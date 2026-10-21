@@ -182,7 +182,10 @@ help:
 	  | sed 's/^# \{0,1\}//'
 
 all:
-	@rustfmt src/*.rs --edition 2024
+	@# `cargo fmt`, not `rustfmt src/*.rs`: the latter also reformats the `include!`d
+	@# generated sources cargo fmt never reaches (src/compiled_stdlib_gen.rs), which left
+	@# every `make install` with a dirty tree and a stale-stdlib test failure.
+	@cargo fmt
 	@RUSTFLAGS=-g cargo build --release
 
 check-targets:
@@ -252,7 +255,7 @@ doctor:
 install-artifacts: check-targets all wasm-html-mt-lib
 	@cargo build --release --target wasm32-wasip2 --lib --no-default-features --features random
 	@cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
-	@cargo build --release --lib --no-default-features --features mmap,random,threading,native-extensions,registry,remote-store --target-dir target/install-lib
+	@scripts/lean_build.sh --lib --bin loft
 	@stale=$$(ls -t target/install-lib/release/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2); \
 	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
 
@@ -261,7 +264,7 @@ install-artifacts: check-targets all wasm-html-mt-lib
 # native binary + lib; this adds the feature-complete install-lib rlib the copies
 # need.  Same stale-loft_ffi prune as the full target.
 install-artifacts-native: all
-	@cargo build --release --lib --no-default-features --features mmap,random,threading,native-extensions,registry,remote-store --target-dir target/install-lib
+	@scripts/lean_build.sh --lib --bin loft
 	@stale=$$(ls -t target/install-lib/release/deps/libloft_ffi-*.rlib 2>/dev/null | tail -n +2); \
 	 if [ -n "$$stale" ]; then echo "  pruning stale loft_ffi rlib(s): $$stale"; rm -f $$stale; fi
 
@@ -303,7 +306,9 @@ install:
 	fi
 	@$(SUDO) chmod -R a+rX $(PREFIX)/share/loft
 	@$(SUDO) install -d $(PREFIX)/bin
-	@$(SUDO) install -m 755 target/release/loft $(PREFIX)/bin/loft
+	@# The production binary, built with the runtime beside it (scripts/lean_build.sh):
+	@# no development aids, and one feature set for the interpreter and `--native`.
+	@$(SUDO) install -m 755 target/install-lib/release/loft $(PREFIX)/bin/loft
 	@smoke="$${TMPDIR:-/tmp}/loft-install-smoke.loft"; \
 	printf 'fn main() {\n    println("loft install smoke ok")\n}\n' > "$$smoke"; \
 	if ! $(PREFIX)/bin/loft --interpret "$$smoke" >/dev/null 2>"$$smoke.err"; then \
@@ -556,7 +561,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: speed profile profile-corpus speed-gate interp-gap janitor-install rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -600,6 +605,9 @@ sections:  ## Every section of LOFT.md / STDLIB.md and what keeps it — a sampl
 rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py
+gap-report:  ## Where one routine's distance to its Rust twin lives: own code, inlined runtime, called runtime, loft lines, declines (ARGS="--bench 17 --fn c_slope_path")
+	cargo build --release --lib --bin loft -q
+	python3 scripts/gap_report.py $(ARGS)
 interp-gap:  ## Where the interpreter still moves data native no longer does, per bench routine (a report; ARGS="--only 14,16")
 	cargo build --release --lib --bin loft -q
 	cargo build --release --lib --bin loft -q --features op-census --target-dir target/op-census
@@ -610,6 +618,9 @@ worst:  ## The worst routines of the last complete runs (interp-gap, perf-portal
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py --bless
+decline-census:  ## Per rewrite rule: sites admitted vs refused, the refusals by reason (a report; ARGS="--record")
+	cargo build --release --bin loft -q
+	python3 scripts/decline_census.py $(ARGS)
 speed-gate:  ## Fail on a test HARD slower than on main (reads the last `make ci` run)
 	python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml
 speed-discover:  ## Find tests slow enough to deserve a @speed annotation
@@ -2391,6 +2402,7 @@ ci: ci-guard
 	cargo clippy --all-targets --all-features -- -D warnings >> result.txt 2>&1 && \
 	scripts/check_doc_drift.sh >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py claims >> result.txt 2>&1 && \
+	python3 scripts/ci_shards.py proof >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py fences --gate >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py sections --gate >> result.txt 2>&1 && \
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \
@@ -2849,6 +2861,10 @@ linkcheck-external:
 .PHONY: rule-coverage
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
+
+.PHONY: stability-read
+stability-read:  ## The weekly stability read: every meter of the owner's directive, one row per week (ARGS="--since 2026-08-03 --record" keeps the series)
+	@python3 scripts/stability_read.py $(ARGS)
 
 .PHONY: rule-pairs
 rule-pairs:  ## The rule pairs the formal text names that no guard file names together

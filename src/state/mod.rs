@@ -1465,7 +1465,9 @@ impl State {
                             .into_iter()
                             .filter(|fv| fv.live && !fn_vars.is_compiler_generated(fv.var_nr))
                             .map(|fv| {
-                                let type_name = fv.typedef.name(data);
+                                // The reader's spelling, as `type_name()` gives it: `i8`, not
+                                // the range `integer(-128, 127)` (loft#2072).
+                                let type_name = data.display_type_name(&fv.typedef);
                                 let value = match fv.value {
                                     crate::state::debug::VariableValue::Integer(n) => {
                                         crate::database::VarValueSnapshot::Int(n)
@@ -1520,11 +1522,19 @@ impl State {
                                         )
                                     }
                                 };
+                                // A local the compiler PROMOTED onto the caller's return buffer
+                                // sits in a hidden parameter slot under its own name; the author
+                                // declared it as a local, so it is reported as one (loft#2087).
+                                let promoted =
+                                    fv.is_argument
+                                        && data.def(d_nr).attr_names.get(&fv.name).is_some_and(
+                                            |&a| data.def(d_nr).attributes()[a].hidden,
+                                        );
                                 crate::database::VarSnapshot {
                                     name: fv.name,
                                     type_name,
                                     value,
-                                    is_argument: fv.is_argument,
+                                    is_argument: fv.is_argument && !promoted,
                                 }
                             })
                             .collect()

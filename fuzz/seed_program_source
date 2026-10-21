@@ -13,7 +13,7 @@ fn main() {
   dst = "../fuzz/corpus/program_source";
   mkdir_all(dst);
   paths: vector<text> = [];
-  for root in ["../tests", "../doc", "../examples", "../lib"] { paths += root.walk(".loft"); }
+  for root in ["../tests", "../doc", "../examples", "../lib"] { paths += root.walk_sorted(".loft", links: false); }
   n = 0;
   for p in paths {
     p.copy_to("{dst}/{n:05}_{p.basename()}");

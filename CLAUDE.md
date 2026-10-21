@@ -128,6 +128,13 @@ make rewrite-census                      # which REWRITES still fire where they 
                                          #   baseline — a DROP (a fix tightened a condition) fails,
                                          #   named by rule and bench; seconds, exact, in `make ci`
                                          #   and on the PR.  `-bless` records a deliberate decline
+make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- rule, the sites it
+                                         #   admitted against the sites it REFUSED, the refusals
+                                         #   ranked by reason — a routine over its bar is a shape a
+                                         #   rewrite declined, and the top reason of a rule that
+                                         #   matters is the next arc, by yield.  Rules without
+                                         #   decline reporting read `not reported`, never covered.
+                                         #   A REPORT (`ARGS="--record"` keeps the snapshot)
 make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
                                          #   every bench lane here and renders ONE page,
                                          #   doc/claude/PERF_PORTAL.md — a median per mechanism
@@ -222,7 +229,10 @@ make view                                # branch-aware doc/code viewer; binds L
 shell's own command line contains the text it searches for (and `pkill -f` by name has killed a
 sibling checkout's run).  Wait on the recorded PID (`scripts/ci-run.sh status`, the pid
 `find_problems.sh --bg` prints) or on the output FILE (`[ -s <out> ]`, its mtime); a `[m]ake`
-bracket or `pgrep -x` only moves the failure.  With neither pid nor file to hand,
+bracket or `pgrep -x` only moves the failure.  **`scripts/wait_for.sh FILE REGEX [--pid N]`** (or
+`--pid N` alone) is that wait, and it always ends: a deadline (`--timeout`, default 3600 s) and,
+with `--pid`, the producer's death; `--stale` lists the wait loops on the box that never will.
+With neither pid nor file to hand,
 **`scripts/pgrep_others.sh <regex>`** (`--wait`, `--count`, `--here`) is `pgrep -f` that cannot
 match its own caller.  Agents repeated this mistake many times after it was
 documented: [CODE.md § shell](doc/claude/CODE.md) has the measurements.
@@ -694,6 +704,9 @@ repositioning from one-game project to distribution ·
 **the owner's notes live OUTSIDE git** (`$LOFT_NOTES`, a folder on the owner's machine):
 his thoughts on what we build, blog subjects and ideas.  They can steer a feature or become a
 post, so read them when one is in question; never commit them, and never publish from them.
+The posts themselves are in [loft-lang/blog](https://github.com/loft-lang/blog)
+(`loft-lang.org/blog`); its own `CLAUDE.md` says how a post is made, and the author approves
+every word.
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
 `loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-ship` (library cross-target + publish) · `engineering-rigor` /

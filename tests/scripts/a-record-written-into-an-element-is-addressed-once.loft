@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-RecPtr`'s element clause — a value record written into an element `v[i]` of a vector
+// at a pure path derives the element ONCE where it writes it: one header read, the in-range
+// test, and the element's reference and address both from the record and the index.  The
+// reference used to come back from the element read and the address out of that reference
+// (`map_set_hex` in `slope_path_with_undo`).  An index out of range still takes the element
+// read itself, so its raise and the null it answers are that read's own.
+//
+// What can go wrong: the address computed for the wrong element (the size, the offset of
+// the first element), a write into another vector of the same path shape, a negative index
+// counted from the wrong end, the raise of an out-of-range index lost or doubled, an absent
+// record written as present.  Values hand-computed; `LOFT_NO_ELEMENT_ADDRESS=1` keeps the
+// old form, and the cells answer the same either way.
+//
+// @falsified-at: none — the clause has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-20), on --native: the address taken at element 0 whatever the index
+//   fails e1 (9 20 300 for 5 20 700); an index out of range taking the in-range path
+//   fails e5 (2220: element 0 overwritten where the write is dropped).
+//   CHANNEL: an assertion.
+
+struct Hex { a: integer, b: integer, c: integer }
+struct Chunk { id: integer, hexes: vector<Hex> }
+
+fn hex(i: integer) -> Hex { Hex { a: i, b: i * 10, c: i * 100 } }
+
+fn hex_sum(v: vector<Hex>) -> integer {
+  t = 0;
+  for h in v { t += h.a + h.b + h.c; }
+  t
+}
+
+// The bench's shape: the element of a nested vector field, reached through a loop variable,
+// written from a value-record parameter.
+fn set_in(cs: &vector<Chunk>, id: integer, idx: integer, h: Hex) {
+  for c in cs {
+    if c.id == id {
+      c.hexes[idx] = h;
+      return;
+    }
+  }
+}
+
+fn chunk(id: integer, n: integer) -> Chunk {
+  c = Chunk { id: id };
+  for i in 0..n { c.hexes += [hex(0)]; }
+  c
+}
+
+fn main() {
+  // e1: a plain local vector, a value local written at 0, 2 and the last index.
+  v: vector<Hex> = [hex(1), hex(2), hex(3), hex(4)];
+  h = hex(7);
+  v[2] = h;
+  v[0] = hex(5);
+  v[3] = hex(9);
+  assert(v[0].a == 5 && v[1].b == 20 && v[2].c == 700 && v[3].a == 9, "e1 got {v[0].a} {v[1].b} {v[2].c} {v[3].a}");
+  assert(len(v) == 4 && hex_sum(v) == 5 * 111 + 2 * 111 + 7 * 111 + 9 * 111, "e1 sum {hex_sum(v)} len {len(v)}");
+
+  // e2: the nested field, reached by a loop variable; only chunk 2, element 5 changes.
+  cs: vector<Chunk> = [chunk(1, 8), chunk(2, 8), chunk(3, 8)];
+  set_in(cs, 2, 5, hex(6));
+  set_in(cs, 3, 0, hex(4));
+  assert(cs[1].hexes[5].b == 60 && cs[2].hexes[0].c == 400, "e2 got {cs[1].hexes[5].b} {cs[2].hexes[0].c}");
+  assert(hex_sum(cs[0].hexes) == 0 && hex_sum(cs[1].hexes) == 666 && hex_sum(cs[2].hexes) == 444, "e2 sums {hex_sum(cs[0].hexes)} {hex_sum(cs[1].hexes)} {hex_sum(cs[2].hexes)}");
+  assert(len(cs[1].hexes) == 8, "e2 len {len(cs[1].hexes)}");
+
+  // e3: a computed index.
+  k = 1;
+  v[k * 2 - 1] = hex(8);
+  assert(v[1].c == 800 && hex_sum(v) == 5 * 111 + 8 * 111 + 7 * 111 + 9 * 111, "e3 got {v[1].c} {hex_sum(v)}");
+
+  // e4: a negative index counts from the end, as the element read does.
+  v[-1] = hex(3);
+  assert(v[3].a == 3 && v[2].a == 7 && len(v) == 4, "e4 got {v[3].a} {v[2].a} len {len(v)}");
+
+  // e5: an index out of range takes the element read itself: the write is dropped.
+  v[9] = hex(2);
+  assert(hex_sum(v) == 5 * 111 + 8 * 111 + 7 * 111 + 3 * 111 && len(v) == 4, "e5 got {hex_sum(v)} len {len(v)}");
+
+  println("done");
+}

@@ -1711,29 +1711,11 @@ pub fn rustc_available() -> bool {
     rustc_version().is_some()
 }
 
-/// The first line `rustc --version` answers on `PATH` (`rustc 1.85.0 (…)`), or `None` when
-/// there is no working `rustc`.  Asked once per process.
+/// The first line `rustc --version` answers on `PATH`, or `None` when there is no working
+/// `rustc` — [`crate::cache::rustc_version`], the one place loft asks it.
 #[must_use]
 pub fn rustc_version() -> Option<&'static str> {
-    use std::sync::OnceLock;
-    static VERSION: OnceLock<Option<String>> = OnceLock::new();
-    VERSION
-        .get_or_init(|| {
-            Spawn::new(Program::search("rustc"))
-                .arg("--version")
-                .run(b"")
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| {
-                    String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .next()
-                        .unwrap_or("rustc")
-                        .trim()
-                        .to_string()
-                })
-        })
-        .as_deref()
+    crate::cache::rustc_version()
 }
 
 /// @C102 — what a developer is told when this machine has no `rustc`.  A program run says

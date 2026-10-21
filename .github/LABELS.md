@@ -340,6 +340,33 @@ plausible-looking shortcuts both mislabel:
 **An unlabelled issue means "not established", never "nobody".**  Roughly 84 issues filed before
 this convention carry no `hit-by:`; treat any count over that period as a floor, not a total.
 
+## `class:` — which MECHANISM produced it (the bug review's axis)
+
+The monthly bug review ([BUG_REVIEW.md](../doc/claude/BUG_REVIEW.md)) asks which mechanism
+class is still producing bugs and whether last cycle's keystone moved its class.  It read
+the class off the issue TITLE with a regex per class, which over-counts: three of the
+fourteen null bugs of the `2026-09` pass answered null without being null defects.  A
+`class:` label, set by the filer from the bug form's "Mechanism class" dropdown or by hand,
+is read INSTEAD of the title for that issue, so the payoff measurement is exact as far as
+the labels reach.  One label per class; the names mirror `scripts/bug-review.py`'s `CLASSES`.
+
+| Label | The class |
+|---|---|
+| `class:null` | null / sentinel / nullable |
+| `class:ownership` | free, leak, use-after-free, owner, borrow |
+| `class:keyed` | keyed collections — hash, sorted, radix, spatial |
+| `class:generic` | generic / template / monomorph instance |
+| `class:narrow` | narrow integers and field widths |
+| `class:tuple` | tuples |
+| `class:enum` | enum variants and discriminants |
+| `class:traversal` | reachability, walks, pruning |
+| `class:par` | par, workers, coroutines |
+| `class:packages` | package format, registry, install |
+| `class:wasm` | the browser / wasm target |
+
+Not a triage axis: it decides nothing about priority, and an issue with none is classified
+by its title as before.
+
 ## Cross-cutting
 
 | Label | Meaning |

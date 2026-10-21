@@ -16778,7 +16778,7 @@ fn main() {
     )
     .unwrap();
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let bin = root.join("target/release/loft");
+    let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&bin) {
         // Sanitizer CI jobs (ASan gate, stack_align sweep) run the test
         // binaries without building the release CLI — skip like the

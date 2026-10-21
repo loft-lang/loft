@@ -169,10 +169,11 @@ eighth. The eighth is not slack for its own sake: a bound store stays live and t
 arena grows by 7/3, so persisting with no room left costs a 2.33× file resize on
 the very next claim, which is worse than the tail it removed.
 
-**Interior free space is still there.** Reclaiming that means relocating records
-and rewriting every `DbRef` — compaction, which @PLN123 arc B remains open for. So
-the size now follows the content, but two construction orders can still differ by
-the fragmentation each genuinely leaves.
+**Interior free space stays while the store is live.** Reclaiming it means
+relocating records, which no live `DbRef` may see, so it happens only when the store
+is next loaded (the INTERIOR paragraph below, @PLN123 arc B). Until then the size
+follows the content, but two construction orders can differ by the fragmentation
+each leaves.
 
 **The bind-first path reaches the same answer at RELEASE (loft#752).** That #710
 fix is on the IMAGE WRITE, so it covers `store_persist_bind` LAST and nothing

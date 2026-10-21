@@ -3846,10 +3846,25 @@ pub fn callref_join_first_bind(
 /// those from the callee's own return summary, which is the stronger fact.
 #[must_use]
 pub fn opaque_callref_bind(data: &Data, d_nr: u32, tp: &Type, value: &Value) -> Option<u32> {
+    if !tp.depend().is_empty() {
+        return None;
+    }
+    opaque_callref_record(data, d_nr, tp, value)
+}
+
+/// The SHAPE half of [`opaque_callref_bind`]: a record `CallRef` whose target cannot be
+/// resolved, whatever the binding's deps say.  The scopes pass asks this to make a plain
+/// first bind of such a call an OWNER — `@FR-O-Opaque` types the result as borrowing every
+/// heap argument, which left the local a skip-free ALIAS of the argument the closure handed
+/// back, so `r = g(s); r.n = 99` wrote into the caller's `s` (loft#2078, `@FR-B-Copy`).  The
+/// adopt-or-copy bind is right on every arm: an argument or a capture predates the call and
+/// is copied, a store the call minted is adopted.
+#[must_use]
+pub fn opaque_callref_record(data: &Data, d_nr: u32, tp: &Type, value: &Value) -> Option<u32> {
     let (Type::Reference(rec, _) | Type::Enum(rec, true, _)) = tp.base() else {
         return None;
     };
-    if !tp.depend().is_empty() || !matches!(value.unspan(), Value::CallRef(_, _)) {
+    if !matches!(value.unspan(), Value::CallRef(_, _)) {
         return None;
     }
     if callee_of(data, d_nr, value).is_some() {

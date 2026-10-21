@@ -15,10 +15,19 @@ EXPLAINED rather than guessed at:
     last run, whose junit is the baseline.
 
     ci_timing.py shard JUNIT [LABEL]   # markdown for the leg's job summary
+    ci_timing.py legs RUN_ID           # every test leg's STEPS against the 20-minute budget
+    ci_timing.py leg RUN_ID NAME       # one leg's steps (its own job summary, from inside the run)
     ci_timing.py report RUN_ID         # the PR comment, updated in place
     ci_timing.py dry-run RUN_ID        # print the PR comment; writes nothing
     ci_timing.py selftest              # against tests/fixtures/ci_timing/
+
+The `legs` table is what the 20-minute rule is read against (CI_BUDGET.md): for each test
+leg, how long it queued for a runner, each step of half a minute or more, the leg's total,
+and whether it is over the budget — so a long leg is explained by its step, build or test,
+and not guessed at from the run's wall clock.
 """
+
+BUDGET_MIN = 20.0
 
 import datetime
 import json
@@ -114,7 +123,59 @@ def gh(*args: str, check: bool = True, input_text: str | None = None) -> str:
 
 
 def api(path: str) -> object:
-    return json.loads(gh("api", path) or "null")
+    try:
+        return json.loads(gh("api", path) or "null")
+    except RuntimeError:
+        # No usable `gh` token (a box without one): the repository is public, so the
+        # read-only endpoints answer unauthenticated too.
+        r = subprocess.run(["curl", "-sS", f"https://api.github.com/{path}"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise
+        return json.loads(r.stdout or "null")
+
+
+def leg_steps(job: dict) -> list[tuple[str, float]]:
+    """(step name, minutes) for every step of `job` that ran half a minute or more."""
+    out = []
+    for s in job.get("steps") or []:
+        if s.get("started_at") and s.get("completed_at"):
+            d = (when(s["completed_at"]) - when(s["started_at"])) / 60
+            if d >= 0.5:
+                out.append((s["name"], d))
+    return out
+
+
+def legs_markdown(r: str, run_id: str, only: str | None = None) -> str:
+    """Each test leg's queue wait, its steps and its total against `BUDGET_MIN`."""
+    jobs = [j for j in api(f"repos/{r}/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+            if j["name"].startswith("Test (") and j.get("started_at")
+            and (only is None or j["name"] == only)]
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    lines = [f"### Leg timing against the {BUDGET_MIN:.0f}-minute budget", ""]
+    if only is None:
+        lines += ["| leg | queued | total | verdict | steps |", "|---|---:|---:|---|---|"]
+    shown = 0
+    for j in sorted(jobs, key=lambda j: j["name"]):
+        queued = (when(j["started_at"]) - when(j["created_at"])) / 60
+        end = when(j["completed_at"]) if j.get("completed_at") else now
+        total = (end - when(j["started_at"])) / 60
+        steps = leg_steps(j)
+        if not steps and total < 0.5:
+            continue  # a placeholder leg of the matrix that ran nothing
+        shown += 1
+        state = "" if j.get("completed_at") else " (still running)"
+        verdict = ("**over budget**" if total > BUDGET_MIN else "within budget") + state
+        if only is None:
+            cells = ", ".join(f"{n[:22].rstrip()} {d:.1f}" for n, d in steps)
+            lines.append(f"| [{j['name']}]({j['html_url']}) | {queued:.1f} | {total:.1f} | {verdict} | {cells} |")
+        else:
+            lines += [f"[{j['name']}]({j['html_url']}): queued {queued:.1f} min, {total:.1f} min so far — {verdict}",
+                      "", "| min | step |", "|---:|---|"]
+            lines += [f"| {d:.1f} | {n} |" for n, d in steps]
+    if not shown:
+        lines.append("no test leg found" + (f" named `{only}`" if only else ""))
+    return "\n".join(lines) + "\n"
 
 
 def repo() -> str:
@@ -279,6 +340,12 @@ if __name__ == "__main__":
             print(f"### Test timing\n\nno junit at `{path}` — the test step did not run to the end.")
             sys.exit(0)
         print(shard_markdown(path, a[2] if len(a) == 3 else path.parent.name))
+        sys.exit(0)
+    if a[:1] == ["legs"] and len(a) == 2:
+        print(legs_markdown(repo(), a[1]), end="")
+        sys.exit(0)
+    if a[:1] == ["leg"] and len(a) == 3:
+        print(legs_markdown(repo(), a[1], a[2]), end="")
         sys.exit(0)
     if a[:1] in (["report"], ["dry-run"]) and len(a) == 2:
         r = repo()

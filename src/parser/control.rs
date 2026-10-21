@@ -6894,16 +6894,16 @@ impl Parser {
                     .collect();
                 partial.sort_by_key(|(_, v_nr, _)| *v_nr);
                 for (name, v_nr, tp) in partial {
-                    let opt = Type::optional(tp);
+                    let opt = Self::capture_optional(&tp);
                     self.vars.set_type(v_nr, opt.clone());
                     if !first_names.contains(&name) {
-                        arm_stmts.push(v_set(v_nr, self.null(&opt)));
+                        arm_stmts.push(v_set(v_nr, self.absent_capture(&opt)));
                     }
                     for (names_i, (_, stmts_i, _)) in
                         branch_names.iter().zip(multi_branches.iter_mut())
                     {
                         if !names_i.contains(&name) {
-                            stmts_i.push(v_set(v_nr, self.null(&opt)));
+                            stmts_i.push(v_set(v_nr, self.absent_capture(&opt)));
                         }
                     }
                 }
@@ -10213,14 +10213,14 @@ impl Parser {
             let var_type = if present_in_all {
                 ftype.clone()
             } else {
-                Type::optional(ftype.clone())
+                Self::capture_optional(ftype)
             };
             let v_nr = self.create_unique(&format!("mv_{fname}"), &var_type);
             if v_nr == u16::MAX {
                 continue;
             }
             self.vars.defined(v_nr);
-            let mut acc = self.null(&var_type);
+            let mut acc = self.absent_capture(&var_type);
             for (bi, branch) in branches.iter().enumerate().rev() {
                 if let Some((pos, vdef, attr)) =
                     branch.iter().enumerate().find_map(|(j, (_, vd, fields))| {
@@ -10498,7 +10498,7 @@ impl Parser {
             let var_type = if present_in_all {
                 ftype.clone()
             } else {
-                Type::optional(ftype.clone())
+                Self::capture_optional(ftype)
             };
             let v_nr = self.create_unique(&format!("mv_{fname}"), &var_type);
             if v_nr == u16::MAX {
@@ -10508,7 +10508,7 @@ impl Parser {
             // if tag==V0 { f@V0 } else if tag==V1 { f@V1 } … else <null>.  A branch
             // lacking `f` is simply skipped — its tag falls through to the null else,
             // which is exactly the `option<T>` null a partial-overlap capture wants.
-            let mut acc = self.null(&var_type);
+            let mut acc = self.absent_capture(&var_type);
             for (disc, vdef, fields) in alts.iter().rev() {
                 if let Some((_, attr_idx, _)) = fields.iter().find(|(n, _, _)| n == fname) {
                     let read = if *attr_idx == usize::MAX {
@@ -13096,14 +13096,14 @@ impl Parser {
             if everywhere {
                 continue;
             }
-            let opt = Type::optional(tp.clone());
+            let opt = Self::capture_optional(tp);
             self.vars.set_type(*slot, opt.clone());
             if !first_set.contains(name) {
-                first_bindings.push(v_set(*slot, self.null(&opt)));
+                first_bindings.push(v_set(*slot, self.absent_capture(&opt)));
             }
             for (binds_i, _, names) in &mut alternatives {
                 if !names.contains(name) {
-                    binds_i.push(v_set(*slot, self.null(&opt)));
+                    binds_i.push(v_set(*slot, self.absent_capture(&opt)));
                 }
             }
         }
@@ -20672,19 +20672,30 @@ impl Parser {
                     end += 1;
                 }
             }
-            let expr = line[after..end].trim();
+            // An assert whose `(` does not close on this line, or whose last string escape
+            // ends it, leaves `end` past the line: the text is then the rest of the line.
+            let expr = line[after..end.min(bytes.len())].trim();
             // If it contains a comma, only take up to the first top-level comma
-            // (the rest is the user message argument).
+            // (the rest is the user message argument).  A comma inside a string literal is
+            // part of the condition.
             let mut comma_depth = 0;
+            let mut in_string = false;
+            let mut escaped = false;
             for (i, b) in expr.bytes().enumerate() {
+                if in_string {
+                    match b {
+                        _ if escaped => escaped = false,
+                        b'\\' => escaped = true,
+                        b'"' => in_string = false,
+                        _ => {}
+                    }
+                    continue;
+                }
                 match b {
+                    b'"' => in_string = true,
                     b'(' | b'[' | b'{' => comma_depth += 1,
                     b')' | b']' | b'}' => comma_depth -= 1,
                     b',' if comma_depth == 0 => return expr[..i].trim().to_string(),
-                    b'"' => {
-                        // skip — don't count commas inside strings
-                        // (simplified: the expression without message has no commas at top level)
-                    }
                     _ => {}
                 }
             }
@@ -20760,7 +20771,30 @@ impl Parser {
                 )
             };
             let d_nr = self.data.def_nr("n_assert");
-            *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
+            // loft#2090 — the message is evaluated only when the assertion fails (#873's
+            // promise).  A constant message costs nothing to build and keeps the one call; a
+            // built one (`"element {i} is {x}"`) is formatted on the failing branch alone, and
+            // the passing branch hands `n_assert` the condition's own text, which is what a
+            // run that lists its passing assertions (the playground's `report_asserts`) shows.
+            if matches!(message.unspan(), Value::Text(_)) {
+                *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
+            } else {
+                let condition = Value::str(&Self::extract_assert_expr(call_pos));
+                let pass = Value::Call(
+                    d_nr,
+                    vec![
+                        Value::Boolean(true),
+                        condition,
+                        a_file.clone(),
+                        a_line.clone(),
+                    ],
+                );
+                let fail = Value::Call(d_nr, vec![Value::Boolean(false), message, a_file, a_line]);
+                // Inside a block: a bare statement `if` testing a local reads as an author's
+                // GUARD of the read that bound it (`rewrite_defended_fault_sites`), and an
+                // assert is not one — it must leave that read's fault report as it was.
+                *val = v_block(vec![v_if(test, pass, fail)], Type::Void, "assert");
+            }
             Type::Void
         } else if name == "panic" {
             let message = if list.is_empty() {
@@ -22296,7 +22330,10 @@ impl Parser {
             } else {
                 self.data.def_nr(&id)
             };
-            if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
+            if d_nr != u32::MAX
+                && self.data.def_type(d_nr) != DefType::EnumValue
+                && !self.type_word_starts_a_value()
+            {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
                     // Still unresolved after pass 2, so this is not a forward reference:
                     // those resolve in `resolve_deferred_unknowns` and take the branch
@@ -22507,6 +22544,14 @@ impl Parser {
     /// `type_name(expr)` — compile-time intrinsic that returns the static type
     /// of `expr` as a text constant.  Works on both type names and expressions:
     /// `type_name(integer)`, `type_name(my_var)`, `type_name(1 + 2)`.
+    /// After `sizeof(` / `type_name(` and a word naming a declared type: does the word start
+    /// an EXPRESSION instead — a struct literal `TPt { … }` or a qualified variant
+    /// `TSh::TCi { … }`?  Read as the bare type, the literal's `{` met `)` and the call was
+    /// refused (loft#2082); the expression path synthesises the same type (`@FR-T-Syn`).
+    fn type_word_starts_a_value(&self) -> bool {
+        self.lexer.peek_token("{") || self.lexer.peek_token("::")
+    }
+
     pub(crate) fn parse_type_name(&mut self, val: &mut Value) -> Type {
         // Try parsing as a type name first (like sizeof does).
         let mut found = false;
@@ -22522,7 +22567,10 @@ impl Parser {
             }
         } else if let Some(id) = self.lexer.has_identifier() {
             let d_nr = self.data.def_nr(&id);
-            if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
+            if d_nr != u32::MAX
+                && self.data.def_type(d_nr) != DefType::EnumValue
+                && !self.type_word_starts_a_value()
+            {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
                     // Same unresolved-name case `parse_size` handles above, and it was
                     // silent here for the same reason: `*val` kept its `Null` initialiser,

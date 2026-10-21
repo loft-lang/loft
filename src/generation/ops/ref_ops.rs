@@ -539,8 +539,10 @@ impl OpCopyRecordEmitter {
         // index re-resolved per field cost seven lookups for one record (`map_set_hex`).
         let plain = matches!(dst.unspan(), Value::Var(_));
         let held = Value::RawExpr("__cd".to_string());
+        // The element clause derived `__cd` already.
+        let derived = matches!(dst.unspan(), Value::RawExpr(e) if e == "__cd");
         write!(ctx.w, "{{ ")?;
-        if !plain {
+        if !plain && !derived {
             write!(ctx.w, "let __cd: DbRef = ")?;
             ctx.emit(dst)?;
             write!(ctx.w, "; ")?;
@@ -634,6 +636,30 @@ impl OpCopyRecordEmitter {
                 && let Some(d) = ctx.output.value_record_locals.get(v).copied()
                 && ctx.output.value_records.types.contains_key(&d)
             {
+                // `@FR-R-RecPtr`'s element clause: the element derived in place, its
+                // reference and its address both from the record and the index.
+                if let Some((vector, index, size)) = ctx.output.element_copy_dest(args) {
+                    write!(ctx.w, "{{ let __vr: DbRef = ")?;
+                    ctx.emit(vector)?;
+                    write!(ctx.w, "; let __vi: i64 = ")?;
+                    ctx.emit(index)?;
+                    write!(
+                        ctx.w,
+                        "; let (__er, __el) = vector::rec_and_len(&__vr, &stores.allocations); \
+                         let (__cd, __cp): (DbRef, *const u8) = match vector::elem_index(__vi, __el) {{ \
+                         Some(__f) => (DbRef {{ store_nr: __vr.store_nr, rec: __er, pos: 8 + __f * {size} }}, \
+                         unsafe {{ stores.allocations[__vr.store_nr as usize].elem_base(__er).add(__f as usize * {size}) }}), \
+                         None => {{ let __d = stores.vec_get_or_raise_runtime(&__vr, {size}, __vi); \
+                         (__d, vector::rec_ptr(&__d, &stores.allocations)) }} }}; "
+                    )?;
+                    crate::rewrite_census::fired("R-RecPtr/element", 1);
+                    ctx.output.element_ptr_held = true;
+                    let held = Value::RawExpr("__cd".to_string());
+                    let r = Self::materialise_local(ctx, *v, d, &held, tp_val, None);
+                    ctx.output.element_ptr_held = false;
+                    r?;
+                    return write!(ctx.w, " }}");
+                }
                 return Self::materialise_local(ctx, *v, d, dst, tp_val, None);
             }
             // A copy FROM a SUB-RECORD of a value local (`Vtx { pos: w.pos, … }`): the

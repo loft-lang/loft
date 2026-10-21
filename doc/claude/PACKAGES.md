@@ -147,12 +147,16 @@ enabled = true              # auto-use: a consumer that calls one of this
                             # of its TYPES (`c: Command = …`) loads it with no
                             # `use`.  Both halves are DERIVED from the `pub`
                             # declarations at publish time; nothing is listed.
-                            # A consumer derives them from each DECLARED
-                            # dependency's own source — a sibling, a `path =`,
-                            # a `lib/<dep>` or a registry package's extracted
-                            # copy (the lock's pin) — and from the catalogue
-                            # for a package nothing declares (methods and
-                            # builders only: the index carries no types).
+                            # A consumer derives them from the copy a `use`
+                            # would load (formal/dispatch.md `Disp-Trigger`):
+                            # each DECLARED dependency's sibling, `path =`,
+                            # `lib/<dep>` or `--lib` copy, else its extracted
+                            # registry copy (the lock's pin); for a package
+                            # nothing declares, a `--lib` directory's copy, then
+                            # the catalogue (methods and builders only: the
+                            # index carries no types).  So `--lib <worktree>`
+                            # fires a method the published copy lacks.  A name
+                            # two `--lib` packages derive fires neither.
 builders = ["set"]          # the one declared half: the free `pub fn`s a consumer
                             # may call BARE (`set(words)`) and have this package
                             # loaded.  A builder takes a name in the program's own
@@ -635,6 +639,15 @@ one under `--native` and answered without complaining.  loft now resolves throug
 your registration on both backends (NATIVE_ARTIFACT_IDENTITY.md § Which symbol a `#native` binding
 links), so a remap is no longer *wrong* — but it still costs you every consumer
 whose cdylib loft cannot load, and it is free to avoid.
+
+**Mark a native `#pure` when its value is its only effect** — the answer depends on the
+arguments alone, it writes nothing, reads no clock, file or entropy, always returns and reports
+nothing: a hash, an encoder or decoder, a verifier.  The annotation goes on its own line after
+`#native`.  loft then computes two calls on unchanged arguments once, also when two small
+wrappers each make the call (a validate-then-use pair decodes once; `formal/rewrites.md`
+§ `(R-PureReuse)`, the shared-call clause).  A wrong `#pure` is a wrong program: a call loft
+merges or moves ahead of a test must not have been observable.  Leave it off a random source,
+a clock, I/O, and anything that can fail loudly.
 
 ### Three execution paths
 

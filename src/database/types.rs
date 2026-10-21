@@ -2816,8 +2816,23 @@ impl Stores {
                     .collect();
                 format!("struct{{{}}}", inner.join(", "))
             }
+            // `@FR-L-Sound` — a variant names its TYPE where the type's name is not the
+            // variant's own: variant names collide across enums, the second and later types
+            // are disambiguated (`src1::Item`), and a line naming only `Item` let two programs
+            // with the variants swapped record one identity and misread each other's stores
+            // (loft#2096).  Every other line is unchanged, so no other recorded identity moves.
             Parts::Enum(vs) => {
-                let inner: Vec<String> = vs.iter().map(|(_, n)| n.clone()).collect();
+                let inner: Vec<String> = vs
+                    .iter()
+                    .map(|(t, n)| {
+                        let tn = name(*t);
+                        if *t != u16::MAX && tn != *n {
+                            format!("{n}={tn}")
+                        } else {
+                            n.clone()
+                        }
+                    })
+                    .collect();
                 format!("enum{{{}}}", inner.join(", "))
             }
             Parts::EnumValue(tag, fields) => {

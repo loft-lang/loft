@@ -148,9 +148,10 @@ that evicts, a cache of open handles).  Decided 2026-08-11, revised by @C121 —
 ## C115 — a closure cannot write through a captured `&` scalar parameter, and cannot rebind a captured heap parameter
 
 **Decision.** A write to a `&` scalar parameter from inside a closure, and a whole-value replace
-(`p = …`) of a captured heap parameter, are compile errors.  A captured local, a `&` parameter
-that is only read, and every mutation THROUGH a captured heap parameter (`p += [x]`, `p[i] = v`,
-a field write) still work.  **Why.** A closure holds a copy of the value, not the binding, so
+(`p = …`) of a captured by-value heap parameter, are compile errors.  A captured local, a `&`
+parameter that is only read, every mutation THROUGH a captured heap parameter (`p += [x]`,
+`p[i] = v`, a field write), and a whole-value replace of a captured `&` HEAP parameter work: a
+`&S` / `&vector` is shared, not copied, so the replace reaches the caller (`(L-CapRef)`).  **Why.** A closure holds a copy of the value, not the binding, so
 neither write can reach the place it names; both compiled to a silently wrong answer.
 
 **Revisit when.** A capture mechanism that carries the BINDING exists.  Decided 2026-09-02

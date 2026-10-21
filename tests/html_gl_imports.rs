@@ -60,7 +60,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
         return;
     }
     let root = repo_root();
-    let loft = root.join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP dhtml_vector_arg_gl_host_import_is_emitted: target/release/loft not built");
         return;

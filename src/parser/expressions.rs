@@ -5468,6 +5468,23 @@ use a separate collection or add after the loop"
         // `Value::Iter(_, _, Block(_), _)` shape — its `next` is the
         // resume-call.  Materialise only when the `next` is a Block (the
         // slice / range / collection-iteration shape).  (@P287)
+        // `@FR-Slice-Value` — a slice reached through a block's TAIL (`b = { src[1..3] }`) is
+        // the fresh vector the bare spelling binds.  The routes below recognise only a bare
+        // `Value::Iter`, so the block's iterator reached the scopes pass outside the loop its
+        // `break` belongs to — an internal compiler error on both backends (loft#2084; the
+        // `if`-arm spelling was loft#1941).  Materialised through the one home for the
+        // coercion, it binds as any vector does.
+        if op == "="
+            && !matches!(code, Value::Iter(..))
+            && Self::slice_shaped(code)
+            && let Type::Iterator(elm, _) = s_type.base().clone()
+        {
+            let want = Type::Vector(elm, Deps::none());
+            let is_tp = s_type.clone();
+            if let Some(vt) = self.iterator_as_vector(code, &is_tp, &want) {
+                s_type = vt;
+            }
+        }
         // Materialisable iter detection — by IR shape, NOT by s_type.  The
         // `s_type` is the type the RHS *evaluates to*, but parse_operators
         // may silently convert `Iterator<T>` to `Vector<T>` when the LHS
@@ -8539,7 +8556,13 @@ use a separate collection or add after the loop"
     /// target, a block's tail — because the call is what decides, not how the bind is spelled.
     fn binds_foreign_value(&self, code: &Value, target: u16) -> bool {
         match code.unspan() {
-            Value::Set(v, rhs) if *v == target => self.value_is_foreign(rhs, &[]),
+            // A WHOLE-VALUE bind of another local (`w = b`) is a copy, the reader's own
+            // (`@FR-B-Copy`) — the very cure the refusal of a write names ("copy it first");
+            // reading it as foreign refused the cure for a record (loft#2083).  The coalesce
+            // temp and a slice view keep their own arms.
+            Value::Set(v, rhs) if *v == target => {
+                !matches!(rhs.unspan(), Value::Var(_)) && self.value_is_foreign(rhs, &[])
+            }
             // A SLICE of foreign data bound to a local is a view of the same bytes, read in
             // place without a copy (`OpSliceView`, @PLN174 F4b) — foreign itself.
             Value::Call(d, args)
@@ -9803,12 +9826,12 @@ use a separate collection or add after the loop"
                 {
                     self.validate_write(&to, &lhs_parent, op);
                 }
-                // Handle `f += X` for File variables before type-changing logic.
-                if op == "+="
-                    && self.is_file_var_type(&f_type)
-                    && let Value::Var(file_v) = to
-                {
-                    self.append_to_file(code, file_v);
+                // Handle `f += X` for a File place before type-changing logic: a local or a
+                // FIELD (`b.h += "y"`), which the local it could be read into takes the same
+                // write as (loft#2088).
+                if op == "+=" && self.is_file_var_type(&f_type) {
+                    let file = to.clone();
+                    self.append_to_file(code, file);
                     return Type::Void;
                 }
                 // record closure association if the RHS was a capturing lambda.
@@ -10070,7 +10093,7 @@ use a separate collection or add after the loop"
         }
     }
 
-    pub(crate) fn append_to_file(&mut self, code: &mut Value, file_v: u16) {
+    pub(crate) fn append_to_file(&mut self, code: &mut Value, file_v: Value) {
         let mut rhs_code = Value::Null;
         let mut unused = Type::Null; // parent_tp, this is normally used to unpack the vector fill
         // Clear any leftover cast marker so we only pick up a cast parsed as
@@ -10408,6 +10431,15 @@ use a separate collection or add after the loop"
     /// gave the member WRITE `t.1 = 300` this check; the whole-tuple store did not look inside,
     /// and `t: (integer, u8) = (1, 256)` held 256.  A literal tuple is asked value by value (a
     /// nullable member takes the checked narrowing); any other tuple by its member types.
+    ///
+    /// `@FR-N-Reserve` — a literal's member is then BOUNDED as the member write `t.0 = e` bounds
+    /// it (loft#1640's two checks, the second being loft#984's range guard): a member is a slot,
+    /// and a slot spends a nullable narrow's edge code.  The narrowing check alone left a value
+    /// already typed `u8?` untouched — nothing narrows `u8?` into `u8?` — so the in-flight `255`
+    /// of `m as u8?` was KEPT as a value, and `u: (u8?, integer) = (m as u8?, 2)` read `u.0`
+    /// as `255` with `u.0 == null` false, through a declared local, a return and an argument
+    /// alike, on both backends (loft#2074).  A member the checked narrowing already rewrote
+    /// answers null for an unfitting value itself, and a `null` member has no value to bound.
     pub(crate) fn narrow_tuple_members(
         &mut self,
         code: &mut Value,
@@ -10420,10 +10452,18 @@ use a separate collection or add after the loop"
         match code.unspan_mut() {
             Value::Tuple(members) if members.len() == slots.len() => {
                 for (i, member) in members.iter_mut().enumerate() {
-                    if matches!(slots[i], Type::Optional(_)) {
-                        self.implicit_checked_narrow(member, &values[i], &slots[i]);
+                    let nullable = matches!(slots[i], Type::Optional(_));
+                    let handled = if nullable {
+                        self.implicit_checked_narrow(member, &values[i], &slots[i])
                     } else {
-                        self.narrow_store_checks(member, &slots[i], &values[i]);
+                        self.narrow_store_checks(member, &slots[i], &values[i])
+                    };
+                    if !handled
+                        && !self.first_pass
+                        && !matches!(values[i].base(), Type::Null)
+                        && !self.is_null_source(member)
+                    {
+                        self.guard_declared_range(member, &slots[i], &values[i], nullable);
                     }
                 }
                 return;
@@ -10839,6 +10879,36 @@ use a separate collection or add after the loop"
             // Anything else is a value, not a place: a literal, a computed value, a call result.
             _ => None,
         }
+    }
+
+    /// Would [`guard_declared_range`](Parser::guard_declared_range) bound a value of `source`
+    /// stored into a MEMBER slot typed `target` — does the member declare a range (`@FR-N-Reserve`:
+    /// a nullable narrow's usable range, or a `limit`) that `source` is not already inside?
+    /// Asked of the two TYPES, for a tuple that is not a literal: such a tuple has no member
+    /// expression to wrap, so `convert` rebuilds it from its members when one owes the guard.
+    ///
+    /// Not for a tuple whose every value position is a LITERAL (the tuple itself, the arms of an
+    /// `if`, a block's tail — the shapes [`narrow_tuple_members`](Parser::narrow_tuple_members)
+    /// descends): those members were bounded there, each with its own proof, and a rebuild
+    /// would replace a constant that provably fits by a member READ that cannot prove it.
+    pub(crate) fn member_owes_range_guard(code: &Value, source: &Type, target: &Type) -> bool {
+        fn literal_tails(code: &Value) -> bool {
+            match code.unspan() {
+                Value::Tuple(_) => true,
+                Value::If(_, then, other) => literal_tails(then) && literal_tails(other),
+                Value::Block(bl) if bl.name != "ncc" => {
+                    bl.operators.last().is_some_and(literal_tails)
+                }
+                _ => false,
+            }
+        }
+        if literal_tails(code) {
+            return false;
+        }
+        let Some((lo, hi, _)) = declared_range(target, matches!(target, Type::Optional(_))) else {
+            return false;
+        };
+        !matches!(source.base(), Type::Integer(src) if i64::from(src.min) >= lo && src.max <= hi)
     }
 
     pub(crate) fn guard_declared_range(

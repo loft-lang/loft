@@ -59,6 +59,14 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     // buffer later, so their root is not provably exclusive and they keep the header.
     ("n_a1", 1, 1, 3),
     ("n_b1", 0, 0, 2),
+    // The return buffer beside a parameter read: a scalar vector stored apart from it
+    // (s1, s4) takes the window; the same storage, however spelled (s2, s3), keeps the header.
+    // Each loop is emitted twice behind the guard on the parameter's element base, and each
+    // copy opens and closes a window of its own.
+    ("n_s1_mk", 2, 2, 0),
+    ("n_s2_mk", 0, 0, 2),
+    ("n_s3_mk", 0, 0, 2),
+    ("n_s4_mk", 2, 2, 0),
     // `(R-Base)`'s growth condition: a mint left on its templates is still a growth.
     ("n_r1", 0, 0, 0),
 ];

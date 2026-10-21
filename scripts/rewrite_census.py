@@ -5,6 +5,8 @@
 
     scripts/rewrite_census.py            # census the benches, fail on any drop vs the baseline
     scripts/rewrite_census.py --bless    # …and write what it counted as the new baseline
+    scripts/rewrite_census.py --bless-unless-drop   # one run that checks and records: fails on a
+                                         #   drop (writing nothing), else writes the counts
     scripts/rewrite_census.py --only 12_drawing,drawing
     scripts/rewrite_census.py --verbose  # also list every rise and new row
     LOFT_BIN=<loft> scripts/rewrite_census.py   # census another build (default target/release/loft)
@@ -145,6 +147,10 @@ def write_baseline(results):
 
 def main() -> int:
     args = sys.argv[1:]
+    # `--bless-unless-drop` is the check and the bless in ONE census: a drop fails exactly as
+    # the plain run does and writes nothing; otherwise the counts are recorded, rises included.
+    # A join's rederive asks it, so the programs are emitted once rather than three times.
+    guarded = "--bless-unless-drop" in args
     bless = "--bless" in args
     only = None
     if "--only" in args:
@@ -185,6 +191,8 @@ def main() -> int:
         print(f"  {len(notes)} rises / new rows (--verbose lists them)")
     for f in failed:
         print(f"  could not census {f}")
+    if guarded and not drops and not failed:
+        bless = True
     if bless:
         kept = [(n, *base[n]) for n in base if n not in {r[0] for r in results}]
         write_baseline(results + kept)

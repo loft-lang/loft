@@ -630,6 +630,7 @@ dependencies = [
  "crc32fast",
  "dirs",
  "ed25519-dalek",
+ "find-msvc-tools",
  "flate2",
  "fontdue",
  "js-sys",

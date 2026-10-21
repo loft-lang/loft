@@ -23,13 +23,11 @@
 // `limit(1000, 1100)` rather than the `u8` a test would reach for first: the covered spelling
 // is the one that cannot fail.
 //
-// Two gaps this file records rather than asserts, because neither is the narrow question:
+// A linked NULLABLE narrow local (`c`) decodes too: its absence is the reserved code, which
+// reads as `NullVal` (loft#2073).
 //
-//   * a NULLABLE local reaches `stack_trace()` as `OtherVal {description:"<unsupported>"}`
-//     for every scalar type, narrow or wide — `read_variable_value` has no `Optional` arm at
-//     all, so `c` below is not in the expectation.  The DEBUGGER's renderer does peel it
-//     (loft#1459 gave it that arm) and decodes it correctly since this fix, which
-//     `tests/frame_readers.rs` checks;
+// One gap this file records rather than asserts, because it is not the narrow question:
+//
 //   * `w`, a WIDE `integer` link, reports `IntVal` rather than `LongVal` — its spec is not
 //     `is_wide()` here, which is a typing question and not a slot one.  Asserted as measured
 //     so a change to it is visible rather than silent.
@@ -67,7 +65,7 @@ fn reported(fn_name: text, var: text) -> text {
 fn linked() -> text {
   a: u8 = 250;          p = &a;
   b: i8 = -1;           q = &b;
-  c: u8? = null;        r = &c;   // reported below only through the DEBUGGER's renderer
+  c: u8? = null;        r = &c;
   d: Lim = 1050;        s = &d;
   e: u16 = 65535;       t = &e;
   f: i32 = -2147483647; g = &f;
@@ -94,7 +92,7 @@ fn main() {
   // `State::variables_snapshot`, which native has no counterpart for, so a native run answers
   // `no-frame` for every one.  Both answers are pinned rather than one skipped, so the day
   // native grows a snapshot this cell says so instead of quietly starting to mean less.
-  interp = "LongVal {{n:250}} LongVal {{n:-1}} OtherVal {{description:\"<unsupported>\"}} "
+  interp = "LongVal {{n:250}} LongVal {{n:-1}} NullVal {{}} "
          + "LongVal {{n:1050}} LongVal {{n:65535}} LongVal {{n:-2147483647}} "
          + "IntVal {{n:77}} IntVal {{n:9}} | 250 -1 true 1050 65535 -2147483647 77 9";
   native = "no-frame no-frame no-frame no-frame no-frame no-frame no-frame no-frame "

@@ -158,7 +158,9 @@ Enumerated first, because this is where the design earns its shape:
    nothing; `[registry] downloading <pkg> <version>` speaks where bytes are
    actually fetched ([GOALS.md](GOALS.md) — loft is noticed in its absence).
 4. **Index staleness is bounded, not fatal.** The 1-hour TTL plus conditional
-   GET; when the refresh fails the run continues and the cache answers.
+   GET; when the refresh fails the run continues and the cache answers.  A `use`
+   the cached index cannot satisfy refreshes it once before failing, so a release
+   is reachable as soon as the registry serves it, not an hour later.
    ⚠ **Right after a publish it reads as the publish having failed.** Two lags
    compound — the local TTL, and GitHub raw's CDN, which serves the pre-push
    index to some edges for a few minutes.  Measured 2026-08-21: `loft install`
@@ -218,6 +220,11 @@ holds:
 Library 'probedep' not found — the registry could not be asked, and no cached copy
 satisfies `>=0.3` (cached: 0.1.0, 0.2.0)
 ```
+
+Where the registry WAS asked — online, with the index fetched in that run — and holds
+nothing in range either, the message opens with *"the registry has no version in
+range"* instead, and the `[registry] auto-install failed` line above it gives the
+registry's own reason.
 
 Until loft#1687 a declared scope did not fall back at all, which failed failure
 path 5 offline: `use graphics;` stopped at graphics' own `use mesh3d;` with

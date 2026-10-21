@@ -1141,6 +1141,9 @@ pub fn build_nav(
     } else {
         parts.push("<a href=\"libraries.html\">Libraries</a>".to_string());
     }
+    // The blog is a separate site (loft-lang/blog), so the link is absolute: it must also
+    // work from a page opened from disk or through `make view`.
+    parts.push("<a href=\"https://loft-lang.org/blog/\">Blog</a>".to_string());
 
     parts.push("<span class=\"nav-sep\">Language:</span>".to_string());
 

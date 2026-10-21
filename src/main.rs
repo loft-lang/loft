@@ -192,6 +192,26 @@ fn print_help() {
     println!("                                unit) and strip the live/debug tier as --lean does:");
     println!("                                a SHIPPED binary.  --native keeps every tier — the");
     println!("                                semantics run");
+    println!("  --static                      with a native build: link every native library INTO");
+    println!(
+        "                                the binary — one file that runs with no loft, rustc or"
+    );
+    println!(
+        "                                library file beside it (a program may ask with `#link static`)"
+    );
+    println!(
+        "  --dynamic                     link native libraries beside the binary (the default)"
+    );
+    println!("  --out <dir>                   with a native build: write the program and every");
+    println!(
+        "                                library file it links into <dir>, which runs wherever"
+    );
+    println!("                                it is copied; the program is not run");
+    println!("  --install-libs                with a native build: place its libraries in");
+    println!(
+        "                                ~/.loft/lib/<package>-<version>/, where every program"
+    );
+    println!("                                built against that version finds them");
     println!(
         "  --native-debug                like --native but compile with -Cdebuginfo=2 (DWARF)"
     );
@@ -328,6 +348,8 @@ fn print_help() {
     println!("                                build            — build [build] default-targets");
     println!("                                build html wasi  — build the named targets");
     println!("                                (targets: native | html | wasi | [build.target.*])");
+    println!("                                native writes dist/: the program and its libraries;");
+    println!("                                --install also places the libraries in ~/.loft/lib/");
     println!("  check [target...]             build + run the declared [[test]] phase (the gate)");
     println!(
         "                                (in a project; `check <file.loft>` compile-checks it)"
@@ -419,6 +441,10 @@ fn print_help() {
     println!("                                warm [--from <dir>] [pkg…]");
     println!(
         "                                                 — build what a run will need, first"
+    );
+    println!("                                     [--runtime html,wasi | --no-runtime]");
+    println!(
+        "                                                 — only these wasm runtime rlibs, or none"
     );
     println!("                                a rerun reuses its parse, a dev build included;");
     println!("                                LOFT_NO_CACHE=1 parses fresh and caches nothing");
@@ -4292,10 +4318,16 @@ fn native_source_key_fingerprint(
     native_utils::native_cabi_enabled().hash(&mut h);
     platform::native_strip_symbols().hash(&mut h);
     loft::cache::rustflags_fingerprint().hash(&mut h);
-    if let Some(lib_dir) = loft_lib_dir()
-        && let Ok(meta) = fa::metadata(lib_dir.join("libloft.rlib"))
-    {
-        meta.modified().ok().hash(&mut h);
+    // Every runtime rlib a build could link, not the one it would choose: choosing asks the
+    // live `rustc` which copy it can read (loft#2033), a process launch this key — computed
+    // on the way to EXECUTING a cached binary — has no use for.  A change to either copy
+    // moves the key; the choice itself is made where a build links.
+    for rlib in native_utils::runtime_rlib_candidates() {
+        rlib.hash(&mut h);
+        fa::metadata(&rlib)
+            .and_then(|m| m.modified())
+            .ok()
+            .hash(&mut h);
     }
     h.finish()
 }
@@ -4406,6 +4438,7 @@ fn exec_native_binary(
     if let (Some(dir), Some(data)) = (binary.parent(), data) {
         native_utils::stage_native_dlls(dir, data);
     }
+    let lib_path = data.and_then(native_utils::lib_path_env);
     // loft#865 — the loft-level profiler cannot follow the program here, and this
     // is the LAST point at which that is still certain: everything before it may
     // still `break 'native` and interpret after all, where the sampler does arm.
@@ -4443,6 +4476,10 @@ fn exec_native_binary(
             |n| data.expect("checked").def(n).position().file.to_string(),
         );
     cmd.push_env("LOFT_NATIVE_MAIN_FILE", &main_file);
+    // @PLN195 — where the libraries this build linked are: the program binds them itself.
+    if let Some(lib_path) = &lib_path {
+        cmd.push_env("LOFT_LIB_PATH", lib_path);
+    }
     // @PLN26 follow-up — run the native binary with cwd = source_dir so its
     // raw `std::fs` anchors where its loft `file()` does (the binary bakes
     // `program_relative` + reads source_dir from LOFT_SOURCE_DIR).  Mirrors
@@ -4628,8 +4665,16 @@ fn handle_cache(argv: &[String], i: &mut usize) {
 ///
 /// Never fails the caller. A package that cannot be warmed is simply built by the test that
 /// needs it, exactly as before, so this is an optimisation with no new failure mode.
-fn cache_warm(argv: &[String], from: usize) {
-    let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+/// `cache warm`'s arguments: the packages wanted (`--from <dir>` collects a tree's, a bare
+/// name adds one) and the runtime rlibs — `None` for every shape whose target is installed,
+/// `Some(names)` for `--runtime html,wasi`, and `--no-runtime` the empty list: a CI leg that
+/// runs no `--html` or wasi test skips two release builds of ~1m45 each (`ci_shards.py warm`).
+fn cache_warm_args(
+    argv: &[String],
+    from: usize,
+) -> (std::collections::BTreeSet<String>, Option<Vec<String>>) {
+    let mut wanted = std::collections::BTreeSet::new();
+    let mut runtimes: Option<Vec<String>> = None;
     let mut idx = from;
     while idx < argv.len() {
         let a = argv[idx].as_str();
@@ -4638,11 +4683,23 @@ fn cache_warm(argv: &[String], from: usize) {
                 collect_used_packages(std::path::Path::new(dir), &mut wanted);
                 idx += 1;
             }
+        } else if a == "--no-runtime" {
+            runtimes = Some(Vec::new());
+        } else if a == "--runtime" {
+            if let Some(list) = argv.get(idx + 1) {
+                runtimes = Some(list.split(',').map(|s| s.trim().to_string()).collect());
+                idx += 1;
+            }
         } else if !a.starts_with('-') {
             wanted.insert(a.to_string());
         }
         idx += 1;
     }
+    (wanted, runtimes)
+}
+
+fn cache_warm(argv: &[String], from: usize) {
+    let (wanted, runtimes) = cache_warm_args(argv, from);
 
     let mut built = 0usize;
     let mut skipped = 0usize;
@@ -4661,6 +4718,12 @@ fn cache_warm(argv: &[String], from: usize) {
         native_utils::WasmRuntimeShape::Wasi,
         native_utils::WasmRuntimeShape::Html,
     ] {
+        if runtimes
+            .as_ref()
+            .is_some_and(|names| !names.iter().any(|n| n == shape.name()))
+        {
+            continue;
+        }
         if !installed.lines().any(|l| l.trim() == shape.triple()) {
             println!(
                 "  skip  {} — {} not installed",
@@ -6655,23 +6718,10 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
                 println!("loft layout: no baseline yet — run `loft layout accept {file}`.");
                 0
             }
-            Ok(ss::SchemaVerdict::Match) => {
-                println!("loft layout: unchanged.");
-                0
-            }
-            Ok(ss::SchemaVerdict::Changed(diff)) => {
-                println!("{}", ss::describe_change(&diff));
-                if diff.is_actionable() {
-                    let path = project.join(".loft").join("migration_outline.loft");
-                    if let Some(parent) = path.parent() {
-                        let _ = fa::create_dir_all(parent);
-                    }
-                    match fa::write(&path, ss::migration_outline(&diff)) {
-                        Ok(()) => println!("  migration outline written to {}", path.display()),
-                        Err(e) => eprintln!("  could not write migration outline: {e}"),
-                    }
-                }
-                0
+            // Nothing changed, so nothing to say.
+            Ok(ss::SchemaVerdict::Match) => 0,
+            Ok(ss::SchemaVerdict::Changed(_)) => {
+                layout_upgrade_report(&project, &p.database, &roots, file)
             }
             Ok(ss::SchemaVerdict::Unreadable) => {
                 eprintln!(
@@ -6689,6 +6739,141 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
             1
         }
     }
+}
+
+/// @PLN196 step 7 — `loft layout upgrade <file> <store>…`: carry each store file into the
+/// layout `<file>` reads it with.  The new store is written beside the old and swapped in;
+/// the old one is kept as `<store>.old`.  A refused store is left exactly as it was, and the
+/// command exits 1 naming why.
+fn run_layout_upgrade(file: &str, stores: &[String]) -> i32 {
+    if stores.is_empty() {
+        eprintln!("loft layout: usage: loft layout upgrade <file> <store>…");
+        return 1;
+    }
+    let entry = std::path::PathBuf::from(file);
+    if !fa::exists(&entry) {
+        eprintln!("loft layout: file {file} not found");
+        return 1;
+    }
+    let abs = file_access::plain_canonical(&entry);
+    let default_str = stdlib_default_dir().to_string_lossy().to_string();
+    let mut program = match loft::host::Program::for_upgrade(&abs, &default_str) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("loft layout: {file} does not compile");
+            return 1;
+        }
+    };
+    #[cfg(not(feature = "mmap"))]
+    {
+        let _ = &mut program;
+        eprintln!("loft layout: this build reads no store files");
+        1
+    }
+    #[cfg(feature = "mmap")]
+    {
+        upgrade_each(&mut program, stores)
+    }
+}
+
+/// Upgrade each store file into `program`'s layout; the exit code of the whole command.
+#[cfg(feature = "mmap")]
+fn upgrade_each(program: &mut loft::host::Program, stores: &[String]) -> i32 {
+    let mut exit = 0;
+    for store in stores {
+        match program.upgrade_file(std::path::Path::new(store)) {
+            Ok(loft::database::FileUpgrade::Current) => {}
+            Ok(loft::database::FileUpgrade::Upgraded { kept, changes }) => {
+                println!(
+                    "{store}: upgraded (the old store is kept as {})",
+                    kept.display()
+                );
+                for c in changes {
+                    println!("  {c}");
+                }
+            }
+            Err(e) => {
+                eprintln!("{store}: not upgraded — {e}");
+                exit = 1;
+            }
+        }
+    }
+    exit
+}
+
+/// @PLN196 step 2 — what an upgrade from the baseline layout to this program's would do to a
+/// store, from the upgrade map: every change, every refusal with its reason.  Exits 1 when
+/// anything is refused, so a project's CI can gate on a change its stored data cannot cross.
+fn layout_upgrade_report(
+    project: &std::path::Path,
+    db: &loft::database::Stores,
+    roots: &[u16],
+    file: &str,
+) -> i32 {
+    use loft::database::{LayoutDesc, UpgradeMap};
+    let text = fa::read_to_string(loft::schema_sidecar::baseline_path(project)).unwrap_or_default();
+    let old = loft::schema_sidecar::LayoutIdentity::from_sidecar(&text)
+        .ok_or_else(|| "the baseline is not a layout file".to_string())
+        .and_then(|id| {
+            let mut d = LayoutDesc::from_dump(&id.dump)?;
+            d.apply_facts(&id.facts)?;
+            Ok(d)
+        });
+    let old = match old {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!(
+                "loft layout: the baseline cannot be read by this version of loft ({e}) —                  re-run `loft layout accept {file}` with the version that wrote it, or accept anew."
+            );
+            return 1;
+        }
+    };
+    let new = db.layout_descriptor(roots);
+    let mut changes: Vec<String> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
+    for &root in roots {
+        let name = db.types[root as usize].name.clone();
+        let Some((&old_root, _)) = old.names.iter().find(|(_, n)| **n == name) else {
+            continue; // a type the baseline did not have: no stored data to carry
+        };
+        let map = UpgradeMap::derive(&old, old_root, &new, root);
+        changes.extend(map.changes);
+        refused.extend(
+            map.refusals
+                .into_iter()
+                .map(|r| format!("{} — {}", r.path, r.reason)),
+        );
+    }
+    let new_names: std::collections::BTreeSet<&str> = roots
+        .iter()
+        .map(|r| db.types[*r as usize].name.as_str())
+        .collect();
+    for (id, name) in &old.names {
+        let user = !matches!(old.nodes.get(id), Some(loft::database::LayoutNode::Base(_)))
+            && name.chars().next().is_some_and(char::is_uppercase)
+            && !name.contains("::");
+        if user && !new_names.contains(name.as_str()) && !db.names.contains_key(name) {
+            changes.push(format!(
+                "{name} is gone: a store whose root is a `{name}` cannot be read"
+            ));
+        }
+    }
+    changes.sort();
+    changes.dedup();
+    refused.sort();
+    refused.dedup();
+    if changes.is_empty() && refused.is_empty() {
+        return 0;
+    }
+    println!("loft layout: a store written with the baseline layout upgrades as follows");
+    for c in &changes {
+        println!("  {c}");
+    }
+    for r in &refused {
+        println!("  refused: {r}");
+    }
+    i32::from(!refused.is_empty())
 }
 
 /// `loft fix [--apply] <file…>` — @PLN131 steps 3–4: check each suggested fix by running
@@ -7377,6 +7562,10 @@ fn main() {
     let mut no_warnings = false;
     let mut deny_warnings = false;
     let mut check_only = false;
+    // @PLN195 — `--out <dir>`: write the native program and its libraries there.
+    let mut dist_dir: Option<String> = None;
+    // @PLN195 — `--install-libs`: place its libraries in the per-user root.
+    let mut install_libs = false;
     // Phase 6t Tier 4 — `--deps[=direct|=transitive]` walks the current
     // project's dep tree and runs `loft test` in each dep.  None = off,
     // Direct = only manifest.dependencies, Transitive = also deps-of-deps.
@@ -7586,6 +7775,28 @@ fn main() {
             native_mode = true;
             native_requested = true;
             native_debug = true;
+        } else if a == "--static" || a == "--dynamic" {
+            // How a native build links the native libraries it uses: INTO the binary
+            // (`--static`, one file to ship) or beside it (`--dynamic`, the default).  Over
+            // the program's own `#link` directive (`native_utils::link_by_flag`).
+            native_utils::link_by_flag(a == "--static");
+        } else if a == "--out" || a.starts_with("--out=") {
+            // @PLN195 — a native build writes the program and every library file it links
+            // into one directory, which runs wherever it is copied (`native_utils::write_dist`).
+            let dir = if let Some(d) = a.strip_prefix("--out=") {
+                d.to_string()
+            } else if let Some(d) = argv.get(i) {
+                i += 1;
+                d.clone()
+            } else {
+                eprintln!("--out needs a directory");
+                std::process::exit(2);
+            };
+            dist_dir = Some(dir);
+        } else if a == "--install-libs" {
+            // @PLN195 — place the libraries a native build links in `~/.loft/lib/`, by
+            // version (`native_utils::install_libraries`).
+            install_libs = true;
         } else if a == "--lean" {
             // @PLN98 P2 — opt OUT of the live/debug tier: the generated Rust
             // carries no live-dispatch machinery (smallest binary, no
@@ -7854,11 +8065,16 @@ fn main() {
             let mut requested: Vec<String> = Vec::new();
             let mut entry_override: Option<String> = None;
             let mut force = false;
+            let mut install = false;
             while let Some(arg) = argv.get(i) {
                 if arg == "--force" || arg == "--fresh" {
                     // @PLN100 Slice 3 — rebuild every asset regardless of its
                     // fingerprint / TTL (a deterministic clean build; CI can pin it).
                     force = true;
+                } else if arg == "--install" {
+                    // @PLN195 — also place the native target's libraries in the per-user
+                    // root, `~/.loft/lib/<package>-<version>/`.
+                    install = true;
                 } else if arg.starts_with('-') {
                     break;
                 } else if fa::extension(std::path::Path::new(arg))
@@ -7889,7 +8105,7 @@ fn main() {
                 std::process::exit(1);
             }
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let ok = loft::build_phase::run(&requested, &entry, &manifest, &cwd, force);
+            let ok = loft::build_phase::run(&requested, &entry, &manifest, &cwd, force, install);
             std::process::exit(i32::from(!ok));
         } else if a == "test" {
             // PKG.6: `loft test [target]` — run package tests.
@@ -8389,14 +8605,20 @@ fn main() {
             let rest: Vec<String> = argv[i..].to_vec();
             std::process::exit(run_api_surface_command(&rest));
         } else if a == "layout" {
-            // @PLN97 Phase F — `loft layout <accept|check> <file>`. Self-contained
-            // + early-exit: never touches the normal build path (zero cost).
+            // @PLN97 Phase F — `loft layout <accept|check> <file>`, and @PLN196's
+            // `loft layout upgrade <file> <store>…`. Self-contained + early-exit: never
+            // touches the normal build path (zero cost).
             let sub = argv.get(i).cloned().unwrap_or_default();
             i += 1;
             let Some(file) = argv.get(i).cloned() else {
-                eprintln!("loft layout: usage: loft layout <accept|check> <file>");
+                eprintln!(
+                    "loft layout: usage: loft layout <accept|check> <file> | upgrade <file> <store>…"
+                );
                 std::process::exit(1);
             };
+            if sub == "upgrade" {
+                std::process::exit(run_layout_upgrade(&file, &argv[i + 1..]));
+            }
             std::process::exit(run_layout_command(&sub, &file));
         } else if a == "fmt" {
             // Parser-driven formatter (loft-written, via the host-call API).
@@ -9178,13 +9400,24 @@ fn main() {
     // (DLL staging reads the parse), and anything the manifest registers beyond loft
     // sources (`startup_cache::native_fast_path`).  A decline costs nothing new: the slow
     // path still hits the generated-Rust cache and skips rustc as before.
-    let native_fingerprint = native_source_key_fingerprint(
-        native_release,
-        native_debug,
-        lean,
-        html_names,
-        debug_name.as_deref(),
-    );
+    // The program's `#link` directive, read from its header before anything keys on the
+    // link mode — the fast path below runs a cached binary without parsing.
+    if let Ok(src) = fa::read_to_string(&abs_file) {
+        native_utils::apply_link_directive(&src);
+    }
+    // Computed where it is used — the fast path's lookup and the sidecar a native build
+    // saves — never on a run that takes neither (an `--interpret` run, a check).  Computing it
+    // can spawn `rustc --version` (the runtime rlib's lookup asks which rustc wrote it), and
+    // on macOS that spawn also starts the driver-death watcher shell (loft#2070).
+    let native_fingerprint = || {
+        native_source_key_fingerprint(
+            native_release,
+            native_debug,
+            lean,
+            html_names,
+            debug_name.as_deref(),
+        )
+    };
     // loft#1684 — the program cache's key names the search path AS GIVEN, captured before
     // the parse: resolving a registry `use` appends that package's directory to
     // `p.lib_dirs`, so a key taken after the parse was one no pre-parse lookup computes —
@@ -9198,6 +9431,8 @@ fn main() {
         && native_wasm.is_none()
         && native_android.is_none()
         && !check_only
+        && dist_dir.is_none()
+        && !install_libs
         && !dump_only
         && !introspect_mode
         && !sandbox_check_mode
@@ -9213,7 +9448,7 @@ fn main() {
             &abs_file,
             &cache_key_dirs,
             &default_str,
-            native_fingerprint,
+            native_fingerprint(),
         )
         .filter(|hit| native_utils::cache_safe_to_execute(&hit.binary));
         if platform::timing_enabled() {
@@ -11332,6 +11567,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `native_cabi_enabled()` keeps codegen and the linker flags in sync
             // (off on Windows, which stays on the rlib path).
             out.native_cabi = native_utils::native_cabi_enabled();
+            // @PLN195 / @PLN197 — a program binds, at start, every library it does not link
+            // into itself: the packages' under a dynamic link, and the C libraries packages
+            // ship that have no archive to link in.
+            out.native_bind = true;
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
@@ -12059,11 +12298,40 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             loft::startup_cache::save_native_sidecar(
                 &abs_file,
                 &cache_key_dirs,
-                native_fingerprint,
+                native_fingerprint(),
                 &cached_binary,
             );
         }
 
+        if install_libs && let Err(e) = native_utils::install_libraries(&p.data) {
+            eprintln!("loft: --install-libs: {e}");
+            std::process::exit(1);
+        }
+        if install_libs && dist_dir.is_none() {
+            return;
+        }
+        if let Some(dir) = &dist_dir {
+            let built = if !no_cache && fa::exists(&cached_binary) {
+                &cached_binary
+            } else {
+                &binary
+            };
+            // A library has no `main`, so there is no program to write: the compile is the
+            // whole answer, as it is for `--check` — which is what `loft build native` asked
+            // before it wrote `dist/`, and why both print the same `ok`.
+            if p.data.def_nr("n_main") != u32::MAX {
+                let name = fa::file_stem(std::path::Path::new(&abs_file))
+                    .unwrap_or_else(|| "program".to_string());
+                if let Err(e) =
+                    native_utils::write_dist(std::path::Path::new(dir), built, &name, &p.data)
+                {
+                    eprintln!("loft: --out {dir}: {e}");
+                    std::process::exit(1);
+                }
+            }
+            println!("ok");
+            return;
+        }
         if check_only {
             // --check --native: compile succeeded, report ok and exit.
             // @PLN18 08-S4 — the artifact path rides the ok line so the
@@ -12390,6 +12658,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // that outlived its store, and a store nobody freed.  Reported at every site during the
     // run (so one run surfaces all of them), and turned into a non-zero exit here so a probe
     // can be a GATE rather than something someone has to read the output of.
+    loft::keys::strict_store_notice();
     if loft::keys::strict_stores() {
         let n = loft::keys::strict_store_violations();
         if n > 0 {

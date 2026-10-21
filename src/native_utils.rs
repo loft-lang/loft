@@ -103,6 +103,30 @@ pub(crate) fn loft_lib_dir() -> Option<std::path::PathBuf> {
     loft_lib_dir_for(None)
 }
 
+/// Every native-target `libloft.rlib` [`loft_lib_dir`] could answer, present on disk, in its
+/// search order — without choosing among them, which asks the live `rustc`
+/// (`preferred_runtime_rlib`).  For a key that must move whenever the linked runtime could
+/// have: hashing all the candidates moves it as surely, and costs no process.
+pub(crate) fn runtime_rlib_candidates() -> Vec<std::path::PathBuf> {
+    let Some(exe_dir) = env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
+    else {
+        return Vec::new();
+    };
+    let mut out = vec![
+        exe_dir.join("deps").join("libloft.rlib"),
+        exe_dir.join("libloft.rlib"),
+    ];
+    if crate::file_access::file_name(&exe_dir).is_some_and(|n| n == "bin")
+        && let Some(prefix) = exe_dir.parent()
+    {
+        out.push(prefix.join("share").join("loft").join("libloft.rlib"));
+    }
+    out.retain(|p| crate::file_access::exists(p));
+    out
+}
+
 /// Walk up from the running loft binary to the loft SOURCE tree — the first
 /// ancestor directory whose `Cargo.toml` is the `loft` package's own manifest.
 /// `Some` in a dev / source checkout (where the native runtime can be rebuilt
@@ -1720,9 +1744,206 @@ pub(crate) fn rlibs_in_dir(
 /// no-op (it already matches the default).
 #[must_use]
 pub(crate) fn native_cabi_enabled() -> bool {
-    // The C-ABI path is the default on every host; only `LOFT_NATIVE_CABI=0`
-    // opts back into the legacy rlib link (the escape hatch).
-    !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
+    // The C-ABI path is the default on every host.  A STATIC link — each native package's
+    // rlib linked INTO the binary as `extern crate`, one file with nothing to ship beside it —
+    // is chosen by, strongest first: `--static` / `--dynamic`, the program's `#link`
+    // directive, `LOFT_NATIVE_CABI=0` (the old escape hatch).
+    match LINK.load(std::sync::atomic::Ordering::Relaxed) {
+        LINK_STATIC => false,
+        LINK_DYNAMIC => true,
+        _ => !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0")),
+    }
+}
+
+/// @PLN195 — the directories of the package libraries this program links, as the build
+/// resolved them, for a program the driver runs where it was built: they reach it through
+/// `LOFT_LIB_PATH` (ahead of any the user set), never through a path written into the
+/// binary.  `None` when the program binds nothing itself.
+pub(crate) fn lib_path_env(data: &crate::data::Data) -> Option<std::ffi::OsString> {
+    if package_libraries(data).is_empty() {
+        return None;
+    }
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    for lib in package_libraries(data) {
+        if let Some(dir) = lib.parent().map(std::path::Path::to_path_buf)
+            && !dirs.contains(&dir)
+        {
+            dirs.push(dir);
+        }
+    }
+    if let Some(user) = std::env::var_os("LOFT_LIB_PATH") {
+        dirs.extend(std::env::split_paths(&user));
+    }
+    std::env::join_paths(dirs).ok()
+}
+
+/// @PLN195 — `--install-libs` / `loft build --install`: every library file the program
+/// links, placed in the per-user root by version — `~/.loft/lib/<package>-<version>/` (moved
+/// by `LOFT_HOME`), where any dynamic program built against that version finds it.  Two
+/// versions of one library sit side by side there.  Returns the directories written.
+pub(crate) fn install_libraries(
+    data: &crate::data::Data,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let root = std::env::var_os("LOFT_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(dirs::home_dir)
+        .ok_or("no home directory to install into")?
+        .join(".loft")
+        .join("lib");
+    let mut written = Vec::new();
+    for (pkg_dir, fallback_name, lib) in package_libraries_by_package(data) {
+        let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
+        let package = manifest
+            .as_ref()
+            .and_then(|m| m.name.clone())
+            .unwrap_or(fallback_name);
+        let version = manifest
+            .and_then(|m| m.version)
+            .unwrap_or_else(|| "0".to_string());
+        let dir = root.join(format!("{package}-{version}"));
+        crate::file_access::create_dir_all(dir.as_path()).map_err(|e| e.to_string())?;
+        let Some(file) = crate::file_access::file_name(lib.as_path()) else {
+            continue;
+        };
+        crate::file_access::copy(lib.as_path(), dir.join(file).as_path())
+            .map_err(|e| format!("{}: {e}", lib.display()))?;
+        written.push(dir);
+    }
+    Ok(written)
+}
+
+/// Every library file the program needs beside it at run time, resolved the way the link
+/// resolved it: each native package's library under a dynamic link (`resolve_native_lib`),
+/// and each C library a package ships itself (@PLN197) — under a static link only the ones
+/// that have no static archive to link into the binary.
+fn package_libraries(data: &crate::data::Data) -> Vec<std::path::PathBuf> {
+    package_libraries_by_package(data)
+        .into_iter()
+        .map(|(_, _, lib)| lib)
+        .collect()
+}
+
+/// [`package_libraries`], each with its package directory and the name the package goes by
+/// when its manifest names none — the same fallback the bind table is written with: the
+/// crate name for a native package, the directory's name for a C library.
+fn package_libraries_by_package(
+    data: &crate::data::Data,
+) -> Vec<(String, String, std::path::PathBuf)> {
+    let dynamic = native_cabi_enabled();
+    let mut out = Vec::new();
+    if dynamic {
+        for (crate_name, pkg_dir) in &data.native_packages {
+            let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+                .and_then(|m| m.native)
+                .unwrap_or_else(|| crate_name.replace('-', "_"));
+            if let Some(so) = crate::extensions::resolve_native_lib(pkg_dir, &stem) {
+                out.push((
+                    pkg_dir.clone(),
+                    crate_name.clone(),
+                    std::path::PathBuf::from(so),
+                ));
+            }
+        }
+    }
+    for (lib, path) in data.shipped_c_libraries() {
+        if !dynamic && loft::c_shim::archived_package(data, &lib.pkg_dir) {
+            continue;
+        }
+        let fallback = crate::file_access::file_name(lib.pkg_dir.as_str()).unwrap_or_default();
+        out.push((lib.pkg_dir.clone(), fallback, path));
+    }
+    out
+}
+
+/// @PLN195 — `--out <dir>` / `loft build native`: the program `built`, named `name`, and
+/// every library file it links, side by side in `dir` — a directory that runs wherever it is
+/// copied, since the binary looks for its libraries beside itself and names no directory of
+/// the machine that built it.  A static link writes the binary alone.
+pub(crate) fn write_dist(
+    dir: &std::path::Path,
+    built: &std::path::Path,
+    name: &str,
+    data: &crate::data::Data,
+) -> Result<(), String> {
+    crate::file_access::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let exe = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    crate::file_access::copy(built, exe.as_path()).map_err(|e| e.to_string())?;
+    // The build cache keeps its binaries owner-only (`tighten_cache_binary`); a program
+    // written out to ship is an ordinary executable.
+    let _ = crate::platform::set_permission_bits(exe.as_path(), 0o755);
+    for lib in package_libraries(data) {
+        let Some(file) = crate::file_access::file_name(lib.as_path()) else {
+            continue;
+        };
+        crate::file_access::copy(lib.as_path(), dir.join(file).as_path())
+            .map_err(|e| format!("{}: {e}", lib.display()))?;
+    }
+    Ok(())
+}
+
+const LINK_UNSET: u8 = 0;
+const LINK_STATIC: u8 = 1;
+const LINK_DYNAMIC: u8 = 2;
+/// The run's link mode, once a flag or the program's `#link` directive has named one.
+static LINK: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(LINK_UNSET);
+/// Whether a FLAG set [`LINK`]: a flag outranks the program's directive.
+static LINK_BY_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `--static` (`true`) / `--dynamic` (`false`): this run's link mode, over the program's own
+/// `#link` directive.
+pub(crate) fn link_by_flag(static_link: bool) {
+    LINK.store(
+        if static_link {
+            LINK_STATIC
+        } else {
+            LINK_DYNAMIC
+        },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    LINK_BY_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The link mode a program's header names — `#link static` or `#link dynamic` among the
+/// directives before its first declaration — applied unless a flag named one.  Read from the
+/// SOURCE, before any parse: the native fast path runs a cached binary without parsing, and
+/// its key holds the link mode, so a mode known only after the parse would key the lookup
+/// and the save differently.  The parser checks the same lines (`Parser::parse_file`).
+pub(crate) fn apply_link_directive(source: &str) {
+    if LINK_BY_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    if let Some(static_link) = link_directive(source) {
+        LINK.store(
+            if static_link {
+                LINK_STATIC
+            } else {
+                LINK_DYNAMIC
+            },
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
+/// `Some(true)` for `#link static`, `Some(false)` for `#link dynamic`, `None` when the header
+/// names no mode.  The header is a `#!` first line, then blank and `//` lines and `#`
+/// directives, up to the first line that is none of those.
+pub(crate) fn link_directive(source: &str) -> Option<bool> {
+    for (n, line) in source.lines().enumerate() {
+        let line = line.trim();
+        if (n == 0 && line.starts_with("#!")) || line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        let directive = line.strip_prefix('#')?;
+        let mut words = directive.trim_end_matches(';').split_whitespace();
+        if words.next() == Some("link") {
+            return match words.next() {
+                Some("static") => Some(true),
+                Some("dynamic") => Some(false),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// PKG.4/PKG.5: add `--extern` flags to a rustc command for native package rlibs.
@@ -1795,19 +2016,28 @@ pub(crate) fn add_c_library_flags(cmd: &mut Spawn, data: &crate::data::Data) {
         // Leaving the extension on made `-l dylib=sqlite_shim_<hash>.dll` open
         // `sqlite_shim_<hash>.dll.lib` — the exact `LNK1181` the Windows leg died
         // on, for a shim whose import library is `sqlite_shim_<hash>.lib`.
-        let stem = file
-            .strip_prefix("lib")
-            .unwrap_or(file)
-            .split(".so")
-            .next()
-            .unwrap_or(file)
-            .split(".dylib")
-            .next()
-            .unwrap_or(file)
-            .split(".dll")
-            .next()
-            .unwrap_or(file)
-            .to_string();
+        let stem = loft::c_shim::library_stem(file);
+        if crate::file_access::exists(&beside) {
+            // @PLN197 — a C library the package ships itself.  A dynamic program binds it
+            // at start from loft's search order (`native_bind`), so the link names it not
+            // at all; a static one links its archive into the binary when it has one.
+            if native_cabi_enabled() {
+                continue;
+            }
+            if let Some(archive) = loft::c_shim::static_archive_for(lib, &beside)
+                .filter(|_| loft::c_shim::archived_package(data, &lib.pkg_dir))
+            {
+                // The archive by its FULL PATH, which every linker reads as "link these
+                // objects".  `-l static=<stem>` lets the linker choose, and macOS `ld`
+                // chooses the `.dylib` of the same stem beside the archive — measured, the
+                // "static" binary still loaded the shim from `@rpath` — while the exact-name
+                // form (`+verbatim`, `-l:`) is one `ld64` does not have.  The path is the
+                // link's only; nothing of it is written into the binary.
+                cmd.push_arg(format!("-Clink-arg={}", archive.display()));
+            }
+            // Without an archive the program binds it at start, as a dynamic one does.
+            continue;
+        }
         if crate::file_access::exists(&beside)
             && let Some(parent) = beside.parent()
         {
@@ -1848,7 +2078,6 @@ pub(crate) fn add_c_library_flags(cmd: &mut Spawn, data: &crate::data::Data) {
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn add_native_extern_flags(
     cmd: &mut Spawn,
     data: &crate::data::Data,
@@ -1881,55 +2110,12 @@ pub(crate) fn add_native_extern_flags(
             let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
                 .and_then(|m| m.native)
                 .unwrap_or_else(|| crate_name.replace('-', "_"));
-            let Some(so) = crate::extensions::resolve_native_lib(pkg_dir, &stem) else {
-                // Unresolvable (missing system lib / build failed) — the resolver
-                // already printed an actionable message.  Skip; the link then fails
-                // loudly on the undefined symbol rather than silently mis-linking.
-                continue;
-            };
-            let so_path = std::path::PathBuf::from(&so);
-            if let Some(so_dir) = so_path.parent() {
-                // `-l dylib=<name>` derived from the RESOLVED file (strip the `lib`
-                // prefix + extension) so a prebuilt or non-`lib<stem>` cdylib links.
-                let file_stem = crate::file_access::file_stem(&so_path);
-                let libname = file_stem
-                    .as_deref()
-                    .map_or(stem.as_str(), |s| s.strip_prefix("lib").unwrap_or(s));
-                cmd.push_arg("-L")
-                    .push_arg(format!("native={}", so_dir.display()));
-                cmd.push_arg("-l").push_arg(format!("dylib={libname}"));
-                // Windows links a DLL through its IMPORT LIBRARY, and
-                // there is NO RPATH: the loader finds the DLL beside the `.exe` / on
-                // `PATH`, so the DLL is staged beside the binary at run time
-                // (`stage_native_dlls`), the Windows form of the `$ORIGIN` rpath below.
-                match crate::platform::bridge_import_lib(so_dir, libname) {
-                    // Disallow-the-unverifiable-loudly: if NEITHER import-lib name is
-                    // present the link would die on an opaque `LNK1181`, so name it
-                    // rather than mis-link.
-                    crate::platform::ImportLib::Missing => eprintln!(
-                        "loft: native package `{crate_name}` cdylib at {} has no import \
-                         library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
-                         DLL through its import lib, not the DLL directly.  \
-                         Rebuild the package's cdylib with a toolchain that emits one.",
-                        so_dir.display()
-                    ),
-                    crate::platform::ImportLib::Ready => {}
-                    crate::platform::ImportLib::NotUsed => {
-                        // @PLN26 phase 0.1 — two RPATH entries: the build/prebuilt dir
-                        // (run-from-build-tree: tests, dev) AND `$ORIGIN` (an installed
-                        // binary that ships the `.so` beside it — `make install` copies
-                        // it next to the binary).  `$ORIGIN` is passed literally; the
-                        // dynamic loader expands it at run time.
-                        cmd.push_arg(format!("-Clink-arg=-Wl,-rpath,{}", so_dir.display()));
-                        // `$ORIGIN` is the ELF spelling and Mach-O does not know it; the
-                        // dyld form is `@loader_path`.  Both are emitted, because a linker
-                        // ignores an rpath entry it cannot parse and the cost of the spare
-                        // one is a string.
-                        cmd.push_arg("-Clink-arg=-Wl,-rpath,$ORIGIN");
-                        cmd.push_args(crate::platform::loader_path_rpath_arg());
-                    }
-                }
-            }
+            // @PLN195 — resolved for its side effect only: this is what builds the library
+            // the program loads.  Nothing is linked — the program binds the library itself at
+            // start (`loft::native_bind`) from a search order loft owns, so the binary names no
+            // directory of this machine.  An unresolvable library was already reported by the
+            // resolver; the program then stops at start naming the package.
+            let _ = crate::extensions::resolve_native_lib(pkg_dir, &stem);
             continue;
         }
         // Look for the compiled rlib in the package's native crate output.
@@ -2183,36 +2369,15 @@ fn stage_c_library_dlls(exe_dir: &std::path::Path, data: &crate::data::Data) {
     }
 }
 
-/// @PLN26 phase 4 — stage every native-package DLL beside a just-built Windows
-/// binary so it loads at run time.  Windows has no RPATH, so the loader finds a
-/// linked DLL beside the `.exe` / on `PATH`; copying it next to the binary is the
-/// Windows form of the `$ORIGIN` rpath the ELF link embeds (`add_native_extern_flags`).
-/// No-op off Windows and when the C-ABI path is disabled (the rlib path links the
-/// package statically, so there is nothing to stage).  Resolves the DLL with the
-/// same `resolve_native_lib` the link used, so run-time and link-time agree on the
-/// file.  Best-effort: a failed copy leaves the loader's normal search to find it.
+/// Stage, beside a just-built Windows binary, every C library that ships beside its package
+/// ([`stage_c_library_dlls`]): Windows has no RPATH, and the loader finds a DLL beside the
+/// `.exe` or on `PATH`.  A native package's own library needs no staging — the program binds
+/// it itself (@PLN195, `loft::native_bind`).  No-op off Windows.
 pub(crate) fn stage_native_dlls(exe_dir: &std::path::Path, data: &crate::data::Data) {
     if !crate::platform::stages_dlls_beside_binary() {
         return;
     }
     stage_c_library_dlls(exe_dir, data);
-    if !native_cabi_enabled() {
-        return;
-    }
-    for (crate_name, pkg_dir) in &data.native_packages {
-        let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-            .and_then(|m| m.native)
-            .unwrap_or_else(|| crate_name.replace('-', "_"));
-        if let Some(so) = crate::extensions::resolve_native_lib(pkg_dir, &stem) {
-            let so_path = std::path::PathBuf::from(&so);
-            if let Some(name) = crate::file_access::file_name(&so_path) {
-                let dest = exe_dir.join(name);
-                if dest != so_path {
-                    let _ = crate::file_access::copy(&so_path, &dest);
-                }
-            }
-        }
-    }
 }
 
 /// The stdlib must be findable from EVERY cargo layout, not just

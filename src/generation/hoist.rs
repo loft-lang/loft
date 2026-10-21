@@ -1863,6 +1863,11 @@ pub fn hoistable(
     // root is unknown.
     if let Some(roots) = &text_grown {
         if !out.movers.is_empty() || !pushes.is_empty() || !mints.is_empty() {
+            crate::rewrite_census::declined(
+                "R-Header",
+                &format!("{}:{}", data.def(def_nr).name(), body.scope),
+                "the loop writes a text and also pushes, mints or reserves",
+            );
             if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
                 eprintln!(
                     "hoist: {} loop {} declined: it writes a text and also pushes, mints or reserves",
@@ -1973,6 +1978,11 @@ pub fn hoistable(
             owned,
         ) else {
             // A statement the write-set walk cannot type: no scalar hoists in this loop.
+            crate::rewrite_census::declined(
+                "R-Header/scalars",
+                &format!("{}:{}", data.def(def_nr).name(), body.scope),
+                "a statement the write-set walk cannot type",
+            );
             if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
                 let shown = format!("{op:?}");
                 eprintln!(
@@ -2063,7 +2073,7 @@ fn owned_local(vars: &crate::variables::Function, r: u16) -> bool {
 /// buffer the caller mints per call site and hands to this call alone, so nothing but this
 /// activation reaches it — exclusive, as the owned local it was.  Argument slots follow
 /// attribute order.
-fn work_buffer_arg(data: &Data, def_nr: u32, r: u16) -> bool {
+pub(crate) fn work_buffer_arg(data: &Data, def_nr: u32, r: u16) -> bool {
     let def = data.def(def_nr);
     def.variables()
         .arguments()
@@ -2263,6 +2273,99 @@ fn element_target(
         }
         _ => Target::Unknown,
     }
+}
+
+/// `@FR-R-RecPtr` — is `n` an access of view `r` the held address SERVES: a fusable scalar
+/// field read or in-place write (either spelling of the field), a copy the address serves,
+/// or `r` handed as a twin's input?  The one definition the verdict's `touched` and the
+/// ordered walk ([`address_use_after_growth`]) both read.  A node of any other shape is no
+/// such access: a text read, a hand to a plain callee or a comparison goes through the
+/// `DbRef`, so a growth after it moves nothing the address answered.
+fn address_use(
+    n: &Value,
+    r: u16,
+    data: &Data,
+    stores: &Stores,
+    owned: Option<&HoistOwned>,
+    twin_params: &HashSet<(u32, u16)>,
+) -> bool {
+    let Value::Call(g, args) = n else {
+        return false;
+    };
+    if (*g as usize) >= data.definitions.len() {
+        return false;
+    }
+    let name = data.def(*g).name();
+    let on_r = matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == r);
+    if (scalar_kind(name).is_some() || setter_kind(name).is_some())
+        && args.len() >= 2
+        && view_field(data, &args[0], &args[1]).is_some_and(|(v, _)| v == r)
+        && (on_r || nested_field_enabled())
+    {
+        return true;
+    }
+    if copy_serves_view(stores, name, args, r, owned) {
+        return true;
+    }
+    args.iter().enumerate().any(|(i, a)| {
+        matches!(a.unspan(), Value::Var(v) if *v == r)
+            && u16::try_from(i).is_ok_and(|p| twin_params.contains(&(*g, p)))
+    })
+}
+
+/// The ORDERED question behind `@FR-R-RecPtr`'s remainder clause: does any address-served
+/// use of `r` (`address_use`) run AFTER a statement that may grow a store?  Statement order
+/// within a block, each arm of an `if` on its own path from the state before it, a loop
+/// body read as repeating (a growth anywhere in it precedes a use anywhere in it), and a
+/// statement that both grows and uses answering yes — the order inside one statement is not
+/// read.  `may_grow` is the verdict's own growth test, so the two agree on what grows.
+fn address_use_after_growth(
+    stmts: &[Value],
+    grown: &mut bool,
+    may_grow: &mut dyn FnMut(&Value) -> bool,
+    is_use: &dyn Fn(&Value) -> bool,
+) -> bool {
+    for s in stmts {
+        match s.unspan() {
+            Value::Block(b) => {
+                if address_use_after_growth(&b.operators, grown, may_grow, is_use) {
+                    return true;
+                }
+            }
+            Value::If(c, a, b) => {
+                if address_use_after_growth(std::slice::from_ref(c), grown, may_grow, is_use) {
+                    return true;
+                }
+                let before = *grown;
+                let mut ga = before;
+                if address_use_after_growth(std::slice::from_ref(a), &mut ga, may_grow, is_use) {
+                    return true;
+                }
+                let mut gb = before;
+                if address_use_after_growth(std::slice::from_ref(b), &mut gb, may_grow, is_use) {
+                    return true;
+                }
+                *grown = ga || gb;
+            }
+            Value::Loop(b) => {
+                let g = b.operators.iter().any(&mut *may_grow);
+                let u = b.operators.iter().any(|o| o.any_node(&mut |n| is_use(n)));
+                if u && (*grown || g) {
+                    return true;
+                }
+                *grown |= g;
+            }
+            _ => {
+                let g = may_grow(s);
+                let u = s.any_node(&mut |n| is_use(n));
+                if u && (*grown || g) {
+                    return true;
+                }
+                *grown |= g;
+            }
+        }
+    }
+    false
 }
 
 /// `LOFT_TRACE_HOIST_DECLINE=1` — name the node that made [`body_writes`] answer `None`.
@@ -3373,8 +3476,51 @@ mod free_order_tests {
 // between each and the two call sites without removing anything.
 // `@FR-H-ShortRef` — the held address is valid only while the store it points into grows
 // nowhere in the view's extent; "the remainder may grow a store" is that refusal.
+// A refusal is one `R-RecPtr` decline of the view in the census, under its reason.
 #[allow(clippy::too_many_arguments)]
 fn view_extent_verdict(
+    rest: &[Value],
+    r: u16,
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+    twin_params: &HashSet<(u32, u16)>,
+    facts: Option<&StoreFacts>,
+    owned: Option<&HoistOwned>,
+    fresh_e: Option<u16>,
+) -> Result<(), &'static str> {
+    let verdict = view_extent_verdict_inner(
+        rest,
+        r,
+        data,
+        stores,
+        def_nr,
+        cache,
+        allow_in_place,
+        twin_params,
+        facts,
+        owned,
+        fresh_e,
+    );
+    if let Err(why) = verdict {
+        let def = data.def(def_nr);
+        crate::rewrite_census::declined(
+            "R-RecPtr",
+            &format!("{}:{}", def.name(), def.variables().name(r)),
+            why,
+        );
+    }
+    verdict
+}
+
+#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the trace's classification stands beside the verdict"
+)]
+fn view_extent_verdict_inner(
     rest: &[Value],
     r: u16,
     data: &Data,
@@ -3392,58 +3538,8 @@ fn view_extent_verdict(
     // A mint window's own element is FRESH for its extent: a copy into it is a write of
     // its bytes, not a growth (`fresh_copy` in `blocks_header_hoist`).
     let mut fresh: HashSet<u16> = fresh_e.into_iter().collect();
-    // `@FR-R-RecPtr`'s remainder clause — a push or mint into a store proven apart from the
-    // view's cannot move it, so the remainder may grow THOSE stores: the push and mint tiers
-    // open exactly when every mover's root is distinct from `r`'s store.
-    let movers_apart = facts.is_some_and(|f| {
-        let roots = mover_roots(rest, data, stores, vars);
-        !roots.is_empty() && roots.iter().all(|m| f.distinct(*r, *m))
-    });
-    if let Some(op) = rest.iter().find(|op| {
-        blocks_header_hoist(
-            op,
-            data,
-            Some(stores),
-            cache,
-            &mut HashSet::new(),
-            Some(vars),
-            HoistTiers {
-                in_place: allow_in_place,
-                push: movers_apart,
-                mint: movers_apart,
-                ..HoistTiers::default()
-            },
-            &mut fresh,
-            owned,
-        )
-    }) {
-        if std::env::var("LOFT_TRACE_RECPTR").is_ok() {
-            let shown = format!("{op:?}");
-            eprintln!(
-                "recptr:   `{}` grows a store by {}",
-                vars.name(*r),
-                &shown[..shown.len().min(220)]
-            );
-        }
-        return Err("the remainder may grow a store");
-    }
-    if movers_apart && std::env::var("LOFT_TRACE_RECPTR").is_ok() {
-        eprintln!(
-            "recptr: {} keeps `{}` beside a growth of another store",
-            data.def(def_nr).name(),
-            vars.name(*r)
-        );
-    }
-    // In statement order: a free (a scope exit's release of a local, a buffer's) BEFORE a
-    // use of `r` declines — through the store a freed record answers the sentinel, through
-    // an address it would answer stale bytes — while the frees that follow the last use,
-    // which is where a block's own releases stand, cost nothing.  A view that outlives its
-    // container is `(B-Disturb)`'s case and is materialised by the parser before this runs.
     let mut rebound = false;
     let mut touched = false;
-    if free_before_use(rest, *r, data, vars) {
-        return Err("the remainder frees a record before a use of the view");
-    }
     for op in rest {
         op.any_node(&mut |n| {
             match n {
@@ -3496,11 +3592,150 @@ fn view_extent_verdict(
             false
         });
     }
-    if rebound {
-        return Err("the remainder rebinds the view");
-    }
+    // Asked before the growth walk: a view the remainder never reads through its address
+    // gains nothing from one, so its verdict names that and not a growth that would have
+    // cost nothing (the decline census counts the reasons that cost).
     if !touched {
         return Err(NO_FUSABLE_USE);
+    }
+    // `@FR-R-RecPtr`'s remainder clause — a push or mint into a store proven apart from the
+    // view's cannot move it, so the remainder may grow THOSE stores: the push and mint tiers
+    // open exactly when every mover's root is distinct from `r`'s store.
+    let movers_apart = facts.is_some_and(|f| {
+        let roots = mover_roots(rest, data, stores, vars);
+        !roots.is_empty() && roots.iter().all(|m| f.distinct(*r, *m))
+    });
+    if let Some(op) = rest.iter().find(|op| {
+        blocks_header_hoist(
+            op,
+            data,
+            Some(stores),
+            cache,
+            &mut HashSet::new(),
+            Some(vars),
+            HoistTiers {
+                in_place: allow_in_place,
+                push: movers_apart,
+                mint: movers_apart,
+                ..HoistTiers::default()
+            },
+            &mut fresh,
+            owned,
+        )
+    }) {
+        if std::env::var("LOFT_TRACE_RECPTR").is_ok() {
+            let shown = format!("{op:?}");
+            eprintln!(
+                "recptr:   `{}` grows a store by {}",
+                vars.name(*r),
+                &shown[..shown.len().min(220)]
+            );
+            // The classification line: the view's chain end and freshness, each mover's,
+            // and the apart verdict — what a sharper fact would have to prove.
+            let end_of = |x: u16| -> String {
+                match facts.and_then(|f| f.terminal(x)) {
+                    Some(e) => format!(
+                        "{}{}",
+                        vars.name(e),
+                        if facts.is_some_and(|f| f.owns_alone(e)) {
+                            "+"
+                        } else {
+                            "-"
+                        }
+                    ),
+                    None => "?".to_owned(),
+                }
+            };
+            let roots = mover_roots(std::slice::from_ref(op), data, stores, vars);
+            let movers: Vec<String> = roots
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{}={}{}",
+                        vars.name(*m),
+                        end_of(*m),
+                        if facts.is_some_and(|f| f.distinct(*r, *m)) {
+                            ":apart"
+                        } else {
+                            ":same?"
+                        }
+                    )
+                })
+                .collect();
+            let mut buffer_op = String::new();
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpDatabase" | "OpDatabaseNP" | "OpClear"
+                    )
+                    && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+                    && *b < vars.count()
+                    && buffer_op.is_empty()
+                {
+                    buffer_op = format!("{}({})", data.def(*d).name(), vars.name(*b));
+                }
+                false
+            });
+            let mut grown = false;
+            let mut fresh_walk = fresh.clone();
+            let after = address_use_after_growth(
+                rest,
+                &mut grown,
+                &mut |o: &Value| {
+                    blocks_header_hoist(
+                        o,
+                        data,
+                        Some(stores),
+                        cache,
+                        &mut HashSet::new(),
+                        Some(vars),
+                        HoistTiers {
+                            in_place: allow_in_place,
+                            push: movers_apart,
+                            mint: movers_apart,
+                            ..HoistTiers::default()
+                        },
+                        &mut fresh_walk,
+                        owned,
+                    )
+                },
+                &|n: &Value| address_use(n, *r, data, stores, owned, twin_params),
+            );
+            eprintln!(
+                "recptr:   class `{}` end={} facts={} movers=[{}] buffer-op={} use-after-growth={}",
+                vars.name(*r),
+                end_of(*r),
+                if facts.is_some() { "some" } else { "none" },
+                movers.join(" "),
+                if buffer_op.is_empty() {
+                    "-"
+                } else {
+                    &buffer_op
+                },
+                if after { "yes" } else { "no" }
+            );
+        }
+        return Err("the remainder may grow a store");
+    }
+    if movers_apart && std::env::var("LOFT_TRACE_RECPTR").is_ok() {
+        eprintln!(
+            "recptr: {} keeps `{}` beside a growth of another store",
+            data.def(def_nr).name(),
+            vars.name(*r)
+        );
+    }
+    // In statement order: a free (a scope exit's release of a local, a buffer's) BEFORE a
+    // use of `r` declines — through the store a freed record answers the sentinel, through
+    // an address it would answer stale bytes — while the frees that follow the last use,
+    // which is where a block's own releases stand, cost nothing.  A view that outlives its
+    // container is `(B-Disturb)`'s case and is materialised by the parser before this runs.
+    if free_before_use(rest, *r, data, vars) {
+        return Err("the remainder frees a record before a use of the view");
+    }
+    if rebound {
+        return Err("the remainder rebinds the view");
     }
     Ok(())
 }
@@ -6489,6 +6724,11 @@ pub fn push_loop_paths<'a>(lp: &'a Block, data: &Data) -> Option<Vec<PushLoop<'a
 fn push_loop_on<'a>(lp: &'a Block, data: &Data, only: Option<&PathKey>) -> Option<PushLoop<'a>> {
     let trace = std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() && only.is_none();
     let decline = |why: &str| -> Option<PushLoop<'a>> {
+        // A loop with no push of its own is not a shape the rule is for (an outer loop
+        // around a counted one): traced, never counted.
+        if only.is_none() && why != "no push at the top level of the body" {
+            crate::rewrite_census::declined("R-PushFill/loop", &format!("loop {}", lp.scope), why);
+        }
         if trace {
             eprintln!("push-fill: loop {} declined — {why}", lp.scope);
         }
@@ -6918,6 +7158,12 @@ fn window_parts_ok(
             // that field, and stays a possible viewer.
             let record_view = plain_record_type(data, vars.tp(x))
                 .is_some_and(|tp| stores.is_some_and(|st| !st.owns_heap(tp)));
+            // A vector of plain scalars stored apart from every root (`vector<u8>` beside a
+            // pushed `vector<integer>`) reaches no store through its elements and cannot BE
+            // a root: element storage is part of a vector's type (`(C-Refl)`, D-types-26).
+            let scalar_vector_apart = roots
+                .iter()
+                .all(|&r| scalar_vector_apart(vars.tp(x), vars.tp(r)));
             !roots.contains(&x)
                 && !facts.is_some_and(|f| roots.iter().all(|&r| f.distinct(x, r)))
                 && !is_scalar(vars.tp(x))
@@ -6925,6 +7171,7 @@ fn window_parts_ok(
                 && !owned_local(vars, x)
                 && !separate_parameter
                 && !record_view
+                && !scalar_vector_apart
         })
         .collect();
     for part in parts {
@@ -8776,6 +9023,18 @@ fn is_scalar(tp: &Type) -> bool {
     )
 }
 
+/// Two vectors of plain scalars whose ELEMENT STORAGE differs — never one vector, because
+/// the type checker refuses one where the other is declared (loft#751, `(C-Refl)` decided on
+/// storage), and neither can name a store through its elements.  `same_element_storage`
+/// answers `true` for any pair it does not compare (an integer and a float), so only a
+/// definite `false` counts — the safe direction for a test that admits a window.
+fn scalar_vector_apart(a: &Type, b: &Type) -> bool {
+    let (Type::Vector(ea, _), Type::Vector(eb, _)) = (a.peel_link(), b.peel_link()) else {
+        return false;
+    };
+    is_scalar(ea) && is_scalar(eb) && !ea.same_element_storage(eb)
+}
+
 /// `@FR-R-LazySplit` — one `for piece in text.split(c)` loop that takes its pieces straight
 /// from the text instead of reading them back out of a `vector<text>`.
 #[derive(Clone, Debug)]
@@ -10556,9 +10815,16 @@ fn group_covers_type(
         return false;
     }
     let mut written: HashSet<u16> = HashSet::new();
+    // An inline record field written member by member: field position → member positions.
+    let mut members: HashMap<u16, HashSet<u16>> = HashMap::new();
     for stmt in ops.iter().skip(at) {
         match stmt.unspan() {
             Value::Line(_) => {}
+            // A bind of another variable whose value never names the record — the value a
+            // later set stores, `__lift = f(…)` — reads nothing the prefill would write.
+            Value::Set(x, rhs)
+                if *x != target
+                    && !rhs.any_node(&mut |n| matches!(n, Value::Var(u) if *u == target)) => {}
             // The declaration's own bind (`v = OpGetField(target, 0, tp)`) interleaves
             // a VECTOR store's group between the OpDatabase and the length reset — a
             // member that covers nothing.  (The collection-field prefill is ONE u32
@@ -10628,6 +10894,15 @@ fn group_covers_type(
                     && let Ok(off) = u16::try_from(*off)
                 {
                     written.insert(off);
+                } else if name.starts_with("OpSet")
+                    && let Some(f) = args.first().and_then(|a| call_named(a, data, "OpGetField"))
+                    && matches!(f.first().map(Value::unspan), Some(Value::Var(w)) if *w == target)
+                    && let Some(Value::Int(off)) = f.get(1).map(Value::unspan)
+                    && let Ok(off) = u16::try_from(*off)
+                    && let Some(Value::Int(m)) = args.get(1).map(Value::unspan)
+                    && let Ok(m) = u16::try_from(*m)
+                {
+                    members.entry(off).or_default().insert(m);
                 } else {
                     break;
                 }
@@ -10635,7 +10910,16 @@ fn group_covers_type(
             _ => break,
         }
     }
-    fields.iter().all(|f| written.contains(&f.position))
+    fields.iter().all(|f| {
+        written.contains(&f.position)
+            || members.get(&f.position).is_some_and(|m| {
+                let sub = f.content as usize;
+                sub < stores.types.len()
+                    && matches!(&stores.types[sub].parts,
+                        crate::database::Parts::Struct(sf)
+                            if !sf.is_empty() && sf.iter().all(|x| m.contains(&x.position)))
+            })
+    })
 }
 
 /// `@FR-R-RefillBuffer` — what [`refill_buffers`] admitted for one function: its return
@@ -11591,6 +11875,138 @@ pub fn refill_text_sites(
     out
 }
 
+/// An element handed to a call AS ITS RETURN BUFFER, and copied from the call's answer when
+/// that is another record: `r = f(…, e)` then `if OpDistinctStore(r, e) OpCopyRecord(r, e,
+/// FRESH | tp) else null`.  The element is written whole on both arms when `f` writes every
+/// field of the buffer it is handed ([`buffer_complete`]) — the answer is then `e` itself —
+/// and the copy, flagged FRESH for the element's type, writes every byte of `e` otherwise.
+fn call_pair_covers(
+    ops: &[Value],
+    at: usize,
+    target: u16,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+) -> bool {
+    let mut rest = ops
+        .iter()
+        .skip(at)
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)));
+    let Some(Value::Set(r, call)) = rest.next().map(Value::unspan) else {
+        return false;
+    };
+    let Value::Call(f, args) = call.unspan() else {
+        return false;
+    };
+    if (*f as usize) >= data.definitions.len() {
+        return false;
+    }
+    let Some(rb) = data.def(*f).hidden_return_buffer_attr() else {
+        return false;
+    };
+    let names_target = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(u) if *u == target));
+    let handed = args.iter().enumerate().all(|(i, a)| {
+        if i == rb {
+            matches!(a.unspan(), Value::Var(u) if *u == target)
+        } else {
+            !names_target(a)
+        }
+    });
+    if !handed {
+        return false;
+    }
+    let Some(Value::If(test, copy, other)) = rest.next().map(Value::unspan) else {
+        return false;
+    };
+    let pair = |v: &Value, name: &str| {
+        call_named(v, data, name).is_some_and(|a| {
+            matches!(a.first().map(Value::unspan), Some(Value::Var(u)) if u == r)
+                && matches!(a.get(1).map(Value::unspan), Some(Value::Var(u)) if *u == target)
+        })
+    };
+    let fresh = call_named(copy, data, "OpCopyRecord").is_some_and(|a| {
+        matches!(a.get(2).map(Value::unspan), Some(Value::Int(n)) if u16::try_from(*n)
+            .is_ok_and(|n| n & crate::keys::COPY_FRESH_DEST != 0 && n & crate::keys::COPY_TP_MASK == tp))
+    });
+    pair(test, "OpDistinctStore")
+        && pair(copy, "OpCopyRecord")
+        && fresh
+        && matches!(other.unspan(), Value::Null)
+        && buffer_complete(data, stores, *f)
+}
+
+/// Does `f` write every field of the return buffer it is handed before it answers it?  Every
+/// mint of the buffer heads a covering literal ([`complete_writes`]'s `db_vars`), and every
+/// `return` of the buffer follows such a mint in its own block.  A recursive chain answers no
+/// past two levels.
+fn buffer_complete(data: &Data, stores: &Stores, f: u32) -> bool {
+    thread_local! {
+        static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+    let def = data.def(f);
+    let Some(rb) = def
+        .hidden_return_buffer_attr()
+        .map(|i| def.variables().var(&def.attributes()[i].name))
+    else {
+        return false;
+    };
+    if DEPTH.with(std::cell::Cell::get) >= 2 {
+        return false;
+    }
+    DEPTH.with(|d| d.set(d.get() + 1));
+    let complete = complete_writes(data, stores, f).db_vars.contains(&rb);
+    DEPTH.with(|d| d.set(d.get() - 1));
+    if !complete {
+        return false;
+    }
+    let mut ok = true;
+    def.code().any_node(&mut |n| {
+        if let Value::Block(bl) = n {
+            let mut minted = false;
+            for op in &bl.operators {
+                if guarded_mint(op, data).is_some_and(|(v, _)| v == rb)
+                    || call_named(op, data, "OpDatabase").is_some_and(
+                        |a| matches!(a.first().map(Value::unspan), Some(Value::Var(u)) if *u == rb),
+                    )
+                {
+                    minted = true;
+                }
+                if let Value::Return(x) = op.unspan()
+                    && matches!(x.unspan(), Value::Var(u) if *u == rb)
+                    && !minted
+                {
+                    ok = false;
+                }
+            }
+        }
+        !ok
+    });
+    ok
+}
+
+/// `if <test of v> null else OpDatabase(v, tp)` — the mint a struct literal built into a
+/// return buffer opens with: the record the caller handed, or a fresh one.  The test names
+/// only `v`.
+fn guarded_mint(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
+    let Value::If(test, then, els) = stmt.unspan() else {
+        return None;
+    };
+    if !matches!(then.unspan(), Value::Null) {
+        return None;
+    }
+    let args = call_named(els, data, "OpDatabase")?;
+    let (Some(Value::Var(v)), Some(Value::Int(tp))) = (
+        args.first().map(Value::unspan),
+        args.get(1).map(Value::unspan),
+    ) else {
+        return None;
+    };
+    if test.any_node(&mut |n| matches!(n, Value::Var(u) if u != v)) {
+        return None;
+    }
+    Some((*v, u16::try_from(*tp).ok()?))
+}
+
 /// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
 /// COMPLETE, so the default prefill writes nothing that survives: the parser's lowering
 /// writes every field explicitly (a named value, the declared default, the interned
@@ -11632,6 +12048,16 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                             db_declined.insert(*v);
                         }
                     }
+                    // A return buffer's guarded mint, `if <v holds a record> null else
+                    // OpDatabase(v, tp)`, heading the literal group: on either arm the group
+                    // writes the record the statements after it name.
+                    Value::If(_, _, _) if let Some((v, tp)) = guarded_mint(stmt, data) => {
+                        if group_covers_type(ops, i + 1, v, tp, data, stores, &out.fresh_fields) {
+                            out.db_vars.insert(v);
+                        } else {
+                            db_declined.insert(v);
+                        }
+                    }
                     // `Set(e, OpNewRecord(P, tp, fld))` heading a mint group: the sets
                     // that follow write through `e`.
                     Value::Set(e, inner) => {
@@ -11661,7 +12087,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                             stores.content(stores.field_type(ptp, fld))
                         };
                         if etp != u16::MAX
-                            && group_covers_type(
+                            && (group_covers_type(
                                 ops,
                                 i + 1,
                                 *e,
@@ -11669,7 +12095,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                                 data,
                                 stores,
                                 &out.fresh_fields,
-                            )
+                            ) || call_pair_covers(ops, i + 1, *e, etp, data, stores))
                         {
                             out.mint_tps.insert(ptp);
                         } else {
@@ -13350,6 +13776,11 @@ fn may_write_existing(
                     k
                 };
                 if callee {
+                    crate::rewrite_census::declined(
+                        "R-ValueRecord",
+                        &format!("{}:{tp}", def.name()),
+                        "a callee may write an existing record of the type",
+                    );
                     if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
                         eprintln!(
                             "[valuerec]   callee `{name}` may write an existing record of type {tp}"
@@ -13375,6 +13806,11 @@ fn may_write_existing(
                 fresh.insert(*b);
             }
             if native_writes_existing(def, args, tp, data, stores, vars, fresh) {
+                crate::rewrite_census::declined(
+                    "R-ValueRecord",
+                    &format!("{}:{tp}", def.name()),
+                    "a native op may write an existing record of the type",
+                );
                 if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
                     let shown = format!("{n:?}");
                     eprintln!(
@@ -16536,7 +16972,16 @@ fn namings_avoid_place(
                                     && crate::scopes::same_place(cx.watch, (cx.root, inner))
                             })
                         });
-                        if reaches || cx.disturbed.is_none() {
+                        // The summary records what MOVES; a callee that writes a value
+                        // into the viewed vector's elements moves nothing and is still seen
+                        // through a view where the copy it stands for would not see it —
+                        // `s.ops[0].pts[1].py = 70` read back through the result (loft#2077,
+                        // `@FR-O-ViewField`, `@FR-B-Copy`).  So a callee that writes through
+                        // the argument at all declines the site.
+                        if reaches
+                            || cx.disturbed.is_none()
+                            || crate::parser::callee_writes_param(*d, cx.data, i)
+                        {
                             cx.ok = false;
                             return;
                         }
@@ -18304,20 +18749,28 @@ enum Pos {
 /// argument, a field value, a return of a non-admitted function, the right of a local
 /// that is not a value local — is declined into `declined`.  Result positions carry the
 /// caller's position down; everything else is an operand.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the census call stands beside each trace"
+)]
 fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>) {
     match node.unspan() {
         Value::Call(callee, args) => {
             // The insert runs whenever the site declines; only the trace is conditional.
-            if pos == Pos::Operand
-                && ctx.admitted.contains_key(callee)
-                && declined.insert(*callee)
-                && std::env::var("LOFT_TRACE_VALUEREC").is_ok()
+            if pos == Pos::Operand && ctx.admitted.contains_key(callee) && declined.insert(*callee)
             {
-                eprintln!(
-                    "[valuerec] {}: its record is consumed in {}",
+                crate::rewrite_census::declined(
+                    "R-ValueRecord",
                     ctx.data.def(*callee).name(),
-                    ctx.data.def(ctx.def_nr).name()
+                    "its record is consumed as an operand at a call site",
                 );
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    eprintln!(
+                        "[valuerec] {}: its record is consumed in {}",
+                        ctx.data.def(*callee).name(),
+                        ctx.data.def(ctx.def_nr).name()
+                    );
+                }
             }
             for (i, arg) in args.iter().enumerate() {
                 // `(R-ValueLocal)` — an admitted call handed straight to a TUPLE PARAMETER
@@ -18429,12 +18882,19 @@ fn site_walk_callref(
         && let Some((arms, _)) = ctx.fnref.get(&(ctx.def_nr, v))
     {
         for a in arms {
-            if declined.insert(*a) && std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
-                eprintln!(
-                    "[valuerec] {}: its record is consumed through a fn-ref in {}",
+            if declined.insert(*a) {
+                crate::rewrite_census::declined(
+                    "R-ValueRecord",
                     ctx.data.def(*a).name(),
-                    ctx.data.def(ctx.def_nr).name()
+                    "its record is consumed through a fn-ref at a call site",
                 );
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    eprintln!(
+                        "[valuerec] {}: its record is consumed through a fn-ref in {}",
+                        ctx.data.def(*a).name(),
+                        ctx.data.def(ctx.def_nr).name()
+                    );
+                }
             }
         }
     }

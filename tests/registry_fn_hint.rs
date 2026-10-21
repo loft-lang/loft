@@ -17,11 +17,7 @@ use loft::file_access as fa;
 use std::path::PathBuf;
 
 fn loft_bin() -> PathBuf {
-    workspace_root().join("target/release/loft")
-}
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 /// A cached index exporting `rand` (free fn, package `random`), `matches`

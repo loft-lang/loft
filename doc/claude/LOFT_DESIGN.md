@@ -406,6 +406,57 @@ which anchors *both* built-in and native I/O at the process working directory
 instead — useful for a CLI tool that should read files relative to where the
 user invoked it.
 
+### A native build links its libraries beside the binary, or into it
+
+A native build (`--native`, `--native-release`) of a program that uses a library with Rust
+code in it — `regex`, `crypto`, the graphics libraries — links that library's code one of two
+ways.  **Dynamic**, the default: the library is a separate file (`.so` / `.dylib` / `.dll`)
+the binary loads when it starts, so a shipped binary needs that file beside it.  **Static**:
+the library's code is built into the binary, which is then one file that runs with no loft,
+no `rustc` and no library file beside it.  The program can say which it wants with a
+directive at the top of the file, beside `#cwd`:
+
+```grammar
+#link static
+use regex;
+fn main() { … }
+```
+
+`--static` / `--dynamic` on the command line win over the directive.  The interpreter
+ignores it — an interpreted run loads libraries the same way either way.  A library written
+in loft alone (`script`) is always compiled into the binary.  Guard:
+`tests/native.rs::a_static_link_ships_one_file_that_runs_alone`.
+
+**Shipping a dynamic program.**  `loft build native` (or `--out <dir>` on a native build)
+writes the program and every library file it uses into one directory — `dist/` — which runs
+wherever it is copied.  A dynamic program looks for each library in this order, the same on
+every OS:
+
+1. `LOFT_LIB_PATH`, a list of directories;
+2. its own directory;
+3. `~/.loft/lib/<package>-<version>/` (`LOFT_HOME` moves `~/.loft`);
+4. `/usr/local/lib/loft/<package>-<version>/` (`%ProgramData%\loft\lib\…` on Windows).
+
+No command-line argument is reserved for this, so a program's arguments are the same
+compiled or interpreted, and `LOFT_LIB_PATH` still reaches a program started through
+`/bin/sh` or a `#!` line on macOS.  The first two may also hold a library in a `<package>-<version>/` subdirectory.  The two
+shared roots hold libraries only by version, so programs built against different versions of
+one library each find their own.  `loft build --install` (or `--install-libs` on a native
+build) places a program's libraries in `~/.loft/lib/`.  A library found nowhere stops the
+program before it starts, with a message naming the package, the version it was built
+against, every directory searched and any other version that was there.  Guard:
+`tests/native.rs::a_dynamic_program_finds_its_libraries_where_loft_looks`.
+
+**A C library a package ships** — the `[c] shim` loft compiles, or a library file beside the
+package's `loft.toml` — goes with the program the same way.  A dynamic program finds it in
+the search order above, and `--out` copies it into `dist/`.  A static program has its code
+inside the binary when the library has a static archive: loft archives a shim itself, and a
+package may ship a `lib<name>.a` beside a prebuilt library.  One without an archive stays a
+file beside the static program.  A system library named by its soname (`libz.so.1`) is the
+system's to provide either way; to put one inside the binary, ship its source as shim
+sources.  On Windows a shim is not yet put inside a static binary: it travels beside it.
+Guard: `tests/native.rs::a_shipped_c_library_travels_with_the_program`.
+
 ### Closure capture: the value at definition, the write shared
 
 A captured scalar is taken by value when the closure is formed: a later write to the

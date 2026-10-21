@@ -9,6 +9,23 @@ use std::path::{Path, PathBuf};
 
 const CELLS: &str = "tests/scripts/a-pure-call-made-twice-is-computed-once.loft";
 
+/// The shared-call clause's cells.
+const SHARED: &str = "tests/scripts/a-call-two-wrappers-share-is-made-once.loft";
+
+/// Every body the shared-call cells share a call in, in order.  c3 (an argument rebound), c4
+/// (a parameter's store written), c5w (a work buffer written), c6 (a wrapper calling twice),
+/// c7 (a function that is not total), c9 (no call always evaluated) and c12 (a wrapper that
+/// writes) share nothing.
+const SHARED_TRACE: &[&str] = &[
+    "[pure-reuse] n_c1: n_names computed once, shared",
+    "[pure-reuse] n_c2: n_names computed once, shared",
+    "[pure-reuse] n_c5: n_names computed once, shared",
+    "[pure-reuse] n_c8: n_names computed once, shared",
+    "[pure-reuse] n_c10: n_names computed once, shared",
+    "[pure-reuse] n_c11: n_names computed once, shared",
+    "[pure-reuse] n_c13: n_names computed once, shared",
+];
+
 /// Every reuse the cells make, in order: the request-check shape, the two projections, and
 /// the request-check and record-field shapes in the natural spelling (`parse(v).ok`).
 const TRACE: &[&str] = &[
@@ -38,8 +55,12 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
 }
 
 fn cells() -> String {
+    script(CELLS)
+}
+
+fn script(name: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(CELLS)
+        .join(name)
         .to_string_lossy()
         .into_owned()
 }
@@ -104,5 +125,65 @@ fn the_cells_answer_the_same_with_the_rule_off() {
             ok && out.contains("done"),
             "{b} with the rule off:\n{out}\n{err}"
         );
+    }
+}
+
+#[test]
+fn the_sharing_bodies_are_the_admitted_shapes() {
+    let (out, err, ok) = loft(
+        &["--interpret", &script(SHARED)],
+        &[("LOFT_TRACE_PURE_REUSE", "1")],
+    );
+    assert!(ok && out.contains("done"), "cells failed:\n{out}\n{err}");
+    let got: Vec<&str> = err
+        .lines()
+        .filter(|l| l.starts_with("[pure-reuse]"))
+        .collect();
+    assert_eq!(got, SHARED_TRACE, "the sharing bodies moved:\n{err}");
+}
+
+#[test]
+fn a_check_and_a_use_call_the_total_function_once() {
+    for (env, want) in [(&[][..], 1usize), (&[("LOFT_NO_PURE_REUSE", "1")][..], 0)] {
+        let rs = std::env::temp_dir().join(format!(
+            "loft_shared_call_{}_{}.rs",
+            std::process::id(),
+            want
+        ));
+        let (_, err, ok) = loft(
+            &["--native-emit", &rs.to_string_lossy(), &script(SHARED)],
+            env,
+        );
+        assert!(ok, "{env:?}: emit failed:\n{err}");
+        let src = fa::read_to_string(&rs).expect("emitted source");
+        let _ = fa::remove_file(&rs);
+        let c1 = body(&src, "n_c1");
+        // With the rule `c1` decodes itself, once, and calls both wrappers' variants; without
+        // it, it calls the two wrappers, each of which decodes.
+        assert_eq!(
+            c1.matches("n_names(").count(),
+            want,
+            "{env:?}: n_c1's own n_names calls"
+        );
+        assert_eq!(
+            c1.matches("n_has__given_").count() + c1.matches("n_count__given_").count(),
+            2 * want,
+            "{env:?}: n_c1's variant calls"
+        );
+        assert_eq!(
+            c1.matches("n_has(").count() + c1.matches("n_count(").count(),
+            2 - 2 * want,
+            "{env:?}: n_c1's wrapper calls"
+        );
+    }
+}
+
+#[test]
+fn the_shared_cells_answer_the_same_on_both_backends_either_way() {
+    for b in ["--interpret", "--native"] {
+        for env in [&[][..], &[("LOFT_NO_PURE_REUSE", "1")][..]] {
+            let (out, err, ok) = loft(&[b, &script(SHARED)], env);
+            assert!(ok && out.contains("done"), "{b} {env:?}:\n{out}\n{err}");
+        }
     }
 }

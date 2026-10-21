@@ -1425,6 +1425,7 @@ const SEARCH_INDEX=[
 {name:"regex::split_on",kind:"fn",url:"lib-regex-api.html"},
 {name:"script",kind:"library",url:"lib-script.html"},
 {name:"script::walk",kind:"fn",url:"lib-script-api.html"},
+{name:"script::walk_sorted",kind:"fn",url:"lib-script-api.html"},
 {name:"script::copy_to",kind:"fn",url:"lib-script-api.html"},
 {name:"script::glob",kind:"fn",url:"lib-script-api.html"},
 {name:"script::glob_match",kind:"fn",url:"lib-script-api.html"},

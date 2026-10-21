@@ -67,7 +67,9 @@
 #                  INSTEAD of writing a position down.  A measured position is stale the
 #                  moment it is committed; a floor is not, so the floor is the only number
 #                  worth putting in prose.  Floors are MINIMUMS for the freeze, not targets
-#                  to stop at.  A REPORT: always exit 0.
+#                  to stop at.  A rewrite rule's guard is the rewrite census (a bench program
+#                  admits it, and `make rewrite-census` fails when it stops), counted beside
+#                  the tests and reported on its own line.  A REPORT: always exit 0.
 
 import collections
 import glob
@@ -111,6 +113,12 @@ GUARD_DIRS = (os.environ["GUARD_DIRS"].split(":")
               if os.environ.get("GUARD_DIRS")
               else [TESTS] + ([SUITE_RULES] if os.path.isdir(SUITE_RULES) else []))
 GUARD_EXTS = os.environ.get("GUARD_EXTS", ".rs,.loft").split(",")
+# The rewrite census is the guard of a REWRITE rule: a row says a bench program admits the
+# rewrite, and `make rewrite-census` fails when a rule fires at fewer sites than its baseline —
+# a stronger claim than a test naming the rule, since the gate fails when the rewrite stops.
+# Twenty-seven `R-` rules read as unguarded while the census held their admissions (2026-10-19).
+CENSUS = os.environ.get("LOFT_REWRITE_CENSUS",
+                        os.path.join(ROOT, "bench", "portal", "rewrite_census.tsv"))
 
 # A rule is DEFINED by a rules-block line `  (Name)  prose` or a deviation header `### Name —`.
 # A RULE is defined by a line `  (Name)  prose` INSIDE A FENCED BLOCK — that is the shape the
@@ -479,6 +487,70 @@ def closed_issues(numbers):
         except Exception:
             unreachable.append(n)
     return out, unreachable
+
+
+def census_rules():
+    """The rules the rewrite census holds an ADMISSION for: `{"R-Base", …}` from every row of
+    `CENSUS` whose count is above zero.  A rule listed with no admission on any program is an
+    unexercised rewrite, not a guarded one, and stays out.  Missing or unreadable: empty."""
+    out = set()
+    try:
+        lines = open(CENSUS, encoding="utf-8", errors="replace").readlines()
+    except OSError:
+        return out
+    for line in lines:
+        if line.startswith("#") or not line.strip():
+            continue
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) < 4:
+            continue
+        try:
+            count = int(parts[3])
+        except ValueError:
+            continue
+        if count > 0:
+            out.add(parts[2].strip())
+    return out
+
+
+def census_listed():
+    """Every rule the census LISTS, admitted or not: the difference with `census_rules` is
+    the rewrites no bench program exercises."""
+    out = set()
+    try:
+        lines = open(CENSUS, encoding="utf-8", errors="replace").readlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.rstrip("\n").split("\t")
+        if not line.startswith("#") and len(parts) >= 4:
+            out.add(parts[2].strip())
+    return out
+
+
+def guard_tags(rules):
+    """The rules an active guard names: a test under GUARD_DIRS citing the rule, or a rewrite
+    census row admitting it.  The ONE answer to "is this rule guarded", so `coverage` and
+    `worklist` cannot disagree about it."""
+    named = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+    return named | {t for t in census_rules() if t in rules}
+
+
+def guard_inputs_line():
+    """What the guard tier READ, said in the report — a count over fewer inputs looks the
+    same as a count over all of them (the suite checkout absent read 231 where both read
+    412, and nothing said why)."""
+    dirs = ", ".join(_rel(d) if d.startswith(ROOT) else d for d in GUARD_DIRS)
+    line = f"  guard inputs: {dirs}; rewrite census {_rel(CENSUS) if os.path.exists(CENSUS) else 'ABSENT'}"
+    if not os.environ.get("GUARD_DIRS") and not os.path.isdir(SUITE_RULES):
+        line += (f"\n  ⚠ the language suite is not beside this tree ({_rel(SUITE_DIR)}, LOFT_SUITE_DIR): the "
+                 "guard tier reads tests/ alone and reads LOW — check the suite out beside the tree")
+    return line
+
+
+def family_of(tag):
+    """A rule's family is its prefix up to the first dash: `B-Copy` → `B`, `R-Range` → `R`."""
+    return tag.split("-", 1)[0]
 
 
 def citations_in(dirs, exts):
@@ -990,7 +1062,9 @@ def main():
         # never that the guard would fail without it.  Say that in the output rather than let
         # the column heading promise a property nobody measured.
         ann = {t for t in citations_in(CITE_DIRS, CITE_EXTS) if t in rules}
-        grd = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+        named = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+        census = {t for t in census_rules() if t in rules}
+        grd = named | census
         total = len(rules)
         pct = (lambda k: 100.0 * k / total if total else 0.0)
         print(f"{total} defined rules\n")
@@ -1001,11 +1075,28 @@ def main():
             mark = "floor met" if have >= floor else f"{short} rule(s) short of {floor} %"
             print(f"  {label:<16} {len(got):>4} / {total}   {have:5.1f} %   "
                   f"contract-1 floor {floor} %  ({mark})")
-        print(f"\n  both tiers       {len(ann & grd):>4} / {total}   {pct(len(ann & grd)):5.1f} %")
+        print(f"\n  rewrite census   {len(census):>4} rules admitted on a bench program, "
+              f"{len(census - named)} of them named by no test")
+        print(f"  both tiers       {len(ann & grd):>4} / {total}   {pct(len(ann & grd)):5.1f} %")
         print(f"  neither          {len(rules.keys() - ann - grd):>4} / {total}   "
               f"{pct(len(rules.keys() - ann - grd)):5.1f} %")
+        print(guard_inputs_line())
+        # By family: the register grows unevenly (the rewrite family fastest), and one share
+        # over every rule hides which family is outrunning its guards.  A rewrite the census
+        # lists with no admission on any program is UNEXERCISED, named rather than counted.
+        listed = {t for t in census_listed() if t in rules}
+        fams = sorted({family_of(t) for t in rules})
+        print("\n  family   rules  annotated  guarded  census-only  neither   unexercised rewrites")
+        for fam in fams:
+            fr = {t for t in rules if family_of(t) == fam}
+            unex = sorted(t for t in (listed & fr) - census if t not in named)
+            print(f"  {fam:<8} {len(fr):>5}  {len(fr & ann):>9}  {len(fr & grd):>7}  "
+                  f"{len(fr & (census - named)):>11}  {len(fr - ann - grd):>7}   "
+                  f"{', '.join(unex) if unex else ''}")
         print("\nA guard tier counts a rule NAMED by a test, which is not the same as a test "
-              "that\nwould fail without it — read it as the weaker claim.  The floors are "
+              "that\nwould fail without it — read it as the weaker claim; a rewrite rule's "
+              "census row is the\nstronger one (`make rewrite-census` fails when the rewrite "
+              "stops firing).  The floors are "
               "contract-1 MINIMUMS,\nnot targets to stop at, and are informed estimates the "
               "owner may move (RULE_MIN_ANNOTATED,\nRULE_MIN_GUARDED).  Crossing them is "
               "necessary for the freeze, never sufficient —\nCOMPATIBILITY.md § The road to "
@@ -1039,7 +1130,7 @@ def main():
         # bound halves it), while a single walk of a covered rule has found several defects
         # (the high bound takes half again).
         ann = {t for t in citations_in(CITE_DIRS, CITE_EXTS) if t in rules}
-        grd = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+        grd = guard_tags(rules)
 
         def chapter(files):
             return sorted(files)[0].removesuffix(".md").removesuffix("-history")

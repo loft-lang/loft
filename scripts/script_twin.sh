@@ -90,8 +90,12 @@ run_side() {
     local s e ms
     s=$(date +%s%N)
     # The CI ledgers are the gate's instrumentation, not the script's stderr: unset for both
-    # sides, or a `[loft-timing]` line is a red err channel on every port.
-    env -u LOFT_TIMING_LEDGER -u LOFT_SKIP_LEDGER "$script" "$@" < "$stdin_file" > "$work/$side.out" 2> "$work/$side.err"
+    # sides, or a `[loft-timing]` line is a red err channel on every port.  The upgrade
+    # notice likewise reports this machine's registry cache, not the script (`[registry]
+    # crypto 0.3.13 is pinned; 0.3.14 is the newest release` appeared on the port the day a
+    # newer crypto reached the runner's cache): off, or every release of a library the
+    # scripts pin turns the port red until the lock is bumped.
+    env -u LOFT_TIMING_LEDGER -u LOFT_SKIP_LEDGER LOFT_NO_UPGRADE_NOTICE=1 "$script" "$@" < "$stdin_file" > "$work/$side.out" 2> "$work/$side.err"
     echo $? > "$work/$side.exit"
     e=$(date +%s%N)
     ms=$(( (e - s) / 1000000 ))

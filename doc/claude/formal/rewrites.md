@@ -677,6 +677,11 @@ header it leaves) and `LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM`
 prevent: a runtime READER meeting the lagging length changes nothing, so there is no stale
 fact to compare — the interpreter is the falsifier, through the cells.  The looser
 reading of `owned_local` is (R-Alias)'s own and is recorded here, not narrowed on suspicion.
+A parameter can name the return buffer the caller offered, so beside a pushed return buffer a
+parameter read declines — except a vector of plain scalars whose element storage differs from
+the pushed vector's (`Type::same_element_storage`, `hoist::scalar_vector_apart`): `(C-Refl)`
+decides on storage, so the two are never one vector, and neither names a store through its
+elements (cells s1–s4).
 Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 `hoist::push_window_ok`, `Output::push_reserve` / `push_window_close` /
 `active_push_window`, the `Value::Loop` emission in `emit.rs` (the order), the registry's
@@ -1319,6 +1324,13 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  use grows, moves or frees a store.  A view part declines the
                  write (its append may grow the store), and a view whose block
                  already holds an address reads and writes through that one.
+                 THE ELEMENT CLAUSE: a whole value record copied into an element
+                 `P[i]` of a vector at a pure path derives the element where it
+                 writes it — one header read, the in-range test, the element's
+                 reference and its address both from the record and the index —
+                 and an index out of range takes the element read itself, so its
+                 raise and the null it answers are that read's.  Pre-evaluation
+                 asks the same question and leaves the element read in place.
 ```
 
 **In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -1339,7 +1351,12 @@ the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_vie
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `Output::output_record_tuple` and
-`Output::write_tuple_through_address` (the tuple clause), `vector::rec_ptr` / `rec_get` /
+`Output::write_tuple_through_address` (the tuple clause), `Output::element_copy_dest` and
+`OpCopyRecordEmitter::copy` (the element clause: one derivation of the reference and the
+address, where a `vec_get_or_raise_runtime` reference and an address read out of it would be a
+round trip — `map_set_hex` in `slope_path_with_undo` 200.9 → 189.6 µs native, −5.6 %, the hand-written form exactly;
+switch `LOFT_NO_ELEMENT_ADDRESS`, guard
+`tests/scripts/a-record-written-into-an-element-is-addressed-once.loft`), `vector::rec_ptr` / `rec_get` /
 `rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
 `loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft`, pins
 `tests/record_ptr.rs`.  The `for e in v` loop
@@ -2008,6 +2025,14 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  one-operator loops in `pil_hline` and `matches_at` cost
                  `fill_circle` and `fill_star` ~50 %, `wide_line` 22 % and `parse`
                  18 %, while six-operator `composite_layer` gains 30 %.  An
+                 INDEX OFFSET is not counted — a single `+` or `-` of two leaves that
+                 is an element read's index (`kb[oa + t]`): the read tests its bounds
+                 whatever the index, so the plain offset saves one predictable branch
+                 and nothing of the read; cbor's `key_lt`, two offsets in a loop of a
+                 few bytes entered per key pair, paid the guard on every compare
+                 (`encode` −4.1 % declined, `encode_bytes` −3.6 %, `check_request`
+                 −3.3 %; drawing `parse` +3.9 % with every function it runs
+                 byte-identical — code placement).  An
                  UNDER-approximation, and the residual is stated rather than hidden:
                  `hair_brush` has the same six operators as `composite_layer` and
                  LOSES ~8 %, so operator count does not separate them — trip count
@@ -2876,6 +2901,54 @@ Sites: `OpGetRecordEmitter` (`src/generation/ops/key_ops.rs`), `Output::emit_lon
 `codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half is `(R-KeyedEntry)`
 below, for an element that owns no heap.
 
+### A vector its caller walks once is never built
+
+```
+  (R-StreamWalk)  `v = P(a…); for i in 0..len(v) { … }` — a call of a function P that
+                  answers `vector<T>` for a record T, bound to a local that the next
+                  statement mentioning it walks once by index — runs as P's STREAM TWIN
+                  with the walk's body as its closure: P's own body runs, and each append
+                  it would have made hands the values it would have stored in the fields
+                  the body reads to the body, at that append.  No vector, no record and no
+                  text of an element is built.  Admitted when: P's result vector is
+                  mentioned only by its buffer's plumbing, by its appends (a mint, a set of
+                  each field from a value, a finish) and by `return`; every field the body
+                  reads is set by every append and is an `integer`, `float`, `single` or
+                  `text`, whose round trip through the store answers the value stored; the
+                  body mentions the vector, the index and the element only as `v[i]?` read
+                  for a field; nothing in it leaves the walk (`break`, `continue`,
+                  `return`, `yield`); P and the body are QUIET — every write lands in a
+                  place the function owns (a local borrowing only what it owns, a buffer
+                  it is handed to write), every call is of a quiet function, every
+                  function value dispatches only to quiet functions without captures; and
+                  neither the body nor a statement between the call and the walk writes a
+                  variable the call reads or a local borrowing from one.  The local is
+                  otherwise mentioned only by its null init and frees.  Native release
+                  build only.
+```
+
+**In words.** The plain form runs P to its end — a buffer refilled, a record claimed and a
+text copied in per element — and then reads each element back once.  The twin interleaves
+P's steps with the body's, which can change a value only if one side sees the other's
+progress.  P is quiet, so it reports, prints and writes nothing the body can read; the
+body is quiet and writes nothing the call reads, so P reads at each step what it would
+have read before the body ever ran — and P reaches data only through its arguments, which
+is why the arguments and every view of them are what the body must leave alone.  The
+values handed over are the values the append would have stored, and each admitted field
+kind reads back what was stored, so the body reads the same values in the same order.  A
+field the body does not read is not handed over, so the twin need not compute it.  The
+call moves down to the walk, past statements that write nothing it reads.  The twin is
+emitted without loop hoists, since a header it held across its loop would not survive a
+body that grows a store.
+
+**BUILT** (`generation::stream_walk` the plan, `generation::stream_walk_emit` the twins and
+the walks; `LOFT_NO_STREAM_WALK=1`, `LOFT_TRACE_STREAM_WALK=1`).  zttext's
+`flow_layout_full` (`slice_runs` walked by `token_width` and twice by `place_line`):
+**4.60× → 2.98× of Rust**, hash unchanged.  Not admitted yet: a walk by `for e in v`, a
+narrow integer, enum, boolean or character field, a body that reads the index, a walk
+that leaves early.  Guard `tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft`
+(`@falsify-tier: native-release`), pin `tests/stream_walk.rs`.
+
 ### A keyed insert writes the entry its key names
 
 ```
@@ -3274,7 +3347,9 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  R-ElemFirst; `a.items = v`, which the move elision builds straight into
                  the field through its staging local), the return buffer, which adopts
                  the local (R-RetAdopt), or another local — and a local bound PURELY as
-                 a copy of another vector (`v = s.v`: one copy in, no push or insert),
+                 a copy of another vector (`v = s.v`: one copy in, no push or insert,
+                 and that copy outside every loop — a copy repeated by a loop is an
+                 accumulator, `keybuf += k`, which no copy elision borrows),
                  which the copy elision's borrow tiers and the transparent link remove
                  outright — every one of those rewrites asks for a local, and a buffer
                  would turn a saved copy into a paid one; a local declared INSIDE a loop, whose
@@ -3562,7 +3637,20 @@ line in `Output::output_function`'s prelude.
                  that exists, and the IR does not tell the two apart), a vector
                  field bound by an append, a `__nullable` element whose
                  discriminant no `OpSet` names — keeps the prefill: the check can
-                 only DECLINE the elision.  `db_vars`
+                 only DECLINE the elision.  BUFFER clauses: a return buffer's
+                 GUARDED mint (`if <buffer holds a record> null else
+                 OpDatabase(v, tp)`) heads its literal's group like a plain mint;
+                 inside a group a bind of another variable whose value never names
+                 the record (`__lift = f(…)`, the value a later set stores) is
+                 passed over, and an inline record field written member by member
+                 (`OpSet…(OpGetField(v, off, Sub), m, x)`) is covered when every
+                 member of `Sub` is.  An element handed to a call AS ITS RETURN
+                 BUFFER (`r = f(…, e)`, then `if OpDistinctStore(r, e)
+                 OpCopyRecord(r, e, FRESH | tp)`) is covered when `f` writes every
+                 field of the buffer it is handed — every mint of it covers and
+                 every `return` of it follows one in its own block — since the
+                 answer is then `e` itself, and the fresh copy writes every byte
+                 of `e` otherwise.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
                  `mint_tps` by the element type (every mint group in the function
                  must).  The interpreter keeps the prefill and is the oracle.
@@ -5455,6 +5543,45 @@ native: 4 stores, 30 claims and 10 deletes → 3, 17 and 5, and −43 % time.  S
 `LOFT_NO_PURE_REUSE=1`, trace `LOFT_TRACE_PURE_REUSE=1`.  Site: `pure_reuse.rs`.  Guard
 `tests/scripts/a-pure-call-made-twice-is-computed-once.loft`, pin `tests/pure_reuse.rs`.
 
+```
+  (R-PureReuse)  THE SHARED-CALL CLAUSE.  A function is TOTAL when it is effect-free, has
+  shared         no loop, reaches no call of itself, uses only operators that read,
+                 compare or hand a buffer on (`OpClearVector`, `OpAdoptVector` into its
+                 own buffer) — none that can report a fault, so no checked arithmetic —
+                 and calls only total functions and natives declared `#pure`.  `#pure` on
+                 a native declares exactly this: its value is its only effect.  A
+                 SHARING WRAPPER of a total `f` whose result is a vector is an
+                 effect-free function of the same load whose body makes ONE call of `f`,
+                 on parameters it never assigns, into a buffer of its own.  In one block,
+                 calls of a total `f` on the same argument variables — each a sharing
+                 wrapper's call or a call of `f` itself, standing anywhere in their
+                 statements, at least one where its statement always evaluates it —
+                 with nothing between them, nor beside them in their statements, that
+                 rebinds an argument or writes a store other than one the function made
+                 itself (when every argument is a parameter or a scalar), are `f` called
+                 once into a fresh local before the first.  A call of `f` reads that
+                 local, or copies it into the buffer it was handed; a wrapper's call is
+                 its VARIANT's: the wrapper taking the vector as one more parameter,
+                 standing where its body called `f`.  An `if` arm that leaves the
+                 function is not between: no later call is reached from it.
+```
+
+**In words.** Applies in: the IR phase, beside the projection clause, both backends; not where a
+definition can change after its calls are compiled (`open_world`) nor where a run reports the
+functions it entered (`observes_entries`), since a variant is entered instead of its wrapper.
+Allowed because a total call answers the same value wherever it runs on unchanged arguments
+and adds neither an effect nor a report: computing it before a short circuit that would have
+skipped it costs only the work.  Profitable because one call stands where its statement
+always evaluates it — the path that reaches it makes that call anyway — so the extra call is
+paid only on a path that leaves in between, an error return.  A store the function made
+itself (assigned only `null`, a literal, or a field, element or new record of another such
+local) was made after the arguments were bound, so no argument can live in it; a write there
+cannot change what the call would answer.  What it removes: a request that validated each
+base64 payload (`pa_is_base64`) and then decoded it again to use (`pa_cbytes`) decoded every
+payload twice; native `request` 6.88 → 4.72 ms (−31 %), the hand-written form exactly.
+Trace `LOFT_TRACE_PURE_REUSE=1` (`…, shared`).  Site: `shared_call.rs`.  Guard
+`tests/scripts/a-call-two-wrappers-share-is-made-once.loft`, pin `tests/pure_reuse.rs`.
+
 ### Two equal reads in one statement are one read
 
 ```
@@ -5870,7 +5997,9 @@ the verify switch.
                  local whose dependencies reach it: a caller never hands a buffer one
                  of its other arguments reaches (loft#1895).  A twin emits the IR's
                  own semantics — no adoption of B by a result local (R-RetAdopt) and
-                 no refill — so what admission read is what runs.
+                 no refill — so what admission read is what runs.  A WORK BUFFER the
+                 caller lends (R-WorkBuffer) is admitted as X like a local: each call
+                 site lends its own, so no other argument can be a view of it.
 ```
 
 **In words.**  A builder clears the buffer it is handed and writes its result into it, and a
@@ -5882,6 +6011,32 @@ Native only; the interpreter copies and is the reference.
 **BUILT** (`src/generation/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
 `emit.rs` / `text.rs`; `LOFT_NO_APPEND_TWIN`, `LOFT_TRACE_APPEND_TWIN`; guard
 `loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft`).
+
+### A call result bound first and appended later is appended where it is made
+
+```
+  (R-BoundAppend) in one block, `k = f(args); S; dst += k` — k a local bound ONCE, to
+                 a call of a function answering a vector through its hidden buffer;
+                 dst a local or a parameter of vector type; every statement of S
+                 mentioning k, dst and every local whose dependencies reach dst only as
+                 the operand of a length, rebinding neither, and leaving nothing early
+                 (no `return`, `break`, `continue`, `yield`); k mentioned nowhere else —
+                 is `b0 = len(dst); dst += f(args); kl = len(dst) - b0; S'`, S' reading
+                 `len(dst)` as b0 and `len(k)` as kl.
+```
+
+**In words.**  The append the original makes after S is made before it, which only a statement
+of S could tell: by reading dst — which it does only through its length, served from before
+the growth — or by never reaching the append, which no statement of S can.  The rewritten
+append is (R-AppendTwin)'s shape, so on native f builds its result after dst's elements, and
+neither k's buffer nor the copy exists; the interpreter makes the same calls in the same order
+with one local fewer.  cbor's `encode_map` encodes each key into k, records its offset and
+length, and appends it: `encode` 7.04 → 5.78 ms native (−17.9 %, the hand-written form exactly),
+hash unchanged.  `LOFT_NO_BOUND_APPEND=1` keeps the bind and the copy;
+`LOFT_TRACE_BOUND_APPEND=1` names each append moved.  Site: `src/bound_append.rs`, in the scope
+pass's IR phase beside `(R-PureReuse)`.  Guard
+`tests/scripts/a-bound-result-appended-later-is-appended-where-it-is-made.loft`, pin
+`tests/bound_append.rs`.
 
 ### A call whose result is moved whole into an element builds it there
 
@@ -6105,7 +6260,7 @@ and the declines: a byte string read, the frame written after the decode, a deco
 returned, a span variant minted alone.  Its planted defect reads a span one byte late; the
 pin `tests/decode_view.rs` holds the roots and the region.
 
-**The structure clause (@C141, read once) — PROPOSED.**  Instance 1 keeps a decoded value's
+**The structure clause (@C141, read once) — instance 1 BUILT.**  Instance 1 of the rule keeps a decoded value's
 LEAVES in the frame and still builds its structure: `check_request` mints a map, a vector of
 three entries and an enum value per key and per value, about 40 % of the call, to read one key.
 The owner extended @C141 to that structure for a value read once:
@@ -6148,12 +6303,63 @@ asked for twice or out of order — and (7) lists the reads an encoding answers 
 before anything reads it, so a malformed tail cannot hide behind an early match.  (9) builds
 what escapes, so a value the program keeps costs what it costs today — the rule the owner set:
 a kept value is a built one.  A value inspected more than once is the case of
-`(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.  Switch
-`LOFT_NO_DECODE_STRUCTURE` (planned); falsifier: the
-built and the positional forms run side by side under `LOFT_HOIST_VERIFY=1` and every read is
-compared.  Priced on `check_request` as the library form of its output — a validation walk,
-then the key searched in the frame's bytes: 1.70 → 0.60 ms (5.04× → 1.79×, hash unchanged),
-against −5 % for the validation walk alone (worklist.md § 0).
+`(R-SharedCall)` and `(R-DeadResult)`: built once, only the parts read.
+
+**Instance 1 of the structure clause, built** (`src/generation/decode_structure.rs` and
+`decode_structure_scan.rs` decide, `decode_structure_emit.rs` writes).  It rides on the view
+clause's roots, region and frame.  The POSITION of a value is the scalar arguments of the
+decoder call that answers it: `decode(b).value` is `read_value(b, 0, 0).value`, a map entry's
+key is `read_value(b, p, d + 1).value` for the `p` the loop handed that call.  The frame does
+not change while a position lives ((1), the region's read-only walk), and the decoder answers
+from its arguments and the frame alone, so running it again at a position takes the same path
+and answers the same value.
+- The PRODUCER is a recursive region function answering a record of one view-enum field and
+  scalar fields, from one frame parameter and scalar parameters.  Its SHAPE TWIN `P__ps`
+  drops every statement that only builds — a mint, a field write, an append, a release,
+  whose operators are a closed list that report no fault — and keeps every test, loop and
+  scalar, so its scalar fields are the plain form's; each `return` answers the variant's tag,
+  ONE slot (a number, or a text run's span `(lo, hi)` when the run's guard holds) and the
+  scalar fields.  A field only the built value holds — a text that is no run, a byte string
+  — answers a marker, and a read of it calls the plain decoder at the position (`P__pst`)
+  and takes the field from the value it builds: (9) for a leaf.  Its WALK TWIN `P__psw<k>`
+  runs the same body and hands each element appended to the walked vector field — the
+  positions of the calls its parts were moved from — to a closure, stopping at the closure's
+  first answer.  A walked local may only be appended to and moved into its field, and a
+  call's position must not be reassigned between its part's binding and the append.
+- A CONSUMER is every other function of the root's chain.  It holds a value as a tuple:
+  `(0, position…)`, or `(tag, 0…)` for a unit literal it returns; a decoded record as
+  `(position, scalar fields…)`; an element as a tuple of positions.  The reads (7) admits:
+  the tag (the shape, computed once per arm), a number, boolean or text field inside the arm
+  that proved the variant, a scalar field of the record, an in-order walk of a vector field
+  (`for e in v.entries`, the loop's body becoming the walk twin's closure, which leaves only
+  by `return`).  An index, a length, a second walk, a value stored or handed to a non-loft
+  function declines the root.
+- (6) in instance 1: a tag test reads the head and a field read inside its arm is part of
+  that match; a walk, a copy, a hand-off to a consumer or a return HANDS a position ON, and
+  a position handed on twice declines.  No position made outside a loop or a walk is read
+  inside it, and no consumer reaches itself, so each part is decoded a bounded number of
+  times.
+- (8) holds by construction: the record the root reads `ok` and `next` from is the decoder's
+  own scalar answer, computed by the shape twin over the whole frame before the root reads a
+  position, and a refused frame's position answers the decoder's value for it.
+- Not yet admitted: a byte-string field read, a value walked by index, a decoder with two
+  slot fields in one variant, a consumer that is recursive.
+
+A position decoded where it was made — the decoder's own call in `decode`, each part a walk
+appends — carries that decode's tag and slots, so no reader decodes its head again.  Measured
+on pluginabi `check_request` (`bench/stats.py`, one core, hash unchanged): 4.66× → 0.94×
+(1.58 → 0.32 ms against the twin's 0.34 ms); the hand price of the same form was 0.30 ms.  Switch `LOFT_NO_DECODE_STRUCTURE` (instance 1 of the view clause alone); trace
+`LOFT_TRACE_DECODE_STRUCTURE` names each producer and root admitted and each decline with its
+reason, `=2` also prints each consumer's IR.  Guard
+`tests/scripts/a-decoded-value-is-read-at-its-position.loft`, every cell hand-computed on both
+backends — lookups found, absent, duplicated and under a number key, a number and a boolean, a
+label only the built value holds, an array summed, a nested lookup, a find in an array of maps,
+the status alone, invalid UTF-8, a frame one level too deep, truncated, or with a trailing
+byte, an empty map, and the declines: a second hand-off, a read in a loop, a value returned.
+Its planted defect hands every part of an entry at the key's position; the pin
+`tests/decode_structure.rs` holds the roots, the twins and the switch.  The side-by-side run
+of both forms under `LOFT_HOIST_VERIFY=1` the clause names is not built: the switch A/B and
+the interpreter are its falsifiers.
 
 ### Proposed clauses on existing rules
 

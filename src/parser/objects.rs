@@ -594,6 +594,17 @@ impl Parser {
         // '$' refers to the current record in struct field default expressions
         // …and in a generic struct's own declaration (@PLN165), where a field read defers to
         // each instance (`Parser::TV_FIELD`, bound by `bind_instance_code`).
+        // Inside the function a `$`-reading default was lowered into, `$` is that function's
+        // first parameter (`dollar_record`), which IS `Var(0)` there too.
+        if name == "$"
+            && let Some(record) = self.dollar_record
+        {
+            if self.init_field_tracking {
+                self.init_reads_record = true;
+            }
+            *code = Value::Var(0);
+            return Type::Reference(record, crate::data::Deps::none());
+        }
         if name == "$"
             && matches!(
                 self.data.def_type(self.context),
@@ -1477,13 +1488,13 @@ impl Parser {
         // type at all — the same peel `enum_context` already does to decide there IS an
         // enum context here (loft#1065 one site over, loft#1416).
         } else if let Type::Enum(enr, _, _) = parent_tp.peel_link()
-            && self.data.def(*enr).attr_names.contains_key(name)
+            && self.data.variant_attr(*enr, name).is_some()
         {
             let enr = *enr;
             t = self.emit_variant_value(enr, name, code);
         } else if let Type::Reference(enr, _) = parent_tp.peel_link()
             && self.data.def_type(*enr) == DefType::Enum
-            && self.data.def(*enr).attr_names.contains_key(name)
+            && self.data.variant_attr(*enr, name).is_some()
         {
             let enr = *enr;
             t = self.emit_variant_value(enr, name, code);
@@ -2342,7 +2353,7 @@ impl Parser {
 
     pub(crate) fn write_to_file(
         &mut self,
-        file_var: u16,
+        file_var: Value,
         val: Value,
         val_type: &Type,
         cast_alias: u32,
@@ -2428,7 +2439,7 @@ impl Parser {
         let var_ref = self.cl("OpCreateStack", &[Value::Var(temp_var)]);
         let write = self.cl(
             "OpWriteFile",
-            &[Value::Var(file_var), var_ref, Value::Int(i32::from(db_tp))],
+            &[file_var, var_ref, Value::Int(i32::from(db_tp))],
         );
         Value::Insert(vec![assign, write])
     }
@@ -2501,8 +2512,8 @@ impl Parser {
             );
             return ret;
         }
-        if let Some(a_nr) = self.data.def(enum_nr).attr_names.get(variant_name) {
-            *code = self.data.attr_value(enum_nr, *a_nr);
+        if let Some(a_nr) = self.data.variant_attr(enum_nr, variant_name) {
+            *code = self.data.attr_value(enum_nr, a_nr);
         }
         ret
     }
@@ -2870,7 +2881,7 @@ impl Parser {
             // emit via the shared emitter (plain discriminant or mixed-enum
             // allocation), resolved within the variant's own enum.
             if let Type::Enum(en, _, _) = t
-                && self.data.def(en).attr_names.contains_key(name)
+                && self.data.variant_attr(en, name).is_some()
             {
                 return self.emit_variant_value(en, name, code);
             }
@@ -3078,6 +3089,12 @@ impl Parser {
                 return false;
             }
             if !self.first_pass && (self.vars.tp(*nr).is_unknown() || !self.vars.is_defined(*nr)) {
+                // A PARAMETER still untyped on pass 2 is a lambda's whose type could not be
+                // inferred: that refusal is the report, so answer "reported" and let the caller
+                // poison the value rather than add an "Unknown variable" per read (loft#2085).
+                if self.vars.is_argument(*nr) && self.vars.tp(*nr).is_unknown() {
+                    return true;
+                }
                 let name = self.vars.name(*nr).to_string();
                 if name == "_" {
                     // loft#795 — `_` DISCARDS its value (each `_ = …` gets its own slot),
@@ -3210,6 +3227,38 @@ impl Parser {
         let mut arg_expr = Value::Null;
         let arg_tp = self.expression(&mut arg_expr);
         self.lexer.token(")");
+        // loft#2079 — `T.parse(…)` answers a T, so a field the parse can leave without a value
+        // (a bare enum with no default, `@FR-D-NoEnumF`) is refused here as `text as T` is.
+        if !self.first_pass {
+            let target = if self.data.def_type(d_nr) == DefType::Enum {
+                Type::Enum(d_nr, true, crate::data::Deps::none())
+            } else {
+                Type::Reference(d_nr, crate::data::Deps::none())
+            };
+            if let Some(reason) = self.data.parse_unfillable(&target) {
+                let t = self.data.def(d_nr).name().to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    code = "text-parse-may-leave-a-field-unfilled",
+                    "`{t}.parse(…)` answers a `{t}` that every field of the text fills, and it \
+                     cannot: {reason}; or parse with `text as {t}?`, which answers null when the \
+                     text leaves such a field out"
+                );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!("parse with the checked cast `text as {t}?`"),
+                    condition: Some(
+                        "a text that leaves the field out is an expected input — the result is \
+                         then nullable"
+                            .to_string(),
+                    ),
+                    edit: None,
+                    concept: "checked cast",
+                    concept_ref: "@F5",
+                });
+            }
+        }
         if !self.first_pass {
             // JsonValue resolves to either Type::Reference (if a
             // user-declared alias) or Type::Enum(_, true, _) (mixed

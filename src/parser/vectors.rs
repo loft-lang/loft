@@ -5941,8 +5941,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.expected = saved_expected;
             parsed
         };
-        // `(Slice-Value)` — a slice as an ELEMENT is the vector the slot wants.
-        if let Some(vt) = self.iterator_as_vector(&mut p, &t, &in_t.clone()) {
+        // `(Slice-Value)` — a slice as an ELEMENT is the vector the slot wants, and in a
+        // literal no annotation types it is the vector it makes: left an iterator, it typed
+        // `[src[3..], src[..1]]` as a vector of iterators — `vv[0][0]` was refused as indexing
+        // a non-vector and `vv.len()` an internal compiler error (loft#2084).
+        let want = match t.base() {
+            Type::Iterator(elm, _) if in_t.is_unknown() => Type::Vector(elm.clone(), Deps::none()),
+            _ => in_t.clone(),
+        };
+        if let Some(vt) = self.iterator_as_vector(&mut p, &t, &want) {
             t = vt;
         }
         // @FR-C-Var — an inferred literal's tuple element stores its variant members as their
@@ -7061,7 +7068,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             } else if crate::env_once!(std::env::var_os("LOFT_TRACE_FUSE").is_some()) {
                 eprintln!(
                     "[fuse] fn={} decline=gate first_pass={} keyed={} container={}",
-                    self.data.def(self.context).name(),
+                    self.fuse_context(),
                     self.first_pass,
                     self.keyed_local_kind(vec),
                     fused_container.is_some()
@@ -7069,6 +7076,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
         }
         ls
+    }
+
+    /// The function a `[fuse]` trace line names: a constant's initialiser
+    /// (`NAMES: vector<text> = ["a", "b"];`) is lowered outside any function, with no
+    /// definition to name, and a trace must never change what compiles.
+    fn fuse_context(&self) -> String {
+        if (self.context as usize) < self.data.definitions.len() {
+            self.data.def(self.context).name().to_string()
+        } else {
+            "<top level>".to_string()
+        }
     }
 
     /// The fused scalar append (@PLN157 § V-m): when `ls` ends in exactly
@@ -7086,10 +7104,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_FUSE").is_some());
         if n < 3 {
             if trace {
-                eprintln!(
-                    "[fuse] fn={} decline=short({n})",
-                    self.data.def(self.context).name()
-                );
+                eprintln!("[fuse] fn={} decline=short({n})", self.fuse_context());
             }
             return;
         }
@@ -7104,10 +7119,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 && args[1] == Value::Var(elm));
         let Value::Call(set_d, set_args) = &ls[n - 2] else {
             if trace {
-                eprintln!(
-                    "[fuse] fn={} decline=no-setter-call",
-                    self.data.def(self.context).name()
-                );
+                eprintln!("[fuse] fn={} decline=no-setter-call", self.fuse_context());
             }
             return;
         };
@@ -7119,7 +7131,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if trace {
                 eprintln!(
                     "[fuse] fn={} decline=shape new_ok={new_ok} fin_ok={fin_ok} nargs={}",
-                    self.data.def(self.context).name(),
+                    self.fuse_context(),
                     set_args.len()
                 );
             }
@@ -7143,17 +7155,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if trace {
                 eprintln!(
                     "[fuse] fn={} decline=container tp={tp} fld={fld}",
-                    self.data.def(self.context).name()
+                    self.fuse_context()
                 );
             }
             return;
         }
         if set_args[0] != Value::Var(elm) || set_args[1] != Value::Int(0) {
             if trace {
-                eprintln!(
-                    "[fuse] fn={} decline=operands",
-                    self.data.def(self.context).name()
-                );
+                eprintln!("[fuse] fn={} decline=operands", self.fuse_context());
             }
             return;
         }
@@ -7163,10 +7172,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             .find(|(set, _)| *set == set_name)
         else {
             if trace {
-                eprintln!(
-                    "[fuse] fn={} decline=kind {set_name}",
-                    self.data.def(self.context).name()
-                );
+                eprintln!("[fuse] fn={} decline=kind {set_name}", self.fuse_context());
             }
             return;
         };
@@ -7182,10 +7188,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let fused = self.cl(push, &push_args);
         ls.push(fused);
         if trace {
-            eprintln!(
-                "[fuse] fn={} fused={push}",
-                self.data.def(self.context).name()
-            );
+            eprintln!("[fuse] fn={} fused={push}", self.fuse_context());
         }
     }
 

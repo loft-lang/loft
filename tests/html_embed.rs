@@ -181,7 +181,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
         eprintln!("SKIP: python3 not installed");
         return;
     };
-    let loft = repo_root().join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
@@ -281,7 +281,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
 // @speed 40.0
 #[test]
 fn the_embedded_file_is_the_one_the_program_would_open() {
-    let loft = repo_root().join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
@@ -340,7 +340,7 @@ fn the_embedded_file_is_the_one_the_program_would_open() {
 // @speed 40.0
 #[test]
 fn a_librarys_declaration_brings_the_librarys_own_file() {
-    let loft = repo_root().join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
@@ -412,7 +412,7 @@ fn a_librarys_declaration_brings_the_librarys_own_file() {
 // @speed 60.0
 #[test]
 fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
-    let loft = repo_root().join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;

@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-BoundAppend` — `k = f(args); S; dst += k` is `b0 = len(dst); dst += f(args);
+// kl = len(dst) - b0; S'`, with `S'` reading `len(dst)` as `b0` and `len(k)` as `kl`.  On
+// native the moved append is `(R-AppendTwin)`'s shape: `f` builds its result after `dst`'s
+// elements, with no buffer for `k` and no copy (cbor's `encode_map`, which encodes each key,
+// records its offset and length, and appends it).
+//
+// What can go wrong: a statement between that reads `dst` sees it grown too soon, one that
+// writes `dst` lands after the moved append instead of before it, an early exit between
+// skips an append the rewrite has already made, a later read of `k` finds nothing, a length
+// read through the wrong one of the two locals.  Values hand-computed;
+// `LOFT_NO_BOUND_APPEND=1` keeps the bind and the copy, and the cells answer the same.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is planted
+//   defects (2026-10-20), on both backends: the statements between admitted whatever they
+//   do fails c2 (`firsts` 10 10 for -1 10: the element read sees dst grown); `k` admitted
+//   while mentioned after the append makes c5 an internal compiler error (k read, never set).
+//   CHANNEL: an assertion, and the compiler's refusal.
+
+// [n*10, n*10+1, …] of length n.
+fn piece(n: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for i in 0..n { r += [n * 10 + i]; }
+  r
+}
+
+// c1: the encode_map shape — offsets and lengths recorded between the bind and the append.
+//   n=1: [10], n=2: [20,21], n=3: [30,31,32] → offs 0,1,3; lens 1,2,3; buf 10 20 21 30 31 32.
+fn c1() {
+  buf: vector<integer> = [];
+  offs: vector<integer> = [];
+  lens: vector<integer> = [];
+  for n in 1..4 {
+    k = piece(n);
+    offs += [len(buf)];
+    lens += [len(k)];
+    buf += k;
+  }
+  assert(len(offs) == 3 && offs[0] == 0 && offs[1] == 1 && offs[2] == 3, "c1 offs {offs}");
+  assert(lens[0] == 1 && lens[1] == 2 && lens[2] == 3, "c1 lens {lens}");
+  assert(len(buf) == 6 && buf[0] == 10 && buf[2] == 21 && buf[3] == 30 && buf[5] == 32, "c1 buf {buf}");
+}
+
+// c2: a statement between reads an ELEMENT of dst — it must see dst before the append.
+//   n=1: buf empty → -1; n=2: buf[0] = 10.
+fn c2() {
+  buf: vector<integer> = [];
+  firsts: vector<integer> = [];
+  for n in 1..3 {
+    k = piece(n);
+    firsts += [buf[0] ?? -1];
+    buf += k;
+  }
+  assert(firsts[0] == -1 && firsts[1] == 10 && len(buf) == 3, "c2 firsts {firsts} buf {buf}");
+}
+
+// c3: a statement between WRITES dst — its element goes before k's: 99 10 99 20 21.
+fn c3() {
+  buf: vector<integer> = [];
+  for n in 1..3 {
+    k = piece(n);
+    buf += [99];
+    buf += k;
+  }
+  assert(len(buf) == 5 && buf[0] == 99 && buf[1] == 10 && buf[2] == 99 && buf[3] == 20, "c3 buf {buf}");
+}
+
+// c4: an early exit between — the append of the pass that leaves never happens: [10].
+fn c4(stop: integer) -> vector<integer> {
+  buf: vector<integer> = [];
+  for n in 1..4 {
+    k = piece(n);
+    if n == stop { return buf; }
+    buf += k;
+  }
+  buf
+}
+
+// c5: k read after the append — it must still hold its elements: 10 + 20 = 30.
+fn c5() {
+  buf: vector<integer> = [];
+  t = 0;
+  for n in 1..3 {
+    k = piece(n);
+    buf += k;
+    t += k[0] ?? 0;
+  }
+  assert(t == 30 && len(buf) == 3, "c5 t {t} buf {buf}");
+}
+
+// c6: dst an ordinary parameter (the caller's vector): 7 10 20 21.
+fn fill(dst: &vector<integer>) {
+  for n in 1..3 {
+    k = piece(n);
+    dst += k;
+  }
+}
+
+fn main() {
+  c1();
+  c2();
+  c3();
+  r4 = c4(2);
+  assert(len(r4) == 1 && r4[0] == 10, "c4 got {r4}");
+  c5();
+  v: vector<integer> = [7];
+  fill(v);
+  assert(len(v) == 4 && v[0] == 7 && v[1] == 10 && v[3] == 21, "c6 got {v}");
+  println("done");
+}

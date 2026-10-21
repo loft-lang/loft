@@ -118,7 +118,7 @@ fn run_html_wasm_full(
         return None;
     }
 
-    let loft_bin = repo_root().join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return None;
@@ -667,7 +667,7 @@ fn parallel_html_builds_do_not_cross_contaminate() {
         eprintln!("SKIP: wasm32-unknown-unknown target not installed");
         return;
     }
-    let loft_bin = repo_root().join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release`)");
         return;
@@ -882,7 +882,7 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
     let wasmtime = find_wasmtime()?;
     which("rustc")?;
     let root = repo_root();
-    let loft_bin = root.join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         return None;
     }
@@ -1222,7 +1222,7 @@ fn pln26_phase3_native_package_runs_on_wasm() {
         return;
     }
     let root = repo_root();
-    let loft_bin = root.join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("skip: target/release/loft not built");
         return;
@@ -1485,7 +1485,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
         eprintln!("SKIP: rustup target wasm32-unknown-unknown not installed");
         return;
     }
-    let loft_bin = repo_root().join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return;
@@ -1732,7 +1732,7 @@ fn pln24_html_c_library_available_compiles_and_answers_false() {
 /// than a rustc cascade against loft's own internals.
 #[test]
 fn pln24_a_reachable_c_binding_is_refused_end_to_end_on_wasm() {
-    let loft_bin = repo_root().join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) || !wasm32_target_installed() {
         eprintln!("SKIP: release binary or wasm32 target missing");
         return;
@@ -2267,8 +2267,7 @@ fn html_a_trap_is_reported_to_the_page() {
         eprintln!("SKIP: rustup target wasm32-unknown-unknown not installed");
         return;
     }
-    let root = repo_root();
-    let loft = root.join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
@@ -2394,7 +2393,7 @@ fn a_browser_build_builds_no_host_native_library() {
         return;
     }
     let root = repo_root();
-    let loft_bin = root.join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return;

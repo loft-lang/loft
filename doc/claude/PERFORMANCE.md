@@ -47,6 +47,7 @@ Ask the tool that measures:
 | the classic benchmark suite, every lane | `bench/run_bench.sh` |
 | which fn, line or path burns the time | `make profile` — § Profiling a run |
 | the interpreter against native, every routine with its censuses | `make interp-gap` → `target/interp-gap/report.md` |
+| how far each REWRITE reaches — the sites it admitted against the sites it refused, the refusals by reason | `make decline-census` (`scripts/decline_census.py`, a report; `ARGS="--record"` keeps it in `bench/portal/decline_census.tsv`).  A routine over its bar is a shape a rewrite declined; the reason at the top of a rule that matters is the next arc, picked by yield |
 | did this change move the WORST routines — interpreter/native and native/Rust, re-timed in seconds to minutes | `make worst` (`scripts/worst.py`): the working set is taken from the last complete `make interp-gap` and `make perf-portal`, so a full run is what redefines it |
 
 The rendered benchmark page for users is [doc/00-performance.html](../00-performance.html).
@@ -74,13 +75,29 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    time](#count-before-you-time) for an asymptotic question; `LOFT_STORE_CENSUS` for data that
    leaves the cache ([INTERPRETER_PERFORMANCE.md § What to
    optimise](INTERPRETER_PERFORMANCE.md#what-to-optimise-the-data-that-leaves-the-cache)).
+   Name it from the CURRENT emission: a profile expires as rules land (a store share measured
+   before the work-buffer rules priced a fix that then measured level).  **`make gap-report
+   ARGS="--bench <lane> --fn <op>"`** does this for one routine: its instructions against
+   its twin's, split into what the loft lines compile to, the runtime inlined into them and
+   the runtime called, the loft lines that carry them, and every rule decline in those
+   functions — a store, copy or check still emitted is a rule that declined it, and the
+   reason is the work item.  Read its split before picking a fix: a step of 5–10 % on a
+   routine still a factor off its twin is working on the wrong row, and the missing piece
+   is wherever the rest of the gap lives.  For now only the null-integer cost is left alone
+   (worklist § Focus).
 4. **Hand-write the efficient form first** — in loft, or as the IR the rewrite would produce —
    for that one case, read what it compiles to on BOTH backends (`--interpret --dump`,
    `--native-emit`, `bench/portal/hand_price.sh`) and time it.  That is the prize, and the
    proof the target shape is fast.  If the hand-written form is not faster, the named work was
-   not the cost: go back to step 3.
+   not the cost: go back to step 3.  The hand form changes only what the rule would change —
+   one that also drops checked arithmetic prices a rewrite no rule may build (`slope_path`:
+   −27.5 % priced, −15 % available) — and a gain made of two pieces is split by pricing each
+   alone.  Time that moves without instructions is a stall (a reference written to memory and
+   read back, an alias): `perf stat`'s stall counters name it faster than elimination does.
 5. **Only then build the rewrite that removes the unneeded work**, turning the natural spelling
-   (the canonical one) into that form.  Where both backends gain, in the IR phase — a native
+   (the canonical one) into that form — after checking its admission holds AT the target (its
+   gate or trace on that shape): a clause whose gate declines the very loop it was written for
+   was built, measured and removed.  Where both backends gain, in the IR phase — a native
    rule moved there ([INTERPRETER_PERFORMANCE.md § Why the interpreter is optimised at
    all](INTERPRETER_PERFORMANCE.md#why-the-interpreter-is-optimised-at-all)); a runtime lever
    before a generator rewrite ([§ Wide before deep](#wide-before-deep)).  **No combined opcode
@@ -108,6 +125,8 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    new ones.  One optimisation never starts the full list (`make perf-portal`).  A row that
    reads slower than its last committed measurement (`make perf-trend` lists them) is the
    exception that needs no schedule: re-measure it alone, at any time, before explaining it.
+   A row that moved while every function it runs is byte-identical between the two builds
+   (diff the two emissions) moved by code placement, not by the change.
    The measured before/after goes in the commit and in the plan or ledger that owns the row.
 8. **Re-analyse after every few optimisations — never work a list of fixes to its end.**  A
    fix moves more than its own row: it changes what LLVM inlines and what other rewrites see,

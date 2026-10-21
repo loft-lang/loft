@@ -395,6 +395,29 @@ the ~30-min Windows leg; reach for it when the change touches a platform seam.  
 release-gate` is the heavier sibling (every nightly against one commit, 60–90 min) and is
 release evidence, not a branch gate.
 
+**A question about a few tests on one platform is a focused probe, not a gate.**  Each runs
+a nextest filterset (or a bash snippet) on one runner, has no concurrency group — so it can
+run beside a `ci.yml` dispatch without cancelling it — and never saves a cache:
+
+```bash
+gh workflow run linux-probe.yml --ref <branch> -f filter='binary(native) or binary(n2_cdylib)'
+gh workflow run linux-probe.yml --ref <branch> -f run='readelf -d target/release/loft'
+gh workflow run win-cdylib.yml  --ref <branch> -f filter='binary(native)'   # both link modes
+gh workflow run windows-probe.yml --ref <branch> -f tests='--test native'  # cargo test args
+gh workflow run macos-probe.yml --ref <branch> -f filter='…'               # the native corpus
+```
+
+`win-cdylib` stops at its first failing test, so one environmental failure hides every
+answer after it: leave out what that runner cannot host — `test(/native_scripts_/)` (the
+corpus fills its temp disk) and a test that runs `target/release/loft` by path, which this
+job never builds (`package_layout`).  `linux-probe` restores the Linux leg's cache read-only — a cache only a push to `main` saves,
+so it starts cold whenever that one has been evicted — and runs the tests the way `ci.yml`'s
+Test job does (dev profile, the `ci` nextest profile, the release rlib built first), so its
+answer is that leg's answer for the tests it selects.  GitHub dispatches a workflow by name
+only once the file is on `main`; before that, a push of the commit to the probe's own branch
+(`linux-probe`, `windows-probe`) runs its standing probes — for `linux-probe`, every test
+binary that runs a native-package program.
+
 **The inner loop can die the same way, and earlier than the tests (2026-09-21).**  A
 `find_problems.sh --subject store` run that had passed two hours before was killed for
 memory while still COMPILING — a subject links tens of test binaries in parallel, and the
@@ -587,7 +610,7 @@ does not belong on a PR, however cheap it is.**
 
 | cadence | jobs | trigger |
 |---|---|---|
-| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`), several advisory doc jobs, **the language suite** (`language-suite`: loft-lang/loft-suite at the commit `tests/loft-suite.pin` names, every rule cell on both backends through `loft --tests` against the release binary the diff builds — required, on every diff, @PLN193) | `pull_request` |
+| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`), the advisory native suites under a STATIC link (`static-link`: `LOFT_NATIVE_CABI=0`, every suite that links a package; ubuntu on a PR, macOS too on push / daily / dispatch — no other Unix leg links statically, @PLN197), several advisory doc jobs, **the language suite** (`language-suite`: loft-lang/loft-suite at the commit `tests/loft-suite.pin` names, every rule cell on both backends through `loft --tests` against the release binary the diff builds — required, on every diff, @PLN193) | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
 | **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, POISON-CLAIM claimed-slot gate (both backends), STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
 | **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
@@ -602,7 +625,7 @@ does not belong on a PR, however cheap it is.**
 | **Mondays 06:00** | `repro-build` — reproducible-build check (weekly, not nightly) | `schedule` |
 | **per PR + push to main** (`daily-build.yml`) | the four RELEASE bundles — `x86_64-pc-windows-msvc`, both Apple targets, `x86_64-unknown-linux-musl` — each through `scripts/make-release.sh`, smoke-tested by running a program out of the unzipped bundle, uploaded as a 30-day artifact.  Called the **daily build** because that is the term users know; the cadence is per PR, which at one or two PRs a day comes to the same thing.  **Advisory, never a required check** — a bundle leg must never block a merge the gate itself passed.  `concurrency: cancel-in-progress`, so a re-push replaces its predecessor rather than queueing.  Exists because release bundles are attached to `v*` tags ONLY, so between monthly releases the only way to run current loft was to compile it — which needs a machine that survives `codegen-units=1` on this crate, and a contributor whose laptop does not is what prompted it | `pull_request`, `push: main`, `workflow_dispatch` (one triple or all) |
 | **library repos** | one `library-ci` per repo, all callers of `library-ci-reusable.yml`, and **`ci / <package>` is a REQUIRED check on every repo's `main`** (41 contexts, one per package; `strict` off, so a PR need not be rebased onto a moved `main`, and `enforce_admins` off, so the owner's direct pushes to `main` still land — the way every library fix reaches it today): the per-package test matrix, plus a repo-level **`unreleased work`** job — a branch ahead of the default branch with no PR, a PR nobody has touched, or a `loft.toml` version the registry has never seen, each red after 14 days without activity (`scripts/unreleased-work.py`, `stale-days` to tune) | `push: main`, `pull_request` |
-| **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
+| **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR; and the focused probes — `linux-probe`, `windows-probe`, `win-cdylib`, `macos-probe` — which answer a few tests on one platform (§ When the local gate is unreliable) | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
 | **on demand — the release evidence** | `release-gate` — every row above that is a nightly (`ci.yml` full matrix incl. Windows + round-trip + oracle, `miri.yml` all gates, `revalidate-libs`, `browser-threads`, `repro-build`; `registry-validation` is deliberately not a leg, since the registry is never release-coupled and a package's own defect turned the gate red twice) called as reusable workflows against ONE commit, ending in one `verdict` job that is red if any leg is not `success` — advisory PR jobs included, and a leg red for a reason outside the candidate WAIVED on the record (`make release-checklist ARGS="--waive <leg> --note '…'"`). `make release-gate` dispatches and waits; `make release-checklist` reads the run for HEAD's sha. Never on a PR, never scheduled, never tags (§ The schedule is not a clock) | `workflow_dispatch`, or push to the `release-gate-probe` branch |
 
 ### A test that spawns a pool declares its share
@@ -693,6 +716,62 @@ HEAD's commit), not a replacement for the schedule: a red nightly is still fixed
 day it appears, or the gate finds a month of them at once. Cost is the nightlies' own
 — `ci.yml` 37–82 min, `miri.yml` 22–34 min, the rest under 15 — in parallel, so about
 an hour and a half of wall clock for a release that happens monthly.
+
+## Each leg builds only the binaries it runs
+
+**Rule: a test leg builds the test binaries it runs and nothing else — one compile of the
+crate, no release build — restores no `target/`, and builds no wasm runtime its binaries
+do not use.**  Of a leg's wall, the test phase was a third and the rest was build: every
+leg compiled all 445 test binaries and ran its share, compiled the crate a second time in
+release because twenty-two binaries spawned `target/release/loft` (and skipped silently
+without it), restored a whole `target/` that made the build no faster (the dependencies
+are half a minute of a cold build; the rest is loft and its test crates, which change with
+every commit), and warmed two wasm runtime rlibs for each of the two binaries whether or
+not a test of the leg ran a page (the measurements: [the history companion § Where a test
+leg's minutes went](CI_BUDGET-history.md#where-a-test-legs-minutes-went)).  Every test
+spawns the loft its own build made (`CARGO_BIN_EXE_loft`), whose `--native` links the
+rlib beside it in `deps/`; a test that wants the release binary is a test of the release
+row, not of the gate.
+
+What `ci.yml` does:
+
+- **`scripts/ci_shards.py` decides the leg a binary runs on, and nothing else does.**
+  `corpus` runs the whole `native` binary (the script corpus, each chunk taking the whole
+  runner, and native's other single-slot tests); `heavy` runs the other single-slot binaries
+  that drive an `--html` page (`html_wasm`, `wasm_debug_relay`, `multiplayer_v3`); the rest
+  — every other `tests/*.rs`, the unit tests, the bin targets' tests — is packed into
+  `rest-a/b/c` by the measured seconds in `scripts/ci_shards.tsv`, a test that takes the
+  whole runner (`threads-required`) counted four times, since nothing runs beside it.  The
+  binaries that need a wasm runtime are packed together into `rest-a`, which starts the pack
+  with the measured cost of building those runtimes so it is handed that much less.  The
+  `Shard` step answers each leg's `--test …` flags; `Build`, the warm-up and both nextest
+  passes take them, so the build and the run select one set.  `ci_test_filter.py` composes
+  the SAME filterset for every leg (its shard argument is accepted and selects nothing);
+  a single-slot group's member on a rest leg still runs in its one slot there.
+  `proof` fails when a binary is in no leg or in two; it runs on every leg and in `make ci`.
+- The wasm target and the runtime rlibs are built on the legs with a binary that uses
+  them (`ci_shards.py html` / `wasi`): the html and wasi shapes SIDE BY SIDE in one step
+  (`loft cache warm --runtime <shape>`, each a 1m45 release build of the crate for one
+  target that does not saturate the runner alone), and the warm-up proper runs
+  `--no-runtime` — a leg whose binaries use no runtime builds none, where every leg built
+  both, twice, before.
+- The build is `cargo test --no-run` with the leg's targets, not `cargo build`: nextest
+  runs the TEST artefacts, and for `--lib` that is the crate compiled once more as its
+  unit-test harness, which a `cargo build --lib` does not make — the test step then spent
+  two minutes compiling before its first test.
+- The Linux/macOS cargo cache keeps the registry, the git db and `~/.loft/build-cache`
+  and no `target/`: a restore in seconds, and the half-minute of dependencies compiled
+  cold.  The read-only restorers (`index-hygiene`, `leak-scan`, `viewer-smoke`, the
+  language suite, the release row) read the same list.
+- **`scripts/ci_timing.py legs <run>`** prints every leg's queue wait, its steps and its
+  total against the 20-minute budget, and each leg writes its own `Leg timing` table to
+  its job summary — the table a long leg is read from, before anything is split.
+
+Three rest legs and not more: a leg that builds its own 140 binaries starts its tests in a
+fraction of the old build, so the budget is met by making each leg quick, not by adding
+runners — a fourth leg would have cost a runner for every run to shave a minute.  Re-pack
+when a leg pulls away from the others: `scripts/ci_shards.py measure <junit>…` from the
+run's `nextest-junit-*` artifacts rewrites the table, `pack` shows the result.
 
 ## What to optimise and split
 A–E (moving the stdlib round-trip pair to nightly, the sharding attempts, macOS leaving the PR matrix, the cheap nightly gates on the PR, the build floor) are implemented, dropped or superseded; their record is in the history companion.

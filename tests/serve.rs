@@ -682,7 +682,7 @@ fn serve_game_debug_control_end_to_end() {
     // channel DIRECTLY, set a fn-entry breakpoint, observe the hit with
     // bindings while a game client's reply is held, resume, and stop the game
     // over the channel (D!:quit — the editor's stop for a swapped game).
-    let loft_bin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("skipping: {} not built", loft_bin.display());
         return;
@@ -789,7 +789,7 @@ fn serve_ws_game_launch_streams_and_stops() {
     // `loft` child process, `gameStatus` polls drain its output and report exit, `stopGame`
     // kills a running one.  The child binary comes from LOFT_BIN (here: the built loft —
     // in production the serve process IS the loft binary, so current_exe is used).
-    let loft_bin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("skipping: {} not built", loft_bin.display());
         return;

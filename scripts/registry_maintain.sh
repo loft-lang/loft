@@ -32,7 +32,13 @@
 #                    signer is handed `--expect <name>@<ver>` for each one — so a
 #                    run that somehow changed anything else REFUSES instead of
 #                    signing it.  A name with nothing to publish is an error.
-#                    This is the agent-safe form; it needs no `--yes`.
+#                    This is the agent-safe form; it needs no `--yes`.  It clones only
+#                    the family repo the index records for each name (the release URL of
+#                    its newest version), enumerating every repo only for a name the
+#                    index lacks or whose recorded repo no longer holds it; it skips the
+#                    drift and branch-hygiene reports, and verifies the pushed index
+#                    carries exactly what it published instead of re-checking the
+#                    whole registry.
 #   --dry-run        gather + print the worklist, change nothing
 #   --yes            skip the confirmation prompt
 #   --key <file>     Ed25519 private key (default: $LOFT_REGISTRY_KEY, else
@@ -84,18 +90,78 @@ sha256_of() { python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[
 echo "fetching registry index ..."
 curl -fsSL "https://raw.githubusercontent.com/$ORG/registry/main/index.json" -o "$tmp/index.json"
 
-echo "cloning family repos ..."
-repos=$(gh api "orgs/$ORG/repos?per_page=100" --jq '.[].name' | grep '^loft-libs-' || true)
-: > "$tmp/own.tsv" # <name>\t<version>\t<repo>\t<libdir>
-for r in $repos; do
-    git clone --quiet --depth 1 "https://github.com/$ORG/$r.git" "$tmp/$r"
-    for t in "$tmp/$r"/*/loft.toml; do
-        [ -f "$t" ] || continue
-        name=$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$t" | head -1)
-        ver=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$t" | head -1)
-        [ -n "$name" ] && printf '%s\t%s\t%s\t%s\n' "$name" "$ver" "$r" "$(dirname "$t")" >> "$tmp/own.tsv"
+# Which family repos to clone.  A named publish (`--only`) of a library the index already
+# carries reads its repo from that entry's release URL — the index is the record of where
+# every published library lives — and clones only those repos.  A name the index does not
+# have yet (a first publish) has no record, so the run falls back to enumerating the org.
+repos=""
+if [ -n "$ONLY" ]; then
+    repos=$(python3 - "$tmp/index.json" "$ONLY" <<'PYEOF'
+import json, sys
+pkgs = json.load(open(sys.argv[1]))["packages"]
+repos = set()
+for name in sys.argv[2].split(","):
+    pkg = pkgs.get(name)
+    if not pkg or not pkg.get("versions"):
+        sys.exit(0)               # unknown name: print nothing, enumerate the org
+    newest = max(pkg["versions"], key=lambda v: tuple(int(p) if p.isdigit() else 0 for p in v.split(".")))
+    parts = pkg["versions"][newest].get("url", "").removeprefix("https://github.com/").split("/")
+    if len(parts) < 2 or parts[0] != "loft-lang" or not parts[1].startswith("loft-libs-"):
+        sys.exit(0)
+    repos.add(parts[1])
+print(" ".join(sorted(repos)))
+PYEOF
+)
+fi
+from_index=""
+if [ -n "$repos" ]; then
+    from_index=1
+    echo "cloning $repos (from the index's record of --only $ONLY) ..."
+else
+    echo "cloning family repos ..."
+    repos=$(gh api "orgs/$ORG/repos?per_page=100" --jq '.[].name' | grep '^loft-libs-' || true)
+fi
+# Shallow clones in parallel: one is a second, eight one after another were fourteen.
+clone_family() {
+    local pids=() r pid
+    for r in "$@"; do
+        [ -d "$tmp/$r" ] && continue
+        git clone --quiet --depth 1 "https://github.com/$ORG/$r.git" "$tmp/$r" &
+        pids+=("$!")
     done
-done
+    for pid in "${pids[@]}"; do
+        wait "$pid" || { echo "a family repo clone failed" >&2; exit 2; }
+    done
+}
+# <name>\t<version>\t<repo>\t<libdir> for every library in the cloned repos.
+read_family() {
+    local r t name ver
+    : > "$tmp/own.tsv"
+    for r in "$@"; do
+        for t in "$tmp/$r"/*/loft.toml; do
+            [ -f "$t" ] || continue
+            name=$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$t" | head -1)
+            ver=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$t" | head -1)
+            [ -n "$name" ] && printf '%s\t%s\t%s\t%s\n' "$name" "$ver" "$r" "$(dirname "$t")" >> "$tmp/own.tsv"
+        done
+    done
+}
+clone_family $repos
+read_family $repos
+# The index's record can be out of date — a library moved to another family repo.  A named
+# library its designated repo does not contain sends the run back to the full enumeration:
+# every family repo, every library's own `loft.toml`, the table rebuilt from scratch.
+if [ -n "$from_index" ]; then
+    for want in ${ONLY//,/ }; do
+        if ! awk -F'\t' -v n="$want" '$1 == n { f = 1 } END { exit !f }' "$tmp/own.tsv"; then
+            echo "  $want is not in its recorded repo — enumerating every family repo ..."
+            repos=$(gh api "orgs/$ORG/repos?per_page=100" --jq '.[].name' | grep '^loft-libs-' || true)
+            clone_family $repos
+            read_family $repos
+            break
+        fi
+    done
+fi
 
 # Own-lib worklist: missing/stale vs the index (same rule as
 # check_registry_coverage.sh, but keeping the libdir for the publish step).
@@ -162,8 +228,10 @@ fi
 
 
 # Foreign upstream drift: does the author's repo have a newer release tag than
-# the registry?  Informational only — the author publishes, not us.
+# the registry?  Informational only — the author publishes, not us — so a named publish
+# (`--only`) does not ask: one API call per foreign package, for nothing it acts on.
 : > "$tmp/foreign_drift.txt"
+[ -n "$ONLY" ] && : > "$tmp/foreign.tsv"
 while IFS=$'\t' read -r name newest frepo; do
     latest=$(gh api "repos/$frepo/releases?per_page=100" \
         --jq ".[].tag_name | select(startswith(\"$name-v\"))" 2> /dev/null |
@@ -183,10 +251,11 @@ gh pr list -R "$ORG/registry" --state open \
 # stray branches here too — unmerged with no open PR (orphaned work to PR-or-delete)
 # and merged with no PR (prunable).  We shallow-clone only main, so this lists
 # branches via the API rather than checking them out.  Informational — never
-# blocks the publish/sign; it just nudges cleanup during a maintenance run.
+# blocks the publish/sign; it just nudges cleanup during a maintenance run — which a named
+# publish (`--only`) is not: it skips the per-branch API calls (half a minute).
 : > "$tmp/orphan_branches.txt"
 : > "$tmp/prunable_branches.txt"
-for r in $repos; do
+for r in $([ -z "$ONLY" ] && echo "$repos"); do
     pr_heads=$(gh pr list -R "$ORG/$r" --state open --json headRefName --jq '.[].headRefName' 2> /dev/null || true)
     while read -r br; do
         [ -n "$br" ] && [ "$br" != "main" ] || continue
@@ -721,8 +790,29 @@ fi
 "$here/scripts/registry-sign.sh" "${sign_args[@]}"
 
 echo
-echo "verifying — coverage check should now be clean:"
-# Check against the index we JUST pushed (local REG_DIR copy), not the CDN-cached
-# raw URL — otherwise a publish shows a spurious "stale" until the cache catches
-# up (the CDN serves the pre-push index for a few minutes).
-"$here/scripts/check_registry_coverage.sh" --index "$REG_DIR/index.json"
+if [ -n "$ONLY" ]; then
+    # A named publish verifies what it published: each name's newest version in the index
+    # just pushed is the version this run released.  The whole-registry coverage check
+    # re-clones every family repo, and the signer's `--expect` already bound the diff to
+    # exactly these entries.
+    echo "verifying — the pushed index carries what this run published:"
+    python3 - "$REG_DIR/index.json" "$tmp/work.tsv" <<'PYEOF'
+import json, sys
+pkgs = json.load(open(sys.argv[1]))["packages"]
+semver = lambda v: tuple(int(p) if p.isdigit() else 0 for p in v.split("."))
+bad = 0
+for line in open(sys.argv[2]):
+    name, ver = line.split("\t")[:2]
+    newest = max(pkgs.get(name, {}).get("versions", {}) or {"": 0}, key=semver)
+    ok = newest == ver
+    bad += not ok
+    print(f"  {'ok' if ok else 'MISSING'}  {name} {ver}" + ("" if ok else f" (index newest: {newest or 'none'})"))
+sys.exit(1 if bad else 0)
+PYEOF
+else
+    echo "verifying — coverage check should now be clean:"
+    # Check against the index we JUST pushed (local REG_DIR copy), not the CDN-cached
+    # raw URL — otherwise a publish shows a spurious "stale" until the cache catches
+    # up (the CDN serves the pre-push index for a few minutes).
+    "$here/scripts/check_registry_coverage.sh" --index "$REG_DIR/index.json"
+fi

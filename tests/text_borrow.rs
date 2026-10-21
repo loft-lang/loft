@@ -257,8 +257,8 @@ fn a_parameters_text_is_borrowed_while_the_frame_writes_only_stores_it_minted() 
         }
     }
     // The bench shape: `w = words[i]?` copies the element neither at the read nor at the
-    // bind.  (`OpSetText` still stages its value — `let s_val = (…).to_string()` — before
-    // claiming in the destination store; that copy is the setter's, not this clause's.)
+    // bind.  (`OpSetText` reads its value in place: `Store::set_str` copies only a value whose
+    // bytes lie in the destination store, which its claim may move.)
     let a1 = body(&rust, "n_a1");
     assert_eq!(
         count(a1, "}}.to_string()") + count(a1, ".clone()"),
@@ -273,8 +273,10 @@ fn a_parameters_text_is_copied_when_its_store_may_move() {
     // d1 grows the source, d3 a sibling field of it, d4 through a callee: nothing borrows.
     for name in ["n_d1", "n_d3", "n_d4"] {
         let b = body(&rust, name);
+        // The setter reads its value where it lives (`s_val`, `Store::set_str` copies a
+        // value inside its own store); the question here is the function's locals.
         assert_eq!(
-            count(b, ": &str = "),
+            count(b, ": &str = ") - count(b, "let s_val: &str = "),
             0,
             "{name}: nothing borrows the parameter's text:\n{b}"
         );

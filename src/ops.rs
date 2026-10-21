@@ -18,6 +18,8 @@
 #![allow(dead_code)]
 use std::cmp::Ordering;
 
+mod number_text;
+
 // ── the `--dev-soft-halt` overflow report (loft#1265) ────────────────────────────────────
 //
 // `(E-Report)` promises the flag surfaces the recoverable faults uniformly -- div0, overflow,
@@ -921,6 +923,32 @@ fn format_prefixed(s: &mut String, prefix: &str, digits: &str, width: i64, dir: 
     format_text(s, &res, width, dir, token);
 }
 
+/// Write a decimal integer straight into `s`, padding only when the field asks for it.
+///
+/// The unpadded rendering is the common case and needs no text of its own; a field wider than
+/// the number takes the rendering back out and pads it through [`format_prefixed`], so every
+/// padding rule keeps its one home.
+fn push_decimal(s: &mut String, neg: bool, abs: u64, plus: bool, width: i64, dir: i8, token: u8) {
+    let start = s.len();
+    if neg {
+        s.push('-');
+    } else if plus {
+        s.push('+');
+    }
+    let sign = s.len() - start;
+    number_text::push_u64(s, abs);
+    pad_rendered(s, start, sign, width, dir, token);
+}
+
+/// Pad the ASCII number rendered at `s[start..]` — its first `sign` bytes a prefix — to `width`.
+fn pad_rendered(s: &mut String, start: usize, sign: usize, width: i64, dir: i8, token: u8) {
+    if width <= (s.len() - start) as i64 {
+        return;
+    }
+    let rendered = s.split_off(start);
+    format_prefixed(s, &rendered[..sign], &rendered[sign..], width, dir, token);
+}
+
 /**
 Format an integer.
 # Panics
@@ -951,14 +979,16 @@ pub fn format_int(
             if note { "0o" } else { "" }
         }
         10 => {
-            write!(res, "{}", val.abs()).unwrap();
-            if val < 0 {
-                "-"
-            } else if plus {
-                "+"
-            } else {
-                ""
-            }
+            push_decimal(
+                s,
+                val < 0,
+                u64::from(val.unsigned_abs()),
+                plus,
+                width,
+                1,
+                token,
+            );
+            return;
         }
         16 => {
             write!(res, "{val:x}").unwrap();
@@ -1010,14 +1040,8 @@ pub fn format_long(
             if note { "0o" } else { "" }
         }
         10 => {
-            write!(res, "{}", val.abs()).unwrap();
-            if val < 0 {
-                "-"
-            } else if plus {
-                "+"
-            } else {
-                ""
-            }
+            push_decimal(s, val < 0, val.unsigned_abs(), plus, width, dir, token);
+            return;
         }
         16 => {
             write!(res, "{val:x}").unwrap();
@@ -1045,19 +1069,26 @@ pub fn format_float(
     dir: i8,
 ) {
     let dir = if dir == 2 { 1 } else { dir };
-    let mut res = String::new();
-    // @PLN10 — NaN is the float null sentinel (`?? ` / `!` treat it as null) and
+    // The number is rendered in place; only a field wider than it takes it back out to pad.
+    let start = s.len();
+    // @PLN10 — NaN is the float null sentinel (`??` / `!` treat it as null) and
     // is not a JSON value; render it as `null`, mirroring text "\0" and integer
     // i64::MIN.  `inf`/`-inf` are real (non-null) values and render normally.
     if val.is_nan() {
-        res.push_str("null");
+        s.push_str("null");
     } else if precision >= 0 {
-        write!(res, "{val:.p$}", p = precision as usize).unwrap();
+        let p = precision as usize;
+        if !number_text::push_fixed(s, val, p) {
+            write!(s, "{val:.p$}").unwrap();
+        }
     } else {
-        write!(res, "{val}").unwrap();
+        write!(s, "{val}").unwrap();
     }
-    sign_a_number(&mut res, plus);
-    format_signed(s, &res, width, dir, token);
+    sign_a_number(s, start, plus);
+    if width > (s.len() - start) as i64 {
+        let res = s.split_off(start);
+        format_signed(s, &res, width, dir, token);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1071,17 +1102,26 @@ pub fn format_single(
     dir: i8,
 ) {
     let dir = if dir == 2 { 1 } else { dir };
-    let mut res = String::new();
-    // @PLN10 — NaN is the float null sentinel; render as `null` (see `format_float`).
+    // The number is rendered in place; only a field wider than it takes it back out to pad.
+    let start = s.len();
+    // @PLN10 — NaN is the float null sentinel (`??` / `!` treat it as null) and
+    // is not a JSON value; render it as `null`, mirroring text "\0" and integer
+    // i64::MIN.  `inf`/`-inf` are real (non-null) values and render normally.
     if val.is_nan() {
-        res.push_str("null");
+        s.push_str("null");
     } else if precision >= 0 {
-        write!(res, "{val:.p$}", p = precision as usize).unwrap();
+        let p = precision as usize;
+        if !number_text::push_fixed(s, f64::from(val), p) {
+            write!(s, "{val:.p$}").unwrap();
+        }
     } else {
-        write!(res, "{val}").unwrap();
+        write!(s, "{val}").unwrap();
     }
-    sign_a_number(&mut res, plus);
-    format_signed(s, &res, width, dir, token);
+    sign_a_number(s, start, plus);
+    if width > (s.len() - start) as i64 {
+        let res = s.split_off(start);
+        format_signed(s, &res, width, dir, token);
+    }
 }
 
 /// Pad an already-rendered and already-signed number, keeping a zero pad behind its sign.
@@ -1116,9 +1156,10 @@ fn format_signed(s: &mut String, res: &str, width: i64, dir: i8, token: u8) {
 /// comparing `>= 0.0` or rounding to `0.000` at the requested precision, and `null` (the
 /// NaN sentinel) is not a number and takes no sign at all.  Before the width is applied,
 /// so a signed number fills the field the same way an unsigned one does.
-fn sign_a_number(res: &mut String, plus: bool) {
+fn sign_a_number(s: &mut String, start: usize, plus: bool) {
+    let res = &s[start..];
     if plus && !res.starts_with('-') && !res.starts_with("null") {
-        res.insert(0, '+');
+        s.insert(start, '+');
     }
 }
 
@@ -1163,6 +1204,52 @@ pub fn fix_till(till: i32, from: usize, s: &str) -> usize {
 #[cfg(test)]
 mod test {
     use super::*;
+    /// A number is rendered in place behind what the text already holds, and only a field
+    /// wider than it is padded — every value below computed by hand.
+    #[test]
+    fn numbers_written_in_place() {
+        let long = |val: i64, width: i64, token: u8, plus: bool, dir: i8| {
+            let mut s = String::from("ab");
+            format_long(&mut s, val, 10, width, token, plus, false, dir);
+            s
+        };
+        assert_eq!(long(42, 0, b' ', false, 2), "ab42");
+        assert_eq!(long(-42, 0, b' ', false, 2), "ab-42");
+        assert_eq!(long(42, 0, b' ', true, 2), "ab+42");
+        assert_eq!(long(42, 5, b' ', false, 2), "ab   42");
+        assert_eq!(long(-42, 5, b'0', false, 2), "ab-0042");
+        assert_eq!(long(42, 5, b'0', true, 2), "ab+0042");
+        assert_eq!(long(42, 5, b' ', false, -1), "ab42   ");
+        assert_eq!(long(42, 6, b'*', false, 0), "ab**42**");
+        assert_eq!(long(123_456, 3, b' ', false, 2), "ab123456");
+        assert_eq!(long(i64::MIN, 6, b'0', false, 2), "ab  null");
+        assert_eq!(
+            long(i64::MIN + 1, 0, b' ', false, 2),
+            "ab-9223372036854775807"
+        );
+        let mut s = String::from("x");
+        format_int(&mut s, -7, 10, 3, b'0', false, false);
+        assert_eq!(s, "x-07");
+        let float = |val: f64, width: i64, precision: i64, token: u8, plus: bool| {
+            let mut s = String::from("ab");
+            format_float(&mut s, val, width, precision, token, plus, 2);
+            s
+        };
+        assert_eq!(float(12.25, 0, 1, b' ', false), "ab12.2");
+        assert_eq!(float(12.35, 4, 1, b' ', false), "ab12.3");
+        assert_eq!(float(2.5, 0, 0, b' ', false), "ab2");
+        assert_eq!(float(3.5, 0, 0, b' ', false), "ab4");
+        assert_eq!(float(-0.01, 0, 1, b' ', false), "ab-0.0");
+        assert_eq!(float(1.5, 6, 1, b' ', true), "ab  +1.5");
+        assert_eq!(float(-3.5, 8, 1, b'0', false), "ab-00003.5");
+        assert_eq!(float(f64::NAN, 6, 1, b'0', true), "ab  null");
+        assert_eq!(float(0.1, 0, -1, b' ', false), "ab0.1");
+        assert_eq!(float(f64::INFINITY, 5, 2, b' ', false), "ab  inf");
+        let mut s = String::from("ab");
+        format_single(&mut s, 0.1, 0, 3, b' ', false, 2);
+        assert_eq!(s, "ab0.100");
+    }
+
     #[test]
     fn test_layouts() {
         let mut s = String::new();

@@ -99,18 +99,22 @@ fn the_switch_restores_the_templates() {
 /// is zero bytes.
 const BARE_CELLS: &str =
     "tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft";
-const BARE: &[(&str, usize, usize, usize)] = &[
-    ("n_b1", 0, 1, 0),    // a record owning a text: its default is not zero bytes
-    ("n_build", 2, 0, 0), // an enum element built by a call, in the loop and the copy beside it
-    ("n_rd", 1, 0, 0),    // the decoder's element, built in place by the destination twin
-    ("n_rd__d", 1, 0, 0), // … and inside the twin itself
-    ("n_b4", 1, 0, 0),    // 30 appends through two growth steps
-    ("n_b5", 3, 0, 3),    // the literal's three; `Nd { kids: [...] }` is a variant's field
-    ("n_b7", 0, 0, 1),    // a `sorted` collection is no plain vector: the template stands
+/// `(function, zero-filled appends, prefilled appends, template mints, unfilled appends)`.
+const BARE: &[(&str, usize, usize, usize, usize)] = &[
+    // a record owning a text, appended as `mkrw(i)`: the slot is the callee's return buffer
+    // and its literal writes every field (`@FR-R-CompleteWrite`'s buffer clause), so it is
+    // appended neither prefilled nor zero-filled
+    ("n_b1", 0, 0, 0, 1),
+    ("n_build", 2, 0, 0, 0), // an enum element built by a call, in the loop and the copy beside it
+    ("n_rd", 1, 0, 0, 0),    // the decoder's element, built in place by the destination twin
+    ("n_rd__d", 1, 0, 0, 0), // … and inside the twin itself
+    ("n_b4", 1, 0, 0, 0),    // 30 appends through two growth steps
+    ("n_b5", 3, 0, 3, 0),    // the literal's three; `Nd { kids: [...] }` is a variant's field
+    ("n_b7", 0, 0, 1, 0),    // a `sorted` collection is no plain vector: the template stands
 ];
 
-fn bare_counts(rust: &str) -> HashMap<String, (usize, usize, usize)> {
-    let mut map: HashMap<String, (usize, usize, usize)> = HashMap::new();
+fn bare_counts(rust: &str) -> HashMap<String, (usize, usize, usize, usize)> {
+    let mut map: HashMap<String, (usize, usize, usize, usize)> = HashMap::new();
     let mut current = String::new();
     for line in rust.lines() {
         if let Some(rest) = line.strip_prefix("fn ")
@@ -122,6 +126,9 @@ fn bare_counts(rust: &str) -> HashMap<String, (usize, usize, usize)> {
         row.0 += line.matches("vector_record_append::<true, true>(").count();
         row.1 += line.matches("vector_record_append::<true, false>(").count();
         row.2 += line.matches("OpNewRecord(").count() + line.matches("OpNewRecordNP(").count();
+        row.3 += line
+            .matches("vector_record_append::<false, false>(")
+            .count();
     }
     map
 }
@@ -154,11 +161,11 @@ fn emit_bare(out: &Path, env: &[(&str, &str)]) -> String {
 fn each_bare_cell_appends_through_the_vector() {
     let out = std::env::temp_dir().join("loft_bare_append_on.rs");
     let got = bare_counts(&emit_bare(&out, &[("LOFT_NO_APART_MINT", "1")]));
-    for (name, zero, pre, tpl) in BARE {
+    for (name, zero, pre, tpl, held) in BARE {
         assert_eq!(
             got.get(*name).copied().unwrap_or_default(),
-            (*zero, *pre, *tpl),
-            "{name}: (zero-filled appends, prefilled appends, template mints)"
+            (*zero, *pre, *tpl, *held),
+            "{name}: (zero-filled appends, prefilled appends, template mints, unfilled appends)"
         );
     }
     let _ = fa::remove_file(&out);
@@ -176,10 +183,10 @@ fn the_bare_switch_restores_the_templates() {
         "LOFT_NO_BARE_APPEND=1 left a bare append in place"
     );
     let got = bare_counts(&rust);
-    for (name, zero, pre, tpl) in BARE {
+    for (name, zero, pre, tpl, held) in BARE {
         assert_eq!(
             got.get(*name).copied().unwrap_or_default().2,
-            zero + pre + tpl,
+            zero + pre + tpl + held,
             "{name}: every bare append is a template mint again"
         );
     }

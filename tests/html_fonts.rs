@@ -406,7 +406,7 @@ fn the_boot_await_holds_the_program_until_a_slow_font_has_arrived() {
 #[test]
 fn a_declared_font_reaches_the_emitted_page() {
     let root = repo_root();
-    let loft = root.join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!("SKIP a_declared_font_reaches_the_emitted_page: target/release/loft not built");
         return;
@@ -512,7 +512,7 @@ fn a_declared_font_reaches_the_emitted_page() {
 #[test]
 fn a_drifting_family_is_refused_before_the_build() {
     let root = repo_root();
-    let loft = root.join("target/release/loft");
+    let loft = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft) {
         eprintln!(
             "SKIP a_drifting_family_is_refused_before_the_build: target/release/loft not built"

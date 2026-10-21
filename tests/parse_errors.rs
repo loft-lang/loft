@@ -5380,6 +5380,24 @@ fn a_qualified_struct_variant_given_fields_names_the_constructor() {
     );
 }
 
+/// loft#2097 — the same refusal when an EARLIER enum also has a variant of that name.  The
+/// variant was looked up by its bare name, first declared wins, so `PV2.Item { v: 77 }` was
+/// parsed as `PV1`'s `Item` and refused with a field-type error about a field the program
+/// never wrote (*"Cannot assign integer to field Item.v of type text"*).
+#[test]
+fn a_qualified_struct_variant_with_a_shared_name_names_its_own_constructor() {
+    code!(
+        "enum Pv2097a { NoneA, Item { v: text } }\n\
+         enum Pv2097b { NoneB, Item { v: integer } }\n\
+         fn test() { b = Pv2097b.Item { v: 77 }; assert(b is Item, \"item\"); }"
+    )
+    .error(
+        "`Pv2097b.Item` is the variant with every field at its default, and does not take \
+         fields — build it with `Pv2097b::Item { … }` or `Item { … }` at \
+         a_qualified_struct_variant_with_a_shared_name_names_its_own_constructor:3:31",
+    );
+}
+
 /// The control for the case above: a `{` after a qualified variant is also an `if` body, and
 /// one that starts with a typed local declaration begins with the same `name :` tokens.  It
 /// must stay a body — and so must one that starts with an assignment.

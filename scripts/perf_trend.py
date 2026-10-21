@@ -9,6 +9,10 @@
     scripts/perf_trend.py --routine fill_polygon    # one routine's whole series
     scripts/perf_trend.py --threshold 25 --host laptop
     scripts/perf_trend.py --all                 # every routine's latest two points
+    scripts/perf_trend.py --population          # the POPULATION per committed measurement, per
+                                                #   host: routines, median, over 3×, over 4.5×,
+                                                #   over 5×, at or under 1× — the trend of the
+                                                #   bar itself, not of one routine
 
 Why
 ---
@@ -92,13 +96,50 @@ def pct(a, b):
     return (b - a) / a * 100.0 if a else float("nan")
 
 
+def population(hist, host_filter=None):
+    """The whole population per committed measurement, per host — the release cut (rows over
+    5×, C136) and the bar (median, over 3×) as a SERIES, where `--routine` gives one row's."""
+    import statistics
+    last = {}
+    printed = 0
+    for commit, date, host, meta, rows in hist:
+        if host_filter and host != host_filter:
+            continue
+        xs = []
+        for r in rows:
+            try:
+                xs.append(float(r.get("ratio") or "nan"))
+            except ValueError:
+                continue
+        xs = [x for x in xs if x == x]
+        if not xs:
+            continue
+        key = (host, meta.get("date", ""), meta.get("commit", ""), len(xs), round(statistics.median(xs), 3))
+        if last.get(host) == key:
+            continue   # a re-commit of the same measurement is not a new point
+        last[host] = key
+        if printed == 0:
+            print(f"{'host':12} {'measured':10} {'loft':10} {'rows':>5} {'median':>7} {'>3×':>5} {'>4.5×':>6} {'>5×':>5} {'≤1×':>5}  committed")
+        print(f"{host:12} {meta.get('date', ''):10} {meta.get('commit', ''):10} {len(xs):5} {statistics.median(xs):7.2f} "
+              f"{sum(x > 3 for x in xs):5} {sum(x > 4.5 for x in xs):6} {sum(x > 5 for x in xs):5} {sum(x <= 1 for x in xs):5}  {commit} ({date})")
+        printed += 1
+    if printed == 0:
+        print("no committed measurements under", RESULTS)
+        return 2
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--routine", help="one routine's series")
     ap.add_argument("--host", help="one machine's rows only")
     ap.add_argument("--threshold", type=float, default=15.0, help="flag a move of this many percent (15)")
     ap.add_argument("--all", action="store_true", help="every routine's latest two points")
+    ap.add_argument("--population", action="store_true",
+                    help="per host, per committed measurement: routines, median, over 3×/4.5×/5×, at or under 1×")
     a = ap.parse_args()
+    if a.population:
+        return population(history(), a.host)
     s = series(history(), a.host)
     if not s:
         print("no committed measurements under", RESULTS)

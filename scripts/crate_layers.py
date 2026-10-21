@@ -32,6 +32,8 @@ sit above every layer.  Comments are skipped; code in `#[cfg(test)]` blocks is c
 because a test in a lower crate that names a higher one has to move too.
 """
 
+from __future__ import annotations
+
 import bisect
 import re
 import sys
@@ -58,10 +60,10 @@ LAYERS: list[tuple[str, list[str]]] = [
         "install", "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys",
         "layout_schema", "lexer", "lib", "libscan", "limits", "literal_append", "lockfile",
         "log_config", "logger", "loop_kernel_rewrite", "loop_kernels", "loop_shape", "manifest",
-        "migrate_long", "narrow", "native_build", "net", "net_profile", "null_census",
+        "migrate_long", "narrow", "native_bind", "native_build", "net", "net_profile", "null_census",
         "op_census", "op_layout", "op_sets", "ops", "package", "package_layout", "page_metrics",
         "paged_reader", "par_pool", "placement", "platform", "platform_census", "png_store",
-        "process_run", "pure_reuse", "radix_db", "radix_tree", "registry", "registry_advisories",
+        "process_run", "pure_reuse", "radix_db", "shared_call", "bound_append", "radix_tree", "registry", "registry_advisories",
         "registry_index", "registry_keys", "registry_signing", "repeat_run", "repl_doc",
         "resolution", "resolution_scope", "return_field", "rewrite_census", "runtime_abi",
         "runtime_error", "rust_spelling", "sandbox", "schema_sidecar", "self_update", "siphash",
@@ -110,7 +112,7 @@ RUNTIME: list[str] = [
     "arena", "base64", "btree", "c_libs", "cache", "calc", "call_frames", "codegen_runtime",
     "crash_report", "database", "diagnostic_render", "diagnostics", "engine_host", "file_access",
     "fxhash", "git_query", "hash", "integrity", "json", "keys", "lexer", "limits", "live_control",
-    "live_rebuild", "lockfile", "log_config", "logger", "loop_kernels", "narrow", "native", "net",
+    "live_rebuild", "lockfile", "log_config", "logger", "loop_kernels", "narrow", "native", "native_bind", "net",
     "net_profile", "op_census", "ops", "page_metrics", "paged_reader", "par_pool", "placement",
     "platform", "png_store", "process_run", "radix_db", "radix_tree", "resolution_scope",
     "rewrite_census", "runtime_abi", "runtime_error", "schema_sidecar", "siphash", "stack_verify",

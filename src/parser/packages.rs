@@ -1252,7 +1252,10 @@ impl Parser {
                 // the user may have a path-dep or sibling that
                 // resolves anyway, or they may want the standard
                 // error.
-                eprintln!("[registry] auto-install failed for {id}: {e}");
+                eprintln!("[registry] auto-install failed for {id}: {}", e.message);
+                if e.registry_answered {
+                    self.registry_refused.insert(id.to_string());
+                }
             }
         }
     }
@@ -1396,11 +1399,18 @@ impl Parser {
         }
         let cached = crate::registry_index::cached_versions(id);
         if !constraints.is_empty() && !cached.is_empty() {
+            // An online auto-install already asked (and refreshed its index first), so the
+            // registry was not unreachable: it has nothing in range, and its reason is the
+            // `[registry]` line above.
+            let registry = if self.registry_refused.contains(id) {
+                "the registry has no version in range"
+            } else {
+                "the registry could not be asked"
+            };
             self.cache_unmet.insert(
                 id.to_string(),
                 format!(
-                    "the registry could not be asked, and no cached copy satisfies `{}` \
-                     (cached: {})",
+                    "{registry}, and no cached copy satisfies `{}` (cached: {})",
                     constraints.join("`, `"),
                     cached.join(", ")
                 ),

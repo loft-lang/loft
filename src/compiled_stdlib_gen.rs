@@ -79,6 +79,7 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     let byte_enum = db.byte(0, false);
     db.field(t29, "enum", byte_enum);
     db.set_field_nullable(t29, "enum", true);
+    db.set_field_default(t29, "enum", loft::keys::Content::Long(1_i64));
     db.field(t29, "v", t4);
     let t30 = db.byte(0, false);
     let _ = t30; // may be unused
@@ -86,31 +87,37 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     let byte_enum = db.byte(0, false);
     db.field(t31, "enum", byte_enum);
     db.set_field_nullable(t31, "enum", true);
+    db.set_field_default(t31, "enum", loft::keys::Content::Long(2_i64));
     db.field(t31, "v", 0);
     let t32 = db.structure("FvLong", 3);
     let byte_enum = db.byte(0, false);
     db.field(t32, "enum", byte_enum);
     db.set_field_nullable(t32, "enum", true);
+    db.set_field_default(t32, "enum", loft::keys::Content::Long(3_i64));
     db.field(t32, "v", 0);
     let t33 = db.structure("FvFloat", 4);
     let byte_enum = db.byte(0, false);
     db.field(t33, "enum", byte_enum);
     db.set_field_nullable(t33, "enum", true);
+    db.set_field_default(t33, "enum", loft::keys::Content::Long(4_i64));
     db.field(t33, "v", t3);
     let t34 = db.structure("FvSingle", 5);
     let byte_enum = db.byte(0, false);
     db.field(t34, "enum", byte_enum);
     db.set_field_nullable(t34, "enum", true);
+    db.set_field_default(t34, "enum", loft::keys::Content::Long(5_i64));
     db.field(t34, "v", t2);
     let t35 = db.structure("FvChar", 6);
     let byte_enum = db.byte(0, false);
     db.field(t35, "enum", byte_enum);
     db.set_field_nullable(t35, "enum", true);
+    db.set_field_default(t35, "enum", loft::keys::Content::Long(6_i64));
     db.field(t35, "v", t6);
     let t36 = db.structure("FvText", 7);
     let byte_enum = db.byte(0, false);
     db.field(t36, "enum", byte_enum);
     db.set_field_nullable(t36, "enum", true);
+    db.set_field_default(t36, "enum", loft::keys::Content::Long(7_i64));
     db.field(t36, "v", t5);
     let t37 = db.structure("StructField", 0);
     db.field(t37, "name", t5);
@@ -145,6 +152,7 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     db.field(t48, "path", t5);
     db.field(t48, "size", 0);
     db.field(t48, "format", t45);
+    db.set_field_default(t48, "format", loft::keys::Content::Long(5_i64));
     let int_ref = db.int(-2147483647, true);
     db.field(t48, "ref", int_ref);
     db.set_field_nullable(t48, "ref", true);
@@ -167,45 +175,54 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     let byte_enum = db.byte(0, false);
     db.field(t54, "enum", byte_enum);
     db.set_field_nullable(t54, "enum", true);
+    db.set_field_default(t54, "enum", loft::keys::Content::Long(1_i64));
     let t55 = db.structure("BoolVal", 2);
     let byte_enum = db.byte(0, false);
     db.field(t55, "enum", byte_enum);
     db.set_field_nullable(t55, "enum", true);
+    db.set_field_default(t55, "enum", loft::keys::Content::Long(2_i64));
     db.field(t55, "b", t4);
     let t56 = db.structure("IntVal", 3);
     let byte_enum = db.byte(0, false);
     db.field(t56, "enum", byte_enum);
     db.set_field_nullable(t56, "enum", true);
+    db.set_field_default(t56, "enum", loft::keys::Content::Long(3_i64));
     db.field(t56, "n", 0);
     let t57 = db.structure("LongVal", 4);
     let byte_enum = db.byte(0, false);
     db.field(t57, "enum", byte_enum);
     db.set_field_nullable(t57, "enum", true);
+    db.set_field_default(t57, "enum", loft::keys::Content::Long(4_i64));
     db.field(t57, "n", 0);
     let t58 = db.structure("FloatVal", 5);
     let byte_enum = db.byte(0, false);
     db.field(t58, "enum", byte_enum);
     db.set_field_nullable(t58, "enum", true);
+    db.set_field_default(t58, "enum", loft::keys::Content::Long(5_i64));
     db.field(t58, "f", t3);
     let t59 = db.structure("SingleVal", 6);
     let byte_enum = db.byte(0, false);
     db.field(t59, "enum", byte_enum);
     db.set_field_nullable(t59, "enum", true);
+    db.set_field_default(t59, "enum", loft::keys::Content::Long(6_i64));
     db.field(t59, "f", t2);
     let t60 = db.structure("CharVal", 7);
     let byte_enum = db.byte(0, false);
     db.field(t60, "enum", byte_enum);
     db.set_field_nullable(t60, "enum", true);
+    db.set_field_default(t60, "enum", loft::keys::Content::Long(7_i64));
     db.field(t60, "c", t6);
     let t61 = db.structure("TextVal", 8);
     let byte_enum = db.byte(0, false);
     db.field(t61, "enum", byte_enum);
     db.set_field_nullable(t61, "enum", true);
+    db.set_field_default(t61, "enum", loft::keys::Content::Long(8_i64));
     db.field(t61, "t", t5);
     let t62 = db.structure("RefVal", 9);
     let byte_enum = db.byte(0, false);
     db.field(t62, "enum", byte_enum);
     db.set_field_nullable(t62, "enum", true);
+    db.set_field_default(t62, "enum", loft::keys::Content::Long(9_i64));
     db.field(t62, "store", 0);
     db.field(t62, "rec", 0);
     db.field(t62, "pos", 0);
@@ -213,11 +230,13 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     let byte_enum = db.byte(0, false);
     db.field(t63, "enum", byte_enum);
     db.set_field_nullable(t63, "enum", true);
+    db.set_field_default(t63, "enum", loft::keys::Content::Long(10_i64));
     db.field(t63, "d_nr", 0);
     let t64 = db.structure("OtherVal", 11);
     let byte_enum = db.byte(0, false);
     db.field(t64, "enum", byte_enum);
     db.set_field_nullable(t64, "enum", true);
+    db.set_field_default(t64, "enum", loft::keys::Content::Long(11_i64));
     db.field(t64, "description", t5);
     let t65 = db.structure("ArgInfo", 0);
     db.field(t65, "name", t5);
@@ -253,25 +272,30 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     let byte_enum = db.byte(0, false);
     db.field(t74, "enum", byte_enum);
     db.set_field_nullable(t74, "enum", true);
+    db.set_field_default(t74, "enum", loft::keys::Content::Long(1_i64));
     let t75 = db.structure("JBool", 2);
     let byte_enum = db.byte(0, false);
     db.field(t75, "enum", byte_enum);
     db.set_field_nullable(t75, "enum", true);
+    db.set_field_default(t75, "enum", loft::keys::Content::Long(2_i64));
     db.field(t75, "value", t4);
     let t76 = db.structure("JNumber", 3);
     let byte_enum = db.byte(0, false);
     db.field(t76, "enum", byte_enum);
     db.set_field_nullable(t76, "enum", true);
+    db.set_field_default(t76, "enum", loft::keys::Content::Long(3_i64));
     db.field(t76, "value", t3);
     let t77 = db.structure("JString", 4);
     let byte_enum = db.byte(0, false);
     db.field(t77, "enum", byte_enum);
     db.set_field_nullable(t77, "enum", true);
+    db.set_field_default(t77, "enum", loft::keys::Content::Long(4_i64));
     db.field(t77, "value", t5);
     let t78 = db.structure("JArray", 5);
     let byte_enum = db.byte(0, false);
     db.field(t78, "enum", byte_enum);
     db.set_field_nullable(t78, "enum", true);
+    db.set_field_default(t78, "enum", loft::keys::Content::Long(5_i64));
     let vec_items = db.vector(t73);
     db.field(t78, "items", vec_items);
     let t79 = db.vector(t73);
@@ -280,6 +304,7 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     let byte_enum = db.byte(0, false);
     db.field(t80, "enum", byte_enum);
     db.set_field_nullable(t80, "enum", true);
+    db.set_field_default(t80, "enum", loft::keys::Content::Long(6_i64));
     let t81 = db.structure("JsonField", 0);
     db.field(t81, "name", t5);
     db.field(t81, "value", t73);
@@ -291,6 +316,7 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     let byte_enum = db.byte(0, false);
     db.field(t83, "enum", byte_enum);
     db.set_field_nullable(t83, "enum", true);
+    db.set_field_default(t83, "enum", loft::keys::Content::Long(7_i64));
     db.field(t83, "value", 0);
     let t84 = db.structure("main_vector<JsonValue>", 0);
     let vec_vector = db.vector(t73);
@@ -354,7 +380,6 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     db.value(t8, "Less", u16::MAX);
     db.value(t8, "Equal", u16::MAX);
     db.value(t8, "Greater", u16::MAX);
-    db.value(t8, "then", u16::MAX);
     db.value(t9, "FvBool", t29);
     db.value(t9, "FvInt", t31);
     db.value(t9, "FvLong", t32);
@@ -373,7 +398,6 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     db.value(t46, "IsDirectory", u16::MAX);
     db.value(t46, "NotEmpty", u16::MAX);
     db.value(t46, "Other", u16::MAX);
-    db.value(t46, "ok", u16::MAX);
     db.value(t53, "NullVal", t54);
     db.value(t53, "BoolVal", t55);
     db.value(t53, "IntVal", t56);
@@ -396,19 +420,6 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     db.value(t73, "JArray", t78);
     db.value(t73, "JObject", t80);
     db.value(t73, "JInteger", t83);
-    db.value(t73, "field", u16::MAX);
-    db.value(t73, "item", u16::MAX);
-    db.value(t73, "len", u16::MAX);
-    db.value(t73, "as_text", u16::MAX);
-    db.value(t73, "as_number", u16::MAX);
-    db.value(t73, "as_long", u16::MAX);
-    db.value(t73, "as_bool", u16::MAX);
-    db.value(t73, "kind", u16::MAX);
-    db.value(t73, "keys", u16::MAX);
-    db.value(t73, "fields", u16::MAX);
-    db.value(t73, "has_field", u16::MAX);
-    db.value(t73, "to_json", u16::MAX);
-    db.value(t73, "to_json_pretty", u16::MAX);
     db.value(t86, "IntegerKind", u16::MAX);
     db.value(t86, "LongKind", u16::MAX);
     db.value(t86, "SingleKind", u16::MAX);
@@ -668,12 +679,12 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
           if ((var_prev_cr) as u8) == 1 { //block_11: void
             {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
             var__elm_1 = stores.vector_record_append::<true, false>(&(var_result), 4, 5);
-            {{let db = (var__elm_1); let s_val = (&*(OpGetTextSub(&var_c, var_p, ops::op_min_int((var_e), (1_i64))))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }}};
+            {{{let db = (var__elm_1); let s_tmp = &((&*(OpGetTextSub(&var_c, var_p, ops::op_min_int((var_e), (1_i64)))))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
             vector::vector_finish(&(var_result), &mut stores.allocations);
             } /*block_11: void*/ else { //block_12: void
             {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
             var__elm_2 = stores.vector_record_append::<true, false>(&(var_result), 4, 5);
-            {{let db = (var__elm_2); let s_val = (&*(OpGetTextSub(&var_c, var_p, var_e))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }}};
+            {{{let db = (var__elm_2); let s_tmp = &((&*(OpGetTextSub(&var_c, var_p, var_e)))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
             vector::vector_finish(&(var_result), &mut stores.allocations);
             } /*block_12: void*/;
           // loft:default/02_files.loft:195
@@ -693,7 +704,7 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
     var__elm_3 = stores.vector_record_append::<true, false>(&(var_result), 4, 5);
     let _pre_4 = t_4text_size(cell, &var_c);
     let _pre_3 = OpGetTextSub(&var_c, var_p, _pre_4);
-    {{let db = (var__elm_3); let s_val = (&*(_pre_3)).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }}};
+    {{{let db = (var__elm_3); let s_tmp = &((&*(_pre_3))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
     vector::vector_finish(&(var_result), &mut stores.allocations);
     } /*block_13: void*/ else {()};
   // loft:default/02_files.loft:200
@@ -742,7 +753,7 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
           // loft:default/02_files.loft:214
           {vector::pre_alloc_vector(&(var_result), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
           var__elm_1 = stores.vector_record_append::<true, false>(&(var_result), 4, 5);
-          {{let db = (var__elm_1); let s_val = (&*(OpGetTextSub(var_self, var_p, var_c__index))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }}};
+          {{{let db = (var__elm_1); let s_tmp = &((&*(OpGetTextSub(var_self, var_p, var_c__index)))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
           vector::vector_finish(&(var_result), &mut stores.allocations);
           // loft:default/02_files.loft:215
           var_p = var_c__next;
@@ -759,7 +770,7 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
     var__elm_2 = stores.vector_record_append::<true, false>(&(var_result), 4, 5);
     let _pre_4 = t_4text_size(cell, var_self);
     let _pre_3 = OpGetTextSub(var_self, var_p, _pre_4);
-    {{let db = (var__elm_2); let s_val = (&*(_pre_3)).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }}};
+    {{{let db = (var__elm_2); let s_tmp = &((&*(_pre_3))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
     vector::vector_finish(&(var_result), &mut stores.allocations);
     } /*block_9: void*/ else {()};
   // loft:default/02_files.loft:222
@@ -797,7 +808,7 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
     // loft:default/02_files.loft:238
     {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
     var__elm_1 = stores.vector_record_append::<true, false>(&(var_out), 4, 5);
-    {{let db = (var__elm_1); let s_val = (var_self).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }}};
+    {{{let db = (var__elm_1); let s_tmp = &((var_self)); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
     vector::vector_finish(&(var_out), &mut stores.allocations);
     // loft:default/02_files.loft:238
     {stores.vector_replace(&(var___retbuf), &(var_out), (5_u16));};
@@ -821,7 +832,7 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
         // loft:default/02_files.loft:244
         {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
         var__elm_2 = stores.vector_record_append::<true, false>(&(var_out), 4, 5);
-        {{let db = (var__elm_2); let s_val = (&*(OpGetTextSub(var_self, var_p, var_i))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }}};
+        {{{let db = (var__elm_2); let s_tmp = &((&*(OpGetTextSub(var_self, var_p, var_i)))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
         vector::vector_finish(&(var_out), &mut stores.allocations);
         // loft:default/02_files.loft:245
         var_p = ops::op_add_int((var_i), (var_sl));
@@ -835,7 +846,7 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
   // loft:default/02_files.loft:249
   {vector::pre_alloc_vector(&(var_out), (1_i64) as u32, (4_i64) as u32, &mut stores.allocations);};
   let mut var__elm_3: DbRef = stores.vector_record_append::<true, false>(&(var_out), 4, 5);
-  {{let db = (var__elm_3); let s_val = (&*(OpGetTextSub(var_self, var_p, var_n))).to_string(); if db.rec != 0 { let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }}};
+  {{{let db = (var__elm_3); let s_tmp = &((&*(OpGetTextSub(var_self, var_p, var_n)))); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + (0_i64) as u32, s_pos); }}}}};
   vector::vector_finish(&(var_out), &mut stores.allocations);
   // loft:default/02_files.loft:250
   { //one_buffer_vec_copy_9: vector<text>["__retbuf"]

@@ -118,7 +118,9 @@ worked example and carries no `examples-exempt.tsv` verdict; a watermark row nam
 library that does not exist), and which reviewed libraries have **moved** since the
 commit their watermark records — with the commit count and how many `pub fn` lines
 changed, so "three commits, zero signatures" can be read and dismissed in seconds. It
-is a report: it never fails, and it never judges whether a doc is *good*.
+is a report: it never fails, and it never judges whether a doc is *good*.  It also places
+each registry description: at home in `loft.toml`, with no field behind it, or different
+from it — where the text lives, never whether it is true (§ 2b).
 
 Then, for each library the aid put on the list, the per-function worklist:
 
@@ -145,6 +147,23 @@ example written as `use lib;` followed by a bare name — a bare `use` brings in
 `lib::` qualifier (@C98), so it does not compile; the cure is `use lib::*;`. The next is a
 limitation the code has since outgrown: "does not build on `--native-wasm`", "is not
 drawn", "import it in this order". A limitation is a claim — run it before keeping it.
+
+### 2b. Read the registry entry (description and categories)
+
+The registry description is the first text a searcher reads, and nothing executes it.  Read
+it, and the categories, against the library's API as it is now: **every capability it names
+exists** as a public function or type, and the thing the library is chiefly for is in it.
+crypto's named ChaCha20-Poly1305 and XChaCha20-Poly1305 for four months; the library never had
+either.
+
+Its home is `description` (and `categories`) in the library's `loft.toml`: a publish copies
+the field into the index (`registry_maintain.sh --only <pkg>` signs that with `--expect-meta`).
+`make libraries-review` lists every library whose index text has **no field behind it** — it
+was written into the index by hand, and no publish will ever correct it — and every one whose
+field differs from the index (published before its last edit).  The fix is the same either
+way: write the true text into `loft.toml` in the library's PR; the library's next publish
+carries it.  Never edit `index.json` for it — a description changed there has no home and
+drifts again.
 
 ### 3. Fill the highest-value coverage gap (examples)
 

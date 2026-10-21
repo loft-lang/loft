@@ -154,6 +154,21 @@ impl Output<'_> {
         {
             return Ok(());
         }
+        // `@FR-R-DecodeView`'s structure clause — a position's reads, writes and walks in a
+        // positional twin, before the view clause's span hooks.
+        if self.ps_mode.is_some()
+            && let Some(code) = node.native()
+            && self.ps_expr(w, code)?
+        {
+            return Ok(());
+        }
+        // `@FR-R-StreamWalk` — a walked element's field read, a stream twin's `return`.
+        if (self.sw_twin.is_some() || !self.sw_frames.is_empty())
+            && let Some(code) = node.native()
+            && self.sw_expr(w, code)?
+        {
+            return Ok(());
+        }
         // `@FR-R-DecodeView` — a span field's write and a span text's read, in the same
         // dispatch for the same reason.
         if !self.dv.region.is_empty()
@@ -3616,7 +3631,10 @@ impl Output<'_> {
         // exactly as a loop body would, and a loop inside re-uses it.  Opened after the
         // prologue, because the header reads `stores`; closed before the block's brace so a
         // tail value flows out of the wrapper.
-        let fn_frame = if is_fn_body && !self.fn_header_disabled && !self.hoist_disabled {
+        let fn_frame = if is_fn_body
+            && !self.fn_header_disabled
+            && (!self.hoist_disabled || self.ps_mode.is_some())
+        {
             let mut memo = std::mem::take(&mut self.fn_header_memo);
             let paths = super::hoist::fn_header_params(bl, self.data, self.def_nr, &mut memo);
             self.fn_header_memo = memo;
@@ -4070,6 +4088,16 @@ impl Output<'_> {
             if repeat_skip.is_some_and(|last| vnr <= last) {
                 continue;
             }
+            // `@FR-R-DecodeView`'s structure clause — a statement the positional twin drops,
+            // before pre-evaluation can lift anything out of it.
+            if self.ps_mode.is_some() && self.ps_skip(v) {
+                continue;
+            }
+            // `@FR-R-StreamWalk` — a stream twin's dropped statement or an append it hands
+            // over, a consumer's call and walk, a walked element's binding.
+            if !self.sw.is_empty() && self.sw_statement(w, operators, vnr)? {
+                continue;
+            }
             if apart_skip.is_some_and(|next| vnr < next) {
                 continue;
             }
@@ -4355,7 +4383,7 @@ impl Output<'_> {
             }
             // `@FR-R-Destination` — a call whose result's heap field is moved whole into a
             // fresh element: the element is minted first and the callee's twin builds there.
-            if super::destination::enabled() && !self.in_coroutine_body {
+            if super::destination::enabled() && !self.in_coroutine_body && self.ps_mode.is_none() {
                 let mut memo = std::mem::take(&mut self.dest_memo);
                 let site = super::destination::site(
                     operators,
@@ -4587,6 +4615,18 @@ impl Output<'_> {
                     // clear, append, yield the buffer — so it arrives here whenever a block's
                     // scope frees follow its value tail.
                     let block_braces = matches!(v.unspan(), Value::Insert(ops) if ops.len() >= 2);
+                    // loft#2075 — a value `if` whose arms both assign a local not yet declared
+                    // gets that local's `let` from `pre_declare_branch_vars`, written just
+                    // before the `if` — which here is INSIDE the initialiser: `let _ret = let
+                    // mut var_pr__1: (i64, String) = …`, a syntax error (loft#1475 met the
+                    // same shape for a fn-ref through the return-hoist).  A tuple pattern's
+                    // alternatives reach it: `(1, pr) | (2, _)` assigns the tuple capture `pr`
+                    // in every arm, the absent arm its all-null tuple.  Declared here instead,
+                    // as statements of this same block, so the `if` finds them declared and
+                    // the scope is the one the `if` would have given them.
+                    if let Value::If(_, true_v, false_v) = v.unspan() {
+                        self.pre_declare_branch_vars(w, true_v, false_v)?;
+                    }
                     write!(w, "let _ret = ")?;
                     if block_braces {
                         write!(w, "{{ ")?;

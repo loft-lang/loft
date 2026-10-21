@@ -23,6 +23,10 @@ const VALID = new Set([
   "area:runtime", "area:native", "area:wasm", "area:stdlib", "area:packages",
   "hit-by:loft", "hit-by:moros", "hit-by:routing", "hit-by:dryopea",
   "hit-by:crawler", "hit-by:zerotrust", "hit-by:planets",
+  // The mechanism class — the bug review's axis (`.github/LABELS.md § class:`), set by the
+  // form's "Mechanism class" dropdown.  Optional: read when answered, never asked for.
+  "class:null", "class:ownership", "class:keyed", "class:generic", "class:narrow", "class:tuple",
+  "class:enum", "class:traversal", "class:par", "class:packages", "class:wasm",
 ]);
 
 /// Required label categories for a loft BUG (`.github/LABELS.md`), with the
@@ -137,9 +141,14 @@ function chooseLabels(body) {
   // heading contains it, which is the trap `wa:` fell into (`### Workaround` came
   // first and swallowed the dropdown that actually sets the label).
   const hitText = section("who hit it") ?? triage ?? unfenced;
+  // The class is read from its own dropdown or the triage block only — never from prose,
+  // where a title or a sentence names two mechanisms as easily as one.  Its placeholder
+  // `class:<not one of these>` matches nothing, as the `sev:<…>` placeholders do not.
+  const classText = section("mechanism class") ?? triage;
 
   const found = new Set();
-  for (const [src, key] of [[sevText, "sev"], [waText, "wa"], [hitText, "hit-by"]]) {
+  for (const [src, key] of [[sevText, "sev"], [waText, "wa"], [hitText, "hit-by"], [classText, "class"]]) {
+    if (src == null) continue;
     const hits = tokens(src, key);
     if (hits.length === 1) found.add(hits[0]);
   }

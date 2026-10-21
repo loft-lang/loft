@@ -713,10 +713,7 @@ pub fn loft_build_fingerprint() -> u64 {
         warn_if_uplifted_rlib_stale();
         let fp = loft_rlib_path()
             .or_else(|| std::env::current_exe().ok())
-            .and_then(|p| file_hash(&p.to_string_lossy()))
-            .map_or(0, |h| {
-                u64::from_le_bytes(h[..8].try_into().unwrap_or([0; 8]))
-            });
+            .map_or(0, |p| stamped_content_fp(&p));
         if fp == 0 {
             // The `fp == 0` path makes `native_artifact_fingerprint_matches`
             // "match anything" — i.e. silently reuse whatever artifact is on
@@ -730,6 +727,63 @@ pub fn loft_build_fingerprint() -> u64 {
         }
         fp
     })
+}
+
+/// The first eight bytes of `path`'s SHA-256 (`0` when it cannot be read), answered from a
+/// stamp in the cache directory that records the file's length and modification time beside
+/// the hash — the signal [`binary_signature_tag`] already trusts for the executable.  A file
+/// unchanged since it was hashed costs one `stat` instead of a read of the whole file: the
+/// rlib this fingerprints is tens of megabytes, and every run that uses a library asks
+/// (loft#2098).  One stamp per path, overwritten when the file changes.
+fn stamped_content_fp(path: &std::path::Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let digest = || {
+        file_hash(&path.to_string_lossy()).map_or(0, |h| {
+            u64::from_le_bytes(h[..8].try_into().unwrap_or([0; 8]))
+        })
+    };
+    let Some(seen) = file_stat_tag(path) else {
+        return digest();
+    };
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.to_string_lossy().hash(&mut h);
+    let name = format!("{:016x}", h.finish());
+    let dir = cache_base_dir().join("content-fp");
+    let stamp = dir.join(&name);
+    if let Ok(text) = crate::file_access::read_to_string(&stamp)
+        && let Some((tag, fp)) = text.trim().rsplit_once(' ')
+        && tag == seen
+        && let Ok(fp) = u64::from_str_radix(fp, 16)
+        && fp != 0
+    {
+        return fp;
+    }
+    let fp = digest();
+    if fp != 0 && crate::file_access::create_dir_all(&dir).is_ok() {
+        // Written aside and renamed, so a concurrent run reads a whole stamp or none.
+        let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
+        if crate::file_access::write(&tmp, format!("{seen} {fp:016x}")).is_ok() {
+            let _ = crate::file_access::rename(&tmp, &stamp);
+        }
+    }
+    fp
+}
+
+/// A file's length and modification time as `<len>:<secs>.<nanos>`, or `None` when the
+/// metadata cannot be read.
+fn file_stat_tag(path: &std::path::Path) -> Option<String> {
+    let meta = crate::file_access::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some(format!(
+        "{}:{}.{}",
+        meta.len(),
+        mtime.as_secs(),
+        mtime.subsec_nanos()
+    ))
 }
 
 /// Loud staleness signal for the dev `target/<profile>/` layout: the uplifted
@@ -964,6 +1018,44 @@ pub fn native_artifact_stamped_fp(profile_dir: &std::path::Path) -> Option<u64> 
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
+/// The first line `rustc --version` answers on `PATH` (`rustc 1.85.0 (…)`), or `None` when
+/// there is no working `rustc`.  Asked once per process, and the ONE place loft asks it:
+/// a launch of `rustc` costs more than a warm start of loft itself, so a run that executes a
+/// program must never reach here.  `LOFT_TIMING=1` reports each launch (`rustc_probe=`), which
+/// is how a start-up that pays one shows it.
+#[must_use]
+pub fn rustc_version() -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static VERSION: OnceLock<Option<String>> = OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            let started = std::time::Instant::now();
+            let version = crate::platform::process::Spawn::new(
+                crate::platform::process::Program::search("rustc"),
+            )
+            .arg("--version")
+            .run(b"")
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("rustc")
+                    .trim()
+                    .to_string()
+            });
+            if crate::platform::timing_enabled() {
+                eprintln!(
+                    "LOFT_TIMING rustc_probe={:.2}ms",
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            version
+        })
+        .as_deref()
+}
+
 /// The reason [`rustc_mismatch`] gives when there is no `rustc` at all — a missing toolchain,
 /// which no runtime rebuild can cure, as opposed to a changed one.
 pub const RUSTC_NOT_FOUND: &str = "rustc not found";
@@ -990,16 +1082,8 @@ pub fn rustc_mismatch() -> Option<&'static str> {
             if stamp.is_empty() {
                 return None;
             }
-            let live = crate::platform::process::Spawn::new(
-                crate::platform::process::Program::search("rustc"),
-            )
-            .arg("--version")
-            .run(b"")
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-            match live {
-                Some(v) if v == stamp => None,
+            match rustc_version() {
+                Some(v) if v == stamp.trim() => None,
                 Some(v) => Some(format!(
                     "rustc changed since this loft was built ({stamp} → {v})"
                 )),

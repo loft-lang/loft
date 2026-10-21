@@ -218,7 +218,7 @@ fn brick_buster_browser_renders_without_console_errors() {
         eprintln!("SKIP: tools/html_render_check.mjs missing");
         return;
     }
-    let loft_bin = root.join("target/release/loft");
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return;

@@ -382,9 +382,12 @@ Fields are declared as `name: type` with optional modifiers **after** the type:
 - `= expr` — stored default value, applied when field is omitted in constructor.
   The expression may build a value of its own — `= [1, 2]`, `= "a" + "b"`, `= mk()`,
   `= P { … }`, `= [K { … }]` for a keyed field — and is evaluated once per
-  construction. One form is refused, and says so: an expression that reads `$` **and**
-  needs a temporary, since a `$`-reading default is built against the record at each
-  construction site and so cannot be built once and shared.
+  construction. It may also read the record through `$`, building from it as freely:
+  `= "{$.id}: {$.label}"`, `= $.label.to_uppercase() + "!"`, `= [$.label]`,
+  `= if $.price > 10 { Big } else { Small }`, `= describe($.label)`. Such a default is
+  lowered into a function of the record and called with the record as it stands.
+  The same default fills the field when a store written before the field existed is
+  upgraded (`loft layout upgrade`, [plans/196-store-upgrade.md](plans/196-store-upgrade.md)).
 
   **Where a default reaches depends on whether it is a constant** (loft#876). A default
   that is a LITERAL — `= 1.5`, `= 7`, `= "hi"`, `= true` — is part of the type: it is
@@ -851,7 +854,11 @@ part copied out of a parsed value or a parsed value stored into a field or an el
 variable: `f()#errors` does not parse, and a variable that is neither a record nor a vector is
 refused.  The one-step `Type.parse(text)`, the `text as T` cast and the staged
 `Type.parse(json_parse(text))` all fill it; `json_errors()` carries the same mismatches as one
-text.  Guards:
+text.  A field with no default cannot be left out: a record whose bare enum field declares no
+`= <variant>` is refused by `text as T` and `T.parse(…)` (`text-parse-may-leave-a-field-unfilled`),
+and the checked `text as T?` answers null when the text leaves that field out, sets it to
+`null`, or names a variant the enum does not have.  Guards:
+`loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft`,
 `loft-suite/attic/scripts/a-record-errors-read-answers-for-its-own-parse.loft`,
 `loft-suite/attic/scripts/a-vector-errors-read-answers-for-its-own-parse.loft`.
 

@@ -95,6 +95,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN148](https://github.com/loft-lang/plans/issues/148) | next | Better PHP end to end — a web client, an HTTPS server that renews its own certificate, and the libraries between them ([WEB_STACK.md](WEB_STACK.md)) |
 | [@PLN72](https://github.com/loft-lang/plans/issues/72) | future | Renderer backend boundary |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
+| [@PLN196](https://github.com/loft-lang/plans/issues/196) | future | Store upgrade — a changed definition converts its data store to store, on disk, in memory and in wasm, or says why it cannot ([plan](plans/196-store-upgrade.md)) |
 
 ### U — Ease of use
 

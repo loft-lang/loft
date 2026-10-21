@@ -769,6 +769,61 @@ impl Parser {
         }
     }
 
+    /// `@FR-P-Opt-Ty` / `@FR-P-Alt-Diff` — the type of a capture only some branches bind: its
+    /// field's type, nullable, in a form that HOLDS every value the field can.  A narrow integer
+    /// that fills its width (`u8`, `i16`) gives one code to its null when nullable (`@FR-N-Reserve`:
+    /// `u8?` holds 0..=254), so a present top value read null wherever the capture went; the
+    /// capture keeps the RANGE and drops the forced width, which a nullable `limit` range answers
+    /// with a spare code beside it.
+    pub(super) fn capture_optional(tp: &Type) -> Type {
+        // A field already nullable is its own capture type: its values are those `τ?` holds.
+        if matches!(tp, Type::Optional(_)) {
+            return tp.clone();
+        }
+        if let Type::Integer(spec) = tp.base()
+            && !spec.is_full_integer()
+            && (i64::from(spec.usable_min(true)) > i64::from(spec.min)
+                || spec.usable_max(true) < spec.max)
+        {
+            let mut wide = *spec;
+            wide.forced_size = None;
+            return Type::optional(Type::Integer(wide));
+        }
+        Type::optional(tp.clone())
+    }
+
+    /// `@FR-P-Opt-Ty` / `@FR-P-Alt-Diff` with `@FR-T-Absent` — the value a pattern capture
+    /// holds where its pattern did NOT bind it: the null of its promoted `τ?`.
+    ///
+    /// For a TUPLE that null has a form of its own — the in-flight absent tuple, every member
+    /// null — and [`null`](Parser::null) has none for it: its catch-all answers `Value::Null`,
+    /// which pushes nothing.  So an absent `pr: (integer, text)` capture read whatever the stack
+    /// held (`pr.0 ?? -1` answered 0, a `text` member SIGSEGVed formatting it) and `--native`
+    /// assigned `()` to an `(i64, String)` (E0308) — at every capture site alike, the slice
+    /// optional group, both alternation forms, the arm-level or-patterns and the tuple-pattern
+    /// alternatives (loft#2075).  A member is in a value position inside the tuple, so it takes
+    /// [`null_value`](Parser::null_value) (a nested tuple recurses).  Every other capture type
+    /// keeps `null`'s answer unchanged: only the STACK tuple spelling has no null of its own,
+    /// and a capture is typed by its field's declared type, which names a tuple that way.
+    pub(crate) fn absent_capture(&mut self, tp: &Type) -> Value {
+        let Type::Tuple(members) = tp.base() else {
+            return self.null(tp);
+        };
+        let members = members.clone();
+        Value::Tuple(
+            members
+                .iter()
+                .map(|m| {
+                    if matches!(m.base(), Type::Tuple(_)) {
+                        self.absent_capture(m)
+                    } else {
+                        self.null_value(m)
+                    }
+                })
+                .collect(),
+        )
+    }
+
     /// loft#793/loft#936 — the null a VALUE POSITION delivers for `tp`:
     /// `null()`, plus the store-pointer sentinel for every remaining
     /// DbRef-backed heap type (the collections, and a struct-enum — whose

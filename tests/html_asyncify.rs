@@ -100,8 +100,8 @@ fn pick_free_port() -> Option<u16> {
 }
 
 /// Build the program to `--html` and return its path, or `None` to skip.
-fn build_html(root: &Path) -> Option<PathBuf> {
-    let loft_bin = root.join("target/release/loft");
+fn build_html(_root: &Path) -> Option<PathBuf> {
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
     if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return None;

@@ -1,0 +1,397 @@
+// `@FR-R-StreamWalk` — a vector a function BUILDS and its caller WALKS ONCE is never built on
+// native: the builder's stream twin runs its own body and hands each element it would have
+// appended to the walk's body, which runs as a closure at that append.  The values the body
+// sees are the values the vector would have held, in the same order, and a walk the rule
+// declines (it writes what the builder reads, it leaves the walk, it uses the vector or the
+// index otherwise, a call in it or in the builder writes what the program can see) keeps
+// the built vector.  The interpreter never takes the rewrite, so agreement between the
+// backends is the evidence here — and every cell's value is hand-computed besides, with
+// `LOFT_NO_STREAM_WALK=1` answering identically.  Which cells stream is pinned by
+// `tests/stream_walk.rs`.
+//
+// @falsify-tier: native-release
+// @falsified-at: hand-measured (sabotage, 2026-10-20) — three gates broken one at a time on
+// `--native-release`, each restored byte-identically: the body's quiet check answering ok
+// made c10 stream and answer 31475 (its body rewrote an item the builder had not read yet);
+// the builder's quiet check answering ok made c19 stream and answer 25 (the builder's log
+// grew while the body read its length); the body's reach check answering no made c20
+// stream and answer 31475.  Each failed at its own assertion and the cells before it stayed
+// green.  `LOFT_NO_STREAM_WALK=1` keeps every cell green (`tests/stream_walk.rs`).
+struct Seg { s: text, v: integer }
+struct FSeg { f: float, n: integer }
+struct Src { items: vector<integer>, words: vector<text> }
+
+// The builder of most cells: the elements of [lo, hi) as segments, nothing when hi <= lo.
+fn segs(src: Src, lo: integer, hi: integer) -> vector<Seg> {
+  out: vector<Seg> = [];
+  if hi <= lo { return out; }
+  for i in lo..hi {
+    if i < len(src.items) {
+      out += [Seg { s: src.words[i]?, v: src.items[i]? }];
+    }
+  }
+  return out;
+}
+
+// Two append sites: even indices as "e" with i, odd as "o" with 10 * i.
+fn twos(n: integer) -> vector<Seg> {
+  out: vector<Seg> = [];
+  for i in 0..n {
+    if i % 2 == 0 {
+      out += [Seg { s: "e", v: i }];
+    } else {
+      out += [Seg { s: "o", v: i * 10 }];
+    }
+  }
+  return out;
+}
+
+fn halves(n: integer) -> vector<FSeg> {
+  out: vector<FSeg> = [];
+  for i in 0..n { out += [FSeg { f: i as float * 0.5, n: i }]; }
+  return out;
+}
+
+// The text field is built by formatting.
+fn labels(n: integer) -> vector<Seg> {
+  out: vector<Seg> = [];
+  for i in 0..n {
+    t = "{i}-{i * i}";
+    out += [Seg { s: t, v: i }];
+  }
+  return out;
+}
+
+// The second append names no `s`: the literal writes the field's default there, so every
+// append sets both fields.
+fn partial(n: integer) -> vector<Seg> {
+  out: vector<Seg> = [];
+  for i in 0..n {
+    if i == 1 {
+      out += [Seg { v: 50 }];
+    } else {
+      out += [Seg { s: "x", v: i }];
+    }
+  }
+  return out;
+}
+
+// A builder that also writes a vector its caller handed it: not quiet.
+fn logged(src: Src, n: integer, log: vector<integer>) -> vector<Seg> {
+  out: vector<Seg> = [];
+  for i in 0..n {
+    log += [i];
+    out += [Seg { s: src.words[i]?, v: src.items[i]? }];
+  }
+  return out;
+}
+
+fn dbl(x: integer) -> integer { x * 2 }
+
+fn note(log: vector<integer>, x: integer) { log += [x]; }
+
+fn mk() -> Src {
+  Src { items: [3, 1, 4, 1, 5, 9, 2, 6], words: ["a", "bb", "ccc", "d", "ee", "fff", "g", "hh"] }
+}
+
+// c1 — the text engine's shape: the element bound, its text and its number read.
+fn c1(src: Src) -> integer {
+  w = 0;
+  runs = segs(src, 1, 5);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    w += len(r.s) * (r.v + 1);
+  }
+  w
+}
+
+// c2 — the element read in place, its number only, folded in order.
+fn c2(src: Src) -> integer {
+  t = 0;
+  runs = segs(src, 0, 8);
+  for i in 0..len(runs) { t = t * 10 + (runs[i]?).v; }
+  t
+}
+
+// c3 — a float field, folded in order.
+fn c3() -> float {
+  acc = 0.0;
+  hs = halves(4);
+  for i in 0..len(hs) {
+    h = hs[i]?;
+    acc = acc * 2.0 + h.f;
+  }
+  acc
+}
+
+// c4 — texts concatenated in order, and the builder's early return.
+fn c4(src: Src) -> text {
+  out = "";
+  runs = segs(src, 2, 6);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    out += "{r.s}{r.v}";
+  }
+  none = segs(src, 5, 5);
+  for j in 0..len(none) {
+    q = none[j]?;
+    out += "!{q.s}";
+  }
+  "{out}|"
+}
+
+// c5 — two append sites in the builder.
+fn c5() -> text {
+  out = "";
+  ts = twos(4);
+  for i in 0..len(ts) {
+    r = ts[i]?;
+    out += "{r.s}{r.v},";
+  }
+  out
+}
+
+// c7 — a statement between the call and the walk that the call does not read.
+fn c7(src: Src) -> integer {
+  acc = 0;
+  runs = segs(src, 0, 3);
+  k = 7;
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    acc += r.v * k;
+  }
+  acc
+}
+
+// c8 — DECLINED: a statement between writes what the call reads.
+fn c8(src: Src) -> integer {
+  acc = 0;
+  hi = 3;
+  runs = segs(src, 0, hi);
+  hi = 8;
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    acc += r.v;
+  }
+  acc + hi * 0
+}
+
+// c9 — the body appends to a vector of its own.
+fn c9(src: Src) -> integer {
+  vals: vector<integer> = [];
+  runs = segs(src, 3, 6);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    vals += [r.v * 2];
+  }
+  f = 0;
+  for x in vals { f = f * 100 + x; }
+  f
+}
+
+// c10 — DECLINED: the body writes the vector the builder reads.
+fn c10(src: Src) -> integer {
+  acc = 0;
+  runs = segs(src, 0, 5);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    acc = acc * 10 + r.v;
+    if r.v == 3 { src.items[3] = 7; }
+  }
+  acc
+}
+
+// c11 — a function value the body calls.
+fn c11(src: Src, f: fn(integer) -> integer) -> integer {
+  acc = 0;
+  runs = segs(src, 0, 4);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    acc += f(r.v);
+  }
+  acc
+}
+
+// c12 — DECLINED: the body calls a function that writes a vector its caller handed it.
+fn c12(src: Src, log: vector<integer>) -> integer {
+  runs = segs(src, 0, 3);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    note(log, r.v);
+  }
+  len(log) * 100 + log[2]
+}
+
+// c13 — DECLINED: the body leaves the walk.
+fn c13(src: Src) -> integer {
+  acc = 0;
+  runs = segs(src, 0, 8);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    if r.v == 9 { break; }
+    acc += r.v;
+  }
+  acc
+}
+
+// c14 — DECLINED: the vector is read after the walk.
+fn c14(src: Src) -> integer {
+  s = 0;
+  runs = segs(src, 0, 4);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    s += r.v;
+  }
+  s * 100 + len(runs)
+}
+
+// c15 — DECLINED: the body reads the index.
+fn c15(src: Src) -> integer {
+  s = 0;
+  runs = segs(src, 0, 4);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    s += i * r.v;
+  }
+  s
+}
+
+// c16 — a walk inside a walk.
+fn c16(src: Src) -> integer {
+  acc = 0;
+  runs = segs(src, 0, 3);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    inner = twos(r.v);
+    for j in 0..len(inner) {
+      q = inner[j]?;
+      acc += q.v;
+    }
+  }
+  acc
+}
+
+// c17 — the text was formatted; one walk reads the number, one the text.
+fn c17() -> text {
+  sum = 0;
+  ls = labels(3);
+  for i in 0..len(ls) { sum += (ls[i]?).v; }
+  out = "";
+  ms = labels(3);
+  for j in 0..len(ms) { out += "{(ms[j]?).s}|"; }
+  "{sum}:{out}"
+}
+
+// c18 — an append that names one field: the literal sets the other to its default, which the
+// stream hands over like any value.
+fn c18() -> text {
+  sum = 0;
+  ps = partial(3);
+  for i in 0..len(ps) { sum += (ps[i]?).v; }
+  out = "";
+  qs = partial(3);
+  for j in 0..len(qs) { out += "[{(qs[j]?).s}]"; }
+  "{sum}:{out}"
+}
+
+// c19 — DECLINED: the builder writes a vector its caller handed it.
+fn c19(src: Src) -> integer {
+  log: vector<integer> = [];
+  acc = 0;
+  runs = logged(src, 3, log);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    acc += r.v * (len(log) + 1);
+  }
+  acc
+}
+
+// c20 — DECLINED: the body writes the LOCAL the builder reads (a place the consumer owns).
+fn c20() -> integer {
+  own = mk();
+  acc = 0;
+  runs = segs(own, 0, 5);
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    acc = acc * 10 + r.v;
+    if r.v == 3 { own.items[3] = 7; }
+  }
+  acc
+}
+
+// c21 — DECLINED: a statement between writes a field of what the call reads.
+fn c21() -> integer {
+  own = mk();
+  acc = 0;
+  runs = segs(own, 0, 4);
+  own.items[1] = 50;
+  for i in 0..len(runs) {
+    r = runs[i]?;
+    acc += r.v;
+  }
+  acc
+}
+
+fn main() {
+  r1 = c1(mk());
+  println("c1 {r1}");
+  assert(r1 == 33, "c1");
+  r2 = c2(mk());
+  println("c2 {r2}");
+  assert(r2 == 31415926, "c2");
+  r3 = c3();
+  println("c3 {r3}");
+  assert(r3 == 5.5, "c3");
+  r4 = c4(mk());
+  println("c4 {r4}");
+  assert(r4 == "ccc4d1ee5fff9|", "c4");
+  r5 = c5();
+  println("c5 {r5}");
+  assert(r5 == "e0,o10,e2,o30,", "c5");
+  r7 = c7(mk());
+  println("c7 {r7}");
+  assert(r7 == 56, "c7");
+  r8 = c8(mk());
+  println("c8 {r8}");
+  assert(r8 == 8, "c8");
+  r9 = c9(mk());
+  println("c9 {r9}");
+  assert(r9 == 21018, "c9");
+  r10 = c10(mk());
+  println("c10 {r10}");
+  assert(r10 == 31415, "c10");
+  r11 = c11(mk(), dbl);
+  println("c11 {r11}");
+  assert(r11 == 18, "c11");
+  lg: vector<integer> = [];
+  r12 = c12(mk(), lg);
+  println("c12 {r12}");
+  assert(r12 == 304, "c12");
+  r13 = c13(mk());
+  println("c13 {r13}");
+  assert(r13 == 14, "c13");
+  r14 = c14(mk());
+  println("c14 {r14}");
+  assert(r14 == 904, "c14");
+  r15 = c15(mk());
+  println("c15 {r15}");
+  assert(r15 == 12, "c15");
+  r16 = c16(mk());
+  println("c16 {r16}");
+  assert(r16 == 54, "c16");
+  r17 = c17();
+  println("c17 {r17}");
+  assert(r17 == "3:0-0|1-1|2-4|", "c17");
+  r18 = c18();
+  println("c18 {r18}");
+  assert(r18 == "52:[x][][x]", "c18");
+  r19 = c19(mk());
+  println("c19 {r19}");
+  assert(r19 == 32, "c19");
+  r20 = c20();
+  println("c20 {r20}");
+  assert(r20 == 31415, "c20");
+  r21 = c21();
+  println("c21 {r21}");
+  assert(r21 == 9, "c21");
+}

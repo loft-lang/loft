@@ -137,6 +137,34 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A native program can ship as one file.**  Put `#link static` at the top of a program (or
+pass `--static`) and a native build links the code of the libraries it uses — `regex`,
+`crypto`, the graphics libraries — into the binary itself.  The result runs on its own: no
+loft, no `rustc`, no library file beside it.  Without it, such libraries stay separate files
+the binary loads at start, as before; `--dynamic` asks for that over a program's `#link
+static`.
+
+**A native program finds its libraries the same way on every OS.**  `loft build native` now
+writes `dist/`: the program and every library file it uses, a directory that runs wherever
+you copy it.  A program that keeps its libraries as separate files looks for them in a fixed
+order — `LOFT_LIB_PATH`, its own directory, then
+`~/.loft/lib/<package>-<version>/` and a system-wide root — instead of in a directory of the
+machine that built it.  `loft build --install` puts a program's libraries in `~/.loft/lib/`,
+where programs built against different versions of one library each find their own.  A
+missing library is a clear error naming the package, its version and where loft looked,
+rather than the OS loader's message.
+**The documentation links the blog, and `loft-lang.org` opens the documentation.**  Every docs
+page has a Blog link in its navigation, to [loft-lang.org/blog](https://loft-lang.org/blog/),
+where the author writes about why loft exists and how it is built.  The site's front address
+now goes straight to the documentation, which always shows the current release, instead of an
+old download page.
+
+**A C library a package ships goes with your program.**  The C code a package compiles
+through `[c] shim`, or a library file it ships beside itself, is now copied into `dist/`
+and found the same way as a package's own library.  With `#link static`, a shim's code is
+built into the binary itself — so a program using such a package can still ship as one
+file.  System libraries (like `libz`) are still the system's to provide.
+
 **A library can offer a few functions by their bare name.**  A library that auto-loads
 (`[triggers]` in its manifest) could already be reached by one of its methods or types with
 no `use`; it can now list *builders* — `builders = ["set"]` — and a bare `set(words)` in your

@@ -167,6 +167,13 @@ record's bytes while a run-time compare finds the parameter's store and the buff
 First bisect step for a wrong text read from a match binding on native; `LOFT_POISON=1` is the
 falsifier.
 
+**`LOFT_NO_TEXT_SET_BORROW=1`** (default-ON, generation time, `--native` only) makes every text
+set into a store field copy its value into a `String` first — with it off, the setter reads the
+value where it lives and `Store::set_str` / `refill_str` copy only a value whose bytes lie in
+the destination store, the one store the claim can move.  First bisect step for a wrong text
+written into a field on native; the falsifier is the store unit test
+`a_text_from_its_own_store_survives_the_claim_that_moves_it`.
+
 **`LOFT_NO_TEXT_SET_HEADER=1`** (`@FR-R-Header`'s text clause, default-ON, generation time)
 makes a loop that writes a text field or element decline its header hold again — with it off,
 such a loop holds the headers of the vectors it reads, and an element base only for a vector
@@ -316,7 +323,20 @@ where the block's remainder grows no store, frees no record before a later use, 
 rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loop variable —
 is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
-and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+and each declined with its reason — a view with no fusable access is declined for that
+before the remainder is walked for growth, so a growth refusal is one that cost something,
+and under each growth refusal a `class` line gives the view's and each mover's chain end
+(`+` fresh, `-` not), the apart verdict, the buffer op that blocks when one does, and
+`use-after-growth`: whether any address-served use follows the first growth, the question an
+ordered remainder clause would ask (priced, not built: `bench/portal/analysis/recptr-remainder.md`).
+`LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+**`LOFT_NO_ELEMENT_ADDRESS=1`** (`@FR-R-RecPtr`'s element clause, default-ON, generation
+time, `--native` only) writes a value record into `v[i]` through the element read and its
+address taken back out of the reference — with it off, the element is derived where it is
+written: one header read, the in-range test, the reference and the address both from the
+record and the index (`map_set_hex` −5.6 % of `slope_path_with_undo`).  The first bisect step
+for a value record written into the wrong element, or an out-of-range write that raised
+twice or not at all.
 **`LOFT_NO_TEXT_FIELD=1`** (`@FR-R-RecPtr`'s text clause, default-ON, generation time,
 `--native` only) makes a TEXT field of a `for e in v` loop variable (`e.name`) resolve the
 store, the record and the text at each read again — with it off, the view's address from
@@ -452,7 +472,9 @@ a local length, and writes the record's length once when the loop ends (`push` 4
 −80 %) — and is the first bisect step for a wrong element or length out of a counted push
 loop or a comprehension on native.  A view of a plain NO-HEAP record named in the body (a
 `pts[i]?` element of another vector) is no viewer of the length and does not decline the
-window, and a builder's tuple copied into the fresh element is the slot's own write; the
+window, nor does a vector of plain scalars stored apart from the pushed one (a `vector<u8>`
+parameter read into a returned `vector<integer>`); a builder's tuple copied into the fresh
+element is the slot's own write; the
 window's other-statement test is asked as the header hoist asks it (in-place tier, variable
 table).  `LOFT_TRACE_PUSH_FILL=1` names the clause that declined a window.  ⚠ `LOFT_HOIST_VERIFY=1` checks the window's base and its frozen header at every
 push, but CANNOT see what the admission exists to prevent — a runtime reader meeting the
@@ -521,6 +543,22 @@ hand-computed values; **`LOFT_TRACE_DECODE_VIEW=1`** names each root the plan ad
 one it declines, with the mention that declined it.
 A reader behind a one-statement helper is held only where the helper is inlined
 (`LOFT_NO_INLINE_READER`, [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
+
+**`LOFT_NO_DECODE_STRUCTURE=1`** (`@FR-R-DecodeView`'s structure clause, default-ON, generation
+time, the same builds) builds every decoded value — with it off, a root whose chain reads its
+decoded value once holds the value as its position (the decoder's arguments) and re-runs the
+decoder's `__ps` shape and `__psw` walk twins to read it.  The first bisect step for a wrong
+answer out of a decoder's caller on a release build, after `LOFT_NO_DECODE_VIEW`.
+**`LOFT_TRACE_DECODE_STRUCTURE=1`** names each producer and root admitted and each decline with
+its reason; `=2` also prints each consumer's IR.
+
+**`LOFT_NO_STREAM_WALK=1`** (`@FR-R-StreamWalk`, default-ON, generation time, `--native-release`
+and every build that does not ship the live tier) builds every vector a caller walks once —
+with it off, a function answering a vector of records that its caller binds and walks by
+index runs as its stream twin, handing each element's fields to the walk's body at the
+append, and no vector is built.  First bisect step for a wrong value, order or count out of
+such a walk on a release build; **`LOFT_TRACE_STREAM_WALK=1`** names every producer and walk
+admitted or declined, with why.
 
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again

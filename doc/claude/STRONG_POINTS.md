@@ -124,12 +124,12 @@ refactor — it reads as delete+create and the value is lost. The single most
 common edit hits the single real gap, on day one. (It warns rather than dropping
 silently, but the data is still gone.)
 
-**Raise it higher.** Build the **migration setter** for the old field (declares
-old name + type, routes the value to the renamed field) — loft has no setter
-concept yet, so this is its own small language feature
+**Raise it higher.** Upgrade stored data to a changed definition store to store,
+with a rename done in two upgrades (the new name filled from the old while both
+exist, the old dropped later) — [@PLN196](plans/196-store-upgrade.md)
 ([GOALS.md § what survives an edit](GOALS.md#why-a-language-not-a-store-bolted-onto-an-existing-one)).
-*Check:* a name-keyed round-trip survives a field rename with a migration setter,
-locked by a regression test.
+*Check:* a field renamed in two upgrades keeps its values, and a one-step rename is
+refused; both locked by regression tests.
 
 ---
 

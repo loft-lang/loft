@@ -24,7 +24,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn loft_bin() -> PathBuf {
-    repo_root().join("target/release/loft")
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 fn which(cmd: &str) -> bool {

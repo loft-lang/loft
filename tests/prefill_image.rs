@@ -130,8 +130,8 @@ fn the_image_changes_no_mint() {
     );
 }
 
-/// How many times the run USED `Mix`'s image (`LOFT_TRACE_PREFILL=1`, one line per use).
-fn image_uses(mode: &str) -> usize {
+/// How many times the run USED `tp`'s image (`LOFT_TRACE_PREFILL=1`, one line per use).
+fn image_uses(mode: &str, tp: &str) -> usize {
     let mut cmd = loft();
     cmd.arg(mode).arg(cells()).env("LOFT_TRACE_PREFILL", "1");
     let out = cmd.output().expect("spawn loft");
@@ -140,22 +140,26 @@ fn image_uses(mode: &str) -> usize {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    let head = format!("[prefill] `{tp}`: image used");
     String::from_utf8_lossy(&out.stderr)
         .lines()
-        .filter(|l| l.starts_with("[prefill] `Mix`: image used"))
+        .filter(|l| l.starts_with(&head))
         .count()
 }
 
 #[test]
 fn the_cells_use_the_image_on_both_backends() {
     // A cell that only CAPTURES the image proves nothing about it — and on `--native`
-    // every literal is a complete-write mint that never prefills, so c1–c10 capture
-    // `Mix`'s image there and never use it; c11's re-activated caller is what makes the
-    // native half of the verify pin above non-vacuous.  Both backends must USE the image.
-    let interpret = image_uses("--interpret");
-    let native = image_uses("--native");
+    // every `Mix` literal is a complete-write mint that never prefills (`@FR-R-CompleteWrite`,
+    // whose buffer clauses cover c11's per-activation slot as well), so c1–c11 capture
+    // `Mix`'s image there and never use it.  c12's `Outer` keeps its prefill on native —
+    // the discriminant of its `Inner?` field is written by no literal — and that is what
+    // makes the native half of the verify pin above non-vacuous.  Both backends must USE
+    // an image: the interpreter `Mix`'s (every cell), native `Outer`'s (c12).
+    let interpret = image_uses("--interpret", "Mix");
+    let native = image_uses("--native", "Outer");
     assert!(
         interpret > 0 && native > 0,
-        "image uses of `Mix`: interpret {interpret}, native {native}"
+        "image uses: interpret `Mix` {interpret}, native `Outer` {native}"
     );
 }

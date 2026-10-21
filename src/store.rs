@@ -33,7 +33,8 @@
 //! - **Positive** → claimed record; magnitude = size in words (incl. header).
 //! - **Negative** → free block; magnitude = size in words.
 //!
-//! Free blocks are tracked in a `BTreeMap` for gap-based allocation.
+//! Free blocks are tracked in an LLRB tree kept inside the free blocks themselves, for
+//! best-fit allocation.
 //! Adjacent free blocks are merged on `delete` to reduce fragmentation.
 //!
 //! Record 0 is the store header; record 1 (`PRIMARY`) is the main record
@@ -5512,8 +5513,28 @@ impl Store {
         }
     }
 
+    /// Whether `len` bytes at `ptr` begin inside this store's buffer.
+    ///
+    /// A text written INTO a store is read from wherever its value lives — a literal, a
+    /// `String`, another store's record — without a copy of its own; only bytes inside THIS
+    /// store can move under the write, because the claim that makes room for them may
+    /// reallocate this store (and only this one), and a refill writes over a block the value
+    /// may be a slice of.  `set_str`, `refill_str` and `set_str_ptr` copy exactly those
+    /// first, which is what lets the generated code hand any text over borrowed.
+    #[inline]
+    fn holds_bytes(&self, ptr: *const u8, len: usize) -> bool {
+        let base = self.ptr as usize;
+        let at = ptr as usize;
+        len != 0 && at >= base && at < base + self.size as usize * 8
+    }
+
     #[inline]
     pub fn set_str(&mut self, val: &str) -> u32 {
+        if self.holds_bytes(val.as_ptr(), val.len()) {
+            // Out of the store before the claim can move it.
+            let moved_out = val.to_owned();
+            return self.set_str(&moved_out);
+        }
         #[cfg(feature = "op-census")]
         crate::op_census::moved(crate::op_census::Moved::Text, val.len());
         let res = self.claim(((val.len() + 15) / 8) as u32);
@@ -5535,6 +5556,11 @@ impl Store {
     /// emitter proves at the call site; a slot holding anything else is read as a block.
     #[inline]
     pub fn refill_str(&mut self, rec: u32, fld: u32, val: &str) {
+        if self.holds_bytes(val.as_ptr(), val.len()) {
+            let moved_out = val.to_owned();
+            self.refill_str(rec, fld, &moved_out);
+            return;
+        }
         let old = self.get_u32_raw(rec, fld);
         if old != 0 && !self.read_only {
             let words = self.read::<i32>(old, 0);
@@ -5559,6 +5585,11 @@ impl Store {
 
     #[inline]
     pub fn set_str_ptr(&mut self, ptr: *const u8, len: usize) -> u32 {
+        if self.holds_bytes(ptr, len) {
+            // SAFETY: the caller hands `len` readable bytes at `ptr`.
+            let own = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
+            return self.set_str_ptr(own.as_ptr(), len);
+        }
         #[cfg(feature = "op-census")]
         crate::op_census::moved(crate::op_census::Moved::Text, len);
         let res = self.claim(((len + 15) / 8) as u32);
@@ -7476,6 +7507,36 @@ mod tests {
     /// takes the tree path and the whole block — the same store the tree path alone builds.
     /// With a wilderness (`@FR-H-Wilderness`) the remainder is the wilderness instead of the
     /// root, and the layout is the same.
+    /// A text whose bytes lie in the store it is written into is copied before the claim that
+    /// may move the store: `set_str`, `refill_str` and `set_str_ptr` each read it after growing
+    /// a store of 64 words to fit a text longer than the whole store.
+    #[test]
+    fn a_text_from_its_own_store_survives_the_claim_that_moves_it() {
+        let long = "the quick brown fox jumps over the lazy dog ".repeat(20);
+        for how in 0..3 {
+            let mut store = store_with(false);
+            let rec = store.claim(2);
+            store.set_u32_raw(rec, 4, 0);
+            let src = store.set_str(&long);
+            let before = store.ptr;
+            let val = store.get_str(src);
+            let got = match how {
+                0 => store.set_str(val),
+                1 => store.set_str_ptr(val.as_ptr(), val.len()),
+                _ => {
+                    store.refill_str(rec, 4, val);
+                    store.get_u32_raw(rec, 4)
+                }
+            };
+            assert_ne!(store.ptr, before, "case {how}: the claim moved the store");
+            assert_eq!(
+                store.get_str(got),
+                long,
+                "case {how}: the copy reads the source text"
+            );
+        }
+    }
+
     #[test]
     fn bump_tail_claims_are_the_tree_paths_layout() {
         for wilderness in [false, true] {

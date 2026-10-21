@@ -4,14 +4,14 @@ schema_version = 1
 
 [[package]]
 name = "crypto"
-version = "0.3.13"
-url = "https://github.com/loft-lang/loft-libs-core/releases/download/crypto-v0.3.13/crypto-0.3.13.tar.gz"
-sha256 = "1ae1ccc15855e487cddf2f65dbab36651d78729d9ae90b4bbadb7562739f6fda"
+version = "0.3.14"
+url = "https://github.com/loft-lang/loft-libs-core/releases/download/crypto-v0.3.14/crypto-0.3.14.tar.gz"
+sha256 = "26dfd4c6cb44bf6862d651d561f0371bc794a27c0982fb961a55f250bf831565"
 source = "registry"
 
 [[package]]
 name = "script"
-version = "0.2.0"
-url = "https://github.com/loft-lang/loft-libs-core/releases/download/script-v0.2.0/script-0.2.0.tar.gz"
-sha256 = "33b0fe91101aaa7f75d481bc7d53f60342fe0897222580c115d9b0b4015f5db3"
+version = "0.4.0"
+url = "https://github.com/loft-lang/loft-libs-core/releases/download/script-v0.4.0/script-0.4.0.tar.gz"
+sha256 = "40bc17428ee2fa952a1feebcd4b44f224ad21a0f1a18d81482b7261838951617"
 source = "registry"

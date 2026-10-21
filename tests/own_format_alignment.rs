@@ -101,12 +101,16 @@ fn db_struct_type_tag() {
 /// edit) must degrade to the **null sentinel**, never silently to variant 1.
 /// This is the "keep as much data as possible alive across structure changes"
 /// guarantee: a stale value reads back as visibly-absent null, not as a
-/// plausible-but-wrong variant.
+/// plausible-but-wrong variant — and the parse says so, naming the field
+/// (`@FR-D-NoEnumF`: a variant the enum lacks is listed under `#errors`, @C148).
 #[test]
 fn db_unknown_enum_degrades_to_null() {
     let (mut s, tp) = data_stores();
     let msg = s.parse_message("{c: Weekly}", tp); // `Weekly` ∉ {Daily, Hourly}
-    assert!(parses(&msg), "unknown enum tag must not error: {msg}");
+    assert!(
+        msg.contains("path:c"),
+        "an unknown enum tag is reported against its field: {msg}"
+    );
     assert!(
         !msg.contains("c:Daily") && !msg.contains("c:Hourly"),
         "unknown variant must NOT map to a real variant: {msg}"

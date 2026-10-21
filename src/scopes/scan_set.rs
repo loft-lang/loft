@@ -96,6 +96,62 @@ fn tuple_member_backings_of(rhs: &Value, function: &Function) -> Option<HashMap<
     Some(out)
 }
 
+/// `@FR-H-Materialise` with `@FR-E-Report` — the projection chain `value` with its SILENT
+/// element read (`OpGetVectorNullable` / `OpVectorRefNullable`) respelled as the plain one, or
+/// `None` when the chain has none.  A following `if` that mentions a bound element turns its
+/// read silent (`Parser::rewrite_defended_fault_sites`), and E-Report calls the two an emission
+/// choice no program can tell apart — but only the plain read is a projection the materialise
+/// copy recognises (`projection_container_var`, kept narrow on purpose), so a view tested that
+/// way stayed a live alias across a `remove` and read the element that moved into its place
+/// (loft#2090's guard met it: `c = v[0]; v.remove(0); if c.n == 1 …` answered from `v[1]`).
+/// Asked only of a binding the walk has already decided to copy, so the one thing the respell
+/// changes beside the copy is that an index out of range is reported rather than silent.
+fn plain_element_read(value: &Value, data: &Data) -> Option<Value> {
+    match value {
+        Value::Span(b) => Some(Value::Span(Box::new((
+            b.0,
+            plain_element_read(&b.1, data)?,
+        )))),
+        Value::Call(d, args) if !args.is_empty() => {
+            let plain = match data.def(*d).name() {
+                "OpGetVectorNullable" => Some(data.def_nr("OpGetVector")),
+                "OpVectorRefNullable" => Some(data.def_nr("OpVectorRef")),
+                _ => None,
+            };
+            if let Some(p) = plain {
+                return Some(Value::Call(p, args.clone()));
+            }
+            if !crate::use_analysis::is_projection_op(data, *d) {
+                return None;
+            }
+            let mut out = args.clone();
+            out[0] = plain_element_read(&args[0], data)?;
+            Some(Value::Call(*d, out))
+        }
+        _ => None,
+    }
+}
+
+/// Is `v = value` a bind that COPIES a record into a `v` that owns it — a dep-empty `v` bound
+/// to a variable whose record codegen copies at this bind (`record_copy_source`, the question
+/// its copy arm asks; `@FR-B-Copy`)?  The copy is a structure this function OWNS
+/// (`@FR-H-Copy-Lease`) however its SOURCE is owned — a parameter's included — so the record a
+/// later rebind displaces is `v`'s own, and its hook runs then (`@FR-H-Drop`, loft#2080).
+/// Not for a copy `@FR-H-Copy-Refuse` refuses — a droppable inside it has no `OpCopy` — which
+/// only runs with that refusal switched off (`LOFT_NO_LEASE_REFUSE`): no lease was taken, so the
+/// copy shares the source's resource and its release is the source owner's.
+fn var_bind_copies(function: &Function, data: &Data, v: u16, value: &Value) -> bool {
+    let Value::Var(src) = value.unspan() else {
+        return false;
+    };
+    // @FR-O-Proxy asks free — the answer licenses the rebind's release of the displaced copy,
+    // so it is `proxy_says_owned`, which carries the @FR-O-Override veto beside the proxy.
+    function.proxy_says_owned(v)
+        && function.tp(v).base().heap_def_nr().is_some()
+        && function.record_copy_source(data, v, *src).is_some()
+        && !crate::lease::copy_reach(data, function.tp(v)).refused
+}
+
 impl Scopes<'_> {
     /// Is `v = value` a copy off a PARAMETER written in a branch arm — a copy that stops `v`
     /// itself, with a per-path flag (loft#1515) to record that it ran?  Such a `v` holds a record
@@ -207,6 +263,19 @@ impl Scopes<'_> {
         }
         // A handle view given a member's handle on one arm and one of its own on another
         // (loft#1585) records which in the arm itself: after the `Set` nothing tells them apart.
+        // A view the walk will copy, read through the silent element peer: respelled so the
+        // copy below recognises it (`plain_element_read`).
+        let respelled;
+        let value = if self.views_to_materialise.contains_key(&v)
+            && base_container_var(value.unspan(), data).is_none()
+            && let Some(plain) = plain_element_read(value, data)
+            && base_container_var(plain.unspan(), data).is_some()
+        {
+            respelled = plain;
+            &respelled
+        } else {
+            value
+        };
         let tagged;
         let value = if self.handle_views.contains(&v)
             && let Some(&flag) = self.handed_off.get(&v)
@@ -314,7 +383,8 @@ impl Scopes<'_> {
         // assignment.
         let displaced = if was_in_scope && *value != Value::Null {
             let rhs_owned = matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned)
-                || self.copy_flagged_on_target(function, data, v, value);
+                || self.copy_flagged_on_target(function, data, v, value)
+                || var_bind_copies(function, data, v, value);
             self.displaced_drop(v, rhs_owned, function, data)
         } else {
             None
@@ -625,6 +695,7 @@ impl Scopes<'_> {
             // arm that did not disagreed at the join, so a later rebind released neither
             // (heap-history.md `D-heap-7`).
             if self.copy_flagged_on_target(function, data, v, value)
+                || var_bind_copies(function, data, v, value)
                 || matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned)
             {
                 self.owned_refs.insert(v, self.loops.len());
@@ -1595,6 +1666,17 @@ impl Scopes<'_> {
                 &set_value,
             )
             .is_some()
+            // loft#2078 — an UNRESOLVED closure call: `OpBindFnRefResult` copies or adopts,
+            // so the local owns either way and `(O-Opaque)`'s assumed borrow must not make
+            // it an alias of the argument handed back (`@FR-B-Copy`).
+            || (!function.is_argument(v)
+                && crate::use_analysis::opaque_callref_record(
+                    data,
+                    self.d_nr,
+                    function.tp(v),
+                    &set_value,
+                )
+                .is_some())
         {
             let deps: Vec<u16> = function.tp(v).depend().clone();
             for d in deps {

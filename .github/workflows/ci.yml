@@ -560,8 +560,6 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            target
-            !target/loft-native-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
@@ -590,29 +588,49 @@ jobs:
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
 
+      # Which test binaries THIS leg builds and runs (`scripts/ci_shards.py`): `corpus` the
+      # whole `native` binary, `heavy` the other single-slot binaries that drive an `--html`
+      # page, each rest leg its pack of the remainder, weighted by measured test seconds — so
+      # a leg builds only what it runs.  Measured before: every leg ran `cargo build
+      # --all-targets` (all 445 test binaries), 7.6 to 8.5 min of each leg's 20 to 24, for a
+      # test phase of 6 to 8 (CI_BUDGET.md § Each leg builds only the binaries it runs).  An
+      # unsharded leg (push to main, the nightly matrix) still builds everything.  `html`
+      # and `wasi` say whether a binary of the leg runs an `--html` page or builds for
+      # wasi — which runtime rlibs the step below builds, and the wasm target with them.
+      - name: Shard
+        id: shard
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.shard }}" ]; then
+            echo "args=$(python3 scripts/ci_shards.py args ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
+            echo "html=$(python3 scripts/ci_shards.py html ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
+            echo "wasi=$(python3 scripts/ci_shards.py wasi ${{ matrix.shard }})" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=--all-targets" >> "$GITHUB_OUTPUT"
+            echo "html=true" >> "$GITHUB_OUTPUT"
+            echo "wasi=true" >> "$GITHUB_OUTPUT"
+          fi
+          python3 scripts/ci_shards.py proof
+      # `cargo test --no-run`, not `cargo build`: nextest runs the TEST artefacts, and for
+      # `--lib` that is the crate compiled once more as its unit-test harness — a `cargo
+      # build --lib` makes the library only, and the test step then spent 2m08 compiling
+      # `loft` before its first test (run 39411552589, rest-c).
       - name: Build
-        run: cargo build --all-targets
+        run: cargo test --no-run ${{ steps.shard.outputs.args }}
 
-      # Defensive build step: some integration tests spawn
-      # `target/release/loft` directly (e.g. via Command::new helpers)
-      # and assume the release binary exists.  `cargo build
-      # --all-targets` builds dev profile only.
-      #
-      # `--lib` ensures the canonical `target/release/libloft.rlib`
-      # is built (cargo only places the canonical artifact when
-      # `--lib` is explicit; `--bin loft` alone only puts the
-      # hashed version in `target/release/deps/`).  Without the
-      # canonical lib, loft's `--native` mode falls back to the
-      # deps directory and rustc can't resolve transitive deps
-      # like rand_core (E0463 on macOS/Windows).
-      - name: Build (release loft binary + lib for integration tests)
-        run: cargo build --release --lib --bin loft
+      # No release build on a test leg: every test spawns the loft the test build made
+      # (`CARGO_BIN_EXE_loft`, `target/debug/loft`), whose `--native` links the rlib beside
+      # it in `deps/`.  Until 2026-10-20 twenty-two binaries spawned `target/release/loft`
+      # instead and skipped silently without it, so every leg compiled the crate a second
+      # time in release (2.2 to 3.2 min) and warmed the wasm runtimes for both binaries.
 
       # A rewrite that stopped firing where it used to (a condition tightened by a fix) fails
       # here, naming the rule and the bench: the count of admissions over the benches is a
       # pure function of the compiler (`scripts/rewrite_census.py`).  Seconds; once per run.
       - name: Rewrite census
         if: ${{ runner.os == 'Linux' && (matrix.shard == 'corpus' || matrix.shard == '' || matrix.shard == null) }}
+        env:
+          LOFT_BIN: ./target/debug/loft
         run: python3 scripts/rewrite_census.py
 
       # @P229 G3 reliability fix: pre-build every native lib package
@@ -668,7 +686,7 @@ jobs:
           done
           # Half 2 — every installed registry package's cdylib, through the same
           # resolver the tests reach (so the artefact and its freshness stamp match).
-          ./target/release/loft --prebuild-natives || true
+          ./target/debug/loft --prebuild-natives || true
 
       # no-default-features check only needs to run on one OS — ubuntu
       # covers it at a fraction of the Windows job's time.  Use `cargo
@@ -692,14 +710,30 @@ jobs:
       # (rlib never built) instead of skipping.  Building everywhere closes
       # that gap and actually exercises `--html` cross-platform.
       - name: Install wasm target (for html_wasm tests)
+        if: ${{ steps.shard.outputs.html == 'true' }}
         run: rustup target add wasm32-unknown-unknown
 
-      # Built into the `--html` shape's own directory, `target/loft/html` — the rlib `loft
-      # --html` links and the surface probe reads, where `make wasm`'s wasm-bindgen build cannot
-      # overwrite it.  A copy built anywhere else is a second build of the same rlib: the warm
-      # step below builds this one regardless (~40 s of the same compile).
-      - name: Build wasm rlib (for html_wasm tests)
-        run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random --target-dir target/loft/html
+      # The wasm runtime rlibs the leg's tests link — `loft --html` the html shape, built
+      # into its own `target/loft/html`; `--native-wasm` the wasi shape — each keyed on the
+      # running loft's build fingerprint (NATIVE.md), so built by that loft (`cache warm
+      # --runtime <shape>`) and only on a leg with a test that uses it.  SIDE BY SIDE: each
+      # is a release build of the crate for one target, 1m45 on the runner, and one of them
+      # does not saturate four cores; one after the other they were 3.7 min of every leg
+      # that needed both (run 39411552589).
+      - name: Build the wasm runtime rlibs the leg's tests link (html, wasi — side by side)
+        if: ${{ steps.shard.outputs.html == 'true' || steps.shard.outputs.wasi == 'true' }}
+        shell: bash
+        run: |
+          pids=""
+          if [ "${{ steps.shard.outputs.html }}" = "true" ]; then
+            ./target/debug/loft cache warm --runtime html & pids="$pids $!"
+          fi
+          if [ "${{ steps.shard.outputs.wasi }}" = "true" ]; then
+            ./target/debug/loft cache warm --runtime wasi & pids="$pids $!"
+          fi
+          for pid in $pids; do
+            wait "$pid" || echo "warn: a runtime rlib build failed — the first test that links it builds it itself"
+          done
 
       # The `--html` runtime rlib is keyed on loft's build fingerprint, which moves on every
       # commit; the warm step stamps the rlib built above with it.  Unwarmed, the first `--html` test in each
@@ -723,16 +757,14 @@ jobs:
       # Measured: `w1_1_html_export_produces_file` took 238 s on ubuntu and 353 s on macOS
       # (past the duration gate) building the rlib inside the suite; warmed by the suite's own
       # binary it takes under a second.  `cargo build --tests` is that binary with the test
-      # build's feature set, and nextest reuses it rather than building again.  The release
-      # binary is warmed too: `html_asyncify` drives `target/release/loft`.
+      # build's feature set, and nextest reuses it rather than building again.  It is the only
+      # binary a test spawns, so the only one warmed.
       - name: Warm loft's --html runtime rlib and the tests' package cdylibs
         shell: bash
         run: |
-          cargo build --tests
-          for loft in ./target/release/loft ./target/debug/loft; do
-            "$loft" cache warm --from tests \
-              || echo "warn: cache warm with $loft failed — the first --html test will build the rlib itself"
-          done
+          cargo test --no-run ${{ steps.shard.outputs.args }}
+          ./target/debug/loft cache warm --from tests --no-runtime \
+            || echo "warn: cache warm failed — the first test needing a package cdylib builds it itself"
           for lib in tests/fixtures/libs/*/; do
             name=$(basename "$lib")
             [ -d "$lib/native" ] || continue
@@ -804,28 +836,13 @@ jobs:
           # one push at a time while the rest sit unrun behind the first.
           FAILFAST="--no-fail-fast"
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}"
-          # `rest-a/b/c` are one filterset split by nextest's own partitioner: the shard
-          # letter picks the slice.  Partitioning is over TESTS, so a single long binary
-          # spreads across the legs instead of pinning one — and nothing has to be
-          # maintained, which is what the named-half list could not manage (it drifted
-          # from 1.2 % to 82 % out of balance in three weeks, and both halves then hit the
-          # 20-minute cap).
-          PART=""
-          #
-          # `slice:` deals the list ROUND-ROBIN across the three legs; `hash:` placed each test
-          # by its name's hash, and slow tests cluster in the list (one binary's dozens of
-          # 90-second `deliver_wasm` cases sit side by side), so a hash can land several on
-          # one leg.  Scored on one full run's per-test times, worst leg over the mean: hash
-          # 1.10, slice 1.04, `count:` 1.15 (it deals per BINARY, so every one-test binary
-          # lands on leg 1).  On #1712 the hash legs ran 732 / 445 / 329 s.  A split by
-          # measured duration would reach 1.00 but needs a baseline and per-test filters;
-          # the timing report (`scripts/ci_timing.py`) says whether the remaining gap earns it.
-          case "${{ matrix.shard }}" in
-            rest-a) PART="--partition slice:1/3" ;;
-            rest-b) PART="--partition slice:2/3" ;;
-            rest-c) PART="--partition slice:3/3" ;;
-          esac
-          echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}${PART:+ }$PART"
+          # A rest leg runs the BINARIES it built (`scripts/ci_shards.py`, the `Shard` step
+          # above): nextest takes them as cargo target flags, so the build and the run select
+          # one set.  The earlier `--partition slice:k/3` dealt the TESTS of every binary
+          # across the legs, which is why every leg had to build every binary.
+          TARGETS="${{ steps.shard.outputs.args }}"
+          [ "$TARGETS" = "--all-targets" ] && TARGETS=""
+          echo "nextest targets: ${TARGETS:-(all)}"
           #
           # Two passes, as `make ci` runs them: the main pass without the starvation victims
           # (the rustc-storm makers run wide in the `ci` profile), then the victims ALONE in
@@ -834,8 +851,8 @@ jobs:
           # so the duration and speed gates below still read the main pass's report.
           VICTIMS="$(python3 scripts/ci_test_filter.py victims)"
           rc=0
-          cargo nextest run --profile ci $FAILFAST $PART -E "($FILTER) - ($VICTIMS)" || rc=$?
-          cargo nextest run --profile ci-victims $FAILFAST --no-tests=pass -E "($FILTER) & ($VICTIMS)" || rc=$((rc + $?))
+          cargo nextest run --profile ci $FAILFAST $TARGETS -E "($FILTER) - ($VICTIMS)" || rc=$?
+          cargo nextest run --profile ci-victims $FAILFAST --no-tests=pass $TARGETS -E "($FILTER) & ($VICTIMS)" || rc=$((rc + $?))
           exit $rc
 
       # Every test finishes inside HALF its per-test limit (the `ci` profile's slow-timeout).
@@ -870,6 +887,15 @@ jobs:
         if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
         shell: bash
         run: python3 scripts/ci_timing.py shard target/nextest/ci/junit.xml "${{ matrix.os }}${{ matrix.shard && format(' [{0}]', matrix.shard) || '' }}" >> "$GITHUB_STEP_SUMMARY"
+      # The leg's own steps against the 20-minute budget — the table a slow leg is read
+      # from (CI_BUDGET.md); `scripts/ci_timing.py legs <run>` is the same for every leg.
+      - name: Leg timing
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/ci_timing.py leg "${{ github.run_id }}" "Test (${{ matrix.os }})${{ matrix.shard && format(' [{0}]', matrix.shard) || '' }}" >> "$GITHUB_STEP_SUMMARY" || echo "leg timing unavailable"
       - name: Keep the test junit
         if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
@@ -1121,8 +1147,6 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            target
-            !target/loft-native-cache
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Save cargo cache (Windows)
         if: "!cancelled() && github.ref == 'refs/heads/main' && runner.os == 'Windows' && (matrix.shard == '' || matrix.shard == 'rest-a')"
@@ -1246,6 +1270,63 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
+  # @PLN197 — the native suites under a STATIC link (`LOFT_NATIVE_CABI=0`: each package
+  # linked into the binary, a shipped C shim from its archive).  Every other Unix leg
+  # links dynamically, so this path ran nowhere but Windows' `win-cdylib`: a static
+  # program whose package had a shim AND an optional library never linked the shim's
+  # code, on every OS, and only a Windows probe found it.  A PR runs it on Linux; push,
+  # schedule and dispatch add macOS, the policy the `test` matrix follows.  ADVISORY
+  # like `guard` / `asan`.
+  static-link:
+    # @windows-exempt: Windows runs both link modes in win-cdylib.yml; this is the Unix half
+    name: Native static link (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && inputs.os != 'windows-latest'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || (inputs.os == 'ubuntu-latest' && '["ubuntu-latest"]') || (inputs.os == 'macos-latest' && '["macos-latest"]') || '["ubuntu-latest","macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      LOFT_NATIVE_CABI: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      # The system libraries the `test` job installs, so a test does not fail here for a
+      # reason it would not fail for there.
+      - name: Install mold + ALSA + headless GL + sqlite + binaryen (Linux only)
+        if: runner.os == 'Linux'
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri libxkbcommon-x11-0 libsqlite3-0 binaryen
+      # Read-only restore of the `test` job's cache: a restore matches a save only with the
+      # IDENTICAL path list, so this list is that job's, unchanged.  Never saved from here.
+      - name: Restore cargo registry and build (the test job's cache)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+      # The native tests link loft's RELEASE rlib and drive the release binary.
+      - name: Build (release loft binary + lib)
+        run: cargo build --release --lib --bin loft
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      # `native_scripts_` is the script corpus, which the `test` job's `native` shard
+      # already runs and which links no package; the rest is every suite that links one.
+      - name: Native suites, static link
+        run: >
+          cargo nextest run --profile ci --no-fail-fast
+          -E '(binary(native) or binary(n2_cdylib) or binary(n3_use_native) or binary(n3_parity)) and not test(/native_scripts_/)'
+
   # Doc-index hygiene (plan-37) — `make index` + broken `@`-tag / markdown-link
   # checks.  Extracted from the per-platform `Test` job because it is whole-repo
   # and platform-independent.  ADVISORY: like `guard`/`asan` it is NOT in the
@@ -1277,8 +1358,6 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            target
-            !target/loft-native-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
@@ -1338,8 +1417,6 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            target
-            !target/loft-native-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
@@ -1389,8 +1466,6 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            target
-            !target/loft-native-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
@@ -1424,8 +1499,6 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            target
-            !target/loft-native-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
@@ -1552,8 +1625,6 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            target
-            !target/loft-native-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-

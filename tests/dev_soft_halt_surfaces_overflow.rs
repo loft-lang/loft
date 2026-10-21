@@ -36,7 +36,6 @@
 //! there; the fixed tree runs both, and the fix is one shared `ops::` function either way.
 
 use loft::file_access as fa;
-use std::path::PathBuf;
 
 /// Run `src` on `backend`, with the soft-halt flag on or off.
 fn run(backend: &str, src: &str, tag: &str, soft_halt: bool) -> (i32, String, String) {
@@ -88,7 +87,6 @@ fn have_rustc() -> bool {
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
-        && fa::exists(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release"))
 }
 
 fn backends() -> Vec<&'static str> {

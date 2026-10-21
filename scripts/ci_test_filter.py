@@ -9,12 +9,14 @@ and not the other reads as a flake — so it is built here, once.
 Usage:  ci_test_filter.py <event_name> [heavy|corpus|rest|rest-a|rest-b|rest-c]
         ci_test_filter.py victims   # the starvation victims, run alone after the main pass
 
-The optional shard restricts the leg to the `heavy-serial` test group, or to
-its complement.  The group's membership is NOT repeated here: it is read out of
-`.config/nextest.toml`, which is where the group is defined and where nextest
-itself reads it from.  (nextest has no `test_group()` filterset predicate as of
-0.9.138 — checked — so a shard boundary has to be spelled as binaries, and this
-is what keeps that spelling honest.)
+The optional shard name is accepted and checked, and selects nothing: since the
+legs build only the binaries they run, the leg a binary runs on is decided by
+`scripts/ci_shards.py` (its `args <shard>` are nextest's cargo target flags),
+and this filterset is the same on every leg.  `group_filter` still reads a
+single-slot group's membership out of `.config/nextest.toml` — where the group
+is defined and where nextest itself reads it from — for `ci_shards.py`, which
+keeps the `heavy`/`corpus` split spelled once.  (nextest has no `test_group()`
+filterset predicate as of 0.9.138 — checked.)
 """
 
 import sys
@@ -208,31 +210,16 @@ def main() -> None:
     clauses = list(BASE) + list(DEDICATED_STEP)
     if event == "pull_request":
         clauses += PR_ONLY
-    if shard == "heavy":
-        clauses.append(f"({serial_boundary()})")
-        clauses.append(f"not ({CORPUS})")
-    elif shard == "corpus":
-        clauses.append(f"({CORPUS})")
-    elif shard in ("rest", "rest-a", "rest-b", "rest-c"):
-        # `rest-a/b/c` are ONE filterset, split by `nextest --partition slice:i/3` in the
-        # workflow rather than by a named list here.  The list-based half (REST_HEAVY_HALF,
-        # kept below for the record) could not hold: its light side is the COMPLEMENT, so
-        # every binary added to the repo landed there and the balance decayed in one
-        # direction — measured 1.2 % apart when written and 82 % apart three weeks later.
-        # A partition cannot drift, because nothing has to be maintained.
-        #
-        # ci.yml records that hash partitioning was tried across the WHOLE suite and
-        # reverted, for a reason that does not reach here: it scattered the single-slot
-        # serial groups across shards, pinning each to a serial floor.  Every such group
-        # now lives whole in `heavy`, so `rest` has none left to scatter — the same
-        # argument that admitted the duration split, applied one step further.  And the
-        # partition is over TESTS, not binaries, so a 765-second binary spreads across all
-        # three legs instead of pinning one.  `slice:` rather than `hash:` because it deals
-        # the list round-robin, so a cluster of slow neighbours — one binary's cases — is
-        # dealt across the legs instead of landing wherever their names hash (ci.yml has the
-        # measurement).
-        clauses.append(f"not ({serial_boundary()})")
-        clauses.append(f"not ({CORPUS})")
+    # A shard no longer narrows the filterset: a leg runs the BINARIES it built, which
+    # `scripts/ci_shards.py` decides (`corpus` the whole `native` binary, `heavy` the other
+    # single-slot binaries that drive an `--html` page, the rest packed by measured weight),
+    # and nextest takes them as cargo target flags — so the single-slot groups are no longer
+    # cut by a filter clause, and a serial group's member on a rest leg still runs in its
+    # one slot there.  The name is accepted so every caller keeps one spelling, and an
+    # unknown one is still refused.  (Before: `rest-a/b/c` were one filterset split by
+    # `--partition slice:i/3`, which is why every leg had to build every binary.)
+    if shard in ("heavy", "corpus", "rest", "rest-a", "rest-b", "rest-c"):
+        pass
     elif shard is not None:
         raise SystemExit(
             f"unknown shard '{shard}' (expected 'heavy', 'corpus', 'rest', 'rest-a', 'rest-b' or 'rest-c')"

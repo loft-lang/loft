@@ -10,6 +10,87 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Two gate reds of the joined tree: the prefill cells' native half, a twin's registry notice
+
+- `tests/prefill_image.rs::the_cells_use_the_image_on_both_backends` read `Mix`'s image
+  used 0 times on native: (R-CompleteWrite)'s buffer clauses now cover c11's per-activation
+  return slot too, so every `Mix` shape of the cells is a complete write there and the
+  native half of the verify pin had gone vacuous.  A c12 cell mints `Outer` — whose
+  `Inner?` field's discriminant no literal writes, the shape the rule keeps the prefill
+  for — once per activation, thirty times (29 image uses on native, hand-checked), and the
+  test counts `Mix` on the interpreter and `Outer` on native.
+- `scripts/script_twin.sh` runs both sides with `LOFT_NO_UPGRADE_NOTICE=1`: the
+  `[registry] crypto 0.3.13 is pinned; 0.3.14 is the newest release` line reached the
+  port's stderr the day a newer crypto reached the runner's cache, and nothing a twin
+  compares had changed.
+
+
+### CI: a test leg builds only the binaries it runs; the legs' steps timed against the budget
+
+- `scripts/ci_shards.py` decides the leg a test binary runs on: `corpus` the whole `native`
+  binary, `heavy` the other single-slot binaries that drive an `--html` page, the rest —
+  the other `tests/*.rs`, the unit tests, the bin targets' tests — packed into `rest-a/b/c`
+  by the measured seconds in `scripts/ci_shards.tsv` (a `threads-required` test counted
+  four times; the binaries needing a wasm runtime together in `rest-a`, which starts the
+  pack with the measured cost of building those runtimes).  It answers each leg's
+  `--test …` flags; `ci.yml`'s `Build`, warm-up and nextest passes take them,
+  `--partition slice` is gone, `ci_test_filter.py` composes one filterset for every leg
+  (its shard argument selects nothing), the wasm target and html rlib are built only where
+  a page test runs, `loft cache warm` takes `--runtime html,wasi` / `--no-runtime` so a
+  leg builds no runtime its binaries do not use, and the Linux/macOS cargo cache carries no
+  `target/`.  No release build on a test leg either: the twenty-two test binaries that
+  spawned `target/release/loft` (the html, engine_host and deliver_wasm suites among them,
+  each skipping silently without it) spawn the test build's loft (`CARGO_BIN_EXE_loft`)
+  like every other test, so the crate compiles once per leg — as `cargo test --no-run`,
+  which also makes the unit-test harness nextest runs for `--lib`.  The html and wasi
+  runtime rlibs build side by side on the legs that link them (`loft cache warm --runtime
+  <shape>`), and the warm-up proper runs `--no-runtime`.  Measured before: every leg
+  built all 445 test binaries (7.6 to 8.5 min), compiled the crate again in release (2.2 to
+  3.2), restored an 11 GB cache (4 to 6 min) that made the build no faster and warmed two
+  wasm runtimes (1m45 each) for each of two binaries whether a test used them or not, for a
+  test phase of 6 to 8 min; after: 11.8 to 15.8 min per leg, every leg within the budget
+  (CI_BUDGET-history.md § Where a test leg's minutes went).  `proof` (a binary in exactly
+  one leg) runs on every leg and in `make ci`.
+- `scripts/ci_timing.py legs <run>` / `leg <run> <name>`: each test leg's queue wait, its
+  steps of half a minute or more and its total against the 20-minute budget; every leg
+  writes its own table to its job summary (CI_BUDGET.md § Each leg builds only the
+  binaries it runs).
+
+### `--native`: a decoded value read once is held as its position (2026-10-19)
+
+- **`(R-DecodeView)`'s structure clause, instance 1** — a root whose chain reads its decoded
+  value once (a lookup, a match, an in-order walk of a map's entries or an array's items)
+  builds nothing of it: the value is held as the decoder call's arguments, and each read
+  re-runs the decoder's shape twin (`P__ps`: its body with every statement that only builds
+  dropped, each return answering the variant's tag, one slot and the scalar fields) or its
+  walk twin (`P__psw<k>`, handing each appended element's positions to the loop body as a
+  closure).  The consumers become `__ps` twins over position tuples; a text leaf is read from
+  the frame (`codegen_runtime::ps_text`), a field only the built value holds from the plain
+  decoder at the position; a position a decode made carries that decode's shape.  pluginabi
+  `check_request` 4.66× → 0.94× (1.58 → 0.32 ms, the Rust twin 0.34 ms), `req_state_b64`
+  1.84× → 1.70×, hashes equal.  Switch
+  `LOFT_NO_DECODE_STRUCTURE`, trace `LOFT_TRACE_DECODE_STRUCTURE`.  Guard
+  `tests/scripts/a-decoded-value-is-read-at-its-position.loft`, pin `tests/decode_structure.rs`.
+- The apart-call clause of `(R-PushRec)` asks the push tier: under `LOFT_NO_PUSH_HOIST` it
+  bound a record-push header (`push_hoist::the_switch_hoists_no_push`).
+### `--interpret`: a call into a library native costs an index, not two locks (2026-10-20)
+
+- **`extensions::native_auto_dispatch`** read its slot per call under the `NATIVE_SIGS` mutex,
+  cloned the symbol and signature out, and looked the bridge up by symbol under
+  `BRIDGE_REGISTRY`'s; then it built its argument lists in two fresh vectors and ran
+  `bridge_args` / `bridge_args_done` even for a call with no store argument.  The bridge is
+  now resolved once at wiring and stored beside the signature; each thread reads its slot
+  from its own copy by library index (`cached_sig`), refetched when a wiring pass bumps
+  `SIGS_GENERATION`; arguments sit in a stack buffer up to eight (`ArgBuf`); and a call with
+  no store argument and no store answer skips the pin/copy/mint step it never needed.
+  `shared_store_dispatch` reads `SHARED_SIGS` through the same cache.  3M regex `search`
+  calls 1.45 s → 0.84 s (~100 ns a call); `tests/dump_ignored_tests` 0.96 s → 0.68 s.  Unit
+  pins `extensions::dispatch_cache_tests`: a rewired slot is never served from a thread's
+  stale copy, and an argument list past the inline slots keeps every value.
+- **`tests/dump_ignored_tests`** lists `tests/*.rs` with `glob`, as the original does, instead
+  of walking every directory under `tests/` and keeping the top level: 1.78 s → 0.96 s with
+  the old dispatcher, same output.
+
 ### `--native`: an unhoisted plain-vector append is the runtime's own (2026-10-19)
 
 - **`(R-PushRec)`'s apart-call clause** — a loop the header gate declines because it calls a
@@ -98,6 +179,71 @@ All notable changes to the loft language and interpreter.
   tree claim by claim and claiming again from a reused store costs more than a fresh store's
   bump claims and a whole-store free).  Guard:
   `tests/scripts/a-text-keyed-insert-writes-the-entry-its-key-names.loft`.
+### The decline census — how far each rewrite reaches, and what holds the rest back
+
+- `make decline-census` (`scripts/decline_census.py`) emits the bench programs with
+  `LOFT_DECLINE_CENSUS` set and reports, per rewrite rule, the sites it admitted against the
+  sites it REFUSED, the refusals ranked by reason with names masked so one condition is one
+  row.  `rewrite_census::declined(rule, site, why)` is the compiler side, the complement of
+  `fired`: one count per `(rule, site)` under the first reason, read inside the body being
+  generated so a loop's per-function scope number names one loop; `admitted(rule, site)`
+  counts a site once where `fired` counts every emitted copy (a guarded loop is emitted
+  twice), so the two are comparable.  Wired at the push window, the counted push loop, the
+  held record address, the loop header hoist and the value-record scanner; every other rule
+  reads `not reported`, never covered, and a rule reporting at some of its refusal sites reads
+  `(at most)`.  `--record` keeps the run in `bench/portal/decline_census.tsv`.  A report,
+  never a gate.  First read, 19 bench programs: the push window reaches 30 of 36 loops, the
+  held record address 77 of 576 views — 431 of its refusals are "the remainder may grow a
+  store" — and a refused loop is never the outer loop around a counted one.
+- `tests/decline_census.rs` pins the counting: one refused loop is one decline under the
+  reason its trace names, an outer loop with no push of its own is no decline, and a loop the
+  counted form refuses still takes the deep window and counts as admitted.
+- The record address's verdict (`R-RecPtr`, `view_extent_verdict_inner`) asks for a fusable
+  use of the view BEFORE it walks the remainder for growth: 293 of its 431 growth refusals
+  were views with no address-served access, which the census now reads as "no fusable field
+  read or write" (180 growth refusals remain).  `LOFT_TRACE_RECPTR=1` prints a `class` line
+  under each growth refusal — the view's and each mover's chain end and freshness, the apart
+  verdict, the buffer op that blocks, and `use-after-growth`, whether any address-served use
+  follows the first growth (the ordered clause's question, answered without building it).
+  Classified and hand-priced in `bench/portal/analysis/recptr-remainder.md`: neither the
+  ordered clause nor a frame-local buffer-mint exemption moved an over-bar row, so neither is
+  built.
+
+### The stability meters as instruments: the weekly read, coverage by family and inputs, the portal across hosts, gates that file, a mechanism-class label (2026-10-19)
+
+- `make stability-read` (`scripts/stability_read.py`) computes every meter of the owner's
+  directive per ISO week — the tracker's filed / `silent-wrong` / `sev:high` / consumer-hit
+  counts, the `contract:strained` share of judged closes and its zero streak, the median
+  hours to close, `silent-wrong` open on main, the consumers' own commit counts, the
+  register's size by family and its rewrite growth, the guarded count, the deviation
+  registers, the design decisions, the consumer gate's nights green, the release gate's age
+  and the portal's release cut per host — and `--record` keeps one row per week in
+  `index/stability_weekly.tsv`, so the December read is a file and not a table built by hand.
+- `rule_tags.py coverage` names the guard inputs it read and warns when the language suite is
+  not beside the tree (the count reads tests/ alone then — 231 where both read 412 — and
+  nothing said so), and reports the register BY FAMILY: rules, annotated, guarded, census-only,
+  neither, and the rewrites the census lists with no admission on any program (unexercised).
+- `make perf-portal` renders a hosts table first — each machine's latest run with its median,
+  over 3×, over 4.5×, over 5× (the release cut, C136) and at-or-under-1× counts — and
+  `scripts/perf_trend.py --population` is the same table over every committed measurement.
+- The consumer nightly's reds reach the combined `[ci] Red steps` issue
+  (`advisory-failures.yml` digests `consumer-main-health` runs): the meter had been red for
+  25 nights with nothing on the tracker.  `release-gate.yml` runs weekly (Monday 16:20 UTC)
+  so the "release gate green" meter has a timeline; a release still dispatches it on its
+  candidate.
+- A `class:` label (the bug form's "Mechanism class" dropdown; `.github/LABELS.md`) names the
+  mechanism an issue belongs to; `scripts/bug-review.py` reads it instead of the title regex
+  for a labelled issue, so the keystone payoff measurement is exact as far as the labels reach.
+
+### The rewrite census is a guard tier (2026-10-19)
+
+- `scripts/rule_tags.py coverage` and `worklist` read `bench/portal/rewrite_census.tsv` beside
+  the tests: a rule with an admission on a bench program is guarded, since `make rewrite-census`
+  fails when the rewrite stops firing — the stronger claim, and the one instrument that
+  verifies a rewrite rule.  Twenty-seven `R-` rules read as unguarded while the census held
+  their admissions; the report names the census's contribution on its own line.  A rule the
+  census lists with no admission stays unguarded: that is an unexercised rewrite.
+  `LOFT_REWRITE_CENSUS` points at another file.  STABILITY_METHOD.md § The rule-led walk.
 
 ### A slice first bind holds its slice whatever the local is rebound to later (2026-10-18)
 

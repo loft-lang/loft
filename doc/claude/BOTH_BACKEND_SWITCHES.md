@@ -454,6 +454,12 @@ sentinel on both backends and its guarded `Set(b, Null)` is the mint.
 **`LOFT_NO_LAZY_BUFFER=1`** mints at entry again and is the first bisect step for a leak, a
 double free or a wrong value at a call that takes a hidden buffer.
 
+**`LOFT_NO_BOUND_APPEND=1`** (`@FR-R-BoundAppend`, default-ON, the scope pass's IR phase, BOTH
+backends) keeps `k = f(…); …; dst += k` as written — with it off, the append is made where the
+call is (`dst += f(…)`, so native builds the result in `dst` through the append twin) and the
+statements between read the two lengths from before the growth.  The first bisect step for a
+wrong length or element of a vector built by appending results that were bound first;
+`LOFT_TRACE_BOUND_APPEND=1` names each append moved.
 **`LOFT_NO_WORK_BUFFER=1`** (`@FR-R-WorkBuffer`, default-ON, after pass 2, BOTH backends)
 makes a vector local that never leaves its frame mint its store at the declaration and free
 it at the exit again — with it off, `v: vector<τ> = []` (τ a scalar) whose every mention is

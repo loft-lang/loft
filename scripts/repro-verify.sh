@@ -165,13 +165,20 @@ rustup toolchain install "$RUSTC_VER" --profile minimal --target "$TARGET" >/dev
 
 # 4. Rebuild, exactly as make-release.sh does.
 echo "   building $TARGET"
+# A release whose source carries scripts/lean_build.sh was built by it (the production
+# feature set, into target/install-lib); an older one by a plain default-feature build.
+if [ -f "$SRC/scripts/lean_build.sh" ]; then
+  build=(bash "$SRC/scripts/lean_build.sh" --bin loft --target "$TARGET"); out="target/install-lib"
+else
+  build=(cargo build --release --bin loft --target "$TARGET"); out="target"
+fi
 ( cd "$SRC" && . "$SRC/scripts/repro-flags.sh" \
     && LOFT_BUILD_ID="$BUILD_COMMIT" CARGO_INCREMENTAL=0 \
-       rustup run "$RUSTC_VER" cargo build --release --bin loft --target "$TARGET" ) \
+       rustup run "$RUSTC_VER" "${build[@]}" ) \
   || die "the rebuild failed"
 
 exe="loft"; case "$TARGET" in *windows*) exe="loft.exe" ;; esac
-rebuilt="$SRC/target/$TARGET/release/$exe"
+rebuilt="$SRC/$out/$TARGET/release/$exe"
 published="$pub_root/bin/$exe"
 [ -f "$rebuilt" ]   || die "no rebuilt binary at $rebuilt"
 [ -f "$published" ] || die "no published binary at $published"

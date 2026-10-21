@@ -119,9 +119,38 @@ def load(cache):
     return json.loads(out.stdout)
 
 
+# The `class:` label, set by the filer (the bug form's "Mechanism class" dropdown, or by
+# hand): one label per class above.  A labelled issue is classified by its labels ALONE —
+# the title regexes are the fallback for the unlabelled majority, and they over-count
+# (three of the fourteen null bugs of the 2026-09 pass answered null without being null
+# defects), so the payoff measurement is exact only as far as the labels reach.
+CLASS_LABELS = {
+    "class:generic":   "generic/monomorph",
+    "class:tuple":     "tuple",
+    "class:null":      "null/sentinel",
+    "class:narrow":    "narrow-int/width",
+    "class:ownership": "ownership/free",
+    "class:enum":      "enum/variant",
+    "class:keyed":     "keyed collections",
+    "class:wasm":      "wasm/browser",
+    "class:packages":  "packages/registry",
+    "class:par":       "par/coroutine",
+    "class:traversal": "traversal/reach",
+}
+
+
+def label_names(issue):
+    return {l["name"] if isinstance(l, dict) else l for l in issue.get("labels", [])}
+
+
 def classify(issues):
     hits = defaultdict(list)
     for i in issues:
+        labelled = [CLASS_LABELS[l] for l in label_names(i) if l in CLASS_LABELS]
+        if labelled:
+            for name in labelled:
+                hits[name].append(i)
+            continue
         for name, pat in CLASSES.items():
             if re.search(pat, i["title"], re.I):
                 hits[name].append(i)
@@ -371,6 +400,13 @@ def main():
           f"({sum(1 for i in issues if i['state'] == 'OPEN')} open overall)")
     print(f"  bucketed by issue number into {a.bands} bands of "
           f"~{bands[0][1] - bands[0][0]}")
+    # What the classifier READ: a `class:` label where one is set, the title regex for
+    # the rest.  Said here because the two differ in what they measure — the regexes
+    # over-count — and a reading over mostly-unlabelled issues is the weaker claim.
+    labelled = sum(1 for i in bugs if any(l in CLASS_LABELS for l in label_names(i)))
+    print(f"  classified by `class:` label: {labelled}; by title regex: {len(bugs) - labelled}"
+          + ("   (no issue carries a class label yet — every row below is the title's reading)"
+             if labelled == 0 else ""))
 
     rows, counts, tot, hits = class_trends(bugs, bands)
 

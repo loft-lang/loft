@@ -31,11 +31,13 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_c5", 1, 0), // the FALLBACK literal skips; the cast path is not an emitter site
     ("n_c6", 1, 1), // the inner N literal skips; O (nested by OpCopyRecord) declines
     ("n_c7", 1, 0), // a conditional part still writes its field
-    ("n_c8", 3, 3), // the vector store and the discharge fallback skip; the __nullable
-    // mints keep the prefill (the discriminant is not in the group's write set).  THREE
-    // no-prefill sites: the walk over `outn` is a counted loop (`@FR-R-ForwardWalk`), which
-    // admits the guarded chain, so its body — the fallback's mint — is emitted twice, as in
-    // c1.  `LOFT_NO_GUARDED_CHAIN=1` or `LOFT_NO_FORWARD_WALK=1` gives (2, 3).
+    ("n_c8", 4, 2), // the vector store and the discharge fallback skip, and so does the
+    // `NullableSome` temporary: its group writes the discriminant and BOTH members of the
+    // inline `S` through `OpGetField` (an inline record covered member by member).  The
+    // element mints keep the prefill (the discriminant is not in their group's write set).
+    // The walk over `outn` is a counted loop (`@FR-R-ForwardWalk`), which admits the
+    // guarded chain, so its body — the fallback's mint — is emitted twice, as in c1.
+    // `LOFT_NO_GUARDED_CHAIN=1` or `LOFT_NO_FORWARD_WALK=1` gives (3, 2).
     // c9 / c10 — a value of the element type appended WHOLE (`b.ps += [p]`): the one
     // `OpCopyRecord` into the element covers every field, so the heap-free P3 mint skips
     // (n_add_p — its one prefilled site is the live-dispatch prelude's `OpDatabase` that
@@ -127,5 +129,43 @@ fn the_switch_restores_every_prefill() {
         0,
         "under LOFT_NO_COMPLETE_WRITE=1 every record keeps its default prefill"
     );
+    let _ = fa::remove_file(&out);
+}
+
+const BUFFER_CELLS: &str = "tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft";
+
+/// The buffer clauses: `(function, no-prefill sites, prefilled sites)`.
+const BUFFER_EXPECTED: &[(&str, usize, usize)] = &[
+    // the guarded mint heads a covering group: a call's tuple fills the inline record
+    ("n_mk", 1, 0),
+    // one answer is a call's result, so the buffer is not always written whole here
+    ("n_pick", 0, 1),
+    // the appended slots handed to `mk` as its buffer: the loop's and the two straight ones
+    ("n_c1", 3, 0),
+    // the slot handed to `mk` skips; `pick`'s answer arrives through a temporary and ONE
+    // whole-record copy flagged FRESH, which covers the slot under the copy clause
+    ("n_c2", 2, 0),
+];
+
+#[test]
+fn a_record_built_into_a_callers_slot_elides_its_prefills() {
+    let out = std::env::temp_dir().join("loft_complete_write_buffer.rs");
+    let rust = emit(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join(BUFFER_CELLS),
+        &out,
+        &[],
+    );
+    let got = counts(&rust);
+    for (name, np, plain) in BUFFER_EXPECTED {
+        let (n, p) = got
+            .get(*name)
+            .copied()
+            .unwrap_or_else(|| panic!("{name} was not emitted"));
+        assert_eq!(
+            (n, p),
+            (*np, *plain),
+            "{name}: (no-prefill, prefilled) sites"
+        );
+    }
     let _ = fa::remove_file(&out);
 }

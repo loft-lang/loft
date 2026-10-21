@@ -18,6 +18,9 @@ pub mod apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;
+pub mod decode_structure;
+mod decode_structure_emit;
+pub mod decode_structure_scan;
 pub mod decode_view;
 mod decode_view_emit;
 pub mod destination;
@@ -33,6 +36,8 @@ pub(crate) mod ops;
 mod pre_eval;
 pub mod range;
 mod ranged_call;
+pub mod stream_walk;
+mod stream_walk_emit;
 mod text;
 pub mod view_return;
 
@@ -68,7 +73,7 @@ const NATIVE_LEAK_CHECK_TAIL: &str = "    if std::env::var(\"LOFT_NATIVE_LEAK_CH
 /// the wasm targets link a SEPARATELY built `libloft` rlib — so a tail referencing a symbol
 /// added to `loft::keys` fails to compile there whenever that rlib is stale, which is a
 /// build break in the generated program rather than anything a probe wanted to know.
-const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))]\n    if std::env::var(\"LOFT_STRICT_STORES\").is_ok() {\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            eprintln!(\"[strict-store] NEVER FREED: {} stores not freed at program exit: {}\", leaks.len(), leaks.join(\", \"));\n            loft::keys::strict_store_leaks(leaks.len());\n        }\n        let n = loft::keys::strict_store_violations();\n        if n > 0 {\n            eprintln!(\"[strict-store] FAILED: {n} store-lifetime violation(s)\");\n            std::process::exit(1);\n        }\n    }\n";
+const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))]\n    if std::env::var(\"LOFT_STRICT_STORES\").is_ok() {\n        loft::keys::strict_store_notice();\n        let stores: &Stores = unsafe { &*cell.get() };\n        let leaks = stores.collect_store_leaks();\n        if !leaks.is_empty() {\n            eprintln!(\"[strict-store] NEVER FREED: {} stores not freed at program exit: {}\", leaks.len(), leaks.join(\", \"));\n            loft::keys::strict_store_leaks(leaks.len());\n        }\n        let n = loft::keys::strict_store_violations();\n        if n > 0 {\n            eprintln!(\"[strict-store] FAILED: {n} store-lifetime violation(s)\");\n            std::process::exit(1);\n        }\n    }\n";
 
 /// Walk the Value IR tree and collect all function definition numbers
 /// referenced by `Value::Call(def_nr, _)` nodes.
@@ -713,6 +718,20 @@ pub struct HeldIndex {
     pub vector: String,
 }
 
+/// How generated code reaches a native package's functions.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackageLink {
+    /// `extern crate <pkg>`: the package's rlib is linked into the unit (a static link, wasm).
+    Crate,
+    /// `extern "C"` symbols the OS loader binds from the package's library file.
+    CAbi,
+    /// @PLN195 — slots the program fills itself at start (`loft::native_bind`).
+    Bound,
+    /// @PLN197 — `Crate` for the packages (a static link), while the program still binds,
+    /// at start, the C libraries packages ship that have no archive to link into it.
+    StaticBound,
+}
+
 /// Use this to drive Rust code generation from a compiled loft program.
 /// It bundles the read-only compile-time data with the mutable emission state
 /// so that individual emits functions don't need to pass both separately.
@@ -874,6 +893,14 @@ pub struct Output<'a> {
     /// `LOFT_NO_PARAM_RECORD_PTR=1` — `@FR-R-RecPtr`'s parameter clause off: a record
     /// parameter's field accesses resolve the store each, as before the clause.
     pub param_record_ptr_disabled: bool,
+    /// `LOFT_NO_ELEMENT_ADDRESS=1` — `@FR-R-RecPtr`'s element clause off: a value record
+    /// written into `v[i]` takes its element through `vec_get_or_raise_runtime` and its
+    /// address back out of the reference ([`Output::element_copy_dest`]).
+    pub element_address_disabled: bool,
+    /// Set while a tuple is written into an element whose address the element clause
+    /// derived beside its reference (`__cp` beside `__cd`): the tuple write takes that address
+    /// instead of reading it back out of `__cd`.
+    pub element_ptr_held: bool,
     /// Header local → the local holding its vector's `DbRef`, bound beside it at a loop
     /// prelude.  Keyed by the header's NAME, which is unique per hoist, so no frame has to
     /// be pushed and popped in step with `vec_headers`.
@@ -1214,6 +1241,22 @@ pub struct Output<'a> {
     /// `@FR-R-DecodeView` — the program's plan, and whether the function being emitted is
     /// its `__dv` twin.
     pub dv: decode_view::DvPlan,
+    /// `@FR-R-DecodeView`'s structure clause — the positional plan, and the twin being
+    /// emitted (`decode_structure_emit`).
+    pub ps: decode_structure::PsPlan,
+    /// `@FR-R-StreamWalk` — the walks a callee's stream twin runs in place of a vector.
+    pub sw: stream_walk::SwPlan,
+    /// The stream twin being emitted: its producer and twin index.
+    pub sw_twin: Option<(u32, usize)>,
+    /// The walks whose closures are being emitted, innermost last.
+    pub sw_frames: Vec<stream_walk_emit::SwFrame>,
+    /// Numbers each walk's closure parameters apart.
+    pub sw_serial: usize,
+    pub ps_mode: Option<decode_structure_emit::PsMode>,
+    pub ps_shapes: Vec<(Value, String)>,
+    pub ps_walk: usize,
+    pub ps_serial: usize,
+    pub ps_bypass: usize,
     pub dv_active: bool,
     /// The node a hook is re-emitting through the ordinary path, which it must not take again.
     pub dv_bypass: usize,
@@ -1593,6 +1636,12 @@ pub struct Output<'a> {
     /// False for wasm32-wasip2 (links the cross-compiled rlib) and `wasm_browser`
     /// (host imports).
     pub native_cabi: bool,
+    /// @PLN195 / @PLN197 — a host-native PROGRAM binds, at start, every library it does not
+    /// link into itself: the header declares each such function as a slot filled by
+    /// `loft::native_bind::bind`, not as an `extern "C"` symbol the OS loader binds before
+    /// `main`.  Off for a library unit (its host loads the libraries) and for every other
+    /// target; [`Self::binds_libraries`] adds the rest of the condition.
+    pub native_bind: bool,
     /// @PLN26 phase 1 — `#native` symbols exported by 2+ packages.  A *reachable*
     /// call to one is rejected at native codegen (the flat C-ABI namespace can't
     /// disambiguate); two packages sharing an UNUSED symbol still build.  Computed
@@ -2350,6 +2399,9 @@ impl<'a> Output<'a> {
                 || !crate::keys::vector_base_enabled(),
             base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
             index_rec_ptr_disabled: std::env::var("LOFT_NO_INDEX_RECPTR").is_ok_and(|v| v != "0"),
+            element_address_disabled: std::env::var("LOFT_NO_ELEMENT_ADDRESS")
+                .is_ok_and(|v| v != "0"),
+            element_ptr_held: false,
             guarded_fill_disabled: std::env::var("LOFT_NO_GUARDED_FILL").is_ok_and(|v| v != "0"),
             held_index_subst: HashMap::new(),
             held_index_ncc: HashMap::new(),
@@ -2465,6 +2517,16 @@ impl<'a> Output<'a> {
             apart_ctx: None,
             apart_twin: false,
             dv: decode_view::DvPlan::default(),
+            ps: decode_structure::PsPlan::default(),
+            sw: stream_walk::SwPlan::default(),
+            sw_twin: None,
+            sw_frames: Vec::new(),
+            sw_serial: 0,
+            ps_mode: None,
+            ps_shapes: Vec::new(),
+            ps_walk: 0,
+            ps_serial: 0,
+            ps_bypass: 0,
             dv_active: false,
             dv_bypass: 0,
             apart_types_done: false,
@@ -2553,6 +2615,7 @@ impl<'a> Output<'a> {
             wasm_browser: false,
             wasm_wasi: false,
             native_cabi: false,
+            native_bind: false,
             native_collisions: data
                 .native_symbol_collisions()
                 .into_iter()
@@ -3606,7 +3669,42 @@ impl Output<'_> {
         // separates them is trip count, which is not a compile-time fact here.  Closing
         // that wants a model of the DUPLICATION cost (is this function small and hot
         // enough that a doubled body loses an inline?), not a larger constant.
-        if admitted.len() < 2 {
+        //
+        // An INDEX OFFSET does not count either: a single `+` or `-` of two leaves that is the
+        // index of an element read (`kb[oa + t]`).  The read tests its bounds whatever the
+        // index is, so a plain offset saves one predictable overflow branch and nothing the
+        // read does — measured on cbor `encode`'s key compare (`key_lt`, two such offsets in a
+        // loop of a few bytes, entered once per key pair): the checked loop without the guard
+        // and the plain loop measured the same, and the guard's evaluation per entry was
+        // −4.2 % of the whole encode.
+        let mut index_offsets: HashSet<usize> = HashSet::new();
+        for op in &lp.operators {
+            op.walk(&mut |n| {
+                if let Value::Call(d, args) = n.unspan()
+                    && args.len() == 3
+                    && hoist::is_element_address(data, *d)
+                    && let Value::Call(a, aargs) = args[2].unspan()
+                    && matches!(
+                        (data.def(*a).name(), aargs.len()),
+                        (
+                            "OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable",
+                            2
+                        )
+                    )
+                    && aargs.iter().all(|x| {
+                        matches!(x.unspan(), Value::Var(_) | Value::Int(_) | Value::Long(_))
+                    })
+                {
+                    index_offsets.insert(aargs.as_ptr() as usize);
+                }
+            });
+        }
+        if admitted
+            .iter()
+            .filter(|a| !index_offsets.contains(a))
+            .count()
+            < 2
+        {
             return Ok(ChainGuard::None);
         }
         // The nested loops' seeds and ends, bounded over the same leaves (no counters).
@@ -3990,6 +4088,11 @@ impl Output<'_> {
             Some(self.stores),
             &mut self.hoist_cache,
         ) {
+            crate::rewrite_census::declined(
+                "R-PushFill",
+                &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
+                &why,
+            );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header pushes — {why}",
@@ -4009,6 +4112,7 @@ impl Output<'_> {
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
+        crate::rewrite_census::admitted("R-PushFill", &format!("loop {}", lp.scope));
         Ok(vec![(win, hdr, vec)])
     }
 
@@ -4066,6 +4170,11 @@ impl Output<'_> {
             &mut self.hoist_cache,
             facts.as_ref(),
         ) {
+            crate::rewrite_census::declined(
+                "R-PushFill",
+                &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
+                &why,
+            );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header pushes (deep) — {why}",
@@ -4085,6 +4194,7 @@ impl Output<'_> {
         )?;
         self.push_windows.push((path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
+        crate::rewrite_census::admitted("R-PushFill", &format!("loop {}", lp.scope));
         Ok(vec![(win, hdr, vec)])
     }
 
@@ -4157,6 +4267,11 @@ impl Output<'_> {
             Some(self.stores),
             &mut self.hoist_cache,
         ) {
+            crate::rewrite_census::declined(
+                "R-PushFill",
+                &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
+                &why,
+            );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header pushes on {} paths — {why}",
@@ -4180,6 +4295,9 @@ impl Output<'_> {
             windows.push((win, hdr, vec));
         }
         crate::rewrite_census::fired("R-PushFill", windows.len());
+        if !windows.is_empty() {
+            crate::rewrite_census::admitted("R-PushFill", &format!("loop {}", lp.scope));
+        }
         Ok(windows)
     }
 
@@ -5983,6 +6101,14 @@ impl Output<'_> {
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
         crate::rewrite_census::fired("R-RecPtr", 1);
+        crate::rewrite_census::admitted(
+            "R-RecPtr",
+            &format!(
+                "{}:{}",
+                self.data.def(self.def_nr).name(),
+                self.data.def(self.def_nr).variables().name(r)
+            ),
+        );
         Ok(())
     }
 
@@ -6607,6 +6733,58 @@ impl Output<'_> {
     /// view whose block already holds an address (its setters use that one), when the
     /// destination lies inside a value local (a tuple has no address), and under
     /// `LOFT_NO_RECORD_PTR`.  A field of another kind keeps its setter, to the same bytes.
+    /// `@FR-R-RecPtr`'s tuple clause, the ELEMENT half — a whole value record copied into an
+    /// element `P[i]` of a vector at a pure path (`OpCopyRecord(local, OpGetVector(P, size,
+    /// i), tp)`), written through the address: the vector, its index and its size, when the
+    /// tuple write would serve the copy through one address.  The element is then derived in
+    /// place ONCE — one header read, the in-range test, its reference and its address both
+    /// from the record and the index — rather than a reference from
+    /// `vec_get_or_raise_runtime` and an address read out of it, a round trip that costs
+    /// `map_set_hex` 5.6 % of `slope_path_with_undo`.  An index out of range takes
+    /// `vec_get_or_raise_runtime` itself, so the raise and the null it answers are its own.
+    /// Pre-evaluation asks the same question, so the element read it would lift stays here
+    /// and only the index is searched for work.
+    pub(crate) fn element_copy_dest<'a>(
+        &self,
+        args: &'a [Value],
+    ) -> Option<(&'a Value, &'a Value, u32)> {
+        if self.record_ptr_disabled || self.element_address_disabled {
+            return None;
+        }
+        let [src, dst, _] = args else {
+            return None;
+        };
+        let Value::Var(v) = src.unspan() else {
+            return None;
+        };
+        let d = *self.value_record_locals.get(v)?;
+        let fields = &self.value_records.types.get(&d)?.fields;
+        if fields.iter().any(|(_, rt)| hoist::is_view_part(rt))
+            || fields
+                .iter()
+                .all(|(_, rt)| hoist::setter_kind(hoist::value_setter(rt)).is_none())
+        {
+            return None;
+        }
+        let Value::Call(op, eargs) = dst.unspan() else {
+            return None;
+        };
+        if self.data.def(*op).name() != "OpGetVector" {
+            return None;
+        }
+        let [vector, size, index] = &eargs[..] else {
+            return None;
+        };
+        hoist::vector_path(self.data, vector)?;
+        if self.in_value_local(vector) {
+            return None;
+        }
+        let Value::Int(size) = size.unspan() else {
+            return None;
+        };
+        Some((vector, index, u32::try_from(*size).ok().filter(|s| *s > 0)?))
+    }
+
     /// Is `v` a value local or a sub-record of one (`(R-ValueLocal)`): a TUPLE, or a range of
     /// one, with no record and so no address — its field accessors name tuple elements.
     pub(crate) fn in_value_local(&self, v: &Value) -> bool {
@@ -6644,10 +6822,15 @@ impl Output<'_> {
             self.output_code_inner(w, dst)?;
             write!(w, "; ")?;
         }
+        if !self.element_ptr_held {
+            write!(
+                w,
+                "let __cp = vector::rec_ptr(&__cd, &stores.allocations); "
+            )?;
+        }
         write!(
             w,
-            "let __cp = vector::rec_ptr(&__cd, &stores.allocations); \
-             let __cl = vector::rec_locked(&__cd, &stores.allocations); "
+            "let __cl = vector::rec_locked(&__cd, &stores.allocations); "
         )?;
         for (i, ((off, rt), kind)) in fields.iter().zip(&kinds).enumerate() {
             if let Some(ty) = kind {
@@ -6860,33 +7043,6 @@ impl Output<'_> {
             self.data.def(self.def_nr).variables().tp(v).base(),
             Type::Text(_)
         ) && !self.text_borrowed(v)
-    }
-
-    /// A text VALUE that borrows no store memory, so a store write may read its bytes where
-    /// they are instead of copying them first (`OpSetText`'s claim can move the store a
-    /// borrowed text points into): a literal, a local borrowing the frame's own work text, the
-    /// null text (`OpConvTextFromNull`, the static
-    /// `STRING_NULL` bytes — `x.f = null` copied them into a `String` per write), an owned text
-    /// local, or a block that answers one — the synthesised text a decoder builds into its
-    /// work string.  Anything else answers no and is copied: a copy is never wrong.
-    #[must_use]
-    pub fn text_value_unborrowed(&self, v: &Value) -> bool {
-        match v.unspan() {
-            Value::Text(_) => true,
-            // A local borrowing the frame's own work text: no store holds its bytes.
-            Value::Var(w) if self.work_text_locals.contains(w) => true,
-            Value::Call(d, args) => {
-                args.is_empty()
-                    && (*d as usize) < self.data.definitions.len()
-                    && self.data.def(*d).name() == "OpConvTextFromNull"
-            }
-            Value::Var(w) => self.text_owned(*w),
-            Value::Block(b) => b
-                .operators
-                .last()
-                .is_some_and(|r| matches!(r.unspan(), Value::Var(w) if self.text_owned(*w))),
-            _ => false,
-        }
     }
 
     /// `@FR-R-SplitTable` — the split table whose local `v` reads through the op `reader`,
@@ -7980,16 +8136,302 @@ fn loft_ckpt_report() {{
         w.write_all(buf)?;
         write!(w, "}})")
     }
+    /// How the header reaches the native packages' functions ([`PackageLink`]).
+    fn package_link(&self) -> PackageLink {
+        if self.binds_libraries() {
+            if self.native_cabi {
+                PackageLink::Bound
+            } else {
+                PackageLink::StaticBound
+            }
+        } else if self.native_cabi {
+            PackageLink::CAbi
+        } else {
+            PackageLink::Crate
+        }
+    }
+
+    /// @PLN195 — does this program bind its native libraries itself?  A host-native program
+    /// build asked for it (`native_bind`) and declares at least one package function, or
+    /// uses a C library a package ships (@PLN197): the header then writes slots and a table
+    /// instead of `extern "C"` symbols, and `main` fills them first.  A program that calls
+    /// into neither is emitted as before.
+    fn binds_libraries(&self) -> bool {
+        self.native_bind
+            && !self.no_c_abi()
+            && ((self.native_cabi
+                && (0..self.data.definitions()).any(|d| Self::is_bound_native(self.data, d)))
+                || !Self::bound_c_packages(self.data, true, !self.native_cabi).is_empty()
+                || !Self::linked_c_packages(self.data, !self.native_cabi).is_empty())
+    }
+
+    /// @PLN197 — under a static link, the packages whose C libraries are linked INTO the
+    /// binary from their archives.  They are in the bind table too, with no file: binding
+    /// one only marks it present, so `c_library_available` answers for it as it does for a
+    /// library that is loaded.
+    fn linked_c_packages(data: &Data, static_link: bool) -> Vec<String> {
+        if !static_link {
+            return Vec::new();
+        }
+        let mut pkgs: Vec<String> = Vec::new();
+        for (c, _) in data.shipped_c_libraries() {
+            if !pkgs.contains(&c.pkg_dir) && crate::c_shim::archived_package(data, &c.pkg_dir) {
+                pkgs.push(c.pkg_dir.clone());
+            }
+        }
+        pkgs
+    }
+
+    /// @PLN197 — the name a C library goes by in the emitted `__C_LIBS` table.  A shim is
+    /// registered under the absolute path loft built it at; a program that binds its
+    /// libraries itself names it by file only, so no directory of this machine is written
+    /// into the binary.  Every other name is the author's own string, kept as written,
+    /// since `c_library_available` is asked by that string.
+    fn emitted_c_lib_name(name: &str, native_bind: bool) -> String {
+        if native_bind && std::path::Path::new(name).is_absolute() {
+            crate::file_access::file_name(name).unwrap_or_else(|| name.to_string())
+        } else {
+            name.to_string()
+        }
+    }
+
+    /// @PLN197 — the packages that ship a C library this program binds itself: their `#c`
+    /// symbols are slots in the bind table rather than `extern "C"` symbols the link names.
+    /// Under a static link a package whose libraries all have a static archive is not among
+    /// them — its code is linked into the binary (`c_shim::archived_package`).
+    fn bound_c_packages(data: &Data, bind: bool, static_link: bool) -> Vec<String> {
+        if !bind {
+            return Vec::new();
+        }
+        let mut pkgs: Vec<String> = Vec::new();
+        for (c, _) in data.shipped_c_libraries() {
+            if !pkgs.contains(&c.pkg_dir)
+                && (!static_link || !crate::c_shim::archived_package(data, &c.pkg_dir))
+            {
+                pkgs.push(c.pkg_dir.clone());
+            }
+        }
+        pkgs
+    }
+
+    /// A body-less `#native` function of a `[native] crate` package — the functions the
+    /// C-ABI header declares (the filter of its loop, kept in one place for the table).
+    fn is_bound_native(data: &Data, d_nr: u32) -> bool {
+        let def = data.def(d_nr);
+        !def.native().is_empty()
+            && *def.code() == Value::Null
+            && data.native_symbol_crates.contains_key(def.native())
+    }
+
+    /// @PLN195 — one library function as a slot `__NB_<id>`, called through `caller` (the
+    /// name the call sites already write: `__cabi_<sym>` for a package function, `__c_<sym>`
+    /// for a `#c` one).  The slot starts at a stub that binds the libraries on first use (a
+    /// unit whose `main` did not run `__loft_bind` first) and reports the symbol by name if
+    /// it is still unbound after that; the caller is an indirect call through it — measured
+    /// as noise against the linked call (P0).
+    ///
+    /// `c_fallback` (@PLN197): a `#c` symbol is attributed to its PACKAGE, never to one of
+    /// its libraries (`c_signature::library_symbol_table`), so one the package's shipped
+    /// library does not export may be in a system library the package also declares; the
+    /// stub then asks the `#c` resolver, which knows those, before reporting it unbound.
+    fn emit_bind_slot(
+        w: &mut dyn Write,
+        id: &str,
+        caller: &str,
+        link: &str,
+        sig: &str,
+        ret: &str,
+        c_fallback: bool,
+    ) -> std::io::Result<()> {
+        let params: Vec<(&str, &str)> = sig
+            .split(", ")
+            .filter(|p| !p.is_empty())
+            .filter_map(|p| p.split_once(": "))
+            .collect();
+        let names = params.iter().map(|p| p.0).collect::<Vec<_>>().join(", ");
+        let types = params.iter().map(|p| p.1).collect::<Vec<_>>().join(", ");
+        writeln!(
+            w,
+            "#[allow(non_upper_case_globals)]\nstatic __NB_{id}: std::sync::atomic::AtomicPtr<()> = std::sync::atomic::AtomicPtr::new(__nb_first_{id} as *mut ());"
+        )?;
+        let fallback = if c_fallback {
+            format!(
+                "if let Some(p) = loft::c_call::resolve_native({link:?}, __C_LIBS, __C_LIB_SYMS) {{ __NB_{id}.store(p.cast_mut(), std::sync::atomic::Ordering::Release); }} else "
+            )
+        } else {
+            String::new()
+        };
+        writeln!(
+            w,
+            "unsafe extern \"C\" fn __nb_first_{id}({sig}){ret} {{ __loft_bind(); if __NB_{id}.load(std::sync::atomic::Ordering::Acquire) == __nb_first_{id} as *mut () {{ {fallback}{{ loft::native_bind::unbound({link:?}, __NB_LIBS) }} }} unsafe {{ {caller}({names}) }} }}"
+        )?;
+        writeln!(
+            w,
+            "#[inline(always)]\nunsafe fn {caller}({sig}){ret} {{ unsafe {{ std::mem::transmute::<*mut (), unsafe extern \"C\" fn({types}){ret}>(__NB_{id}.load(std::sync::atomic::Ordering::Relaxed))({names}) }} }}"
+        )
+    }
+
+    /// @PLN195 — the table `loft::native_bind::bind` fills the slots from: per package, its
+    /// name and version (the `<package>-<version>/` directory a shared root holds it in),
+    /// the library file's name on this OS, and the symbols the program can reach.  A
+    /// package none of whose functions is reachable is not listed, so its file is not
+    /// needed to run.  `__loft_bind` is the one entry point, called first by `main`.
+    fn emit_bind_table(
+        w: &mut dyn Write,
+        data: &Data,
+        reachable: &HashSet<u32>,
+        packages: bool,
+        c_packages: &[String],
+        linked_packages: &[String],
+    ) -> std::io::Result<()> {
+        let mut per_crate: std::collections::BTreeMap<&str, Vec<&str>> =
+            std::collections::BTreeMap::new();
+        for d in 0..data.definitions() {
+            if !packages {
+                break;
+            }
+            if !Self::is_bound_native(data, d) || !(reachable.is_empty() || reachable.contains(&d))
+            {
+                continue;
+            }
+            let native = data.def(d).native();
+            let krate = data.native_symbol_crates[native].as_str();
+            let syms = per_crate.entry(krate).or_default();
+            if !syms.contains(&native) {
+                syms.push(native);
+            }
+        }
+        writeln!(w, "static __NB_LIBS: &[loft::native_bind::Library] = &[")?;
+        for (crate_name, pkg_dir) in &data.native_packages {
+            let ident = crate_name.replace('-', "_");
+            let Some(syms) = per_crate.get(ident.as_str()) else {
+                continue;
+            };
+            let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
+            let package = manifest
+                .as_ref()
+                .and_then(|m| m.name.clone())
+                .unwrap_or_else(|| crate_name.clone());
+            let version = manifest
+                .as_ref()
+                .and_then(|m| m.version.clone())
+                .unwrap_or_else(|| "0".to_string());
+            let stem = manifest
+                .and_then(|m| m.native)
+                .unwrap_or_else(|| ident.clone());
+            let file = crate::native_build::platform_lib_name(&stem);
+            write!(
+                w,
+                "    loft::native_bind::Library {{ package: {package:?}, version: {version:?}, file: {file:?}, c_name: \"\", symbols: &["
+            )?;
+            for s in syms {
+                write!(
+                    w,
+                    "loft::native_bind::Symbol {{ name: {:?}, slot: &__NB_{s} }}, ",
+                    data.link_symbol(s)
+                )?;
+            }
+            writeln!(w, "] }},")?;
+        }
+        Self::emit_bind_c_libraries(w, data, reachable, c_packages)?;
+        for (lib, _) in data.shipped_c_libraries() {
+            if linked_packages.contains(&lib.pkg_dir) {
+                writeln!(
+                    w,
+                    "    loft::native_bind::Library {{ package: \"\", version: \"\", file: \"\", c_name: {:?}, symbols: &[] }},",
+                    Self::emitted_c_lib_name(&lib.name, true)
+                )?;
+            }
+        }
+        writeln!(w, "];")?;
+        writeln!(
+            w,
+            "fn __loft_bind() {{ loft::native_bind::bind(__NB_LIBS); }}"
+        )
+    }
+
+    /// @PLN197 — the C libraries packages ship, as bind-table rows: the package (its
+    /// directory's name when its manifest names none), its version, the library's file, the
+    /// name it goes by in `__C_LIBS` (so the `#c` resolver and `c_library_available` see it
+    /// as loaded), and the `#c` symbols the program can reach in that package.  A package
+    /// none of whose `#c` functions is reachable is not listed.
+    fn emit_bind_c_libraries(
+        w: &mut dyn Write,
+        data: &Data,
+        reachable: &HashSet<u32>,
+        c_packages: &[String],
+    ) -> std::io::Result<()> {
+        let target = crate::c_signature::CTarget::host();
+        for (lib, path) in data.shipped_c_libraries() {
+            if !c_packages.contains(&lib.pkg_dir) {
+                continue;
+            }
+            let mut syms: Vec<String> = Vec::new();
+            let mut used = false;
+            for d in 0..data.definitions() {
+                let def = data.def(d);
+                if def.c_sig.is_empty()
+                    || *def.code() != Value::Null
+                    || data.c_owner_pkg(def.position().file.as_str()) != Some(lib.pkg_dir.as_str())
+                    || !(reachable.is_empty() || reachable.contains(&d))
+                {
+                    continue;
+                }
+                used = true;
+                if data.c_symbol_is_lazy(def.position().file.as_str()) {
+                    continue;
+                }
+                if let Some(Ok(sig)) = crate::c_signature::of(data, d, target)
+                    && !syms.contains(&sig.symbol)
+                {
+                    syms.push(sig.symbol);
+                }
+            }
+            if !used {
+                continue;
+            }
+            let manifest = crate::manifest::read_manifest(&format!("{}/loft.toml", lib.pkg_dir));
+            let package = manifest
+                .as_ref()
+                .and_then(|m| m.name.clone())
+                .or_else(|| crate::file_access::file_name(lib.pkg_dir.as_str()))
+                .unwrap_or_default();
+            let version = manifest
+                .and_then(|m| m.version)
+                .unwrap_or_else(|| "0".to_string());
+            let file = crate::file_access::file_name(path.as_path()).unwrap_or_default();
+            let c_name = Self::emitted_c_lib_name(&lib.name, true);
+            write!(
+                w,
+                "    loft::native_bind::Library {{ package: {package:?}, version: {version:?}, file: {file:?}, c_name: {c_name:?}, symbols: &["
+            )?;
+            for s in &syms {
+                write!(
+                    w,
+                    "loft::native_bind::Symbol {{ name: {s:?}, slot: &__NB_c_{s} }}, "
+                )?;
+            }
+            writeln!(w, "] }},")?;
+        }
+        Ok(())
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_file_header(
         w: &mut dyn Write,
         data: &Data,
         wasm_browser: bool,
         no_c_abi: bool,
-        native_cabi: bool,
+        package_link: PackageLink,
         reachable: &HashSet<u32>,
         checkpoints: CkptMode,
     ) -> std::io::Result<()> {
+        let native_cabi = matches!(package_link, PackageLink::CAbi | PackageLink::Bound);
+        // `native_bind`: the packages' functions are slots; `c_bind`: the C libraries packages
+        // ship are bound at start too (always when the packages are, and under a static link
+        // for the ones with no archive to link in).
+        let native_bind = package_link == PackageLink::Bound;
+        let c_bind = matches!(package_link, PackageLink::Bound | PackageLink::StaticBound);
         // Every `allow` here suppresses a rustc lint about GENERATED code, which a user
         // cannot act on and did not write: the emitter names every local whether or not
         // the body reads it, parenthesises defensively, and emits whatever the IR says.
@@ -8168,8 +8610,15 @@ extern crate loft;"
             // type-correct.  The opaque FFI types are named through loft's
             // own `loft_ffi` (`--extern loft_ffi`) — the only copy left in
             // the consumer now the cdylib's copy is sealed away.
+            //
+            // @PLN195 — or, when the program binds its libraries itself (`native_bind`), each
+            // symbol is a SLOT under the same `__cabi_` name instead, filled at start by
+            // `loft::native_bind::bind` from the table `emit_bind_table` writes below.  The call
+            // sites are the same either way.
             use std::fmt::Write as _;
-            writeln!(w, "unsafe extern \"C\" {{")?;
+            if !native_bind {
+                writeln!(w, "unsafe extern \"C\" {{")?;
+            }
             let mut declared = HashSet::new();
             for d_nr in 0..data.definitions() {
                 let def = data.def(d_nr);
@@ -8300,6 +8749,18 @@ extern crate loft;"
                 // implements it, which for a remapped binding is not the
                 // `#native` string.  The alias stays keyed on the `#native`
                 // string so call sites are unaffected.
+                if native_bind {
+                    Self::emit_bind_slot(
+                        w,
+                        def.native(),
+                        &format!("__cabi_{}", def.native()),
+                        data.link_symbol(def.native()),
+                        &sig,
+                        &ret,
+                        false,
+                    )?;
+                    continue;
+                }
                 writeln!(
                     w,
                     "    #[link_name = \"{}\"]",
@@ -8307,7 +8768,11 @@ extern crate loft;"
                 )?;
                 writeln!(w, "    fn __cabi_{}({sig}){ret};", def.native())?;
             }
-            writeln!(w, "}}")?;
+            // The bind table is written at the end of the header, after the `#c` slots
+            // it also lists (@PLN197).
+            if !native_bind {
+                writeln!(w, "}}")?;
+            }
         } else {
             // Emit extern crate declarations only for the native packages the
             // emitted (reachable) code actually calls (#307).  A library cdylib
@@ -8385,6 +8850,10 @@ extern crate loft;"
             let target = crate::c_signature::CTarget::host();
             let mut declared_c: HashSet<String> = HashSet::new();
             let mut block = String::new();
+            let bound_pkgs = Self::bound_c_packages(data, c_bind, !native_cabi);
+            let linked_pkgs = Self::linked_c_packages(data, !native_cabi);
+            let mut shipped_exports = crate::c_shim::ShippedExports::default();
+            let mut slots: Vec<u8> = Vec::new();
             // @PLN24 arc G — a symbol from a package that declares an OPTIONAL
             // library cannot be declared `extern "C"`: an extern that is CALLED
             // is an undefined reference, and with the library off the link line
@@ -8414,7 +8883,17 @@ extern crate loft;"
                     ref t => format!(" -> {}", t.rust_type()),
                 };
                 use std::fmt::Write as _;
-                if data.c_symbol_is_lazy(def.position().file.as_str()) {
+                // @PLN197 — a package linked INTO the binary from its archive, whose
+                // optional library makes its symbols lazy: the ones its shim defines are
+                // declared like a required symbol.  A lazy lookup would find nothing — the
+                // linker pulls an archive's objects in only for a symbol the program
+                // references, and a symbol looked up by name is not one.
+                let file = def.position().file.as_str();
+                let archived = data.c_owner_pkg(file).is_some_and(|p| {
+                    linked_pkgs.iter().any(|l| l == p)
+                        && shipped_exports.defines(data, p, &sig.symbol)
+                });
+                if data.c_symbol_is_lazy(file) && !archived {
                     let fn_ty = format!(
                         "unsafe extern \"C\" fn({}){ret}",
                         sig.params
@@ -8460,11 +8939,33 @@ extern crate loft;"
                     let _ = writeln!(lazy, "}}");
                     continue;
                 }
+                // @PLN197 — a package that ships its C library: the symbol is a slot the
+                // program fills itself, under the same `__c_` name the call sites write.
+                if data
+                    .c_owner_pkg(def.position().file.as_str())
+                    .is_some_and(|p| bound_pkgs.iter().any(|b| b == p))
+                {
+                    let sig_text = (0..sig.params.len())
+                        .map(|i| format!("a{i}: {}", sig.params[i].rust_type()))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    Self::emit_bind_slot(
+                        &mut slots,
+                        &format!("c_{}", sig.symbol),
+                        &format!("__c_{}", sig.symbol),
+                        &sig.symbol,
+                        &sig_text,
+                        &ret,
+                        true,
+                    )?;
+                    continue;
+                }
                 // Aliased like the `#native` block, and for the same reason: a
                 // C symbol may share the wrapper fn's name (E0428).
                 let _ = writeln!(block, "    #[link_name = \"{}\"]", sig.symbol);
                 let _ = writeln!(block, "    fn __c_{}({params}){ret};", sig.symbol);
             }
+            w.write_all(&slots)?;
             if !block.is_empty() {
                 writeln!(w, "unsafe extern \"C\" {{")?;
                 write!(w, "{block}")?;
@@ -8492,8 +8993,20 @@ extern crate loft;"
         // `c_library_available` — the very question a library is told to ask
         // before calling into C — fail to compile under `--html` (@PLN24 arc E).
         writeln!(w, "static __C_LIBS: &[(&str, &str)] = &[")?;
+        // @PLN197 — a library the program binds itself goes in by name alone: it is found
+        // through the bind search order, never through the package directory of this
+        // machine, which is therefore not written into the binary.
+        let bound_pkgs = Self::bound_c_packages(data, c_bind, !native_cabi);
+        let linked_pkgs = Self::linked_c_packages(data, c_bind && !native_cabi);
         for lib in &data.c_libraries {
-            writeln!(w, "    ({:?}, {:?}),", lib.name, lib.pkg_dir)?;
+            let bound = !lib.optional
+                && (bound_pkgs.contains(&lib.pkg_dir) || linked_pkgs.contains(&lib.pkg_dir));
+            writeln!(
+                w,
+                "    ({:?}, {:?}),",
+                Self::emitted_c_lib_name(&lib.name, c_bind),
+                if bound { "" } else { lib.pkg_dir.as_str() }
+            )?;
         }
         writeln!(w, "];")?;
         writeln!(w, "static __C_LIB_SYMS: &[(&str, &[&str])] = &[")?;
@@ -8502,8 +9015,15 @@ extern crate loft;"
         // right table is the empty one rather than a build failure.
         #[cfg(feature = "native-extensions")]
         for (lib, syms) in crate::c_signature::library_symbol_table(data) {
+            // A library linked into the binary lists no symbols: they are not in its dynamic
+            // symbol table, so a lookup by name could only report them missing.
+            let linked = data
+                .c_libraries
+                .iter()
+                .any(|c| c.name == lib && !c.optional && linked_pkgs.contains(&c.pkg_dir));
+            let lib = Self::emitted_c_lib_name(&lib, c_bind);
             write!(w, "    ({lib:?}, &[")?;
-            for s in &syms {
+            for s in syms.iter().filter(|_| !linked) {
                 write!(w, "{s:?}, ")?;
             }
             writeln!(w, "]),")?;
@@ -8511,6 +9031,9 @@ extern crate loft;"
         writeln!(w, "];")?;
         if !lazy.is_empty() {
             write!(w, "{lazy}")?;
+        }
+        if c_bind {
+            Self::emit_bind_table(w, data, reachable, native_bind, &bound_pkgs, &linked_pkgs)?;
         }
         Self::emit_ckpt_prelude(w, checkpoints)?;
         Ok(())
@@ -8609,7 +9132,7 @@ extern crate loft;"
             self.data,
             self.wasm_browser,
             self.no_c_abi(),
-            self.native_cabi,
+            self.package_link(),
             &self.reachable,
             self.checkpoints,
         )?;
@@ -8752,7 +9275,7 @@ extern crate loft;"
             self.data,
             self.wasm_browser,
             self.no_c_abi(),
-            self.native_cabi,
+            self.package_link(),
             &reachable,
             self.checkpoints,
         )?;
@@ -9078,6 +9601,13 @@ extern crate loft;"
         };
         let _ = ckpt;
         let (prelude, args) = self.entry_call_extra_args();
+        // @PLN195 — a program that binds its native libraries itself fills the slots before
+        // anything runs.  Empty (and so byte-identical) for a program that links none.
+        let bind = if self.binds_libraries() {
+            "    __loft_bind();\n"
+        } else {
+            ""
+        };
         // #255 / @PLN9: bake the parse-time `#cwd` path-mode default.
         writeln!(
             w,
@@ -9117,7 +9647,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -9158,7 +9688,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
@@ -10301,6 +10831,11 @@ extern crate loft;"
                 {
                     self.dv = decode_view::DvPlan::default();
                 }
+                // `@FR-R-DecodeView`'s structure clause rides on the region the view clause
+                // admitted: its roots, its frame parameters and its view types.
+                self.ps = decode_structure::plan(self.data, self.stores, &self.dv);
+                // `@FR-R-StreamWalk` — a vector its caller walks once, streamed.
+                self.sw = stream_walk::plan(self.data, &self.reachable);
             }
             self.output_apart_types(w)?;
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
@@ -10328,7 +10863,14 @@ extern crate loft;"
             {
                 continue;
             }
-            self.output_function(w, dnr, program_store.as_ref())?;
+            // `@FR-R-DecodeView`'s structure clause — a root whose chain holds every decoded
+            // value as a position is emitted in its positional form, under its own name.
+            if self.ps.roots.contains(&dnr) {
+                self.ps_mode = Some(decode_structure_emit::PsMode::Consumer(dnr));
+            }
+            let r = self.output_function(w, dnr, program_store.as_ref());
+            self.ps_mode = None;
+            r?;
             // `@FR-R-Apart` — the function's apart twin beside it: the same body over values.
             if self.apart.twins.contains_key(&dnr) {
                 self.apart_twin = true;
@@ -10343,7 +10885,7 @@ extern crate loft;"
                 self.output_function(w, dnr, program_store.as_ref())?;
                 self.twin = None;
             }
-            self.output_dv_twins(w, dnr, program_store.as_ref())?;
+            self.output_plan_twins(w, dnr, program_store.as_ref())?;
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
@@ -10355,6 +10897,18 @@ extern crate loft;"
                 return Ok(());
             }
         }
+    }
+    /// The twins the view plans ask for beside `dnr`: the decode view's, the structure
+    /// clause's, and the stream walks' (`@FR-R-StreamWalk`).
+    fn output_plan_twins(
+        &mut self,
+        w: &mut dyn Write,
+        dnr: u32,
+        program_store: Option<&(Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        self.output_dv_twins(w, dnr, program_store)?;
+        self.output_ps_twins(w, dnr, program_store)?;
+        self.output_sw_twins(w, dnr, program_store)
     }
 
     /// `@FR-R-DecodeView` — a region function's `__dv` twin beside it, and its inputs twin.
@@ -11144,6 +11698,11 @@ extern crate loft;"
         program_store: Option<&(Stores, crate::keys::DbRef)>,
     ) -> std::io::Result<()> {
         let saved_hoist = self.hoist_disabled;
+        // A positional twin keeps its function clause header and no loop hoist: the loops it
+        // keeps build nothing, and the ones it drops are not there to hold a header across.
+        if self.ps_mode.is_some() || self.sw_twin.is_some() {
+            self.hoist_disabled = true;
+        }
         self.apart_ctx = self.apart_ctx_for(def_nr);
         if self
             .apart_ctx
@@ -11295,9 +11854,12 @@ extern crate loft;"
             )?;
         }
         let twin = self.twin.clone();
+        let ps_name = self
+            .ps_signature_name()
+            .or_else(|| self.sw_signature_name());
         write!(
             w,
-            "{}fn {}{}{}{}(cell: &std::cell::UnsafeCell<Stores>",
+            "{}fn {}{}{}{}{}(cell: &std::cell::UnsafeCell<Stores>{}",
             self.fn_inline_attr(def),
             self.fn_ident(def),
             if twin.is_some() { "__inv" } else { "" },
@@ -11314,7 +11876,9 @@ extern crate loft;"
                 "__apv"
             } else {
                 ""
-            }
+            },
+            ps_name.as_deref().unwrap_or(""),
+            self.ps_leading_params()
         )?;
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.
@@ -11325,8 +11889,18 @@ extern crate loft;"
             value_rec.as_ref().and_then(|_| hoist::ret_buffer_attr(def))
         };
         for (i, a) in def.attributes().iter().enumerate() {
-            if dropped == Some(i) {
+            if dropped == Some(i) || self.sw_param_dropped(def_nr, i) {
                 continue;
+            }
+            // `@FR-R-DecodeView`'s structure clause — a positional twin takes a position
+            // where the function takes a decoded value, and no buffer for one it answers.
+            match self.ps_param(def_nr, i) {
+                decode_structure_emit::PsParam::Same => {}
+                decode_structure_emit::PsParam::Dropped => continue,
+                decode_structure_emit::PsParam::Typed(t) => {
+                    write!(w, ", mut var_{}: {t}", sanitize(&a.name))?;
+                    continue;
+                }
             }
             // `@FR-R-Apart` — a twin takes its record parameters as values and no buffer.
             match self.apart_twin_param(def_nr, i) {
@@ -11389,12 +11963,19 @@ extern crate loft;"
                 write!(w, ", __ip_{k}: *const u8, __il_{k}: bool")?;
             }
         }
-        write!(w, ") ")?;
-        if *def.returned() != Type::Void {
+        write!(
+            w,
+            "{}{}) ",
+            self.ps_trailing_params(),
+            self.sw_trailing_params()
+        )?;
+        if *def.returned() != Type::Void && self.sw_twin.is_none() {
             // @PLN10 — owned-`String` vs buffer-backed `Str` wrapper: the single
             // decision lives in `returns_owned_string` (shared with the
             // shared-store bridge), so the signature and the body never disagree.
-            if let Some(t) = self.apart_twin_result(def_nr) {
+            if let Some(t) = self.ps_result() {
+                write!(w, "-> {t} ")?;
+            } else if let Some(t) = self.apart_twin_result(def_nr) {
                 write!(w, "-> {t} ")?;
             } else if let Some(t) = &value_rec {
                 write!(w, "-> {t} ")?;
@@ -11426,6 +12007,10 @@ extern crate loft;"
         // at its IR position via `predeclared`.
         let mut vdb_prologue = self.apart_prologue();
         vdb_prologue.push_str(&self.dv_prologue(def_nr));
+        let ps_prologue = self.ps_prologue(def_nr);
+        vdb_prologue.push_str(&ps_prologue);
+        let sw_prologue = self.sw_prologue(def_nr);
+        vdb_prologue.push_str(&sw_prologue);
         // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
         // every free the body names of it skips.
         if self.vr_twin
@@ -11510,6 +12095,11 @@ extern crate loft;"
                 // Same E0425, same cure: bind the sentinel up front so the `let`
                 // position stops depending on where the null-init landed.
                 let is_iter_scratch = vars.name(v).contains("hash_scratch");
+                // A position local a positional twin's prologue bound is not bound again.
+                if (self.ps_mode.is_some() || self.sw_twin.is_some()) && self.declared.contains(&v)
+                {
+                    continue;
+                }
                 if !vars.is_argument(v)
                     && (vars.name(v).starts_with("__vdb")
                         || is_iter_scratch
@@ -11661,6 +12251,14 @@ extern crate loft;"
                 .then(|| hoist::ret_buffer_attr(def))
                 .flatten();
             for (i, a) in def.attributes().iter().enumerate() {
+                // A positional twin's buffer is no parameter: a local the prologue bound.
+                if matches!(
+                    self.ps_param(def_nr, i),
+                    decode_structure_emit::PsParam::Dropped
+                ) || self.sw_param_dropped(def_nr, i)
+                {
+                    continue;
+                }
                 // @PLN157 § V-aa — an admitted fn has no return buffer, so it has no
                 // buffer witness either (the parameter itself is gone).
                 if dropped == Some(i) {
@@ -13089,7 +13687,11 @@ fn output_enum_values(
 ) -> std::io::Result<()> {
     let def = data.def(d_nr);
     let e_var = format!("t{type_id}");
-    for a in def.attributes() {
+    // Only the variants: a method's dispatcher shares the list (`Data::is_variant`, loft#2100).
+    for (a_nr, a) in def.attributes().iter().enumerate() {
+        if !data.is_variant(d_nr, a_nr) {
+            continue;
+        }
         let variant_type = if matches!(a.typedef, Type::Enum(_, true, _)) {
             // Find the EnumValue definition whose parent is this enum and name matches.
             (0..data.definitions())

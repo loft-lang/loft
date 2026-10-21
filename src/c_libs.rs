@@ -320,6 +320,11 @@ pub(crate) fn try_dlsym(name: &str) -> Option<(*const (), bool)> {
 /// at a file that could not exist and every `#c` symbol in it went unresolved.
 #[cfg(feature = "native-extensions")]
 pub fn load_c_library(name: &str, pkg_dir: &str) -> bool {
+    // @PLN197 — a native program bound this library at start, from where the binary found
+    // it; the name alone (no package directory is written into the binary) would not.
+    if crate::native_bind::is_bound_c(name) {
+        return true;
+    }
     let mut last_err = None;
     for cand in host_lib_variants(name) {
         let beside = std::path::Path::new(pkg_dir).join(&cand);

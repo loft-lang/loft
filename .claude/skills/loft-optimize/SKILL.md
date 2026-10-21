@@ -89,7 +89,9 @@ slower than the compiled program on the same code. So:
    Prefer the fix that removes the mechanism even when it is larger than a rewrite for this
    shape. A rewrite that covers only one shape is a STOPGAP: allowed when the root fix is far
    off, but recorded as such, with the root fix that will retire it, the way `KERNELS.md` keeps
-   every Rust stand-in with its removal trigger. Two traps when stating the condition:
+   every Rust stand-in with its removal trigger. Before building, check that the rule's own
+   conditions hold on the case you priced: a rule whose gate refuses its target costs a build
+   and measures nothing. Two traps when stating the condition:
    - **Sound is not the same as profitable.** State where the gain is paid back, not only where
      the rewrite is correct. Handing a store on to the next call pays only when that call runs
      again; outside a loop the same rewrite was correct and cost an extra allocation.
@@ -145,6 +147,17 @@ slower than the compiled program on the same code. So:
   If the compiler cannot prove its condition, it does not apply.
 - **Complicating the memory model to make temporary objects cheaper.** Remove the temporary
   object instead. A question that only exists because the object is kept is the wrong question.
+- **Calling a cost fundamental.** "The memory model costs that" ends the search without
+  looking. A copy or allocation still in the compiled code is usually a rule that declined it
+  for a nameable reason; ask the rules (their traces) before accepting any cost as the price of
+  the language. `make gap-report` lists those declines per routine.
+- **Small steps on a routine still a factor off.** Five or ten percent at a time on a routine
+  several times slower than its twin means the work is going into the wrong part. First see
+  where the gap actually lives (`make gap-report`: the code's own work, the runtime inlined
+  into it, the runtime it calls), then work that part as a mechanism.
+- **A hand form that changes more than the rule would.** It prices a rewrite nobody can build:
+  a hand form that also dropped a safety check measured twice what the lookups alone were
+  worth. Change one thing per form, and split a gain by pricing its pieces apart.
 
 ## A short example
 

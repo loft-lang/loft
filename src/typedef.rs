@@ -52,6 +52,10 @@ pub(crate) fn fold_declared_default(data: &Data, value: &Value) -> Option<Conten
     match value.unspan() {
         Value::Int(i) => Some(Content::Long(i64::from(*i))),
         Value::Long(i) => Some(Content::Long(*i)),
+        // An enum field's `= <variant>` is a constant too: its 1-based discriminant, which the
+        // store writes back by the variant's NAME (`Stores::write_declared_default`).  It
+        // folded to nothing, so an omitted `tint: Colour = Blue` read null (loft#2079).
+        Value::Enum(n, _) if *n > 0 => Some(Content::Long(i64::from(*n))),
         // A boolean field is a byte holding 0/1; `Content` has no boolean spelling and
         // the walker reads this back through the field's own content type.
         Value::Boolean(b) => Some(Content::Long(i64::from(*b))),
@@ -1055,17 +1059,27 @@ fn register_enum_db(data: &mut Data, database: &mut Stores, d: u32) {
 /// The database half is add-if-absent because `Stores::value` appends blindly:
 /// a second pass over an already-populated enum would give it `Red, Green, Red,
 /// Green` and shift what each discriminant names.
+///
+/// Only a VARIANT is stamped (`Data::is_variant`).  A method whose receiver is the enum hangs
+/// its dispatcher on the same attribute list, and stamped as a variant it became one of the
+/// enum's values: `"label" as E` parsed to a value named `label`, and adding a method
+/// changed the layout identity, so `store_load` refused every stored `E` (loft#2100).  A
+/// variant's discriminant is its position in the database list, plus one.
 fn stamp_enum_variants(data: &mut Data, database: &mut Stores, d: u32, e_nr: u16) {
     for a in 0..data.attributes(d) {
-        let v_name = data.attr_name(d, a);
-        let known = match &database.types[e_nr as usize].parts {
-            crate::database::Parts::Enum(values) => values.iter().any(|(_, n)| *n == v_name),
-            _ => false,
-        };
-        if !known {
-            database.value(e_nr, &v_name, u16::MAX);
+        if !data.is_variant(d, a) {
+            continue;
         }
-        data.set_attr_value(d, a, Value::Enum(a as u8 + 1, e_nr));
+        let v_name = data.attr_name(d, a);
+        let at = match &database.types[e_nr as usize].parts {
+            crate::database::Parts::Enum(values) => values.iter().position(|(_, n)| *n == v_name),
+            _ => None,
+        };
+        let at = match at {
+            Some(i) => i as u16,
+            None => database.value(e_nr, &v_name, u16::MAX),
+        };
+        data.set_attr_value(d, a, Value::Enum(at as u8 + 1, e_nr));
     }
 }
 

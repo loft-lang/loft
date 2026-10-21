@@ -174,6 +174,13 @@ const CODES: &[(&str, &str)] = &[
         "text-parse-may-fail",
         "fn main() { x: integer = \"5\" as integer; print(\"{x}\"); }",
     ),
+    // loft#2079 — a parse that can leave a bare enum field without a value, asserted.
+    (
+        "text-parse-may-leave-a-field-unfilled",
+        "enum C { R, G }\n\
+         struct P { c: C, x: integer }\n\
+         fn main() { p = \"{{}}\" as P; print(\"{p.x}\"); }",
+    ),
     (
         "redundant-coalesce",
         "struct S { a: u8 }\n\

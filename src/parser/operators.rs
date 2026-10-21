@@ -2509,6 +2509,10 @@ impl Parser {
             if !self.first_pass
                 && t.is_unknown()
                 && let Value::Var(nr) = code
+                // A PARAMETER still untyped on pass 2 is a lambda's whose type could not be
+                // inferred, and that refusal is already reported once; one "Unknown variable"
+                // per read of it only buried it (loft#2085, `@FR-Disp-Hint`).
+                && !self.vars.is_argument(*nr)
             {
                 // Name it, like every sibling site does (`objects.rs` reports `Unknown
                 // variable 'x' — did you mean 'y'?`).  A bare "Unknown variable" leaves
@@ -3096,8 +3100,24 @@ impl Parser {
     /// spellings is what makes it the owner's 2026-09-16 ruling — `?`/`??` mean nothing on a
     /// tuple that is there — without withdrawing `v[i] ?? d`, which is the idiom the ruling
     /// names as the one that must keep working.
-    fn tuple_subject_is_held(code: &Value) -> bool {
-        matches!(code.unspan(), Value::Var(_) | Value::Tuple(_))
+    ///
+    /// A CALL is held too — of a function or through a function value, in both of the homes a
+    /// tuple return arrives in (the stack tuple, or the boxed `__tuple<…>` a heap-carrying
+    /// return travels as): `(T-Absent)` names "a declared member-nullable return" among the
+    /// tuples that EXIST, and the one call that answers an absence is a generic `-> T?`
+    /// instantiated at a tuple, whose type carries the `?` that
+    /// [`is_existing_tuple`](Parser::is_existing_tuple) already reads.  Admitting only the two
+    /// spellings above let `mk()?` and `mk() ?? d` compile on a `-> (integer, text)` while the
+    /// same discharge of its result held in a local was refused (loft#2076).  An OPERATOR call
+    /// is not held: it is the element read itself, the shape the refusal must not reach.
+    /// Everything else — the `tuple_unbox` block an element read arrives as, a `??` chain, a
+    /// branch — answers no, which can only leave a discharge admitted, never refuse one.
+    fn tuple_subject_is_held(data: &crate::data::Data, code: &Value) -> bool {
+        match code.unspan() {
+            Value::Var(_) | Value::Tuple(_) | Value::CallRef(..) => true,
+            Value::Call(d, _) => !data.def(*d).is_operator(),
+            _ => false,
+        }
     }
 
     /// The members of a BOXED tuple whose only difference from `stack`'s elements is each
@@ -3570,7 +3590,7 @@ impl Parser {
         // `tuples.md` D-tup-10).
         if !self.first_pass
             && Self::is_existing_tuple(&self.data, ctp)
-            && Self::tuple_subject_is_held(code)
+            && Self::tuple_subject_is_held(&self.data, code)
         {
             diagnostic!(
                 self.lexer,
@@ -4727,7 +4747,8 @@ impl Parser {
         // on a PARTLY PRESENT one, where `??` keeps the present member and a whole-value
         // default would drop it.  Refusing is the owner's 2026-09-16 ruling (`tuples.md`
         // D-tup-10) — the alternative was to pick a meaning the rules do not settle.
-        if Self::is_existing_tuple(&self.data, ctp) && Self::tuple_subject_is_held(code) {
+        if Self::is_existing_tuple(&self.data, ctp) && Self::tuple_subject_is_held(&self.data, code)
+        {
             if !self.first_pass {
                 diagnostic!(
                     self.lexer,
@@ -5460,6 +5481,46 @@ impl Parser {
                 //    the checked `as τ?` (value or null) or the assert-or-default `as τ ?? d`. A
                 //    `?? d` immediately after IS that form — allowed, and typed `τ?` so the `??`
                 //    discharges it (mirrors the DN4 narrowing `coalesced` rule above).
+                // loft#2079 — `text as T` asserts the parse produces a T; a field it can leave
+                // without a value (a bare enum with no default) makes that unprovable, so the
+                // asserting cast is refused and the checked `as T?` named — it answers null.
+                if !self.first_pass
+                    && !nullable_cast
+                    && !self.lexer.peek_token("??")
+                    && matches!(ctp.base(), Type::Text(_))
+                    && matches!(
+                        rt.base(),
+                        Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+                    )
+                    && let Some(reason) = self.data.parse_unfillable(&rt)
+                {
+                    let t = rt.base().source_name(&self.data);
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        code = "text-parse-may-leave-a-field-unfilled",
+                        "`as {t}` asserts the text fills every field, and it cannot: {reason}; \
+                         or cast with `as {t}?`, which answers null when the text leaves such a \
+                         field out"
+                    );
+                    self.lexer.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Conditional,
+                        title: "make the cast checked".to_string(),
+                        condition: Some(
+                            "a text that leaves the field out is an expected input — the result \
+                             is then nullable, so a non-null target needs a discharge"
+                                .to_string(),
+                        ),
+                        edit: Some(crate::diagnostics::Edit {
+                            line: type_end.0,
+                            col: type_end.1,
+                            len: 0,
+                            text: "?".to_string(),
+                        }),
+                        concept: "checked cast",
+                        concept_ref: "@F5",
+                    });
+                }
                 if !nullable_cast
                     && crate::keys::pln25_dn1_enabled()
                     && matches!(ctp, Type::Text(_))
@@ -5552,8 +5613,7 @@ impl Parser {
                 {
                     let en = rt.source_name(&self.data);
                     if let Some(lit) = &cast_literal {
-                        if !self.data.def(e_nr).attr_names.contains_key(lit.as_str())
-                            && !self.first_pass
+                        if self.data.variant_attr(e_nr, lit.as_str()).is_none() && !self.first_pass
                         {
                             diagnostic!(
                                 self.lexer,

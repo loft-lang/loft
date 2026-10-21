@@ -620,12 +620,32 @@ def cmd_rederive(args):
                 print("\n".join("        " + l for l in out.splitlines()[-10:]))
                 print(f"        cure: {art.get('cure', 'read the check')}")
                 continue
+            # An EXACT check compares every line with the committed file, so its passing IS
+            # the answer: the regen would write what is there.  Running it again was a second
+            # full gate for nothing (the ownership drop gate — the heaviest step of a join).
+            if art.get("check_exact"):
+                print(f"  ok    {name:22} unchanged (its exact check passed)")
+                continue
         pin = art.get("pin")
+        regenerated = False
         if pin:
-            current = measure_pin(art, pin)
+            # Measured by running the regen ONCE, in place: within budget the file it wrote is
+            # the re-derived artefact; over budget it is put back and the join stops.
+            path = ROOT / pin["file"]
+            saved = path.read_bytes()
+            before = status()
+            ran = all(sh(cmd, quiet=True)[0] for cmd in art["regen"])
+            current = read_numbers(path.read_text(encoding="utf-8"), pin["format"]) if ran else {}
             budget, rows = growth_budget(plan, pin)
             over = {k: (v, budget.get(k)) for k, v in current.items()
                     if budget.get(k) is not None and v > budget[k]}
+            if not ran or (over and name not in accept):
+                path.write_bytes(saved)
+            if not ran:
+                stopped.append(name)
+                print(f"  STOP  {name:22} its regen failed")
+                continue
+            regenerated = True
             if over and name not in accept:
                 stopped.append(name)
                 print(f"  STOP  {name:22} grew past what the sources pinned themselves:")
@@ -642,15 +662,22 @@ def cmd_rederive(args):
                           "the pin, `git log -1 -- index/optional_ratchet.json`)")
                 print(f"        cure: {art.get('cure', '')}")
                 continue
-        before = status()
-        for cmd in art["regen"]:
-            ok, _ = sh(cmd)
+        if not regenerated:
+            before = status()
+        for cmd in [] if regenerated else art["regen"]:
+            ok, out = sh(cmd, quiet=bool(art.get("regen_checks")))
             if not ok:
                 stopped.append(name)
                 print(f"  STOP  {name:22} `{cmd}` failed")
+                if art.get("regen_checks"):
+                    print("\n".join("        " + l for l in out.splitlines()[-10:]))
+                    print(f"        cure: {art.get('cure', 'read the check')}")
                 break
         else:
-            if art.get("check"):
+            # A regen that is its own check (`regen_checks`) has just answered it, and a pinned
+            # artefact was measured from the file the regen wrote: asking either again re-runs
+            # the same measurement.
+            if art.get("check") and not art.get("regen_checks") and not pin:
                 ok, _ = sh(art["check"])
                 if not ok:
                     stopped.append(name)
@@ -678,18 +705,6 @@ def cmd_rederive(args):
         print("\nre-derived and left staged-for-review; commit with `--commit`, or by hand:\n")
         print("\n".join("  " + l for l in msg.splitlines()))
     return 0
-
-
-def measure_pin(art, pin):
-    """The union's own numbers: re-pin into a scratch copy, read it, and put the file back."""
-    path = ROOT / pin["file"]
-    saved = path.read_bytes()
-    try:
-        for cmd in art["regen"]:
-            sh(cmd, quiet=True)
-        return read_numbers(path.read_text(encoding="utf-8"), pin["format"])
-    finally:
-        path.write_bytes(saved)
 
 
 def rederive_message(plan, moved):

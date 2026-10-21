@@ -734,10 +734,19 @@ pub struct Parser {
     /// constraint and the versions the cache holds, so "library not found" can say which
     /// declaration was unmet instead of implying nothing is there.
     cache_unmet: std::collections::HashMap<String, String>,
+    /// The `use` ids an auto-install asked the registry for and was refused — the index it
+    /// decided on was fetched in that call — so the "not found" message says the registry
+    /// has nothing in range rather than that it could not be asked.
+    #[cfg(feature = "registry")]
+    registry_refused: std::collections::HashSet<String>,
     /// Tier-1 text-method trigger map: `method name -> providing package`,
     /// derived once per top-level parse from the current package's (and its
     /// trigger-enabled dependencies') declared triggers.  `None` until built.
     auto_use_trigger_map: Option<std::collections::HashMap<String, String>>,
+    /// `@FR-Disp-Trigger` (loft#2094) — the method names two trigger-enabled packages of ONE
+    /// search step both derive, with those packages: dropped from the map (no directory order
+    /// chooses), and named by the unknown-method refusal.  Built with `auto_use_trigger_map`.
+    pub(crate) auto_use_ambiguous: std::collections::HashMap<String, Vec<String>>,
     /// The type half of the same surface: `type name -> providing package`, from the
     /// current package's and its trigger-enabled dependencies' `pub struct` / `pub enum`
     /// names (`triggers.rs`).  Built with `auto_use_trigger_map`; local only — a type name
@@ -768,6 +777,10 @@ pub struct Parser {
     /// the sidecar's `builders`, for a bare call on a package the user has not declared.
     #[cfg_attr(not(feature = "registry"), allow(dead_code))]
     auto_use_catalog_builders: Option<std::collections::HashMap<String, String>>,
+    /// The catalogue's methods two packages provide (`method -> "a,b"`), for the refusal
+    /// that names them (loft#2094).  `None` until first asked.
+    #[cfg_attr(not(feature = "registry"), allow(dead_code))]
+    auto_use_catalog_ambiguous: Option<std::collections::HashMap<String, String>>,
     /// Is this the first pass on parsing:
     /// - Do not assume that all struct / enum types are already parsed.
     /// - Define variables, try to determine their type (can become clear from later code).
@@ -1340,6 +1353,14 @@ pub struct Parser {
     /// the record" and did not, and the function pass 1 left behind held a `$` no frame
     /// ever allocated (loft#1086).
     pub(crate) init_reads_record: bool,
+    /// @PLN196 — while a field default that reads `$` and builds a value is re-parsed into a
+    /// function of its own, the struct whose record `$` is there: inside that function `$`
+    /// is its first parameter, `self`.
+    pub(crate) dollar_record: Option<u32>,
+    /// @PLN196 — synthesise `__fill_<T>__<field>(self: T)` for every field whose default is
+    /// not a constant, so a store upgrade can fill an added field the way a constructor does.
+    /// Off for an ordinary parse: only `loft layout upgrade` and a live swap ask for them.
+    pub upgrade_fills: bool,
     /// M11-a: true while parsing the body of a `for … par(…) { … }` loop.
     /// `yield` inside a `par()` body is illegal — the worker runs in a separate
     /// thread with its own store; there is no safe coroutine resumption path.
@@ -1681,6 +1702,17 @@ use closures::{
 };
 use imports::{ImportSpec, PendingImport};
 use packages::{file_exists, registry_fn_hint, script_dir};
+
+/// Does user function `fn_nr` write through its parameter `slot` — a field, an element, a
+/// nested place, directly or through a call it makes ([`callee_param_writes`])?  `true` for a
+/// slot it does not have, the answer that keeps a caller's assumption safe.
+pub(crate) fn callee_writes_param(fn_nr: u32, data: &Data, slot: usize) -> bool {
+    let mut cache = crate::fxhash::FxHashMap::default();
+    callee_param_writes(fn_nr, data, &mut cache)
+        .get(slot)
+        .copied()
+        .unwrap_or(true)
+}
 mod advice;
 mod bounds;
 mod call_args;
@@ -1938,10 +1970,14 @@ impl Parser {
             program_scope: None,
             program_entry: None,
             cache_unmet: std::collections::HashMap::new(),
+            #[cfg(feature = "registry")]
+            registry_refused: std::collections::HashSet::new(),
             auto_use_trigger_map: None,
+            auto_use_ambiguous: std::collections::HashMap::new(),
             auto_use_type_map: std::collections::HashMap::new(),
             auto_use_builder_map: std::collections::HashMap::new(),
             auto_use_catalog_builders: None,
+            auto_use_catalog_ambiguous: None,
             reported_manifest_errors: Vec::new(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
@@ -2001,6 +2037,8 @@ impl Parser {
             init_field_tracking: false,
             init_field_deps: Vec::new(),
             init_reads_record: false,
+            dollar_record: None,
+            upgrade_fills: false,
             in_par_body: false,
             is_capture_aliases: Vec::new(),
             capture_took_body: None,
@@ -2213,10 +2251,25 @@ impl Parser {
         // directory.  Whole-program; must precede declarations.  At file top the
         // lexer's first token can only be this directive (`#rust`/`#native`/etc.
         // are declaration-scoped, consumed later by `parse_rust`).
-        if self.lexer.has_token("#") {
+        // `#link static` / `#link dynamic` names how a native build links the native libraries
+        // the program uses.  The DRIVER acts on it, reading the header before any parse
+        // (`native_utils::apply_link_directive`); here it is only checked, so a misspelt mode
+        // is refused rather than silently linking the default way.
+        while self.lexer.has_token("#") {
             match self.lexer.has_identifier().as_deref() {
                 Some("cwd") => {
                     self.database.program_relative = false;
+                    let _ = self.lexer.has_token(";");
+                }
+                Some("link") => {
+                    let mode = self.lexer.has_identifier().unwrap_or_default();
+                    if mode != "static" && mode != "dynamic" {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Unknown link mode '#link {mode}' (expected '#link static' or '#link dynamic')"
+                        );
+                    }
                     let _ = self.lexer.has_token(";");
                 }
                 other => {
@@ -2224,8 +2277,9 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "Unknown file directive '#{name}' (expected '#cwd')"
+                        "Unknown file directive '#{name}' (expected '#cwd' or '#link')"
                     );
+                    break;
                 }
             }
         }

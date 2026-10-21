@@ -925,16 +925,19 @@ impl Output<'_> {
         {
             res = "{{let db = @v1; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), 0u32); }}}}".to_string();
         }
-        // `OpSetText` copies its value into a fresh `String` before `set_str` because the value
-        // may BORROW store memory (a field read, a slice of a text parameter) that the claim
-        // can move.  A literal and an owned `String` local borrow no store: their bytes are
-        // read where they are, one allocation and one copy fewer per write.
+        // `OpSetText` reads its value where it lives — a literal, a `String`, a parameter, a
+        // field of any store — with no copy of its own.  The value may borrow store memory the
+        // claim can move, but only the DESTINATION store's: `Store::set_str` copies a value
+        // whose bytes lie inside its own buffer before it claims (`Store::holds_bytes`), and a
+        // claim moves no other store.  The borrow is detached from `stores` so a text read
+        // from one store can be written into another through `store_mut`; `s_tmp` keeps a
+        // temporary `String` alive to the end of the block.
         if def_fn.name() == "OpSetText"
             && !self.text_set_copy_kept
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
-            && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v))
+            && !matches!(vals.get(vi), Some(Value::Null))
         {
-            res = "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
+            res = "{{let db = @v1; let s_tmp = &(@val); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
         }
         // `@FR-R-RefillText` — in a refill twin, the literal's text sets into its own buffer
         // refill the slot: written over the block the slot owns when the text fits, released
@@ -948,12 +951,11 @@ impl Output<'_> {
                 })))
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
         {
-            let borrowed = !self.text_set_copy_kept
-                && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v));
+            let borrowed = !self.text_set_copy_kept;
             res = if matches!(vals.get(vi), Some(Value::Null)) {
                 "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
             } else if borrowed {
-                "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), s_val); }}}}"
+                "{{let db = @v1; let s_tmp = &(@val); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), s_val); }}}}"
             } else {
                 "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
             }
@@ -968,12 +970,11 @@ impl Output<'_> {
             && matches!(vals.first().map(Value::unspan), Some(Value::Var(e)) if k.elems.contains(e))
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
         {
-            let borrowed = !self.text_set_copy_kept
-                && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v));
+            let borrowed = !self.text_set_copy_kept;
             res = if matches!(vals.get(vi), Some(Value::Null)) {
                 "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
             } else if borrowed {
-                "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, s_val); }} else {{ let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
+                "{{let db = @v1; let s_tmp = &(@val); let s_val: &str = unsafe { &*std::ptr::from_ref::<str>(AsRef::<str>::as_ref(s_tmp)) }; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, s_val); }} else {{ let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
             } else {
                 "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, &s_val); }} else {{ let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
             }

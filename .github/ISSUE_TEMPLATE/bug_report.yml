@@ -150,6 +150,28 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: mechanism_class
+    attributes:
+      label: Mechanism class
+      description: Sets the `class:*` label — which MECHANISM produced the wrong answer (the monthly bug review's axis; BUG_REVIEW.md).  Leave it on "not one of these" when none fits; the review falls back to the title.
+      options:
+        - "class:<not one of these>"
+        - "class:null — a null, sentinel or nullable spelling"
+        - "class:ownership — a free, leak, use-after-free, owner or borrow"
+        - "class:keyed — a hash, sorted, radix, spatial or other keyed collection"
+        - "class:generic — a generic, template or monomorph instance"
+        - "class:narrow — a narrow integer or field width"
+        - "class:tuple — a tuple"
+        - "class:enum — an enum variant or discriminant"
+        - "class:traversal — reachability, a walk, pruning"
+        - "class:par — par, workers, coroutines"
+        - "class:packages — the package format, registry or install"
+        - "class:wasm — the browser or wasm target"
+      default: 0
+    validations:
+      required: false
+
   - type: checkboxes
     id: area
     attributes:

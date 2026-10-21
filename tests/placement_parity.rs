@@ -1316,11 +1316,16 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
     );
 }
 
-/// The pid of the `--lib-worker` process `parent` started, if it has one yet.
+/// The pid of the `--lib-worker` process `parent` started, if it has one yet.  Picked by its
+/// command line, not as the first child: on macOS the first owned spawn also starts the
+/// driver-death watcher shell, and when that spawn precedes the worker the watcher has the
+/// lower pid, so "first child" killed the watcher and left the worker running (loft#2070).
 fn worker_child_of(parent: u32) -> Option<u32> {
     let out = loft::platform::process::harness_command("pgrep")
         .arg("-P")
         .arg(parent.to_string())
+        .arg("-f")
+        .arg("lib-worker")
         .output()
         .ok()?;
     String::from_utf8_lossy(&out.stdout)

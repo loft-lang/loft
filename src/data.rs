@@ -564,6 +564,80 @@ impl Value {
         }
     }
 
+    /// Renumber frame variable `from` to `to` throughout this IR: every `Var`, `Set`,
+    /// `CallRef`, tuple and iterator variable, and the frame deps of every block's result type.
+    /// A `Call`'s first field is a definition, not a variable, and is left alone.  The caller
+    /// renumbers the variable table's own type deps in tandem.
+    pub fn renumber_frame_var(&mut self, from: u16, to: u16) {
+        match self {
+            Value::Var(n) if *n == from => *n = to,
+            Value::Set(v, inner) => {
+                if *v == from {
+                    *v = to;
+                }
+                inner.renumber_frame_var(from, to);
+            }
+            // `CallRef`'s first field is the fn-ref VARIABLE (remap it); `Call`'s is a
+            // def_nr (a definition, NOT a variable — leave it). Missing the CallRef var
+            // desyncs it from the swapped variable table → codegen's `generate_call_ref`
+            // reads a non-`Function` slot and panics (loft-lang/loft#568 default-on).
+            Value::CallRef(v, xs) => {
+                if *v == from {
+                    *v = to;
+                }
+                for x in xs {
+                    x.renumber_frame_var(from, to);
+                }
+            }
+            Value::Call(_, xs) | Value::Insert(xs) | Value::Tuple(xs) | Value::Parallel(xs) => {
+                for x in xs {
+                    x.renumber_frame_var(from, to);
+                }
+            }
+            Value::Block(bl) | Value::Loop(bl) => {
+                bl.result.renumber_frame_deps(from, to);
+                for op in &mut bl.operators {
+                    op.renumber_frame_var(from, to);
+                }
+            }
+            Value::If(c, t, e) => {
+                c.renumber_frame_var(from, to);
+                t.renumber_frame_var(from, to);
+                e.renumber_frame_var(from, to);
+            }
+            Value::Return(inner) | Value::Drop(inner) | Value::Yield(inner) => {
+                inner.renumber_frame_var(from, to);
+            }
+            Value::Span(b) => b.1.renumber_frame_var(from, to),
+            Value::Iter(v, a, b, c) => {
+                if *v == from {
+                    *v = to;
+                }
+                a.renumber_frame_var(from, to);
+                b.renumber_frame_var(from, to);
+                c.renumber_frame_var(from, to);
+            }
+            Value::TupleGet(v, _) => {
+                if *v == from {
+                    *v = to;
+                }
+            }
+            Value::TuplePut(v, _, inner) => {
+                if *v == from {
+                    *v = to;
+                }
+                inner.renumber_frame_var(from, to);
+            }
+            Value::FnRef(_, v, ty) => {
+                if *v == from {
+                    *v = to;
+                }
+                ty.renumber_frame_deps(from, to);
+            }
+            _ => {}
+        }
+    }
+
     /// Plan-07 phase 1, step 1.B.0 — see through any number of nested
     /// `Value::Span` wrappers and return the inner non-Span node.
     ///
@@ -4197,7 +4271,9 @@ pub enum Purity {
     /// impure by the analyser to avoid false positives.
     #[default]
     Unknown,
-    /// `#pure` — no observable side effects, no parent-store writes.
+    /// `#pure` — the value is the only effect: no observable side effect, no parent-store
+    /// write, and (what a native's declaration also promises) it always returns and reports
+    /// nothing, so `@FR-R-PureReuse` may compute a call ahead of a test that skipped it.
     /// Always par-safe.
     Pure,
     /// `#impure(category)` — observable side effect, classified by
@@ -6964,6 +7040,34 @@ impl Data {
         rec
     }
 
+    /// A copy of function `of` under `name`, in `of`'s source: a VARIANT a rewrite builds
+    /// from it (`@FR-R-PureReuse`'s shared-call clause).  The copy is a function of its own —
+    /// unlinked from `of`'s parent chain, its code not yet compiled — that the caller then
+    /// changes; `of` itself is untouched.
+    ///
+    /// # Panics
+    /// When a definition named `name` already exists in `of`'s source.
+    pub fn add_variant_fn(&mut self, of: u32, name: &str, why: &'static str) -> u32 {
+        let rec = self.definitions();
+        let mut def = self.definitions[of as usize].clone();
+        assert!(
+            !self.def_names.contains(name, def.source),
+            "Dual definition of {name}"
+        );
+        self.def_names.insert(name, def.source, rec);
+        def.name = name.to_string();
+        def.variables.name = name.to_string();
+        def.parent = u32::MAX;
+        def.first_child = u32::MAX;
+        def.next_sibling = u32::MAX;
+        def.code_position = 0;
+        def.code_length = 0;
+        def.pub_visible = false;
+        def.synthetic = Some(why);
+        self.definitions.push(def);
+        rec
+    }
+
     /// Mark a definition as synthesised by the compiler with a
     /// `&'static` reason string.  Used by fallback dispatch paths
     /// (e.g. `parser/fields.rs::field`'s parent-enum lookup) to skip
@@ -7466,6 +7570,31 @@ impl Data {
         self.def(d_nr).attributes.len()
     }
 
+    /// Is attribute `a_nr` of the enum `d_nr` one of its VARIANTS?
+    ///
+    /// An enum's attribute list holds its variants (typed `Type::Enum`, plain or
+    /// struct-enum) and, after them, the dispatcher of each method whose receiver is the enum
+    /// (a `Type::Routine`, `definitions.rs`).  Every site that turns a name into a variant —
+    /// the storage list, the native registration, a bare or qualified variant, a parsed
+    /// literal — asks this, so a method can never become a value (loft#2100).
+    #[must_use]
+    pub fn is_variant(&self, d_nr: u32, a_nr: usize) -> bool {
+        self.def(d_nr)
+            .attributes
+            .get(a_nr)
+            .is_some_and(|a| matches!(a.typedef.base(), Type::Enum(..)))
+    }
+
+    /// The attribute number of the VARIANT `name` of enum `d_nr` ([`Self::is_variant`]).
+    #[must_use]
+    pub fn variant_attr(&self, d_nr: u32, name: &str) -> Option<usize> {
+        self.def(d_nr)
+            .attr_names
+            .get(name)
+            .copied()
+            .filter(|a| self.is_variant(d_nr, *a))
+    }
+
     #[must_use]
     pub fn attr(&self, d_nr: u32, name: &str) -> usize {
         if let Some(nr) = self.def(d_nr).attr_names.get(name) {
@@ -7737,6 +7866,79 @@ impl Data {
     /// predicate that both the `x?` default-fallback operator and (the `S{}` zero
     /// value, in time) consult — there must be exactly one notion of "T's default".
     ///
+    /// loft#2079, `@FR-D-NoEnumF` / `@FR-N-Cast` — can a text parse into `tp` leave a field
+    /// without a value?  A parse fills an omitted field with its default, so a type a parse
+    /// reaches that has none — a record whose bare enum field declares no `= <variant>`, at
+    /// any depth: an inline record, a nullable record that may be present, a collection's
+    /// element, a struct-enum variant's payload — answers the reason (`has_default`'s), and
+    /// the asserting forms (`text as T`, `T.parse(…)`) are refused for it.
+    #[must_use]
+    pub fn parse_unfillable(&self, tp: &Type) -> Option<String> {
+        let mut seen = std::collections::HashSet::new();
+        self.parse_unfillable_in(tp, &mut seen)
+    }
+
+    fn parse_unfillable_in(
+        &self,
+        tp: &Type,
+        seen: &mut std::collections::HashSet<u32>,
+    ) -> Option<String> {
+        match tp.base() {
+            Type::Vector(e, _) => self.parse_unfillable_in(e, seen),
+            Type::Hash(d, _, _)
+            | Type::Sorted(d, _, _)
+            | Type::Index(d, _, _)
+            | Type::Radix(d, _, _)
+            | Type::Trie(d, _, _) => {
+                self.parse_unfillable_in(&Type::Reference(*d, Deps::none()), seen)
+            }
+            Type::Reference(d, deps)
+                if !deps.is_pointer_marker()
+                    && matches!(self.def_type(*d), DefType::Struct | DefType::EnumValue) =>
+            {
+                if !seen.insert(*d) {
+                    return None;
+                }
+                let rec = self.def(*d).name().to_string();
+                (0..self.attributes(*d)).find_map(|a| {
+                    let at = &self.def(*d).attributes()[a];
+                    let ftp = self.attr_type(*d, a);
+                    if at.value != Value::Null || at.constant || at.hidden {
+                        return None;
+                    }
+                    // A bare enum field with no `= <variant>` — `JsonValue` aside: a field of
+                    // it captures whatever JSON stands there, so a parse always gives it one.
+                    if !matches!(ftp, Type::Optional(_))
+                        && let Type::Enum(e, _, _) = ftp.base()
+                        && !self.def(*e).name.starts_with("__")
+                        && self.def(*e).name != "JsonValue"
+                    {
+                        let fname = self.attr_name(*d, a);
+                        let tn = ftp.name(self);
+                        return Some(format!(
+                            "record `{rec}` has no default: field `{fname}: {tn}` is an enum \
+                             with no explicit choice — add `{fname}: {tn} = <variant>`, or make \
+                             it `{tn}?` (defaults null)"
+                        ));
+                    }
+                    self.parse_unfillable_in(&ftp, seen)
+                })
+            }
+            Type::Enum(d, true, _) => {
+                if self.def(*d).name == "JsonValue" || !seen.insert(*d) {
+                    return None;
+                }
+                let d = *d;
+                (0..self.definitions.len() as u32)
+                    .filter(|v| {
+                        self.def_type(*v) == DefType::EnumValue && self.def(*v).parent() == d
+                    })
+                    .find_map(|v| self.parse_unfillable_in(&Type::Reference(v, Deps::none()), seen))
+            }
+            _ => None,
+        }
+    }
+
     /// `Ok(())` when a default exists; `Err(reason)` names the first field / reason a
     /// record has none, ready to drop into the compile error.  Scalars, text,
     /// collections, enums (first/marked variant), nullables (`null`), tuples of
@@ -9039,9 +9241,22 @@ impl Data {
             DefType::Generic => generic_members,
             _ => false,
         };
+        // `@FR-Disp-Key` — "a consumer's definition of ANOTHER spelling joins" a library's set.
+        // A `use`d library's dispatcher is bound under this source's own name table (the
+        // import binds it bare); the stdlib's is reached only through the stdlib fallback and
+        // keeps the refusal of @C95.  Without this a lone consumer member registered beside the
+        // set as a plain `n_<name>` that selection never ranked — `hit(b)` with `b: u8`
+        // answered the library's `hit(integer)` in silence — and a third definition re-read
+        // every body against that `n_` (loft#2071).
+        let library_set = o_nr != u32::MAX
+            && self.def(o_nr).def_type == DefType::Dynamic
+            && self.def(o_nr).source != STD_SOURCE
+            && self.def(o_nr).source != self.source
+            && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str());
         if d_nr != u32::MAX
             && incumbent_joins(self, d_nr)
-            && self.def(d_nr).source == self.source
+            && (self.def(d_nr).source == self.source
+                || (library_set && self.def(d_nr).source == self.def(o_nr).source))
             && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
             && self.def_full_spelling(d_nr).as_ref() != Some(&full)
         {
@@ -9089,7 +9304,7 @@ impl Data {
             && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
             && o_nr != u32::MAX
             && self.def(o_nr).def_type == DefType::Dynamic
-            && self.def(o_nr).source == self.source
+            && (self.def(o_nr).source == self.source || library_set)
             && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
         {
             // A FREE definition of a name that is already an overload set of this source — a
@@ -9151,8 +9366,26 @@ impl Data {
             // Without it a stdlib collision read as a bare "Cannot redefine 'sum'", which
             // does not say that `sum` is the stdlib's rather than a duplicate of the
             // reader's own (loft#863).
-            let text = self.redefinition_text(lexer, d_nr, fn_name);
-            diagnostic!(lexer, Level::Error, "{text}");
+            // A METHOD colliding with a stdlib method of its receiver type is reported by the
+            // type's slot below, which names the stdlib and the type (`` `negate` is a stdlib
+            // method on `float` ``); saying "Cannot redefine" here as well was one mistake, two
+            // refusals (loft#2086).  Only when that slot holds this very def, so the slot's
+            // report is certain.
+            let slot_reports = (is_self || is_both)
+                && self.def(d_nr).source == STD_SOURCE
+                && arguments.first().is_some_and(|a| {
+                    let t = self.method_family(self.type_def_nr(&a.typedef));
+                    t != u32::MAX && {
+                        let at = self.attr(t, fn_name);
+                        at != usize::MAX
+                            && matches!(self.def(t).attributes[at].typedef.base(),
+                                Type::Routine(r) if *r == d_nr)
+                    }
+                });
+            if !slot_reports {
+                let text = self.redefinition_text(lexer, d_nr, fn_name);
+                diagnostic!(lexer, Level::Error, "{text}");
+            }
             // Report and CONTINUE, under a name nothing can reach.  Answering `u32::MAX`
             // here made `parse_function` return `false` — "this was not a function" —
             // with the lexer parked between the parameter list and the `->`, so the
@@ -9264,7 +9497,12 @@ impl Data {
                         "cannot redefine field `{fn_name}` on `{tname}`"
                     );
                 }
-                return u32::MAX;
+                // Report and CONTINUE, as the free-function collision above does: the def is
+                // registered under its own key and simply takes no slot on the type, so the
+                // rest of the definition parses and the error stands alone.  `u32::MAX` made
+                // `parse_function` answer "not a function" with the lexer before `->`, and the
+                // top level reported `Syntax error: unexpected '->'` (loft#2086).
+                return d_nr;
             } else {
                 let a_nr = self.add_attribute(lexer, type_nr, fn_name, Type::Routine(d_nr));
                 self.definitions[type_nr as usize].attributes[a_nr].mutable = false;
@@ -9568,21 +9806,21 @@ impl Data {
     /// The argument types as DISPATCHED: `(F-Recv)`'s argument clause — a `both`/`self`
     /// overload pair takes uniform nullability, so when ANY argument is nullable every
     /// position is asked for as `τ?`, and null propagates regardless of position and of
-    /// spelling (@PLN25 F1b(b); D-call-21 closed the method spelling).  An empty list, or a
-    /// `null` literal first, has no receiver: the first position becomes `Unknown`, which
-    /// asks for the free `n_<name>`.
+    /// spelling (@PLN25 F1b(b); D-call-21 closed the method spelling).  An empty list has no
+    /// receiver: the first position becomes `Unknown`, which asks for the free `n_<name>`.  A
+    /// `null` literal stays `Null` in every position: an overload set RANKS it (it fits a
+    /// `τ?` member as it is, loft#2081), and the ladder ([`Self::select`]) reads a leading
+    /// `null` as no receiver itself.
     #[must_use]
     pub fn routed_types(&self, types: &[Type]) -> Vec<Type> {
-        if types.is_empty() || types[0] == Type::Null {
-            let mut out = vec![Type::Unknown(0)];
-            out.extend_from_slice(types.get(1..).unwrap_or(&[]));
-            return out;
+        if types.is_empty() {
+            return vec![Type::Unknown(0)];
         }
         if types.iter().any(|t| matches!(t, Type::Optional(_))) {
             types
                 .iter()
                 .map(|t| {
-                    if matches!(t, Type::Optional(_)) {
+                    if matches!(t, Type::Optional(_) | Type::Null) {
                         t.clone()
                     } else {
                         Type::optional(t.base().clone())
@@ -9601,7 +9839,11 @@ impl Data {
     /// yield exactly one.
     #[must_use]
     pub fn select(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
-        let routed = self.routed_types(types);
+        let mut routed = self.routed_types(types);
+        // A `null` literal first has no receiver: the ladder asks for the free `n_<name>`.
+        if routed[0] == Type::Null {
+            routed[0] = Type::Unknown(0);
+        }
         match self.candidates(source, fn_name, &routed[0]).as_slice() {
             [one] => *one,
             _ => u32::MAX,
@@ -11671,6 +11913,29 @@ impl Data {
             .map(|c| c.pkg_dir.as_str())
     }
 
+    /// @PLN197 — every REQUIRED C library a package ships itself — its `[c] shim`, which
+    /// loft built, or a file beside its `loft.toml` — with the file it resolves to on this
+    /// host.  These are the C libraries a native program must carry with it: linked into a
+    /// static binary, found through `loft::native_bind`'s search order by a dynamic one,
+    /// copied by `--out`.  A bare soname is absent here — it is the system's to find — and so
+    /// is an optional library, which is opened only when a call needs it.
+    #[must_use]
+    pub fn shipped_c_libraries(&self) -> Vec<(&CLibrary, std::path::PathBuf)> {
+        self.c_libraries
+            .iter()
+            .filter(|c| !c.optional)
+            .filter_map(|c| {
+                let dir = std::path::Path::new(&c.pkg_dir);
+                let found = crate::platform::existing_lib_beside(
+                    dir,
+                    &c.name,
+                    crate::platform::host_lib_os(),
+                )?;
+                Some((c, dir.join(found)))
+            })
+            .collect()
+    }
+
     /// @PLN24 arc G — must a `#c` symbol declared in `file` be resolved at RUN
     /// time rather than linked?
     ///
@@ -13279,6 +13544,18 @@ impl Data {
             Type::Character => "character".to_string(),
             Type::Text(_) => "text".to_string(),
             Type::Keys => "keys".to_string(),
+            // An instance of a generic struct is its template applied to its arguments, each
+            // named as the reader wrote it (`TBox<u8>`) — its def name is the instance KEY,
+            // which carries the argument's range and width (`TBox<integer(0, 255)s1>`) and is
+            // no type a program can write (loft#2072, loft#1824's class).  Only the reader's
+            // spelling: `type_name_str` is the API surface's recorded contract.
+            Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _)
+                if named && self.def(*d_nr).instance_of != u32::MAX =>
+            {
+                let d = self.def(*d_nr);
+                let args: Vec<String> = d.instance_args.iter().map(&name).collect();
+                format!("{}<{}>", self.def(d.instance_of).name, args.join(", "))
+            }
             Type::Enum(d_nr, _, _) | Type::Reference(d_nr, _) => self.def(*d_nr).name.clone(),
             Type::RefVar(inner) => format!("&{}", name(inner)),
             Type::Vector(inner, _) => format!("vector<{}>", name(inner)),

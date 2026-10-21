@@ -53,7 +53,7 @@ name = "loft-dap"
 path = "src/bin/loft-dap.rs"
 
 [features]
-default      = ["mmap", "random", "threading", "registry", "native-extensions", "remote-store"]
+default      = ["mmap", "random", "threading", "registry", "native-extensions", "remote-store", "strict-stores"]
 threading    = ["dep:rayon"]
 wasm         = ["dep:wasm-bindgen", "dep:serde", "dep:serde-wasm-bindgen",
                 "dep:js-sys", "dep:web-sys", "png", "dep:fontdue",
@@ -106,6 +106,13 @@ emit-repro   = []
 # runtime should carry no census.  Without the feature the call sites are not compiled.
 # `make interp-gap` builds a separate census binary with it; the op counts need no feature.
 op-census    = []
+# `LOFT_STRICT_STORES` (@PLN130 F8): a use-after-free probe for DEBUGGING, never for
+# production.  Its per-access test sits in every store access and costs a store-heavy
+# routine 4-11 % (bench/portal/analysis/store-checks.md), so a runtime built without the
+# feature answers it with a constant and the test compiles away.  In `default`, so the
+# development tree and its tests keep it; the installed runtime (`make install`'s
+# feature list) and the wasm builds leave it out, and say so when the switch is set.
+strict-stores = []
 
 [build-dependencies]
 # build.rs re-derives the compiled stdlib's source hash to warn when it is stale (@PLN181).
@@ -157,6 +164,11 @@ wasm_sync = { path = "wasm-sync" }
 
 [target.'cfg(unix)'.dependencies]
 libc               = "0.2"
+
+# @PLN197 C — finds MSVC `cl.exe` / `lib.exe` (and their INCLUDE / LIB) the way rustc finds
+# `link.exe`, so a static Windows program can hold its `[c] shim`.  cc's own finder, no deps.
+[target.'cfg(windows)'.dependencies]
+find-msvc-tools    = "0.1"
 
 # Line editor for the interactive REPL (arrow-key history, in-line editing).
 # Non-wasm only: the browser playground supplies its own editing, and rustyline

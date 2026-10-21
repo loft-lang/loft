@@ -1411,6 +1411,22 @@ pub fn pure_reuse_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PURE_REUSE"))
 }
 
+/// `LOFT_NO_BOUND_APPEND=1` — `k = f(…); …; dst += k` keeps the bind and the copy
+/// (`@FR-R-BoundAppend` off): the first bisect step for a wrong length or content of a vector
+/// built by appending call results bound first.
+#[must_use]
+pub fn bound_append_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BOUND_APPEND"))
+}
+
+/// `LOFT_TRACE_BOUND_APPEND=1` — name each append `bound_append` moves to its call.
+#[must_use]
+pub fn trace_bound_append() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_BOUND_APPEND"))
+}
+
 /// `LOFT_TRACE_PURE_REUSE=1` — name each call `pure_reuse` computes once.
 #[must_use]
 pub fn trace_pure_reuse() -> bool {
@@ -2801,6 +2817,11 @@ pub fn trace_db() -> bool {
 #[must_use]
 #[inline]
 pub fn strict_stores() -> bool {
+    // A runtime built for production (no `strict-stores` feature) answers a constant, so
+    // no store access carries the test: [`strict_store_notice`] says so at exit.
+    if !cfg!(feature = "strict-stores") {
+        return false;
+    }
     // Read on every store access (`Stores::store`), so the cached answer is one
     // relaxed load: 0 = not read yet, 1 = off, 2 = on.
     static SS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
@@ -2891,6 +2912,19 @@ pub fn strict_store_violation(
         );
     } else if n == 20 {
         crate::loft_eprintln!("[strict-store] ... further use-after-free reports suppressed");
+    }
+}
+
+/// `LOFT_STRICT_STORES` given to a runtime built without the `strict-stores` feature (an
+/// installed one): its never-freed report still runs, its use-after-free test was compiled
+/// out — said once, at exit, rather than letting a clean report read as a clean run.
+pub fn strict_store_notice() {
+    if !cfg!(feature = "strict-stores") && env_set("LOFT_STRICT_STORES") {
+        crate::loft_eprintln!(
+            "[strict-store] this runtime was built without the per-access check (the \
+             `strict-stores` feature): a use after free is not detected — run it from a \
+             development build"
+        );
     }
 }
 

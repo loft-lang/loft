@@ -18,7 +18,7 @@
 use loft::file_access as fa;
 
 fn loft_bin() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft")
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 #[test]

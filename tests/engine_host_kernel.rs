@@ -47,7 +47,7 @@ fn vm_deadline(secs: u64) -> Instant {
 }
 
 fn loft_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft")
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 /// Kills the whole PROCESS GROUP: a `--native` run spawns the compiled

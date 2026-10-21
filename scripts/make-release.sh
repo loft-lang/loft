@@ -84,11 +84,12 @@ TARGETS=("$@"); [ ${#TARGETS[@]} -eq 0 ] && TARGETS=("$HOST")
 for TRIPLE in "${TARGETS[@]}"; do
   echo ">> building loft for $TRIPLE"
   if [ "$TRIPLE" = "$HOST" ]; then
-    CARGO_INCREMENTAL=0 cargo build --release --bin loft
-    bin="target/release/loft"
+    # The production build (scripts/lean_build.sh): no development aids.
+    CARGO_INCREMENTAL=0 scripts/lean_build.sh --bin loft
+    bin="target/install-lib/release/loft"
   else
-    CARGO_INCREMENTAL=0 cargo build --release --bin loft --target "$TRIPLE"
-    bin="target/$TRIPLE/release/loft"
+    CARGO_INCREMENTAL=0 scripts/lean_build.sh --bin loft --target "$TRIPLE"
+    bin="target/install-lib/$TRIPLE/release/loft"
   fi
   exe="loft"
   case "$TRIPLE" in *windows*) exe="loft.exe"; bin="$bin.exe";; esac

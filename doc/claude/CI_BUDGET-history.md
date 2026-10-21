@@ -830,3 +830,57 @@ What it says:
   A crate split leaves that unit where it is; shortening it is a change of its own, measured
   against the interpreter's speed (the likely content is the dispatch loop with its inlined
   operators).
+
+## Where a test leg's minutes went
+
+Measured 2026-10-20 on the dispatched gate of 2026-10-19 (run 39339989819, five ubuntu legs, 20 to
+24 min each) and the next day's (39393070285, 27 to 30): of a leg's wall, the test phase
+was 6 to 8 minutes and the rest was build — `cargo build --all-targets` 7.6 to 8.5 (all
+445 test binaries, of which the leg then ran a third), the release binary and library
+2.4, the wasm rlib 1.5, the fixture warm-up 3 — and, once `main` had saved its 11 GB
+cache, a 4 to 6 minute restore of a `target/` that made the build no faster: the
+dependencies are half a minute of a cold build (89 crates before `Compiling loft`), the
+rest is loft and its test crates, which change with every commit.  The cure is
+[CI_BUDGET.md § Each leg builds only the binaries it runs](CI_BUDGET.md#each-leg-builds-only-the-binaries-it-runs):
+`scripts/ci_shards.py` packs the rest into three legs by the seconds in
+`scripts/ci_shards.tsv`, each leg builds only its pack, and the cargo cache keeps the
+registry and no `target/`.
+
+The first run so built (39400567382, 2026-10-20) read, per leg: build 2.9–4.3 min (was
+7.6–11.3), cache restore gone (was 4–6), the release build 2.2–3.2, the warm-up 2.4–5.7 —
+on the two legs with no page test, two release builds of a wasm runtime rlib nothing there
+used, 1m45 each — and test phases of 2.3 (corpus), 9.8 (heavy: `html_wasm` four-wide for
+5.1 min, then the `heavy-serial` chain for 5.2, which cannot overlap it on four threads),
+4.5 / 8.4 / 13.6 (rest-a/b/c).  Totals 14.5, 22.6, 15.1, 22.8, 27.6: two legs within
+budget.  The rest packs had been weighted by summed test seconds from an earlier run, and
+the sums lied twice: a test under `threads-required` takes the whole runner for its
+duration (`ownership_drop_gate`'s 23 cells, 10 s each, serialised rest-c for 3 min), and
+the html leg pays 4.7 min of runtime builds before its first test.  Both went into the
+weights; the `heavy-serial` members that run no page (`n2_cdylib`, `n3_parity`,
+`n3_use_native`, `multiplayer_v2`) went to the rest legs, where their one slot runs beside
+the wide tests, and `native` whole to `corpus`.
+
+So re-cut (run 39406514698, green): heavy 16.1 and corpus 18.1 within budget; the rest
+legs 21.3 / 21.5 / 22.5 with test phases of 6.6 / 10.5 / 12.1 — the warm-up on the two
+no-runtime legs down from 5.5 to 2.0 min, and each rest leg still paying about 11 min
+before its first test: build 4.0–4.4, the release build 3.0–3.2, warm-up 2, checkout and
+tooling 1.5.  Three legs' fixed costs plus 29 min of tests divided by three is 20 whatever
+the balance, so the next cut was the release build itself: the twenty-two binaries that
+spawned `target/release/loft` (the html, engine_host and deliver_wasm suites among them,
+each skipping silently without it) now spawn the test build's loft like every other test,
+and the leg compiles the crate once.
+
+Without it (run 39411552589, green): corpus 14.7, heavy 16.9, rest-a 17.6, rest-b 16.8,
+rest-c 20.4 — four within budget.  Two costs remained in the logs: the leg holding `--lib`
+spent 2m08 inside its test step compiling the crate as its unit-test harness, which
+`cargo build --lib` had not made (so the build step is `cargo test --no-run`), and the
+three legs that link a runtime built the html and wasi rlibs one after the other, 1m45
+each on a four-core runner neither saturates (so they build side by side).  The rest packs
+were re-weighted from this run (rest-a 11.0 min before its tests, rest-b 7.5: the runtime
+leg's offset is 3.5 min).
+
+With those (run 39414576471, green): corpus 11.8, heavy 15.8, rest-a 13.5, rest-b 15.7,
+rest-c 15.2 — every leg within budget, from 20–37 min per leg two days earlier.  Of the
+legs' walls: build 2.3–5.0 (the leg holding `--lib` the longest), the runtime rlibs 2.8–3.4
+side by side, the warm-up 1.4–1.8, tests 4.2–8.3.  Windows runs the same five legs on a PR
+and had not run them by this commit.

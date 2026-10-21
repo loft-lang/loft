@@ -95,6 +95,38 @@ def has_guide(owner_repo: str, subpath: str) -> bool:
     return any(n.endswith(".loft") for n in listing.splitlines())
 
 
+MEASURE_FAILED = object()
+
+
+def manifest_description(owner_repo: str, subpath: str):
+    """The `description` the library's `loft.toml` declares on `origin/main`, or `None`.
+
+    That field is the registry entry's description at its HOME: a publish copies it into the
+    index (`registry_maintain.sh --expect-meta`), so an index text with no manifest field
+    behind it was written by hand and no publish ever corrects it — crypto's index named two
+    ciphers the library never had for four months.  `None` is a manifest with no such field;
+    a fetch that FAILS answers `MEASURE_FAILED`, and the caller then records nothing, so the
+    reader sees "not measured" — the third state `has_guide` keeps for the same reason.
+    """
+    path = f"{subpath}/loft.toml" if subpath else "loft.toml"
+    r = subprocess.run(
+        ["gh", "api", f"repos/{owner_repo}/contents/{path}", "-H", "Accept: application/vnd.github.raw"],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        return MEASURE_FAILED
+    try:
+        import tomllib
+        return tomllib.loads(r.stdout).get("package", {}).get("description")
+    except Exception:
+        return MEASURE_FAILED
+
+
+def record_description(entry: dict, owner_repo: str, subpath: str) -> None:
+    desc = manifest_description(owner_repo, subpath)
+    if desc is not MEASURE_FAILED:
+        entry["description"] = desc
+
+
 def main() -> int:
     argv = sys.argv[1:]
     # The sha keys the SOURCE, and the source is only half of what the snapshot depends on:
@@ -131,6 +163,10 @@ def main() -> int:
             # from the extractor: it is one directory listing, independent of `loft api`.
             # So backfill just that, cheaply, rather than making the reader run a full
             # re-extract of 42 libraries to learn one boolean per library.
+            # The manifest description is one file read, independent of the extractor too:
+            # backfilled the same way, so a snapshot written before it records it.
+            if "description" not in result[name]:
+                record_description(result[name], owner_repo, subpath)
             if "guide" not in result[name]:
                 result[name]["guide"] = has_guide(owner_repo, subpath)
                 sys.stderr.write(
@@ -142,6 +178,7 @@ def main() -> int:
         api = extract_api(owner_repo, subpath)
         guide = has_guide(owner_repo, subpath)
         result[name] = {"sha": sha, "api": api, "guide": guide}
+        record_description(result[name], owner_repo, subpath)
         sys.stderr.write(
             f"  {name}: fetched ({sha[:7]}, {len(api)} sigs, "
             f"{'guide' if guide else 'NO guide'})\n")

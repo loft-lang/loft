@@ -1,0 +1,335 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-DecodeView`'s STRUCTURE clause (@C141, read once) — a decoded value the program reads
+// once is held as its POSITION in the frame, and nothing of it is built (`--native-release`):
+// the enum tag, a number, a text and an in-order walk of a vector field are each answered by
+// running the decoder again at the position.  Every cell asserts the VALUES a hand
+// computation gives; the interpreter builds every value and is the oracle, and
+// `LOFT_NO_DECODE_STRUCTURE=1` must answer the same.
+//
+// The decoder is cbor's `read_value` in miniature: a value is `[tag, arg, …]` — tag 1 an
+// integer (`arg - 100`), 2 a text (`arg` bytes), 3 a byte string, 4 a map (`arg` key/value
+// pairs), 5 an array (`arg` items), 6 a boolean (`arg != 0`), 7 a label (the text `L<arg>`,
+// built by a format: only the built value holds it).  A value nested deeper than 3 fails, and
+// so does every map or array around it.
+//
+// Predictions, hand-computed:
+// F1 { "op": "apply", "n": 7, "ok": true, "lb": L42, "op": "dup" } — 39 bytes.
+//    lookup op → "apply" (the first of two), n → "-", lb → "L:L42", zz → "-";
+//    num n → 7, ok → 1, op → -999, zz → -999; total → -1 (no array); status → "true/39".
+// F2 [ 10, 20, "x", -3 ] → total 27; [ ] → 0.
+// F3 { "a": { "b": "deep", "c": 5 } } → deep a b "deep", a c "-", x b "-".
+// F4 [ {"k": "one"}, {"j": "two"}, {"k": "three"} ] → find k "one", j "two", z "-".
+// F5 three maps deep → status "true/17"; four deep → the innermost fails, so does every
+//    map around it: "false/0", and lookup "bad".
+// F6 { "t": a 0x80 b, "u": "é" } → t "" (not UTF-8), u "é".
+// F7 F1 without its last byte → "bad", status "false/0".
+// F8 the text "x" and one byte more → "bad", status "false/3".
+// F9 { } → "-", "true/2".  F10 { 1: "num-key", "op": "z" } → op "z" (a number key skipped).
+// F11 { "a": "x", "b": "y" } → two "x+y" (one value handed on twice: declines, (6)); each
+//    b, a, c → "yx-" (a read in a loop: declines); keep → "apply" (a decoded value returned:
+//    declines).
+// F12 a root that calls another root (`checked`: `status`, then its own decode): F1 op →
+//    "apply", F7 → "bad".  A root is emitted under its own name, so the call of one stays a plain call; the
+//    consumer-twin name it was given did not exist and the release build did not compile.
+//
+// @falsify-tier: native-release
+// @falsified-by: tests/falsified/a-decoded-value-is-read-at-its-position.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch hands every part of a walked entry
+//   at the key's position, so the value read is the key.
+//   WITNESS: *F1 op: op* where "apply" is due.
+//   HOLDS: the interpreter is exact on both trees; leak, panic and free-refusal are clean on
+//   both.
+
+enum Val {
+  VNull,
+  VInt { value: integer },
+  VText { value: text },
+  VBytes { value: vector<u8> },
+  VMap { entries: vector<Entry> },
+  VArr { items: vector<Val> },
+  VBool { value: boolean },
+  VLabel { value: text },
+}
+
+struct Entry {
+  key: Val,
+  value: Val,
+}
+
+struct Dec {
+  value: Val,
+  next: integer,
+  ok: boolean,
+}
+
+fn rd(bytes: vector<u8>, pos: integer, depth: integer) -> Dec {
+  n = len(bytes);
+  if pos + 1 >= n || depth > 3 { return Dec { value: VNull, next: pos, ok: false }; }
+  tag = bytes[pos] ?? 0;
+  arg = bytes[pos + 1] ?? 0;
+  at = pos + 2;
+  if tag == 1 { return Dec { value: VInt { value: arg - 100 }, next: at, ok: true }; }
+  if tag == 6 { return Dec { value: VBool { value: arg != 0 }, next: at, ok: true }; }
+  if tag == 7 { return Dec { value: VLabel { value: "L{arg}" }, next: at, ok: true }; }
+  if tag == 2 {
+    if at + arg > n { return Dec { value: VNull, next: pos, ok: false }; }
+    tb: vector<u8> = [];
+    for k in 0..arg { tb += [bytes[at + k] ?? 0]; }
+    return Dec { value: VText { value: text_from_bytes(tb) }, next: at + arg, ok: true };
+  }
+  if tag == 3 {
+    if at + arg > n { return Dec { value: VNull, next: pos, ok: false }; }
+    bs: vector<u8> = [];
+    for k in 0..arg { bs += [bytes[at + k] ?? 0]; }
+    return Dec { value: VBytes { value: bs }, next: at + arg, ok: true };
+  }
+  if tag == 4 {
+    entries: vector<Entry> = [];
+    p = at;
+    mok = true;
+    for _ in 0..arg {
+      if mok {
+        kd = rd(bytes, p, depth + 1);
+        if kd.ok {
+          vd = rd(bytes, kd.next, depth + 1);
+          if vd.ok {
+            kv = kd.value;
+            vv = vd.value;
+            entries += [Entry { key: kv, value: vv }];
+            p = vd.next;
+          } else { mok = false; }
+        } else { mok = false; }
+      }
+    }
+    if !mok { return Dec { value: VNull, next: pos, ok: false }; }
+    return Dec { value: VMap { entries: entries }, next: p, ok: true };
+  }
+  if tag == 5 {
+    items: vector<Val> = [];
+    p = at;
+    aok = true;
+    for _ in 0..arg {
+      if aok {
+        sub = rd(bytes, p, depth + 1);
+        if sub.ok { items += [sub.value]; p = sub.next; } else { aok = false; }
+      }
+    }
+    if !aok { return Dec { value: VNull, next: pos, ok: false }; }
+    return Dec { value: VArr { items: items }, next: p, ok: true };
+  }
+  return Dec { value: VNull, next: pos, ok: false };
+}
+
+/// The whole frame as one value: trailing bytes refuse it, as cbor's `decode` does.
+fn dec(bytes: vector<u8>) -> Dec {
+  d = rd(bytes, 0, 0);
+  if d.ok {
+    if d.next != len(bytes) { return Dec { value: VNull, next: d.next, ok: false }; }
+  }
+  return d;
+}
+
+// ── the readers ────────────────────────────────────────────────────────────
+
+/// The entry of map `m` under text key `key`, or null.
+fn get(m: Val, key: text) -> Val {
+  match m {
+    VMap { entries } => {
+      for e in entries {
+        match e.key { VText { value } => { if value == key { return e.value; } }, _ => {} }
+      }
+    },
+    _ => {}
+  }
+  return VNull;
+}
+
+/// A text as itself, a label marked, "-" for anything else.
+fn text_of(v: Val) -> text {
+  match v {
+    VText { value } => { return "{value}"; },
+    VLabel { value } => { return "L:{value}"; },
+    _ => {}
+  }
+  return "-";
+}
+
+/// A number, a boolean as 0 or 1, -999 for anything else.
+fn num_of(v: Val) -> integer {
+  match v {
+    VInt { value } => { return value; },
+    VBool { value } => { if value { return 1; } return 0; },
+    _ => {}
+  }
+  return -999;
+}
+
+/// The sum of an array's numbers, walked in order; -1 for no array.
+fn sum_items(v: Val) -> integer {
+  match v {
+    VArr { items } => {
+      s = 0;
+      for it in items { match it { VInt { value } => { s += value; }, _ => {} } }
+      return s;
+    },
+    _ => {}
+  }
+  return -1;
+}
+
+/// The first value under `key` in an array of maps.
+fn find_in(v: Val, key: text) -> Val {
+  match v {
+    VArr { items } => {
+      for it in items {
+        r = get(it, key);
+        match r { VNull => {}, _ => { return r; } }
+      }
+    },
+    _ => {}
+  }
+  return VNull;
+}
+
+// ── the roots ──────────────────────────────────────────────────────────────
+
+fn lookup(frame: vector<u8>, key: text) -> text {
+  d = dec(frame);
+  if !d.ok { return "bad"; }
+  text_of(get(d.value, key))
+}
+
+fn num(frame: vector<u8>, key: text) -> integer {
+  d = dec(frame);
+  if !d.ok { return -1000; }
+  num_of(get(d.value, key))
+}
+
+fn total(frame: vector<u8>) -> integer {
+  d = dec(frame);
+  if !d.ok { return -1000; }
+  sum_items(d.value)
+}
+
+fn deep(frame: vector<u8>, a: text, b: text) -> text {
+  d = dec(frame);
+  if !d.ok { return "bad"; }
+  text_of(get(get(d.value, a), b))
+}
+
+fn find(frame: vector<u8>, key: text) -> text {
+  d = dec(frame);
+  if !d.ok { return "bad"; }
+  text_of(find_in(d.value, key))
+}
+
+/// The status alone: the value is never read.
+fn status(frame: vector<u8>) -> text {
+  d = dec(frame);
+  "{d.ok}/{d.next}"
+}
+
+/// Two lookups of one value, one after the other.
+fn two(frame: vector<u8>) -> text {
+  d = dec(frame);
+  "{text_of(get(d.value, "a"))}+{text_of(get(d.value, "b"))}"
+}
+
+/// A lookup per key, in a loop: the value is read inside a loop it was not made in.
+fn each(frame: vector<u8>, a: text, b: text, c: text) -> text {
+  d = dec(frame);
+  out = "";
+  for k in [a, b, c] { out += text_of(get(d.value, k)); }
+  out
+}
+
+/// The decoded value handed out of the frame's function.
+fn keep(frame: vector<u8>) -> Val {
+  d = dec(frame);
+  return d.value;
+}
+
+/// A root that asks another root about its frame before decoding it itself (the request
+/// check's shape when its two decodes are not one): the other root is called by its own name.
+fn checked(frame: vector<u8>, key: text) -> text {
+  if status(frame) == "false/0" { return "bad"; }
+  d = dec(frame);
+  text_of(get(d.value, key))
+}
+
+fn f1() -> vector<u8> {
+  [4, 5,
+   2, 2, 111, 112,  2, 5, 97, 112, 112, 108, 121,
+   2, 1, 110,  1, 107,
+   2, 2, 111, 107,  6, 1,
+   2, 2, 108, 98,  7, 42,
+   2, 2, 111, 112,  2, 3, 100, 117, 112]
+}
+
+fn main() {
+  f = f1();
+  assert(len(f) == 39, "F1 length {len(f)}");
+  assert(lookup(f, "op") == "apply", "F1 op: {lookup(f, \"op\")}");
+  assert(lookup(f, "n") == "-", "F1 n: {lookup(f, \"n\")}");
+  assert(lookup(f, "lb") == "L:L42", "F1 lb: {lookup(f, \"lb\")}");
+  assert(lookup(f, "zz") == "-", "F1 zz: {lookup(f, \"zz\")}");
+  assert(num(f, "n") == 7, "F1 num n: {num(f, \"n\")}");
+  assert(num(f, "ok") == 1, "F1 num ok: {num(f, \"ok\")}");
+  assert(num(f, "op") == -999, "F1 num op: {num(f, \"op\")}");
+  assert(num(f, "zz") == -999, "F1 num zz: {num(f, \"zz\")}");
+  assert(total(f) == -1, "F1 total: {total(f)}");
+  assert(status(f) == "true/39", "F1 status: {status(f)}");
+
+  f2: vector<u8> = [5, 4, 1, 110, 1, 120, 2, 1, 120, 1, 97];
+  assert(total(f2) == 27, "F2 total: {total(f2)}");
+  assert(total([5, 0]) == 0, "F2 empty: {total([5, 0])}");
+
+  f3: vector<u8> = [4, 1, 2, 1, 97, 4, 2, 2, 1, 98, 2, 4, 100, 101, 101, 112, 2, 1, 99, 1, 105];
+  assert(deep(f3, "a", "b") == "deep", "F3 a b: {deep(f3, \"a\", \"b\")}");
+  assert(deep(f3, "a", "c") == "-", "F3 a c: {deep(f3, \"a\", \"c\")}");
+  assert(deep(f3, "x", "b") == "-", "F3 x b: {deep(f3, \"x\", \"b\")}");
+
+  f4: vector<u8> = [5, 3,
+    4, 1, 2, 1, 107, 2, 3, 111, 110, 101,
+    4, 1, 2, 1, 106, 2, 3, 116, 119, 111,
+    4, 1, 2, 1, 107, 2, 5, 116, 104, 114, 101, 101];
+  assert(find(f4, "k") == "one", "F4 k: {find(f4, \"k\")}");
+  assert(find(f4, "j") == "two", "F4 j: {find(f4, \"j\")}");
+  assert(find(f4, "z") == "-", "F4 z: {find(f4, \"z\")}");
+
+  f5: vector<u8> = [4, 1, 2, 1, 97, 4, 1, 2, 1, 97, 4, 1, 2, 1, 97, 1, 101];
+  assert(status(f5) == "true/17", "F5 status: {status(f5)}");
+  f5b: vector<u8> = [4, 1, 2, 1, 97, 4, 1, 2, 1, 97, 4, 1, 2, 1, 97, 4, 1, 2, 1, 97, 1, 101];
+  assert(status(f5b) == "false/0", "F5b status: {status(f5b)}");
+  assert(lookup(f5b, "a") == "bad", "F5b lookup: {lookup(f5b, \"a\")}");
+
+  f6: vector<u8> = [4, 2, 2, 1, 116, 2, 3, 97, 128, 98, 2, 1, 117, 2, 2, 195, 169];
+  assert(lookup(f6, "t") == "", "F6 t: {lookup(f6, \"t\")}");
+  assert(lookup(f6, "u") == "é", "F6 u: {lookup(f6, \"u\")}");
+
+  f7: vector<u8> = [];
+  for i in 0..38 { f7 += [f[i] ?? 0]; }
+  assert(lookup(f7, "op") == "bad", "F7 lookup: {lookup(f7, \"op\")}");
+  assert(status(f7) == "false/0", "F7 status: {status(f7)}");
+
+  f8: vector<u8> = [2, 1, 120, 0];
+  assert(lookup(f8, "x") == "bad", "F8 lookup: {lookup(f8, \"x\")}");
+  assert(status(f8) == "false/3", "F8 status: {status(f8)}");
+
+  f9: vector<u8> = [4, 0];
+  assert(lookup(f9, "op") == "-", "F9 lookup: {lookup(f9, \"op\")}");
+  assert(status(f9) == "true/2", "F9 status: {status(f9)}");
+
+  f10: vector<u8> = [4, 2, 1, 101, 2, 7, 110, 117, 109, 45, 107, 101, 121, 2, 2, 111, 112, 2, 1, 122];
+  assert(lookup(f10, "op") == "z", "F10 op: {lookup(f10, \"op\")}");
+
+  f11: vector<u8> = [4, 2, 2, 1, 97, 2, 1, 120, 2, 1, 98, 2, 1, 121];
+  assert(two(f11) == "x+y", "F11 two: {two(f11)}");
+  assert(each(f11, "b", "a", "c") == "yx-", "F11 each: {each(f11, \"b\", \"a\", \"c\")}");
+  assert(checked(f, "op") == "apply" && checked(f7, "op") == "bad", "F12 checked: {checked(f, \"op\")} {checked(f7, \"op\")}");
+  k = keep(f);
+  assert(text_of(get(k, "op")) == "apply", "F11 keep: {text_of(get(k, \"op\"))}");
+  println("done");
+}

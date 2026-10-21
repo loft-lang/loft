@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A QUALIFIED VARIANT IS ITS OWN ENUM'S VARIANT (loft#2097): `E.V` names the variant `V` of
+// `E`, also when an enum declared EARLIER has a variant of the same name.  The value `E.V` of a
+// struct variant is that variant with every field at its default, so it must carry `E`'s
+// defaults — the bare-name lookup handed it the other enum's record instead, and its integer
+// field read back as a stray number.  The cell holds the shared name fixed and moves the
+// declaration order (the shadowing enum before / after) and the field types (text against
+// integer, one field against two), and checks the unit sibling beside it.
+//
+// Values hand-computed: `Pq2.Item` defaults `v` to 42, `Pr1.Item` defaults `n` to 7 and `w`
+// to "w"; the unit variants match themselves.
+//
+// @falsified-at: 18594597b — interpret: `Pq2.Item`'s `v` read 6, not 42, and `Pr1.Item` matched
+//   no `Pr1::Item` arm — every `X.Item` was built from `Pq1.Item`, the first `Item` declared.
+// CHANNEL: the asserts.
+// WITNESS: `Pq2.Item.v = 6`.
+// HOLDS: the unit variants beside them.
+
+enum Pq1 { NoneA, Item { v: text = "x", w: text = "y" } }
+enum Pq2 { NoneB, Item { v: integer = 42 } }
+
+enum Pr1 { Item { n: integer = 7, w: text = "w" }, NoneC }
+enum Pr2 { NoneD, Item { s: text = "s" } }
+
+fn test_the_later_enums_variant_carries_its_own_defaults() {
+  b = Pq2.Item;
+  got = match b { Pq2::Item { v } => v, _ => -1 };
+  assert(got == 42, "Pq2.Item.v = {got}");
+  c = Pq2.NoneB;
+  assert(match c { Pq2::NoneB => true, _ => false }, "Pq2.NoneB");
+}
+
+fn test_the_earlier_enums_variant_carries_its_own_defaults() {
+  b = Pr1.Item;
+  got = match b { Pr1::Item { n, w } => "{n} {w}", _ => "other" };
+  assert(got == "7 w", "Pr1.Item = {got}");
+  d = Pr2.Item;
+  got2 = match d { Pr2::Item { s } => s, _ => "other" };
+  assert(got2 == "s", "Pr2.Item = {got2}");
+}

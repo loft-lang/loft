@@ -154,7 +154,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 naming of the container is a disturbance unless what it reaches is shown
                 to move nothing (a sibling field, a claim in the store, a fixed-width
                 field write, a read of the watched field itself, a call whose own
-                disturbance summary does not reach it).  One site that stores, appends
+                disturbance summary does not reach it and that writes nothing through
+                the container).  A VALUE written into the viewed vector's elements moves
+                nothing, but the view would see it where the copy it stands for does not,
+                so it is a disturbance too.  One site that stores, appends
                 to, iterates, rebinds, returns or hands the field to a by-value parameter
                 declines the function whole, and every site keeps the owning copy.
                 "Every call site" means every site the compiler sees whole (R-Escape): a

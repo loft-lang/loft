@@ -72,7 +72,7 @@ format decision (§ 6).
 
 | row | × | known lever | lands at |
 |---|--:|---|---|
-| `check_request` | 5.04 | `(R-DecodeView)`'s structure clause (decided, C141 read-once; PROPOSED in formal/rewrites.md), with `(R-DeadResult)` as its validation step | ≈ 1.8× (priced) |
+| `check_request` | 5.04 | DONE: `(R-DecodeView)`'s structure clause, instance 1 BUILT (a value read once held as its position) | **0.94×** (measured) |
 | `flow_layout_full` | 7.00 | S1b and S1c are built (S1c after this host's run: −21 % on x86-64); a fused `character` element read | re-measure, then re-price |
 | `invert` | 5.82 | `(R-Compact)`'s prepend form, `(R-Rebind)` for a chain exit | unpriced |
 | `sphere` | 5.72 | none named (vector growth, the two `add_triangle` writes); 5.97 → 5.72 with the deep window | unpriced |
@@ -99,6 +99,172 @@ format decision (§ 6).
    (`anim_of`, `check_request`) and relational range facts (`fill_rect`).
 5. Price the rest: `invert`, `sphere`, `map_json`, `arguments/parse`, `rand_indices`.
 
+### The x86 rows over 4×, toward 3× (measured at `27ea270e8`)
+
+`scripts/perf_check.py --routine …` on this laptop, each row interleaved with its Rust twin,
+hashes equal.  Nine rows stand over 4×; `fill_polygon` 3.81×, `draft_fit_p` 3.31×, `sphere`
+2.45×, `combine_cut` 1.98× and `timer_spend` 1.94× have left it since `7d30105c8`.  Each
+profile is callgrind over one routine: the routine's own driver toggled (lane 17), or the
+library function counted at `--n 2` and `--n 6` and differenced so the setup cancels (the
+packages, whose drivers are inlined).  A share is of loft's instructions in the routine.
+"Lands at" multiplies the row by each lever's saving; *est.* marks a saving read off a
+profile share and never hand-priced (such a figure has paid about two thirds, § 0).
+
+| × | row | where loft's excess goes | levers, in order | lands at |
+|--:|---|---|---|---|
+| 4.75 | `flow_layout_full` | `slice_runs` 59 % inclusive (`buf_slice_text` 16 %): each run a vector, a `Run` record and a 1–2 character text the caller walks once and then drops | F1 (−10.6 %, priced) and F2 (−32.5 % on top, priced) below | **≈ 2.9×** |
+| 4.67 | cbor `encode` | store creation 40 % (`OpDatabase`: 13 stores an encode, one per local vector of each `encode_map` call, ~3.3 k instructions each with the claim, the prefill and the free); `head__ap` 21 % | E1 (−15.5 %, priced); L2, the local vectors' stores pooled per frame (−30 % *est.*) | ≈ 2.8× (*est.*) |
+| 4.48 | `slope_path_with_undo` | `map_set_hex` 35 % and `map_get_hex` 28 % (the chunk walk set up per call, three field compares per chunk, `rec_and_len` out of line, 8.5 %); the undo vector's growth 10 % with the store's `resize` 6 % | L7, the chunk vector's header and base handed into the callees as an `__inv` twin from the caller's loop (−30 % *est.*); the undo vector reserved once (−5 % *est.*) | ≈ 3.0× (*est.*) |
+| 4.41 | `pluginabi/request` | base64 59 %: each payload decoded TWICE (`pa_is_base64` decodes to validate, `pa_cbytes` decodes to use; the twin decodes once) by a decoder that makes three passes (a stripped copy, a value vector, the output; the twin's two); the decoded bytes deep-copied into their entry 27 % (`pa_te(k, pa_cbytes(…))`: `OpCopyRecord` of a fresh value); the encoder 15 % | L5, crypto's decoder in one pass (a library native, −20 % *est.*) and the validation answered without decoding twice (−25 % *est.*); L3, a fresh argument built in the record that takes it (−20 % *est.*) | ≈ 2.0× (*est.*) |
+| 4.39 | `truncate_to` | `history_push` 67 %: the entry deep-copied into the timeline's store (`OpCopyRecord` 28 %, `copy_plain_vectors` 18 %) and the dropped entry's release (`release_plain_vectors` 13 %, `remove_claims` 14 %); `keep_vector_range` 20 % (the truncated tail's release, the twin's `Vec::truncate` drops the same) | L3, the entry built in the store that keeps it (`(R-Place)`'s foreign-store clause: no copy, no release of a temporary; a move across stores is ruled out by @C125) (−40 % *est.*) | ≈ 2.6× (*est.*) |
+| 4.31 | `field_add_cell` | the keyed get-or-insert 56 % (`entry_ints` 48 %: `add_at` 15 %, `grow_if_full` + `rehash_into` 22 %, `ints_hash` 11 %); the lookup `OpGetHashLong` 14 %.  The twin is std's `HashMap` (SipHash) and grows too, so the excess is per insert, not the hash | L6, the keyed insert path line by line (unpriced: next to profile) | needs pricing |
+| 4.27 | `panel_build` | the release of last frame's panel 26 % (`release_by_plan`, `remove_claims`), claims 11 %, the prefill 11 % (`set_default_value`), number formatting ~20 % (`format_long` and `format_float` through `core::fmt`) | L4, the panel tree refilled in place of release-and-claim (−25 % *est.*); L1, numbers formatted without `core::fmt` (−12 % *est.*) | ≈ 2.8× (*est.*) |
+| 4.23 | cbor `encode_bytes` | `encode__ap` 78 %: `head__ap` 35 % (one to nine bytes, each run through `push_header` 9 % and `reserve_more` 11 %), `append_bytes` 17 %.  The twin reads 76–96 µs between runs, so this row is noisy | L8, the head written through the caller's held window with the payload reserved with it (−25 % *est.*); X9 −3 % (priced) | ≈ 3.1× (*est.*) |
+| 4.14 | `forms_upto` | spread over the library: `form_admissible` 25 %, `form_closes` 21 %, `form_canon` 15 %, `form_write` 8 %; the key text built by formatting integers ~12 % (`format_long`, `core::fmt`), stores ~8 %, `malloc`/`free` ~6 % | L1 (−10 % *est.*); L2 (−6 % *est.*); the helpers line by line (unpriced) | ≈ 3.5× (*est.*) |
+
+**Built since** (A/B on this laptop, each side on its own rlib): **L1** — numbers formatted
+in place (`ops/number_text.rs`): `panel_build` 4.23× → 3.72×, `forms_upto` 4.10× → 3.80×.
+**F2** — `(R-StreamWalk)`, the walk twin as a general rule: `flow_layout_full` 4.60× → **2.98×**
+(the height loop's twin reads only the style, so F1 comes with it).  A text set reads its
+value in place (`Store::holds_bytes`): −1.8 % of `panel_build`'s instructions, no wall move.
+**`(R-CompleteWrite)` buffer clauses** — a record built into the caller's slot skips the
+prefill on both sides of the call: `panel_build` 3.67× → 3.44×.
+**Standing at `666268397`** (`bench/stats.py`, this laptop): `flow_layout_full` 2.98×,
+`panel_build` 3.44×, `forms_upto` 3.83×, cbor `encode_bytes` 3.92×, `truncate_to` 4.16×,
+`pluginabi/request` 4.42×, `field_add_cell` 4.44×, `slope_path_with_undo` 4.53×, cbor `encode`
+4.66×.  Store creation is ~950 instructions (12 % of `encode`) spread over slot bookkeeping,
+`Store::init` and a fresh store's first claim through the tree path; no single fold moves it
+more than ~2 %.
+#### The five rows over 4× at `4cc416af4`, analysed (2026-10-20)
+
+Callgrind per op against the twin, compiled from the release emission with line tables; a
+price is an edit of the emitted Rust or of the library source, timed interleaved on one core
+(`--n` 200–300, uncached), hash unchanged.
+
+| × | row | loft / twin | where the excess goes | priced | lands at |
+|--:|---|---|---|---|---|
+| 4.53 | `slope_path_with_undo` | 2275 / 415 instr per step | `map_get_hex` 337 and `map_set_hex` 408 instr per call (twin ~100): the chunk walk rebuilds a `DbRef` per pass, each field read is a null-and-bounds `rec_get`, the nested `ck_hexes` is resolved twice (`length_vector`, then `get_vector`), the `Hex` read and written field by field through the store; the undo vector's growth (`resize`, `resize_store`, `memset`) ~11 % | both helpers in the tight form (held base, raw field compares, one `rec_and_len`, one element address) **−27.5 %** | **≈ 3.3×**; the undo vector reserved without the zero fill *est.* −8 % → ≈ 3.0× |
+| 4.42 | `pluginabi/request` | 151 k / 31 k instr per request | base64 decoded TWICE per payload (`pa_is_base64` then `pa_cbytes`, 31 % each pair); the decoded bytes copied ~3 times into the entry (`copy_claims` 40 k, `OpCopyRecord` 13 k); the encoder | one decode per payload, validated by its result (library form) **−31 %** | **≈ 3.05×**; R2, the bytes built where the entry keeps them, *est.* −15 % → ≈ 2.6× |
+| 4.66 | cbor `encode` | 113 k / 26.5 k instr per encode | the rank loop's `key_lt` (per byte a checked `kb[i] ?? 0`, ~112 instr a compare, ~40 k); a key's bytes appended through `vector_slice` (~450 instr for 1–8 bytes: the headers resolved four times) and `vector_add` (~650); 14 stores (~14 k with their release) | E1 (earlier, library form) −15.5 % | E1 + `vector_slice`/`vector_add` resolving each header once *est.* −12 % → ≈ 3.5×; 3× needs the rank loop's reads held (`key_lt` is called with the buffer as a parameter: a twin clause) |
+| 4.16 | `truncate_to` | 3.6 k / 755 instr per push | the entry deep-copied into the timeline (~1035: two claims ~143 each, `copy_plain_vectors` ~372 of its own); the dropped entry released (~730: two deletes ~165 each, `release_plain_vectors` ~234); the entry's own build ~1130 (a push header and a reservation per push) | L3, the entry built in the timeline's element: **+30 % — REFUTED** (its vectors then grow element by element in the large, fragmented store; the reused loop record copies once at the exact size) | runtime tightening of the copy, the release and claim/delete *est.* −25 % → ≈ 3.2×; no structural lever found |
+| 4.44 | `field_add_cell` | 545 M / 123 M instr | keyed operations 55 %: ~440 instr each against hashbrown's ~200–300 — per call the entries header, the seed, the record words and the sub-record type re-read (~60), SipHash 52, the arena claim 52; rehash 54 M against 22 M (191 per moved entry); `mark_borders`' dirty inserts | the second bucket lookup removed (library form) −0.9 % — DROPPED | the keyed header held across a loop or call *est.* −8 %, a cheaper rehash *est.* −6 % → ≈ 3.9×; needs a line-level pass of the keyed runtime |
+
+**BUILT (2026-10-20)** — `pluginabi/request`'s decode once, as `(R-PureReuse)`'s SHARED-CALL
+clause (`formal/rewrites.md`): a total call two wrappers make is made once by the caller and
+handed to each wrapper's variant.  Native `request` 6.88 → 4.77 ms (−30.6 %; the hand-written
+form 4.72), hash 16387f10, interpreter −25 %; `check_request` unchanged.  It fires once crypto
+declares its decoder `#pure` (the lane's crypto 0.3.11 does not): a crypto release with the
+annotation and pluginabi's lock moved to it are what put it in the lane.  Found beside it and
+fixed: a decode root calling another root did not compile on `--native-release`
+(`LOFT_NO_PURE_REUSE=1` broke the bench), loft#2091.
+
+**Focus, for now (owner, 2026-10-20).**  Everything loft does is a target for optimisation.
+The one overhead left alone for the moment is the null-integer cost — the sentinel test on a
+read that may be null, and arithmetic that answers null rather than wrapping (C120) — and that
+too is removed later wherever it can be proved away (ranges, in-range reads).  Store creation,
+store indirection, copies, a reference built and read back, lock tests: none of these is a
+reason a row stays over its bar.  An answer of the form *"the store model costs that"* is
+therefore not an analysis — find the rule that declined the work and why.
+
+**cbor `encode` inspected (2026-10-20, at e8b405937, 4.56×).**  The question was why it could not
+reach the Rust twin.  The twin passes one `&mut Vec` down the recursion and keeps its local
+tables on the stack; loft's `encode` returns a vector per level and keeps its locals in stores.
+Most of those stores are ALREADY removed by existing rules, and each that remains has a named
+decline (`LOFT_TRACE_WORK_BUFFER=1`):
+
+| store, minted per call | removed or declined, and by what | the cure |
+|---|---|---|
+| `koff`, `klen`, `ranks` in `encode_map` | removed: `(R-WorkBuffer)`, the caller lends them | — |
+| `head`'s buffer | removed: refilled, not minted (`OpDatabaseRefill`) | — |
+| `buf += encode(value)` | removed: `encode__ap` appends in place (`(R-AppendTwin)`) | — |
+| `keybuf` in `encode_map` | declined by `(R-WorkBuffer)`: "bound as a copy of another vector" — `copy_bound` reads a vector whose only fill is ONE whole copy as the bind `a = s.v`, and `keybuf += k` stands INSIDE the key loop: an accumulator, not a bind | count a copy inside a loop as building (narrow fix to `copy_bound`) |
+| `k` (`__ref_2`), `k = encode(key)` | declined: "its callee is on a cycle with this function" — `encode` ↔ `encode_map` recurse, so a buffer the caller lends cannot be shared between activations | E1: `k = encode(key); …; keybuf += k` → `encode__ap` straight into `keybuf`, `len(k)` the growth; no `k` exists, so the recursion does not matter.  Priced earlier at −15.5 % |
+| `encode`'s result buffers of the map and array arms (`__ref_5`…`__ref_8`) | declined: "its result is not a view of this buffer alone" (×2), "handed to more than one call", "its call is not the value of a bind" | unpriced — one look per arm |
+
+The recursion is the only structural obstacle, and it binds ONE buffer, which E1 removes rather
+than lends — the twin's own answer (`encode(v, out)` writes every level into one vector).  The
+stores were ~40 % of the row's profile; `keybuf` + E1 *est.* −15–20 % (≈ 3.8×), the arm buffers
+next.  What stays is the focus's exception (the null-integer reads and C120's arithmetic) and
+store indirection where no header can be held.
+
+BUILT after the inspection: `keybuf` — `(R-WorkBuffer)`'s `copy_bound` no longer reads a copy
+inside a loop as the single bind, so the accumulator is lent by the caller (correct, and level
+here: 7.04 → 7.03 ms — the store share above was measured before the work-buffer rules; also
+promotes graphics' `bl_ends`); E1 — `(R-BoundAppend)`: `k = encode(key); …; keybuf += k` is
+`keybuf += encode(key)` with the lengths served from before the growth, and `(R-AppendTwin)` now
+admits a lent work buffer as its destination, so `encode__ap` builds each key in `keybuf`:
+`encode` 4.54× → 3.73× in the lane (−17.8 %, the hand form exactly), pluginabi `request` −3.5 %,
+everything else level.  Left: `encode`'s arm buffers, the `key_lt` span clause (−4 %), the
+null-integer reads (the focus's exception).
+
+Built today on the row: `(R-GuardedChain)`'s guard is no longer evaluated per call for a loop
+whose chains are only index offsets — `key_lt`, a loop of a few bytes per key pair, paid the
+guard closure on every compare (−4.1 % by hand, −2.5 % in the lane).  PRICED, not built: `key_lt`
+testing both key spans in range once at entry and comparing with plain loads, −7.9 % in all
+(−4 % beyond the guard fix) — a span clause of the loop emitter.
+
+**`slope_path_with_undo`, the lookups, RE-PRICED and part BUILT (2026-10-20).**  The −27.5 % above
+was a hand form that also replaced `chunk_idx_32` / `hex_idx_32`'s checked arithmetic with
+plain `div_euclid` / `rem_euclid` — a change `@C120` rules out.  With the arithmetic kept, the
+two helpers price at −15.2 % (200.9 → 170.3 µs), split as: the WRITE `sh_c.ck_hexes[idx] = h`
+−7.1 % and the READ `return gh_c.ck_hexes[idx]?` −5.8 %.  Not the scan: its compares read
+through `rec_get` on the held address, and raw loads there measured slower.  Not the `?`
+discharge (inert).  Not a missed inline (`#[inline(always)]` on `vec_get_or_raise_runtime`,
+`get_vector`, `rec_ptr`: each inert).  The write's cost is the element's reference coming back
+from `vec_get_or_raise_runtime` and its address read back out of it (time, not instructions:
+−25 M instructions over the program against the read's −339 M).
+BUILT: `(R-RecPtr)`'s ELEMENT clause (`LOFT_NO_ELEMENT_ADDRESS`) — the element derived where the
+value record is written, one header read, its reference and address from the record and the
+index: 4.52× → 4.26× in the lane (−5.7 %, hash 3f61de).  PRICED, NOT BUILT: the read's two
+header reads shared (−4.8 %, the guard's `len` and the arm's element read): an `if` statement
+clause on the loop gate fired at 6 other sites and moved nothing, and here the gate declines
+the arm (its `?` fallback mints and frees a temporary), so it needs a write analysis that
+proves the arm's writes land only in fresh temporaries.  Dropped.  What is left is the chunk
+walk the twin shares and the checked arithmetic.
+
+The common thread of the last three is the runtime's unit cost: a claim, a delete, a vector
+header resolution and a keyed probe each cost several times their `malloc` / `Vec` /
+hashbrown counterpart, and these rows are made of them.
+
+**PRICED and DROPPED** — `@FR-R-Apart` instance 3 for full-width `vector<integer>` locals:
+cbor `encode` 4.66× → 4.26×, but drawing's image routines 2–3.5× slower (`render_marks` +255 %,
+`resize` +220 %): their whole-image integer buffers lost the store's reservation, held base
+and fill, and the IR cannot tell a 20-element table from a pixel buffer.  Kept from it: the
+inline slots are no longer zero-filled per call.
+
+The levers, by reach — each a compiler or runtime rule, never a library rewrite for speed
+(`formal/performance.md` `(Perf-Cure)`):
+
+- **F1 + F2 — `(R-DeadResult)` per field, and a vector a callee builds and its caller walks once
+  streamed.**  F2 is the structure clause's WALK TWIN (`decode_structure_emit`, built) moved
+  off decoders: the callee's loop runs with the caller's loop body as its closure at each
+  append, so neither the vector nor its records are made.  F1 is the shape twin's dropped
+  statements for one unread field.  `flow_layout_full`, and every builder-then-walker pair.
+- **L1 — numbers formatted without `core::fmt`.**  `format_long` / `format_float` go through
+  `fmt::write` and `pad_integral`; a direct integer writer and a shortest-float writer in the
+  runtime.  `panel_build`, `forms_upto`, every format of a number.  Runtime only, both backends.
+- **L2 — a function's local vectors pooled per frame.**  `(R-WorkBuffer)`'s proposed clause
+  for vectors: a local vector's store claimed once per frame and cleared, not created and freed
+  per call (~3.3 k instructions).  cbor `encode`, `forms_upto`, `request`'s encoder.
+- **L3 — a fresh value built where it is kept.**  A call result handed as an argument the
+  callee stores into a record (`pa_te(k, pa_cbytes(…))`), or a record pushed into another
+  store (`history_push`), built in the destination instead of built, deep-copied and released.
+  `request`, `truncate_to`.
+- **L4 — a record tree rebuilt every frame refilled in place.**  `(R-RefillBuffer)` for a tree:
+  the previous frame's records reused field by field.  `panel_build`.
+- **L5 — crypto's base64 decoder in one pass, and its validation without a second decode.**  A
+  library native; the validation half needs a call shared across natives or a validating
+  native — a decision (@C entry) before it is built.  `request`.
+- **L6 — the keyed insert path.**  Unpriced; `field_add_cell` is the row to profile line by line.
+- **L7 — a callee's chunk walk set up once per caller loop.**  `(R-Inputs)` for the chunk
+  vector `map_get_hex` / `map_set_hex` walk.  `slope_path_with_undo`.
+- **L8 — a small append run through the caller's window.**  `(R-PushFill)`'s run clause across a
+  call.  `encode_bytes`, cbor `encode`.
+
+Order by reach and price: F1 + F2 (priced, one row under 3× alone, the machinery built), L3
+(two rows), L1 and L2 (three rows each, both general), then L5, L4, L7, L8; L6 first needs its
+profile.
+
 ### The laptop rows at 4.5× and over, toward 3× (measured at `2cf6c15ca`)
 
 `bench/stats.py`, calibrated: `check_request` 5.05×, `flow_layout_full` 4.83×, cbor `encode`
@@ -113,7 +279,7 @@ the compiler rule that would make the natural spelling do the same.
 |---|---|---|---|---|
 | `flow_layout_full` | 154 M / 22.5 M instr | `slice_runs` 59 % inclusive: 64 k calls per layout, each a vector, a `Run` record and a 1–2 character text, where the twin pushes a `&[char]` slice | F1 −10.6 %, F1+F2 −39.7 % | **≈ 2.9×** |
 | cbor `encode` | 113.5 M / 26.3 M instr | each of 20 keys per encode built in a vector of its own and copied into `keybuf` (`vector_add`); 13 stores created per encode, one per local vector of each `encode_map` call; the rank loop | E1 −15.5 % | ≈ 3.96× |
-| `check_request` | 11.6 k / 2.3 k instr per check | one decode per check (loft already shares it between the two questions, the twin decodes twice); per check: leaf reads 2.0 k, four span texts 1.4 k, three entry records 1.0 k, the decode's store 1.0 k, frees 0.8 k, record placement 0.6 k | the structure clause −65 % (below) | **≈ 1.8×** |
+| `check_request` | 11.6 k / 2.3 k instr per check | one decode per check (loft already shares it between the two questions, the twin decodes twice); per check: leaf reads 2.0 k, four span texts 1.4 k, three entry records 1.0 k, the decode's store 1.0 k, frees 0.8 k, record placement 0.6 k | the structure clause, BUILT: 1.58 → 0.32 ms | **0.94×** |
 
 - **F1 — an unread field is not built.**  `place_line`'s height loop asks `slice_runs` for runs
   and reads only `.style`; every run's text is built and dropped.  The rule: a callee whose
@@ -131,7 +297,10 @@ the compiler rule that would make the natural spelling do the same.
   freeing a store is ~600–800 instructions), then the rank and emit loops (key-pair compare
   ~90 instructions against the twin's ~36; the slice compare was priced and dropped).  E1 and
   the stores reach ≈ 3.5×.  3× needs a third lever not yet found.
-- **`check_request` (5.04×, 1.70 ms against the twin's 0.34 ms) is the decoded TREE.**  Its
+- **`check_request` — DONE at 0.94× (0.32 ms against the twin's 0.34 ms): `(R-DecodeView)`'s
+  structure clause, instance 1, holds the decoded value as its position and builds nothing of
+  it (formal/rewrites.md).  The analysis that led there:** it was 5.04×, 1.70 ms, and its cost
+  was the decoded TREE.  Its
   two questions already share one decode (`(R-PureReuse)`), and that decode's `value` is read,
   so neither `(R-SharedCall)` nor `(R-DeadResult)` moves the row alone.  What is left is
   building a map, its entries and an enum value per key and value to read one key — which
@@ -177,7 +346,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 
 | × | row | steps | lands at |
 |--:|---|---|---|
-| 4.97 | `check_request` (7.55 before `(R-DecodeView)`) | the decoded tree built to read one key: `(R-DecodeView)`'s structure clause, priced −65 % (§ 0's bullet) | ≈ 1.8× once built |
+| 4.97 | `check_request` (7.55 before `(R-DecodeView)`) | DONE: `(R-DecodeView)`'s structure clause builds nothing of the decoded tree (§ 0's bullet) | 0.94× |
 | 4.42 | `panel_build` (7.44 before the release plan, 5.24 before the record enum's literal exits) | BUILT: `(R-Place)`'s callee clause for a record enum — `panel_hit_test`'s four variant exits build into the caller's buffer (−5.0 %); `(R-Place)`'s foreign-exit clause — the palette built in its field though two exits answer a constant (−11.3 %, the hand price).  What is left: the release of last frame's tree (~19 %), the claims (~25 %), the status format (~15 %) | out of the cut |
 | 7.34 | `arguments/parse` | X7 | the cursor match BUILT — `(R-SameRead)`'s match clause: the subject's length and each integer computation of one element two arm tests make, bound once before the first test (`same_read::bind_match_reads`, `LOFT_NO_MATCH_READ`).  Then counted by callgrind (per parse, loft ~200 k instructions, the twin ~23.7 k; IPC 4.4 against 3.7, so the gap is work, not stalls): `find_long_opt` 51 k (25 %: each `fo.long_name` resolved through the store, the record and the text — a TEXT FIELD of a vector's record element, which `(R-Base)`'s text clause does not serve — and `len(name) > 0` counted by `char_count`, 6 k); `classify`'s own 56 k (the tokens' texts claimed and copied where the twin borrows, `opt_kind`'s scans); `cur = Cur { src: toks, pos: 0 }` 18 k (9 %) — the token vector DEEP-COPIED into the cursor record, though `toks` is dead after it: `(R-MoveLast)` relocates only within one store and `classify`'s result lives in its own; `parse`'s loops over `results` 31 k (a checked element read and a length per iteration of the reset `while`, and of the required-option walk); each matched text copied twice into its result (a `String`, then `set_str`: ~97 `malloc`/`free` pairs, 7 k) | `arguments/parse` | the match clause measured: 25.23 → 24.01 ms native (−4.9 %, 86 % of its −5.7 % hand price), interpreted −0.8 %, hash equal; the dead token vector moved into the cursor record PRICED: −9.1 % (24.14 → 21.94 ms, six interleaved rounds, hash equal) with `Cur`'s record claimed in the token vector's store, its `src` slot taking the vector's handle (no element copied) and `Cur`'s own free dropped (its store is the tokens', freed once); then BUILT as `(R-MoveLast)`'s host clause (`literal_host::rewrite`, `LOFT_NO_LITERAL_HOST`): 24.04 → 22.08 ms native (−8.2 %, about 90 % of the hand price), interpreted −0.9 %, hash equal; `find_long_opt`'s text field PRICED (five interleaved rounds, hash equal): `fo.long_name` read through the held base and the store's text span — the field's record number one load at `base + i × 20 + 4`, the text sliced off the span (`vector::text_at`) instead of resolving the store, the record and the text per element — 22.09 → 19.61 ms (−11.2 %); `len(fo2.long_name) > 0` as a byte test (not null, not empty) instead of `t_4text_len`'s character count, a further −6.3 % (→ 18.32 ms); reading the field once where the prefix loop reads it twice, nothing more; then BUILT: `(R-RecPtr)`'s text clause (`vector::rec_text`, `LOFT_NO_TEXT_FIELD`, native) 22.09 → 18.64 ms alone (−15.6 %), `(R-ZeroCount)` (`src/zero_count.rs`, `LOFT_NO_ZERO_COUNT`, both backends) → 20.50 ms alone (−7.2 %), together → 16.92 ms (−23.4 %, past the −17 % hand price: the fold and the clause serve the library's other walks too); interpreted −1.6 % on layout-pinned builds, hash equal | RE-PROFILED at `69085c245` (callgrind, per parse: loft 133 k instructions, the twin 23.4 k; 16.9 against 3.47 ms, 4.9×): the CHECKED ELEMENT READ leads — `vec_get_or_raise_runtime` 21.6 k (16 %, 120 calls at 180 instructions each: it reads the length, then `get_vector` reads the header and the length again), and with `get_vector` and `length_vector` called from other sites the three helpers are 26 % of the row; `parse`'s reset loop 15.8 k (12 %: 40 checked reads per parse, and `self.results[ri] = null` allocates a `String` for the null text before `refill_str`); `find_long_opt` 18.6 k (14 %, its compares); `classify`'s `argv` walk 8 k (6 %: a parameter's vector, not held, each word copied into a `String`); `opt_kind`'s full scan 5.3 k (4 %, the library's own code).  The checked read as one header read PRICED (a runtime A/B, the same emitted Rust against two rlibs, five interleaved rounds, hash equal): `vec_get_or_raise_runtime` resolving the store, the element record and the length once (`get_vector` too), the in-range path inline and the raise outlined (`@FR-R-Cold`) — 16.89 → 15.60 ms (−7.6 %, instructions 280 → 248 M); with `length_vector` forced inline as well (LLVM declined its `#[inline]`), 14.96 ms (−11.4 %), the binary 0.13 % larger.  Then BUILT — `(R-Cold)`'s one-read clause (`vector::rec_and_len`, the runtime, both backends): 16.92 → 14.67 ms (−13.3 %, past the price, once `get_vector_hoisted`'s end-of-walk half was outlined too — inline, it made `mesh_aabb` 68 % slower); on six other lanes, against the same emitted Rust, `chunk_lookup` −14.6 %, `slope_path_with_undo` −15.6 %, `resolve_move` −11.1 %, `replace` −18 %, and nothing slower beyond 5 % at equal or fewer instructions (layout); the interpreter −5.6 % instructions on this row.  The reset loop (`while ri < self.results.len() { self.results[ri] = null; ri += 1 }`) PRICED (six interleaved rounds, hash equal), 14.64 ms at the tip: the null text written as the constant it is, not copied into a `String` first (`text_value_unborrowed` does not name the null constant) −2.0 %; the walk counted over a header held across the text sets — the vector's record and length, which a text set into an element cannot change, its store resolved once — −3.7 %; both −8.7 % (13.37 ms), the allocation costing more once the walk is cheap.  `(R-Header)` declines this loop over its text set (X2), which can grow the store and so move the BASE, never the header.  Then BUILT: `(R-Header)`'s text clause (`LOFT_NO_TEXT_SET_HEADER`, native) and the null text borrowed (`text_value_unborrowed`) — 14.70 → 13.72 ms (−6.7 %, three quarters of the price: each pass still resolves its element's store and checks the write's index); the clause fires in 3 loops of `arguments` and nowhere else the census reaches.  `classify`'s `argv` walk PRICED (six interleaved rounds, hash equal, 13.68 ms at the tip): each word borrowed from the store instead of copied into a `String` −2.9 %; `argv`'s header held −2.3 %; both −6.1 % (12.85 ms).  Neither is admitted now for one reason: `argv` is a parameter and the loop pushes into the return buffer, which a caller may hand in sharing `argv`'s store — then a push could move the borrowed bytes and the held elements.  Both hold exactly when `argv`'s store is none the loop writes, which one run-time compare of store numbers decides (`(R-Alias)`'s versioned clause, X2).  Then BUILT in `(R-Alias)`'s versioned copy: the copy now counts a walked path for the parameter its dep chain ends at (`argv`'s header and base kept there), and `(R-TextBorrow)`'s versioned clause borrows the word — 13.68 → 12.94 ms (−5.4 %), hash equal; `tween`'s `value`, never targeted, −9.0 % from the same counting.  RE-PROFILED at `19cb78861` (callgrind, per parse: loft 106.5 k instructions, the twin 23.4 k — was 140 k; 12.92 against 3.47 ms, 3.7×; the twin runs the same algorithms and the same `memcmp` total): `find_long_opt` 17.9 k (17 %, near its floor in this layout — a held address, the text's record number, a bounds-checked slice and the compare per option, where the twin's `String` is inline); store claims ~11 k (10 %: `claim` and `claim_best_fit` for each token's record and text, which the twin keeps in a `Vec` and borrows); `opt_kind`'s full scan 6.6 k (6 %, the library's algorithm, the twin's too); `find_short_opt` 6.2 k (6 %: `"{fch}" == fso.short_name` formats the loop-invariant character into a `String` per option, ~3 % of the row); the cursor match's text bindings copied into `String`s ~4 k (4 %); the reset loop 4.9 k (4.6 %: `refill_str` of the null text per element); the required-option walk 3.7 k (3.5 %, unheld: its error exit declines the gate); each held walk's read one past its end through `get_vector_cold` 1.9 k (1.75 %: 27 walk ends per parse at 69 instructions, an answer `elem_index` gives inline).  The store claims PRICED and DROPPED (a runtime A/B, six interleaved rounds, hash equal): per parse 15 claims at ~430 instructions each — the free-tree descent and the wilderness test ~1.5 k, `claim_block`'s split and the remainder's `fl_insert` ~2.3 k, `claim`'s own bookkeeping ~1.1 k, `finish_claim`'s switch reads and zero fill ~0.4 k — so even a free claim is under 6 % of the row's instructions.  A wilderness bump in `claim` (no tracked free block: the claim is the wilderness's front, the writes `claim_best_fit` and `claim_block` make) took 55 % of the claims, claim instructions 12.75 → 9.88 M, and the row 12.99 → 12.90 ms (−0.7 %).  The rest is `clear_vector_release` resetting the token store and claiming its vector record again per parse (3.5 k, 3.3 %).  `find_short_opt`'s `"{fch}"` PRICED and DROPPED (six interleaved rounds, hash equal, 13.05 ms at the tip): the format already reuses a work `String` (cleared, one character pushed per option, one heap allocation per call for the first push); built once before the loop −1.4 %, and encoded into a four-byte stack buffer instead of the `String` −3.6 % (12.58 ms) — the lone-character format's heap buffer is the larger half.  Under the bar, as are what is left of the profile's named rows; the row stands at 3.7× |
 | 6.86 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
@@ -493,7 +662,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | `decode` | 3.6–3.8× | no further lever named |
 | `flow_layout_full` | 6.23× on x86-64 with S1b, S5 and S1c built; the 3.6× priced earlier counted all three as still to come | X2 and X3 (§ 0, the x86-64 cut), neither priced |
 | `draw_bezier` | 3.66× measured on x86-64 (graphics 0.9.8 with the keep-range clause) | under the bar only through S3 (2.3×) |
-| `check_request` | 5.04×, ≈ 17× aligned | decided (C141): `(R-DecodeView)` instance 1 BUILT; its structure clause (read-once) priced at 1.79× and PROPOSED — the copy loops are already one copy each (`(R-ByteCopy)`'s vector clause, `(R-TextRun)`, built); a slice spelled as a field value (`CBytes { value: bytes[a..b] }`) mints a store and copies twice (+94 % hand-measured), a gap of its own — ceiling with no text or byte string built: 3.95 → 2.54 ms (−36 %), formal/rewrites.md |
+| `check_request` | 0.94× (was 5.04×, ≈ 17× aligned) | DONE (C141): `(R-DecodeView)` instance 1 and its structure clause (read-once) BUILT; before it — the copy loops are already one copy each (`(R-ByteCopy)`'s vector clause, `(R-TextRun)`, built); a slice spelled as a field value (`CBytes { value: bytes[a..b] }`) mints a store and copies twice (+94 % hand-measured), a gap of its own — ceiling with no text or byte string built: 3.95 → 2.54 ms (−36 %), formal/rewrites.md |
 | `build_walls` | ≈ 3.3× | no further lever named |
 
 ## 4. Named steps with no price

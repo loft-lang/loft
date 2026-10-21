@@ -14,8 +14,10 @@
 # A price counts only when the hash is unchanged and two runs agree.  It is a CEILING for
 # the form, not a proof of the rewrite: the conditions under which the form is sound are the
 # rule's to state and the emitter's to validate (formal/rewrites.md).  The flags are the ones
-# `src/main.rs` passes for a shipped binary; `target/release` must be current
-# (`cargo build --release --lib --bin loft`, `make check-rlib`).
+# `src/main.rs` passes for a shipped binary; `target/release` must be current (it links the
+# DEVELOPMENT runtime, with `strict-stores`: a price is a difference, the absolute numbers are
+# `bench/stats.py`'s, which measures the production pair) — `cargo build --release --lib
+# --bin loft`, `make check-rlib`.
 #
 # A RUNTIME change (an edit to the rlib, not to the emitter) is A/B'd the same way without
 # editing any Rust: emit once, save `target/release/deps/libloft.rlib` from each build, copy
@@ -34,7 +36,10 @@
 #   bench/portal/hand_price.sh /tmp/b.rs /tmp/b /tmp/b.args
 #
 # Only the source and the output are replaced, and the symbols are kept (a profile needs them).
+# HAND_PRICE_RUSTFLAGS adds flags to either compile (`-C debuginfo=line-tables-only`, which
+# scripts/gap_report.py uses to charge instructions to loft lines).
 set -euo pipefail
+read -r -a extra <<< "${HAND_PRICE_RUSTFLAGS:-}"
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
   echo "usage: $0 <emitted.rs> <out-binary> [<rustc-args-file>]" >&2
   exit 2
@@ -54,7 +59,7 @@ if [ $# -eq 3 ]; then
     fi
     prev="$arg"
   done < "$3"
-  rustc "${args[@]}" 2> >(grep -E "^error" -A 14 >&2 || true)
+  rustc "${args[@]}" ${extra[@]+"${extra[@]}"} 2> >(grep -E "^error" -A 14 >&2 || true)
   exit
 fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -72,4 +77,4 @@ args=(--edition=2024 -o "$2" "$1" -C opt-level=3 -C codegen-units=1
 # macOS ld64 rejects the GNU option; `src/main.rs` leaves it out there too.
 [ "$(uname -s)" != Darwin ] && args+=(-Clink-arg=-Wl,--allow-multiple-definition)
 # rustc's warnings about generated code are noise here; an error is the answer.
-rustc "${args[@]}" 2> >(grep -E "^error" -A 14 >&2 || true)
+rustc "${args[@]}" ${extra[@]+"${extra[@]}"} 2> >(grep -E "^error" -A 14 >&2 || true)

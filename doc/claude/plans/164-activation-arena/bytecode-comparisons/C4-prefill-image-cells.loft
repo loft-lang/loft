@@ -166,7 +166,9 @@ fn c10() {
 // c11 — a hidden return buffer minted per ACTIVATION of its caller: on native every `Mix`
 // literal is a complete-write mint (`OpDatabaseNP`) and `mk`'s buffer is minted once per
 // activation of `c5`, so c1–c10 CAPTURE the image on native and never use it; this cell
-// re-activates the caller thirty times, so the image is used on both backends.
+// re-activates the caller thirty times, so the image is used on the interpreter.  Native
+// covers this slot too since (R-CompleteWrite)'s buffer clauses — `mk`'s guarded mint heads
+// its literal's group — so c12 carries the native half.
 fn wrap(i: integer) -> integer {
   m = mk(i);
   assert(m.n == -1 && m.s == "" && m.b == null && m.sh == null && m.c == null, "c11 {i}");
@@ -179,7 +181,25 @@ fn c11() {
   println("c11 {s}");
 }
 
+// c12 — a nullable inline record field (`Outer.inner: Inner?`): no literal writes its
+// discriminant, so the mint keeps the prefill on native too ((R-CompleteWrite): "a
+// `__nullable` element whose discriminant no `OpSet` names — keeps the prefill").  Minted
+// once per activation, thirty times: the image is used on BOTH backends, which is what
+// keeps the native half of the verify pin non-vacuous now that every `Mix` shape above is
+// a complete write there.
+fn wrap_outer(i: integer) -> integer {
+  o = Outer { id: i };
+  assert(o.inner == null && o.n == null && o.id == i, "c12 {i}");
+  o.id
+}
+fn c12() {
+  s = 0;
+  for i in 0..30 { s += wrap_outer(i); }
+  assert(s == 435, "c12 {s}");
+  println("c12 {s}");
+}
+
 fn main() {
-  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11();
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12();
   println("ok");
 }

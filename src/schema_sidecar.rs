@@ -40,10 +40,28 @@ pub struct LayoutIdentity {
     /// schema on EITHER side is grandfathered (the pre-F9 hash+dump verdict), so
     /// existing stores are never newly refused.
     pub schema: String,
+    /// @PLN196 — the name of the store's root type, when the identity has one root; empty
+    /// otherwise (a project baseline, or a version-1 sidecar).
+    pub root: String,
+    /// @PLN196 — the layout facts the dump does not render
+    /// (`LayoutDesc::render_facts`): linkedness, nullability, reference targets, index
+    /// groups.  Never part of the identity — `classify` does not read it — only of what an
+    /// upgrade knows about the old layout.  Empty in a version-1 sidecar.
+    pub facts: String,
+    /// loft#2099 — the slot the store had in the program that wrote it.  A stored
+    /// `reference<T>` names its target's store by slot number, so a loader that puts the
+    /// store in another slot rewrites the references naming this one, and can tell them from
+    /// references into other stores.  `None` in a version-1 sidecar and in a baseline.
+    pub slot: Option<u16>,
 }
 
 const SIDECAR_MAGIC: &str = "LOFT-DSCHEMA";
-const SIDECAR_VERSION: u32 = 1;
+/// Version 2 adds the `root=` header and the facts section after the dump; a version-1
+/// sidecar (neither) is still read.  An older build reads a version-2 sidecar as unreadable
+/// and refuses the store, which is the safe direction: it never reads one raw.
+const SIDECAR_VERSION: u32 = 2;
+/// Where the facts start, after the dump.
+const FACTS_FENCE: &str = "--facts--\n";
 
 impl LayoutIdentity {
     /// Build the identity from the live type table (the in-memory source of
@@ -52,11 +70,33 @@ impl LayoutIdentity {
     /// full-width nullability. An empty schema is grandfathered in [`classify`].
     #[must_use]
     pub fn of(stores: &Stores, roots: &[u16]) -> LayoutIdentity {
+        let (root, facts) = Self::root_and_facts(stores, roots);
         LayoutIdentity {
             layout_hash: stores.layout_algo_hash(roots),
             dump: stores.layout_dump(roots),
             schema: String::new(),
+            root,
+            facts,
+            slot: None,
         }
+    }
+
+    /// The identity a store in `slot` writes beside itself: [`LayoutIdentity::of`] its type,
+    /// plus the slot its references name it by.
+    #[must_use]
+    pub fn of_store(stores: &Stores, slot: u16, tp: u16) -> LayoutIdentity {
+        let mut id = Self::of(stores, &[tp]);
+        id.slot = Some(slot);
+        id
+    }
+
+    /// The root's name (one root only) and the facts of `roots`' closure.
+    pub(crate) fn root_and_facts(stores: &Stores, roots: &[u16]) -> (String, String) {
+        let root = match roots {
+            [r] => stores.types[*r as usize].name.clone(),
+            _ => String::new(),
+        };
+        (root, stores.layout_descriptor(roots).render_facts())
     }
 
     /// Serialize to the `.dschema` sidecar text — a SEPARATE file beside the
@@ -70,9 +110,25 @@ impl LayoutIdentity {
         } else {
             format!("schema={}\n", self.schema)
         };
+        if self.root.is_empty() && self.facts.is_empty() && self.slot.is_none() {
+            // Nothing version 2 adds: the version-1 text, byte for byte.
+            return format!(
+                "{SIDECAR_MAGIC} v1\nhash={}\n{schema_line}--\n{}",
+                self.layout_hash, self.dump
+            );
+        }
+        let mut root_line = if self.root.is_empty() {
+            String::new()
+        } else {
+            format!("root={}\n", self.root)
+        };
+        if let Some(slot) = self.slot {
+            use std::fmt::Write as _;
+            let _ = writeln!(root_line, "slot={slot}");
+        }
         format!(
-            "{SIDECAR_MAGIC} v{SIDECAR_VERSION}\nhash={}\n{schema_line}--\n{}",
-            self.layout_hash, self.dump
+            "{SIDECAR_MAGIC} v{SIDECAR_VERSION}\nhash={}\n{schema_line}{root_line}--\n{}{FACTS_FENCE}{}",
+            self.layout_hash, self.dump, self.facts
         )
     }
 
@@ -84,25 +140,39 @@ impl LayoutIdentity {
     pub fn from_sidecar(text: &str) -> Option<LayoutIdentity> {
         // `<MAGIC vN>\n<hash= / schema= header lines>\n--\n<DUMP>` — split on the
         // `\n--\n` fence, then parse the header lines (`schema=` optional).
-        let (head, dump) = text.split_once("\n--\n")?;
+        let (head, rest) = text.split_once("\n--\n")?;
         let mut lines = head.lines();
         let (magic, ver) = lines.next()?.split_once(" v")?;
-        if magic != SIDECAR_MAGIC || ver.parse::<u32>().ok()? != SIDECAR_VERSION {
+        let ver = ver.parse::<u32>().ok()?;
+        if magic != SIDECAR_MAGIC || !(1..=SIDECAR_VERSION).contains(&ver) {
             return None;
         }
         let mut layout_hash: Option<u64> = None;
         let mut schema = String::new();
+        let mut root = String::new();
+        let mut slot = None;
         for line in lines {
             match line.split_once('=') {
                 Some(("hash", v)) => layout_hash = Some(v.parse::<u64>().ok()?),
                 Some(("schema", v)) => schema = v.to_string(),
+                Some(("root", v)) if ver >= 2 => root = v.to_string(),
+                Some(("slot", v)) if ver >= 2 => slot = Some(v.parse::<u16>().ok()?),
                 _ => return None, // an unknown header line — malformed
             }
         }
+        let (dump, facts) = if ver >= 2 {
+            let (d, f) = rest.split_once(FACTS_FENCE)?;
+            (d.to_string(), f.to_string())
+        } else {
+            (rest.to_string(), String::new())
+        };
         Some(LayoutIdentity {
             layout_hash: layout_hash?,
-            dump: dump.to_string(),
+            dump,
             schema,
+            root,
+            facts,
+            slot,
         })
     }
 }
@@ -119,26 +189,14 @@ pub struct LayoutDiff {
     pub changed: Vec<String>,
 }
 
-impl LayoutDiff {
-    /// The **actionable** state (Phase F): a diff that reshapes a type, or that
-    /// carries BOTH an add and a drop, cannot be told from a rename / a data
-    /// migration — so the compiler must surface it (diagnostic + migration
-    /// outline) rather than silently defaulting/dropping. A pure add-only or
-    /// drop-only diff is handled automatically (lenient add / drop).
-    #[must_use]
-    pub fn is_actionable(&self) -> bool {
-        !self.changed.is_empty() || (!self.added.is_empty() && !self.dropped.is_empty())
-    }
-}
-
 /// The reload/persistence handoff decision, comparing a stored identity (OLD,
 /// from the sidecar) with the running program's identity (NEW).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Handoff {
     /// Byte layout unchanged — hand over the RAW store (zero-copy, no migration).
     Identical,
-    /// Layout changed — serialize-before-handoff. The diff drives Phase E
-    /// (Drop&Add / migration) and Phase F (the compiler aid).
+    /// Layout changed — never a raw handoff.  The diff names the types for the load
+    /// refusal; what an upgrade does is the upgrade map's (@PLN196).
     Changed(LayoutDiff),
 }
 
@@ -242,8 +300,8 @@ pub enum SchemaVerdict {
     Fresh,
     /// The stored layout matches the running program's — safe RAW handoff.
     Match,
-    /// The stored layout differs — serialize-before-handoff / migrate (Phase E)
-    /// or reject-and-rebuild. Carries the per-type diff.
+    /// The stored layout differs — never read raw; an upgrade (@PLN196) or a rebuild
+    /// carries it across. Carries the per-type diff.
     Changed(LayoutDiff),
     /// The `.dschema` is present but unreadable (bad magic / version / format) —
     /// the store's layout is UNKNOWN, so it must not be read raw. Reject.
@@ -336,13 +394,11 @@ pub fn check_beside(store_path: &Path, current: &LayoutIdentity) -> std::io::Res
     check_file(&dschema_path(store_path), current)
 }
 
-// ── Phase F — the compiler migration aid (developer surface) ────────────────
+// ── Phase F — the committed layout baseline (developer surface) ─────────────
 //
-// The programmer just edits their structs; the compiler diffs the current layout
-// against a committed BASELINE and, on the actionable state (a reshape, or an
-// add∧drop it can't tell from a rename), aids them: a diagnostic + a scaffolded
-// migration outline. Add-only / drop-only changes are handled silently (lenient
-// default / ignore). The handoff machinery stays invisible.
+// The programmer edits their structs; `loft layout check` diffs the current layout
+// against a committed BASELINE and reports what an upgrade of a store written under it
+// would do, from the upgrade map (@PLN196, `crate::database::UpgradeMap`).
 
 /// The project's committed layout baseline — `.loft/layout.lock` beside
 /// `loft.toml`. The compiler diffs the current type table against it to detect a
@@ -375,79 +431,6 @@ pub fn check_against_baseline(
     check_file(&baseline_path(project_dir), current)
 }
 
-/// The human diagnostic for a schema change against the baseline. Empty string
-/// when nothing changed; a quiet NOTE for a pure add-only / drop-only change
-/// (handled automatically); a WARNING that migration may be needed for the
-/// actionable state (a reshape, or an add∧drop).
-#[must_use]
-pub fn describe_change(diff: &LayoutDiff) -> String {
-    use std::fmt::Write as _;
-    if diff.added.is_empty() && diff.dropped.is_empty() && diff.changed.is_empty() {
-        return String::new();
-    }
-    let list = |v: &[String]| v.join(", ");
-    if diff.is_actionable() {
-        let mut s =
-            String::from("warning: the store layout changed in a way that may need migration:\n");
-        if !diff.changed.is_empty() {
-            let _ = writeln!(s, "  reshaped: {}", list(&diff.changed));
-        }
-        if !diff.added.is_empty() {
-            let _ = writeln!(s, "  added:    {}", list(&diff.added));
-        }
-        if !diff.dropped.is_empty() {
-            let _ = writeln!(s, "  dropped:  {}", list(&diff.dropped));
-        }
-        s.push_str("  a migration outline was generated — fill the backfill stub(s).");
-        s
-    } else if diff.dropped.is_empty() {
-        // add-only — automatic on load.
-        format!(
-            "note: schema added {} (auto-defaulted on load)",
-            list(&diff.added)
-        )
-    } else {
-        // drop-only — automatic on load.
-        format!(
-            "note: schema dropped {} (auto-ignored on load)",
-            list(&diff.dropped)
-        )
-    }
-}
-
-/// A scaffolded `.loft` migration outline generated from a schema change: the
-/// mechanical add/drop parts are noted as handled automatically, and each
-/// RESHAPED type gets a `// TODO backfill` stub to fill (map old fields → new).
-/// The programmer fills the stubs; `write_baseline` accepts the result.
-#[must_use]
-pub fn migration_outline(diff: &LayoutDiff) -> String {
-    use std::fmt::Write as _;
-    let mut s = String::from(
-        "// @PLN97 migration outline — generated from a schema change.\n\
-         // Add-only / drop-only parts are handled automatically on load; only the\n\
-         // reshaped types below need a backfill (map the OLD record to the NEW).\n",
-    );
-    if !diff.added.is_empty() {
-        let _ = writeln!(s, "//   added   (defaulted): {}", diff.added.join(", "));
-    }
-    if !diff.dropped.is_empty() {
-        let _ = writeln!(s, "//   dropped (ignored):   {}", diff.dropped.join(", "));
-    }
-    s.push_str("\nfn migrate() {\n");
-    if diff.changed.is_empty() {
-        s.push_str("  // no reshaped types — nothing to backfill.\n");
-    } else {
-        for name in &diff.changed {
-            let _ = writeln!(
-                s,
-                "  // TODO backfill {name}: read the old {name} fields, write the new ones."
-            );
-        }
-    }
-    s.push_str("}\n");
-    s
-}
-
 /// Leads every computed `layout_schema::nullability_schema` so "computed, no nullable
 /// fields" (this marker alone) is distinct from an ABSENT schema (`""`). Semicolon-joined so
 /// the signature is a single sidecar line.
@@ -462,6 +445,9 @@ mod tests {
             layout_hash: hash,
             dump: dump.to_string(),
             schema: String::new(),
+            root: String::new(),
+            facts: String::new(),
+            slot: None,
         }
     }
 
@@ -471,6 +457,9 @@ mod tests {
             layout_hash: hash,
             dump: dump.to_string(),
             schema: schema.to_string(),
+            root: String::new(),
+            facts: String::new(),
+            slot: None,
         }
     }
 
@@ -491,11 +480,10 @@ mod tests {
         assert_eq!(d.added, vec!["C".to_string()]);
         assert_eq!(d.dropped, vec!["B".to_string()]);
         assert_eq!(d.changed, vec!["A".to_string()]);
-        assert!(d.is_actionable(), "a reshape is actionable");
     }
 
     #[test]
-    fn add_only_and_drop_only_are_not_actionable() {
+    fn add_only_and_drop_only_are_told_apart() {
         let base = "A\tsize=4\tstruct{}\n";
         let add_only = classify(
             &id(1, base),
@@ -507,8 +495,8 @@ mod tests {
         );
         match (add_only, drop_only) {
             (Handoff::Changed(a), Handoff::Changed(d)) => {
-                assert!(!a.is_actionable() && !a.added.is_empty() && a.dropped.is_empty());
-                assert!(!d.is_actionable() && !d.dropped.is_empty() && d.added.is_empty());
+                assert!(!a.added.is_empty() && a.dropped.is_empty());
+                assert!(!d.dropped.is_empty() && d.added.is_empty());
             }
             _ => panic!("expected Changed"),
         }
@@ -590,12 +578,23 @@ mod tests {
         // and a WITH-schema identity round-trips too (the new `schema=` line)
         let b = id_schema(0xfeed, "A\tsize=8\tstruct{i@0:integer}\n", "A:i");
         assert_eq!(LayoutIdentity::from_sidecar(&b.to_sidecar()), Some(b));
+        // and a version-2 one, with its root and facts
+        let mut c = id_schema(0xbeef, "A\tsize=8\tstruct{i@0:integer}\n", "nn/1;A:i");
+        c.root = "A".to_string();
+        c.facts = "A.i\tnullable\n".to_string();
+        c.slot = Some(7);
+        let text = c.to_sidecar();
+        assert!(text.starts_with("LOFT-DSCHEMA v2\n"), "{text}");
+        assert_eq!(LayoutIdentity::from_sidecar(&text), Some(c));
     }
 
     #[test]
     fn bad_sidecar_rejects() {
         assert!(LayoutIdentity::from_sidecar("garbage").is_none());
         assert!(LayoutIdentity::from_sidecar("LOFT-DSCHEMA v999\nhash=1\n--\n").is_none());
+        // a root line belongs to version 2, and version 2 has a facts fence
+        assert!(LayoutIdentity::from_sidecar("LOFT-DSCHEMA v1\nhash=1\nroot=A\n--\n").is_none());
+        assert!(LayoutIdentity::from_sidecar("LOFT-DSCHEMA v2\nhash=1\n--\nA\n").is_none());
         assert!(LayoutIdentity::from_sidecar("OTHER v1\nhash=1\n--\n").is_none());
     }
 
@@ -639,35 +638,6 @@ mod tests {
         assert_eq!(v.as_corrupt_reason(), Some(CorruptReason::SchemaMismatch));
 
         let _ = crate::file_access::remove_file(&side);
-    }
-
-    fn diff(added: &[&str], dropped: &[&str], changed: &[&str]) -> LayoutDiff {
-        let v = |s: &[&str]| s.iter().map(|x| (*x).to_string()).collect();
-        LayoutDiff {
-            added: v(added),
-            dropped: v(dropped),
-            changed: v(changed),
-        }
-    }
-
-    #[test]
-    fn describe_change_notes_vs_warns() {
-        assert_eq!(describe_change(&diff(&[], &[], &[])), "");
-        // add-only / drop-only → a quiet note, no "migration".
-        assert!(describe_change(&diff(&["B"], &[], &[])).starts_with("note:"));
-        assert!(describe_change(&diff(&[], &["B"], &[])).contains("auto-ignored"));
-        // reshape (or add∧drop) → a warning about migration.
-        let w = describe_change(&diff(&["C"], &["B"], &["A"]));
-        assert!(w.starts_with("warning:") && w.contains("reshaped: A"));
-    }
-
-    #[test]
-    fn migration_outline_stubs_reshapes() {
-        let o = migration_outline(&diff(&["C"], &["B"], &["A", "D"]));
-        assert!(o.contains("TODO backfill A") && o.contains("TODO backfill D"));
-        assert!(o.contains("added   (defaulted): C") && o.contains("dropped (ignored):   B"));
-        // no reshape → nothing to backfill.
-        assert!(migration_outline(&diff(&["C"], &[], &[])).contains("nothing to backfill"));
     }
 
     #[test]
