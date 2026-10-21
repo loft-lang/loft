@@ -1548,6 +1548,9 @@ pub static NATIVE_FAIL_FAST: std::sync::atomic::AtomicBool =
 /// The type number of `text`: the sixth base type [`Stores::new`] registers, fixed for
 /// every program.
 pub const TEXT_TP: u16 = 5;
+/// The base types `Stores::new` registers first, in the same order in every program: their
+/// ids are the same everywhere.
+pub const BASE_TYPES: u16 = 7;
 
 impl Stores {
     #[must_use]

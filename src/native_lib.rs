@@ -757,10 +757,18 @@ pub struct HostTable {
         n: usize,
         ret: *mut LibArg,
     ),
+    /// @PLN199 G0b-2 — this program's id of the type named `key` (`lib_ids::TypeNames::key`),
+    /// or `u16::MAX`; `ids` is what the host passed to `loft_shared_init`.
+    pub type_id:
+        unsafe extern "C" fn(ids: *const std::ffi::c_void, key: *const u8, len: usize) -> u16,
+    /// @PLN199 G0b-2 — this program's number of the function named `key` (`lib_ids::fn_key`),
+    /// or `u32::MAX`.
+    pub fn_id:
+        unsafe extern "C" fn(ids: *const std::ffi::c_void, key: *const u8, len: usize) -> u32,
 }
 
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 4;
+pub const HOST_ABI: u32 = 5;
 
 /// The table this process hands to every library cdylib it loads.
 pub static HOST_TABLE: HostTable = HostTable {
@@ -768,6 +776,8 @@ pub static HOST_TABLE: HostTable = HostTable {
     coroutine_adopt: host_coroutine_adopt,
     coroutines: HOST_COROUTINES,
     call_ref: host_call_ref,
+    type_id: crate::lib_ids::host_type_id,
+    fn_id: crate::lib_ids::host_fn_id,
 };
 
 /// @PLN199 D2 / D3 — the host's coroutine table as a library cdylib sees it: the runtime's
@@ -906,16 +916,16 @@ unsafe extern "C" fn host_coroutine_adopt(
 }
 
 /// The part of every library cdylib that receives the [`HostTable`]: `loft_shared_init`
-/// stores it, and `__host()` reads it.  Appended by [`generate_shared_cdylib_lib_rs`]; the
-/// compiled standard library, which is built INTO the host, swaps it for
-/// [`IN_HOST_TABLE_SRC`].
+/// fills the artifact's id tables from it ([`id_tables_src`]), stores it, and `__host()`
+/// reads it.  Appended by [`generate_shared_cdylib_lib_rs`]; the compiled standard library,
+/// which is built INTO the host, swaps it for [`IN_HOST_TABLE_SRC`].
 pub(crate) const HOST_INIT_SRC: &str = "
 static __HOST: std::sync::OnceLock<&'static loft::native_lib::HostTable> = std::sync::OnceLock::new();
 
 #[unsafe(no_mangle)]
-pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable) -> u32 {
+pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable, ids: *const std::ffi::c_void) -> u32 {
     let table: &'static loft::native_lib::HostTable = unsafe { &*table };
-    if table.abi != loft::native_lib::HOST_ABI {
+    if table.abi != loft::native_lib::HOST_ABI || !__fill_ids(table, ids) {
         return 0;
     }
     let _ = __HOST.set(table);
@@ -963,11 +973,22 @@ mod __coro {
 /// Build the shared `--native` program (header + `init` + only the functions
 /// reachable from `entry` + their deps) for `data`.  Both cdylib generators
 /// append their export wrappers to this.
-fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
+///
+/// With `own_ids`, the code reads the ids of the types and functions it names from tables the
+/// host fills at load (`Output::shared_ids`), and those ids come back beside the source.
+fn emit_program(
+    data: &Data,
+    stores: &Stores,
+    entry: &[u32],
+    own_ids: bool,
+) -> (String, Option<crate::generation::SharedIds>) {
     let _census = crate::rewrite_census::Pause::new();
     let mut buf: Vec<u8> = Vec::new();
-    {
+    let ids = {
         let mut out = Output::new(data, stores);
+        if own_ids {
+            out.shared_ids = Some(std::cell::RefCell::default());
+        }
         // @PLN26 phase 2 — a cdylib that calls a `[native] crate` package emits
         // that package's fns as C-ABI `extern "C"` decls naming `loft_ffi::Loft*`,
         // its `.so` linked (sealing the package's whole Rust crate graph), exactly
@@ -989,8 +1010,151 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
         // reachable subset) — exactly what a `--native` binary emits from `n_main`,
         // so unreachable operator stubs never surface.
         let _ = out.output_native_library(&mut buf, 0, data.definitions(), entry);
+        out.shared_ids.take().map(std::cell::RefCell::into_inner)
+    };
+    (String::from_utf8(buf).unwrap_or_default(), ids)
+}
+
+/// @PLN199 G0b-2 — the code a library artifact carries for `entry` and what it reaches, with
+/// its id tables: what `tests/lib_ids.rs` generates in two programs that number the same
+/// functions differently and requires to be the same text (outside `init`, the program's own
+/// type table).
+#[doc(hidden)]
+#[must_use]
+pub fn library_code_rs(data: &Data, stores: &Stores, entry: &[u32]) -> String {
+    let (mut src, ids) = emit_program(data, stores, entry, true);
+    src.push_str(&id_tables_src(data, stores, &ids.unwrap_or_default()));
+    src
+}
+
+/// @PLN199 G0b-2 — the id tables of a library artifact: the key of each type and function its
+/// code reads by position (`lib_ids`), the slots `loft_shared_init` fills with the loading
+/// program's numbers, and the readers.  The slots are written once, at load, before any bridge
+/// runs, and only read after, so a read is a plain load (`loft::native_lib::IdTable`), which
+/// the optimiser may merge with another read of the same slot — what lets a fn-value dispatch
+/// that made its value from `__fid(k)` fold its `__fid(k)` arm as it folds a literal one.  A
+/// key the program lacks refuses the artifact (`__fill_ids` answers false).
+fn id_tables_src(data: &Data, stores: &Stores, ids: &crate::generation::SharedIds) -> String {
+    use std::fmt::Write as _;
+    let names = crate::lib_ids::TypeNames::new(data, stores);
+    let type_keys: Vec<String> = ids.types.iter().map(|&t| names.key(t)).collect();
+    let fn_keys: Vec<String> = ids
+        .fns
+        .iter()
+        .map(|&d| crate::lib_ids::fn_key(data, d))
+        .collect();
+    let list = |keys: &[String]| {
+        let mut s = String::new();
+        for k in keys {
+            let _ = writeln!(s, "    {k:?},");
+        }
+        s
+    };
+    let (nt, nf) = (type_keys.len(), fn_keys.len());
+    format!(
+        "
+static __TID: loft::native_lib::IdTable<u16, {nt}> = loft::native_lib::IdTable::new(0);
+const __TID_KEYS: [&str; {nt}] = [
+{}];
+static __FID: loft::native_lib::IdTable<u32, {nf}> = loft::native_lib::IdTable::new(0);
+const __FID_KEYS: [&str; {nf}] = [
+{}];
+
+#[allow(dead_code)]
+#[inline(always)]
+fn __tid(k: usize) -> u16 {{
+    __TID.get(k)
+}}
+
+#[allow(dead_code)]
+#[inline(always)]
+fn __fid(k: usize) -> u32 {{
+    __FID.get(k)
+}}
+
+/// The program's number of function value number `f`: a function of this artifact's is
+/// numbered by its table position here (`0x8000_0000 | k`).
+#[allow(dead_code)]
+#[inline(always)]
+fn __to_host(f: u32) -> u32 {{
+    if f & 0x8000_0000 != 0 && f != u32::MAX {{ __FID.get((f & 0x7fff_ffff) as usize) }} else {{ f }}
+}}
+
+/// This artifact's number of function value number `f`, as the program numbered it: its own
+/// for a function it carries, the program's for any other.
+#[allow(dead_code)]
+#[inline(always)]
+fn __norm(f: u32) -> u32 {{
+    if f & 0x8000_0000 != 0 {{
+        return f;
+    }}
+    let local = __FLOCAL.get(0);
+    let at = f as usize;
+    if at < local.len() && local[at] != 0 {{ local[at] }} else {{ f }}
+}}
+
+/// The program's function numbers to this artifact's: `0x8000_0000 | k` at the program's
+/// number of function `k`, 0 elsewhere.
+static __FLOCAL: loft::native_lib::IdTable<&'static [u32], 1> = loft::native_lib::IdTable::new(&[]);
+
+fn __fill_ids(table: &loft::native_lib::HostTable, ids: *const std::ffi::c_void) -> bool {{
+    for (k, key) in __TID_KEYS.iter().enumerate() {{
+        let id = unsafe {{ (table.type_id)(ids, key.as_ptr(), key.len()) }};
+        if id == u16::MAX {{
+            return false;
+        }}
+        unsafe {{ __TID.set(k, id) }};
+    }}
+    for (k, key) in __FID_KEYS.iter().enumerate() {{
+        let id = unsafe {{ (table.fn_id)(ids, key.as_ptr(), key.len()) }};
+        if id == u32::MAX {{
+            return false;
+        }}
+        unsafe {{ __FID.set(k, id) }};
+    }}
+    let mut local = vec![0_u32; (0..{nf}).map(|k| __FID.get(k) as usize + 1).max().unwrap_or(0)];
+    for k in 0..{nf} {{
+        local[__FID.get(k) as usize] = 0x8000_0000 | k as u32;
+    }}
+    unsafe {{ __FLOCAL.set(0, Box::leak(local.into_boxed_slice())) }};
+    true
+}}
+",
+        list(&type_keys),
+        list(&fn_keys)
+    )
+}
+
+/// @PLN199 G0b-2 — a library artifact's table of ids (`__tid` / `__fid`): written by its
+/// `loft_shared_init` before any of its code runs, read by that code after.  The write-once
+/// discipline is what makes a plain read sound, and a plain read is what the optimiser can
+/// merge with another read of the same slot, where an atomic one it cannot.
+pub struct IdTable<T: Copy, const N: usize>(std::cell::UnsafeCell<[T; N]>);
+
+// SAFETY: written only by `loft_shared_init`, which the host runs once per artifact before
+// handing out any of the artifact's functions, on any thread.
+unsafe impl<T: Copy, const N: usize> Sync for IdTable<T, N> {}
+
+impl<T: Copy, const N: usize> IdTable<T, N> {
+    #[must_use]
+    pub const fn new(zero: T) -> Self {
+        IdTable(std::cell::UnsafeCell::new([zero; N]))
     }
-    String::from_utf8(buf).unwrap_or_default()
+
+    /// Slot `k`.
+    #[inline]
+    #[must_use]
+    pub fn get(&self, k: usize) -> T {
+        unsafe { (*self.0.get())[k] }
+    }
+
+    /// Fill slot `k`.
+    ///
+    /// # Safety
+    /// Only while no code that reads the table can run: from `loft_shared_init`.
+    pub unsafe fn set(&self, k: usize, v: T) {
+        unsafe { (*self.0.get())[k] = v };
+    }
 }
 
 /// Generate the cdylib `lib.rs` source for `data`'s **scalar** export set: the
@@ -1007,7 +1171,7 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
 #[must_use]
 pub fn generate_cdylib_lib_rs(data: &Data, stores: &Stores, export_set: &HashSet<u32>) -> String {
     let entry: Vec<u32> = export_set.iter().copied().collect();
-    let mut src = emit_program(data, stores, &entry);
+    let (mut src, _) = emit_program(data, stores, &entry, false);
     let dups = crate::generation::duplicate_fn_names(data);
     for &d in export_set {
         src.push('\n');
@@ -1027,16 +1191,34 @@ pub fn generate_shared_cdylib_lib_rs(
     stores: &Stores,
     export_set: &HashSet<u32>,
 ) -> String {
+    shared_cdylib_source(data, stores, export_set, false)
+}
+
+/// [`generate_shared_cdylib_lib_rs`].  `in_host`: the code writes this program's ids as
+/// literals and carries no id tables — the compiled standard library, built into the host
+/// against the type prefix every program starts with.  `LOFT_NO_LIB_IDS=1` writes a library
+/// artifact's ids as literals too, with empty tables: the artifact then serves only the
+/// program it was generated in (the A/B and the falsifier of @PLN199 G0b-2).
+pub(crate) fn shared_cdylib_source(
+    data: &Data,
+    stores: &Stores,
+    export_set: &HashSet<u32>,
+    in_host: bool,
+) -> String {
+    let own_ids = !in_host && std::env::var_os("LOFT_NO_LIB_IDS").is_none();
     // Sorted: the artifact's source is then the same bytes for the same set, which a
     // generated file under a drift guard needs (@PLN181), and a `HashSet`'s order is not.
     let mut entry: Vec<u32> = export_set.iter().copied().collect();
     entry.sort_unstable();
-    let mut src = emit_program(data, stores, &entry);
+    let (mut src, ids) = emit_program(data, stores, &entry, own_ids);
     src.push_str(HOST_INIT_SRC);
+    if !in_host {
+        src.push_str(&id_tables_src(data, stores, &ids.unwrap_or_default()));
+    }
     let dups = crate::generation::duplicate_fn_names(data);
     for &d in &entry {
         src.push('\n');
-        src.push_str(&shared_bridge_wrapper(data, stores, &dups, d));
+        src.push_str(&shared_bridge_wrapper(data, stores, &dups, d, !in_host));
     }
     src.push('\n');
     src.push_str(&layout_fp_export(type_layout_fingerprint(stores)));
@@ -1120,11 +1302,15 @@ fn export_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> String {
 ///
 /// Finally it forwards to the inner `--native` fn and writes the return.
 #[expect(clippy::too_many_lines, reason = "inherited")]
+///
+/// `own_ids`: the artifact numbers its own functions (`Output::fn_lit_as`), so a function
+/// value it answers takes the program's number on the way out (`__to_host`).
 fn shared_bridge_wrapper(
     data: &Data,
     stores: &Stores,
     dups: &HashSet<String>,
     d_nr: u32,
+    own_ids: bool,
 ) -> String {
     // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its record's
     // fields in REGISTERS, so this wrapper stops forwarding the hidden dest and writes
@@ -1311,7 +1497,7 @@ fn shared_bridge_wrapper(
         );
         w
     } else {
-        bridge_write_ret(def.returned(), &call, returns_owned_string(def))
+        bridge_write_ret(def.returned(), &call, returns_owned_string(def), own_ids)
     };
 
     // @PLN118 arc F — after writing the return, free every bridge-allocated
@@ -1466,7 +1652,7 @@ fn bridge_read(t: &Type, slot: &str) -> String {
 /// the inner fn: text producers split into those returning an owned `String`
 /// (nwb / FFI-direct / curated) and those returning a buffer-backed `Str`, and the
 /// bridge must borrow `&str` from the right one (`String` has no `.str()`).
-fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
+fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool, own_ids: bool) -> String {
     // `Optional(τ)` rides τ's sentinel layout (@PLN25) — write as the base type.
     match t.base() {
         Type::Void | Type::Null => format!("let _ = {expr};"),
@@ -1486,7 +1672,8 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
         | Type::Trie(_, _, _) => format!("unsafe {{ (*ret).dbref = ({expr}); }}"),
         // @PLN199 C1 — a function value, as the `(d_nr, closure)` pair.
         Type::Function(..) => format!(
-            "let __f = ({expr});\n    unsafe {{ (*ret).scalar = i64::from(__f.0); (*ret).dbref = __f.1; }}"
+            "let __f = ({expr});\n    unsafe {{ (*ret).scalar = i64::from({}); (*ret).dbref = __f.1; }}",
+            if own_ids { "__to_host(__f.0)" } else { "__f.0" }
         ),
         // @PLN199 D1 — a generator: the inner fn answers its state machine, which the host
         // registers in ITS coroutine table (the cdylib's is a copy of its own), writing the

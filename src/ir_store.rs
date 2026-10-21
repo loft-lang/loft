@@ -530,6 +530,12 @@ pub fn materialize_data_at(stores: &mut Stores, root: DbRef, data: &Data) {
         ur.set_field_str(stores, ds::USENAME_NAME, &name);
         ur.set_field_int(stores, ds::USENAME_SOURCE, i64::from(source));
     }
+    let labels = r.field_recvec(ds::DATA_SOURCE_LABELS, ds::USENAME_STRIDE);
+    for (source, name) in data.source_label_pairs() {
+        let lr = labels.push(stores);
+        lr.set_field_str(stores, ds::USENAME_NAME, &name);
+        lr.set_field_int(stores, ds::USENAME_SOURCE, i64::from(source));
+    }
     // The type-variable placeholders and their bound keys: a parse that continues this
     // Data (the stdlib cache, a warm program) asks them which placeholder a `<T>` header
     // already names, and without them mints a second one.  Sorted, so the bundle's bytes

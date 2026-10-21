@@ -318,6 +318,10 @@ struct Data {
   imports: vector<AppliedImport>,
   use_names: vector<UseName>,
   type_var_bounds: vector<TypeVarBound>,
+  // @PLN199 G0b-2 — the name each library source was loaded under
+  // (src/data.rs::Data.source_labels), as `UseName`s: what a library artifact names that
+  // source's types and functions by, which the source number cannot be.
+  source_labels: vector<UseName>,
 }
 
 // ---- Database type schema (src/database) ------------------------------------

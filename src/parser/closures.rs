@@ -103,9 +103,9 @@ pub(super) fn emit_fn_ref_field_write(
 ) -> Value {
     let unspanned = val_code.unspan().clone();
     match unspanned {
-        Value::FnRef(d, w, _) if w == u16::MAX => {
+        Value::FnRef(d, w, tp) if w == u16::MAX => {
             // Non-capturing inline lambda — just write the d_nr.
-            p.cl("OpSetInt4", &[ref_code, pos_val, Value::Int(d)])
+            p.fn_number_write(ref_code, pos_val, d, &tp)
         }
         Value::Block(bl) if bl.name == "fn_ref_with_closure" => {
             // Capturing inline lambda.  bl.operators = [
@@ -113,7 +113,7 @@ pub(super) fn emit_fn_ref_field_write(
             //   FnRef(d, w, _)  // last element
             // ].
             let last = bl.operators.last().cloned().unwrap_or(Value::Null);
-            let Value::FnRef(d, w, _) = last.unspan() else {
+            let Value::FnRef(d, w, lambda_tp) = last.unspan() else {
                 if !p.first_pass {
                     diagnostic!(
                         p.lexer,
@@ -123,7 +123,7 @@ pub(super) fn emit_fn_ref_field_write(
                 }
                 return Value::Null;
             };
-            let (lambda_d, w_var) = (*d, *w);
+            let (lambda_d, w_var, lambda_tp) = (*d, *w, lambda_tp.as_ref().clone());
             let mut ops: Vec<Value> = bl
                 .operators
                 .iter()
@@ -205,10 +205,7 @@ pub(super) fn emit_fn_ref_field_write(
             }
             // Write the d_nr at the loft-attribute position (which maps
             // to the database-side `<attr>` field — the d_nr half).
-            ops.push(p.cl(
-                "OpSetInt4",
-                &[ref_code.clone(), pos_val.clone(), Value::Int(lambda_d)],
-            ));
+            ops.push(p.fn_number_write(ref_code.clone(), pos_val.clone(), lambda_d, &lambda_tp));
             // Deep-copy the parent-Store closure record into the host's
             // `__closure_rec` vector at pos+4.  We need the host's
             // closure_rec field as a DbRef + the closure record's
@@ -310,7 +307,11 @@ pub(super) fn emit_fn_ref_field_write(
                 {
                     bl.operators[0].clone()
                 }
-                Value::FnRef(d, _, _) => Value::Int(d),
+                Value::FnRef(d, _, tp) => return p.fn_number_write(ref_code, pos_val, d, &tp),
+                Value::Int(n) if n != 0 => {
+                    let tp = p.data.attr_type(d_nr, f_nr);
+                    return p.fn_number_write(ref_code, pos_val, n, &tp);
+                }
                 Value::Int(n) => Value::Int(n),
                 Value::Null => Value::Int(0),
                 _ => {

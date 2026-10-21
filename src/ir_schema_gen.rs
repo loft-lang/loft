@@ -756,6 +756,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t84, "use_names", vec_use_names);
     let vec_type_var_bounds = db.vector(t83);
     db.field(t84, "type_var_bounds", vec_type_var_bounds);
+    let vec_source_labels = db.vector(t82);
+    db.field(t84, "source_labels", vec_source_labels);
     let t123 = db.vector(t80);
     let _ = t123; // may be unused
     let t124 = db.vector(t81);

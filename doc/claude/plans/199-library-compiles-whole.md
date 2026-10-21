@@ -285,27 +285,34 @@ value (`generation/emit.rs:390` and `:392`, `({d_nr}_u32, …)`), the dispatch a
 (`emit.rs:1820`, `{d_nr}_u32 =>`), and the closure drop cascade's arm
 (`generation/ops/ref_ops.rs:82`, `{lambda}_u32 =>`).  Checked with `introspect_diff.sh` empty.
 
-**G0b-2 — in a library cdylib, both helpers read tables filled at init.**
-- `type_lit` prints `__tid(k)` and `fn_lit` prints `__fid(k)`; `Output` records each `k` with
-  the `(package, name)` it stands for, and the generated source ends with
-  `static __TID: [AtomicU16; N]` / `__FID: [AtomicU32; M]` and the two name tables.
-- A dispatch arm cannot match a non-constant: in library mode it becomes a guard,
-  `f if f == __fid(3) =>`, one arm per candidate as now — the fn-ref dispatch and the drop
-  cascade alike.
-- The names come from the HOST's definitions, not its store: `loft_shared_init` takes a second
-  argument, and `HostTable` two entries — `type_id(ctx, pkg, name) -> u16` and
-  `fn_id(ctx, pkg, name) -> u32` — answered from the `Data` that
-  `extensions::wire_shared_native_fns` already holds.  Qualified by package, so a program's
-  own `InputState` beside a library's never answers for it (the loft#1706 class that
-  `hidden_dest_type_name` handles per call today).  A name the host lacks makes the init
-  answer 0, and the artifact is rebuilt, as an undeclared layout is.
-- A relaxed `AtomicU16` load per id, never a `OnceLock` (an acquire load per call cost a
-  generator loop 6-8 % in D2).
-- Check: the parity guards (`gatefull`, `callback`) on every mode; a struct-allocating loop and a
-  fn-value dispatch loop in a cdylib within 2 % of the literal build (`bench.py`-style A/B);
-  and the falsifying case — an artifact built for one program, adopted by a second whose types
-  and functions are numbered differently (build it, then remove the fingerprint from the key in
-  a probe): right answers with G0b-2, wrong ones without.
+**G0b-2 — in a library cdylib, the code names its ids by key (done).**  `Output::shared_ids`
+is set for a library artifact (`native_lib::emit_program`, not for the compiled standard
+library); the helpers record each id at a table position `k`, and the source ends with the
+key tables (`id_tables_src`) that `loft_shared_init(table, ids)` fills from the host
+(`HostTable::type_id` / `fn_id`, answered by `lib_ids::HostIds`).
+- A key is the program-independent name (`lib_ids`): `<source label>::<name>` for a declared
+  type or a function (`Data::source_label`, persisted in both IR images), and for a type
+  spelled from others (`main_vector<…>`, `__tuple<…>`, a generic instance) its parts' keys, a
+  cycle written as a back-reference.  A key the host lacks refuses the artifact, naming it.
+- A type id is `__tid(k)`, a plain load from a write-once table (`native_lib::IdTable`); the
+  two flag bits an operator packs into `tp` (`TYPE_ID_FLAGS`) are or-ed back on.
+- A function the artifact carries is numbered `FN_LOCAL | k`, a CONSTANT, so a dispatch arm
+  stays a constant and a value made in the artifact folds into a direct call as a literal one
+  did: guards on `__fid(k)` measured 1.7–2.6× on a fn-value loop, this within 1 %.  A value
+  takes the program's number where it leaves the artifact's code (`__to_host`: a store write
+  through `FnRefDnr`, a bridge return, a generator slot image, a call back) and the
+  artifact's where it enters (`__norm`: a store read, a fn-typed parameter's prologue, a
+  `vector<fn>` parallel input, a generator slot read).  A number never normalised still
+  answers right, through the call back.  A function written into a store as a constant goes
+  through a temporary (`Parser::fn_number_write`), so its write is that projection too.
+- `LOFT_NO_LIB_IDS=1` writes literals again (the A/B; NATIVE_SWITCHES.md), and
+  `LOFT_TRACE_LIB_IDS=1` prints the host's key of every type.
+- Guards: `tests/lib_ids.rs` generates every corpus and suite program as a library artifact
+  alone and behind a prefix that renumbers it, and requires the same code outside `init`;
+  `n2_cdylib::a_library_artifact_runs_in_a_program_that_numbers_it_differently` runs an
+  artifact in a program that numbers it differently (a crash with `LOFT_NO_LIB_IDS=1`).
+- Left to G1: `init()` is still the whole program's type table, and block comments print
+  loft types with their ids, so the source is not yet the same text in two programs.
 
 **G0c — key the artifact on what it references.**  Replace `type_layout_fingerprint(stores)` and
 `fn_numbering_fingerprint` in `cached_or_build_shared_cdylib`'s key (`native_lib.rs` ~2509) with
@@ -395,9 +402,9 @@ The procedure, the one every step above followed:
 
 ## Order
 
-Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3.  D4 is dropped.  The open steps, each one commit:
+Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2.  D4 is dropped.  The open
+steps, each one commit:
 
-G0-0 → G0a (per file) → G0b-1 → G0b-2 → G0c → G1a → G1b → G2a → G2b → G3a → G3b → G2c, and,
-independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G0a and G0b-1 change
-no behaviour and can land any time; G0b-2 is the step that makes an artifact shareable, and
-G2c, the release job, is last because it publishes.
+G0c → G1a → G1b → G2a → G2b → G3a → G3b → G2c, and,
+independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G0c is the step that
+lets one artifact serve two programs, and G2c, the release job, is last because it publishes.

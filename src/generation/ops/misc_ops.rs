@@ -211,7 +211,7 @@ impl OpEmitter for OpStepEmitter {
         write!(ctx.w, ", ")?;
         ctx.emit_param_slot(2, &args[2])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_param_slot(3, &args[3])?;
+        ctx.emit_iter_arg(&args[2], &args[3])?;
         write!(ctx.w, ")")
     }
 }

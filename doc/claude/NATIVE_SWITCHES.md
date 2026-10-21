@@ -978,6 +978,18 @@ again — the bisect step for a leaked or doubly-freed fn-ref return buffer in a
 recursion — and `LOFT_TRACE_GUARD_FREE=1` names, per function that keeps its guard, the
 reachable callee that registers.
 
+## Library artifacts
+
+**A `use`d library's cdylib names its type ids and function numbers by key (@PLN199 G0b-2,
+generation time, library artifacts only):** a type id is read from a table its
+`loft_shared_init` fills from the loading program (`__tid(k)`), and a function it carries is
+numbered by its own constant (`FN_LOCAL | k`), translated where a value leaves or enters its
+code — so one artifact can run in a program that numbers its types and functions differently.
+**`LOFT_NO_LIB_IDS=1`** writes the generating program's numbers as literals again: the A/B for
+a library routine that moved, and the falsifier of `n2_cdylib`'s renumbered-program guard.
+**`LOFT_TRACE_LIB_IDS=1`** prints the loading program's key of every type, the first look when
+an artifact is refused for naming a key the program lacks.
+
 ## Inlining hints
 
 **Every loop-free loft function carries `#[inline]` (default-ON, generation time, both native

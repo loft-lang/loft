@@ -890,6 +890,14 @@ impl Output<'_> {
                     && super::TYPE_ID_PARAMS.contains(&def_fn.attributes()[idx].name.as_str())
                 {
                     self.emit_type_slot(w, v)?;
+                } else if let Some(code) = (idx < def_fn.attributes().len()
+                    && super::TYPE_ID_PARAMS.contains(&def_fn.attributes()[idx].name.as_str())
+                    && rust_type(&def_fn.attributes()[idx].typedef, &Context::Argument) == "i64")
+                    .then(|| self.type_id_code(v, "i64"))
+                    .flatten()
+                {
+                    // A plain `integer` parameter that takes a type id (`hash_sorted(h, tp)`).
+                    write!(w, "{code}")?;
                 } else if param_is_narrow {
                     self.emit_i32_slot(w, v)?;
                 } else {
@@ -1215,6 +1223,16 @@ impl Output<'_> {
                 {
                     let inner = self.generate_expr_buf(&vals[a_nr])?;
                     res = replace_placeholder(&res, &name, &format!("(&*({inner}))"));
+                    continue;
+                }
+                // A definition number (`OpConstRef(d_nr)`) is the program's (`def_lit_as`).
+                if a.name == "d_nr"
+                    && let Value::Int(n) = vals[a_nr].unspan()
+                    && let Ok(d) = u32::try_from(*n)
+                    && rust_type(&a.typedef, &Context::Result) == "i64"
+                {
+                    let lit = self.def_lit_as(d, "i64");
+                    res = replace_placeholder(&res, &name, &format!("({lit})"));
                     continue;
                 }
                 // A constant type id (`TYPE_ID_PARAMS`) is written by `type_lit_as`, at the

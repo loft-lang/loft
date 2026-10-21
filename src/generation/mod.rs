@@ -742,7 +742,42 @@ enum PackageLink {
 /// @PLN199 G0a — the operator parameters that carry a type id (`OpDatabase(pos, db_tp)`,
 /// `OpNewRecord(data, parent_tp, fld)`, …): the `default/*.loft` spelling of one.  An
 /// argument at such a parameter is written through `Output::type_lit`.
-pub(crate) const TYPE_ID_PARAMS: [&str; 4] = ["tp", "db_tp", "parent_tp", "enum_tp"];
+pub(crate) const TYPE_ID_PARAMS: [&str; 6] =
+    ["tp", "db_tp", "parent_tp", "enum_tp", "struct_kt", "kt"];
+
+/// @PLN199 G0b-2 — the bits of such an argument that are flags rather than the id
+/// (`keys::COPY_FREE_SOURCE`, `keys::COPY_FRESH_DEST`, `allocation::CLEAR_KEYED_VIEW`): a type
+/// id stays below them.
+pub(crate) const TYPE_ID_FLAGS: u16 = 0xC000;
+
+/// @PLN199 G0b-2 — the ids a library artifact's code reads from its tables, in the order the
+/// code first named them: `types[k]` is the type `__tid(k)` stands for, `fns[k]` the function
+/// `__fid(k)` does, both in the numbering of the program the artifact was generated in.
+#[derive(Default)]
+pub struct SharedIds {
+    pub types: Vec<u16>,
+    type_at: HashMap<u16, usize>,
+    pub fns: Vec<u32>,
+    fn_at: HashMap<u32, usize>,
+}
+
+impl SharedIds {
+    /// The table position of type `tp`, added at its first use.
+    pub fn type_slot(&mut self, tp: u16) -> usize {
+        *self.type_at.entry(tp).or_insert_with(|| {
+            self.types.push(tp);
+            self.types.len() - 1
+        })
+    }
+
+    /// The table position of function `d_nr`, added at its first use.
+    pub fn fn_slot(&mut self, d_nr: u32) -> usize {
+        *self.fn_at.entry(d_nr).or_insert_with(|| {
+            self.fns.push(d_nr);
+            self.fns.len() - 1
+        })
+    }
+}
 
 /// Use this to drive Rust code generation from a compiled loft program.
 /// It bundles the read-only compile-time data with the mutable emission state
@@ -1670,6 +1705,10 @@ pub struct Output<'a> {
     /// (`native_lib::emit_program`): its `#c` symbols resolve at first call
     /// ([`PackageLink::Library`]).
     pub library_unit: bool,
+    /// @PLN199 G0b-2 — set for a `use`d library's shared-store cdylib: the type ids and
+    /// function numbers its code names, each read from a table the host fills when it loads
+    /// the artifact (`__tid(k)` / `__fid(k)`) rather than written as this program's literal.
+    pub shared_ids: Option<std::cell::RefCell<SharedIds>>,
     /// @PLN26 phase 1 — `#native` symbols exported by 2+ packages.  A *reachable*
     /// call to one is rejected at native codegen (the flat C-ABI namespace can't
     /// disambiguate); two packages sharing an UNUSED symbol still build.  Computed
@@ -2637,6 +2676,7 @@ impl<'a> Output<'a> {
             native_cabi: false,
             native_bind: false,
             library_unit: false,
+            shared_ids: None,
             native_collisions: data
                 .native_symbol_collisions()
                 .into_iter()
@@ -12134,6 +12174,28 @@ extern crate loft;"
         vdb_prologue.push_str(&ps_prologue);
         let sw_prologue = self.sw_prologue(def_nr);
         vdb_prologue.push_str(&sw_prologue);
+        // @PLN199 G0b-2 — a function value handed to a library artifact's function takes the
+        // artifact's own number on entry (`__norm`), so a dispatch on it matches a constant arm.
+        if self.shared_ids.is_some() {
+            use std::fmt::Write as _;
+            for (i, a) in def.attributes().iter().enumerate() {
+                if matches!(a.typedef.base(), Type::Function(..))
+                    && rust_type(&a.typedef, &Context::Argument) == "(u32, DbRef)"
+                    && !self.sw_param_dropped(def_nr, i)
+                    && matches!(
+                        self.ps_param(def_nr, i),
+                        decode_structure_emit::PsParam::Same
+                    )
+                    && matches!(
+                        self.apart_twin_param(def_nr, i),
+                        apart_emit::TwinParam::Same
+                    )
+                {
+                    let name = sanitize(&a.name);
+                    let _ = write!(vdb_prologue, "\n  var_{name}.0 = __norm(var_{name}.0);");
+                }
+            }
+        }
         // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
         // every free the body names of it skips.
         if self.vr_twin

@@ -769,7 +769,11 @@ impl OpEmitter for NewRecordEmitter {
                 crate::rewrite_census::fired("R-FieldAppend", 1);
                 write!(ctx.w, "stores.field_vector_append::<{}>(&(", !no_prefill)?;
                 ctx.emit(&args[0])?;
-                return write!(ctx.w, "), {pos}, {size}, {elem})");
+                return write!(
+                    ctx.w,
+                    "), {pos}, {size}, {})",
+                    ctx.output.type_lit_bare(elem, "u16")
+                );
             }
             // `@FR-R-FieldAppend`'s bare clause — `v += [x]` on a plain vector: the slot
             // `record_new`'s first path claims, its prefill one zero fill where the
@@ -785,7 +789,11 @@ impl OpEmitter for NewRecordEmitter {
                     zero && !no_prefill
                 )?;
                 ctx.emit(&args[0])?;
-                return write!(ctx.w, "), {size}, {elem})");
+                return write!(
+                    ctx.w,
+                    "), {size}, {})",
+                    ctx.output.type_lit_bare(elem, "u16")
+                );
             }
             // @PLN157 § V-y (`@FR-R-CompleteWrite`) — an UNFUSED mint whose every group
             // in this function covers the element type calls the no-prefill twin; the

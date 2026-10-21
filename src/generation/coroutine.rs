@@ -2000,6 +2000,7 @@ impl Output<'_> {
                     .flatten()
                     .filter(|_| crate::coroutine_layout::yield_handed_over(yield_tp))
                 {
+                    let tp = self.type_lit_bare(tp, "i32");
                     writeln!(
                         w,
                         "            return loft::codegen_runtime::coroutine_hand_out(cell, v, {tp});"
@@ -2714,9 +2715,15 @@ impl Output<'_> {
             } else {
                 writeln!(w, "                let _f: (u32, DbRef) = ({yield_code});")?;
             }
+            // @PLN199 G0b-2 — a slot image another frame reads holds the program's number.
+            let num = if self.shared_ids.is_some() {
+                "__to_host(_f.0)"
+            } else {
+                "_f.0"
+            };
             writeln!(
                 w,
-                "                dest[0] = (_f.0 as i64) | (((_f.1.store_nr as u64) as i64) << 32);"
+                "                dest[0] = ({num} as i64) | (((_f.1.store_nr as u64) as i64) << 32);"
             )?;
             writeln!(
                 w,
@@ -2773,8 +2780,16 @@ impl Output<'_> {
         } else {
             format!("{{ let _f: (u32, DbRef) = ({val_code}); ")
         };
-        out += "__values.push((_f.0 as i64) | (((_f.1.store_nr as u64) as i64) << 32)); \
-                __values.push((_f.1.rec as i64) | ((_f.1.pos as i64) << 32)); ";
+        let num = if self.shared_ids.is_some() {
+            "__to_host(_f.0)"
+        } else {
+            "_f.0"
+        };
+        let _ = write!(
+            out,
+            "__values.push(({num} as i64) | (((_f.1.store_nr as u64) as i64) << 32)); \
+             __values.push((_f.1.rec as i64) | ((_f.1.pos as i64) << 32)); "
+        );
         let mut inner_scopes = std::collections::HashSet::new();
         val.walk(&mut |n| {
             if let Value::Block(b) = n {
@@ -2798,6 +2813,7 @@ impl Output<'_> {
     /// are forgotten, as the lazy path forgets them, so neither the next iteration nor the
     /// generator's tail touches that store again.
     pub(super) fn eager_snapshot_push(&self, val: &Value, val_code: &str, tp: u16) -> String {
+        let tp = self.type_lit_bare(tp, "i32");
         use std::fmt::Write as _;
         let yield_tp = match self.data.def(self.def_nr).returned().base() {
             Type::Iterator(inner, _) => (**inner).clone(),
@@ -3483,6 +3499,7 @@ impl Output<'_> {
                         "            if v == {sub_exhaust} && __sub.done() {{ break; }}"
                     )?;
                     if let Some(tp) = snapshot_tp {
+                        let tp = self.type_lit_bare(tp, "i32");
                         // The sub-generator hands each value over (`(G-Own)`), so this
                         // buffer snapshots it and releases the handed store; a type not
                         // handed over stays the sub-generator's, which frees it when it is

@@ -10,6 +10,10 @@ use crate::ir_node::{IrBlock, IrNode};
 use std::io::Write;
 
 use super::text::count_format_ops;
+
+/// @PLN199 G0b-2 — the bit that marks a function number as a library artifact's own
+/// ([`Output::fn_lit_as`]); a program never numbers a definition this high.
+pub(crate) const FN_LOCAL: u32 = 0x8000_0000;
 use super::{
     Output, block_needs_i64_widen, block_tail_cast, default_native_value, default_native_value_in,
     narrow_int_cast, sanitize,
@@ -470,6 +474,11 @@ impl Output<'_> {
                 // P215: project the d_nr from a fn-ref var's (u32, DbRef) tuple — through
                 // the slot's place, which is a struct field in a generator (loft#1587).
                 let place = self.var_place(node.fnref_dnr_var());
+                // @PLN199 G0b-2 — the number a store holds is the program's: a library
+                // artifact's own numbering stays in its code (`__to_host`).
+                if self.shared_ids.is_some() {
+                    return write!(w, "(__to_host({place}.0) as i64)");
+                }
                 return write!(w, "({place}.0 as i64)");
             }
             // Plan-07 — Span is transparent in native emit.
@@ -2042,7 +2051,14 @@ impl Output<'_> {
             // script handed in names a callee this cdylib does not carry, and the interpreter
             // that loaded it runs that callee (`HostTable::call_ref`).  An absent fn-ref
             // reaches the interpreter's own `@FR-L-FnAbsent` guard there.
-            Self::write_upcall_arm(w, &param_types, &ret_type, &place, &closure_expr)?;
+            // A value that reaches this arm is no function of this artifact's, but a value
+            // the program numbered, and it leaves in the program's numbering (`__to_host`).
+            let callee = if self.shared_ids.is_some() {
+                format!("__to_host({place}.0)")
+            } else {
+                format!("{place}.0")
+            };
+            Self::write_upcall_arm(w, &param_types, &ret_type, &callee, &closure_expr)?;
         } else if let Some(fields) = &value_fields {
             write!(
                 w,
@@ -2078,7 +2094,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         param_types: &[Type],
         ret_type: &Type,
-        place: &str,
+        callee: &str,
         closure_expr: &str,
     ) -> std::io::Result<()> {
         let n = param_types.len();
@@ -2101,7 +2117,7 @@ impl Output<'_> {
             "]; let __uc = loft::native_lib::LibArg {{ dbref: {closure_expr}, \
              ..loft::native_lib::LibArg::ZERO }}; \
              let mut __ur = loft::native_lib::LibArg::ZERO; \
-             unsafe {{ (__host().call_ref)(cell.get(), {place}.0, &raw const __uc, __ua.as_ptr(), \
+             unsafe {{ (__host().call_ref)(cell.get(), {callee}, &raw const __uc, __ua.as_ptr(), \
              {n}, &raw mut __ur) }}; "
         )?;
         let read = match ret_type.base() {
@@ -2225,21 +2241,50 @@ impl Output<'_> {
 
     /// [`Self::type_lit`] with `flags` or-ed into the bits above the id (`0x8000`, a call
     /// that frees its source).
-    #[expect(
-        clippy::unused_self,
-        reason = "a library artifact reads its ids through `self` (@PLN199 G0b-2)"
-    )]
-    pub(super) fn type_lit_flagged(&self, tp: u16, flags: i32) -> String {
-        format!("{}_i32", i32::from(tp) | flags)
+    pub(super) fn type_lit_flagged(&self, tp: u16, flags: u16) -> String {
+        self.type_lit_as(tp | flags, "i32")
+    }
+
+    /// The table position a library artifact reads type `tp` from, or `None` where the
+    /// literal is written: outside one, and for a base type or the no-type id, which every
+    /// program numbers alike.
+    fn shared_type_slot(&self, tp: u16) -> Option<usize> {
+        let ids = self.shared_ids.as_ref()?;
+        (tp >= crate::database::BASE_TYPES && tp != u16::MAX)
+            .then(|| ids.borrow_mut().type_slot(tp))
+    }
+
+    /// The table position a library artifact reads function `d_nr` from, or `None`.
+    fn shared_fn_slot(&self, d_nr: u32) -> Option<usize> {
+        let ids = self.shared_ids.as_ref()?;
+        (d_nr != u32::MAX).then(|| ids.borrow_mut().fn_slot(d_nr))
     }
 
     /// [`Self::type_lit`] at the integer type `ty` a `#rust` template's parameter has.
-    #[expect(
-        clippy::unused_self,
-        reason = "a library artifact reads its ids through `self` (@PLN199 G0b-2)"
-    )]
+    ///
+    /// The two top bits of an operator's `tp` are flags, not part of the id
+    /// ([`super::TYPE_ID_FLAGS`]: `COPY_FREE_SOURCE`, `COPY_FRESH_DEST`, `CLEAR_KEYED_VIEW`), so a
+    /// table read stands for the id alone and the flags are or-ed back onto it.
     pub(super) fn type_lit_as(&self, tp: u16, ty: &str) -> String {
-        format!("{tp}_{ty}")
+        let flags = tp & super::TYPE_ID_FLAGS;
+        match self
+            .shared_type_slot(tp & !super::TYPE_ID_FLAGS)
+            .filter(|_| tp != u16::MAX)
+        {
+            Some(k) if flags == 0 && ty == "u16" => format!("__tid({k})"),
+            Some(k) if flags == 0 => format!("(__tid({k}) as {ty})"),
+            Some(k) => format!("((__tid({k}) | {flags}) as {ty})"),
+            None => format!("{tp}_{ty}"),
+        }
+    }
+
+    /// [`Self::type_lit`] unsuffixed, where the callee's `ty` parameter types the literal.
+    pub(super) fn type_lit_bare(&self, tp: u16, ty: &str) -> String {
+        if self.shared_ids.is_some() {
+            self.type_lit_as(tp, ty)
+        } else {
+            format!("{tp}")
+        }
     }
 
     /// @PLN199 G0b-1 — the literal a function number (a definition's `d_nr`, the first half
@@ -2251,17 +2296,40 @@ impl Output<'_> {
     }
 
     /// [`Self::fn_lit`] at the integer type `ty` the surrounding code casts from.
-    #[expect(
-        clippy::unused_self,
-        reason = "a library artifact reads its ids through `self` (@PLN199 G0b-2)"
-    )]
+    ///
+    /// In a library artifact a function it carries is numbered by its own table position,
+    /// marked ([`FN_LOCAL`]): `FN_LOCAL | k` is a constant, so a dispatch on a value made here
+    /// folds as it does on a literal, where a table read would not.  A value takes the
+    /// program's number where it leaves the artifact's code (`__to_host`) and the local one
+    /// where it enters (`__norm`).
     pub(super) fn fn_lit_as(&self, d_nr: u32, ty: &str) -> String {
-        format!("{d_nr}_{ty}")
+        match self.shared_fn_slot(d_nr) {
+            Some(k) if ty == "u32" => Self::fn_local(k),
+            Some(k) => format!("({} as {ty})", Self::fn_local(k)),
+            None => format!("{d_nr}_{ty}"),
+        }
+    }
+
+    /// The program's number of definition `d_nr` that is no function value — a constant
+    /// `OpConstRef` reads — at integer type `ty`: a library artifact reads it from its table.
+    pub(super) fn def_lit_as(&self, d_nr: u32, ty: &str) -> String {
+        match self.shared_fn_slot(d_nr) {
+            Some(k) => format!("(__fid({k}) as {ty})"),
+            None => format!("{d_nr}_{ty}"),
+        }
+    }
+
+    /// The constant a library artifact numbers its `k`-th function by.
+    fn fn_local(k: usize) -> String {
+        format!("{:#x}_u32", FN_LOCAL | u32::try_from(k).unwrap_or(0))
     }
 
     /// The pattern of the `match` arm that dispatches a function value to function `d_nr`.
     pub(super) fn fn_arm(&self, d_nr: u32) -> String {
-        self.fn_lit(d_nr)
+        match self.shared_fn_slot(d_nr) {
+            Some(k) => Self::fn_local(k),
+            None => self.fn_lit(d_nr),
+        }
     }
 
     /// The code of `v` when it is a bare function number — an integer constant where a
@@ -2288,6 +2356,15 @@ impl Output<'_> {
         match self.fn_number_code(v) {
             Some(code) => write!(w, "{code}"),
             None => self.output_code_inner(w, v),
+        }
+    }
+
+    /// The code of `v` when it is a constant type id, written by [`Self::type_lit_as`] at `ty`
+    /// (`i64` where a parameter is a plain `integer`); `None` for anything else.
+    pub(super) fn type_id_code(&self, v: &Value, ty: &str) -> Option<String> {
+        match v.unspan() {
+            Value::Int(tp) => u16::try_from(*tp).ok().map(|tp| self.type_lit_as(tp, ty)),
+            _ => None,
         }
     }
 
@@ -3811,10 +3888,17 @@ impl Output<'_> {
         if adopt_delivery {
             self.in_adopt_delivery += 1;
         }
+        // @PLN199 G0b-2 — a function number read from a store is the program's; a library
+        // artifact takes its own for the functions it carries (`__norm`).
+        let (norm_open, norm_close) = if self.shared_ids.is_some() {
+            ("__norm(", ")")
+        } else {
+            ("", "")
+        };
         if bl.name == "fn_ref_field_read" && bl.operators.len() == 2 {
-            write!(w, "((")?;
+            write!(w, "({norm_open}(")?;
             self.output_code_inner(w, &bl.operators[0])?;
-            write!(w, ") as u32, ")?;
+            write!(w, ") as u32{norm_close}, ")?;
             self.output_code_inner(w, &bl.operators[1])?;
             write!(w, ")")?;
             return Ok(());
@@ -3827,9 +3911,9 @@ impl Output<'_> {
         // closure.
         if bl.name == "fn_ref_field_read" && bl.operators.len() > 2 {
             let last = bl.operators.len() - 1;
-            write!(w, "{{ let __fn_d = (")?;
+            write!(w, "{{ let __fn_d = {norm_open}(")?;
             self.output_code_inner(w, &bl.operators[0])?;
-            write!(w, ") as u32; ")?;
+            write!(w, ") as u32{norm_close}; ")?;
             for op in &bl.operators[1..last] {
                 self.output_code_inner(w, op)?;
                 write!(w, "; ")?;
@@ -3892,8 +3976,12 @@ impl Output<'_> {
             self.indent(w)?;
             writeln!(
                 w,
-                "if var_{buf}.store_nr == u16::MAX {{ var_{buf} = stores.place_record_in(&var_{vdb}, {}u16); }} //@PLN157 § V-j placed buffer",
-                pair.buf_tp
+                "if var_{buf}.store_nr == u16::MAX {{ var_{buf} = stores.place_record_in(&var_{vdb}, {}); }} //@PLN157 § V-j placed buffer",
+                if self.shared_ids.is_some() {
+                    self.type_lit_u16(pair.buf_tp)
+                } else {
+                    format!("{}u16", pair.buf_tp)
+                }
             )?;
             self.active_move_vars.push(pair.loop_var);
         }

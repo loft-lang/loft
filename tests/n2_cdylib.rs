@@ -230,23 +230,29 @@ fn build_shared_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(
     p.parse_str(lib_src, "lib", false);
     loft::scopes::check(&mut p.data, &mut p.database);
 
+    // `fn_name` may list several functions, comma-separated.
     let shared = loft::native_gate::shared_store_dispatchable(&p.data);
-    let fn_nr = p.data.def_nr(&format!("n_{fn_name}"));
-    assert!(
-        shared.contains(&fn_nr),
-        "{fn_name} should be shared-store-dispatchable"
-    );
-    let export: std::collections::HashSet<u32> = std::iter::once(fn_nr).collect();
+    let mut export = std::collections::HashSet::new();
+    for name in fn_name.split(',') {
+        let fn_nr = p.data.def_nr(&format!("n_{name}"));
+        assert!(
+            shared.contains(&fn_nr),
+            "{name} should be shared-store-dispatchable"
+        );
+        export.insert(fn_nr);
+    }
 
     let mut state = loft::state::State::new(p.database);
     loft::compile::byte_code(&mut state, &mut p.data);
 
     let src = loft::native_lib::generate_shared_cdylib_lib_rs(&p.data, &state.database, &export);
-    let want = format!("pub extern \"C\" fn loft_shared_n_{fn_name}");
-    assert!(
-        src.contains(&want),
-        "the shared bridge for {fn_name} must be present"
-    );
+    for name in fn_name.split(',') {
+        let want = format!("pub extern \"C\" fn loft_shared_n_{name}");
+        assert!(
+            src.contains(&want),
+            "the shared bridge for {name} must be present"
+        );
+    }
 
     let so = compile_cdylib(&src, stem, &tmp, &rlib, &deps);
     Some((so, tmp))
@@ -1426,4 +1432,61 @@ fn auto_native_vector_return_uses_caller_dest() {
     );
 
     let _ = fa::remove_dir_all(&root);
+}
+
+/// @PLN199 G0b-2 — a library artifact names its types and functions by key, not by the
+/// numbers of the program it was generated in.  The artifact is built from the library
+/// alone; the program that loads it declares three structs and two functions FIRST, so `Pt`,
+/// its vector, `inc` and `dbl` take other numbers there.  Both carry the library's
+/// declarations, as a program that `use`s a library parses them.  With literals the artifact
+/// mints its vector and records under the types the FIRST program gave those numbers, and
+/// the host reads them back as its own `Pt`; and a function value it answers (`pick`) names
+/// the function the first program gave that number (falsified with `LOFT_NO_LIB_IDS=1`).
+/// `mix(4)`: i=0 inc(0)=1, i=1 dbl(1)=2, i=2 inc(2)=3, i=3 dbl(3)=6, each `Pt { x, y: i }`.
+#[test]
+fn a_library_artifact_runs_in_a_program_that_numbers_it_differently() {
+    let _lock = TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    const DECLS: &str = "pub struct Pt { x: integer, y: integer }\n\
+                         fn inc(a: integer) -> integer { a + 1 }\n\
+                         fn dbl(a: integer) -> integer { a * 2 }\n";
+    let lib = format!(
+        "{DECLS}pub fn mix(n: integer) -> vector<Pt> {{\n\
+         \x20   v: vector<Pt> = [];\n\
+         \x20   for i in 0..n {{\n\
+         \x20       f = if i % 2 == 0 {{ inc }} else {{ dbl }};\n\
+         \x20       v += [Pt {{ x: f(i), y: i }}];\n\
+         \x20   }}\n\
+         \x20   v\n\
+         }}\n\
+         pub fn pick(i: integer) -> fn(integer) -> integer {{ if i == 0 {{ inc }} else {{ dbl }} }}"
+    );
+    let Some((so, tmp)) = build_shared_lib_cdylib("loft_n2_renumbered", &lib, "mix,pick") else {
+        return;
+    };
+    let source = format!(
+        "struct Before1 {{ a: text, b: float, c: boolean }}\n\
+         struct Before2 {{ d: vector<Before1>, e: integer, f: integer, g: float }}\n\
+         struct Before3 {{ h: Before2 }}\n\
+         fn before1(a: integer) -> integer {{ a - 1 }}\n\
+         fn before2(a: integer) -> integer {{ a - 2 }}\n\
+         {DECLS}\
+         pub fn mix(n: integer) -> vector<Pt>;\n\
+         #native \"loft_shared_n_mix\"\n\
+         pub fn pick(i: integer) -> fn(integer) -> integer;\n\
+         #native \"loft_shared_n_pick\"\n\
+         fn main() {{\n\
+         \x20   assert(before1(3) + before2(3) == 3, \"the shifting functions run\");\n\
+         \x20   v = mix(4);\n\
+         \x20   xs = v[0].x * 1000 + v[1].x * 100 + v[2].x * 10 + v[3].x;\n\
+         \x20   ys = v[0].y * 1000 + v[1].y * 100 + v[2].y * 10 + v[3].y;\n\
+         \x20   assert(len(v) == 4 && xs == 1236 && ys == 123, \"mix(4) gave {{len(v)}} {{xs}} {{ys}}\");\n\
+         \x20   f = pick(0);\n\
+         \x20   g = pick(1);\n\
+         \x20   assert(f(5) == 6 && g(5) == 10, \"pick gave {{f(5)}} {{g(5)}}\")\n\
+         }}\n"
+    );
+    run_shared_dispatch(&so, "", &source);
+    let _ = fa::remove_dir_all(&tmp);
 }

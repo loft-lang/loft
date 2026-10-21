@@ -268,9 +268,16 @@ fn tuple_arg_prep(ctx: &EmitCtx<'_, '_>, fn_d_nr: u32, elem_size: i32) -> (Strin
     // closure.  Mirrors the working for-loop unpack
     // (`tests/generated/issues_p4d_a2_vector_fn_ref_for_loop.rs`).
     if matches!(elem_attr.typedef, Type::Function(..)) {
-        let prep = "let _ts = unsafe { &*cell.get() }.store(&elm); \
-                    let _p = (_ts.get_i32_raw(elm.rec, elm.pos) as u32, DbRef::NULL); "
-            .to_string();
+        // @PLN199 G0b-2 — a library artifact numbers its own functions (`__norm`).
+        let (open, close) = if ctx.output.shared_ids.is_some() {
+            ("__norm(", ")")
+        } else {
+            ("", "")
+        };
+        let prep = format!(
+            "let _ts = unsafe {{ &*cell.get() }}.store(&elm); \
+             let _p = ({open}_ts.get_i32_raw(elm.rec, elm.pos) as u32{close}, DbRef::NULL); "
+        );
         return (prep, "_p");
     }
     // A by-value scalar worker parameter (e.g. `fn(x: integer)` over a
@@ -388,6 +395,10 @@ impl OpEmitter for ParallelForEmitter {
             // return_size — the storage type the runtime deep-copies each
             // worker result as (struct/enum def, or a vector's wrapper).
             let (struct_size, known_type) = heap_ref_kt(ctx, &worker_ret);
+            let known_type = u16::try_from(known_type).map_or_else(
+                |_| known_type.to_string(),
+                |t| ctx.output.type_lit_bare(t, "i32"),
+            );
             write!(ctx.w, "{struct_size}, {known_type}, ")?;
         } else {
             ctx.emit_param_slot(2, &args[2])?;
@@ -562,6 +573,10 @@ impl OpEmitter for ParallelQueueEmitter {
         write!(ctx.w, ", ")?;
         if shape == ClosureShape::HeapRef {
             let (struct_size, known_type) = heap_ref_kt(ctx, &worker_ret);
+            let known_type = u16::try_from(known_type).map_or_else(
+                |_| known_type.to_string(),
+                |t| ctx.output.type_lit_bare(t, "i32"),
+            );
             write!(ctx.w, "{struct_size}, {known_type}, ")?;
         } else {
             ctx.emit_param_slot(2, &args[2])?;

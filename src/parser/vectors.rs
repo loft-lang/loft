@@ -6290,22 +6290,34 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// that crashes when the element is later called or freed (#263). So each source
     /// shape is projected to its d_nr:
     ///
-    /// * `Value::Int(d)` — what `parse_fn_ref` lowers a bare function name to. Already the
-    ///   bare d_nr; write it.
     /// * `Value::Var(v)` — a fn-ref local. `FnRefDnr(v)` projects the d_nr via `OpVarInt`.
-    /// * `Value::Call(…)` — a call that returns a fn-ref. Materialise it into a temp
-    ///   first, then project that; the temp is marked `skip_free` because its closure half
-    ///   is the null sentinel and scope-exit must never dereference it.
+    /// * `Value::Int(d)` — what `parse_fn_ref` lowers a bare function name to — and
+    ///   `Value::Call(…)` — a call that returns a fn-ref.  Materialised into a temp first,
+    ///   then projected; the temp is marked `skip_free` because its closure half is the null
+    ///   sentinel and scope-exit must never dereference it.
     ///
     /// Anything else is handed back untouched, which is what the struct-field path
     /// (`emit_fn_ref_field_write`) and the #247 guard are there to judge.
+    /// @PLN199 G0b-2 — `OpSetInt4(at, pos, d)` for the constant function `d` of type `fn_tp`:
+    /// through a temporary, as [`Self::fn_ref_slot_dnr`] does, so the write is the
+    /// variable's projection (`FnRefDnr`), where a library artifact writes the program's
+    /// number of a function it numbers itself.
+    pub(crate) fn fn_number_write(&mut self, at: Value, pos: Value, d: i32, fn_tp: &Type) -> Value {
+        let (dnr, mut ops) = self.fn_ref_slot_dnr(&Value::Int(d), fn_tp);
+        ops.push(self.cl("OpSetInt4", &[at, pos, dnr]));
+        v_block(ops, Type::Void, "fn_number_write")
+    }
+
     pub(crate) fn fn_ref_slot_dnr(&mut self, src: &Value, in_t: &Type) -> (Value, Vec<Value>) {
         match src.unspan() {
-            Value::Int(_) => (src.clone(), Vec::new()),
             Value::Var(v) if matches!(self.vars.tp(*v), Type::Function(..)) => {
                 (Value::FnRefDnr(*v), Vec::new())
             }
-            Value::Call(_, _) => {
+            // A named function (`Int(d_nr)`) goes through a temporary as a call result does,
+            // so the store write is the variable's projection: a library artifact numbers
+            // its own functions, and the projection is where it writes the program's
+            // number instead (@PLN199 G0b-2).
+            Value::Int(_) | Value::Call(_, _) => {
                 let fn_type = if let Type::Function(params, ret, _, consts) = in_t {
                     Type::Function(params.clone(), ret.clone(), Deps::none(), *consts)
                 } else {

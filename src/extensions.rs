@@ -987,6 +987,43 @@ mod impl_symbol_tests {
     }
 }
 
+/// @PLN199 C0 — every library cdylib receives the host's table before any of its bridges can
+/// be called.  Idempotent: the cdylib keeps the first table it is handed.
+/// @PLN199 G0b-2 — and the numbers this program gives the types and functions its code names,
+/// by key.  A library that names one this program lacks refuses, and leaves the search: its
+/// functions are not wired, and say so.
+#[cfg(feature = "native-extensions")]
+fn init_library_cdylibs(state: &crate::state::State, data: &crate::data::Data) {
+    type InitFn =
+        unsafe extern "C" fn(*const crate::native_lib::HostTable, *const std::ffi::c_void) -> u32;
+    let ids = crate::lib_ids::HostIds::new(data, &state.database);
+    let mut refused = Vec::new();
+    for (lib, init) in crate::c_libs::dlsym_in_each("loft_shared_init") {
+        let init: InitFn = unsafe { std::mem::transmute(init) };
+        let accepted = unsafe {
+            init(
+                &raw const crate::native_lib::HOST_TABLE,
+                (&raw const ids).cast::<std::ffi::c_void>(),
+            )
+        };
+        if accepted != 1 {
+            refused.push(lib);
+            match ids.take_missing() {
+                Some(key) => eprintln!(
+                    "loft: a compiled library names `{key}`, which this program does not \
+                     have; it is not used"
+                ),
+                None => eprintln!(
+                    "loft: a compiled library was built for a different loft; it is not used"
+                ),
+            }
+        }
+    }
+    if !refused.is_empty() {
+        crate::c_libs::refuse_loaded(refused);
+    }
+}
+
 /// @PLN11 Arc N — wire the **shared-store** bridge dispatchers.  For every
 /// `#native "loft_shared_…"` definition (the marker for an auto-generated
 /// shared-store bridge), resolve the bridge symbol from the loaded cdylibs via
@@ -996,14 +1033,7 @@ mod impl_symbol_tests {
 /// they handle disjoint symbol sets, `wire_native_fns` skips `loft_shared_…`).
 #[cfg(feature = "native-extensions")]
 pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::data::Data) {
-    // @PLN199 C0 — every library cdylib receives the host's table before any of its bridges
-    // can be called.  Idempotent: the cdylib keeps the first table it is handed.
-    type InitFn = unsafe extern "C" fn(*const crate::native_lib::HostTable) -> u32;
-    for init in crate::c_libs::dlsym_in_each("loft_shared_init") {
-        let init: InitFn = unsafe { std::mem::transmute(init) };
-        let accepted = unsafe { init(&raw const crate::native_lib::HOST_TABLE) };
-        debug_assert_eq!(accepted, 1, "a library cdylib refused this host's table");
-    }
+    init_library_cdylibs(state, data);
     // Phase 1: collect resolvable shared bridges (no lock held).
     let mut wired: Vec<(String, u16, *const (), SharedSig)> = Vec::new();
     for d_nr in 0..data.definitions() {

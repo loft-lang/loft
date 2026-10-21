@@ -183,9 +183,14 @@ impl OpEmitter for OpFreeRefEmitter {
                     })
                     .collect();
                 for (buf, tp) in hosted {
+                    let tp_lit = if ctx.output.shared_ids.is_some() {
+                        ctx.output.type_lit_u16(tp)
+                    } else {
+                        format!("{tp}u16")
+                    };
                     write!(
                         ctx.w,
-                        "stores.free_record_in(&(var_{buf}), {tp}u16); var_{buf} = DbRef::NULL; "
+                        "stores.free_record_in(&(var_{buf}), {tp_lit}); var_{buf} = DbRef::NULL; "
                     )?;
                 }
             }
@@ -200,6 +205,11 @@ impl OpEmitter for OpFreeRefEmitter {
                 && let Some(pair) = ctx.output.move_pairs.get(v)
             {
                 let tp = pair.buf_tp;
+                let tp_lit = if ctx.output.shared_ids.is_some() {
+                    ctx.output.type_lit_u16(tp)
+                } else {
+                    format!("{tp}u16")
+                };
                 let name = super::super::sanitize(
                     ctx.output
                         .data
@@ -209,7 +219,7 @@ impl OpEmitter for OpFreeRefEmitter {
                 );
                 write!(
                     ctx.w,
-                    "{{ stores.free_record_in(&(var_{name}), {tp}u16); var_{name} = DbRef::NULL; }}"
+                    "{{ stores.free_record_in(&(var_{name}), {tp_lit}); var_{name} = DbRef::NULL; }}"
                 )?;
                 return Ok(());
             }
@@ -558,14 +568,21 @@ impl OpCopyRecordEmitter {
         ctx.output
             .write_tuple_fields(ctx.w, d, to, &format!("var_{name}"))?;
         if let Some(sub) = fresh.filter(|_| presence.is_some()) {
-            write!(ctx.w, "}} else {{ stores.set_default_value({sub}, &(")?;
+            write!(
+                ctx.w,
+                "}} else {{ stores.set_default_value({}, &(",
+                ctx.output.type_lit_bare(sub, "u16")
+            )?;
             ctx.emit(to)?;
             write!(ctx.w, ")); }} ")?;
         } else if presence.is_some() {
             write!(ctx.w, "}} else {{ stores.copy_null_into(&(")?;
             ctx.emit(to)?;
             write!(ctx.w, "), (")?;
-            ctx.emit(tp_val)?;
+            match ctx.output.type_id_code(tp_val, "i64") {
+                Some(code) => write!(ctx.w, "{code}")?,
+                None => ctx.emit(tp_val)?,
+            }
             write!(ctx.w, ") as u16); }} ")?;
         }
         write!(ctx.w, "}}")
@@ -604,7 +621,8 @@ impl OpCopyRecordEmitter {
         ctx.emit(&from)?;
         write!(
             ctx.w,
-            ".store_nr == u16::MAX {{ stores.set_default_value({sub}, &("
+            ".store_nr == u16::MAX {{ stores.set_default_value({}, &(",
+            ctx.output.type_lit_bare(sub, "u16")
         )?;
         ctx.emit(dst)?;
         write!(ctx.w, ")); }} else {{ ")?;

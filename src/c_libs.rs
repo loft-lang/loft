@@ -301,16 +301,44 @@ pub(crate) fn try_dlsym(name: &str) -> Option<(*const (), bool)> {
 /// [`try_dlsym`] answers only the first.  For a symbol each generated library carries under
 /// the same name (`loft_shared_init`, @PLN199 C0).
 #[cfg(feature = "native-extensions")]
-pub(crate) fn dlsym_in_each(name: &str) -> Vec<*const ()> {
+pub(crate) fn dlsym_in_each(name: &str) -> Vec<(usize, *const ())> {
     let libs = LOADED_LIBS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut sym_name = name.to_string();
     sym_name.push('\0');
     libs.iter()
-        .filter_map(|(lib, _)| unsafe { lib.get::<*const ()>(sym_name.as_bytes()) }.ok())
-        .map(|sym| *sym)
+        .enumerate()
+        .filter_map(|(i, (lib, _))| {
+            unsafe { lib.get::<*const ()>(sym_name.as_bytes()) }
+                .ok()
+                .map(|sym| (i, *sym))
+        })
         .collect()
+}
+
+/// Libraries taken out of the search because they refused this process (@PLN199 G0b-2: an
+/// artifact that names a type or function the program lacks).  Kept loaded — code of theirs
+/// may already have run — but never asked for a symbol again.
+#[cfg(feature = "native-extensions")]
+static REFUSED_LIBS: Mutex<Vec<(libloading::Library, bool)>> = Mutex::new(Vec::new());
+
+/// Take the libraries at `indices` (as [`dlsym_in_each`] numbered them) out of the search.
+#[cfg(feature = "native-extensions")]
+pub(crate) fn refuse_loaded(mut indices: Vec<usize>) {
+    let mut libs = LOADED_LIBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut refused = REFUSED_LIBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    indices.sort_unstable();
+    indices.dedup();
+    for i in indices.into_iter().rev() {
+        if i < libs.len() {
+            refused.push(libs.remove(i));
+        }
+    }
 }
 
 /// `dlopen` a C library a package declared with `[c] libs`, and

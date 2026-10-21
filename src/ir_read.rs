@@ -454,6 +454,14 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
             ur.field_int(stores, ds::USENAME_SOURCE) as u16,
         )
     }));
+    let labels = r.field_recvec(ds::DATA_SOURCE_LABELS, ds::USENAME_STRIDE);
+    data.set_source_labels((0..labels.len(stores)).map(|i| {
+        let lr = labels.get(i, stores);
+        (
+            lr.field_int(stores, ds::USENAME_SOURCE) as u16,
+            lr.field_str(stores, ds::USENAME_NAME).to_string(),
+        )
+    }));
     data.rebuild_indices();
     data.fn_fields_settled = data.definitions();
     data

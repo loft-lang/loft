@@ -981,7 +981,13 @@ pub fn plan(data: &Data, stores: &Stores, value_fns: &HashSet<u32>) -> ApartPlan
                 (
                     d,
                     ApLayout {
-                        rust: format!("Apart{d}"),
+                        // Named by the definition's source and name, which a program
+                        // around a library does not change, where its number does.
+                        rust: format!(
+                            "Apart_{}_{}",
+                            super::sanitize(&data.source_label(data.def(d).source)),
+                            super::sanitize(data.def(d).name())
+                        ),
                         rec_tp: *kt,
                         vec_tps: fields.iter().map(|f| f.1).collect(),
                         fields: fields

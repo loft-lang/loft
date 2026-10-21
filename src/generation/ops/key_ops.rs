@@ -177,7 +177,7 @@ impl OpEmitter for OpIterateEmitter {
         write!(ctx.w, ", ")?;
         ctx.emit_param_slot(1, &args[1])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_param_slot(2, &args[2])?;
+        ctx.emit_iter_arg(&args[1], &args[2])?;
         // Keys array — emitted inline because `Key` is its own
         // struct shape (not a Content wrapper).
         write!(ctx.w, ", &[")?;

@@ -101,6 +101,16 @@ impl EmitCtx<'_, '_> {
         }
     }
 
+    /// Emit the `arg` of an `OpIterate` / `OpStep` walking collection kind `on`: the index's
+    /// type id for an index (`on & 63 == 1`), the element size otherwise.
+    pub fn emit_iter_arg(&mut self, on: &Value, arg: &Value) -> io::Result<()> {
+        if matches!(on.unspan(), Value::Int(k) if k & 63 == 1) {
+            self.emit_type_slot(arg)
+        } else {
+            self.emit_i32_slot(arg)
+        }
+    }
+
     /// Emit a `Value` that the runtime helper takes as a `DbRef`.
     ///
     /// [`Self::emit`] renders a bare `Value::Null` as `()`, because it knows the value and

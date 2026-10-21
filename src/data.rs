@@ -5707,6 +5707,10 @@ pub struct Data {
     /// in a source's own file is never a private import there — adoption can leave a
     /// declaration under the `source` of the file that first NAMED it (@C98).
     source_files: HashMap<u16, crate::lexer::FileName>,
+    /// @PLN199 G0b-2 — the name each library source was loaded under (`use_add`): what a
+    /// library artifact names that source's types and functions by ([`Data::source_label`]),
+    /// because the source NUMBER depends on the order a program's `use`s load it in.
+    source_labels: HashMap<u16, String>,
     /// loft#788 — bare names that MORE THAN ONE import binds, and to different
     /// definitions: `(name, importing_source) → the losing def_nrs`.
     ///
@@ -6494,6 +6498,7 @@ impl Data {
             bare_uses: Vec::new(),
             private_imports: HashMap::new(),
             source_files: HashMap::new(),
+            source_labels: HashMap::new(),
             ambiguous: HashMap::new(),
             unknown_key_fields: Vec::new(),
             adopted_stubs: Vec::new(),
@@ -6782,6 +6787,25 @@ impl Data {
         self.use_names = pairs.into_iter().collect();
     }
 
+    /// Every library source with the name it was loaded under ([`Data::source_label`]),
+    /// sorted by source.
+    #[must_use]
+    pub(crate) fn source_label_pairs(&self) -> Vec<(u16, String)> {
+        let mut pairs: Vec<(u16, String)> = self
+            .source_labels
+            .iter()
+            .map(|(src, name)| (*src, name.clone()))
+            .collect();
+        pairs.sort();
+        pairs
+    }
+
+    /// Replace the source labels with a stored image's: like the `use` names, they are not
+    /// derivable from the definitions.
+    pub(crate) fn set_source_labels(&mut self, pairs: impl IntoIterator<Item = (u16, String)>) {
+        self.source_labels = pairs.into_iter().collect();
+    }
+
     #[must_use]
     pub fn get_source(&self, name: &str) -> u16 {
         if let Some(nr) = self.use_names.get(name) {
@@ -6946,7 +6970,25 @@ impl Data {
         // is the next free source after the reserved main slot.
         let n = self.use_names.len() as u16 + 1;
         self.use_names.insert(short.to_string(), n);
+        self.source_labels
+            .entry(n)
+            .or_insert_with(|| short.to_string());
         self.source = n;
+    }
+
+    /// @PLN199 G0b-2 — the program-independent name of `source`: `std` for the standard
+    /// library, `main` for the program, and a library's name as its `use` loaded it.
+    #[must_use]
+    pub fn source_label(&self, source: u16) -> String {
+        match source {
+            STD_SOURCE => "std".to_string(),
+            MAIN_SOURCE => "main".to_string(),
+            s => self
+                .source_labels
+                .get(&s)
+                .cloned()
+                .unwrap_or_else(|| format!("#{s}")),
+        }
     }
 
     /// @PLN22 Phase 3 — register an additional name (`use lib as alias`) for an

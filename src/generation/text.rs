@@ -145,7 +145,10 @@ impl Output<'_> {
         if let [target, source, tp] = vals {
             let target_expr = self.generate_expr_buf(target)?;
             let source_expr = self.generate_expr_buf(source)?;
-            let known_expr = self.generate_expr_buf(tp)?;
+            let known_expr = match self.type_id_code(tp, "i64") {
+                Some(code) => code,
+                None => self.generate_expr_buf(tp)?,
+            };
             write!(
                 w,
                 "{{ let _av_t = {target_expr}; let _av_s = {source_expr}; \

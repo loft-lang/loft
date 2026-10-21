@@ -361,8 +361,9 @@ pub(crate) const DATA_DEFINITIONS: u32 = 8; // vector<Definition>
 pub(crate) const DATA_IMPORTS: u32 = 12; // vector<AppliedImport> (loft#1359)
 pub(crate) const DATA_USE_NAMES: u32 = 16; // vector<UseName> (loft#1359)
 pub(crate) const DATA_TYPE_VAR_BOUNDS: u32 = 20; // vector<TypeVarBound>
+pub(crate) const DATA_SOURCE_LABELS: u32 = 24; // vector<UseName> (@PLN199 G0b-2)
 /// The root record's size in bytes.
-pub(crate) const DATA_STRIDE: u32 = 24;
+pub(crate) const DATA_STRIDE: u32 = 32;
 /// What a `Data` root CLAIMS: `Store::claim` counts 8-byte words and the block
 /// starts with an 8-byte header (the root's fields begin at byte 8), so a claim
 /// sized from the stride alone leaves the last field in the next block.
@@ -485,9 +486,9 @@ pub(crate) const DBTYPE_LINKED: u32 = 33;
 /// `Bundle { data: Data, types: vector<DbType> }` — the saved-bundle store root
 /// (D2a step 4): `Data` inlined at offset 0, the schema vector at `BUNDLE_TYPES`.
 pub(crate) const BUNDLE_DATA: u32 = 0;
-pub(crate) const BUNDLE_TYPES: u32 = 24; // right after the inlined 24-byte `Data`
+pub(crate) const BUNDLE_TYPES: u32 = 32; // right after the inlined 32-byte `Data`
 /// The bundle root's size in bytes, and its claim in words (see `DATA_ROOT_WORDS`).
-pub(crate) const BUNDLE_STRIDE: u32 = 32;
+pub(crate) const BUNDLE_STRIDE: u32 = 40;
 #[cfg(feature = "mmap")] // only `save_bundle` claims a bundle root
 pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
 
@@ -1565,6 +1566,7 @@ mod tests {
         assert_eq!(pos(ids.data, "imports"), DATA_IMPORTS);
         assert_eq!(pos(ids.data, "use_names"), DATA_USE_NAMES);
         assert_eq!(pos(ids.data, "type_var_bounds"), DATA_TYPE_VAR_BOUNDS);
+        assert_eq!(pos(ids.data, "source_labels"), DATA_SOURCE_LABELS);
         assert_eq!(u32::from(stores.size(ids.data)), DATA_STRIDE);
         assert_eq!(pos(ids.applied_import, "lib_source"), IMPORT_LIB_SOURCE);
         assert_eq!(pos(ids.applied_import, "into_source"), IMPORT_INTO_SOURCE);
