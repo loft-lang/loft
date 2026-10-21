@@ -1572,11 +1572,7 @@ fn cell_a_store_below_the_oldest_release_is_refused() {
             "3.0",
             "data_compatible_with = \"2.0\"\ndata_bridge = \"2.3\"\n",
         );
-        let body = if reader_types == V1 {
-            "  println(\"{len(s.items)}\");\n"
-        } else {
-            "  println(\"{len(s.items)}\");\n"
-        };
+        let body = "  println(\"{len(s.items)}\");\n";
         loft::file_access::write(
             dir.join("b.loft"),
             format!(

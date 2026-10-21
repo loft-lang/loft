@@ -674,15 +674,17 @@ impl Deriver<'_> {
         Some(at)
     }
 
-    /// The per-field plan of a record whose name did not change.
-    fn record(
+    /// The fields a record gains and loses, reported as changes; `false` when it does both in
+    /// one upgrade with no `upgrade` routine to carry a moved value (`@FR-L-Upgrade-Routine`),
+    /// which looks like a rename and is refused.
+    fn added_and_dropped(
         &mut self,
         name: &str,
         new_id: u16,
         of: &[LayoutField],
         nf: &[LayoutField],
         path: &str,
-    ) -> Option<Vec<FieldFrom>> {
+    ) -> bool {
         let data = |f: &LayoutField| f.is_data();
         let added: Vec<&str> = nf
             .iter()
@@ -712,7 +714,7 @@ impl Deriver<'_> {
                     added.join(", ")
                 ),
             );
-            return None;
+            return false;
         }
         for a in &added {
             self.map
@@ -724,6 +726,22 @@ impl Deriver<'_> {
                 .changes
                 .push(format!("{name}.{d} removed: its values are not kept"));
         }
+        true
+    }
+
+    /// The per-field plan of a record whose name did not change.
+    fn record(
+        &mut self,
+        name: &str,
+        new_id: u16,
+        of: &[LayoutField],
+        nf: &[LayoutField],
+        path: &str,
+    ) -> Option<Vec<FieldFrom>> {
+        if !self.added_and_dropped(name, new_id, of, nf, path) {
+            return None;
+        }
+        let data = |f: &LayoutField| f.is_data();
         // In each index group the FIRST member that has stored data is converted; the others
         // receive the same records through it.  Writing a default into a later member would
         // overwrite what filing through the first one put there.
