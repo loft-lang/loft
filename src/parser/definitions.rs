@@ -8241,6 +8241,7 @@ impl Parser {
         // drain after every whole-image load, which calls them for a converting load.
         if self.upgrade_fills {
             self.synth_upgrade_fills();
+            self.synth_upgrade_routines();
         }
         self.synth_upgrade_drain();
         // Cheap exit for the overwhelmingly common program: no `OpDrop` anywhere means no
@@ -8433,6 +8434,145 @@ impl Parser {
         self.data.def_used(f_nr);
     }
 
+    /// `@FR-L-Upgrade-Routine`, @PLN196 step 9 — every `upgrade` routine the program wrote:
+    /// `fn upgrade(from: Version, old: O, item: T)`, with `O` and `T` structs.  A store older
+    /// than the program's release runs it on each record of `T` it converts.  Several, one
+    /// per `T`, are an overload set.
+    #[must_use]
+    pub fn upgrade_routine_defs(data: &crate::data::Data) -> Vec<UpgradeRoutineDef> {
+        // One routine is a plain function; several are an overload set, which joins its
+        // members to `Version` as methods and is keyed by the bare name.
+        let mut candidates = data.overload_routines("upgrade");
+        let single = data.def_nr("n_upgrade");
+        if single != u32::MAX && !candidates.contains(&single) {
+            candidates.push(single);
+        }
+        let strukt = |t: &Type| match t {
+            Type::Reference(d, _) if data.def_type(*d) == DefType::Struct => Some(*d),
+            _ => None,
+        };
+        let mut out = Vec::new();
+        for r in candidates {
+            let def = data.def(r);
+            if def.def_type() != DefType::Function || !matches!(def.returned(), Type::Void) {
+                continue;
+            }
+            let [from, old, item] = def.attributes() else {
+                continue;
+            };
+            let (Some(version), Some(old), Some(item)) = (
+                strukt(&from.typedef),
+                strukt(&old.typedef),
+                strukt(&item.typedef),
+            ) else {
+                continue;
+            };
+            let fields: Vec<&str> = data
+                .def(version)
+                .attributes()
+                .iter()
+                .filter(|a| !matches!(a.typedef, Type::Routine(_)))
+                .map(|a| a.name.as_str())
+                .collect();
+            if data.def(version).name() != "Version" || fields != ["major", "minor", "patch"] {
+                continue;
+            }
+            out.push(UpgradeRoutineDef {
+                routine: r,
+                version,
+                old,
+                item,
+            });
+        }
+        out
+    }
+
+    /// The function an `upgrade` routine for struct `item` is called through:
+    /// `__upgrade_<Struct>`, by name through the host API as a fill function is.
+    #[must_use]
+    pub fn upgrade_routine_name(data: &crate::data::Data, item: u32) -> String {
+        let clean: String = data
+            .def(item)
+            .name()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        format!("__upgrade_{clean}")
+    }
+
+    /// Give each `upgrade` routine its wrapper ([`Self::upgrade_routine_name`]), which takes
+    /// the three records as the drain and the host hand them over and calls the routine.
+    pub(crate) fn synth_upgrade_routines(&mut self) {
+        for r in Self::upgrade_routine_defs(&self.data) {
+            self.synth_upgrade_routine(&r);
+        }
+    }
+
+    fn synth_upgrade_routine(&mut self, r: &UpgradeRoutineDef) {
+        let name = Self::upgrade_routine_name(&self.data, r.item);
+        let key = format!("n_{name}");
+        if self.data.def_nr(&key) != u32::MAX {
+            return;
+        }
+        let pos = *self.data.def(r.routine).position();
+        let f_nr = self.data.add_def(&key, &pos, DefType::Function);
+        self.data.set_returned(f_nr, Type::Void);
+        let params = [("from", r.version), ("old", r.old), ("item", r.item)]
+            .map(|(n, d)| (n, Type::Reference(d, crate::data::Deps::none())));
+        for (n, t) in &params {
+            let _ = self.data.add_attribute(&mut self.lexer, f_nr, n, t.clone());
+        }
+        let mut vars = Function::new(&name, pos.file.as_str());
+        let mut args = Vec::new();
+        for (n, t) in &params {
+            let v = vars.add_variable(n, t, &mut self.lexer);
+            vars.become_argument(v);
+            vars.defined(v);
+            args.push(Value::Var(v));
+        }
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = f_nr;
+        let call = Value::Call(r.routine, args);
+        self.finish_body(v_block(vec![call], Type::Void, "block"), Type::Void);
+        let built = std::mem::replace(&mut self.vars, outer_vars);
+        self.data.definitions[f_nr as usize].variables = built;
+        self.context = outer_context;
+        self.data.def_used(f_nr);
+        self.data.def_used(r.routine);
+    }
+
+    /// `fn __upgrade_register()`: tell the store layer each `upgrade` routine's types
+    /// (`store_upgrade_routine`), so the converting load it precedes knows which records owe
+    /// one.  `u32::MAX` when the program wrote none.
+    fn synth_upgrade_register(&mut self) -> u32 {
+        let routines = Self::upgrade_routine_defs(&self.data);
+        if routines.is_empty() {
+            return u32::MAX;
+        }
+        let native = self.data.def_nr("n_store_upgrade_routine");
+        let pos = *self.data.def(self.data.def_nr("n_store_load")).position();
+        let f_nr = self
+            .data
+            .add_def("n___upgrade_register", &pos, DefType::Function);
+        self.data.set_returned(f_nr, Type::Void);
+        let vars = Function::new("__upgrade_register", pos.file.as_str());
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = f_nr;
+        let tp = |d: u32| Value::Int(i32::from(self.data.def(d).known_type()));
+        let body: Vec<Value> = routines
+            .iter()
+            .map(|r| Value::Call(native, vec![tp(r.item), tp(r.old), tp(r.version)]))
+            .collect();
+        self.finish_body(v_block(body, Type::Void, "block"), Type::Void);
+        let built = std::mem::replace(&mut self.vars, outer_vars);
+        self.data.definitions[f_nr as usize].variables = built;
+        self.context = outer_context;
+        self.data.def_used(f_nr);
+        f_nr
+    }
+
     /// @PLN196 step 8 — a `store_load` or `store_persist_bind` of a file written under an
     /// older layout converts it (open question 3) — as do `store_load_untrusted` and the
     /// two URL loaders — and an added field whose default the program must compute is left
@@ -8469,12 +8609,17 @@ impl Parser {
         }
         if drain == u32::MAX {
             self.synth_upgrade_fills();
+            self.synth_upgrade_routines();
             drain = self.synth_drain_fn();
+        }
+        let mut register = self.data.def_nr("n___upgrade_register");
+        if register == u32::MAX {
+            register = self.synth_upgrade_register();
         }
         for d in callers {
             let mut code =
                 std::mem::replace(&mut self.data.definitions[d as usize].code, Value::Null);
-            Self::wrap_loads(&mut code, &loads, drain);
+            Self::wrap_loads(&mut code, &loads, drain, register);
             self.data.definitions[d as usize].code = code;
         }
     }
@@ -8492,18 +8637,28 @@ impl Parser {
         }
     }
 
-    /// Wrap every call of one of `loads` in `v` that is not wrapped yet in `drain(call)`.
-    fn wrap_loads(v: &mut Value, loads: &[u32], drain: u32) {
+    /// Wrap every call of one of `loads` in `v` that is not wrapped yet in `drain(call)`, or,
+    /// when the program wrote `upgrade` routines, in `drain({register(); call})`.
+    fn wrap_loads(v: &mut Value, loads: &[u32], drain: u32, register: u32) {
         match v {
             Value::Call(d, _) if *d == drain => {}
             Value::Call(d, args) if loads.contains(d) => {
                 for a in args.iter_mut() {
-                    Self::wrap_loads(a, loads, drain);
+                    Self::wrap_loads(a, loads, drain, register);
                 }
                 let call = std::mem::replace(v, Value::Null);
-                *v = Value::Call(drain, vec![call]);
+                let arg = if register == u32::MAX {
+                    call
+                } else {
+                    v_block(
+                        vec![Value::Call(register, Vec::new()), call],
+                        Type::Boolean,
+                        "block",
+                    )
+                };
+                *v = Value::Call(drain, vec![arg]);
             }
-            _ => v.for_each_child_mut(&mut |c| Self::wrap_loads(c, loads, drain)),
+            _ => v.for_each_child_mut(&mut |c| Self::wrap_loads(c, loads, drain, register)),
         }
     }
 
@@ -8548,6 +8703,29 @@ impl Parser {
             let lit = i32::try_from(key).map_or(Value::Long(key), Value::Int);
             let test = self.cl("OpEqInt", &[Value::Var(k), lit]);
             let call = Value::Call(fill, vec![Value::Call(record, Vec::new())]);
+            arms = v_if(test, call, arms);
+        }
+        // Every routine, by `database::routine_key`: its release, its old fields, its record.
+        let (owed_from, owed_old) = (
+            self.data.def_nr("n_store_upgrade_owed_from"),
+            self.data.def_nr("n_store_upgrade_owed_old"),
+        );
+        for r in Self::upgrade_routine_defs(&self.data) {
+            let wrapper = self.data.def_nr(&format!(
+                "n_{}",
+                Self::upgrade_routine_name(&self.data, r.item)
+            ));
+            let key = crate::database::routine_key(self.data.def(r.item).known_type());
+            let lit = i32::try_from(key).map_or(Value::Long(key), Value::Int);
+            let test = self.cl("OpEqInt", &[Value::Var(k), lit]);
+            let call = Value::Call(
+                wrapper,
+                vec![
+                    Value::Call(owed_from, Vec::new()),
+                    Value::Call(owed_old, Vec::new()),
+                    Value::Call(record, Vec::new()),
+                ],
+            );
             arms = v_if(test, call, arms);
         }
         let done = self.cl("OpLtInt", &[Value::Var(k), Value::Int(0)]);
@@ -9438,6 +9616,20 @@ pub(crate) fn visit_constant_vars(val: &mut Value, f: &mut dyn FnMut(&mut u16)) 
         | Value::FnRef(..)
         | Value::FnRefDnr(_) => false,
     }
+}
+
+/// @PLN196 step 9 — one `upgrade(from: Version, old: O, item: T)` routine
+/// ([`Parser::upgrade_routine_defs`]).
+#[derive(Clone, Copy, Debug)]
+pub struct UpgradeRoutineDef {
+    /// The routine.
+    pub routine: u32,
+    /// The stdlib `Version` struct.
+    pub version: u32,
+    /// `O`: the stored fields it reads.
+    pub old: u32,
+    /// `T`: the record type it converts.
+    pub item: u32,
 }
 
 /// Where a stored default is replayed, which is what decides the variables it may name.

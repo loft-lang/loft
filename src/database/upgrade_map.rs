@@ -90,6 +90,10 @@ pub struct UpgradeMap {
     pub changes: Vec<String>,
     /// What it refuses.  A map with a refusal is never executed.
     pub refusals: Vec<Refusal>,
+    /// @PLN196 step 9 — per new record type with an `upgrade` routine that runs for this
+    /// store, the pair that fills the routine's `old` struct from a stored record: each of
+    /// its fields from the old field of that name, or its default when the store has none.
+    pub projections: BTreeMap<u16, usize>,
 }
 
 impl UpgradeMap {
@@ -97,7 +101,7 @@ impl UpgradeMap {
     /// `new` (rooted at `new_root`).
     #[must_use]
     pub fn derive(old: &LayoutDesc, old_root: u16, new: &LayoutDesc, new_root: u16) -> Self {
-        Self::derive_with(old, old_root, new, new_root, true)
+        Self::derive_with(old, old_root, new, new_root, true, &BTreeMap::new())
     }
 
     /// [`UpgradeMap::derive`], choosing whether an unchanged record or collection may be
@@ -105,6 +109,10 @@ impl UpgradeMap {
     /// is copied as it is, so every record and collection is carried field by field and
     /// element by element through the old description — the identity conversion step 1
     /// measures the description-driven reader with.
+    ///
+    /// `routines` maps a new record type to the `old` struct of the `upgrade` routine that
+    /// runs on its records for this store (@PLN196 step 9): such a record may lose and gain
+    /// fields in one upgrade, because the routine is what carries a moved value.
     #[must_use]
     pub fn derive_with(
         old: &LayoutDesc,
@@ -112,8 +120,10 @@ impl UpgradeMap {
         new: &LayoutDesc,
         new_root: u16,
         whole_copies: bool,
+        routines: &BTreeMap<u16, u16>,
     ) -> Self {
         let mut d = Deriver {
+            routines,
             whole_copies,
             old,
             new,
@@ -156,6 +166,7 @@ impl UpgradeMap {
 }
 
 struct Deriver<'a> {
+    routines: &'a BTreeMap<u16, u16>,
     whole_copies: bool,
     old: &'a LayoutDesc,
     new: &'a LayoutDesc,
@@ -399,7 +410,14 @@ impl Deriver<'_> {
                     );
                     return None;
                 }
-                self.record(&new_name, of, nf, path).map(How::Record)
+                let plan = self.record(&new_name, new, of, nf, path).map(How::Record)?;
+                if let Some(&o) = self.routines.get(&new)
+                    && !self.map.projections.contains_key(&new)
+                {
+                    let at = self.project(old, of, o, &format!("{path} (upgrade)"))?;
+                    self.map.projections.insert(new, at);
+                }
+                Some(plan)
             }
             (LayoutNode::Choices(ov), LayoutNode::Choices(nv)) => {
                 if old_name != new_name {
@@ -611,10 +629,56 @@ impl Deriver<'_> {
         true
     }
 
+    /// `@FR-L-Upgrade-Old` — the pair that fills an `upgrade` routine's `old` struct (new
+    /// type `o`) from a stored record of old type `old`: each field of `o` from the stored
+    /// field of its name, through the same conversion a carried field takes, or the
+    /// field's default when the store has none — a routine reads it only for the releases
+    /// whose stores had it (`from`).  Nothing is refused for being dropped or added: the
+    /// struct names the fields it reads and no others.
+    fn project(&mut self, old: u16, of: &[LayoutField], o: u16, path: &str) -> Option<usize> {
+        let Some(LayoutNode::Record(nf)) = self.new.nodes.get(&o).cloned() else {
+            self.refuse(
+                path,
+                "an upgrade routine's `old` is not a struct".to_string(),
+            );
+            return None;
+        };
+        let at = self.push(old, o, How::Same);
+        // Not memoised as (old, o): a stored record and the struct it projects onto are
+        // never the same pair as the record and its own new type.
+        self.memo.remove(&(old, o));
+        let mut plan = Vec::with_capacity(nf.len());
+        let oname = self.name(true, o);
+        for f in &nf {
+            if !f.is_data() {
+                plan.push(FieldFrom::Layout);
+                continue;
+            }
+            let fpath = format!("{path}.{}", f.name);
+            if matches!(self.new.nodes.get(&f.content), Some(LayoutNode::Ref)) {
+                self.refuse(
+                    &fpath,
+                    format!("`{oname}.{}` is a reference, which an upgrade routine cannot read from the old store", f.name),
+                );
+                return None;
+            }
+            match of.iter().position(|x| x.is_data() && x.name == f.name) {
+                Some(i) => {
+                    let pair = self.pair_as(of[i].content, f.content, &fpath, false)?;
+                    plan.push(FieldFrom::Old { field: i, pair });
+                }
+                None => plan.push(FieldFrom::Default),
+            }
+        }
+        self.map.pairs[at].how = How::Record(plan);
+        Some(at)
+    }
+
     /// The per-field plan of a record whose name did not change.
     fn record(
         &mut self,
         name: &str,
+        new_id: u16,
         of: &[LayoutField],
         nf: &[LayoutField],
         path: &str,
@@ -630,13 +694,20 @@ impl Deriver<'_> {
             .filter(|f| data(f) && !nf.iter().any(|n| data(n) && n.name == f.name))
             .map(|f| f.name.as_str())
             .collect();
-        if !added.is_empty() && !dropped.is_empty() {
+        if !added.is_empty() && !dropped.is_empty() && self.routines.contains_key(&new_id) {
+            self.map.changes.push(format!(
+                "{name} loses {} and gains {}: its `upgrade` routine converts it",
+                dropped.join(", "),
+                added.join(", ")
+            ));
+        } else if !added.is_empty() && !dropped.is_empty() {
             self.refuse(
                 path,
                 format!(
                     "`{name}` loses {} and gains {} in one upgrade, which looks like a rename; \
                      keep the old field, give the new one a default that reads it \
-                     (`new: T = $.old`), upgrade, then remove the old one",
+                     (`new: T = $.old`), upgrade, then remove the old one; or write \
+                     `fn upgrade(from: Version, old: <the old fields>, item: {name})`",
                     dropped.join(", "),
                     added.join(", ")
                 ),

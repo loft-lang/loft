@@ -1416,7 +1416,13 @@ impl Parser {
         from: &Type,
         to: &Type,
     ) -> Option<bool> {
-        if self.default || !self.data.user_operator_conversions {
+        // A program without a `to_<t>` of its own pays nothing at a cast to a scalar.  A cast
+        // INTO a struct is always asked: the stdlib declares conversions (`operator
+        // to_version`) without setting the flag, and the flag is not in a warm stdlib cache,
+        // so a cast must not depend on whether the stdlib was parsed or loaded.
+        if self.default
+            || (!self.data.user_operator_conversions && !matches!(to.base(), Type::Reference(..)))
+        {
             return None;
         }
         let from = &from.unrewritten();

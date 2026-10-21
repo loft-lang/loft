@@ -1695,6 +1695,7 @@ pub(super) mod builtins;
 pub(super) mod collections;
 pub(super) mod control;
 pub(super) mod definitions;
+pub use definitions::UpgradeRoutineDef;
 pub(super) mod dispatch;
 pub(super) mod expressions;
 pub(super) mod fields;

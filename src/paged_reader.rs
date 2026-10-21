@@ -501,15 +501,16 @@ impl PageProvider for PageSource {
 pub fn check_sidecar(
     spec: &str,
     current: &crate::schema_sidecar::LayoutIdentity,
+    release: &crate::database::Release,
 ) -> crate::schema_sidecar::SchemaVerdict {
     use crate::schema_sidecar::SchemaVerdict;
     if spec.starts_with("http://") || spec.starts_with("https://") {
         match crate::net::fetch_text(&format!("{spec}.dschema")) {
-            Some(text) => crate::schema_sidecar::verdict_for_sidecar_text(&text, current),
+            Some(text) => crate::schema_sidecar::verdict_for_sidecar_text(&text, current, release),
             None => SchemaVerdict::Fresh, // 404 / unreachable → proceed (store_verify backstop)
         }
     } else {
-        crate::schema_sidecar::check_beside(std::path::Path::new(spec), current)
+        crate::schema_sidecar::check_beside(std::path::Path::new(spec), current, release)
             .unwrap_or(SchemaVerdict::Fresh) // IO error (not NotFound) → proceed (backstop)
     }
 }

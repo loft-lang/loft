@@ -70,6 +70,28 @@ load" for a change every loader in fact refuses.
   computed field), `cell_a_rebuild_checks_the_running_world_before_it_compiles`.  Open: the
   browser swap (S6) — the page compiles B, checks it against A's world and keeps the plan
   before it touches A; the wasm build compiles the converter.
+- **Step 9 — skipped versions.**  The sidecar records the writing release (`version=`, from
+  the entry program's `loft.toml`; a native build carries it as a constant).  The floor is
+  the manifest's existing `data_compatible_with`, and `data_bridge` names the release a
+  refusal sends the user to (`Release::admits`, `src/database/release.rs`); every loader
+  asks it where a sidecar becomes a verdict (`verdict_for_sidecar_text`), and the converter
+  asks it before anything is read.  A routine `upgrade(from: Version, old: O, item: T)` (an
+  overload set, one per `T`) runs on each record of `T` converted from a store older than
+  the program, after its carried fields and defaults: the parser gives each a wrapper
+  `__upgrade_<T>`, registers the routines before every wrapped load, and the drain calls
+  them; `loft layout upgrade` calls them through the host.  `old` is filled by name into a
+  scratch store released after the drain.  `Version` is a stdlib struct ordered by number,
+  compared against a text with `operator compare`.  Rules: `(L-Release)`,
+  `(L-Upgrade-Routine)`, `(L-Upgrade-Old)` in formal/layout.md.  Guards: the `cell_a_*`
+  step-9 cells in `tests/store_upgrade.rs`.  Two readings of the design that differ from its
+  wording, for the owner: (1) the routine runs for every store older than the program, not
+  only those older than "the previous release" — the program has no record of which release
+  that was, and the routine's own `from` branches decide; (2) a field of `old` the stored
+  record lacks takes its default (what a constructor writes for an omitted field) rather than a refusal, because a refusal would refuse every store
+  written after that field was dropped (a v3 store opened by v4 with a routine that reads
+  `label` for `from < 2.0`).  Not covered: a value moved ACROSS records (a default reading
+  `$.inner.x`, then `Inner.x` dropped) is not refused without a routine, since the drop and
+  the add are in different records.
 
 ## Goal
 

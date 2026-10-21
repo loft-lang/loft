@@ -192,6 +192,11 @@ pub struct Manifest {
     ///
     /// `None` means the package declares no floor (grandfathered — no gate).
     pub data_compatible_with: Option<String>,
+    /// @PLN196 step 9 — the last release of THIS package that still read stores older than
+    /// [`Manifest::data_compatible_with`], from `[package] data_bridge = "2.3"`.  Recorded
+    /// when the floor is raised, so a refused store names the release that carries it
+    /// forward.  `None` when the floor was never raised past a release that wrote stores.
+    pub data_bridge: Option<String>,
     /// GitHub repository that publishes this package's releases, from
     /// `[package] repository = "..."`.  Either a bare repo name under the
     /// `loft-lang` org (`"loft-libs-core"`) or a full `"owner/repo"`.  When
@@ -766,6 +771,7 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("package", "contract") => m.contract = Some(value.scalar()),
         ("package", "api_compatible_with") => m.api_compatible_with = Some(value.scalar()),
         ("package", "data_compatible_with") => m.data_compatible_with = Some(value.scalar()),
+        ("package", "data_bridge") => m.data_bridge = Some(value.scalar()),
         ("package", "repository") => m.repository = Some(value.scalar()),
         ("package", "description") => m.description = Some(value.scalar()),
         ("library", "entry") => m.entry = Some(value.scalar()),
@@ -976,7 +982,7 @@ pub fn check_floor(declared: Option<&str>, own_version: Option<&str>) -> FloorCh
 /// Parse `X` / `X.Y` / `X.Y.Z` into a numeric triple (missing parts default to
 /// 0).  Returns `None` for any non-numeric component or a fourth component —
 /// the malformed signal the old `unwrap_or(0)` swallowed.
-fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     let s = s.trim();
     if s.is_empty() {
         return None;

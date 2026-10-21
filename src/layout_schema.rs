@@ -24,6 +24,7 @@ pub fn of_scoped(stores: &Stores, roots: &[u16], data: &crate::data::Data) -> La
         root,
         facts,
         slot: None,
+        version: String::new(),
     }
 }
 

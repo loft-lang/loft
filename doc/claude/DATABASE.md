@@ -161,6 +161,30 @@ The raw paths share one verdict, `Stores::layout_verdict_ok`, and the converting
 entry, `Stores::layout_changed` with `load_upgraded` / `bind_upgraded`; a new whole-image
 loader uses both rather than growing its own.
 
+**A store that skipped releases** (`@FR-L-Release`, `@FR-L-Upgrade-Routine`).  The `.dschema`
+also records the release that wrote the store: the `version` of the writing program's
+`loft.toml`.  A conversion sees only the store's layout and the program's, so a value an
+intermediate release moved and a later one dropped would be lost — the drop and the add in one
+record are refused as a rename.  The programmer writes the steps in between as a routine, one
+per record type, in the program or in a separate upgrade module run with
+`loft layout upgrade up.loft <store>`:
+
+```loft
+struct Item { id: integer, count: integer }       // release 3.0; 2.0 moved label into count
+struct ItemBefore2 { label: text }                // the stored fields the routine reads
+fn upgrade(from: Version, old: ItemBefore2, item: Item) {
+  if from < "2.0" { item.count = len(old.label) }
+}
+```
+
+It runs on every record of `Item` converted from a store older than the program, after the
+fields carried by name and the added fields' defaults; `old` is filled by name from the stored
+record, and a field the stored record lacks takes its default, as an omitted field does in a constructor.  `[package] data_compatible_with = "2.0"`
+refuses stores written before 2.0 (retiring the routine's older branches), and
+`data_bridge = "2.3"` names the release the refusal sends the user to: *this store was written
+by 1.4, and this program reads stores from 2.0 on; open it once with 2.3, then with this one*.
+A store that records no release passes the floor.
+
 #### What the file's SIZE and BYTES mean (loft#710)
 
 A persisted store used to be the arena's whole **capacity**, so its size said how

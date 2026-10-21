@@ -10,6 +10,8 @@ mod descriptor;
 mod equality;
 mod field_groups;
 mod layout_parse;
+mod release;
+pub use release::{Release, version_triple};
 mod upgrade;
 mod upgrade_map;
 pub use field_groups::{LinkedFieldGroup, LinkedFieldKind};
@@ -38,7 +40,10 @@ pub use allocation::{CLEAR_KEYED_VIEW, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};
 pub use journal::Journal;
 pub use types::Type;
-pub use upgrade::{FileUpgrade, FileUpgradeJob, Fills, PendingFills, WorldPlan, owed_key};
+pub use upgrade::{
+    FileUpgrade, FileUpgradeJob, Fills, Pending, PendingFills, Routine, Routines, WorldPlan,
+    owed_key, routine_key,
+};
 pub use upgrade_map::{FieldFrom, How, Pair, Refusal, UpgradeMap};
 
 /// Store index reserved for compile-time constant data (vectors, long strings).
@@ -446,6 +451,9 @@ pub struct Stores {
     /// right after the call, and a bind that is finished once they are.  Runtime-only:
     /// `clone` starts it empty.
     pub(crate) owed: upgrade::Owed,
+    /// @PLN196 step 9 — the `upgrade` routine of each record type, registered by the drain's
+    /// wrapper before a converting load ([`Stores::upgrade_routine`]).
+    pub(crate) upgrade_routines: upgrade::Routines,
     /// `@FR-G-Arg-Rebind` — the stores a live generator frame names as an ARGUMENT:
     /// `(store_nr, frames holding it, orphaned)`.  The caller and the frame share the value
     /// (`@FR-G-Arg-Share`), and it is released when BOTH are done with it: a free while a
@@ -626,6 +634,10 @@ pub struct Stores {
     /// Directory of the main source file being executed.
     /// Set by `main.rs` after parsing; used by `source_dir()` built-in.
     pub source_dir: String,
+    /// @PLN196 step 9 — the release this program's stores record ([`Release`]): set by a
+    /// native build from the manifest it was compiled against, else read once from the
+    /// `loft.toml` above `source_dir` ([`Stores::release`]).
+    pub release: std::sync::OnceLock<Release>,
     /// #255 / @PLN9: when true, a *relative* program-supplied file path
     /// re-homes against `source_dir` (the program's own directory) instead of
     /// the process cwd.  Absolute paths are never touched.  Parse-time config:
@@ -772,6 +784,7 @@ impl Clone for Stores {
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
+            upgrade_routines: self.upgrade_routines.clone(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -806,6 +819,7 @@ impl Clone for Stores {
             // empty here left source-relative asset resolution broken in those
             // contexts.
             source_dir: self.source_dir.clone(),
+            release: self.release.clone(),
             // #255: parse-time config like source_dir — preserve across clone so
             // the path mode survives the per-test-function State rebuild.
             program_relative: self.program_relative,
@@ -1550,6 +1564,7 @@ impl Stores {
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
+            upgrade_routines: upgrade::Routines::new(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -1578,6 +1593,7 @@ impl Stores {
             swap_safe_types: Vec::new(),
             spare_store: None,
             source_dir: String::new(),
+            release: std::sync::OnceLock::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
             // re-homes against the program's own directory, so "program + assets"
             // is a portable bundle.  CLI tools opt back into cwd with `#cwd`.

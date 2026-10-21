@@ -6723,6 +6723,11 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
             Ok(ss::SchemaVerdict::Changed(_)) => {
                 layout_upgrade_report(&project, &p.database, &roots, file)
             }
+            // A baseline is read with no release floor.
+            Ok(ss::SchemaVerdict::Refused(why)) => {
+                eprintln!("loft layout: {why}");
+                1
+            }
             Ok(ss::SchemaVerdict::Unreadable) => {
                 eprintln!(
                     "loft layout: baseline unreadable — delete `.loft/layout.lock` and re-accept."

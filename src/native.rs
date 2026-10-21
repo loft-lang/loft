@@ -96,6 +96,9 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_store_upgrade_owed_next", n_store_upgrade_owed_next),
     ("n_store_upgrade_owed_record", n_store_upgrade_owed_record),
     ("n_store_upgrade_owed_finish", n_store_upgrade_owed_finish),
+    ("n_store_upgrade_owed_old", n_store_upgrade_owed_old),
+    ("n_store_upgrade_owed_from", n_store_upgrade_owed_from),
+    ("n_store_upgrade_routine", n_store_upgrade_routine),
     ("n_store_verify", n_store_verify),
     ("n_store_reclaim", n_store_reclaim),
     ("n_store_release", n_store_release),
@@ -1316,6 +1319,25 @@ fn n_store_upgrade_owed_record(stores: &mut Stores, stack: &mut DbRef) {
 fn n_store_upgrade_owed_finish(stores: &mut Stores, stack: &mut DbRef) {
     let ok = stores.owed_finish();
     stores.put(stack, ok);
+}
+
+/// The `old` record of the owed routine call, and the release it is told (@PLN196 step 9).
+fn n_store_upgrade_owed_old(stores: &mut Stores, stack: &mut DbRef) {
+    let r = stores.owed_old();
+    stores.put(stack, r);
+}
+
+fn n_store_upgrade_owed_from(stores: &mut Stores, stack: &mut DbRef) {
+    let r = stores.owed_from();
+    stores.put(stack, r);
+}
+
+/// Register a record type's `upgrade` routine.  Args pop in reverse: version, old, tp.
+fn n_store_upgrade_routine(stores: &mut Stores, stack: &mut DbRef) {
+    let version = stores.get::<i64>(stack) as u16;
+    let old = stores.get::<i64>(stack) as u16;
+    let tp = stores.get::<i64>(stack) as u16;
+    stores.upgrade_routine(tp, old, version);
 }
 
 /// Interpreter handler for `store_bind_lazy` — @PLN129 arc A.  Bind a COLLECTION

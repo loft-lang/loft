@@ -3103,6 +3103,7 @@ impl Stores {
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
             owed: super::upgrade::Owed::default(),
+            upgrade_routines: self.upgrade_routines.clone(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -3138,6 +3139,7 @@ impl Stores {
             // #255 / @PLN9: a parallel worker's file ops must resolve paths the
             // same way as the main thread — carry the anchor + mode.
             source_dir: self.source_dir.clone(),
+            release: self.release.clone(),
             program_relative: self.program_relative,
             frame_yield: false,
             poison_free: self.poison_free,
@@ -6644,7 +6646,8 @@ impl Stores {
         // An unreadable sidecar (an I/O failure, not a layout answer) tells us nothing
         // about the layout, so it neither passes nor fails the store: keep the previous
         // behaviour rather than refuse a load on a filesystem hiccup.
-        let Ok(verdict) = crate::schema_sidecar::check_beside(path, &current) else {
+        let Ok(verdict) = crate::schema_sidecar::check_beside(path, &current, self.release())
+        else {
             return true;
         };
         Self::layout_verdict_ok(&verdict, &path.display().to_string(), builtin)
@@ -6655,7 +6658,7 @@ impl Stores {
     fn layout_changed(&self, slot: u16, path: &std::path::Path) -> bool {
         self.slot_layout_identity(slot).is_some_and(|current| {
             matches!(
-                crate::schema_sidecar::check_beside(path, &current),
+                crate::schema_sidecar::check_beside(path, &current, self.release()),
                 Ok(crate::schema_sidecar::SchemaVerdict::Changed(_))
             )
         })
@@ -6698,7 +6701,11 @@ impl Stores {
         let (verdict, text) = match crate::net::fetch_bytes(&format!("{url}.dschema")) {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => (
-                    crate::schema_sidecar::verdict_for_sidecar_text(&text, &current),
+                    crate::schema_sidecar::verdict_for_sidecar_text(
+                        &text,
+                        &current,
+                        self.release(),
+                    ),
                     Some(text),
                 ),
                 Err(_) => (crate::schema_sidecar::SchemaVerdict::Unreadable, None),
@@ -6734,6 +6741,10 @@ impl Stores {
     ) -> bool {
         if verdict.is_raw_safe() {
             return true;
+        }
+        if let crate::schema_sidecar::SchemaVerdict::Refused(why) = verdict {
+            crate::loft_eprintln!("{builtin}: refusing {what} — {why}.");
+            return false;
         }
         let detail = match verdict {
             crate::schema_sidecar::SchemaVerdict::Changed(diff) => {
@@ -6776,7 +6787,7 @@ impl Stores {
             return true; // untyped store — no identity to compare against
         }
         let current = crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]);
-        let verdict = crate::paged_reader::check_sidecar(path, &current);
+        let verdict = crate::paged_reader::check_sidecar(path, &current, self.release());
         if verdict.is_raw_safe() {
             return true;
         }

@@ -54,11 +54,60 @@ struct Run<'m> {
     fixups: Vec<(DbRef, (u16, u32, u32))>,
     /// The fill function of each (new type, field name) whose default is not a constant.
     fills: &'m Fills,
-    /// Every record that still owes one of those fills, in conversion order.
-    pending: Vec<(DbRef, String)>,
+    /// Every record that still owes one of those fills, and every routine call, in
+    /// conversion order.
+    pending: PendingFills,
     /// Owe every added field the converter could not fill itself to the running program's
     /// drain ([`Owed`]), instead of to `fills`.
     owe: bool,
+    /// @PLN196 step 9 — the `upgrade` routine of each record type that runs for this store;
+    /// empty when none does (the store is not older than this program, or none is written).
+    routines: &'m Routines,
+    /// The release the store records, for the routine's `from`.
+    from: &'m str,
+    /// The store the routines' `old` records and their `Version` live in, made on first use
+    /// and released once every routine ran; its first record is the `Version`.
+    scratch: Option<u16>,
+    /// Filling a routine's `old` record: its elements are copies, never the record a stored
+    /// reference names.
+    projecting: bool,
+}
+
+/// @PLN196 step 9 — the `upgrade(from: Version, old: O, item: T)` routine the programmer
+/// wrote for record type `T` (the key of [`Routines`]): it runs on every record of `T` that a
+/// store older than this program's release is converted with, after the fields carried by
+/// name and the added fields' defaults.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Routine {
+    /// The type of `old`: the stored fields the routine reads, filled by name.
+    pub old: u16,
+    /// The type of `from`, the stdlib `Version`.
+    pub version: u16,
+    /// The function a caller without the drain calls it through (`__upgrade_<T>`).
+    pub name: String,
+}
+
+/// Per record type, its `upgrade` routine.
+pub type Routines = BTreeMap<u16, Routine>;
+
+/// The key the drain matches an owed routine call by: a field position no record reaches.
+#[must_use]
+pub fn routine_key(tp: u16) -> i64 {
+    owed_key(tp, u16::MAX)
+}
+
+/// What a conversion left for the program to run on the new store, in this order.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pending {
+    /// Fill one added field of `rec` with its default through function `name`.
+    Fill { rec: DbRef, name: String },
+    /// Run the `upgrade` routine `name` on `item`, with its `old` record and `from`.
+    Routine {
+        item: DbRef,
+        old: DbRef,
+        from: DbRef,
+        name: String,
+    },
 }
 
 /// @PLN196 step 5 — per (new type, field name), the function that writes that field's
@@ -66,9 +115,9 @@ struct Run<'m> {
 /// is evaluated by the program, not by the store layer.
 pub type Fills = BTreeMap<(u16, String), String>;
 
-/// The records an upgrade left owing an expression default, with the function that fills
-/// each: the caller runs them, in this order, on the new store (`host::Program`).
-pub type PendingFills = Vec<(DbRef, String)>;
+/// What an upgrade left for the program to run, in order: each record owing an expression
+/// default with the function that fills it, and each routine call (`host::Program`).
+pub type PendingFills = Vec<Pending>;
 
 impl Stores {
     /// @PLN196 — upgrade the store in `slot`, written under `old` with its root at `old_root`
@@ -122,7 +171,7 @@ impl Stores {
         whole_copies: bool,
         fills: &Fills,
     ) -> Result<(u16, PendingFills), String> {
-        self.upgrade_store_run(
+        let (new_slot, pending, scratch) = self.upgrade_store_run(
             slot,
             old,
             old_root,
@@ -131,10 +180,15 @@ impl Stores {
             whole_copies,
             fills,
             false,
-        )
+            (&Routines::new(), ""),
+        )?;
+        debug_assert!(scratch.is_none(), "no routine was offered");
+        Ok((new_slot, pending))
     }
 
-    /// [`Stores::upgrade_store_with`], owing the added fields to [`Owed`] when `owe` is set.
+    /// [`Stores::upgrade_store_with`], owing the added fields to [`Owed`] when `owe` is set,
+    /// and running `routines` with the release `from` the store records.  Also answers the
+    /// scratch store the routines' records are in, which the caller releases after them.
     #[allow(clippy::too_many_arguments)]
     fn upgrade_store_run(
         &mut self,
@@ -146,9 +200,14 @@ impl Stores {
         whole_copies: bool,
         fills: &Fills,
         owe: bool,
-    ) -> Result<(u16, PendingFills), String> {
-        let new = self.layout_descriptor(&[new_root]);
-        let map = UpgradeMap::derive_with(old, old_root, &new, new_root, whole_copies);
+        (routines, from): (&Routines, &str),
+    ) -> Result<(u16, PendingFills, Option<u16>), String> {
+        let roots: Vec<u16> = std::iter::once(new_root)
+            .chain(routines.values().map(|r| r.old))
+            .collect();
+        let new = self.layout_descriptor(&roots);
+        let lift: BTreeMap<u16, u16> = routines.iter().map(|(t, r)| (*t, r.old)).collect();
+        let map = UpgradeMap::derive_with(old, old_root, &new, new_root, whole_copies, &lift);
         if let Some(r) = map.refusals.first() {
             return Err(format!("{}: {}", r.path, r.reason));
         }
@@ -164,9 +223,21 @@ impl Stores {
                 fills,
                 pending: Vec::new(),
                 owe,
+                routines,
+                from,
+                scratch: None,
+                projecting: false,
             };
-            let new_slot = self.upgrade_into_new_store(&mut run, slot, new_root)?;
-            Ok((new_slot, run.pending))
+            let built = self.upgrade_into_new_store(&mut run, slot, new_root);
+            match built {
+                Ok(new_slot) => Ok((new_slot, run.pending, run.scratch)),
+                Err(e) => {
+                    if let Some(sc) = run.scratch {
+                        self.release_scratch(sc);
+                    }
+                    Err(e)
+                }
+            }
         });
         // The appended rows go, whatever happened: nothing outside this call names them.
         self.rollback_types_to(keep);
@@ -411,9 +482,16 @@ impl Stores {
                         FieldFrom::Group { .. } => {}
                         FieldFrom::Default => {
                             if let Some(f) = run.fills.get(&(new_tp, nname.clone())) {
-                                run.pending.push((*to, f.clone()));
+                                run.pending.push(Pending::Fill {
+                                    rec: *to,
+                                    name: f.clone(),
+                                });
                             } else if run.owe {
-                                self.owed.fills.push((*to, owed_key(new_tp, i as u16)));
+                                self.owed.fills.push((
+                                    *to,
+                                    owed_key(new_tp, i as u16),
+                                    DbRef::NULL,
+                                ));
                             }
                             self.write_absent_value(ncontent, new_tp, i as u16, &field_to);
                         }
@@ -430,6 +508,9 @@ impl Stores {
                             }
                         }
                     }
+                }
+                if let Some(&proj) = run.map.projections.get(&new_tp) {
+                    self.owe_routine(run, proj, from, to, new_tp)?;
                 }
                 Ok(())
             }
@@ -738,7 +819,7 @@ impl Stores {
             let before = self.collection_count(&slot, coll_tp);
             let rec = self.record_new(&parent, parent_tp, field);
             self.zero_element(&rec, coll_tp);
-            if src.pos == 8 {
+            if src.pos == 8 && !run.projecting {
                 run.rec_map.insert(src.rec, rec);
             }
             let elem_tp = run.map.pairs[elem].new;
@@ -777,6 +858,86 @@ impl Stores {
         Ok(())
     }
 
+    /// `@FR-L-Upgrade-Old` — fill the `old` record of `item`'s routine from the stored record
+    /// at `from` through projection pair `proj`, and owe the routine call: to the drain, or
+    /// to the caller's list.  The routine runs after `item`'s fields and its owed defaults.
+    fn owe_routine(
+        &mut self,
+        run: &mut Run,
+        proj: usize,
+        from: &DbRef,
+        item: &DbRef,
+        tp: u16,
+    ) -> Result<(), String> {
+        let Some(r) = run.routines.get(&tp).cloned() else {
+            return Ok(());
+        };
+        let scratch = self.upgrade_scratch(run, r.version);
+        let words = (8 + u32::from(self.size(r.old))).div_ceil(8).max(2);
+        let rec = self.allocations[scratch as usize].claim(words);
+        self.allocations[scratch as usize].zero_fill(rec);
+        let old = DbRef {
+            store_nr: scratch,
+            rec,
+            pos: 8,
+        };
+        let was = std::mem::replace(&mut run.projecting, true);
+        let done = self.convert(run, proj, from, &old, Container::At(old, r.old));
+        run.projecting = was;
+        done?;
+        let version = DbRef {
+            store_nr: scratch,
+            rec: crate::store::PRIMARY,
+            pos: 8,
+        };
+        if run.owe {
+            self.owed.fills.push((*item, routine_key(tp), old));
+            self.owed.from = Some(version);
+        } else {
+            run.pending.push(Pending::Routine {
+                item: *item,
+                old,
+                from: version,
+                name: r.name,
+            });
+        }
+        Ok(())
+    }
+
+    /// The scratch store of `run`'s routines, made on first use with the `Version` of the
+    /// release the store records as its first record.
+    fn upgrade_scratch(&mut self, run: &mut Run, version_tp: u16) -> u16 {
+        if let Some(sc) = run.scratch {
+            return sc;
+        }
+        use crate::store::PRIMARY;
+        let words = (8 + u32::from(self.size(version_tp))).div_ceil(8).max(2);
+        let mut st = crate::store::Store::new_in_use(words + PRIMARY + 1);
+        let root = st.claim(words);
+        st.zero_fill(root);
+        let (major, minor, patch) = crate::database::version_triple(run.from).unwrap_or((0, 0, 0));
+        if let Parts::Struct(fs) = &self.types[version_tp as usize].parts {
+            for (f, v) in fs.iter().zip([major, minor, patch]) {
+                let pos = 8 + u32::from(f.position);
+                if self.size(f.content) == 4 {
+                    st.set_int(root, pos, i64::from(v));
+                } else {
+                    st.set_long(root, pos, i64::from(v));
+                }
+            }
+        }
+        st.set_known_type(version_tp);
+        let sc = self.adopt_store(st);
+        run.scratch = Some(sc);
+        sc
+    }
+
+    /// Release the scratch store of a conversion's routines.
+    pub(crate) fn release_scratch(&mut self, sc: u16) {
+        drop(self.take_store(sc));
+        self.release_slot(sc);
+    }
+
     /// Clear a freshly allocated element's payload, so a field the plan leaves to the layout
     /// reads as zero rather than as whatever the block held.
     fn zero_element(&mut self, rec: &DbRef, coll_tp: u16) {
@@ -801,6 +962,8 @@ pub struct FileUpgradeJob {
     current: crate::schema_sidecar::LayoutIdentity,
     changes: Vec<String>,
     new_slot: u16,
+    /// The routines' scratch store, released with the job.
+    scratch: Option<u16>,
 }
 
 /// What [`Stores::upgrade_file`] did.
@@ -872,6 +1035,8 @@ struct Converted {
     changes: Vec<String>,
     new_slot: u16,
     pending: PendingFills,
+    /// The routines' scratch store, released after them.
+    scratch: Option<u16>,
 }
 
 /// The key a drain matches an owed fill by: the new type and the field's position in it.
@@ -889,8 +1054,13 @@ pub fn owed_key(tp: u16, field: u16) -> i64 {
 /// ends with [`Stores::owed_finish`].
 #[derive(Default)]
 pub(crate) struct Owed {
-    /// Each record owing a fill, with the key of the field it owes.
-    fills: Vec<(DbRef, i64)>,
+    /// Each record owing a fill, with the key of the field it owes; for a routine call
+    /// ([`routine_key`]), also its `old` record.
+    fills: Vec<(DbRef, i64, DbRef)>,
+    /// The `Version` the routine calls are told the store's release with.
+    from: Option<DbRef>,
+    /// The store the routines' records are in, released by [`Stores::owed_finish`].
+    scratch: Option<u16>,
     /// How many of `fills` the drain has taken.
     at: usize,
     /// A bind waiting for the fills before its file is upgraded.
@@ -921,18 +1091,23 @@ impl Stores {
         new_root: Option<u16>,
         fills: &Fills,
         owe: bool,
+        routines: &Routines,
     ) -> Result<Option<Converted>, String> {
         let (text, bytes) = read_store_file(path)?;
         let what = path.display().to_string();
-        self.upgrade_image_from(&text, &bytes, &what, new_root, fills, owe)
+        self.upgrade_image_from(&text, &bytes, &what, new_root, fills, owe, routines)
     }
 
     /// [`Stores::upgrade_image`] for a store image already in memory, `sidecar` being the
     /// text of its `.dschema`; `what` names it in a refusal.  `Store::from_bytes` validates
     /// the image's block structure before anything reads it, as the untrusted loaders do.
     ///
+    /// `routines` run on a store older than this program's release (@PLN196 step 9); a store
+    /// older than the oldest release it reads is refused before anything is read.
+    ///
     /// # Errors
     /// As [`Stores::upgrade_file`].
+    #[allow(clippy::too_many_arguments)]
     fn upgrade_image_from(
         &mut self,
         sidecar: &str,
@@ -941,9 +1116,11 @@ impl Stores {
         new_root: Option<u16>,
         fills: &Fills,
         owe: bool,
+        routines: &Routines,
     ) -> Result<Option<Converted>, String> {
         use crate::schema_sidecar::LayoutIdentity;
         let (id, old, old_root) = recorded_layout(sidecar, what)?;
+        self.release().admits(&id.version)?;
         let old_name = old.names[&old_root].clone();
         let new_root = match new_root {
             Some(r) => r,
@@ -955,25 +1132,54 @@ impl Stores {
         if current.layout_hash == id.layout_hash && current.dump == id.dump {
             return Ok(None);
         }
-        let new = self.layout_descriptor(&[new_root]);
-        let changes = UpgradeMap::derive(&old, old_root, &new, new_root).changes;
+        // A store older than this program goes through the routines; one the program wrote,
+        // or a later release wrote, is converted by name alone.
+        let none = Routines::new();
+        let routines = if self.release().is_newer_than(&id.version) {
+            routines
+        } else {
+            &none
+        };
+        let roots: Vec<u16> = std::iter::once(new_root)
+            .chain(routines.values().map(|r| r.old))
+            .collect();
+        let new = self.layout_descriptor(&roots);
+        let lift: BTreeMap<u16, u16> = routines.iter().map(|(t, r)| (*t, r.old)).collect();
+        let changes = UpgradeMap::derive_with(&old, old_root, &new, new_root, true, &lift).changes;
         let store = crate::store::Store::from_bytes(bytes)
             .ok_or_else(|| format!("{what} is not a store image"))?;
         let old_slot = self.adopt_store(store);
         let result = self.upgrade_store_run(
-            old_slot, &old, old_root, new_root, id.slot, true, fills, owe,
+            old_slot,
+            &old,
+            old_root,
+            new_root,
+            id.slot,
+            true,
+            fills,
+            owe,
+            (routines, &id.version),
         );
         drop(self.take_store(old_slot));
         self.release_slot(old_slot);
-        let (new_slot, pending) = result?;
-        // The new image's references name the slot it was built in.
+        let (new_slot, pending, scratch) = result.map_err(|e| {
+            if id.version.is_empty() || !self.release().is_newer_than(&id.version) {
+                e
+            } else {
+                format!("the store was written by {}: {e}", id.version)
+            }
+        })?;
+        // The new image's references name the slot it was built in, and it is now this
+        // release's store.
         let mut current = current;
         current.slot = Some(new_slot);
+        current.version.clone_from(&self.release().version);
         Ok(Some(Converted {
             current,
             changes,
             new_slot,
             pending,
+            scratch,
         }))
     }
 
@@ -1031,11 +1237,24 @@ impl Stores {
         bytes: &[u8],
         what: &str,
     ) -> Result<(), String> {
-        self.owed = Owed::default();
+        self.reset_owed();
         let root = self.allocations[slot as usize].known_type;
-        let c = self
-            .upgrade_image_from(sidecar, bytes, what, Some(root), &Fills::new(), true)?
-            .ok_or_else(|| "its recorded layout could not be compared".to_string())?;
+        let routines = self.upgrade_routines.clone();
+        let converted = self
+            .upgrade_image_from(
+                sidecar,
+                bytes,
+                what,
+                Some(root),
+                &Fills::new(),
+                true,
+                &routines,
+            )
+            .and_then(|c| c.ok_or_else(|| "its recorded layout could not be compared".to_string()));
+        // A conversion that stopped part way may already have listed records it owes; they
+        // are in the store it released, and the drain after this call must not reach them.
+        let c = converted.inspect_err(|_| self.reset_owed())?;
+        self.owed.scratch = c.scratch;
         let before = self.place_converted(slot, c.new_slot)?;
         drop(before);
         Ok(())
@@ -1052,11 +1271,14 @@ impl Stores {
         slot: u16,
         path: &std::path::Path,
     ) -> Result<(), String> {
-        self.owed = Owed::default();
+        self.reset_owed();
         let root = self.allocations[slot as usize].known_type;
-        let c = self
-            .upgrade_image(path, Some(root), &Fills::new(), true)?
-            .ok_or_else(|| "its recorded layout could not be compared".to_string())?;
+        let routines = self.upgrade_routines.clone();
+        let converted = self
+            .upgrade_image(path, Some(root), &Fills::new(), true, &routines)
+            .and_then(|c| c.ok_or_else(|| "its recorded layout could not be compared".to_string()));
+        let c = converted.inspect_err(|_| self.reset_owed())?;
+        self.owed.scratch = c.scratch;
         let before = self.place_converted(slot, c.new_slot)?;
         let mut current = c.current;
         current.slot = Some(slot);
@@ -1085,10 +1307,10 @@ impl Stores {
         if let Err(why) = self.rebase_stored_refs(slot, Some(new_slot)) {
             let converted = std::mem::replace(&mut self.allocations[slot as usize], before);
             drop(converted);
-            self.owed = Owed::default();
+            self.reset_owed();
             return Err(why);
         }
-        for (r, _) in &mut self.owed.fills {
+        for (r, _, _) in &mut self.owed.fills {
             if r.store_nr == new_slot {
                 r.store_nr = slot;
             }
@@ -1100,7 +1322,7 @@ impl Stores {
     /// its record is [`Stores::owed_record`].
     pub fn owed_next(&mut self) -> i64 {
         match self.owed.fills.get(self.owed.at) {
-            Some(&(_, key)) => {
+            Some(&(_, key, _)) => {
                 self.owed.at += 1;
                 key
             }
@@ -1121,8 +1343,46 @@ impl Stores {
                     rec: 0,
                     pos: 0,
                 },
-                |&(r, _)| r,
+                |&(r, _, _)| r,
             )
+    }
+
+    /// The `old` record of the owed routine call [`Stores::owed_next`] last answered.
+    #[must_use]
+    pub fn owed_old(&self) -> DbRef {
+        self.owed
+            .at
+            .checked_sub(1)
+            .and_then(|i| self.owed.fills.get(i))
+            .map_or(DbRef::NULL, |&(_, _, o)| o)
+    }
+
+    /// The `Version` an owed routine call is told the store's release with.
+    #[must_use]
+    pub fn owed_from(&self) -> DbRef {
+        self.owed.from.unwrap_or(DbRef::NULL)
+    }
+
+    /// @PLN196 step 9 — register the `upgrade` routine of record type `tp`: its `old` struct
+    /// `old` and the `Version` type `version`.  The drain's wrapper registers every routine
+    /// before the load it follows, so the converter knows which records owe one.
+    pub fn upgrade_routine(&mut self, tp: u16, old: u16, version: u16) {
+        self.upgrade_routines.insert(
+            tp,
+            Routine {
+                old,
+                version,
+                name: String::new(),
+            },
+        );
+    }
+
+    /// Forget what a drain still owed, releasing the routines' scratch store.
+    fn reset_owed(&mut self) {
+        let scratch = std::mem::take(&mut self.owed).scratch;
+        if let Some(sc) = scratch {
+            self.release_scratch(sc);
+        }
     }
 
     /// End a drain: forget the owed fills, and finish a waiting bind by upgrading its file
@@ -1130,7 +1390,11 @@ impl Stores {
     /// when a bind could not write its file, which leaves the file and `slot` as they were
     /// before the call.
     pub fn owed_finish(&mut self) -> bool {
-        let bind = std::mem::take(&mut self.owed).bind;
+        let owed = std::mem::take(&mut self.owed);
+        if let Some(sc) = owed.scratch {
+            self.release_scratch(sc);
+        }
+        let bind = owed.bind;
         let Some(bind) = bind else {
             return true;
         };
@@ -1217,7 +1481,7 @@ impl Stores {
         path: &std::path::Path,
         new_root: Option<u16>,
     ) -> Result<FileUpgrade, String> {
-        match self.upgrade_file_begin(path, new_root, &Fills::new())? {
+        match self.upgrade_file_begin(path, new_root, &Fills::new(), &Routines::new())? {
             None => Ok(FileUpgrade::Current),
             Some((job, _)) => self.upgrade_file_finish(job),
         }
@@ -1236,18 +1500,22 @@ impl Stores {
         path: &std::path::Path,
         new_root: Option<u16>,
         fills: &Fills,
+        routines: &Routines,
     ) -> Result<Option<(FileUpgradeJob, PendingFills)>, String> {
-        Ok(self.upgrade_image(path, new_root, fills, false)?.map(|c| {
-            (
-                FileUpgradeJob {
-                    path: path.to_path_buf(),
-                    current: c.current,
-                    changes: c.changes,
-                    new_slot: c.new_slot,
-                },
-                c.pending,
-            )
-        }))
+        Ok(self
+            .upgrade_image(path, new_root, fills, false, routines)?
+            .map(|c| {
+                (
+                    FileUpgradeJob {
+                        path: path.to_path_buf(),
+                        current: c.current,
+                        changes: c.changes,
+                        new_slot: c.new_slot,
+                        scratch: c.scratch,
+                    },
+                    c.pending,
+                )
+            }))
     }
 
     /// Write a begun upgrade's new store beside the old one and swap it in; the old pair is
@@ -1270,6 +1538,9 @@ impl Stores {
     pub fn upgrade_file_abandon(&mut self, job: &FileUpgradeJob) {
         drop(self.take_store(job.new_slot));
         self.release_slot(job.new_slot);
+        if let Some(sc) = job.scratch {
+            self.release_scratch(sc);
+        }
     }
 
     /// The new store a begun upgrade built, for running its fills on.

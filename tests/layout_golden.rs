@@ -572,7 +572,7 @@ fn a_changed_placement_token_refuses_the_store() {
     );
     assert!(
         matches!(
-            verdict_for_sidecar_text(&text, &current),
+            verdict_for_sidecar_text(&text, &current, &loft::database::Release::default()),
             SchemaVerdict::Match
         ),
         "an untouched sidecar hands over raw"
@@ -580,7 +580,7 @@ fn a_changed_placement_token_refuses_the_store() {
 
     // What a store written before a placement bump looks like to a binary after one.
     let older = text.replace("hash<", "hash|PLACEMENT|<");
-    let verdict = verdict_for_sidecar_text(&older, &current);
+    let verdict = verdict_for_sidecar_text(&older, &current, &loft::database::Release::default());
     assert!(
         !verdict.is_raw_safe(),
         "a store whose hash placement this binary would compute differently must not be \
