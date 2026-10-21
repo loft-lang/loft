@@ -12,9 +12,9 @@
       ],
       "check": "python3 scripts/compiled_stdlib_fresh.py",
       "regen": [
-        "python3 scripts/compiled_stdlib_fresh.py >/dev/null 2>&1 || make -s compiled-stdlib"
+        "make -s compiled-stdlib"
       ],
-      "note": "the stdlib's compiled loft bodies (@PLN181): stale after any default/*.loft change, and a stale one is interpreted 5-23x slower — first, because the census and the allocation pins measure the build it produces",
+      "note": "the stdlib's compiled loft bodies (@PLN181): stale after any default/*.loft change AND after a compiler change in src/ that alters what the stdlib compiles to (compiled_stdlib_fresh.py hashes only the sources, so the regen is unconditional; the test compiled_stdlib_up_to_date is the real check), and a stale one is interpreted 5-23x slower — first, because the census and the allocation pins measure the build it produces",
       "ci": true
     },
     {
