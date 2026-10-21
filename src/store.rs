@@ -77,6 +77,15 @@ fn scan_index_enabled() -> bool {
     *ON.get_or_init(|| !std::env::var("LOFT_NO_SCAN_INDEX").is_ok_and(|v| v != "0"))
 }
 
+/// `LOFT_NO_WILD_BUMP=1` sends a claim on a store whose free tree is empty through
+/// `claim_best_fit` again instead of carving it off the wilderness directly
+/// ([`Store::bump_wild`]); the same block either way, so the bisect step for a claim the
+/// fast path got wrong.
+fn wild_bump_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILD_BUMP").is_ok_and(|v| v != "0"))
+}
+
 fn wilderness_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILDERNESS").is_ok_and(|v| v != "0"))
@@ -1762,6 +1771,15 @@ impl Store {
             self.fl_validate();
             return self.finish_claim(pos);
         }
+        // The same for a store that keeps a wilderness: with the tree empty it is the only
+        // block the best fit could choose (`@FR-H-Wilderness`).
+        if self.wilderness
+            && let Some(pos) = self.bump_wild(size)
+        {
+            #[cfg(debug_assertions)]
+            self.fl_validate();
+            return self.finish_claim(pos);
+        }
         // Fast path: claim from the smallest tracked free block that fits.
         if let Some(result) = self.claim_best_fit(size) {
             #[cfg(debug_assertions)]
@@ -2011,6 +2029,37 @@ impl Store {
         self.free_root = new_free;
         self.claims.insert(pos);
         self.claimed_end = self.claimed_end.max(new_free);
+        if let Some(log) = self.recording.as_mut() {
+            log.push(StoreChange::Insert { pos, size });
+        }
+        Some(pos)
+    }
+
+    /// `bump_tail`'s twin for a store that keeps a wilderness (`@FR-H-Wilderness`): while the
+    /// free tree is empty the wilderness is the only block `claim_best_fit` could choose, so
+    /// the claim is carved off its front here — the block, the split and the remainder
+    /// `claim_best_fit` → `claim_block` → `fl_insert` would produce, without the tree walk
+    /// and the two calls.  Only the case where `claim_block` splits and the remainder stays
+    /// the wilderness; any other leaves the claim to the general path.  A store reset per
+    /// call (`clear_vector_release`'s root reset) claims every record here: a third of a
+    /// `split` was the allocator walking an empty tree (@PLN179 finding 021).
+    #[inline]
+    fn bump_wild(&mut self, size: u32) -> Option<u32> {
+        let pos = self.wild;
+        if pos == 0 || self.free_root != 0 || !wild_bump_enabled() {
+            return None;
+        }
+        let req = size as i32;
+        let block = self.fl_size(pos);
+        if block <= req * 4 / 3 || block - req < MIN_FREE_TREE {
+            return None;
+        }
+        self.write(pos, 0, req);
+        let rest = pos + size;
+        self.set_free_header(rest, block - req);
+        self.wild = rest;
+        self.claims.insert(pos);
+        self.claimed_end = self.claimed_end.max(rest);
         if let Some(log) = self.recording.as_mut() {
             log.push(StoreChange::Insert { pos, size });
         }

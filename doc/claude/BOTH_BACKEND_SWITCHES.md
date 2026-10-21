@@ -757,6 +757,14 @@ parse row's tree claims took the tail; the row −6 % in cycles).  **`LOFT_NO_WI
 keeps the tail in the tree again (read per store at construction) and is the first bisect step
 for a store-layout fault or a claim that hands out a live block.
 
+**A claim on an empty tree bumps the wilderness (default-ON, both backends,
+`@FR-H-Wilderness`):** while the free tree holds nothing the wilderness is the only block a
+best fit could choose, so the claim is carved off its front directly — `bump_tail`'s twin for a
+store that keeps a wilderness, which `bump_tail` skips.  Same block, split and remainder; what
+goes is the tree walk and two calls per claim.  A store reset per call (a returned
+`vector<text>`'s root reset) claims every record this way: `split` −10 %, @PLN179 finding 021.
+**`LOFT_NO_WILD_BUMP=1`** sends such a claim through `claim_best_fit` again.
+
 **A best-fit claim carves its node in place (default-ON, both backends, `@FR-H-Carve`):** a
 claim from a free-tree block at least twice the request leaves the remainder in the block's
 place in the tree (links, color, parent pointer) instead of a delete and an insert — the block
