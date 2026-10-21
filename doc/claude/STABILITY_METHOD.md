@@ -331,6 +331,16 @@ sites in `src/`, the targets of a site-mutation pass the report does not run. Ru
 ordered by the defects behind them, the walk's own yield order. A report of reach, never a
 gate, and a floor: ROUTE and ESCAPE are not composition axes and stay a by-hand read.
 
+**Where two rules meet.** A third of the defect-born cells cite two rules or more, and the
+questions that reached the owner by hand were mostly of that kind: each rule clear alone, the
+text silent on which applies where both do. A COMPOSITION is stated as prose under the rule
+that governs — one sentence naming the other rule with a `when`, `where`, `instead`, `exactly
+as` or `governs` beside it, and the cell that fails when the order is wrong citing both — never
+as a pair notation, which would grow as the square of the rules and index nothing the two
+names do not. `python3 scripts/rule_tags.py pairs --unstated` lists the pairs the text names
+without saying which applies, and the pairs a defect-born cell cites together that no rule's
+entry names at all, the ones that have already failed first.
+
 ⚠ **"A queue measured in years" was this doc's own projection, and it was wrong.** Measured
 2026-09-17 off `git grep "@FR-" <rev> -- src`: citation went from none to most of the corpus
 inside about five weeks, running several times the afternoon-per-rule estimate. Two things keep

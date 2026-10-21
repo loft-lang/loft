@@ -208,6 +208,9 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
   inference — declared vs inferred storage (the "by definition vs by use" split)
   (N-Decl)     a DECLARED slot `x: τ` is a COMMITMENT: `x = e` checks `e ⇐ τ`. If e:τ? it is
                `(N-Store)`-illegal — declaring non-null FORBIDS a later nullable write.
+               The check `e ⇐ τ` is (I-Narrow)'s where τ is a narrower integer than e's type —
+               not implicit, so `c: u8 = a + b` is refused in its plain, `match` and value-`if`
+               spellings alike (loft#1379) — and (N-Store)'s where e may be null.
   (N-Join)     an INFERRED `a = e₁ … a = eₙ` (no annotation) has type `⨆ᵢ τᵢ`, made OPTIONAL
                iff some `τᵢ` is optional.  `?` rides the SAME join as integer width `(I-Join)`
                — `integer ⊔ integer? = integer?`.

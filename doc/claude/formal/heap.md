@@ -657,6 +657,13 @@ installed, which the frame does own.
              cannot "err toward the safe side while the real fix is designed": a drop's fix
              has to be RIGHT on every path, which is why `(O-Complete)`'s per-path clause and
              this rule meet so often.
+             A MOVE (H-Move) hands the lease on with the value, so the structure it moved out
+             of releases nothing for it at its death: a returned tuple local's droppable
+             member runs its hook once, in the caller (loft#1594).  WHICH record a
+             reassignment displaces is (O-Latest)'s answer — the latest assignment to the
+             binding at that loop depth, never the type's deps list — and the hook runs for
+             that record (loft#1362).  A closure that leaves its frame takes the release of
+             its captures over, hooks included (L-CapOwn, loft#1609).
   (H-Lease)  a structure whose type OWNS a droppable — the type declares `OpDrop`, or holds
              a member that does, at any depth — holds its OWN lease on the resource, and
              two structures are two drops.  A copy makes a second structure, so it takes a
@@ -692,6 +699,14 @@ installed, which the frame does own.
              written under a branch is decided PER PATH — one name may be spent on one path
              and live on another, and the release must run on exactly the paths that did not
              move it.
+             Where (H-Move) moved it is where a name is spent: every position H-Move lists — a
+             field, an element, a tuple member, an append, a return — spends the name from the
+             end of that statement, an iterator handle (G-Hold) included, so `next(g)` after
+             `v += [g]` is refused rather than driving a frame its holder owns (loft#2043).
+             With (H-Copy-Refuse) it partitions the shapes that would release a resource
+             twice: a COPY of a value the function does not own is refused where it is
+             written, a READ of a name an earlier statement moved is refused here, naming
+             where the value went (loft#1506).
   (H-Copy-Lease) a copy of a type that declares `fn OpCopy(self: τ)` copies the bytes and
              then runs `OpCopy` on the NEW structure, which takes its own lease there.  A
              struct, an enum variant or a collection holding such a member gets a synthesized

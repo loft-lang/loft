@@ -10,6 +10,21 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Compositions in the formal rules, and the pairs check reads them
+
+- A composition — which rule applies where two do — is stated as prose under the rule that
+  governs, naming the other rule with a `when`/`where`/`instead`/`governs` beside it; no pair
+  notation.  Seven written from the cells the defects left: `H-Spent` with `H-Move`, `G-Hold`
+  and `H-Copy-Refuse`; `H-Drop` with `H-Move`, `O-Latest` and `L-CapOwn`; `N-Decl` with
+  `I-Narrow`; `F-Ret` with `B-Copy`, `O-Move` and `G-Mono`; `B-Copy` with `B-View`,
+  `B-Ref-Alias` and `T-Cons`; `B-Ref-Uniform` with `B-Ref-Intro`; `L-CapOwn` with `H-Drop`.
+- `rule_tags.py pairs` reads a rule named bare or in backticks as well as in parentheses or
+  by tag (517 pairs named, from 311), tells a STATED composition (the naming sentence carries a
+  conditional or ordering connective: 302) from a cross-reference, and `--unstated` lists the
+  rest with the defect-born cells citing both first — and, strongest, the pairs such a cell
+  cites that no rule's entry names at all (276 before the seven; a third of defect-born cells
+  cite two rules or more).
+
 ### The per-rule depth report: how thoroughly the tests match a formal rule
 
 - `make rule-depth` (`scripts/rule_depth.py`): where `rule_tags.py coverage` counts a rule

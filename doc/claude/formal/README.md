@@ -251,6 +251,14 @@ What that buys, and none of it is available from a rule NAME alone:
   carry the directory as a prefix: `./scripts/idx tag:@FR-B-Copy` lists the cells there
   beside the sites here) and by `rule_tags.py coverage` (its `rules/` is a guard directory
   by default).  Without the checkout both still answer, from this tree alone.
+- **the composition question is a lookup too** — *which rule applies where two do?* is
+  stated as prose under the rule that GOVERNS: one sentence naming the other rule with a
+  `when`, `where`, `instead`, `exactly as` or `governs` beside it, and the cell that fails
+  when the order is wrong citing both. Never a pair notation: it would grow as the square of
+  the rules and index nothing the two names do not. `scripts/rule_tags.py pairs` reads a
+  rule named in any spelling, tells such a sentence from a bare cross-reference, and
+  `--unstated` lists the pairs the text names without saying which applies, the ones a
+  defect-born cell cites together first.
 
 **Two constraints the measurement forced** (numbers in [IMPLEMENTATIONS.md](IMPLEMENTATIONS.md)):
 

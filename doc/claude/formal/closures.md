@@ -97,6 +97,9 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  skips it — so there the frame's release is the store's only one.  The record's
                  reach is its CASCADE: a capture attribute the cascade does not follow is not
                  covered by any adoption, whatever the free-suppression believes.
+                 The release a leaving closure takes over is the WHOLE of one — the
+                 captures' (H-Drop) hooks as well as their stores, dispatched on the
+                 record's own type ahead of the free (loft#1609).
   (L-CapKeep)    each RUN of a closure build is its own record.  A fn-ref that still names
                  the record an earlier run built (a pass of a loop kept in a local declared
                  outside it, a `&fn(…)` link, a copy in another local) goes on answering from

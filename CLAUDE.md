@@ -287,7 +287,8 @@ decision:C<n>` shows one.  A decision no site can keep is reopened, not document
 **A FORMAL RULE is `@FR-`-tagged — `@FR-B-Copy`, `@FR-L-Null`, `@FR-D-bind-11`** — and a code
 site that enforces one CITES it, so *"which sites enforce this rule?"* is a grep and *"is this
 rule already implemented somewhere?"* is a lookup. `scripts/rule_tags.py` is the tool
-(`list` · `check` · `sites <tag>` · `dups` · `registers`); `check` gates that every citation
+(`list` · `check` · `sites <tag>` · `dups` · `registers` · `pairs --unstated`, the rule pairs
+whose composition the text does not state); `check` gates that every citation
 resolves and no rule is defined twice, and **`registers` reads each chapter's stated
 `OPEN: n` against the entries actually attributed to it** — its `-history` companion's
 included, because a chapter that delegates its register states a number nothing beside it

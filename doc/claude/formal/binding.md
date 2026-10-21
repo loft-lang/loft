@@ -119,6 +119,10 @@ different type former doing a different job (`B-Ref-StoredRef`).
                   field/element mutate — and every operation goes through the link via
                   the EXISTING mutation code.  The TYPE carries the linkage; no
                   operation is special-cased and the mutation code is unchanged.
+                  Every τ that (B-Ref-Intro) admits a `&τ` for is a τ this rule covers, so it
+                  has no exception by type: a keyed collection parameter appends through its
+                  link (loft#1445), and a nullable slot is linked and written as its dense twin
+                  is (loft#1372).
 ```
 
 **In words.** A linked variable is a window onto its source: read it and you see the
@@ -140,6 +144,11 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   owns a droppable without `OpCopy`, such a bind is a compile-time error on
                   its own line, whatever follows it ([heap.md](heap.md) H-Copy-Refuse); with
                   `OpCopy` it takes a second lease (H-Copy-Lease).
+                  The SHAPE decides between this rule and (B-View), never the type's
+                  nullability: a STRUCT-typed projection views, every other plain bind copies —
+                  a nullable whole-value bind copies like its dense twin (loft#1319) — and the
+                  `&` of (B-Ref-Alias) overrides both into a link.  A tuple literal copies every
+                  heap member the same way (T-Cons, loft#1674).
   (B-Ref-Alias)   the `&τ` annotation makes ANY binding — scalar OR heap — a live LINK
                   to the source instead of a copy.  `d = &v` / `d = &self.data` ALIAS the
                   vector: `d[i] = x` (and `d += …`) write THROUGH to the source, which is

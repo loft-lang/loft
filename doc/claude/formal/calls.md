@@ -239,6 +239,13 @@ and compiles. This is the only static rejection at a call site besides `F-Arity`
              (now-dropped) locals.  A function that returns a whole heap value hands out an
              OWNED value (heap.md H-Alloc / the return-buffer), never a view of a local.
              EXCEPTION: a `&T` return (binding.md) is an explicit borrow of an addressable input.
+             A result that BORROWS a visible argument — the `{Attr(param)}` return of (O-Move) —
+             is not fresh, and (B-Copy) copies it at the bind that takes it, reassigned or
+             chosen by an `if`, on both backends; a return that borrows a closure's own capture
+             is declined rather than copied (loft#1353).  The return is the JOIN of every
+             delivery site, each early `return` and the tail, per specialisation (G-Mono): a
+             parameter returned on one path and a fresh value on another hand the caller an
+             owned value on both, the bind guarded by store identity (loft#1884).
 ```
 
 **In words.** Two calls to the same function give you two independent results — mutating one never
