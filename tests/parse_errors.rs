@@ -5233,6 +5233,23 @@ fn sort_in_a_generic_needs_the_bound() {
         .error("'T' does not satisfy interface 'Ordered': missing `operator compare(self: T, other: T) -> Ordering` at sort_in_a_generic_needs_the_bound:1:33");
 }
 
+/// `@FR-Op-Bound` — a bound is met by the receiver's OWN operator.  A struct declaring `compare`
+/// against two right-hand types makes `compare` an overload set holding every type's members,
+/// and a bare `T` fits any member's parameters; it met `Ordered` through `D`'s `compare(D, D)`,
+/// so `sort` in an unbounded generic compiled in any program holding such a struct — every
+/// program, once the stdlib's `Version` compared against a text.
+#[test]
+fn another_types_compare_set_does_not_meet_a_bare_variables_bound() {
+    code!("struct D { ms: integer }\npub operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }\npub operator compare(self: D, other: integer) -> Ordering { self.ms.compare(other) }\nfn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")
+        .error("'T' does not satisfy interface 'Ordered': missing `operator compare(self: T, other: T) -> Ordering` at another_types_compare_set_does_not_meet_a_bare_variables_bound:4:33");
+}
+
+/// The control: the struct's own `compare(D, D)` still meets `Ordered` for `D`.
+#[test]
+fn a_types_own_compare_in_a_set_meets_its_bound() {
+    code!("struct D { ms: integer }\npub operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }\npub operator compare(self: D, other: integer) -> Ordering { self.ms.compare(other) }\nfn g<T: Ordered>(v: vector<T>) -> vector<T> { sort(v); v }\nfn test() { s = g([D { ms: 3 }, D { ms: 1 }, D { ms: 2 }]); assert(\"{s[0].ms}{s[1].ms}{s[2].ms}\" == \"123\", \"sorted by its own compare\"); }");
+}
+
 /// @PLN165 E5 — a `#builtin` method's callback is typed by the special form's hint, in both
 /// spellings: over a const collection the element parameter is `const` (loft#1540), so a
 /// short lambda's write to it is refused in `v.filter(…)` as in `filter(v, …)`.

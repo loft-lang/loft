@@ -7375,7 +7375,26 @@ impl Data {
         let base = shape.clone();
         // A form may be an overload set (several right-hand types), and `compare` always is
         // one beside the stdlib's own members on the base types.
-        let mut candidates = self.overload_routines(form);
+        //
+        // `@FR-Op-Bound` — a bound is met by the RECEIVER's own member.  The set holds every
+        // type's members of the form, and `params_fit` lets a type variable stand for anything,
+        // so a struct declaring `compare` against two right-hand types made a bare `T` meet
+        // `Ordered` through that struct's `compare(D, D)`: `sort` in an unbounded generic was
+        // admitted in every program once the stdlib declared one (`Version`).
+        let receiver = self.type_def_nr(&base);
+        let variant_of = |v: u32, e: u32| {
+            v != u32::MAX && self.def(v).def_type == DefType::EnumValue && self.def(v).parent == e
+        };
+        let mut candidates: Vec<u32> = self
+            .overload_routines(form)
+            .into_iter()
+            .filter(|&d| {
+                self.visible_params(d).first().is_some_and(|h| {
+                    let h = self.type_def_nr(h);
+                    h == receiver || variant_of(h, receiver) || variant_of(receiver, h)
+                })
+            })
+            .collect();
         let found = self.find_fn(u16::MAX, form, &base);
         if found != u32::MAX && !candidates.contains(&found) {
             candidates.push(found);
