@@ -13,7 +13,8 @@
 # The branch must be pushed: the runner regenerates from what is on origin.  The fast-forward
 # is `git merge --ff-only` on a CLEAN tree only — never a pull — and a checkout that has
 # committed since is told to rebase instead (CLAUDE.md § Git safety).  JOINING.md § Derived
-# artefacts on a runner.
+# artefacts on a runner.  It always ends by itself: DERIVE_TIMEOUT (seconds, default 3600)
+# bounds the wait for the run, which then exits 124 having merged nothing.
 set -euo pipefail
 
 wf=derive.yml
@@ -40,8 +41,21 @@ for _ in $(seq 1 30); do
 done
 [ -n "$run" ] || { echo "the dispatched run did not appear" >&2; exit 1; }
 echo "$wf run $run on $branch"
-gh run watch "$run" --exit-status >/dev/null || {
-  echo "$wf run $run failed: gh run view $run --log-failed" >&2; exit 1; }
+# A deadline, so the script always ends by itself — `gh run watch` waits on a queued or stuck
+# runner for as long as it stays that way.  DERIVE_TIMEOUT seconds, 3600 by default.
+deadline=$(( $(date +%s) + ${DERIVE_TIMEOUT:-3600} ))
+while :; do
+  state=$(gh run view "$run" --json status,conclusion -q '.status + " " + .conclusion' 2>/dev/null || echo "unknown ")
+  case "$state" in
+    "completed success") break ;;
+    completed*) echo "$wf run $run ${state#completed }: gh run view $run --log-failed" >&2; exit 1 ;;
+  esac
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "$wf run $run still ${state% } after ${DERIVE_TIMEOUT:-3600}s — nothing was merged; re-run when it ends: gh run view $run" >&2
+    exit 124
+  fi
+  sleep 20
+done
 
 git fetch -q origin "$branch"
 if [ "$(git rev-parse "origin/$branch")" = "$local_sha" ]; then
