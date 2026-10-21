@@ -703,7 +703,7 @@ impl Stores {
         let key: Vec<Content> = sub.iter().map(|v| Content::Long(*v)).collect();
         let new = self.keyed_place_begin(coll, db, &key);
         self.keyed_place_finish(coll, &new, db, &key);
-        new
+        self.filed(&new)
     }
 
     /// The second half of [`Self::keyed_place_begin`]: the subscript's key written into the

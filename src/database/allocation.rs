@@ -3101,6 +3101,7 @@ impl Stores {
             lazy_errors: std::collections::HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            last_filed: None,
             evacuated: Vec::new(),
             owed: super::upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
@@ -3341,6 +3342,14 @@ impl Stores {
                         "[cr-check] {path}: hash bucket rec {cur} insane room {room} (cap {cap})",
                     );
                     *problems += 1;
+                    return;
+                }
+                // `(Col-Inline)` — an inline table's entries are positions in the table
+                // record itself, listed by the hash's own walk.
+                if crate::hash::is_inline(store, cur) {
+                    for entry in crate::hash::records(rec, &self.allocations) {
+                        self.validate_claims(&entry, *v, &format!("{path}{{inline}}"), problems);
+                    }
                     return;
                 }
                 let sb = crate::hash::slot_bytes(store, cur);
@@ -4098,7 +4107,12 @@ impl Stores {
         // appended.  The destination allocates its slots through the same arena, so
         // visiting in that order rebuilds the source's physical layout.
         let mut children = self.for_each_owned_child(rec, tp).children;
-        children.sort_by_key(|c| (c.child.rec, c.child.pos));
+        // An inline table lists its entries in insertion order already (`(Col-Inline)`); an
+        // arena's position order is its hand-out order.
+        let src_claim = self.store(rec).get_u32_raw(rec.rec, rec.pos);
+        if src_claim == 0 || !hash::is_inline(self.store(rec), src_claim) {
+            children.sort_by_key(|c| (c.child.rec, c.child.pos));
+        }
         let stride = crate::hash::stride_for(size);
         for child in children {
             let src_db = child.child;
@@ -8566,7 +8580,9 @@ impl Stores {
         // copy that built its own bucket or node would be a second implementation of
         // the structure the collection is checked against.
         match kind {
-            PagedKind::Hash => crate::hash::add(local, &entry, &mut self.allocations, keys),
+            PagedKind::Hash => {
+                crate::hash::add(local, &entry, &mut self.allocations, keys);
+            }
             PagedKind::Trie => crate::trie_db::add(local, &entry, &mut self.allocations, keys),
             PagedKind::Radix => crate::radix_db::add(local, &entry, &mut self.allocations, keys),
         }

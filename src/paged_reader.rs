@@ -1040,8 +1040,14 @@ pub fn find_hash_entry<P: PageProvider>(
     // `(Col-Tag)` — the table's slot width is in its header.
     let flags = reader.u32_at(claim, crate::hash::STRIDE_FLD);
     let sb = if flags & crate::hash::TAGGED != 0 { 8 } else { crate::hash::SLOT_BYTES };
-    let elms = crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb);
-    let stride = flags & !crate::hash::TAGGED;
+    let stride = flags & !(crate::hash::TAGGED | crate::hash::INLINE);
+    // `(Col-Inline)` — an inline table's entry is in the table record, at its bucket.
+    let inline = flags & crate::hash::INLINE != 0;
+    let elms = if inline {
+        crate::hash::inline_count(room - crate::hash::RESERVED_WORDS, stride)
+    } else {
+        crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb)
+    };
     let seed = reader.i64_at(claim, crate::hash::SEED_FLD) as u64;
     let hash_val = crate::keys::key_hash(key, seed);
     let mut index = crate::hash::home_bucket(hash_val, elms);
@@ -1050,7 +1056,13 @@ pub fn find_hash_entry<P: PageProvider>(
         if slot == 0 {
             return (0, 0);
         }
-        let (rec, pos) = entry_at(reader, claim, slot, stride);
+        let (rec, pos) = if !inline {
+            entry_at(reader, claim, slot, stride)
+        } else if slot == crate::hash::TOMB {
+            (0, 0)
+        } else {
+            (claim, crate::hash::ent0(elms) + index * stride)
+        };
         if rec != 0 && key_compare_reader(reader, key, rec, pos, keys) == std::cmp::Ordering::Equal
         {
             return (rec, pos);
@@ -1112,12 +1124,14 @@ pub fn hash_bucket_addrs<P: PageProvider>(
     if room < crate::hash::RESERVED_WORDS {
         return Vec::new();
     }
-    let sb = if reader.u32_at(claim, crate::hash::STRIDE_FLD) & crate::hash::TAGGED != 0 {
-        8
+    let flags = reader.u32_at(claim, crate::hash::STRIDE_FLD);
+    let sb = if flags & crate::hash::TAGGED != 0 { 8 } else { crate::hash::SLOT_BYTES };
+    let elms = if flags & crate::hash::INLINE != 0 {
+        let stride = flags & !(crate::hash::TAGGED | crate::hash::INLINE);
+        crate::hash::inline_count(room - crate::hash::RESERVED_WORDS, stride)
     } else {
-        crate::hash::SLOT_BYTES
+        crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb)
     };
-    let elms = crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb);
     if elms == 0 {
         return Vec::new();
     }

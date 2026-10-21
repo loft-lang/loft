@@ -55,6 +55,81 @@ pub const SLOT_BYTES: u32 = 4;
 /// written before carries) has [`SLOT_BYTES`]-wide slots and is read as it was written.
 pub const TAGGED: u32 = 0x8000_0000;
 
+/// `(Col-Inline)` — `STRIDE_FLD`'s next bit: this table keeps its entries IN the record, an
+/// entries array of `count × stride` bytes after the `count` tagged slots, an entry at its
+/// bucket's position.  A slot's first word is the entry's insertion number (`arena::NEXT_FLD`
+/// counts them, from 1), not an arena index: a walk in slot order sorts by it, so it follows
+/// the inserts and removes alone, never the seed.  A removal leaves [`TOMB`] (a keyed removal
+/// moves no other entry, `(Col-Remove)`); only a rebuild moves entries, and drops the
+/// tombstones, which `arena::FREE_FLD` counts.  Only tables that own their entries are made
+/// inline: a type a stored reference or a group shares is `linked`, and gets per-record entries
+/// in a borrowing table (`Stores::record_new`).
+pub const INLINE: u32 = 0x4000_0000;
+
+/// A removed inline entry's slot: live for a probe walk, empty for a walk over the entries.
+pub const TOMB: u32 = u32::MAX;
+
+/// `LOFT_NO_HASH_INLINE=1` — `(Col-Inline)` off: tables that own their entries keep them in
+/// the arena.  A writer's policy, read once: a reader reads either layout.
+fn hash_inline() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !keys::env_set("LOFT_NO_HASH_INLINE") && hash_tag())
+}
+
+/// A table's header word `STRIDE_FLD` read once, with what it decides.
+#[derive(Clone, Copy)]
+struct Hdr {
+    /// Bucket slots.
+    count: u32,
+    /// Bytes per slot.
+    sb: u32,
+    /// Bytes per entry, 0 for a table that borrows.
+    stride: u32,
+    inline: bool,
+}
+
+/// The buckets of an inline table of `words` words past the reserved ones: the largest power
+/// of two whose slots and entries fit.
+#[inline]
+#[must_use]
+pub fn inline_count(words: u32, stride: u32) -> u32 {
+    let n = (u64::from(words) * 8 / u64::from(8 + stride)) as u32;
+    if n == 0 { 0 } else { 1 << (31 - n.leading_zeros()) }
+}
+
+/// The words an inline table of `count` buckets of `stride`-byte entries takes.
+#[inline]
+fn inline_words(count: u32, stride: u32) -> u32 {
+    RESERVED_WORDS + count * (8 + stride) / 8
+}
+
+/// Byte offset of an inline table's entries array.
+#[inline]
+#[must_use]
+pub fn ent0(count: u32) -> u32 {
+    BUCKET0 + count * 8
+}
+
+#[inline]
+fn hdr(store: &Store, claim: u32) -> Hdr {
+    let words = store.record_words(claim).saturating_sub(RESERVED_WORDS);
+    let flags = store.get_u32_raw(claim, STRIDE_FLD);
+    let stride = flags & !(TAGGED | INLINE);
+    if flags & INLINE != 0 {
+        Hdr { count: inline_count(words, stride), sb: 8, stride, inline: true }
+    } else {
+        let sb = if flags & TAGGED != 0 { 8 } else { SLOT_BYTES };
+        Hdr { count: slots_in(words, sb), sb, stride, inline: false }
+    }
+}
+
+/// Is table `claim` inline?
+#[inline]
+#[must_use]
+pub fn is_inline(store: &Store, claim: u32) -> bool {
+    store.get_u32_raw(claim, STRIDE_FLD) & INLINE != 0
+}
+
 /// Bytes per bucket slot of table `claim`: 8 when it is tagged, [`SLOT_BYTES`] when not.
 #[inline]
 #[must_use]
@@ -83,10 +158,8 @@ pub fn slots_in(words: u32, sb: u32) -> u32 {
 /// A table's header read once: its bucket count, its slot width and its entry stride.
 #[inline]
 fn header(store: &Store, claim: u32) -> (u32, u32, u32) {
-    let words = store.record_words(claim);
-    let flags = store.get_u32_raw(claim, STRIDE_FLD);
-    let sb = if flags & TAGGED != 0 { 8 } else { SLOT_BYTES };
-    (slots_in(words.saturating_sub(RESERVED_WORDS), sb), sb, flags & !TAGGED)
+    let h = hdr(store, claim);
+    (h.count, h.sb, h.stride)
 }
 
 /// The tag a key's digest leaves in a tagged slot: its low 32 bits, which hold the home
@@ -177,7 +250,7 @@ fn room_for_buckets(elms: u64, sb: u32) -> u64 {
 
 /// Bucket slots in table record `claim`.
 fn elms(store: &Store, claim: u32) -> u32 {
-    slots_in(store.record_words(claim) - RESERVED_WORDS, slot_bytes(store, claim))
+    hdr(store, claim).count
 }
 
 /// Bytes per entry slot, as recorded in the table.
@@ -187,7 +260,7 @@ fn elms(store: &Store, claim: u32) -> u32 {
 /// without having to be handed a type it would otherwise only need for this.
 #[must_use]
 pub fn stride(store: &Store, claim: u32) -> u32 {
-    store.get_u32_raw(claim, STRIDE_FLD) & !TAGGED
+    store.get_u32_raw(claim, STRIDE_FLD) & !(TAGGED | INLINE)
 }
 
 /// A bucket slot's high bit: this slot names a store RECORD, not an arena index.
@@ -258,11 +331,52 @@ struct Entries {
     stride: u32,
     dir: u32,
     cap: u32,
+    /// `(Col-Inline)`: entries sit in the table `claim` from byte `ent0`, at their bucket.
+    inline: bool,
+    claim: u32,
+    ent0: u32,
 }
 
 impl Entries {
     fn of(store: &Store, claim: u32, store_nr: u16) -> Entries {
-        Entries::with_stride(store, claim, store_nr, stride(store, claim))
+        let h = hdr(store, claim);
+        if h.inline {
+            return Entries::inline(claim, store_nr, &h);
+        }
+        Entries::with_stride(store, claim, store_nr, h.stride)
+    }
+
+    /// The entries of table `claim`, its header already read.
+    fn from_hdr(store: &Store, claim: u32, store_nr: u16, h: &Hdr) -> Entries {
+        if h.inline {
+            Entries::inline(claim, store_nr, h)
+        } else {
+            Entries::with_stride(store, claim, store_nr, h.stride)
+        }
+    }
+
+    /// The entries of inline table `claim`.
+    fn inline(claim: u32, store_nr: u16, h: &Hdr) -> Entries {
+        Entries {
+            store_nr,
+            stride: h.stride,
+            dir: 0,
+            cap: 0,
+            inline: true,
+            claim,
+            ent0: ent0(h.count),
+        }
+    }
+
+    /// The entry a probe at bucket `at` holding slot value `slot` compares: in place for an
+    /// inline table, through the arena otherwise.
+    #[inline]
+    fn at_bucket(&self, store: &Store, slot: u32, at: u32) -> (u32, u32) {
+        if self.inline {
+            (self.claim, self.ent0 + at * self.stride)
+        } else {
+            self.at(store, slot)
+        }
     }
 
     /// [`Entries::of`] for a caller that has read the stride already.
@@ -277,6 +391,9 @@ impl Entries {
             stride,
             dir,
             cap: arena::dir_capacity(store, dir),
+            inline: false,
+            claim: 0,
+            ent0: 0,
         }
     }
 
@@ -377,14 +494,20 @@ pub fn ensure_table(hash: &DbRef, stride: u32, stores: &mut [Store]) -> u32 {
     // starts at 16 slots, the size it has always started at — a power of two
     // (`@FR-Col-Bucket`).
     let sb = new_slot_bytes();
-    let claim = keys::mut_store(hash, stores).claim(RESERVED_WORDS + 16 * sb / 8);
-    keys::mut_store(hash, stores).zero_fill(claim);
+    // `(Col-Inline)` — a table that owns its entries keeps them in its record.
+    let claim = if stride != 0 && hash_inline() {
+        inline_create(keys::mut_store(hash, stores), 16, stride)
+    } else {
+        let claim = keys::mut_store(hash, stores).claim(RESERVED_WORDS + 16 * sb / 8);
+        keys::mut_store(hash, stores).zero_fill(claim);
+        let flag = if sb == 8 { TAGGED } else { 0 };
+        keys::mut_store(hash, stores).set_u32_raw(claim, STRIDE_FLD, stride | flag);
+        claim
+    };
     // Seed the new table and store the seed with its buckets, so any
     // reader (including a different process) re-derives identical buckets.
     let seed = keys::fresh_seed();
     write_seed(keys::mut_store(hash, stores), claim, seed);
-    let flag = if sb == 8 { TAGGED } else { 0 };
-    keys::mut_store(hash, stores).set_u32_raw(claim, STRIDE_FLD, stride | flag);
     keys::mut_store(hash, stores).set_u32_raw(hash.rec, hash.pos, claim);
     claim
 }
@@ -400,6 +523,17 @@ pub fn ensure_table(hash: &DbRef, stride: u32, stores: &mut [Store]) -> u32 {
 pub fn alloc_entry(hash: &DbRef, stride: u32, owner: u32, stores: &mut [Store]) -> DbRef {
     let claim = ensure_table(hash, stride, stores);
     let store = keys::mut_store(hash, stores);
+    if is_inline(store, claim) {
+        // `(Col-Inline)` — the entry is built in a stage of its own and copied into its
+        // bucket when it is filed ([`add`]), since its key decides the bucket.
+        let rec = store.claim(1 + stride.div_ceil(8));
+        store.zero_fill(rec);
+        return DbRef {
+            store_nr: hash.store_nr,
+            rec,
+            pos: 8,
+        };
+    }
     let (_, rec, pos) = arena::alloc_at(store, claim, stride, owner);
     DbRef {
         store_nr: hash.store_nr,
@@ -474,14 +608,14 @@ pub fn entry_ints(
             bucket = Some(BUCKET0 + at * sb);
             break;
         }
-        if tag_differs(store, claim, sb, at, tag) {
+        if (entries.inline && slot == TOMB) || tag_differs(store, claim, sb, at, tag) {
             at += 1;
             if at >= count {
                 at = 0;
             }
             continue;
         }
-        let (rec, pos) = entries.at(store, slot);
+        let (rec, pos) = entries.at_bucket(store, slot, at);
         if keys
             .iter()
             .zip(values)
@@ -501,6 +635,15 @@ pub fn entry_ints(
     // A full walk with no empty bucket cannot happen below the load factor; leave it to the
     // general insert, which rebuilds the table first.
     let bucket = bucket?;
+    if entries.inline {
+        let (claim, at) = inline_slot_for(hash, claim, tag, stores);
+        let store = keys::mut_store(hash, stores);
+        let entry = inline_file(store, hash.store_nr, claim, at, tag, true);
+        for (k, v) in keys.iter().zip(values) {
+            store.set_int(entry.rec, entry.pos + u32::from(k.position), *v);
+        }
+        return Some(entry);
+    }
     let store = keys::mut_store(hash, stores);
     let (index, rec, pos) = arena::alloc_at(store, claim, entries.stride, owner);
     for (k, v) in keys.iter().zip(values) {
@@ -537,18 +680,15 @@ pub fn entry_one_int(
     if claim == 0 {
         return None;
     }
-    let words = store.record_words(claim);
-    if words <= RESERVED_WORDS {
+    if store.record_words(claim) <= RESERVED_WORDS {
         return None;
     }
-    let flags = store.get_u32_raw(claim, STRIDE_FLD);
-    let width = flags & !TAGGED;
+    let h = hdr(store, claim);
+    let (count, sb, width) = (h.count, h.sb, h.stride);
     if width == 0 {
         return None;
     }
-    let sb = if flags & TAGGED != 0 { 8 } else { SLOT_BYTES };
-    let count = slots_in(words - RESERVED_WORDS, sb);
-    let entries = Entries::with_stride(store, claim, hash.store_nr, width);
+    let entries = Entries::from_hdr(store, claim, hash.store_nr, &h);
     let digest = keys::ints_hash(&[value], read_seed(store, claim));
     let tag = tag_of(digest);
     let mut at = home_bucket(digest, count);
@@ -559,8 +699,8 @@ pub fn entry_one_int(
             bucket = Some(at);
             break;
         }
-        if !tag_differs(store, claim, sb, at, tag) {
-            let (rec, pos) = entries.at(store, slot);
+        if !(h.inline && slot == TOMB) && !tag_differs(store, claim, sb, at, tag) {
+            let (rec, pos) = entries.at_bucket(store, slot, at);
             if store.get_int(rec, pos + kp) == value {
                 return Some(DbRef {
                     store_nr: hash.store_nr,
@@ -575,6 +715,13 @@ pub fn entry_one_int(
         }
     }
     let at = bucket?;
+    if h.inline {
+        let (claim, at) = inline_slot_for(hash, claim, tag, stores);
+        let store = keys::mut_store(hash, stores);
+        let entry = inline_file(store, hash.store_nr, claim, at, tag, true);
+        store.set_int(entry.rec, entry.pos + kp, value);
+        return Some(entry);
+    }
     let length = store.get_u32_raw(claim, LEN_FLD);
     let store = keys::mut_store(hash, stores);
     let (index, rec, pos) = arena::alloc_at(store, claim, width, owner);
@@ -631,14 +778,14 @@ pub fn entry_str(
             bucket = Some(BUCKET0 + at * sb);
             break;
         }
-        if tag_differs(store, claim, sb, at, tag) {
+        if (entries.inline && slot == TOMB) || tag_differs(store, claim, sb, at, tag) {
             at += 1;
             if at >= count {
                 at = 0;
             }
             continue;
         }
-        let (rec, pos) = entries.at(store, slot);
+        let (rec, pos) = entries.at_bucket(store, slot, at);
         if fast.matches(store, rec, pos) {
             return Some(DbRef {
                 store_nr: hash.store_nr,
@@ -652,6 +799,14 @@ pub fn entry_str(
         }
     }
     let bucket = bucket?;
+    if entries.inline {
+        let (claim, at) = inline_slot_for(hash, claim, tag, stores);
+        let store = keys::mut_store(hash, stores);
+        let entry = inline_file(store, hash.store_nr, claim, at, tag, true);
+        let text = store.set_str(value);
+        store.set_u32_raw(entry.rec, entry.pos + u32::from(key.position), text);
+        return Some(entry);
+    }
     let store = keys::mut_store(hash, stores);
     let (index, rec, pos) = arena::alloc_at(store, claim, entries.stride, owner);
     let text = store.set_str(value);
@@ -665,10 +820,15 @@ pub fn entry_str(
     Some(rec)
 }
 
-pub fn add(hash: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
+/// File `rec` in the hash: answers the entry as filed — `rec` itself, or for an inline table
+/// (`(Col-Inline)`) the bucket's entry its staged bytes were copied into, the stage freed.
+pub fn add(hash: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> DbRef {
     // loft#1213 — read the slot through `collection_rec` so an ABSENT field reads as "no
     // table" and takes the branch below, rather than as a table at the reserved id.
     let mut claim = keys::store(hash, stores).collection_rec(hash.rec, hash.pos);
+    if claim != 0 && is_inline(keys::store(hash, stores), claim) {
+        return inline_add(hash, claim, rec, stores, keys);
+    }
     if claim == 0 {
         // Reached only when the entry was allocated somewhere else — a SECONDARY index
         // over another collection's records.  Stride 0 records that: this table
@@ -690,7 +850,7 @@ pub fn add(hash: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
     }
     hash_set(claim, index, rec, stores, keys);
     keys::mut_store(rec, stores).set_u32_raw(claim, LEN_FLD, length + 1);
-    // hash_validate(hash, key, stores, keys);
+    *rec
 }
 
 /// `LOFT_NO_HALF_LOAD=1` — a table is rebuilt at three quarters full again instead of at
@@ -808,6 +968,11 @@ pub fn probe_for_insert(hash: &DbRef, rec: &DbRef, stores: &[Store], keys: &[Key
     if claim == 0 || store.record_words(claim) <= RESERVED_WORDS {
         return Probed::Unknown;
     }
+    if is_inline(store, claim) {
+        // An inline table files a staged record by copying it ([`add`]): the two-walk form
+        // owns both answers.
+        return Probed::Unknown;
+    }
     let count = elms(store, claim);
     let sb = slot_bytes(store, claim);
     let entries = Entries::of(store, claim, hash.store_nr);
@@ -828,7 +993,7 @@ pub fn probe_for_insert(hash: &DbRef, rec: &DbRef, stores: &[Store], keys: &[Key
         if slot == own {
             return Probed::Unknown;
         }
-        if tag_differs(store, claim, sb, at, tag) {
+        if (entries.inline && slot == TOMB) || tag_differs(store, claim, sb, at, tag) {
             at += 1;
             if at >= count {
                 at = 0;
@@ -873,6 +1038,10 @@ pub fn add_at(
     keys: &[Key],
 ) {
     let claim = keys::store(hash, stores).collection_rec(hash.rec, hash.pos);
+    if is_inline(keys::store(hash, stores), claim) {
+        inline_add(hash, claim, rec, stores, keys);
+        return;
+    }
     let length = keys::store(hash, stores).get_u32_raw(claim, LEN_FLD);
     if keys::keyed_verify() {
         let (at, _) = hash_free_pos(claim, rec, stores, keys);
@@ -949,6 +1118,16 @@ pub fn reserve(hash: &DbRef, count: i64, stride: u32, stores: &mut [Store], keys
     // Create the table if it is not there yet, so the seed, the stride and the arena
     // fields all come from the one place that mints them.
     let claim = ensure_table(hash, stride, stores);
+    if is_inline(keys::store(hash, stores), claim) {
+        // `(Col-Inline)` — rebuilt in place at the bucket count the fill needs.
+        let target = need.max(2).next_power_of_two();
+        if u64::from(elms(keys::store(hash, stores), claim)) < target {
+            if let Ok(target) = u32::try_from(target) {
+                inline_rebuild(hash, claim, target, stores);
+            }
+        }
+        return;
+    }
     let have = u64::from(elms(keys::store(hash, stores), claim));
     if have >= need.max(2).next_power_of_two() || (!pow2_buckets() && keys::store(hash, stores).record_words(claim) >= want) {
         return;
@@ -1234,9 +1413,14 @@ pub fn find(hash_ref: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -
             record.pos = 0;
             break;
         }
-        let skip = tag_differs(store, claim, sb, index, tag);
+        let skip = (entries.inline && slot == TOMB) || tag_differs(store, claim, sb, index, tag);
         if !skip {
-            record = entries.entry(store, slot);
+            let (r, p) = entries.at_bucket(store, slot, index);
+            record = DbRef {
+                store_nr: hash_ref.store_nr,
+                rec: r,
+                pos: p,
+            };
         }
         if skip || keys::key_compare(key, &record, stores, keys) != Ordering::Equal {
             index += 1;
@@ -1279,11 +1463,11 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
     if claim == 0 || store.record_words(claim) == 0 {
         return Some(found);
     }
-    let (count, sb, width) = header(store, claim);
+    let (count, sb, _) = header(store, claim);
     let digest = keys::long_hash(value, read_seed(store, claim));
     let tag = tag_of(digest);
     let home = home_bucket(digest, count);
-    let entries = Entries::with_stride(store, claim, hash_ref.store_nr, width);
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
     let p = u32::from(key.position);
     (found.rec, found.pos) = match kind {
         1 => {
@@ -1344,10 +1528,10 @@ pub fn find_ints(
     if claim == 0 || store.record_words(claim) == 0 {
         return Some(found);
     }
-    let (count, sb, width) = header(store, claim);
+    let (count, sb, _) = header(store, claim);
     let digest = keys::ints_hash(values, read_seed(store, claim));
     let home = home_bucket(digest, count);
-    let entries = Entries::with_stride(store, claim, hash_ref.store_nr, width);
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
     (found.rec, found.pos) = probe(store, claim, count, sb, home, tag_of(digest), &entries, |r, b| {
         keys.iter()
             .zip(values)
@@ -1376,10 +1560,10 @@ pub fn find_str(hash_ref: &DbRef, stores: &[Store], key: &Key, value: &str) -> O
     if claim == 0 || store.record_words(claim) == 0 {
         return Some(found);
     }
-    let (count, sb, width) = header(store, claim);
+    let (count, sb, _) = header(store, claim);
     let digest = keys::str_hash(value, read_seed(store, claim));
     let home = home_bucket(digest, count);
-    let entries = Entries::with_stride(store, claim, hash_ref.store_nr, width);
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
     let k = keys::FastKey::Str(u32::from(key.position), value);
     (found.rec, found.pos) = probe(store, claim, count, sb, home, tag_of(digest), &entries, |r, b| {
         k.matches(store, r, b)
@@ -1475,14 +1659,14 @@ fn probe(
         if slot == 0 {
             break;
         }
-        if tag_differs(store, claim, sb, at, tag) {
+        if (entries.inline && slot == TOMB) || tag_differs(store, claim, sb, at, tag) {
             at += 1;
             if at >= count {
                 at = 0;
             }
             continue;
         }
-        let (rec, pos) = entries.at(store, slot);
+        let (rec, pos) = entries.at_bucket(store, slot, at);
         if same(rec, pos) {
             return (rec, pos);
         }
@@ -1506,6 +1690,12 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
         return 0;
     }
     let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
+    if claim == 0 {
+        return 0;
+    }
+    if is_inline(keys::store(hash_ref, stores), claim) {
+        return inline_remove(hash_ref, claim, rec, stores);
+    }
     let length = keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD);
     if length == 0 {
         return 0;
@@ -1582,7 +1772,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
 /// borrowing table owns nothing, so both release nothing, as [`free_entry`] decides too.
 pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
     let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
-    if claim == 0 || slot == 0 || slot & SLOT_RECORD != 0 {
+    if claim == 0 || slot == 0 || slot & SLOT_RECORD != 0 || is_inline(keys::store(hash_ref, stores), claim) {
         return;
     }
     let width = stride(keys::store(hash_ref, stores), claim);
@@ -1603,6 +1793,14 @@ pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
 pub fn free_entry(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store]) {
     let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
+        return;
+    }
+    if is_inline(keys::store(hash_ref, stores), claim) {
+        // A removed inline entry is a tombstone in the table, which frees it with itself; a
+        // stage never filed is a record of its own.
+        if rec.rec != claim {
+            keys::mut_store(hash_ref, stores).delete(rec.rec);
+        }
         return;
     }
     let width = stride(keys::store(hash_ref, stores), claim);
@@ -1661,7 +1859,12 @@ pub fn table_bytes(hash_ref: &DbRef, stores: &[Store]) -> u32 {
     if claim == 0 {
         return 0;
     }
-    elms(keys::store(hash_ref, stores), claim) * slot_bytes(keys::store(hash_ref, stores), claim)
+    let h = hdr(keys::store(hash_ref, stores), claim);
+    if h.inline {
+        h.count * (8 + h.stride)
+    } else {
+        h.count * h.sb
+    }
 }
 
 /// C60 Step 1: collect every live record's record-number from a hash.
@@ -1695,6 +1898,12 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
     let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
         return Vec::new();
+    }
+    if is_inline(store, claim) {
+        return inline_entries(store, hash_ref.store_nr, claim)
+            .into_iter()
+            .map(|e| (e, true))
+            .collect();
     }
     let count = elms(store, claim);
     let sb = slot_bytes(store, claim);
@@ -1731,6 +1940,9 @@ pub fn records_by_slot(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
     if claim == 0 {
         return Vec::new();
     }
+    if is_inline(store, claim) {
+        return inline_entries(store, hash_ref.store_nr, claim);
+    }
     let count = elms(store, claim);
     let sb = slot_bytes(store, claim);
     let width = stride(store, claim);
@@ -1757,6 +1969,9 @@ pub fn arena_records(hash_ref: &DbRef, stores: &[Store]) -> Vec<u32> {
     let store = keys::store(hash_ref, stores);
     let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
+        return Vec::new();
+    }
+    if is_inline(store, claim) {
         return Vec::new();
     }
     arena::all_records(store, claim)
@@ -1813,4 +2028,204 @@ pub fn validate(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) {
         );
     }
     assert_eq!(length, l, "Incorrect hash length");
+}
+
+// ---- `(Col-Inline)` — the operations of a table that keeps its entries in its record ----
+
+/// The factor an inline table grows by when it is due: twice its buckets, as an arena table
+/// grows (`grow_if_full`).
+const GROWTH: u32 = 2;
+
+/// Zero the `count` slots of table `claim`: an empty slot is a zero first word, and nothing
+/// else in the record is read before it is written.
+fn zero_slots(store: &mut Store, claim: u32, count: u32) {
+    unsafe {
+        store
+            .base_ptr()
+            .add(claim as usize * 8 + BUCKET0 as usize)
+            .write_bytes(0, count as usize * 8);
+    }
+}
+
+/// A new inline table of `count` buckets for `stride`-byte entries: its slots empty, its
+/// insertion count at 1, no tombstones.  The caller writes the seed and the field.
+fn inline_create(store: &mut Store, count: u32, stride: u32) -> u32 {
+    let claim = store.claim(inline_words(count, stride));
+    for fld in [LEN_FLD, SEED_FLD, SEED_FLD + 4, arena::DIR_FLD, arena::FREE_FLD] {
+        store.set_u32_raw(claim, fld, 0);
+    }
+    store.set_u32_raw(claim, arena::NEXT_FLD, 1);
+    store.set_u32_raw(claim, STRIDE_FLD, stride | TAGGED | INLINE);
+    let count = hdr(store, claim).count;
+    zero_slots(store, claim, count);
+    claim
+}
+
+/// Rebuild inline table `claim` at `want` buckets or more: every live entry moved to its
+/// bucket in the new record by its tag, the tombstones dropped, the seed, the insertion count
+/// and the length carried; the field repointed and the old record freed.  Answers the new
+/// table.  This is the one place an inline entry moves (besides a store's load), and every
+/// view of an entry ends at it (`binding.md` B-Disturb, a keyed add).
+fn inline_rebuild(hash: &DbRef, claim: u32, want: u32, stores: &mut [Store]) -> u32 {
+    let store = keys::mut_store(hash, stores);
+    let h = hdr(store, claim);
+    let new_claim = store.claim(inline_words(want, h.stride));
+    for fld in [LEN_FLD, SEED_FLD, SEED_FLD + 4, arena::NEXT_FLD, STRIDE_FLD] {
+        let v = store.get_u32_raw(claim, fld);
+        store.set_u32_raw(new_claim, fld, v);
+    }
+    store.set_u32_raw(new_claim, arena::DIR_FLD, 0);
+    store.set_u32_raw(new_claim, arena::FREE_FLD, 0);
+    let nh = hdr(store, new_claim);
+    zero_slots(store, new_claim, nh.count);
+    let mask = nh.count - 1;
+    let (old0, new0) = (ent0(h.count), ent0(nh.count));
+    let stride = h.stride as usize;
+    let base = store.base_ptr();
+    let slot = |rec: u32, at: u32| unsafe {
+        base.add(rec as usize * 8 + (BUCKET0 + at * 8) as usize)
+            .cast::<u32>()
+    };
+    for i in 0..h.count {
+        let seq = unsafe { slot(claim, i).read_unaligned() };
+        if seq == 0 || seq == TOMB {
+            continue;
+        }
+        let tag = unsafe { slot(claim, i).add(1).read_unaligned() };
+        let mut at = tag & mask;
+        while unsafe { slot(new_claim, at).read_unaligned() } != 0 {
+            at = (at + 1) & mask;
+        }
+        unsafe {
+            slot(new_claim, at).write_unaligned(seq);
+            slot(new_claim, at).add(1).write_unaligned(tag);
+            std::ptr::copy_nonoverlapping(
+                base.add(claim as usize * 8 + (old0 + i * h.stride) as usize),
+                base.add(new_claim as usize * 8 + (new0 + at * h.stride) as usize),
+                stride,
+            );
+        }
+    }
+    install_table(hash, claim, new_claim, stores);
+    new_claim
+}
+
+/// The empty bucket an insert of `tag` takes in inline table `claim`, the table grown first
+/// when it is due: `(table, bucket)`.  The walk for a hit came before; this one ends at the
+/// first EMPTY slot (a tombstone is not reused).
+fn inline_slot_for(hash: &DbRef, claim: u32, tag: u32, stores: &mut [Store]) -> (u32, u32) {
+    let store = keys::store(hash, stores);
+    let h = hdr(store, claim);
+    let used = store.get_u32_raw(claim, LEN_FLD) + store.get_u32_raw(claim, arena::FREE_FLD);
+    let claim = if is_full(used, h.count) {
+        inline_rebuild(hash, claim, h.count * GROWTH, stores)
+    } else {
+        claim
+    };
+    let store = keys::store(hash, stores);
+    let mask = hdr(store, claim).count - 1;
+    let mut at = tag & mask;
+    while store.get_u32_raw(claim, BUCKET0 + at * 8) != 0 {
+        at = (at + 1) & mask;
+    }
+    (claim, at)
+}
+
+/// File a new entry at empty bucket `at` of inline table `claim`: its insertion number and
+/// tag, the length, and — with `zero` — its bytes zeroed, as a fresh arena slot is.  Answers
+/// the entry.
+fn inline_file(store: &mut Store, store_nr: u16, claim: u32, at: u32, tag: u32, zero: bool) -> DbRef {
+    let h = hdr(store, claim);
+    let seq = store.get_u32_raw(claim, arena::NEXT_FLD).max(1);
+    store.set_u32_raw(claim, arena::NEXT_FLD, seq + 1);
+    put_slot(store, claim, 8, at, seq, tag);
+    let len = store.get_u32_raw(claim, LEN_FLD);
+    store.set_u32_raw(claim, LEN_FLD, len + 1);
+    let pos = ent0(h.count) + at * h.stride;
+    if zero {
+        unsafe {
+            store
+                .base_ptr()
+                .add(claim as usize * 8 + pos as usize)
+                .write_bytes(0, h.stride as usize);
+        }
+    }
+    DbRef { store_nr, rec: claim, pos }
+}
+
+/// [`add`] on an inline table: `rec`'s bytes — a record staged by [`alloc_entry`] — copied
+/// into the bucket its key takes, and the stage freed.  Answers the filed entry.
+fn inline_add(hash: &DbRef, claim: u32, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> DbRef {
+    let seed = read_seed(keys::store(hash, stores), claim);
+    let tag = tag_of(keys::hash(rec, stores, keys, seed));
+    let (claim, at) = inline_slot_for(hash, claim, tag, stores);
+    let placed = inline_file(keys::mut_store(hash, stores), hash.store_nr, claim, at, tag, false);
+    let stride = hdr(keys::store(hash, stores), claim).stride;
+    if rec.store_nr == hash.store_nr {
+        let store = keys::mut_store(hash, stores);
+        let base = store.base_ptr();
+        unsafe {
+            std::ptr::copy(
+                base.add(rec.rec as usize * 8 + rec.pos as usize),
+                base.add(placed.rec as usize * 8 + placed.pos as usize),
+                stride as usize,
+            );
+        }
+    } else {
+        let src = keys::store(rec, stores).base_ptr();
+        let dst = keys::store(hash, stores).base_ptr();
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                src.add(rec.rec as usize * 8 + rec.pos as usize),
+                dst.add(placed.rec as usize * 8 + placed.pos as usize),
+                stride as usize,
+            );
+        }
+    }
+    if !(rec.store_nr == hash.store_nr && rec.rec == claim) {
+        keys::mut_store(rec, stores).delete(rec.rec);
+    }
+    placed
+}
+
+/// [`remove`] on an inline table: the entry at `rec` leaves a tombstone, so no other entry
+/// moves.  Answers its insertion number, 0 when the table did not hold it.
+fn inline_remove(hash_ref: &DbRef, claim: u32, rec: &DbRef, stores: &mut [Store]) -> u32 {
+    let store = keys::mut_store(hash_ref, stores);
+    let h = hdr(store, claim);
+    let base = ent0(h.count);
+    if rec.rec != claim || rec.pos < base || h.stride == 0 {
+        return 0;
+    }
+    let at = (rec.pos - base) / h.stride;
+    if at >= h.count {
+        return 0;
+    }
+    let seq = store.get_u32_raw(claim, BUCKET0 + at * 8);
+    if seq == 0 || seq == TOMB {
+        return 0;
+    }
+    store.set_u32_raw(claim, BUCKET0 + at * 8, TOMB);
+    let len = store.get_u32_raw(claim, LEN_FLD);
+    store.set_u32_raw(claim, LEN_FLD, len.saturating_sub(1));
+    let tombs = store.get_u32_raw(claim, arena::FREE_FLD);
+    store.set_u32_raw(claim, arena::FREE_FLD, tombs + 1);
+    seq
+}
+
+/// The live entries of inline table `claim`, in insertion order (the order an unordered walk
+/// promises, `@FR-Col-Unordered`).
+fn inline_entries(store: &Store, store_nr: u16, claim: u32) -> Vec<DbRef> {
+    let h = hdr(store, claim);
+    let base = ent0(h.count);
+    let mut live: Vec<(u32, u32)> = (0..h.count)
+        .filter_map(|at| {
+            let seq = store.get_u32_raw(claim, BUCKET0 + at * 8);
+            (seq != 0 && seq != TOMB).then_some((seq, at))
+        })
+        .collect();
+    live.sort_unstable();
+    live.into_iter()
+        .map(|(_, at)| DbRef { store_nr, rec: claim, pos: base + at * h.stride })
+        .collect()
 }

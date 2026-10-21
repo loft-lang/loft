@@ -820,6 +820,7 @@ impl Stores {
             let elem_tp = run.map.pairs[elem].new;
             self.convert(run, elem, &src, &rec, Container::At(rec, elem_tp))?;
             self.record_finish(&parent, &rec, parent_tp, field);
+            let rec = self.filed(&rec);
             if self.collection_count(&slot, coll_tp) == before {
                 let key = crate::keys::get_key(
                     &rec,
