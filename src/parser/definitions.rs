@@ -993,9 +993,14 @@ impl Parser {
             // 256 overflows the `u8` — an internal compiler error under debug assertions,
             // a wrap to the reserved `0` without them.
             if nr == 253 {
-                self.lexer.diagnostic(
+                // Reported at the 255th variant — the one refused — not after the comma that
+                // closes the 254th (loft#2089).
+                let at = self.lexer.peek_pos().clone();
+                diagnostic_at!(
+                    self.lexer,
+                    &at,
                     Level::Error,
-                    "Too many enum variants — an enum holds at most 254, because a variant is one byte and 0 and 255 are reserved",
+                    "Too many enum variants — an enum holds at most 254, because a variant is one byte and 0 and 255 are reserved"
                 );
                 // Skip the rest of the variant list rather than breaking out mid-name: the
                 // caller's `token("}")` is standing at the next variant otherwise, and one
@@ -2492,24 +2497,48 @@ impl Parser {
         }
     }
 
+    /// The table's names not built yet: the form each will back.
+    const OPERATOR_FORMS_NOT_BUILT: &[(&str, &str)] = &[
+        ("at", "`x[i]`"),
+        ("set_at", "`x[i] = v`"),
+        ("slice", "`x[a..b]`"),
+        ("key_range", "a keyed slice"),
+        ("power", "`**`"),
+        ("bit_and", "`&`"),
+        ("bit_or", "`|`"),
+        ("bit_xor", "`^`"),
+        ("bit_not", "`~`"),
+        ("shift_left", "`<<`"),
+        ("shift_right", "`>>`"),
+    ];
+
+    /// Does `refuse_operator_name` refuse `fn_name` — `equals`, a form not built yet, or a name
+    /// that is no form at all?  Asked before the definition exists, so a refused name never
+    /// meets another definition of it (`index` is a stdlib name, loft#2089).
+    fn backs_no_form(fn_name: &str) -> bool {
+        fn_name == "equals"
+            || Self::OPERATOR_FORMS_NOT_BUILT
+                .iter()
+                .any(|(n, _)| *n == fn_name)
+            || !(matches!(
+                fn_name,
+                "compare"
+                    | "plus"
+                    | "minus"
+                    | "times"
+                    | "divided_by"
+                    | "remainder"
+                    | "negate"
+                    | "next"
+                    | "to_text"
+            ) || fn_name.starts_with("to_"))
+    }
+
     /// `@FR-Op-Def`'s name half: a form of the table not built yet is refused by name, saying
     /// what it will back, and a name that is no form at all is refused as one.  Answers whether
     /// it refused.
     fn refuse_operator_name(&mut self, fn_name: &str) -> bool {
-        // The table's names not built yet: the form each will back.
-        const PLACED: &[(&str, &str)] = &[
-            ("at", "`x[i]`"),
-            ("set_at", "`x[i] = v`"),
-            ("slice", "`x[a..b]`"),
-            ("key_range", "a keyed slice"),
-            ("power", "`**`"),
-            ("bit_and", "`&`"),
-            ("bit_or", "`|`"),
-            ("bit_xor", "`^`"),
-            ("bit_not", "`~`"),
-            ("shift_left", "`<<`"),
-            ("shift_right", "`>>`"),
-        ];
+        let placed = Self::OPERATOR_FORMS_NOT_BUILT;
         // @C134 (owner) — `==` is always structural, for every type at every depth; no
         // type defines it, so a deep comparison of its own is a named method.
         if fn_name == "equals" {
@@ -2521,7 +2550,7 @@ impl Parser {
             );
             return true;
         }
-        if let Some((_, form)) = PLACED.iter().find(|(n, _)| *n == fn_name) {
+        if let Some((_, form)) = placed.iter().find(|(n, _)| *n == fn_name) {
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -2550,7 +2579,7 @@ impl Parser {
                  — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, \
                  `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a \
                  unary `-`, `next` for `for e in x`, `to_text` for \
-                 `\"{{x}}\"`; declare an ordinary method with `fn`"
+                 `\"{{x}}\"`, `to_<type>` for `x as <type>`; declare an ordinary method with `fn`"
             );
             return true;
         }
@@ -2839,6 +2868,15 @@ impl Parser {
         };
         let Some(fn_name) = self.parse_fn_name() else {
             return false;
+        };
+        // `@FR-Op-Def` — an `operator` whose name backs no form is refused in the second pass by
+        // the name as written; its definition takes a private name so that it collides with
+        // nothing first (`operator index(…)` met the stdlib's `index`, loft#2089).
+        let written_name = fn_name.clone();
+        let fn_name = if is_operator && !self.default && Self::backs_no_form(&fn_name) {
+            format!("__refused_operator_{fn_name}")
+        } else {
+            fn_name
         };
         // Marked or not: an unmarked `fn to_<t>` is what `as` names in its refusal (`@FR-Op-Mark`).
         if !self.default && fn_name.starts_with("to_") && fn_name != "to_text" {
@@ -3138,7 +3176,7 @@ impl Parser {
             Type::Void
         };
         if is_operator && !self.first_pass {
-            self.check_operator_definition(&fn_name, &arguments, &result);
+            self.check_operator_definition(&written_name, &arguments, &result);
         }
         if !is_operator && !self.first_pass && !self.default {
             self.report_retired_operator_function(&fn_name, &arguments);

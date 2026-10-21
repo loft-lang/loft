@@ -529,7 +529,7 @@ impl Parser {
                 );
                 if none_applicable && method_types.is_empty() {
                     let sel = crate::parser::dispatch::Selection::NoneApplicable;
-                    self.report_selection(name, &routed, &sel, Some(name_pos));
+                    self.report_selection_with(name, &routed, &sel, Some(name_pos), list);
                 } else if method_types.is_empty() {
                     // @PLN13 phase 6 (diagnostics slice): the name may simply be
                     // unimported rather than wrong.  An EXACT hit in a published

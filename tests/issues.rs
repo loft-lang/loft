@@ -16314,7 +16314,7 @@ fn test_it() {
          sharing a mutable variable between closures is not supported — hold the \
          shared state in a struct field instead (e.g. `state = State { t: ... }` \
          captured by all closures) \
-         at issue_314_scalar_shared_by_two_closures_rejected:5:2",
+         at issue_314_scalar_shared_by_two_closures_rejected:4:53",
     );
 }
 

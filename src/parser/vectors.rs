@@ -3236,18 +3236,24 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             return;
         }
         for name in &scalars {
-            let capturers = lambdas
+            let capturing: Vec<u32> = lambdas
                 .iter()
-                .filter(|&&lam| {
+                .copied()
+                .filter(|&lam| {
                     let rec = self.data.def(lam).closure_record();
                     rec != u32::MAX
                         && (0..self.data.attributes(rec))
                             .any(|a_nr| self.data.attr_name(rec, a_nr) == *name)
                 })
-                .count();
+                .collect();
+            let capturers = capturing.len();
             if capturers >= 2 {
-                diagnostic!(
+                // At the SECOND closure that captures it — the one that makes the variable
+                // shared — not wherever the lexer stands when the function ends (loft#2089).
+                let at = self.data.def(capturing[1]).position().clone();
+                diagnostic_at!(
                     self.lexer,
+                    &at,
                     Level::Error,
                     "variable `{name}` is mutated through a closure and captured by \
                      {capturers} closures; sharing a mutable variable between closures \

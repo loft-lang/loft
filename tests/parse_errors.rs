@@ -771,7 +771,7 @@ fn a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous() {
         "enum En {\n    Fi { n: integer },\n    Cr { n: integer }\n}\nfn kd(self: Fi?) -> integer { 1 }\nfn kd(self: En) -> integer { self.n }\nfn test() { f: En = Fi { n: 1 }; f.kd(); }"
     )
     .warning("Parameter self is never read at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:5:30")
-    .error("`kd(En)` is ambiguous at (Fi) — that pair is taken by kd(Fi?) and kd(En) and nothing ranks them; give the call the arguments that pick one, or drop one definition at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:7:41");
+    .error("`kd(En)` is ambiguous at (Fi) — that variant is taken by kd(Fi?) and kd(En) and nothing ranks them; give the call the arguments that pick one, or drop one definition at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:7:41");
 }
 
 #[test]
@@ -4812,7 +4812,7 @@ fn enum_variant_limit_refuses_the_255th() {
     let src = format!("enum Wide {{\n{}\n}}\n", variants.join("\n"));
     code!(&src).error(
         "Too many enum variants — an enum holds at most 254, because a variant is one byte \
-         and 0 and 255 are reserved at enum_variant_limit_refuses_the_255th:255:8",
+         and 0 and 255 are reserved at enum_variant_limit_refuses_the_255th:256:3",
     );
 }
 
@@ -5816,7 +5816,7 @@ fn test() {
 #[test]
 fn operator_with_a_name_that_backs_nothing() {
     code!("struct P { v: integer }\npub operator frob(self: P, other: P) -> Ordering { self.v.compare(other.v) }\nfn test() { }")
-        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a unary `-`, `next` for `for e in x`, `to_text` for `\"{x}\"`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
+        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a unary `-`, `next` for `for e in x`, `to_text` for `\"{x}\"`, `to_<type>` for `x as <type>`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
 }
 
 #[test]

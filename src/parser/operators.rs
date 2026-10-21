@@ -141,17 +141,8 @@ impl Parser {
     /// the author wrote `const` on that, not on the view, and "const variable 'f'" would point at
     /// a declaration that does not exist.
     pub(crate) fn report_const_write(&mut self, nr: u16) {
-        if let Some(place) = self.const_views.get(&(self.context, nr)).cloned() {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "Cannot modify '{}': it is a view of {place}, whose value is read-only; remove \
-                 'const' there, or copy what you change into a local",
-                self.vars.written_name(nr)
-            );
-            return;
-        }
-        // `@FR-Const-Foreign` — a binding of foreign data: the author wrote no `const`.
+        // `@FR-Const-Foreign` — a binding of foreign data, or a view of one: the author wrote no
+        // `const`, so this is asked before the view wording below.
         if self.foreign_bound.contains(&(self.context, nr)) {
             let name = self.vars.name(nr).to_string();
             diagnostic!(
@@ -160,6 +151,16 @@ impl Parser {
                 "Cannot modify '{name}': it holds read-only data the program does not own (a \
                  mapped file or a library's buffer) — copy it first (`w = {name}`, a bind copies) \
                  and write the copy"
+            );
+            return;
+        }
+        if let Some(place) = self.const_views.get(&(self.context, nr)).cloned() {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot modify '{}': it is a view of {place}, whose value is read-only; remove \
+                 'const' there, or copy what you change into a local",
+                self.vars.written_name(nr)
             );
             return;
         }

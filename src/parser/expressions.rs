@@ -11726,12 +11726,23 @@ use a separate collection or add after the loop"
             return;
         };
         self.vars.set_value_const(view);
+        // A view of foreign data holds foreign data: its refusal is `@FR-Const-Foreign`'s, which
+        // names no `const` the author never wrote (loft#2089).
+        if let (_, Some(root)) = self.const_view_root(source, bare_var_views)
+            && self.foreign_bound.contains(&(self.context, root))
+        {
+            self.foreign_bound.insert((self.context, view));
+        }
         self.const_views.insert((self.context, view), place);
     }
 
-    /// The value-const place `source` reads out of, described for a refusal, or `None` when it
-    /// reads none — see [`Self::mark_const_view`] for which shapes count.
-    pub(crate) fn const_view_place(&self, source: &Value, bare_var_views: bool) -> Option<String> {
+    /// The node `source` arrives as, unwrapped, and the variable it reads out of, when it
+    /// reads one — the root [`Self::const_view_place`] describes.
+    fn const_view_root<'v>(
+        &self,
+        source: &'v Value,
+        bare_var_views: bool,
+    ) -> (&'v Value, Option<u16>) {
         let mut node = source.unspan();
         // The wrappers a right-hand side arrives in, and nothing else.
         loop {
@@ -11753,6 +11764,22 @@ use a separate collection or add after the loop"
             }
             other => crate::use_analysis::view_source_place(&self.data, other).map(|(v, _)| v),
         };
+        (node, root)
+    }
+
+    /// The value-const place `source` reads out of, described for a refusal, or `None` when it
+    /// reads none — see [`Self::mark_const_view`] for which shapes count.
+    pub(crate) fn const_view_place(&self, source: &Value, bare_var_views: bool) -> Option<String> {
+        let (node, root) = self.const_view_root(source, bare_var_views);
+        // `@FR-Const-Foreign` — data the program does not own: the author wrote no `const`.
+        if let Some(root) = root
+            && self.foreign_bound.contains(&(self.context, root))
+        {
+            return Some(format!(
+                "'{}', data the program does not own",
+                self.vars.written_name(root)
+            ));
+        }
         if let Some(root) = root
             && self.vars.exists(root)
             && self.vars.is_value_const(root)
