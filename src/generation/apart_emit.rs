@@ -39,6 +39,8 @@ pub struct ApartCtx {
     pub rb: Option<u16>,
     /// Instance 3: the body's apart `vector<float>` locals and their companions.
     pub vecs: VecRoles,
+    /// Instance 4: the body's apart records of record vectors, or its `__apr` twin's parameter.
+    pub recs: super::apart_records::RecRoles,
 }
 
 impl Output<'_> {
@@ -57,17 +59,22 @@ impl Output<'_> {
                 _ => (Roles::default(), false),
             }
         };
-        if !twin && roles.is_empty() && vecs.is_empty() {
+        let recs = super::apart_records::roles(self.data, &self.apr, def_nr, self.apr_twin);
+        if !twin && roles.is_empty() && vecs.is_empty() && recs.is_empty() {
             return None;
         }
         if !vecs.is_empty() {
             crate::rewrite_census::fired("R-Apart/vector", vecs.apart.len());
+        }
+        if !recs.is_empty() && !self.apr_twin {
+            crate::rewrite_census::fired("R-Apart/records", recs.vars.len());
         }
         Some(ApartCtx {
             roles,
             twin,
             rb,
             vecs,
+            recs,
         })
     }
 
@@ -113,6 +120,7 @@ impl Output<'_> {
             return Ok(());
         }
         self.apart_types_done = true;
+        self.output_apr_types(w)?;
         let mut types: Vec<&ApLayout> = self.apart.types.values().collect();
         types.sort_by(|a, b| a.rust.cmp(&b.rust));
         for t in types {
@@ -142,6 +150,17 @@ impl Output<'_> {
     /// How the twin's signature takes parameter `i`: a record parameter as a reference to its
     /// value, the return buffer not at all, every other parameter as the original has it.
     pub(super) fn apart_twin_param(&self, def_nr: u32, i: usize) -> TwinParam {
+        if self.apr_twin
+            && let Some(&(_, at, rec)) = self.apr.twins.get(&def_nr)
+            && at == i
+        {
+            let def = self.data.def(def_nr);
+            let t = &self.apr.types[&rec].rust;
+            return TwinParam::Value(format!(
+                ", __ap_{}: &{t}",
+                sanitize(&def.attributes()[i].name)
+            ));
+        }
         let Some(ctx) = self.apart_ctx.as_ref().filter(|c| c.twin) else {
             return TwinParam::Same;
         };
@@ -184,6 +203,15 @@ impl Output<'_> {
             }
             let t = &self.apart.types[rec].rust;
             let _ = write!(out, "\n  let mut {}: {t} = {t}::ZERO;", self.ap_name(v));
+        }
+        let mut recs: Vec<(&u16, &u32)> = ctx.recs.vars.iter().collect();
+        recs.sort_unstable();
+        for (&v, rec) in recs {
+            if ctx.recs.param == Some(v) {
+                continue;
+            }
+            let t = &self.apr.types[rec].rust;
+            let _ = write!(out, "\n  let mut {}: {t} = {t}::new();", self.ap_name(v));
         }
         let mut vecs: Vec<&u16> = ctx.vecs.apart.iter().collect();
         vecs.sort_unstable();
@@ -374,7 +402,7 @@ impl Output<'_> {
         if self.apart_ctx.is_none() {
             return Ok(false);
         }
-        if self.apart_vector_expr(w, x)? {
+        if self.apart_vector_expr(w, x)? || self.apr_expr(w, x)? {
             return Ok(true);
         }
         let data = self.data;
@@ -510,7 +538,10 @@ impl Output<'_> {
     /// own — the index, and a write's value — or `None` when `x` is no such mention.
     pub(super) fn apart_operands<'v>(&self, x: &'v Value) -> Option<Vec<&'v Value>> {
         self.apart_ctx.as_ref()?;
-        if let Some(ops) = self.apart_vector_operands(x) {
+        if let Some(ops) = self
+            .apart_vector_operands(x)
+            .or_else(|| self.apr_operands(x))
+        {
             return Some(ops);
         }
         if let Some((v, _, idx, _)) = apart_value::element_read(self.data, x)

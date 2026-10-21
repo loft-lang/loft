@@ -297,9 +297,11 @@ impl Output<'_> {
         if !dest && self.vr_call(w, def_fn, vals)? {
             return Ok(());
         }
-        // `own`: a call with a twin of its own — a destination's, or (`@FR-R-HandOver`) the
-        // rotate's call of a `__nk` twin — which no other twin form applies to.
-        let own = dest || self.nokeep_call(vals);
+        // `own`: a call with a twin of its own — a destination's, an apart record's
+        // (`@FR-R-Apart`), or (`@FR-R-HandOver`) the rotate's `__nk` — which no other
+        // twin form applies to.
+        let apr = !dest && self.apr_call(self.current_call_def, vals);
+        let own = dest || apr || self.nokeep_call(vals);
         let append = !own
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
@@ -349,7 +351,13 @@ impl Output<'_> {
             if refill_twin { "__rt" } else { "" },
             if append { "__ap" } else { "" },
             if dest { "__d" } else { "" },
-            if own && !dest { "__nk" } else { "" }
+            if apr {
+                "__apr"
+            } else if own && !dest {
+                "__nk"
+            } else {
+                ""
+            }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::runtime_abi::Abi::Cell) {
@@ -440,6 +448,13 @@ impl Output<'_> {
                     w,
                     "DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {off} }}"
                 )?;
+                continue;
+            }
+            // `@FR-R-Apart` instance 4 — an apart record goes to its twin as its value.
+            if let Value::Var(x) = v.unspan()
+                && let Some(arg) = self.apr_arg(*x)
+            {
+                write!(w, "{arg}")?;
                 continue;
             }
             self.emit_call_arg(w, def_fn, idx, v)?;

@@ -3110,13 +3110,20 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let (k, g) = (site.k, site.g);
         let vec = self.expr_string(&site.vector)?;
-        let src = self.expr_string(site.src)?;
         let etp = site.elem_tp;
+        // `@FR-R-Apart` instance 4 — an apart source rotates in from its parts.
+        let rotate = match site.src.unspan() {
+            Value::Var(p) if self.apr_parts(*p).is_some() => format!(
+                "stores.rotate_from_parts(&({vec}), {}, {etp}_u16, {k}_i64)",
+                self.apr_parts(*p).unwrap_or_default()
+            ),
+            _ => {
+                let src = self.expr_string(site.src)?;
+                format!("stores.rotate_into(&({vec}), &({src}), {etp}_u16, {k}_i64)")
+            }
+        };
         self.indent(w)?;
-        writeln!(
-            w,
-            "if stores.rotate_into(&({vec}), &({src}), {etp}_u16, {k}_i64) {{ //@FR-R-HandOver rotate"
-        )?;
+        writeln!(w, "if {rotate} {{ //@FR-R-HandOver rotate")?;
         self.indent += 1;
         for s in &site.between {
             self.indent(w)?;

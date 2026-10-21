@@ -1,0 +1,222 @@
+// `@FR-R-Apart` instance 4 — a record of record vectors built in a frame and handed to the
+// functions that copy it into a collection is one byte buffer per field: the pushes write the
+// element bytes in the frame, the callee is its `__apr` twin, and the store meets the value at
+// the append's copy (a fresh element's blocks) or under `(R-HandOver)`'s rotate clause (the
+// oldest element's blocks).  A driver or a callee that reads an element keeps the store form.
+//
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them, each expectation computed in its comment.  An entry prints as
+// `len(ps):sum q:sum x:count on|len(ms):sum k`; element j of push k has q = k*10+j,
+// x = 0.5 for an even j and 1.25 for an odd one, on = (j even).  `LOFT_NO_APART_RECORDS=1`
+// must answer the same.  Pinned by tests/apart_records.rs.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-21) — see tests/apart_records.rs.
+
+struct P { q: integer, x: float, on: boolean }
+struct M { k: integer }
+struct E { ps: vector<P>, ms: vector<M> }
+struct T { es: vector<E>, cur: integer }
+
+fn show(t: const T) -> text {
+  s = "";
+  for e in t.es {
+    sq = 0;
+    fx = 0.0;
+    on = 0;
+    for p in e.ps {
+      sq += p.q;
+      fx += p.x;
+      if p.on { on += 1; }
+    }
+    sk = 0;
+    for m in e.ms { sk += m.k; }
+    if len(s) > 0 { s += " "; }
+    s += "{len(e.ps)}:{sq}:{fx}:{on}|{len(e.ms)}:{sk}";
+  }
+  "{len(t.es)} {t.cur} [{s}]"
+}
+
+fn noop(e: const E) -> boolean { len(e.ps) == 0 && len(e.ms) == 0 }
+
+fn trunc(h: &T, n: integer) {
+  if n >= len(h.es) { return; }
+  nv: vector<E> = [];
+  for i in 0..n { nv += [h.es[i]?]; }
+  h.es = nv;
+}
+
+fn drop_old(h: &T, n: integer) {
+  if n <= 0 || n > len(h.es) { return; }
+  nv: vector<E> = [];
+  for i in n..len(h.es) { nv += [h.es[i]?]; }
+  h.es = nv;
+  h.cur = h.cur - n;
+  if h.cur < 0 { h.cur = 0; }
+}
+
+fn push3(h: &T, e: E) {
+  if noop(e) { return; }
+  trunc(h, h.cur);
+  h.es += [e];
+  h.cur = h.cur + 1;
+  if len(h.es) > 3 { drop_old(h, len(h.es) - 3); }
+}
+
+fn push2(h: &T, e: E) {
+  if noop(e) { return; }
+  trunc(h, h.cur);
+  h.es += [e];
+  h.cur = h.cur + 1;
+  if len(h.es) > 2 { drop_old(h, len(h.es) - 2); }
+}
+
+// a1 — depth 3, n = (k*2)%5+1 elements (3 5 2 4 1 3 5): k4 rotates into k1's blocks (3 → 4,
+// grown), k5 into k2's (5 → 1), k6 into k3's (2 → 3, grown), k7 into k4's (4 → 5, grown).
+// Left: k5 (q 50, x 0.5, on 1), k6 (60+61+62 = 183, 0.5+1.25+0.5 = 2.25, on 2),
+// k7 (70+..+74 = 360, x 4, on 3).  Cursor 3.
+fn a1() {
+  t = T { es: [], cur: 0 };
+  for k in 1..8 {
+    e = E { ps: [], ms: [] };
+    for j in 0..(k * 2) % 5 + 1 {
+      e.ps += [P { q: k * 10 + j, x: if j % 2 == 0 { 0.5 } else { 1.25 }, on: j % 2 == 0 }];
+    }
+    e.ms += [M { k: k }];
+    push3(t, e);
+  }
+  r = show(t);
+  println("a1 {r}");
+  assert(r == "3 3 [1:50:0.5:1|1:5 3:183:2.25:2|1:6 5:360:4:3|1:7]", "a1");
+}
+
+// a2 — depth 2, ms pushed only when k % 3 == 1 (k1, k4), n = k%2+1 (2 1 2 1 2).  k3 rotates
+// into k1's blocks with no ms (k1's ms block freed), k4 into k2's with one (claimed), k5 into
+// k3's with none.  Left: k4 (q 40, 0.5, 1 | 1:4), k5 (50+51 = 101, 1.75, 1 | 0:0).  Cursor 2.
+fn a2() {
+  t = T { es: [], cur: 0 };
+  for k in 1..6 {
+    e = E { ps: [], ms: [] };
+    for j in 0..k % 2 + 1 {
+      e.ps += [P { q: k * 10 + j, x: if j % 2 == 0 { 0.5 } else { 1.25 }, on: j % 2 == 0 }];
+    }
+    if k % 3 == 1 { e.ms += [M { k: k }]; }
+    push2(t, e);
+  }
+  r = show(t);
+  println("a2 {r}");
+  assert(r == "2 2 [1:40:0.5:1|1:4 2:101:1.75:1|0:0]", "a2");
+}
+
+// a3 — a truncation beside the rotate: k1 k2 k3 (n = k%4+1: 2 3 4), cursor back to 1; k4 (n 1)
+// keeps k1 and appends, cursor 2; k5 (n 2), cursor 3; k6 (n 3) rotates: k4 k5 k6 =
+// 40/0.5/1, 101/1.75/1, 183/2.25/2.  Cursor 3.
+fn a3() {
+  t = T { es: [], cur: 0 };
+  for k in 1..7 {
+    if k == 4 { t.cur = 1; }
+    e = E { ps: [], ms: [] };
+    for j in 0..k % 4 + 1 {
+      e.ps += [P { q: k * 10 + j, x: if j % 2 == 0 { 0.5 } else { 1.25 }, on: j % 2 == 0 }];
+    }
+    e.ms += [M { k: k }];
+    push3(t, e);
+  }
+  r = show(t);
+  println("a3 {r}");
+  assert(r == "3 3 [1:40:0.5:1|1:4 2:101:1.75:1|1:5 3:183:2.25:2|1:6]", "a3");
+}
+
+// a4 — the driver reads an element of `e`, so `e` stays in the store.  n = 2: entry k has
+// q 20k+1, x 1.75, on 1; left k2 k3 k4 (41, 61, 81); first = 10+20+30+40 = 100.
+fn a4() {
+  t = T { es: [], cur: 0 };
+  first = 0;
+  for k in 1..5 {
+    e = E { ps: [], ms: [] };
+    for j in 0..2 {
+      e.ps += [P { q: k * 10 + j, x: if j % 2 == 0 { 0.5 } else { 1.25 }, on: j % 2 == 0 }];
+    }
+    e.ms += [M { k: k }];
+    first += e.ps[0].q;
+    push3(t, e);
+  }
+  r = show(t);
+  println("a4 {r} {first}");
+  assert(r == "3 3 [2:41:1.75:1|1:2 2:61:1.75:1|1:3 2:81:1.75:1|1:4]" && first == 100, "a4");
+}
+
+// a5 — the callee reads an element of its parameter, so it has no twin and the driver's `e`
+// reaches none: both stay in the store.  The values are a4's.
+fn push3r(h: &T, e: E) {
+  if e.ps[0].q < 0 { return; }
+  trunc(h, h.cur);
+  h.es += [e];
+  h.cur = h.cur + 1;
+  if len(h.es) > 3 { drop_old(h, len(h.es) - 3); }
+}
+
+fn a5() {
+  t = T { es: [], cur: 0 };
+  for k in 1..5 {
+    e = E { ps: [], ms: [] };
+    for j in 0..2 {
+      e.ps += [P { q: k * 10 + j, x: if j % 2 == 0 { 0.5 } else { 1.25 }, on: j % 2 == 0 }];
+    }
+    e.ms += [M { k: k }];
+    push3r(t, e);
+  }
+  r = show(t);
+  println("a5 {r}");
+  assert(r == "3 3 [2:41:1.75:1|1:2 2:61:1.75:1|1:3 2:81:1.75:1|1:4]", "a5");
+}
+
+// a6 — one value handed to two twins: k = 1..5, one element each (q k*10, x 0.5, on 1).
+// t (depth 3) keeps k3 k4 k5, u (depth 2) keeps k4 k5.
+fn a6() {
+  t = T { es: [], cur: 0 };
+  u = T { es: [], cur: 0 };
+  for k in 1..6 {
+    e = E { ps: [], ms: [] };
+    e.ps += [P { q: k * 10, x: 0.5, on: true }];
+    e.ms += [M { k: k }];
+    push3(t, e);
+    push2(u, e);
+  }
+  r = show(t);
+  q = show(u);
+  println("a6 {r} / {q}");
+  assert(r == "3 3 [1:30:0.5:1|1:3 1:40:0.5:1|1:4 1:50:0.5:1|1:5]", "a6 t");
+  assert(q == "2 2 [1:40:0.5:1|1:4 1:50:0.5:1|1:5]", "a6 u");
+}
+
+// a7 — a twin that only appends (no drop): k = 1..3 with n = k: 10/0.5/1, 20+21 = 41/1.75/1,
+// 30+31+32 = 93/2.25/2.  Cursor 0.
+fn keep(h: &T, e: E) {
+  h.es += [e];
+}
+
+fn a7() {
+  t = T { es: [], cur: 0 };
+  for k in 1..4 {
+    e = E { ps: [], ms: [] };
+    for j in 0..k {
+      e.ps += [P { q: k * 10 + j, x: if j % 2 == 0 { 0.5 } else { 1.25 }, on: j % 2 == 0 }];
+    }
+    e.ms += [M { k: k }];
+    keep(t, e);
+  }
+  r = show(t);
+  println("a7 {r}");
+  assert(r == "3 0 [1:10:0.5:1|1:1 2:41:1.75:1|1:2 3:93:2.25:2|1:3]", "a7");
+}
+
+fn main() {
+  a1();
+  a2();
+  a3();
+  a4();
+  a5();
+  a6();
+  a7();
+  println("apart records ok");
+}

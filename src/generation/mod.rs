@@ -13,6 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
 pub mod apart;
 mod apart_emit;
+pub mod apart_records;
+mod apart_records_emit;
 pub mod apart_value;
 pub mod apart_vector;
 pub mod append_twin;
@@ -1247,6 +1249,10 @@ pub struct Output<'a> {
     /// and whether the value structs are written.
     pub apart_ctx: Option<apart_emit::ApartCtx>,
     pub apart_twin: bool,
+    /// `@FR-R-Apart` instance 4 — the records of record vectors held apart, their twins and
+    /// owners ([`apart_records::plan`]), and whether the body being emitted is a `__apr` twin.
+    pub apr: apart_records::RecPlan,
+    pub apr_twin: bool,
     /// `@FR-R-DecodeView` — the program's plan, and whether the function being emitted is
     /// its `__dv` twin.
     pub dv: decode_view::DvPlan,
@@ -2530,6 +2536,8 @@ impl<'a> Output<'a> {
             apart: apart_value::ApartPlan::default(),
             apart_ctx: None,
             apart_twin: false,
+            apr: apart_records::RecPlan::default(),
+            apr_twin: false,
             dv: decode_view::DvPlan::default(),
             ps: decode_structure::PsPlan::default(),
             sw: stream_walk::SwPlan::default(),
@@ -3123,6 +3131,10 @@ impl Output<'_> {
         if !self.loop_record_disabled {
             let lr = hoist::loop_records(self.data, self.stores, def_nr);
             self.loop_records = lr.recs;
+            // `@FR-R-Apart` instance 4 — an apart record is no store record to keep.
+            if let Some(ctx) = &self.apart_ctx {
+                self.loop_records.retain(|v, _| !ctx.recs.holds(*v));
+            }
             // The refill clause's vector-field zeros are `@FR-R-RefillBuffer`'s empties.
             self.refill.field_zeros.extend(lr.field_zeros);
         }
@@ -4879,14 +4891,15 @@ impl Output<'_> {
         // `@FR-R-Apart` instance 3 — an apart vector is no store vector: no path rooted at it
         // or at a companion takes a header, and a loop whose only growth was such a vector
         // grows no store.
-        if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs)
-            && !vecs.is_empty()
+        if let Some(ctx) = self.apart_ctx.as_ref()
+            && (!ctx.vecs.is_empty() || !ctx.recs.is_empty())
         {
-            verdict.vectors.retain(|(p, _)| !vecs.holds(p.0));
-            verdict.pushes.retain(|(p, _)| !vecs.holds(p.0));
-            verdict.mint_pushes.retain(|(p, _)| !vecs.holds(p.0));
+            let held = |v: u16| ctx.vecs.holds(v) || ctx.recs.holds(v);
+            verdict.vectors.retain(|(p, _)| !held(p.0));
+            verdict.pushes.retain(|(p, _)| !held(p.0));
+            verdict.mint_pushes.retain(|(p, _)| !held(p.0));
             let movers = verdict.movers.len();
-            verdict.movers.retain(|m| !vecs.holds(*m));
+            verdict.movers.retain(|m| !held(*m));
             if movers > 0 && verdict.movers.is_empty() {
                 verdict.growth_free = true;
             }
@@ -4916,8 +4929,8 @@ impl Output<'_> {
             HashSet::new()
         } else {
             let mut paths = hoist::nest_read_paths(lp, self.data);
-            if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs) {
-                paths.retain(|p| !vecs.holds(p.0));
+            if let Some(ctx) = self.apart_ctx.as_ref() {
+                paths.retain(|p| !ctx.vecs.holds(p.0) && !ctx.recs.holds(p.0));
             }
             paths
         };
@@ -10835,6 +10848,7 @@ extern crate loft;"
             // interpreter, so that build has no plan.
             if !self.emit_live {
                 self.apart = apart_value::plan(self.data, self.stores, &value_fns);
+                self.apr = apart_records::plan(self.data, self.stores);
                 self.dv = decode_view::plan(self.data, self.stores);
                 // A function both plans re-emit would need a twin of a twin.
                 if self
@@ -10890,6 +10904,13 @@ extern crate loft;"
                 self.apart_twin = true;
                 let r = self.output_function(w, dnr, program_store.as_ref());
                 self.apart_twin = false;
+                r?;
+            }
+            // `@FR-R-Apart` instance 4 — the twin taking a record of record vectors apart.
+            if self.apr.twins.contains_key(&dnr) {
+                self.apr_twin = true;
+                let r = self.output_function(w, dnr, program_store.as_ref());
+                self.apr_twin = false;
                 r?;
             }
             // @PLN157 § V-p — the callee's TWIN beside it (`@FR-R-Inputs`): the same body,
@@ -11922,6 +11943,8 @@ extern crate loft;"
                 "__vr"
             } else if self.apart_twin {
                 "__apv"
+            } else if self.apr_twin {
+                "__apr"
             } else if self.nk_twin {
                 "__nk"
             } else {
