@@ -10,6 +10,10 @@
 #   refused-line:N    the probe is refused, but the diagnostic does NOT point at line N
 #   crash             the probe dies with a signal (the defect is still there)
 #   startup-over:MS   `loft --interpret` of a hello takes more than MS ms, best of 5
+#   startup-over:python  `loft --interpret` of a hello starts slower than `python3` prints
+#                     hello — best of 15 each, interleaved so load hits both alike.  The
+#                     plan's own bar (README § The bar), and one no machine or load moves:
+#                     an absolute bar measured the box as much as the language
 #   over:MS           the probe itself takes more than MS ms interpreted, best of 5
 # After each probe the driver rewrites the finding's `checked:` (the loft commit) and
 # `holds:` (yes | no) lines.  A finding whose probe says `no` is the one to look at: the
@@ -43,6 +47,26 @@ for _ in range(5):
     best = us if best is None else min(best, us)
 print(best)' "$@"
 }
+# Best-of-15 of two commands, interleaved, in microseconds: "<first> <second>".  The two
+# commands are separated by `--`.
+race_us() {
+  python3 -c '
+import os, sys, time
+args = sys.argv[1:]
+cut = args.index("--")
+cmds = (args[:cut], args[cut + 1:])
+out = os.open(os.devnull, os.O_WRONLY)
+fa = [(os.POSIX_SPAWN_DUP2, out, 1), (os.POSIX_SPAWN_DUP2, out, 2)]
+best = [None, None]
+for rnd in range(17):
+    for i, argv in enumerate(cmds):
+        t = time.perf_counter()
+        os.waitpid(os.posix_spawnp(argv[0], argv, os.environ, file_actions=fa), 0)
+        us = int((time.perf_counter() - t) * 1e6)
+        if rnd >= 2:
+            best[i] = us if best[i] is None else min(best[i], us)
+print(best[0], best[1])' "$@"
+}
 n=0; stale=0
 for f in "$dir"/[0-9][0-9][0-9]-*.md; do
   probe=$(sed -n 's/^probe: *//p' "$f" | head -1); expect=$(sed -n 's/^expect: *//p' "$f" | head -1)
@@ -63,6 +87,11 @@ for f in "$dir"/[0-9][0-9][0-9]-*.md; do
     crash)
       LOFT_TIMEOUT=120 "$loft" --interpret "$dir/$probe" > /dev/null 2> "$tmp"; rc=$?
       { [ $rc -ge 128 ] || grep -q SIGSEGV "$tmp"; } && holds=yes ;;
+    startup-over:python)
+      read -r mine theirs < <(race_us "$loft" --interpret "$dir/$probe" -- python3 -c 'print("hi")')
+      [ "$mine" -gt "$theirs" ] && holds=yes
+      printf '  %s: start-up %d.%d ms, python3 %d.%d ms\n' "$(basename "$f")" \
+        $((mine / 1000)) $((mine % 1000 / 100)) $((theirs / 1000)) $((theirs % 1000 / 100)) ;;
     startup-over:*|over:*)
       bar=${expect#*over:}
       best=$(best_us "$loft" --interpret "$dir/$probe")
