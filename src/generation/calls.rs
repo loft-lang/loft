@@ -297,15 +297,15 @@ impl Output<'_> {
         if !dest && self.vr_call(w, def_fn, vals)? {
             return Ok(());
         }
-        let nokeep = !dest && self.nokeep_call(vals);
-        let append = !dest
-            && !nokeep
+        // `own`: a call with a twin of its own — a destination's, or (`@FR-R-HandOver`) the
+        // rotate's call of a `__nk` twin — which no other twin form applies to.
+        let own = dest || self.nokeep_call(vals);
+        let append = !own
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.append_call(self.current_call_def, vals);
         let twin_args = if !append
-            && !dest
-            && !nokeep
+            && !own
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
         {
@@ -330,8 +330,7 @@ impl Output<'_> {
         // within its bound.  Not for a forward site, which spells its own call shape.
         let ranged = forward.is_none()
             && !append
-            && !dest
-            && !nokeep
+            && !own
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
@@ -339,7 +338,7 @@ impl Output<'_> {
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some() || append || dest || nokeep,
+            twin_args.is_some() || ranged || forward.is_some() || append || own,
         )?;
         write!(
             w,
@@ -350,7 +349,7 @@ impl Output<'_> {
             if refill_twin { "__rt" } else { "" },
             if append { "__ap" } else { "" },
             if dest { "__d" } else { "" },
-            if nokeep { "__nk" } else { "" }
+            if own && !dest { "__nk" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::runtime_abi::Abi::Cell) {

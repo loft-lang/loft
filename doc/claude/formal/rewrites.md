@@ -6404,13 +6404,33 @@ birth in the source: when the drop takes exactly what the append added, both ord
 same vector, so the oldest entry's vectors take the newest one's elements and the slots rotate
 instead of shifting.
 
-**Priced** (dryopea `truncate_to`, the emitted `history_push` edited by hand: when the
-timeline is full and nothing is truncated, `hp_entry`'s two vectors are copied into entry 0's
-blocks and the slots rotate by one): 53.7 → 35.4 µs per op, **−34.0 %**, hash unchanged — about
-3.95× → 2.6×.  Each push then claims and deletes nothing; it made 2.03 claims and 1.69 deletes
-before (`LOFT_STORE_CENSUS`).
+**The rotate clause, as built** (`src/generation/hand_over.rs`, `Stores::rotate_into`).  The
+site is the append group (`OpNewRecord` · a FRESH `OpCopyRecord` · `OpFinishRecord`), S, and
+`if K < len(h.F) { g(h, len(h.F) - K) }` where `g`'s body is null inits, early returns
+PROVED false at `n = 1, len = K >= 1`, ONE `(R-Compact)` keep `[n, len)` of its first
+parameter's field, and statements that touch neither the field nor a call.  The emission is
 
-**What it may not do — the limitations.**
+```
+if stores.rotate_into(&h.F, &src, elem_tp, K) { S; g__nk(h, 1) } else { <the range as written> }
+```
+
+`rotate_into` admits when the vector holds exactly K elements of a type whose owners are plain
+vectors and nothing else, no block element 0 owns is in the referenced set, and `src` is a
+record outside the vector; it copies `src`'s bytes into element 0, its vectors into element 0's
+blocks (grown by `resize` where too small, freed where `src`'s is empty, claimed where element
+0's is), and rotates the slots left by one.  `g__nk` is `g`'s body without its keep statement —
+the rest of `g` (`h.cursor -= n`) runs.  A source INSIDE the vector cannot arrive here:
+`history_push(t, t.es[1])` is refused at compile time (`push` grows `h` while `e` references
+into it), and `rotate_into` declines it as a defence.
+
+**Measured** (dryopea `truncate_to`, interleaved on one core, same runtime): 52.1 → 43.2 µs,
+**−17.1 %**, hash unchanged; the routine looped alone 1.01 → 0.85 s.  The hand price, −34 %,
+also removed the `truncate_to` call (a no-op on a steady push) and the build of `e`, which the
+clause leaves.  The truncating take that preceded it measured a loss and is not built
+(`rewrites-history.md` § 2026-10-21).
+
+**What it may not do — the limitations** (written for the general rule; the rotate clause
+meets each by the run-time test above).
 
 - **One function, one store.**  v and w meet in one function body, and w is built in v's
   store.  A value that dies in one CALL and a value of its type built in the NEXT one
@@ -6492,10 +6512,14 @@ purer case: its whole panel is frame-local (built, hit-tested, read, rebound eac
 the ~19 claims and ~19 deletes a frame vanish with `(R-Apart)` alone — once it holds texts and
 vectors of texts, which it does not yet.
 
-**Status: PROPOSED.**  Priced on `truncate_to`; the shape it needs (a release and a claim of
-one type plan inside one call) is what `LOFT_STORE_CENSUS` shows as claims ≈ deletes per
-operation — `panel_build` (≈ 19 a frame), `emit_to_material`, `build_walls` — the next rows to
-check it against.
+**Status: the rotate clause BUILT** (switch `LOFT_NO_HAND_OVER=1`, trace
+`LOFT_TRACE_HAND_OVER=1`; guard `tests/scripts/158-rotate.loft` — every cell hand-computed, the
+interpreter as oracle, both switch states under `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STRICT_STORES` and the leak check, falsified by sabotage; pin `tests/hand_over_rotate.rs`).
+The general hand-over (a death before a birth, paired by the scope phase) stays PROPOSED, and
+for the reason the truncating take measured: on the exact-size free lists a release followed by
+a claim of the same plan already reuses the block, so a hand-over pays only where it also
+removes bookkeeping — the slot claim, the record finish, the shift — as the rotate does.
 
 ### Proposed clauses on existing rules
 

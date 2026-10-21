@@ -506,6 +506,13 @@ appended by one `vector::append_bytes` (cbor's `head`: `encode_bytes` −10 % ov
 one-window form).  The first bisect step for a wrong byte or length after such a run; cells
 `tests/scripts/158-push-run.loft`.
 
+**`LOFT_NO_HAND_OVER=1`** (`@FR-R-HandOver`'s rotate clause, default-ON, generation and run
+time, `--native` only) runs an append to a full vector beside the drop of its oldest element as
+written — with it on, the copy goes into the oldest element's blocks and the slots rotate, and
+the dropping callee runs as its `__nk` twin (dryopea `truncate_to` −17 %).  The first bisect
+step for a wrong element, order, length or cursor after such a push;
+`LOFT_TRACE_HAND_OVER=1` names each site admitted; cells `tests/scripts/158-rotate.loft`.
+
 **`LOFT_NO_TYPED_READ=1`** (`@FR-R-TypedRead`, default-ON, generation time, `--native` only)
 sends every `f#read` through the generic `OpReadFile` again — with it off, a read that lands a
 fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls

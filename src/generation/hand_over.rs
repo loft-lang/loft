@@ -155,15 +155,17 @@ fn certainly_false(data: &Data, c: &Value, field: (i64, i64)) -> bool {
     false
 }
 
-/// Does `v` mention `Var(p)`'s field at `pos`, or call a user function?
-fn touches_field_or_calls(data: &Data, v: &Value, p: u16, pos: i64) -> bool {
-    v.any_node(&mut |n| match n {
-        Value::Call(d, a) => {
-            let nm = name(data, *d);
+/// Does `stmt` mention `Var(owner)`'s field at `pos`, call a user function, or leave the
+/// statement list?  Every other node answers no: an operator or a stdlib method reaches no
+/// vector it is not handed, and the field reaches the vector only through `OpGetField`.
+fn touches_field_or_calls(data: &Data, stmt: &Value, owner: u16, pos: i64) -> bool {
+    stmt.any_node(&mut |node| match node {
+        Value::Call(def, args) => {
+            let nm = name(data, *def);
             (!nm.starts_with("Op") && !nm.starts_with("t_"))
                 || (nm == "OpGetField"
-                    && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == p)
-                    && a.get(1).and_then(int_of) == Some(pos))
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == owner)
+                    && args.get(1).and_then(int_of) == Some(pos))
         }
         Value::CallRef(..) | Value::Return(_) | Value::Break(_) | Value::Continue(_) => true,
         _ => false,
@@ -178,7 +180,9 @@ fn touches_field_or_calls(data: &Data, v: &Value, p: u16, pos: i64) -> bool {
 fn keep_of(data: &Data, f: u32) -> Option<(i64, i64, u16)> {
     let def = data.def(f);
     let vars = def.variables();
-    if !(vars.is_argument(0) && vars.is_argument(1)) || (2..vars.count()).any(|v| vars.is_argument(v)) {
+    if !(vars.is_argument(0) && vars.is_argument(1))
+        || (2..vars.count()).any(|v| vars.is_argument(v))
+    {
         return None;
     }
     let Value::Block(b) = def.code() else {
@@ -198,10 +202,10 @@ fn keep_of(data: &Data, f: u32) -> Option<(i64, i64, u16)> {
                 && let [v, etp, lo, hi] = &a[..]
                 && let Some(field) = field_of(data, v, 0)
                 && let Some(etp) = int_of(etp).and_then(|t| u16::try_from(t).ok())
+                && matches!(lo.unspan(), Value::Var(1))
+                && is_len(data, hi, 0, field)
             {
-                if matches!(lo.unspan(), Value::Var(1)) && is_len(data, hi, 0, field) {
-                    found = Some((field, etp));
-                }
+                found = Some((field, etp));
             }
         });
         if let Some((field, etp)) = found {
@@ -217,7 +221,8 @@ fn keep_of(data: &Data, f: u32) -> Option<(i64, i64, u16)> {
             continue;
         }
         match o.unspan() {
-            Value::Set(x, init) if !vars.is_argument(*x) && matches!(init.unspan(), Value::Null) => {}
+            Value::Set(x, init)
+                if !vars.is_argument(*x) && matches!(init.unspan(), Value::Null) => {}
             Value::If(c, then, els)
                 if i < ki
                     && matches!(els.unspan(), Value::Null)
@@ -283,92 +288,116 @@ fn vector_of(data: &Data, h: &Value, pos: i64, tp: i64) -> Option<Value> {
 }
 
 /// The rotate site starting at `operators[at]`, if there is one.
-pub fn site<'a>(operators: &'a [Value], at: usize, data: &Data, stores: &Stores) -> Option<Site<'a>> {
+pub fn site<'a>(
+    operators: &'a [Value],
+    at: usize,
+    data: &Data,
+    stores: &Stores,
+) -> Option<Site<'a>> {
     if !crate::keys::hand_over_enabled() {
         return None;
     }
     let ops: Vec<&Value> = operators.iter().collect();
-    // ROTATE: the append, S, then `if K < len(h.F) { g(h, len(h.F) - K) }`.
-    let (mut next, copy, h, pos, tp) = append_group(&ops, at, data, stores)?;
-    let hv = match h.unspan() {
-        Value::Var(x) => *x,
-        _ => return None,
+    // The append, S, then `if K < len(h.F) { g(h, len(h.F) - K) }`.
+    let (mut next, copy, owner, pos, tp) = append_group(&ops, at, data, stores)?;
+    let Value::Var(owner_var) = owner.unspan() else {
+        return None;
     };
     let Value::Set(elm, _) = ops[at].unspan() else {
         return None;
     };
-    let src = match copy.unspan() {
-        Value::Call(_, a) => a.first()?,
-        _ => return None,
+    let Value::Call(_, copy_args) = copy.unspan() else {
+        return None;
     };
+    let src = copy_args.first()?;
     let mut between = Vec::new();
     loop {
-        let o = ops.get(next)?;
-        match o.unspan() {
+        let stmt = ops.get(next)?;
+        match stmt.unspan() {
             Value::Line(_) => next += 1,
-            Value::If(c, then, els) if matches!(els.unspan(), Value::Null) => {
-                let [kv, lenv] = call(data, c, "OpLtInt")? else {
-                    return None;
-                };
-                let k = int_of(kv)?;
-                let lf = call(data, lenv, "t_6vector_len")?;
-                let (fpos, vtp) = field_of(data, lf.first()?, hv)?;
-                if fpos != pos || k < 1 || !plain_vector(stores, vtp) {
-                    return None;
-                }
-                let Value::Block(b) = then.unspan() else {
-                    return None;
-                };
-                let inner = flat(&b.operators);
-                let [Value::Call(g, gargs)] = inner.iter().map(|v| v.unspan()).collect::<Vec<_>>()[..]
-                else {
-                    return None;
-                };
-                let [gh, gn] = &gargs[..] else {
-                    return None;
-                };
-                (gh.unspan() == h.unspan()).then_some(())?;
-                let [l2, k2] = call(data, gn, "OpMinInt")? else {
-                    return None;
-                };
-                if int_of(k2) != Some(k) || !is_len(data, l2, hv, (pos, vtp)) {
-                    return None;
-                }
-                let (gpos, _, etp) = keep_of(data, *g)?;
-                if gpos != pos || etp != tp {
-                    return None;
-                }
+            Value::If(..) => {
+                let (k, callee, vtp) = drop_if(data, stores, stmt, owner, *owner_var, (pos, tp))?;
                 // The temporary the append names is the range's own: nothing after it reads it.
-                if ops[next + 1..]
-                    .iter()
-                    .any(|o| o.any_node(&mut |n| matches!(n, Value::Var(x) if x == elm)))
-                {
+                if ops[next + 1..].iter().any(|later| {
+                    later.any_node(&mut |node| matches!(node, Value::Var(x) if x == elm))
+                }) {
                     return None;
                 }
                 return Some(Site {
                     k,
                     last: next,
-                    g: *g,
-                    vector: vector_of(data, h, pos, vtp)?,
+                    g: callee,
+                    vector: vector_of(data, owner, pos, vtp)?,
                     copy,
-                    elem_tp: etp,
+                    elem_tp: tp,
                     src,
-                    owner: h,
+                    owner,
                     between,
                     range: ops[at..=next].to_vec(),
                 });
             }
             // S: run in both branches, so it declares nothing (`Value::Set`) a later
             // statement could read, and touches neither the vector nor a call.
-            _ if !touches_field_or_calls(data, o, hv, pos)
-                && !o.any_node(&mut |n| matches!(n, Value::Set(..))) =>
+            _ if !touches_field_or_calls(data, stmt, *owner_var, pos)
+                && !stmt.any_node(&mut |node| matches!(node, Value::Set(..))) =>
             {
-                between.push(*o);
+                between.push(*stmt);
                 next += 1;
             }
             _ => return None,
         }
     }
+}
+
+/// `if K < len(h.F) { g(h, len(h.F) - K) }` with `g` a suffix keep of the same field and
+/// element type: `(K, g, the vector type)`.  `field` is the append's `(byte position,
+/// element type)`.
+fn drop_if(
+    data: &Data,
+    stores: &Stores,
+    stmt: &Value,
+    owner: &Value,
+    owner_var: u16,
+    field: (i64, u16),
+) -> Option<(i64, u32, i64)> {
+    let Value::If(cond, then, els) = stmt.unspan() else {
+        return None;
+    };
+    if !matches!(els.unspan(), Value::Null) {
+        return None;
+    }
+    let [depth, length] = call(data, cond, "OpLtInt")? else {
+        return None;
+    };
+    let k = int_of(depth)?;
+    let (fpos, vtp) = field_of(
+        data,
+        call(data, length, "t_6vector_len")?.first()?,
+        owner_var,
+    )?;
+    if fpos != field.0 || k < 1 || !plain_vector(stores, vtp) {
+        return None;
+    }
+    let Value::Block(blk) = then.unspan() else {
+        return None;
+    };
+    let inner = flat(&blk.operators);
+    let [Value::Call(callee, cargs)] = inner.iter().map(|v| v.unspan()).collect::<Vec<_>>()[..]
+    else {
+        return None;
+    };
+    let [c_owner, count] = &cargs[..] else {
+        return None;
+    };
+    (c_owner.unspan() == owner.unspan()).then_some(())?;
+    let [len_again, depth_again] = call(data, count, "OpMinInt")? else {
+        return None;
+    };
+    if int_of(depth_again) != Some(k) || !is_len(data, len_again, owner_var, (fpos, vtp)) {
+        return None;
+    }
+    let (gpos, _, etp) = keep_of(data, *callee)?;
+    (gpos == field.0 && etp == field.1).then_some((k, *callee, vtp))
 }
 
 /// Is the vector type `vtp` a plain `vector` (no order, no key) — the one kind whose slots a
@@ -388,9 +417,9 @@ pub fn keep_statement(data: &Data, g: u32) -> Option<usize> {
     let mut found = None;
     for o in flat(&b.operators) {
         if let Value::If(_, then, _) = o.unspan()
-            && then.any_node(&mut |n| {
-                matches!(n, Value::Call(d, _) if name(data, *d) == "OpKeepVectorRange")
-            })
+            && then.any_node(
+                &mut |n| matches!(n, Value::Call(d, _) if name(data, *d) == "OpKeepVectorRange"),
+            )
         {
             found = Some(std::ptr::from_ref(o.unspan()) as usize);
         }
