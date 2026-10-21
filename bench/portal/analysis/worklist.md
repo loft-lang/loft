@@ -207,6 +207,28 @@ entry where the timeline keeps it is not admissible here as written: `history_pu
 BEFORE it appends, so an entry placed first would be cut by the truncation.  What is left is
 the allocator's unit cost; the row stands near 3.9×.
 
+**`truncate_to`: how many allocations (2026-10-21, `LOFT_STORE_CENSUS`, `op-census` build).**
+Per push over 3 000: 2.03 claims, 1.69 deletes, 0.01 store growths, 384 bytes copied.  That is
+the data structure's own minimum — one block for each of the new entry's two vectors, freed when
+the entry falls off the 50-deep timeline — and the Rust twin's count: two `malloc`s (each vector
+grows once) and the same frees; the driver's `e` is refilled in place and claims nothing after
+the first push.  So the row does not allocate MORE; each allocation costs more (claim ~150,
+delete ~140) and carries a copy and a release walk.  Allocating LESS than the twin needs a
+representation without a heap block per small vector (a short vector held inside its record),
+which would remove the claim, the copy and the delete together: a design question.
+
+**Zero fills in the runtime, classified.**  NEEDED (the structure reads 0 as "empty"): a hash
+table's buckets when made or grown (`hash.rs`), the entry arena's directory and chunks
+(`arena.rs`), a fresh store's root record (`codegen_runtime.rs`, `state/io.rs`: its collection
+handles are read before anything writes them), the radix / data-store / IR nodes.  DEFENSIVE
+only (`@C137`: a claim promises no value, a reader of an unwritten word is the defect): the
+whole buffer of `Store::new` (`alloc_zeroed`) and every growth in `resize_store`.  The program
+reads only claimed memory, which `LOFT_POISON_CLAIM=1` already fills with garbage under test,
+and the allocator reads unclaimed memory only through headers it writes.  DEBUG only, off by
+default: `finish_claim` and the in-place grow under `LOFT_ZERO_CLAIM=1`.  The two defensive fills
+removed, priced by runtime swap: `truncate_to` −3.5 %, `map_json` −2.8 %, `slope_path_with_undo`
+−1.0 %, `encode`, `encode_bytes`, `decode`, `panel_build`, `reload_and_record` level.
+
 Read together: `binary_read` is one emitter clause from the bar.  `encode_bytes` and
 `truncate_to` stand on the runtime's unit cost of an append and of a claim/release pair, and
 reach ≈ 3× only with every lever.  `field_add_cell` and `slope_path_with_undo` do not reach
