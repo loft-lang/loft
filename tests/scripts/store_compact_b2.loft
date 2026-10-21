@@ -16,11 +16,13 @@
 //
 // Env in:
 //   LOFT_PERSIST_TEST_PATH   file prefix; two stores are written
-//   B2_SHAPE                 rich (default) | refuse
-//                            `refuse` puts a `reference<T>` in each record —
-//                            a cross-store pointer this rebuild will not carry,
-//                            so compaction must decline and the load must still
-//                            be correct.
+//   B2_SHAPE                 rich (default) | refuse | foreign
+//                            `refuse` puts a `reference<T>` in each record,
+//                            pointing at another record of the same image: the
+//                            load rebases it (@FR-L-Ref-Slot), compaction must
+//                            decline, and every link must still read its target.
+//                            `foreign` points each record into a store outside
+//                            the image, which the load refuses (@FR-L-Ref-Slot).
 
 struct Inner { const a: i32, const b: i32 }
 struct Tag { const name: text, const w: i32 }
@@ -39,6 +41,12 @@ struct Linked {
   const id: integer,
   const label: text,
   const link: reference<Leaf>,
+}
+
+struct Node {
+  const id: integer,
+  const label: text,
+  link: reference<Node>?,
 }
 
 fn i32_of(v: integer) -> i32 { v as i32? ?? (0 as i32) }
@@ -98,20 +106,39 @@ fn main() {
   src_path = "{prefix}-src.store";
   out_path = "{prefix}-out.store";
 
-  // A shape the rebuild must DECLINE: a `reference<T>` is a pointer into
-  // another store, and this rebuild only moves records within one.
+  // A shape the rebuild must DECLINE: a `reference<T>` is a position, and this
+  // rebuild moves records without rewriting the positions that name them.
+  // Every link points at one of the 29 records that survive, so reading each
+  // one after the load checks the rebase as well as the decline.
   if shape == "refuse" {
+    nodes: hash<Node[id]> = [];
+    for i in 0..300 { nodes += [Node { id: i, label: "l-{i}", link: null }] }
+    for i in 1..300 { nodes[i].link = &nodes[(i * 7) % 29] }
+    for d in 30..300 { nodes[d] = null }
+    if !store_persist_bind(nodes, src_path) { println("FAIL bind"); return }
+    back: hash<Node[id]> = [];
+    if !store_load(back, src_path) { println("FAIL load"); return }
+    n = 0;
+    links = 0;
+    for nr in back {
+      n += 1;
+      if nr.link != null { links += nr.link.id }
+    }
+    println("refuse count {n} links {links} sound {store_verify(back)}");
+    return
+  }
+
+  // A reference into a store OUTSIDE the image: nothing in the file says what
+  // that store holds in the reader, so the load is refused.
+  if shape == "foreign" {
     pool: vector<Leaf> = [];
     for p in 0..50 { pool += [Leaf { v: p * 7 }] }
     lh: hash<Linked[id]> = [];
     for i in 0..300 { lh += [Linked { id: i, label: "l-{i}", link: &pool[i % 50] }] }
     for d in 30..300 { lh[d] = null }
     if !store_persist_bind(lh, src_path) { println("FAIL bind"); return }
-    back: hash<Linked[id]> = [];
-    if !store_load(back, src_path) { println("FAIL load"); return }
-    n = 0;
-    for lr in back { n += lr.id * 0 + 1 }
-    println("refuse count {n} sound {store_verify(back)}");
+    outside: hash<Linked[id]> = [];
+    println("foreign load {store_load(outside, src_path)} count {len(outside)}");
     return
   }
 

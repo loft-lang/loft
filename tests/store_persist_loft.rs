@@ -2564,9 +2564,11 @@ fn store_rebuild_b1_recovers_the_interior_and_is_idempotent() {
 ///   element through it immediately after the load, and keeps using the
 ///   collection after.
 /// - **Refusal is attributable and safe.** A record holding a `reference<T>`
-///   points into ANOTHER store, which this rebuild does not carry — compaction
-///   must decline, say so, and leave a correct load behind. A refusal that reads
-///   the same as a dense store is one nobody can test.
+///   holds a position, which this rebuild does not rewrite — compaction must
+///   decline, say so, and leave a correct load behind. A refusal that reads the
+///   same as a dense store is one nobody can test.
+/// - **A foreign reference refuses the load.** A reference into a store outside
+///   the image names nothing the reader can resolve (@FR-L-Ref-Slot).
 #[test]
 fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
     let script = workspace_root().join("tests/scripts/store_compact_b2.loft");
@@ -2658,10 +2660,21 @@ fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
             "{backend}: a collection holding a reference into another store must \
              be declined, with the reason said out loud:\n{refused}"
         );
+        // Links 1..29 point at (i * 7) % 29, which sums to 406; record 0 has none.
         assert!(
-            refused.contains("refuse count 30") && refused.contains("sound true"),
+            refused.contains("refuse count 30 links 406 sound true"),
             "{backend}: and a declined compaction must leave a correct load \
-             behind:\n{refused}"
+             behind, every reference rebased to the loaded slot:\n{refused}"
+        );
+
+        // A reference into a store outside the image cannot be resolved in the
+        // reader, so the load is refused and the collection stays empty
+        // (@FR-L-Ref-Slot).
+        let foreign = run(backend, &scratch(&format!("b2for_{tag}")), "foreign", true);
+        assert!(
+            foreign.contains("foreign load false count 0"),
+            "{backend}: a load holding a reference into another store must be \
+             refused, leaving nothing behind:\n{foreign}"
         );
     }
 }
