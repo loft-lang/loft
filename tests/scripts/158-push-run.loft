@@ -11,6 +11,9 @@
 // a run: an append to a record's vector field lowers through `(R-FieldAppend)`, which the run
 // recogniser does not read (predicted a run; measured none).  r7's pushes stand in a loop
 // that holds the vector's push header, which keeps them.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-21) — the run's `append_bytes` appending
+// one byte short failed r1 on --native (recorded with the rewrite, 99f77b41f).
 
 fn tot(v: const vector<u8>) -> integer { t = 0; for x in v { t += x; } t }
 
