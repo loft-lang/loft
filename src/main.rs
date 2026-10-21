@@ -11816,6 +11816,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             native_release.hash(&mut h);
             native_debug.hash(&mut h);
             loft::cache::release_rustc_args().hash(&mut h);
+            // And whether the build strips its symbols (`LOFT_NATIVE_KEEP_SYMBOLS`): the
+            // same story one switch over — a profiler asking for a symbolised build was
+            // handed the stripped one the previous run cached.
+            platform::native_strip_symbols().hash(&mut h);
             // Include modification times of native package rlibs and loft's
             // own rlib so the cache invalidates when dependencies are rebuilt.
             if let Some(lib_dir) = loft_lib_dir() {
