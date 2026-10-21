@@ -23,10 +23,9 @@ mod number_text;
 // ── the `--dev-soft-halt` overflow report (loft#1265) ────────────────────────────────────
 //
 // `(E-Report)` promises the flag surfaces the recoverable faults uniformly -- div0, overflow,
-// OOB -- and overflow was the one it missed.  A dropped write has its own report; div0 and
-// overflow are silent everywhere by design, the null being the signal (@C80, loft#2027 dropped
-// the one Warn line it once promised div0).  So the flag was the whole of overflow's
-// observability, and it was not answering.
+// OOB -- and overflow was the one it missed.  A dropped write has its own report and an
+// unguarded div0 its log line; overflow is silent by design, the null being the signal (@C80).
+// So the flag was the whole of overflow's observability, and it was not answering.
 //
 // Reporting from here rather than from the ops' callers is what makes it free.  Overflow
 // becomes the sentinel in exactly one place -- `checked_long!`'s `None` arm -- so the test

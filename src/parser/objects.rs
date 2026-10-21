@@ -3400,13 +3400,11 @@ impl Parser {
             };
             self.expected = saved_expected;
             self.in_format_expr = saved_in_fmt;
-            // `@FR-F-FaultSafe` (@C142) — formatting never traps: every fault-prone op in the
-            // hole is swapped to its silent nullable peer (@C66), so `"{a / b}"`, `"{v[i]}"`
-            // and `"{user.name}"` yield the null VALUE and the hole renders it as a plain
-            // `null`, never the fault's cause.
-            if !self.first_pass {
-                Self::rewrite_subtree_to_nullable(&mut format, &self.data);
-            }
+            // `@FR-F-FaultSafe` (@C142) — formatting never traps: a fault in the hole yields
+            // the null VALUE (no op halts, @C80) and the hole renders it as a plain `null`.
+            // It is reported as the same fault anywhere else is (`@FR-E-Report`): the hole
+            // keeps the plain op, so `"{a / b}"` and `"{v[9]}"` log their line (owner,
+            // 2026-10-21).  A `??` inside the hole still takes the silent peer.
             self.un_ref(&mut tp, &mut format);
             // @P376 — the format expression resolved to `Unknown`: a directly
             // interpolated unresolved name (`print("{zzz}")`, zzz undefined)

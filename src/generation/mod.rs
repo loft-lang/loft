@@ -2871,6 +2871,10 @@ impl Output<'_> {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
+        // The position stream restarts with each body: before its first `// loft:` marker a
+        // site takes the definition's line (`ckpt_site`) or the frame's (a fault), never the
+        // previous function's last line.
+        self.ckpt_cur_line = 0;
         self.linked_members = crate::tuple_links::linked_narrow_members(self.data, def_nr);
         self.header_dbrefs.clear();
         self.param_rec_ptrs.clear();

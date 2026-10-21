@@ -10,6 +10,23 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A run-time fault logs at every unguarded site, on both backends (@C80, owner 2026-10-21)
+
+An uncomputable divide, modulo or index logs one Warn line wherever it sits.  A format-string
+hole no longer swaps its operations to their silent peers (`rewrite_subtree_to_nullable` is
+gone, and with it the gate that kept its swap table equal to the `??` one), so `"{a / b}"`
+renders `null` and logs as `c = a / b` does; a `??` inside the hole stays silent.  `--log-conf`
+now reaches a `--native` run.  The 2026-10-16 entry below ("a division by zero is silent")
+rested on a probe of the hole alone.  Guard
+`tests/runtime_logging.rs::every_unguarded_fault_logs_on_both_backends`.
+
+### A fault keeps its own position under soft-halt and inside an inlined leaf (loft#2111)
+
+`--dev-soft-halt` printed `at ?` for a fault in an op with no span of its own; it now takes the
+position the log line takes.  A fault inside a leaf `(R-InlineLeaf)` inlines named the call:
+the span table kept one span per start pc and the call's replaced the body's.  An inner span
+now keeps its range.
+
 ### Two gate reds of the joined tree: the prefill cells' native half, a twin's registry notice
 
 - `tests/prefill_image.rs::the_cells_use_the_image_on_both_backends` read `Mix`'s image

@@ -7658,6 +7658,16 @@ fn main() {
             i += 1;
         } else if a == "--log-conf" {
             log_conf = Some(argv[i].clone());
+            // A `--native` run's compiled program builds its own logger from
+            // `LOFT_LOG_CONF`, so the flag reaches it through the environment, as
+            // `--production` does; without it a native run logged nowhere the flag named.
+            //
+            // SAFETY: set_var is unsafe in Rust 2024; this runs during argument parsing,
+            // before any thread or State exists, as the `--production` arm below does.
+            let conf = std::path::absolute(&argv[i]).unwrap_or_else(|_| argv[i].clone().into());
+            unsafe {
+                std::env::set_var("LOFT_LOG_CONF", conf);
+            }
             i += 1;
         } else if a == "--production" {
             production = true;

@@ -1322,12 +1322,25 @@ impl Output<'_> {
         // match inside `s.raise_recoverable(` (an `_` follows `s.raise`, not
         // `(`), so this is an independent substitution; the `_runtime` suffix
         // again breaks the self-re-match (see `Stores::raise_recoverable_runtime`).
-        res = res.replace("s.raise_recoverable(", "stores.raise_recoverable_runtime(");
-        res = res.replace("s.vec_get_or_raise(", "stores.vec_get_or_raise_runtime(");
-        res = res.replace("s.vec_ref_or_raise(", "stores.vec_ref_or_raise_runtime(");
+        // `@FR-E-Report`: a fault names the statement it sits in, as on the interpreter, so
+        // the log line is the statement's and each site keeps its own rate-limit budget.  The
+        // line reaches only the raise: the in-range paths are unchanged.
+        let at = self.ckpt_cur_line;
+        res = res.replace(
+            "s.raise_recoverable(",
+            &format!("stores.raise_recoverable_at_runtime({at}, "),
+        );
+        res = res.replace(
+            "s.vec_get_or_raise(",
+            &format!("stores.vec_get_or_raise_at_runtime({at}, "),
+        );
+        res = res.replace(
+            "s.vec_ref_or_raise(",
+            &format!("stores.vec_ref_or_raise_at_runtime({at}, "),
+        );
         res = res.replace(
             "s.text_char_or_raise(",
-            "stores.text_char_or_raise_runtime(",
+            &format!("stores.text_char_or_raise_at_runtime({at}, "),
         );
         // loft represents `character` as `i32`; template functions that return `char`
         // (like `ops::text_character`) need an explicit cast at the call site.

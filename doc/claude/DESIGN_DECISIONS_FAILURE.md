@@ -44,11 +44,13 @@ unimplemented native refused at compile time and at startup (`tests/exit_codes.r
 
 **Decision.** A calculation that cannot produce a value — division by zero, integer overflow, an
 out-of-bounds index, a deref of an absent value — yields null and execution continues, identically
-in development, test and production.  It is silent: the null is the whole signal, for a division
-by zero as for every other fault (the one run-time warning this entry once promised was never
-emitted and is dropped — owner, 2026-10-16, loft#2027); a divisor that is a constant zero is a
-compile-time warning (`divide-by-constant-zero`), and `--dev-soft-halt` names each fault in
-development.  Tests observe faults through the debug log.  `panic` and `assert` are not calculations:
+in development, test and production.  An unguarded division or modulo by zero, and an index
+out of range, also log ONE Warn line naming the fault (`divide_by_zero`, `index_out_of_bounds`)
+wherever the operation sits — a statement, a `return`, an argument, a format-string hole — on
+both backends; a site the program guards (`?? d`, a null check) logs nothing, since the program
+already inspects it (owner, 2026-10-21).  A divisor that is a constant zero is a compile-time
+warning (`divide-by-constant-zero`), and `--dev-soft-halt` names each fault in development.
+Tests observe faults through the log.  `panic` and `assert` are not calculations:
 they halt in development and tests and log-and-continue in production (@C66).  Startup failures still
 stop (@C67).  **Why.** As in a spreadsheet, one bad cell never stops the others: degradation stays
 local, with no unwinding or cleanup blocks to get wrong.

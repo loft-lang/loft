@@ -1764,6 +1764,17 @@ it singled out one fault among four that all go quietly, and a hot loop's repeti
 have needed a rule nobody asked for.  The null is the whole signal; the compile-time
 `divide-by-constant-zero` warning and `--dev-soft-halt` stay.
 
+### Revised 2026-10-21 — the log line is kept, at every site
+
+The 2026-10-16 premise was a measurement that held its position fixed: loft#2027's repro was
+`println("{12 / z}")`, a format-string hole, which swapped every fault-prone op to its silent
+peer.  At a statement (`a = 10 / z`), a `return`, an argument and a `%`, the interpreter DID
+log the Warn line, and native did too once its logger was given the config (`--log-conf` never
+reached a native run).  Measured in the rule walk's batch 4.  The owner ruled: *keep the log
+line and make it log under all variants* — the hole now keeps the plain operation, `--log-conf`
+reaches native through `LOFT_LOG_CONF`, and only a site the program guards stays silent.
+Guard `tests/runtime_logging.rs::every_unguarded_fault_logs_on_both_backends`.
+
 ## C81 — `&` stays one token, disambiguated by position (bitwise-and vs reference)
 
 **Catalogue:** @F21 (references `&T`), @F37 (operators — bitwise `&`).

@@ -3129,6 +3129,7 @@ impl Stores {
             par_fn_native_buffer_stack: Vec::new(),
             logger: self.logger.clone(),
             had_fatal: false,
+            fault_line: 0,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
