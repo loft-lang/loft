@@ -2,10 +2,10 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Run scripts/gap_report.py over every routine in jobs.tsv, one at a time (this box: one heavy
-# job), into OUT (default /tmp/gap-sweep).  Then: summary.py OUT (each row in twin units),
+# job), into OUT (default: gap-sweep in /tmp).  Then: summary.py OUT (each row in twin units),
 # mechanisms.py OUT (the inlined runtime by the function it came from).
 if [ "${1:-}" = "--help" ]; then
-  echo "usage: sweep.sh [OUT]  — gap_report.py over every routine in jobs.tsv, into OUT (default /tmp/gap-sweep)"
+  echo "usage: sweep.sh [OUT]  — gap_report.py over every routine in jobs.tsv, into OUT (default: gap-sweep in /tmp)"
   exit 0
 fi
 here=$(cd "$(dirname "$0")" && pwd)
