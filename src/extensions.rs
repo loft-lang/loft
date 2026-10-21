@@ -378,6 +378,16 @@ fn marshal_arg_t(t: &crate::data::Type) -> Option<ArgT> {
     })
 }
 
+/// The leaves of a tuple type, depth first in element order; any other type is its own leaf.
+#[cfg(feature = "native-extensions")]
+fn tuple_leaves(t: &crate::data::Type) -> Vec<&crate::data::Type> {
+    if let crate::data::Type::Tuple(elems) = t.base() {
+        elems.iter().flat_map(tuple_leaves).collect()
+    } else {
+        vec![t]
+    }
+}
+
 /// #303 — build a [`SharedSig`] from a definition, via the ONE marshallability
 /// judgment (`native_gate::classify_bridge_attr`).  Returns `None` exactly when
 /// the gate would not have marked the function — so a marked function always
@@ -395,8 +405,12 @@ fn compute_shared_sig(data: &crate::data::Data, d_nr: u32) -> Option<SharedSig> 
     for attr in &def.attributes {
         match classify_bridge_attr(attr, ret_text)? {
             BridgeAttrKind::Marshal => {
-                pops.push(marshal_arg_t(&attr.typedef)?);
-                forward.push(true);
+                // @PLN199 A3 — a tuple argument is its elements, contiguous on the stack in
+                // element order: one pop per leaf, which the reverse pop below reads in place.
+                for leaf in tuple_leaves(&attr.typedef) {
+                    pops.push(marshal_arg_t(leaf)?);
+                    forward.push(true);
+                }
             }
             BridgeAttrKind::WorkText => {
                 // The call site pushes the work buffer's `DbRef` (a CreateStack

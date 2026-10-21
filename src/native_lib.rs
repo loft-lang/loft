@@ -1014,9 +1014,9 @@ fn shared_bridge_wrapper(
             }
             crate::native_gate::BridgeAttrKind::Marshal => {
                 let ty = rust_type(&a.typedef, &Context::Argument);
-                let read = bridge_read(&a.typedef, &format!("a[{slot}]"));
+                // @PLN199 A3 — a tuple reads one slot per leaf (`extensions::tuple_leaves`).
+                let read = bridge_read_value(&a.typedef, &mut slot);
                 let _ = writeln!(body, "    let {var}: {ty} = {read};");
-                slot += 1;
                 // `(R-ValueLocal)` — a TUPLE PARAMETER: the C boundary hands a record, the
                 // inner fn takes its fields (`hoist::layout_reads`, the live arm's spelling)
                 // and, for a nullable layout, whether the record is there.
@@ -1143,6 +1143,24 @@ pub(crate) fn hidden_dest_type_name(data: &Data, stores: &Stores, t: &Type) -> O
         }
         _ => None,
     }
+}
+
+/// Rust expression reading an argument of loft type `t` starting at `LibArg` slot `*slot`,
+/// advancing it past the slots read: one for a plain value, one per leaf for a tuple, which
+/// is rebuilt as the Rust tuple the inner fn takes (`(i64, (f64, u8))`).
+fn bridge_read_value(t: &Type, slot: &mut usize) -> String {
+    if let Type::Tuple(elems) = t.base() {
+        let parts: Vec<String> = elems.iter().map(|e| bridge_read_value(e, slot)).collect();
+        // A one-element Rust tuple needs its trailing comma.
+        return if parts.len() == 1 {
+            format!("({},)", parts[0])
+        } else {
+            format!("({})", parts.join(", "))
+        };
+    }
+    let read = bridge_read(t, &format!("a[{slot}]"));
+    *slot += 1;
+    read
 }
 
 /// Rust expression reading an argument of loft type `t` out of `LibArg` slot

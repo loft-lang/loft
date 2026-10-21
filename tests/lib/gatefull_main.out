@@ -8,6 +8,9 @@ ret_lit [fixed] 5 <fixedhello
 stdlib [tool] [/usr/local/bin] 14 <tool
 ret_tuple 8 t4
 arg_tuple 304
+arg_tuple_var 709 x7
+arg_tuple_nested 6 0
+arg_tuple_ref 33
 arg_ref 6
 arg_fn 11
 ret_fn 21

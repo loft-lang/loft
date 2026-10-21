@@ -37,6 +37,10 @@ fn main() {
     t = ret_tuple(4);
     println("ret_tuple {t.0} {t.1}"); // 8 t4
     println("arg_tuple {arg_tuple((3, 4))}"); // 304
+    q = (7, 9);
+    println("arg_tuple_var {arg_tuple(q)} {arg_tuple_text((5, "x"), 2)}"); // 709 x7
+    println("arg_tuple_nested {arg_tuple_nested((1, (2.5, true)))} {arg_tuple_nested((1, (2.5, false)))}"); // 6 0
+    println("arg_tuple_ref {arg_tuple_ref((Ck { k: 1, v: 11 }, 3))}"); // 33
     n = 1;
     arg_ref(n);
     println("arg_ref {n}"); // 6

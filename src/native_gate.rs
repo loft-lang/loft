@@ -237,6 +237,10 @@ pub fn classify_bridge_attr(a: &crate::data::Attribute, ret_text: bool) -> Optio
 fn is_bridge_type(t: &Type) -> bool {
     // Enum(_, _, _): a plain (tag-only) enum (a u8 tag) or a data enum (a DbRef);
     // `bridge_read` distinguishes them.  Peel `Optional` — same layout as the base.
+    // @PLN199 A3 — a tuple crosses as its leaves, one `LibArg` each.
+    if let Type::Tuple(elems) = t.base() {
+        return elems.iter().all(is_tuple_leaf);
+    }
     is_scalar_type(t)
         || matches!(
             t.base(),
@@ -250,6 +254,31 @@ fn is_bridge_type(t: &Type) -> bool {
                 | Type::Radix(_, _, _)
                 | Type::Trie(_, _, _)
         )
+}
+
+/// @PLN199 A3 — may `t` be an element of a tuple PARAMETER?  The dispatcher pops a tuple
+/// leaf by leaf, each with the step [`crate::database::Stores::get`] pops for its type, and
+/// every element sits in its own 8-rounded slot (`data::element_stack_offsets_in`).  Those
+/// agree for a full-width integer, a float, a boolean, a text and a store reference; a
+/// `single`, a `character` and a plain enum are narrower in the slot than the dispatcher's
+/// read, and stay out until it reads them at their own width.  A nested tuple flattens.
+pub(crate) fn is_tuple_leaf(t: &Type) -> bool {
+    match t.base() {
+        Type::Tuple(elems) => elems.iter().all(is_tuple_leaf),
+        Type::Integer(s) => s.forced_size.is_none(),
+        Type::Float
+        | Type::Boolean
+        | Type::Text(_)
+        | Type::Enum(_, true, _)
+        | Type::Vector(_, _)
+        | Type::Reference(_, _)
+        | Type::Sorted(_, _, _)
+        | Type::Index(_, _, _)
+        | Type::Hash(_, _, _)
+        | Type::Radix(_, _, _)
+        | Type::Trie(_, _, _) => true,
+        _ => false,
+    }
 }
 
 /// Transitive native-compilability of function `d_nr`: its body uses no

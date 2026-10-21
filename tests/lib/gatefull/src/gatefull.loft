@@ -32,6 +32,11 @@ pub fn ret_lit() -> text { "fixed" }
 // Tuples, either way across.
 pub fn ret_tuple(q: integer) -> (integer, text) { (q * 2, "t{q}") }
 pub fn arg_tuple(t: (integer, integer)) -> integer { t.0 * 100 + t.1 }
+pub fn arg_tuple_text(t: (integer, text), k: integer) -> text { "{t.1}{t.0 + k}" }
+pub fn arg_tuple_nested(t: (integer, (float, boolean))) -> float {
+    if t.1.1 { t.1.0 * 2.0 + t.0 as float } else { 0.0 }
+}
+pub fn arg_tuple_ref(t: (Ck, integer)) -> integer { t.0.v * t.1 }
 
 // A reference to the caller's variable.
 pub fn arg_ref(n: &integer) { n += 5; }
