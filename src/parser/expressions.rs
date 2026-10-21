@@ -647,7 +647,8 @@ impl Parser {
                 && def.native().is_empty()
                 && def.c_sig.is_empty()
                 && (self.compiled_bridges.contains(def.name())
-                    || (def.pub_visible
+                    || (self.library_bridges
+                        && def.pub_visible
                         && self.pending_native_compile.iter().any(|dir| {
                             crate::file_access::is_under(def.position().file.as_str(), dir)
                         }))))

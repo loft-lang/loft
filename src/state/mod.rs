@@ -264,6 +264,28 @@ fn fast_stack_allowed() -> bool {
 
 pub use crate::database::COROUTINE_STORE;
 
+/// The widest yield [`State::advance_for_native`] hands to compiled code: a text's `Str`.
+const YIELD_BYTES: usize = 16;
+
+/// The bytes an interpreted generator yielded to compiled code, held on the stack — an
+/// advance is a hot path, so it allocates nothing.  Empty when the generator is exhausted.
+pub(crate) struct Yielded {
+    len: usize,
+    bytes: [u8; YIELD_BYTES],
+}
+
+impl Yielded {
+    const EXHAUSTED: Yielded = Yielded {
+        len: 0,
+        bytes: [0; YIELD_BYTES],
+    };
+
+    /// The yielded bytes.
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
 std::thread_local! {
     /// @PLN199 C2 — the text result of this thread's last call back into the interpreter
     /// (`State::call_back`), which the compiled caller copies before it calls back again.
@@ -288,18 +310,15 @@ pub(crate) fn hold_native_text_yield(gen_ref: DbRef, text: String) -> Str {
     }
     NATIVE_TEXT_YIELDS.with(|y| {
         let mut y = y.borrow_mut();
-        let at = match y
+        let at = if let Some(i) = y
             .iter()
             .position(|(g, _)| g.rec == gen_ref.rec && g.pos == gen_ref.pos)
         {
-            Some(i) => {
-                y[i].1 = text;
-                i
-            }
-            None => {
-                y.push((gen_ref, text));
-                y.len() - 1
-            }
+            y[i].1 = text;
+            i
+        } else {
+            y.push((gen_ref, text));
+            y.len() - 1
         };
         // The `String`'s buffer stays put while the vector moves its header.
         Str::new(y[at].1.as_str())
@@ -1171,7 +1190,6 @@ impl State {
 
     /// `fn_call_ref`, calling `target` in place of the function the slot holds when given —
     /// the slot's closure and everything else about the frame are the slot's.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn fn_call_ref_to(&mut self, fn_var: u16, arg_size: u16, target: Option<usize>) {
         // fn-ref slot is 20B ([d_nr:i64][closure:DbRef]); fn_var must be ≥ 20.
         assert!(
@@ -1638,17 +1656,14 @@ impl State {
         // PKG.5: set library index for auto-marshal dispatch.
         crate::extensions::set_current_lib_idx(call);
         let f = self.library[call as usize];
-        if crate::extensions::is_shared_dispatch(f) {
+        if let Some(raw) = crate::extensions::shared_dispatch_raw(f) {
             // @PLN199 C2 — a compiled library may call back into this interpreter (a function
             // value it cannot run itself), so the bridge call reaches the stores through a
             // pointer derived from the same `State` the call-back uses, never through a
             // `&mut Stores` held across it.
             let state: *mut State = self;
             let outer = crate::extensions::enter_host_state(state);
-            crate::extensions::shared_store_dispatch_raw(
-                unsafe { &raw mut (*state).database },
-                &mut stack,
-            );
+            raw(unsafe { &raw mut (*state).database }, &mut stack);
             crate::extensions::leave_host_state(outer);
         } else {
             f(&mut self.database, &mut stack);
@@ -8478,57 +8493,32 @@ impl State {
             .collect()
     }
 
-    /// FY.2: Resume execution after a frame yield.  Returns `true` while the
-    /// program is still running, `false` when it finishes.
-    /// @PLN18 02 (the heart's aorta) — the compiled→interp RE-ENTRY thunk:
-    /// call one interpreted function from HOST code (generated native code,
-    /// the debugger, a test) over the live State, between or inside frames.
-    ///
-    /// Contract: the caller has pushed the args in declaration order via
-    /// [`put_stack`](Self::put_stack) (scalars as `i64`, records/vectors as
-    /// `DbRef`, integer null = `i64::MIN`).  `reenter` pushes the synthetic
-    /// return address, jumps to the callee, runs it to completion, and
-    /// restores the PC and stack watermark — the surrounding execution (a
-    /// paused `main`, a yielded frame loop) continues unperturbed.
-    ///
-    /// v1 bounds: the callee must not yield (asserted) and stack-returning
-    /// results are not retrieved (store-writing callees — the shared store
-    /// is the ABI; a result record arg is the supported result path).
-    ///
-    /// # Panics
-    /// When the callee yields mid-call (not supported in v1).
-    /// `reenter` for a value-returning callee: after completion the result
-    /// sits at the synthetic frame's BASE (`copy_result` copies it to
-    /// `fn_stack` = the base and leaves `stack_pos = base + step(size)`).
-    /// Read it before restoring the watermark.
-    ///
-    /// # Panics
-    /// When the callee yields mid-call (not supported in v1).
     /// @PLN199 D3 — advance the interpreted generator `gen_ref` for compiled code, and answer
     /// the bytes it yielded, or nothing when it is exhausted.  The resume entry beside
     /// [`Self::reenter_ret`], which asserts its callee does not yield: the advance runs above
     /// every live frame with the stop sentinel as the address the generator yields back to,
     /// then restores the PC and the stack.  The yield's size is the generator's own
     /// (`coroutine_layout::next_operands` of its element type).
-    pub(crate) fn advance_for_native(&mut self, gen_ref: DbRef) -> Vec<u8> {
+    pub(crate) fn advance_for_native(&mut self, gen_ref: DbRef) -> Yielded {
         if !self.coroutine_slot_matches(&gen_ref) || self.coroutine_exhausted(&gen_ref) {
-            return Vec::new();
+            return Yielded::EXHAUSTED;
         }
         let d_nr = self.coroutines[gen_ref.rec as usize]
             .as_ref()
             .map_or(u32::MAX, |f| f.d_nr);
-        let handle = self.data_ptr.clone();
-        let Some(elem) = handle
-            .get()
-            .and_then(|data| match data.def(d_nr).returned().base() {
-                crate::data::Type::Iterator(elem, _) => Some((**elem).clone()),
-                _ => None,
-            })
+        let Some(packed) =
+            self.data_ptr
+                .get()
+                .and_then(|data| match data.def(d_nr).returned().base() {
+                    crate::data::Type::Iterator(elem, _) => {
+                        Some(crate::coroutine_layout::next_operands(elem).0)
+                    }
+                    _ => None,
+                })
         else {
-            return Vec::new();
+            return Yielded::EXHAUSTED;
         };
-        let packed = crate::coroutine_layout::next_operands(&elem).0;
-        let size = (packed & 0xFF) as usize;
+        let size = ((packed & 0xFF) as usize).min(YIELD_BYTES);
         let saved_pos = self.code_pos;
         let saved_sp = self.stack_pos;
         let base = self.stack_high.next_multiple_of(8);
@@ -8552,13 +8542,16 @@ impl State {
             );
         }
         let exhausted = self.coroutine_exhausted(&gen_ref);
-        let mut out = vec![0u8; size];
-        let store = self.database.store(&self.stack_cur);
-        let src = store.addr::<u8>(self.stack_cur.rec, self.stack_cur.pos + base);
-        unsafe { std::ptr::copy_nonoverlapping(src, out.as_mut_ptr(), size) };
+        let mut out = Yielded::EXHAUSTED;
+        if !exhausted {
+            let store = self.database.store(&self.stack_cur);
+            let src = store.addr::<u8>(self.stack_cur.rec, self.stack_cur.pos + base);
+            unsafe { std::ptr::copy_nonoverlapping(src, out.bytes.as_mut_ptr(), size) };
+            out.len = size;
+        }
         self.code_pos = saved_pos;
         self.stack_pos = saved_sp;
-        if exhausted { Vec::new() } else { out }
+        out
     }
 
     /// @PLN199 C2 — a compiled library's call through a function value whose callee it does
@@ -8570,6 +8563,29 @@ impl State {
     /// scalar or void return, so the callee has no hidden buffer.
     ///
     /// [`LibArg`]: crate::native_lib::LibArg
+    /// `n` empty `String` slots above every live frame, for a call back's text result: below
+    /// the frame `reenter_ret` builds, each named by the `DbRef` `OpCreateStack` makes for a
+    /// local, which is the form a callee's hidden `&text` work buffer takes.
+    fn call_back_text_buffers(&mut self, n: usize) -> Vec<DbRef> {
+        let mut bufs = Vec::with_capacity(n);
+        if n == 0 {
+            return bufs;
+        }
+        let saved_sp = self.stack_pos;
+        self.stack_pos = self.stack_high.next_multiple_of(8);
+        for _ in 0..n {
+            bufs.push(DbRef {
+                store_nr: self.stack_cur.store_nr,
+                rec: self.stack_cur.rec,
+                pos: self.stack_cur.pos + self.stack_pos,
+            });
+            self.put_stack(String::new());
+        }
+        self.stack_high = self.stack_high.max(self.stack_pos);
+        self.stack_pos = saved_sp;
+        bufs
+    }
+
     pub(crate) fn call_back(
         &mut self,
         d_nr: u32,
@@ -8583,25 +8599,8 @@ impl State {
             .expect("a call back into the interpreter needs the program's definitions");
         let def = data.def(d_nr);
         let pos = self.fn_positions[d_nr as usize];
-        // A text result is delivered through the callee's hidden `&text` work buffers: they
-        // are `String` slots above every live frame, below the frame `reenter_ret` builds,
-        // each handed over as the `DbRef` `OpCreateStack` makes for a local.
         let saved_high = self.stack_high;
-        let mut bufs: Vec<DbRef> = Vec::new();
-        if def.text_work_buffers() > 0 {
-            let saved_sp = self.stack_pos;
-            self.stack_pos = self.stack_high.next_multiple_of(8);
-            for _ in 0..def.text_work_buffers() {
-                bufs.push(DbRef {
-                    store_nr: self.stack_cur.store_nr,
-                    rec: self.stack_cur.rec,
-                    pos: self.stack_cur.pos + self.stack_pos,
-                });
-                self.put_stack(String::new());
-            }
-            self.stack_high = self.stack_high.max(self.stack_pos);
-            self.stack_pos = saved_sp;
-        }
+        let bufs = self.call_back_text_buffers(def.text_work_buffers());
         // A heap result is delivered through the callee's hidden return buffer, set up and
         // recorded as `fn_call_ref_to` does for an interpreted fn-ref call — so the callee's
         // own release (`release_fnref_bufs`) frees a buffer it did not hand back — at the
@@ -8701,6 +8700,32 @@ impl State {
         ret
     }
 
+    /// FY.2: Resume execution after a frame yield.  Returns `true` while the
+    /// program is still running, `false` when it finishes.
+    /// @PLN18 02 (the heart's aorta) — the compiled→interp RE-ENTRY thunk:
+    /// call one interpreted function from HOST code (generated native code,
+    /// the debugger, a test) over the live State, between or inside frames.
+    ///
+    /// Contract: the caller has pushed the args in declaration order via
+    /// [`put_stack`](Self::put_stack) (scalars as `i64`, records/vectors as
+    /// `DbRef`, integer null = `i64::MIN`).  `reenter` pushes the synthetic
+    /// return address, jumps to the callee, runs it to completion, and
+    /// restores the PC and stack watermark — the surrounding execution (a
+    /// paused `main`, a yielded frame loop) continues unperturbed.
+    ///
+    /// v1 bounds: the callee must not yield (asserted) and stack-returning
+    /// results are not retrieved (store-writing callees — the shared store
+    /// is the ABI; a result record arg is the supported result path).
+    ///
+    /// # Panics
+    /// When the callee yields mid-call (not supported in v1).
+    /// `reenter` for a value-returning callee: after completion the result
+    /// sits at the synthetic frame's BASE (`copy_result` copies it to
+    /// `fn_stack` = the base and leaves `stack_pos = base + step(size)`).
+    /// Read it before restoring the watermark.
+    ///
+    /// # Panics
+    /// When the callee yields mid-call (not supported in v1).
     pub fn reenter_ret<T: Copy + 'static>(
         &mut self,
         d_nr: u32,

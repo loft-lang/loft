@@ -286,7 +286,7 @@ impl Output<'_> {
         // N8b.2: generator function calls produce a DbRef via the coroutine table.
         let is_generator = matches!(def_fn.returned(), Type::Iterator(_, _));
         if is_generator {
-            write!(w, "loft::codegen_runtime::alloc_coroutine_held(cell, ")?;
+            write!(w, "{}(cell, ", self.coro_fn("alloc_coroutine_held"))?;
         }
         // P199 — user-defined functions, generated stubs, AND Op stubs in
         // `src/codegen_runtime.rs` all take `&UnsafeCell<Stores>` (Track 1).

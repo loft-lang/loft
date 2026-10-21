@@ -660,6 +660,10 @@ pub struct Parser {
     /// before the program is read, so a call to one gets what a bridged call needs
     /// ([`Parser::crosses_text_bridge`]).  Empty for a run that compiles the program.
     pub compiled_bridges: std::collections::HashSet<String>,
+    /// @PLN199 — will a `use`d library's calls cross the shared-store bridge?  False when the
+    /// driver compiles the whole program, or runs every library interpreted
+    /// (`LOFT_NO_NATIVE_LIBS`): no call then needs [`Parser::crosses_text_bridge`]'s temporary.
+    pub library_bridges: bool,
     /// @PLN119 arc A — libraries that declared `[library] placement = "process"`,
     /// as (library name, package dir).  Recorded during `use` processing; the
     /// driver (`main.rs`) starts one worker per entry after `scopes::check` and
@@ -1969,6 +1973,7 @@ impl Parser {
             native_lib_regs: Vec::new(),
             pending_native_compile: Vec::new(),
             compiled_bridges: std::collections::HashSet::new(),
+            library_bridges: true,
             pending_placed_libs: Vec::new(),
             pending_pkg_deps: Vec::new(),
             auto_use_scan_cache: std::collections::HashMap::new(),

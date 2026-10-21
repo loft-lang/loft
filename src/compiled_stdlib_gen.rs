@@ -1489,6 +1489,14 @@ fn __host() -> &'static loft::native_lib::HostTable {
     &loft::native_lib::HOST_TABLE
 }
 
+#[allow(dead_code, unused_imports)]
+mod __coro {
+    pub use crate::codegen_runtime::{
+        alloc_coroutine_held, coroutine_is_exhausted, coroutine_next_dbref, coroutine_next_i64,
+        coroutine_next_into, coroutine_next_text, coroutine_retain,
+    };
+}
+
 pub extern "C" fn loft_shared_t_4File_lines(
     stores: *mut Stores,
     args: *const loft::native_lib::LibArg,

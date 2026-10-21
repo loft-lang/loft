@@ -6674,6 +6674,14 @@ impl State {
         args: &[Value],
         cdylib_lib: u16,
     ) {
+        // @PLN199 — a compiled library's text function takes the destination with its
+        // arguments, in ONE native call (`<symbol>#dest`, `extensions::shared_dest_symbol`).
+        let dest_lib = self
+            .library_names
+            .get(&crate::extensions::shared_dest_symbol(
+                stack.data.def(op).native(),
+            ))
+            .copied();
         let set_dest_lib = *self
             .library_names
             .get("n_set_bridge_dest")
@@ -6696,6 +6704,15 @@ impl State {
         } else {
             let dep_offset = stack.var_pos(var);
             self.emit_push_create_stack(stack, dep_offset);
+        }
+        if let Some(dest_lib) = dest_lib {
+            stack.add_op("OpStaticCall", self);
+            self.code_add(dest_lib);
+            stack.position -= stack.step(size_of::<crate::keys::DbRef>() as u16);
+            for attr_type in &attr_types {
+                stack.position -= stack.step(size(attr_type, &Context::Argument));
+            }
+            return;
         }
         // n_set_bridge_dest pops the dest DbRef off the top and stashes it.
         stack.add_op("OpStaticCall", self);

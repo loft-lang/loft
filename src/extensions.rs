@@ -1065,6 +1065,34 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
     for (sym, ..) in &wired {
         state.replace_static_fn(sym, shared_store_dispatch);
     }
+    // The destination-passing slot of each text bridge: the same bridge and signature.
+    let dests: Vec<(u16, String, FnPtr, std::sync::Arc<SharedSig>)> = wired
+        .iter()
+        .filter(|(_, _, _, sig)| matches!(sig.ret, Some(ArgT::Text)))
+        .filter_map(|(sym, _, ptr, sig)| {
+            let dest = shared_dest_symbol(sym);
+            let idx = *state.library_names.get(&dest)?;
+            Some((idx, dest, FnPtr(*ptr), std::sync::Arc::new(sig.clone())))
+        })
+        .collect();
+    if !dests.is_empty() {
+        {
+            let mut guard = SHARED_SIGS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let table = guard.get_or_insert_with(HashMap::new);
+            for (idx, _, ptr, sig) in &dests {
+                table.insert(*idx, (*ptr, std::sync::Arc::clone(sig)));
+            }
+            SIGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
+        }
+        crate::call_frames::label_shared_bridges(
+            dests.iter().map(|(idx, dest, ..)| (*idx, dest.clone())),
+        );
+        for (_, dest, ..) in &dests {
+            state.replace_static_fn(dest, shared_store_dispatch_dest);
+        }
+    }
 }
 
 #[cfg(not(feature = "native-extensions"))]
@@ -1082,25 +1110,57 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
     shared_store_dispatch_raw(stores, stack);
 }
 
-/// Is `call` the shared-bridge dispatcher?  `State::invoke_native` asks, to enter it through
-/// [`shared_store_dispatch_raw`] with the interpreter reachable for an upcall (@PLN199 C2).
+/// The raw entry of `call` when it is a shared-bridge dispatcher.  `State::invoke_native`
+/// asks, to enter it with the interpreter reachable for an upcall (@PLN199 C2).
+pub type SharedRaw = fn(*mut crate::database::Stores, &mut crate::keys::DbRef);
+
 #[cfg(feature = "native-extensions")]
 #[must_use]
-pub fn is_shared_dispatch(call: crate::database::Call) -> bool {
-    std::ptr::fn_addr_eq(call, shared_store_dispatch as crate::database::Call)
+pub fn shared_dispatch_raw(call: crate::database::Call) -> Option<SharedRaw> {
+    if std::ptr::fn_addr_eq(call, shared_store_dispatch as crate::database::Call) {
+        Some(shared_store_dispatch_raw)
+    } else if std::ptr::fn_addr_eq(call, shared_store_dispatch_dest as crate::database::Call) {
+        Some(shared_store_dispatch_dest_raw)
+    } else {
+        None
+    }
 }
 
 #[cfg(not(feature = "native-extensions"))]
 #[must_use]
-pub fn is_shared_dispatch(_call: crate::database::Call) -> bool {
-    false
+pub fn shared_dispatch_raw(_call: crate::database::Call) -> Option<SharedRaw> {
+    None
 }
 
-#[cfg(not(feature = "native-extensions"))]
-pub fn shared_store_dispatch_raw(
-    _stores_raw: *mut crate::database::Stores,
-    _stack: &mut crate::keys::DbRef,
+/// The library slot of shared bridge `sym`'s destination-passing call (`<sym>#dest`): a
+/// text call whose result goes to a caller cell pops that cell as one more slot, instead of
+/// handing it over in a native call of its own (`n_set_bridge_dest`).
+#[must_use]
+pub fn shared_dest_symbol(sym: &str) -> String {
+    format!("{sym}#dest")
+}
+
+/// [`shared_store_dispatch`] for a destination-passing text call: the destination `DbRef`
+/// is the top slot, above the arguments.
+#[cfg(feature = "native-extensions")]
+fn shared_store_dispatch_dest(
+    stores: &mut crate::database::Stores,
+    stack: &mut crate::keys::DbRef,
 ) {
+    shared_store_dispatch_dest_raw(stores, stack);
+}
+
+#[cfg(feature = "native-extensions")]
+fn shared_store_dispatch_dest_raw(
+    stores_raw: *mut crate::database::Stores,
+    stack: &mut crate::keys::DbRef,
+) {
+    {
+        let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
+        let dest = stores.get::<crate::keys::DbRef>(stack);
+        stores.bridge_text_dest = Some(dest);
+    }
+    shared_store_dispatch_raw(stores_raw, stack);
 }
 
 std::thread_local! {
@@ -1133,7 +1193,7 @@ pub(crate) fn host_state() -> *mut crate::state::State {
 /// pops reborrow before the call and the pushes after it.
 #[cfg(feature = "native-extensions")]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-pub fn shared_store_dispatch_raw(
+fn shared_store_dispatch_raw(
     stores_raw: *mut crate::database::Stores,
     stack: &mut crate::keys::DbRef,
 ) {
@@ -1156,9 +1216,19 @@ pub fn shared_store_dispatch_raw(
 
     // Pop ONE stack slot per attribute (the call site pushes every attribute,
     // including hidden dests and the text work buffer) — in reverse (stack is
-    // LIFO), then restore declaration order.
-    let mut popped: Vec<LibArg> = Vec::with_capacity(sig.pops.len());
-    for &t in sig.pops.iter().rev() {
+    // LIFO), each into its declaration-order slot.  On the stack for any signature
+    // of up to `INLINE_ARGS` attributes: two `Vec`s per call were a third of a bare
+    // crossing's cost (@PLN199 perf).
+    let n_pops = sig.pops.len();
+    let mut popped_inline = [LibArg::ZERO; INLINE_ARGS];
+    let mut popped_spill: Vec<LibArg> = Vec::new();
+    let popped: &mut [LibArg] = if n_pops <= INLINE_ARGS {
+        &mut popped_inline[..n_pops]
+    } else {
+        popped_spill.resize(n_pops, LibArg::ZERO);
+        &mut popped_spill
+    };
+    for (at, &t) in sig.pops.iter().enumerate().rev() {
         let slot = match t {
             ArgT::I32 | ArgT::I64 => LibArg {
                 scalar: stores.get::<i64>(stack),
@@ -1201,17 +1271,29 @@ pub fn shared_store_dispatch_raw(
                 }
             }
         };
-        popped.push(slot);
+        popped[at] = slot;
     }
-    popped.reverse();
     // Forward only the marshalled slots (compacted order — the bridge reads
     // `a[0..n]` skipping work buffers and hidden dests it satisfies locally).
-    let args: Vec<LibArg> = popped
-        .iter()
-        .zip(&sig.forward)
-        .filter(|(_, f)| **f)
-        .map(|(a, _)| *a)
-        .collect();
+    let mut args_inline = [LibArg::ZERO; INLINE_ARGS];
+    let mut args_spill: Vec<LibArg> = Vec::new();
+    let mut n_args = 0;
+    for (a, f) in popped.iter().zip(&sig.forward) {
+        if !*f {
+            continue;
+        }
+        if n_pops <= INLINE_ARGS {
+            args_inline[n_args] = *a;
+        } else {
+            args_spill.push(*a);
+        }
+        n_args += 1;
+    }
+    let args: &[LibArg] = if n_pops <= INLINE_ARGS {
+        &args_inline[..n_args]
+    } else {
+        &args_spill
+    };
 
     // @PLN10 — dest-mode detection: the interpreter caller routes a text-returning
     // auto-native call through `gen_cdylib_text_dest_call`, which set a per-call
@@ -1330,6 +1412,10 @@ pub fn shared_store_dispatch_raw(
     }
     crate::call_frames::leave_shared_bridge(outer_bridge);
 }
+
+/// The attribute count a shared-bridge call marshals without allocating
+/// ([`shared_store_dispatch_raw`]); a wider signature spills to the heap.
+const INLINE_ARGS: usize = 16;
 
 /// The interpreter's function-value slot: an 8-byte `d_nr`, then the closure `DbRef`
 /// (`OpVarFnRef`, `data::element_stack_size_in`).

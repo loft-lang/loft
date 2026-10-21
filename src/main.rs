@@ -9379,6 +9379,8 @@ fn main() {
     if !native_mode && html_out.is_none() {
         p.compiled_bridges = loft::compiled_stdlib::names();
     }
+    p.library_bridges =
+        !native_mode && html_out.is_none() && std::env::var_os("LOFT_NO_NATIVE_LIBS").is_none();
     // @P363: join with a path separator (Path::join) instead of string
     // concat.  `project_dir()` returns a trailing-separator path, but
     // `--path <dir>` sets `dir` to the raw CLI argument with no trailing

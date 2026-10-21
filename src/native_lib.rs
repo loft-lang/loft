@@ -806,7 +806,8 @@ fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
         return (crate::codegen_runtime::CoroutineHost::HERE.next_i64)(gen_ref, stores);
     };
     // A one-byte yield is a boolean's storage byte; anything else an `i64` image.
-    let v = st.advance_for_native(gen_ref);
+    let yielded = st.advance_for_native(gen_ref);
+    let v = yielded.as_slice();
     match v.len() {
         0 => crate::codegen_runtime::COROUTINE_EXHAUSTED,
         1 => i64::from(v[0]),
@@ -818,7 +819,8 @@ fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     let Some(st) = interpreter_for(gen_ref) else {
         return (crate::codegen_runtime::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
     };
-    let v = st.advance_for_native(gen_ref);
+    let yielded = st.advance_for_native(gen_ref);
+    let v = yielded.as_slice();
     if v.len() < std::mem::size_of::<DbRef>() {
         DbRef::NULL
     } else {
@@ -831,7 +833,8 @@ fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
         return (crate::codegen_runtime::CoroutineHost::HERE.next_text)(gen_ref, stores);
     };
     // The interpreter yields a `Str` into its own memory; the compiled consumer owns a copy.
-    let v = st.advance_for_native(gen_ref);
+    let yielded = st.advance_for_native(gen_ref);
+    let v = yielded.as_slice();
     if v.len() < std::mem::size_of::<crate::keys::Str>() {
         return crate::store::STRING_NULL.to_string();
     }
@@ -924,6 +927,21 @@ pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable) 
 fn __host() -> &'static loft::native_lib::HostTable {
     __HOST.get().expect(\"a library cdylib is called only after its host ran loft_shared_init\")
 }
+
+/// The host's coroutine table, under the runtime's names: what the generator calls in a
+/// library cdylib, so a generator handle means one table on both sides.
+#[allow(dead_code)]
+mod __coro {
+    use loft::database::Stores;
+    use loft::keys::DbRef;
+    pub fn alloc_coroutine_held(cell: &std::cell::UnsafeCell<Stores>, coro: Box<dyn loft::codegen_runtime::LoftCoroutine>) -> DbRef { (super::__host().coroutines.alloc_held)(cell, coro) }
+    pub fn coroutine_retain(g: DbRef) -> DbRef { (super::__host().coroutines.retain)(g) }
+    pub fn coroutine_next_i64(g: DbRef, s: &mut Stores) -> i64 { (super::__host().coroutines.next_i64)(g, s) }
+    pub fn coroutine_next_into(g: DbRef, s: &mut Stores, d: &mut [i64]) -> bool { (super::__host().coroutines.next_into)(g, s, d) }
+    pub fn coroutine_next_dbref(g: DbRef, s: &mut Stores) -> DbRef { (super::__host().coroutines.next_dbref)(g, s) }
+    pub fn coroutine_next_text(g: DbRef, s: &mut Stores) -> String { (super::__host().coroutines.next_text)(g, s) }
+    pub fn coroutine_is_exhausted(g: DbRef) -> bool { (super::__host().coroutines.exhausted)(g) }
+}
 ";
 
 /// [`HOST_INIT_SRC`] for code linked into the host itself: its table is the host's own.
@@ -931,6 +949,14 @@ pub(crate) const IN_HOST_TABLE_SRC: &str = "
 #[allow(dead_code)]
 fn __host() -> &'static loft::native_lib::HostTable {
     &loft::native_lib::HOST_TABLE
+}
+
+#[allow(dead_code, unused_imports)]
+mod __coro {
+    pub use crate::codegen_runtime::{
+        alloc_coroutine_held, coroutine_is_exhausted, coroutine_next_dbref, coroutine_next_i64,
+        coroutine_next_into, coroutine_next_text, coroutine_retain,
+    };
 }
 ";
 

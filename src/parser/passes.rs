@@ -71,6 +71,7 @@ impl Parser {
         self.pending_native_compile
             .clone_from(&base.pending_native_compile);
         self.compiled_bridges.clone_from(&base.compiled_bridges);
+        self.library_bridges = base.library_bridges;
         self.pending_placed_libs
             .clone_from(&base.pending_placed_libs);
     }

@@ -8162,6 +8162,17 @@ fn loft_ckpt_report() {{
         write!(w, "}})")
     }
     /// How the header reaches the native packages' functions ([`PackageLink`]).
+    /// Where the generated code reaches the native coroutine table's entry point `name`: the
+    /// runtime's own in a program, the host's through `__coro` in a library cdylib
+    /// (@PLN199 D2, `native_lib::HOST_INIT_SRC`).
+    pub(crate) fn coro_fn(&self, name: &str) -> String {
+        if self.library_unit {
+            format!("__coro::{name}")
+        } else {
+            format!("loft::codegen_runtime::{name}")
+        }
+    }
+
     fn package_link(&self) -> PackageLink {
         if self.binds_libraries() {
             if self.native_cabi {
