@@ -173,6 +173,14 @@ pub(super) struct OwnedChild {
 ///   `Hash`, `Index`, `ChildRec`) — `remove_claims` resets that pointer to 0 so a
 ///   later reassignment starts clean.  `Struct`/`EnumValue`/`Enum` hold their
 ///   children INLINE (no pointer to zero), so it is false.
+/// The blocks `Stores::hand_over_detach` took from a dying element, one per vector of its
+/// type's plain-vector plan (0 where that vector was empty), for the next copy to write into.
+#[derive(Clone, Copy, Debug)]
+pub struct HandOver {
+    pub blocks: [u32; PLAIN_MAX],
+    pub count: usize,
+}
+
 pub(super) struct OwnedWalk {
     pub children: Vec<OwnedChild>,
     pub container_rec: Option<u32>,
@@ -3571,6 +3579,140 @@ impl Stores {
                     pos: 4,
                 },
                 length * size + 4,
+            );
+        }
+        true
+    }
+
+    /// `@FR-R-HandOver` — take element `index`'s vector blocks out of the vector `vec` of
+    /// elements of type `elem_tp`, so the statement that drops the element frees nothing of
+    /// them and the next element appended takes them (`Self::hand_over_copy`).  Each owned
+    /// vector's slot in the element is set to 0, the empty vector.  `None`, with nothing
+    /// changed, unless the element type owns plain vectors and nothing else, the element
+    /// exists, its store is writable and no block it owns is named by a stored reference.
+    #[must_use]
+    pub fn hand_over_detach(&mut self, vec: &DbRef, index: i64, elem_tp: u16) -> Option<HandOver> {
+        if !crate::keys::hand_over_enabled()
+            || vec.is_null()
+            || vec.rec == 0
+            || index < 0
+            || (vec.store_nr as usize) >= self.allocations.len()
+        {
+            return None;
+        }
+        let (plan, count) = self.plain_vectors_of(elem_tp)?;
+        let size = u32::from(self.size(elem_tp));
+        let store = &self.allocations[vec.store_nr as usize];
+        if store.read_only || store.is_foreign() {
+            return None;
+        }
+        let vec_rec = store.collection_rec(vec.rec, vec.pos);
+        if vec_rec == 0 {
+            return None;
+        }
+        let len = store.get_u32_raw(vec_rec, 4);
+        let Ok(i) = u32::try_from(index) else {
+            return None;
+        };
+        if i >= len {
+            return None;
+        }
+        let at = 8 + i * size;
+        let cap = store.capacity_words();
+        let mut out = HandOver {
+            blocks: [0; PLAIN_MAX],
+            count,
+        };
+        for (k, &(off, _)) in plan[..count].iter().enumerate() {
+            let cur = store.get_u32_raw(vec_rec, at + off);
+            if cur == 0 || Self::owned_edge_absent(cur) {
+                continue;
+            }
+            if cur >= cap || store.is_referenced(cur) {
+                return None;
+            }
+            out.blocks[k] = cur;
+        }
+        let store = &mut self.allocations[vec.store_nr as usize];
+        for (k, &(off, _)) in plan[..count].iter().enumerate() {
+            if out.blocks[k] != 0 {
+                store.set_u32_raw(vec_rec, at + off, 0);
+            }
+        }
+        Some(out)
+    }
+
+    /// `@FR-R-HandOver` — release blocks a take held that no copy wrote into (a second take
+    /// beside one already used), in the store of `dst`, where they were taken.
+    pub fn hand_over_release(&mut self, dst: &DbRef, ho: &HandOver) {
+        if dst.store_nr == u16::MAX || (dst.store_nr as usize) >= self.allocations.len() {
+            return;
+        }
+        let store = self.store_mut(dst);
+        for &b in &ho.blocks[..ho.count] {
+            if b != 0 {
+                store.delete(b);
+            }
+        }
+    }
+
+    /// `@FR-R-HandOver` — the copy of `src` (a record of type `tp` whose owners are plain
+    /// vectors) into the FRESH slot `dst`, its vectors written into the blocks `ho` took: each
+    /// block's length set to `src`'s and the elements copied, a block too small grown.  `false`
+    /// — the taken blocks released, nothing else done — where the general copy must run: a
+    /// null or foreign source, a source inside `dst`'s own vector, a traced or checked copy.
+    pub fn hand_over_copy(&mut self, src: &DbRef, dst: &DbRef, tp: u16, ho: &HandOver) -> bool {
+        let refuse = src.store_nr == u16::MAX
+            || src.rec == 0
+            || (src.store_nr as usize) >= self.allocations.len()
+            || (src.store_nr == dst.store_nr && src.rec == dst.rec)
+            || self.allocations[src.store_nr as usize].is_foreign()
+            || crate::keys::trace_copy()
+            || self.copy_check_enabled();
+        let Some((plan, count)) = self.plain_vectors_of(tp).filter(|_| !refuse) else {
+            let store = self.store_mut(dst);
+            for &b in &ho.blocks[..ho.count] {
+                if b != 0 {
+                    store.delete(b);
+                }
+            }
+            return false;
+        };
+        let size = u32::from(self.size(tp));
+        self.copy_block(src, dst, size);
+        for (k, &(off, esize)) in plan[..count].iter().enumerate() {
+            let s = self.store(src).get_u32_raw(src.rec, src.pos + off);
+            let mut b = ho.blocks[k];
+            if s == 0 || Self::owned_edge_absent(s) {
+                if b != 0 {
+                    self.store_mut(dst).delete(b);
+                }
+                self.store_mut(dst).set_u32_raw(dst.rec, dst.pos + off, s);
+                continue;
+            }
+            let length = self.store(src).get_u32_raw(s, 4);
+            let words = 1 + (esize * length).div_ceil(8);
+            let store = self.store_mut(dst);
+            b = if b == 0 {
+                store.claim(words)
+            } else if store.record_words(b) < words {
+                store.resize(b, words)
+            } else {
+                b
+            };
+            store.set_u32_raw(dst.rec, dst.pos + off, b);
+            self.copy_block(
+                &DbRef {
+                    store_nr: src.store_nr,
+                    rec: s,
+                    pos: 4,
+                },
+                &DbRef {
+                    store_nr: dst.store_nr,
+                    rec: b,
+                    pos: 4,
+                },
+                length * esize + 4,
             );
         }
         true

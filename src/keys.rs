@@ -1707,6 +1707,20 @@ pub fn append_twin_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_TWIN"))
 }
 
+/// `LOFT_NO_HAND_OVER=1` — a dying element's vectors are released and the next element
+/// appended claims its own again (`@FR-R-HandOver` off): the first bisect step for a wrong
+/// element or length after an append beside a drop of the same vector.
+pub fn hand_over_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_HAND_OVER"))
+}
+
+/// `LOFT_TRACE_HAND_OVER=1` — name each append the hand-over admits or declines, and why.
+pub fn trace_hand_over() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_HAND_OVER"))
+}
+
 /// `LOFT_NO_PUSH_RUN=1` — a straight-line run of byte appends pushes each through the
 /// runtime again (`@FR-R-PushFill`'s run clause off): the first bisect step for a wrong byte
 /// or length after `v += [a]; v += [b]; …`.

@@ -5210,6 +5210,13 @@ impl Store {
     /// (vector `[rec:u32][len:u32]`, hash buckets, tree node ptrs,
     /// string-record lengths).  NOT for user `integer` fields.
     #[inline]
+    /// Does a stored reference name record `rec` (`@FR-H-Removed`)?  Such a record keeps its
+    /// position when it is removed, so its block may not change hands (`(R-HandOver)`).
+    #[must_use]
+    pub fn is_referenced(&self, rec: u32) -> bool {
+        self.referenced.contains(rec)
+    }
+
     pub fn get_u32_raw(&self, rec: u32, fld: u32) -> u32 {
         if rec != 0 && self.valid(rec, fld) {
             self.read(rec, fld)
