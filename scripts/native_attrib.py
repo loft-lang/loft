@@ -18,6 +18,7 @@ otherwise every call chain stops at the runtime boundary and inclusive equals se
     RUSTFLAGS=-Cforce-frame-pointers=yes cargo build --profile profiling --lib
     loft --native-release --native-emit out.rs prog.loft
     rustc --edition=2024 -o prog.bin out.rs -C opt-level=3 -C codegen-units=1 \\
+        -C llvm-args=-align-loops=64 \\
         -Cdebuginfo=1 -Cforce-frame-pointers=yes \\
         -Clink-arg=-Wl,--allow-multiple-definition \\
         --extern loft=target/profiling/libloft.rlib -L dependency=target/profiling/deps \\

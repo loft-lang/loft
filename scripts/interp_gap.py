@@ -57,6 +57,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# The shipped tier's rustc arguments, the list loft compiles in.
+RELEASE_ARGS = [x.strip() for x in (ROOT / "src" / "native_release_args.txt").read_text().splitlines()
+                if x.strip() and not x.strip().startswith("#")]
 BENCH = ROOT / "bench"
 
 FAMILIES = [
@@ -191,7 +194,7 @@ def native_store(census_loft, prog, n, timeout):
         p = run([census_loft, "--native-emit", str(rs), "--lean", *argv], cwd, {}, timeout)
         if p.returncode != 0 or not rs.exists():
             return None, "native emit failed: " + ((p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"])[0]
-        p = run(["rustc", "-C", "opt-level=3", "-C", "codegen-units=1", "--edition=2024",
+        p = run(["rustc", *RELEASE_ARGS, "--edition=2024",
                  "--extern", f"loft={lib}/libloft.rlib", "-L", f"{lib}/deps", "-o", str(exe), str(rs)],
                 cwd, {}, timeout)
         if p.returncode != 0:

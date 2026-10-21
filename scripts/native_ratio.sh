@@ -19,6 +19,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# The shipped tier's rustc arguments, the list loft compiles in (src/native_release_args.txt).
+mapfile -t RELEASE_ARGS < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/src/native_release_args.txt")
 ORACLE="$ROOT/bench/ratio_oracle.tsv"
 LOFT="${LOFT_BIN:-$ROOT/target/release/loft}"
 LOFT_LIB="${LOFT_LIB_DIR:-$ROOT/target/release}"
@@ -111,7 +113,7 @@ build_and_run() {
   # and full optimisation.  A performance lane measures the optimised build; the
   # semantics runs are the test runner's.
   "$LOFT" --native-emit "$build/ratio_native.rs" --lean --path "$ROOT/" "$dir/bench.loft" > /dev/null
-  rustc -C opt-level=3 -C codegen-units=1 --edition=2024 \
+  rustc "${RELEASE_ARGS[@]}" --edition=2024 \
     --extern "loft=$LOFT_LIB/libloft.rlib" -L "$LOFT_LIB/deps" \
     -o "$build/ratio_native" "$build/ratio_native.rs"
   rm -f "$build/ratio_native.rs"

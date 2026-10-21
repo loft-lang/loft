@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# The shipped tier's rustc arguments, the list loft compiles in (src/native_release_args.txt).
+mapfile -t RELEASE_ARGS < <(grep -vE '^[[:space:]]*(#|$)' "$PROJECT_ROOT/src/native_release_args.txt")
 
 # Auto-detect loft binary: env override → project target/release → PATH
 if [[ -n "${LOFT_BIN:-}" ]]; then
@@ -191,7 +193,7 @@ run_bench() {
     native_rs="$build_dir/bench.rs"
     "$LOFT" --native-emit "$native_rs" --lean "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
     if [[ -f "$native_rs" ]]; then
-      rustc -C opt-level=3 -C codegen-units=1 --edition=2024 \
+      rustc "${RELEASE_ARGS[@]}" --edition=2024 \
         --extern "loft=$LOFT_LIB/libloft.rlib" \
         -L "$LOFT_LIB/deps" \
         -o "$build_dir/bench_bin" \

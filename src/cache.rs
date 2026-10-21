@@ -860,7 +860,8 @@ pub fn rustflags_fingerprint() -> u64 {
 /// (`--native-release` and every generated library cdylib), split on whitespace: a
 /// MEASUREMENT switch for trying a code-generation flag over a whole portal run
 /// (`-C llvm-args=-align-all-functions=6`) before it is made a default.  Empty when unset.
-/// Every cache key that names a release binary folds [`native_release_flags_fingerprint`],
+/// Every cache key that names a release binary folds [`native_release_flags_fingerprint`]
+/// (over [`release_rustc_args`], this list appended),
 /// so a run with other flags never adopts this one's binary.
 #[must_use]
 pub fn native_release_flags() -> Vec<String> {
@@ -869,10 +870,25 @@ pub fn native_release_flags() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The fingerprint of [`native_release_flags`]: what a cached release artifact's key folds.
+/// The shipped tier's `rustc` arguments: `src/native_release_args.txt` (the one list the
+/// performance scripts read too), then [`native_release_flags`].
+#[must_use]
+pub fn release_rustc_args() -> Vec<String> {
+    let mut args: Vec<String> = include_str!("native_release_args.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    args.extend(native_release_flags());
+    args
+}
+
+/// The fingerprint of [`release_rustc_args`]: what a cached release artifact's key folds, so
+/// a binary built with other arguments is never adopted.
 #[must_use]
 pub fn native_release_flags_fingerprint() -> u64 {
-    rustflags_fp_of(&native_release_flags().join(" "))
+    rustflags_fp_of(&release_rustc_args().join(" "))
 }
 
 /// Pure core of [`rustflags_fingerprint`] (takes the flag string so it is testable).

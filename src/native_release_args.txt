@@ -1,0 +1,20 @@
+# The rustc arguments of the SHIPPED and PERFORMANCE tiers (NATIVE.md § Optimisation tiers):
+# every `--native-release` program, every generated library cdylib, and every performance
+# lane that compiles emitted Rust itself (bench/stats.py, bench/portal/hand_price.sh,
+# scripts/native_ratio.sh, bench/run_bench.sh, scripts/interp_gap.py).  One argument per
+# line; `#` starts a comment.  `src/cache.rs` compiles this file in, the scripts read it, so
+# the two cannot drift.  LOFT_NATIVE_RELEASE_FLAGS appends to it for a measurement.
+#
+# Full optimisation in one codegen unit: on the drawing pass `hash` -15-20 %, the pixel
+# rows -3-5 % over `-O`; opt-level 3 alone and `-C target-cpu=native` moved nothing.
+-C
+opt-level=3
+-C
+codegen-units=1
+# Every loop aligned to 64 bytes: a routine's speed no longer depends on where unrelated
+# code puts it.  Shifting a program's code by 0/16/32/48 bytes moved a routine by a median
+# 2.7 % (17 of 51 by more than 5 %, `byte_at` 27 %) unaligned and 0.5 % aligned (3 of 51,
+# the memory-bound ones), at -0.8 % geomean; code +0.2 %
+# (bench/portal/analysis/worklist.md § Regressions that stand).
+-C
+llvm-args=-align-loops=64
