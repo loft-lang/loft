@@ -144,7 +144,9 @@ fn var_bind_copies(function: &Function, data: &Data, v: u16, value: &Value) -> b
     let Value::Var(src) = value.unspan() else {
         return false;
     };
-    function.tp(v).depend().is_empty()
+    // @FR-O-Proxy asks free — the answer licenses the rebind's release of the displaced copy,
+    // so it is `proxy_says_owned`, which carries the @FR-O-Override veto beside the proxy.
+    function.proxy_says_owned(v)
         && function.tp(v).base().heap_def_nr().is_some()
         && function.record_copy_source(data, v, *src).is_some()
         && !crate::lease::copy_reach(data, function.tp(v)).refused
