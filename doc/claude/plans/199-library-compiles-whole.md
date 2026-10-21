@@ -220,10 +220,14 @@ A whole-program `--native` binary has no host table and keeps its own.
 `reenter_ret` asserts that its callee does not yield, so this is a resume entry of its own
 beside it, built on `coroutine_next`, not on `reenter_ret`.
 
-**D4 — one handle.**  The two store numbers collapse into one host-owned table whose entries
-are an interpreted frame or a compiled state machine, behind one `next`.  This is the end
-state the owner's rule asks for.  It is a refactor once D1–D3 hold: the probes stay green and
-the corpus is byte-identical on `--native`.
+**D4 — one handle: dropped.**  D2 already makes one table for every COMPILED generator — a
+library cdylib's generated code calls the host's through `__coro`
+(`native_lib::HOST_INIT_SRC`) — and an interpreted generator's frame lives in `State`, which
+the runtime crate may not name (`scripts/crate_layers.py`).  Moving interpreted frames into the
+runtime's table would break that layering for no behaviour: a handle already advances,
+retains, frees and tests the same way from either side (`native_lib::HOST_COROUTINES`).  The
+two store numbers (`COROUTINE_STORE`, `NATIVE_COROUTINE_STORE`) stay; reopen only if a shape
+appears that needs one handle to change kind.
 
 ## Phase E — libraries with a native crate
 
@@ -246,44 +250,126 @@ The C-ABI link of `[native] crate` packages into a shared cdylib already exists 
 
 ## Phase G — published libraries arrive compiled
 
-**G0 — a cdylib numbered by name.**  This is the precondition, and it also removes the
-second build when another script uses the same library.
-- **G0a**: one helper writes every type-id literal in generation (about 76 `known_type`
-  reads across `src/generation/mod.rs`, `dispatch.rs`, `ops/parallel.rs`, `hoist.rs`, …).
-  Program mode prints the literal it prints today, so the corpus diff is empty.
-- **G0b**: in cdylib mode the helper prints `__tid(k)`, reading a table that
-  `loft_shared_init` fills by name from the caller's `Stores::name`.  This is the lookup
-  `hidden_dest_type_name` already does per call.
-- **G0c**: `type_layout_fingerprint` hashes only the types the library references (name,
-  size, alignment, field offsets).  Two scripts with different structs then share one cdylib;
-  the check is that the second script's run builds nothing.
+Today an artifact serves one program: generated code writes type ids and function numbers as
+literals (`OpDatabase(cell, r, 100_i32)`, `(835_u32, DbRef::NULL)`, `835_u32 =>` dispatch arms),
+and the key hashes the caller's whole type table (`type_layout_fingerprint`) and the numbers of
+every function the artifact reaches (`fn_numbering_fingerprint`, `native_lib.rs` ~2654).  G
+makes the artifact a function of the LIBRARY alone, so CI can build it and a machine without
+`rustc` can run it.  Every step below is either byte-identical on `--native` (checked with
+`scripts/introspect_diff.sh` over the corpus) or changes only library cdylibs.
 
-**G1 — a reproducible name.**  The artifact name hashes the library's source, `loft_build_fp`,
-the triple and the G0c fingerprint, and nothing from the program.  CI can then build the file
-the loader will look for.
+**G0-0 — a lambda's name is its place in its enclosing function.**  The root of the function
+half: a lambda is named from ONE counter across the whole parse (`__lambda_{lambda_counter}`,
+`parser/vectors.rs:1643` and `:1949`, the counter at `parser/mod.rs:1150`, reset per pass at
+`parser/passes.rs:173` and `:224`), so a library's lambda numbers shift with whatever was parsed
+before it, and no table can map them by name.
+- Change: the counter becomes per enclosing definition (a `HashMap<u32, u32>` keyed by
+  `self.context`, reset where `lambda_counter` is), and the name
+  `__lambda_<enclosing stored name>_<k>`; a lambda inside a lambda takes its parent's stable
+  name.  Keep the `__lambda_` prefix: `native_lib::is_synthetic_name`, `parser/suggest.rs:82`
+  and the closure-record names (`vectors.rs:2397`, `:3423`, `__lambda_` → `__closure_`) read it.
+- Check: the suite green on both backends; a new `n3_use_native` test — two scripts that differ
+  only in a lambda declared before their `use` give the library's lambdas the same names
+  (`LOFT_LOG=static` dump).  Not byte-identical (names change), so it is its own commit.
 
-**G2 — the producer.**  `loft build-native` (`src/main.rs` ~8845) already builds the auto cdylib
-and prints `loft_build_fp`.  The registry index's `BinaryEntry` (`src/registry_index.rs` ~123,
-parsed ~388–410) gains `loft_build_fp` beside `loft_ffi_fp`.  The loft release pipeline
-(RELEASE_PUBLISH.md) runs `build-native` over every registry library's latest version for each
-released triple and publishes the entries.  A library version published between loft releases
-is built by the registry CI on publish.
+**G0a — one helper writes every type-id literal (byte-identical).**  `Output::type_lit(tp: u16)
+-> String`, which prints today's literal.  The sites: the `known_type` reads in
+`generation/mod.rs` (51), `ops/parallel.rs` (9), `dispatch.rs` (8), `hoist.rs` (3), and one each
+in `destination.rs`, `decode_view.rs`, `decode_structure.rs`, `coroutine.rs`, `apart_value.rs`;
+plus the `name_type(…)` ids written as `{tp}_i32` (5 sites).  One commit per file; each is
+checked with `introspect_diff.sh` empty.
 
-**G3 — the consumer.**  `fetch_prebuilt` (`src/install.rs:87`) requires `m.native` today.  It
-learns the auto model: no stem, matched on `loft_build_fp`, written to the G1 name in
-`native-auto/`.  `cached_or_build_shared_cdylib` adopts it after the layout probe, with or
-without `rustc`.  The trace says when a library interprets because no prebuilt matches this
-loft build and `rustc` is absent.
-- Check: a registry fixture with `rustc` hidden from `PATH` runs compiled.  The same binary
-  under another `loft_build_fp` is never loaded.
+**G0b-1 — one helper writes every function-number literal (byte-identical).**
+`Output::fn_lit(d_nr: u32) -> String` at the three places a number reaches the code: the `FnRef`
+value (`generation/emit.rs:390` and `:392`, `({d_nr}_u32, …)`), the dispatch arm
+(`emit.rs:1820`, `{d_nr}_u32 =>`), and the closure drop cascade's arm
+(`generation/ops/ref_ops.rs:82`, `{lambda}_u32 =>`).  Checked with `introspect_diff.sh` empty.
+
+**G0b-2 — in a library cdylib, both helpers read tables filled at init.**
+- `type_lit` prints `__tid(k)` and `fn_lit` prints `__fid(k)`; `Output` records each `k` with
+  the `(package, name)` it stands for, and the generated source ends with
+  `static __TID: [AtomicU16; N]` / `__FID: [AtomicU32; M]` and the two name tables.
+- A dispatch arm cannot match a non-constant: in library mode it becomes a guard,
+  `f if f == __fid(3) =>`, one arm per candidate as now — the fn-ref dispatch and the drop
+  cascade alike.
+- The names come from the HOST's definitions, not its store: `loft_shared_init` takes a second
+  argument, and `HostTable` two entries — `type_id(ctx, pkg, name) -> u16` and
+  `fn_id(ctx, pkg, name) -> u32` — answered from the `Data` that
+  `extensions::wire_shared_native_fns` already holds.  Qualified by package, so a program's
+  own `InputState` beside a library's never answers for it (the loft#1706 class that
+  `hidden_dest_type_name` handles per call today).  A name the host lacks makes the init
+  answer 0, and the artifact is rebuilt, as an undeclared layout is.
+- A relaxed `AtomicU16` load per id, never a `OnceLock` (an acquire load per call cost a
+  generator loop 6-8 % in D2).
+- Check: the parity guards (`gatefull`, `callback`) on every mode; a struct-allocating loop and a
+  fn-value dispatch loop in a cdylib within 2 % of the literal build (`bench.py`-style A/B);
+  and the falsifying case — an artifact built for one program, adopted by a second whose types
+  and functions are numbered differently (build it, then remove the fingerprint from the key in
+  a probe): right answers with G0b-2, wrong ones without.
+
+**G0c — key the artifact on what it references.**  Replace `type_layout_fingerprint(stores)` and
+`fn_numbering_fingerprint` in `cached_or_build_shared_cdylib`'s key (`native_lib.rs` ~2509) with
+one fingerprint over the recorded `(package, name)` of every type — with its size and field
+offsets — and every function — with its signature.  `artifact_matches_layout` probes the same
+value.
+- A generic instantiated with a type from OUTSIDE the library (`i_<T>_n_…` with a script's `T`)
+  is program-specific; it leaves the shared artifact's export set and keeps today's
+  per-program artifact, keyed as now.  `library_candidates` (`native_lib.rs` ~529) is where the
+  split is made.
+- Check: two scripts with different structs using one library build it once (the second run
+  creates no file in `native-auto/`); the per-program artifact appears only when the script
+  instantiates a library generic with its own type.
+
+**G1 — a reproducible name.**
+- G1a: generated source carries no machine path.  `cr_call_push` / `cr_call_push_lean`
+  (`generation/mod.rs` ~12590) print the absolute file; print it relative to the package root
+  (`<pkg>/src/x.loft`), which is what a stack trace should show anyway.
+- G1b: the stem hashes `contributing_fingerprint` (the library's sources), `loft_exe_identity`,
+  `cache::host_triple` and the G0c fingerprint — nothing from the program.
+- Check: the same library, checked out at two paths, built by the same `loft`, produces the
+  same stem and byte-identical `.rs`.
+
+**G2 — the producer.**
+- G2a: `BinaryEntry` (`registry_index.rs:123`, parsed at ~400 beside `loft_ffi_fp`) gains
+  `loft_exe_id: Option<u64>` and `stem: Option<String>` (the G1 name).  A unit test reads an
+  index line with and without them.
+- G2b: `loft build-native` (`main.rs:8845`) builds the AUTO cdylib for a package with no
+  `[library] native`, and prints the G1 stem and `loft_exe_identity`.
+- G2c: the release pipeline (RELEASE_PUBLISH.md) runs G2b over every registry library's latest
+  version per released triple and adds the entries; trust is the existing signed index (the
+  entry's `sha256`).  A library published between releases is built by the registry's CI.
+
+**G3 — the consumer.**  `fetch_prebuilt` (`install.rs:87`) returns false for a package without
+`m.native`.
+- G3a: a second branch: no stem in the manifest, a binary entry whose `loft_exe_id` equals
+  `cache::loft_exe_identity()` → write it to `native-auto/<stem>` with the dylib's platform
+  name.  `cached_or_build_shared_cdylib` then adopts it on its first branch (present, current,
+  layout probe passes), with or without `rustc` (`native_lib::rustc_available`, ~2046).
+- G3b: the trace names a library that interprets because no prebuilt matches this loft and
+  `rustc` is absent.
+- Check: a registry fixture with `rustc` hidden from `PATH` runs compiled (the trace's `n of n`);
+  the same binary under another `loft_exe_id` is never fetched.
 
 ## Phase F — the gate is the rule
 
-- `Decline` keeps `NotFunction` and an uninstantiated generic, nothing else.
-- The rule is recorded as a design decision (`./scripts/idx next-decision`), cited by the
-  gate, the trace and the `gatefull` guard.
-- The trace guard asserts `n of n` with no per-function line.
-- NATIVE.md § N9's open row lists what remains, if anything.
+- **F1 — the census.**  `LOFT_TRACE_NATIVE_GATE=1` over every registry library's published
+  version (`scripts/revalidate_libs_local.sh` already resolves them), counted per decline
+  reason, as `make gate-census`: a report, never a gate.  It orders the standing shapes below
+  by how many published functions each keeps interpreted.
+- **F2 — the generators `--native` cannot carry.**  `coroutine_layout::channel_tag` answers
+  `CHANNEL_NONE` for a tuple yield holding a text or a nested tuple (`coroutine_layout.rs` ~181),
+  which the generator answers with a `compile_error!` on `--native` too (loft#1132) — so this is
+  a backend gap, not a bridge one, and closes `Decline::Yield` for programs and libraries alike:
+  a `YieldSlot` for the nested tuple, flattened as the tuple parameters of A3 are.
+- **F3… — the standing shapes**, in the census's order, each by the procedure below.
+- **F-last.**
+  - `Decline` keeps `NotFunction` (which covers an uninstantiated generic) and nothing else:
+    `CBinding` is already out of the candidate set (E1), `Yield` closes in F2, `CallRef` with
+    the last `upcall_carries` shape.
+  - The rule is recorded as a design decision (`./scripts/idx next-decision`), cited by
+    `native_gate::fn_decline`, `explain_interpreted` and the `gatefull` guard.
+  - The trace guard asserts `n of n` with `GATEFULL_INTERPRETED` empty, and NATIVE.md § N9's
+    open row lists what remains, if anything.
 
 ## Standing work — the remaining shapes, as needed
 
@@ -309,6 +395,9 @@ The procedure, the one every step above followed:
 
 ## Order
 
-A0 → A1, A2, B1, B2, E1 (each small and independent) → A3, A4 → C0 → C1 → C2 → D1 → D2 → D3 →
-E2/E3 → G0 → G1–G3 → D4 → F.  G0 can start any time after A0; it is the largest refactor and
-touches no behaviour until G0b.
+Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3.  D4 is dropped.  The open steps, each one commit:
+
+G0-0 → G0a (per file) → G0b-1 → G0b-2 → G0c → G1a → G1b → G2a → G2b → G3a → G3b → G2c, and,
+independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G0a and G0b-1 change
+no behaviour and can land any time; G0b-2 is the step that makes an artifact shareable, and
+G2c, the release job, is last because it publishes.
