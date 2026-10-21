@@ -53,6 +53,18 @@ load" for a change every loader in fact refuses.
   (`src/database/upgrade.rs`) appends the old layout's types to the table for the length of
   the upgrade, checks that they re-render the old dump, and builds the new store through
   `record_new`/`record_finish`; `loft layout upgrade <file> <store>…` writes beside and swaps.
+- **Step 8 — the callers.**  Every whole-image loader converts an older layout in memory
+  (`store_load`, `store_load_untrusted`, `store_load_url`, `store_load_url_trusted`; the
+  pinned one checks its hash first), `store_persist_bind` upgrades its file in place keeping
+  one `<path>.old`, and the live build swap hands the world over as a store image that
+  `swap_world` loads through the same path.  A computed default runs in the program: the
+  converter lists the records that owe one (`Stores::owed_*`) and the parser wraps each of
+  those calls in a synthesised `__upgrade_drain`.  The paged loaders (`store_load_key*`)
+  still refuse a changed layout.  Guards: `tests/store_upgrade.rs` (every upgrade cell also
+  read by `store_load` on the OLD file), `tests/store_persist_loft.rs`
+  `*_converts_or_refuses_a_changed_layout_both_backends`, and
+  `tests/engine_host_kernel.rs` `s5_native_swap_under_running_world` (a world grown by a
+  computed field).  Open: the browser swap (S6), the wasm build.
 
 ## Goal
 

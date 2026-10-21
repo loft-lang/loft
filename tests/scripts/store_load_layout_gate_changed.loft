@@ -3,30 +3,29 @@
 //
 // @PLN97 3b.5 — the MISMATCH half of the layout-identity gate. Same collection
 // name and key as `store_load_layout_gate.loft`, but Tile carries an EXTRA
-// field, so its storage layout differs. Loading the store persisted by the
-// sibling script must be REFUSED: the gate reads the `.dschema` sidecar, sees a
-// different layout, and returns nothing rather than range-read foreign-layout
-// bytes at schema-derived offsets. Driven by `store_persist_loft.rs`.
+// field, so its storage layout differs (`@FR-L-Sound`: never read raw).  The
+// paged loader (`store_load_key`) refuses it: the gate reads the `.dschema`
+// sidecar, sees a different layout, and returns nothing rather than range-read
+// foreign-layout bytes at schema-derived offsets. Driven by `store_persist_loft.rs`.
 //
-// loft#700 — the `whole` mode is the same mismatch through `store_load`, the
-// WHOLE-IMAGE loader. It kept the target slot's type and reinterpreted the file's
-// bytes through it, and records are fixed-stride: this Tile is 8 bytes wider than
-// the stored one, so every record was read past its end. `len()` on an added
-// collection returned wild values (`510277628`, `2135492622`) and iterating one
-// read arbitrary memory — silently, on both backends. The paged loaders had this
-// gate; the whole-image path did not.
-//
-// loft#1562 — `bind` and `url` are the same mismatch through the other two ways an
-// existing image is read through this program's types: `store_persist_bind` on an
-// existing file, and the whole-image URL loaders (`LOFT_PERSIST_TEST_SHA` is the
-// pin, or `trusted`).  Both refuse.  A refused bind leaves the collection as it was
-// (empty, and still usable) and leaves the file's `.dschema` naming the layout that
-// wrote it, so `store_load` goes on refusing the file too.
+// loft#700, loft#1562 — the whole-image paths (`whole`: `store_load`, `bind`:
+// `store_persist_bind` on an existing file, `url`: the URL loaders, with
+// `LOFT_PERSIST_TEST_SHA` the pin or `trusted`) read an image through this
+// program's types.  Records are fixed-stride, and this Tile is 8 bytes wider than
+// the stored one, so a raw read went past every record's end.  They CONVERT it
+// instead (@PLN196): every stored record arrives with `extra` at its default, and
+// a bind upgrades the file in place.  A change the converter refuses is
+// `store_load_layout_gate_refused.loft`.
 
 struct Tile {
   id: integer not null,
   name: text not null,
-  extra: integer not null,
+  extra: integer not null = 7,
+}
+
+fn show(h: hash<Tile[id]>) -> text {
+  t = h[42] ?? Tile { id: 0, name: "?", extra: 0 };
+  "{t.id}/{t.name}/{t.extra}"
 }
 
 fn main() {
@@ -38,10 +37,12 @@ fn main() {
     ok = store_load(h, path);
     println("changed whole ok={ok}");
     println("changed whole len={len(h)}");
+    println("changed whole tile={show(h)}");
   } else if mode == "bind" {
     ok = store_persist_bind(h, path);
     println("changed bind ok={ok}");
     println("changed bind len={len(h)}");
+    println("changed bind tile={show(h)}");
     h += Tile { id: 5, name: "five", extra: 55 };
     println("changed bind after-insert len={len(h)} name={(h[5] ?? Tile { id: 0, name: \"?\", extra: 0 }).name}");
   } else if mode == "url" {
@@ -50,6 +51,7 @@ fn main() {
     ok = if sha == "trusted" { store_load_url_trusted(h, url) } else { store_load_url(h, url, sha) };
     println("changed url ok={ok}");
     println("changed url len={len(h)}");
+    println("changed url tile={show(h)}");
   } else {
     ok = store_load_key(h, path, 42);
     println("changed ok={ok}");

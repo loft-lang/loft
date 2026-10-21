@@ -2081,12 +2081,11 @@ mod p98_p33_tests {
 // Rollback is the default: the child dying or timing out un-freezes the old
 // build — it never stopped listening.
 //
-// v1 bounds (documented in 08-live-build-swap.md): the world is ONE
-// record graph named via `swap_world(w)` (scalars/text/vectors/inline
-// structs — `populate_struct_from_jsonvalue`'s matrix); events arriving
-// INSIDE the freeze window die with the old process (visible as the
-// connection close); layout changes between builds are the lenient
-// deserializer's problem (missing fields → null, extra → ignored).
+// Bounds (documented in 08-live-build-swap.md): the world is ONE record
+// graph named via `swap_world(w)`, handed over as its store's image and
+// converted into the new build's types (@PLN196), or as JSON when it shares
+// its store; events arriving INSIDE the freeze window die with the old
+// process (visible as the connection close).
 
 #[cfg(not(target_arch = "wasm32"))]
 enum SwapPhase {
@@ -2124,6 +2123,21 @@ fn swap_world_impl(stores: &mut Stores, w: DbRef) -> bool {
     let Ok(snap_path) = std::env::var("LOFT_RESUME") else {
         return false;
     };
+    // @PLN196 step 8 — a world handed over as a store image loads through the converter: the
+    // same layout reads raw, an older one converts in place (open question 4), references and
+    // keyed collections included.  A change the converter refuses ends THIS build before it
+    // serves, which the old build reads as a failed swap and keeps serving.
+    if crate::file_access::has_extension(snap_path.as_str(), "store") {
+        if stores.load_path(w.store_nr, std::path::Path::new(&snap_path)) {
+            eprintln!("loft-swap: world restored from {snap_path}");
+            return true;
+        }
+        eprintln!(
+            "loft-swap: this build cannot take over the running world (the reason is above); \
+             the running build keeps serving"
+        );
+        std::process::exit(1);
+    }
     let Ok(json) = crate::file_access::read_to_string(&snap_path) else {
         eprintln!("loft-swap: LOFT_RESUME set but {snap_path} unreadable; starting fresh");
         return false;
@@ -2132,6 +2146,46 @@ fn swap_world_impl(stores: &mut Stores, w: DbRef) -> bool {
     crate::native::populate_struct_from_jsonvalue(stores, &w, kt, &jv);
     eprintln!("loft-swap: world restored from {snap_path}");
     true
+}
+
+/// Write the world `w` (of type `kt`) for the next build to resume, and answer the file.
+///
+/// @PLN196 step 8 — when `w` is the root of its own store, the whole store goes over as an
+/// image with its layout sidecar (`Stores::write_store_snapshot`), which the next build loads
+/// through the converter: hashes, sorted collections and references survive, and a changed
+/// struct converts.  A world that shares its store with something else goes over as JSON,
+/// whose reader keeps the scalars, texts, vectors and inline structs.  `LOFT_NO_SWAP_IMAGE=1`
+/// sends every world as JSON: the first bisect step for a swap that loses or misreads data.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_world_snapshot(
+    stores: &mut Stores,
+    w: DbRef,
+    kt: u16,
+    base: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    #[cfg(feature = "mmap")]
+    {
+        let own_store = stores.allocations[w.store_nr as usize].known_type == kt;
+        if own_store && std::env::var_os("LOFT_NO_SWAP_IMAGE").is_none() {
+            let snap = crate::file_access::with_extension(base, "snap.store");
+            match stores.write_store_snapshot(w.store_nr, &snap) {
+                Ok(()) => return Some(snap),
+                Err(why) => eprintln!("loft-swap: the world goes over as JSON ({why})"),
+            }
+        }
+    }
+    let mut json = String::new();
+    stores.show_json(&mut json, &w, kt, false);
+    let snap = crate::file_access::with_extension(base, "snap.json");
+    crate::file_access::write(&snap, &json).ok()?;
+    Some(snap)
+}
+
+/// Remove a world snapshot, with the layout sidecar a store image has beside it.
+#[cfg(not(target_arch = "wasm32"))]
+fn remove_world_snapshot(snap: &std::path::Path) {
+    let _ = crate::file_access::remove_file(snap);
+    let _ = crate::file_access::remove_file(crate::schema_sidecar::dschema_path(snap));
 }
 
 /// `swap_start(artifact)` — request a swap to the given binary (normally
@@ -2172,17 +2226,14 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                 };
                 // The frame boundary: meaning is frozen from here on, so
                 // this snapshot is THE world state the new build resumes.
-                let mut json = String::new();
-                stores.show_json(&mut json, &w, kt, false);
                 let base = std::env::temp_dir().join(format!("loft_swap_{}", std::process::id()));
-                let snap = crate::file_access::with_extension(&base, "snap.json");
                 let ready = crate::file_access::with_extension(&base, "ready");
                 let _ = crate::file_access::remove_file(&ready);
-                if crate::file_access::write(&snap, &json).is_err() {
+                let Some(snap) = write_world_snapshot(stores, w, kt, &base) else {
                     eprintln!("loft-swap: rolled back (cannot write snapshot)");
                     *sw = SwapPhase::Idle;
                     return 0;
-                }
+                };
                 use crate::platform::process::{Program, Spawn, Tree};
                 let spawned = Spawn::new(Program::os(&artifact))
                     .env("LOFT_RESUME", &snap)
@@ -2210,7 +2261,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     }
                     Err(e) => {
                         eprintln!("loft-swap: rolled back (cannot spawn {artifact}: {e})");
-                        let _ = crate::file_access::remove_file(&snap);
+                        remove_world_snapshot(&snap);
                         *sw = SwapPhase::Idle;
                         0
                     }
@@ -2227,7 +2278,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     // Kernel closes the listener, the UDP socket and every
                     // connection — seats reconnect into the new process.
                     eprintln!("loft-swap: handing over — this build retires");
-                    let _ = crate::file_access::remove_file(&*snap);
+                    remove_world_snapshot(&*snap);
                     let _ = crate::file_access::remove_file(&*ready);
                     *sw = SwapPhase::Done;
                     KERNEL.with(|k| *k.borrow_mut() = None);
@@ -2238,7 +2289,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                         .finish()
                         .map_or_else(|e| e.to_string(), |s| s.to_string());
                     eprintln!("loft-swap: rolled back (new build exited {status} before serving)");
-                    let _ = crate::file_access::remove_file(&*snap);
+                    remove_world_snapshot(&*snap);
                     let _ = crate::file_access::remove_file(&*ready);
                     *sw = SwapPhase::Idle;
                     return 0;
@@ -2246,7 +2297,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                 if Instant::now() > *deadline {
                     eprintln!("loft-swap: rolled back (new build never became ready)");
                     let _ = child.stop_tree();
-                    let _ = crate::file_access::remove_file(&*snap);
+                    remove_world_snapshot(&*snap);
                     let _ = crate::file_access::remove_file(&*ready);
                     *sw = SwapPhase::Idle;
                     return 0;

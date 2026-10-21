@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN196 — the REFUSED half of the whole-image loaders (loft#700, loft#1562): the
+// same Tile as `store_load_layout_gate.loft` with `name` changed from text to
+// integer, a change the store upgrade cannot carry.  `store_load`,
+// `store_persist_bind` on the existing file and the URL loaders all refuse it: the
+// call answers false, the collection stays empty (and usable), and the file and its
+// `.dschema` are left as they were.  Driven by `store_persist_loft.rs`.
+
+struct Tile {
+  id: integer,
+  name: integer,
+}
+
+fn main() {
+  path = env_variable("LOFT_PERSIST_TEST_PATH");
+  mode = env_variable("LOFT_PERSIST_TEST_MODE");
+
+  h: hash<Tile[id]> = [];
+  if mode == "whole" {
+    ok = store_load(h, path);
+    println("refused whole ok={ok}");
+    println("refused whole len={len(h)}");
+  } else if mode == "bind" {
+    ok = store_persist_bind(h, path);
+    println("refused bind ok={ok}");
+    println("refused bind len={len(h)}");
+    h += Tile { id: 5, name: 55 };
+    println("refused bind after-insert len={len(h)} name={(h[5] ?? Tile { id: 0, name: 0 }).name}");
+  } else if mode == "url" {
+    url = env_variable("LOFT_PERSIST_TEST_URL");
+    sha = env_variable("LOFT_PERSIST_TEST_SHA");
+    ok = if sha == "trusted" { store_load_url_trusted(h, url) } else { store_load_url(h, url, sha) };
+    println("refused url ok={ok}");
+    println("refused url len={len(h)}");
+  }
+}

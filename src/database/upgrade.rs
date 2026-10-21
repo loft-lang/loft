@@ -815,6 +815,20 @@ pub enum FileUpgrade {
     },
 }
 
+/// The `.dschema` text and the image of the store file at `path`.
+fn read_store_file(path: &std::path::Path) -> Result<(String, Vec<u8>), String> {
+    let side = crate::schema_sidecar::dschema_path(path);
+    let text = crate::file_access::read_to_string(&side).map_err(|_| {
+        format!(
+            "{} has no recorded layout ({} is missing), so what it holds cannot be known",
+            path.display(),
+            side.display()
+        )
+    })?;
+    let bytes = crate::file_access::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok((text, bytes))
+}
+
 /// A store file converted into a new slot by [`Stores::upgrade_image`].
 struct Converted {
     /// The new layout, recording the slot the new store's references name.
@@ -872,17 +886,29 @@ impl Stores {
         fills: &Fills,
         owe: bool,
     ) -> Result<Option<Converted>, String> {
-        use crate::schema_sidecar::{LayoutIdentity, dschema_path};
-        let side = dschema_path(path);
-        let text = crate::file_access::read_to_string(&side).map_err(|_| {
-            format!(
-                "{} has no recorded layout ({} is missing), so what it holds cannot be known",
-                path.display(),
-                side.display()
-            )
-        })?;
-        let id = LayoutIdentity::from_sidecar(&text)
-            .ok_or_else(|| format!("{} is not a layout file", side.display()))?;
+        let (text, bytes) = read_store_file(path)?;
+        let what = path.display().to_string();
+        self.upgrade_image_from(&text, &bytes, &what, new_root, fills, owe)
+    }
+
+    /// [`Stores::upgrade_image`] for a store image already in memory, `sidecar` being the
+    /// text of its `.dschema`; `what` names it in a refusal.  `Store::from_bytes` validates
+    /// the image's block structure before anything reads it, as the untrusted loaders do.
+    ///
+    /// # Errors
+    /// As [`Stores::upgrade_file`].
+    fn upgrade_image_from(
+        &mut self,
+        sidecar: &str,
+        bytes: &[u8],
+        what: &str,
+        new_root: Option<u16>,
+        fills: &Fills,
+        owe: bool,
+    ) -> Result<Option<Converted>, String> {
+        use crate::schema_sidecar::LayoutIdentity;
+        let id = LayoutIdentity::from_sidecar(sidecar)
+            .ok_or_else(|| format!("{what}.dschema is not a layout file"))?;
         let mut old = LayoutDesc::from_dump(&id.dump)?;
         old.apply_facts(&id.facts)?;
         // Version 2 names the root; version 1 leaves it to be read from the closure, where
@@ -895,8 +921,7 @@ impl Stores {
         let roots = named.map_or_else(|| old.unreferenced(), |r| vec![r]);
         let [old_root] = roots[..] else {
             return Err(format!(
-                "{} does not say which of its types is the store's root",
-                side.display()
+                "{what}.dschema does not say which of its types is the store's root"
             ));
         };
         let old_name = old.names[&old_root].clone();
@@ -912,10 +937,8 @@ impl Stores {
         }
         let new = self.layout_descriptor(&[new_root]);
         let changes = UpgradeMap::derive(&old, old_root, &new, new_root).changes;
-        let bytes =
-            crate::file_access::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let store = crate::store::Store::from_bytes(&bytes)
-            .ok_or_else(|| format!("{} is not a store image", path.display()))?;
+        let store = crate::store::Store::from_bytes(bytes)
+            .ok_or_else(|| format!("{what} is not a store image"))?;
         let old_slot = self.adopt_store(store);
         let result = self.upgrade_store_run(
             old_slot, &old, old_root, new_root, id.slot, true, fills, owe,
@@ -945,10 +968,26 @@ impl Stores {
         slot: u16,
         path: &std::path::Path,
     ) -> Result<(), String> {
+        let (text, bytes) = read_store_file(path)?;
+        self.load_upgraded_from(slot, &text, &bytes, &path.display().to_string())
+    }
+
+    /// [`Stores::load_upgraded`] for an image already in memory, with the text of its
+    /// `.dschema`: the URL loaders, after their own checks on the fetched bytes.
+    ///
+    /// # Errors
+    /// As [`Stores::load_upgraded`].
+    pub(crate) fn load_upgraded_from(
+        &mut self,
+        slot: u16,
+        sidecar: &str,
+        bytes: &[u8],
+        what: &str,
+    ) -> Result<(), String> {
         self.owed = Owed::default();
         let root = self.allocations[slot as usize].known_type;
         let c = self
-            .upgrade_image(path, Some(root), &Fills::new(), true)?
+            .upgrade_image_from(sidecar, bytes, what, Some(root), &Fills::new(), true)?
             .ok_or_else(|| "its recorded layout could not be compared".to_string())?;
         let before = self.place_converted(slot, c.new_slot)?;
         drop(before);
@@ -1190,6 +1229,27 @@ impl Stores {
     #[must_use]
     pub fn upgrade_file_store(job: &FileUpgradeJob) -> u16 {
         job.new_slot
+    }
+
+    /// @PLN196 step 8 — write the store in `slot` to `path` exactly as it is, with its layout
+    /// sidecar beside it: the live build swap's snapshot.  Nothing is rebuilt, so every record
+    /// keeps its place and a stored reference keeps naming it; the sidecar records `slot`, so
+    /// the loader re-points those references at the slot it loads into (`@FR-L-Ref-Slot`).
+    ///
+    /// # Errors
+    /// An untyped store, or an I/O failure.
+    pub fn write_store_snapshot(&self, slot: u16, path: &std::path::Path) -> Result<(), String> {
+        let tp = self.allocations[slot as usize].known_type;
+        if tp == u16::MAX {
+            return Err("the store records no type".to_string());
+        }
+        let image = self
+            .store_image(slot)
+            .ok_or_else(|| "the store did not form an image".to_string())?;
+        crate::file_access::write(path, &image).map_err(|e| e.to_string())?;
+        crate::schema_sidecar::LayoutIdentity::of_store(self, slot, tp)
+            .write_beside(path)
+            .map_err(|e| e.to_string())
     }
 
     /// The byte image of the store in `slot`, ending at its last live record.

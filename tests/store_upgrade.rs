@@ -1207,3 +1207,82 @@ fn cell_two_converting_loads_in_one_program() {
     );
     let _ = loft::file_access::remove_dir_all(&dir);
 }
+
+/// The other whole-image loaders convert an older layout as `store_load` does: the untrusted
+/// local loader, the trusted URL loader and the pinned URL loader (whose pin is the OLD file's
+/// hash, checked before anything is converted).  A `file://` URL keeps the cell off the
+/// network.  A wrong pin still refuses, before any conversion.
+#[test]
+fn cell_every_whole_image_loader_converts() {
+    let dir = write_store("other_loaders", &item_writer());
+    let before = store_bytes(&dir);
+    let url = format!("file://{}", dir.join("a.store").display());
+    let pin = loft::integrity::sha256_hex(&before.0);
+    let show = "  println(\"{h[1].price} [{h[2].title}] {len(h)}\");\n";
+    for (name, call) in [
+        (
+            "untrusted",
+            "store_load_untrusted(h, \"a.store\")".to_string(),
+        ),
+        (
+            "url_trusted",
+            format!("store_load_url_trusted(h, \"{url}\")"),
+        ),
+        (
+            "url_pinned",
+            format!("store_load_url(h, \"{url}\", \"{pin}\")"),
+        ),
+    ] {
+        let reader = format!(
+            "{ITEM_V2}fn main() {{\n  h: hash<Item[id]> = [];\n  if !{call} {{ println(\"not loaded\"); return; }}\n{show}}}\n"
+        );
+        loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+        reads(name, &dir, "10 [2: n2] 4\n", name);
+        assert!(
+            store_bytes(&dir) == before,
+            "{name}: the file is left as it was"
+        );
+    }
+    let wrong = "0".repeat(64);
+    let reader = format!(
+        "{ITEM_V2}fn main() {{\n  h: hash<Item[id]> = [];\n  if !store_load_url(h, \"{url}\", \"{wrong}\") {{ println(\"not loaded {{len(h)}}\"); return; }}\n{show}}}\n"
+    );
+    loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    reads("url_wrong_pin", &dir, "not loaded 0\n", "a wrong pin");
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// The live build swap's restore (@PLN196 step 8, open question 4): `swap_world` takes the
+/// previous build's world from `LOFT_RESUME` as a store image and converts it into this
+/// build's types.  The world holds a hash and a REFERENCE into it, which survive the load into
+/// another slot (`@FR-L-Ref-Slot`); both structs grew a field whose default is computed from
+/// the record (`size = len($.name)` per item, `bonus = len($.items) * 10` on the world), filled
+/// by the drain the parser puts after `swap_world`.  Both backends.  The writer binds its
+/// world, which writes the live bytes and the slot exactly as the swap's snapshot does.
+#[test]
+fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
+    let writer = "struct Item { id: integer, name: text }\nstruct World { items: hash<Item[id]>, best: reference<Item>? }\nfn main() {\n  w = World {};\n  w.items += [Item { id: 1, name: \"a\" }, Item { id: 2, name: \"bb\" }, Item { id: 3, name: \"ccc\" }];\n  w.best = w.items[2];\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let reader = "use engine_host;\nstruct Item { id: integer, name: text, size: integer = len($.name) }\nstruct World { items: hash<Item[id]>, best: reference<Item>?, bonus: integer = len($.items) * 10 }\nfn main() {\n  w = World {};\n  r = engine_host::swap_world(w);\n  println(\"{r} {len(w.items)} {w.best.id} {w.best.name} {w.best.size} {w.bonus} {w.items[3].size}\");\n}\n";
+    let dir = write_store("swap_world_restore", writer);
+    loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    let lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("lib");
+    for mode in ["--interpret", "--native"] {
+        let out = loft::platform::process::harness_command(loft_bin())
+            .args([mode, "--lib"])
+            .arg(&lib)
+            .arg("b.loft")
+            .current_dir(&dir)
+            .env("LOFT_TIMEOUT", "120")
+            .env("LOFT_RESUME", dir.join("a.store"))
+            .output()
+            .expect("loft runs");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            (out.status.code(), stdout.as_ref()),
+            (Some(0), "true 3 2 bb 2 30 3\n"),
+            "{mode}: the restored world:\n{stdout}\n{stderr}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}

@@ -4802,7 +4802,8 @@ impl Stores {
         // A file written under an older layout is converted and upgraded in place (@PLN196,
         // open question 3); the drain after this call finishes the bind.
         if exists && self.layout_changed(slot, path) {
-            return self.converted(slot, path, "store_persist_bind", Self::bind_upgraded);
+            let done = self.bind_upgraded(slot, path);
+            return Self::conversion_took(done, &path.display().to_string(), "store_persist_bind");
         }
         if exists && !self.schema_gate_ok(slot, path, "store_persist_bind") {
             return false;
@@ -5057,7 +5058,8 @@ impl Stores {
         // A file written under an older layout is converted in memory (@PLN196, open
         // question 3); the file is left as it is.
         if self.layout_changed(slot, path) {
-            return self.converted(slot, path, "store_load", Self::load_upgraded);
+            let done = self.load_upgraded(slot, path);
+            return Self::conversion_took(done, &path.display().to_string(), "store_load");
         }
         if !self.schema_gate_ok(slot, path, "store_load") {
             return false;
@@ -6520,9 +6522,9 @@ impl Stores {
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
     pub fn load_url_verified(&mut self, slot: u16, url: &str, sha256_hex: &str) -> bool {
-        if !self.url_schema_gate_ok(slot, url, "store_load_url") {
+        let Ok(older) = self.url_layout_gate(slot, url, "store_load_url") else {
             return false;
-        }
+        };
         let bytes = match crate::net::fetch_bytes(url) {
             Ok(b) => b,
             Err(e) => {
@@ -6533,6 +6535,11 @@ impl Stores {
         if let Err(e) = crate::integrity::verify_sha256(&bytes, sha256_hex) {
             crate::loft_eprintln!("store loader: refusing {url} — {e}");
             return false;
+        }
+        // An older layout converts in memory, once the pin has passed (@PLN196).
+        if let Some(sidecar) = older {
+            let done = self.load_upgraded_from(slot, &sidecar, &bytes, url);
+            return Self::conversion_took(done, url, "store_load_url");
         }
         let recorded = self.url_recorded_slot(slot, url);
         self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url")
@@ -6556,9 +6563,9 @@ impl Stores {
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
     pub fn load_url(&mut self, slot: u16, url: &str) -> bool {
-        if !self.url_schema_gate_ok(slot, url, "store_load_url_trusted") {
+        let Ok(older) = self.url_layout_gate(slot, url, "store_load_url_trusted") else {
             return false;
-        }
+        };
         let bytes = match crate::net::fetch_bytes(url) {
             Ok(b) => b,
             Err(e) => {
@@ -6566,6 +6573,10 @@ impl Stores {
                 return false;
             }
         };
+        if let Some(sidecar) = older {
+            let done = self.load_upgraded_from(slot, &sidecar, &bytes, url);
+            return Self::conversion_took(done, url, "store_load_url_trusted");
+        }
         let recorded = self.url_recorded_slot(slot, url);
         self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url_trusted")
     }
@@ -6579,6 +6590,16 @@ impl Stores {
     /// `load_path` (the trusted path) validates only in debug and is faster;
     /// use this for a file whose provenance you don't control.
     pub fn load_path_untrusted(&mut self, slot: u16, path: &std::path::Path) -> bool {
+        // An older layout converts in memory, as `store_load` does (@PLN196); the converter
+        // validates the image's structure before it reads a record.
+        if self.layout_changed(slot, path) {
+            let done = self.load_upgraded(slot, path);
+            return Self::conversion_took(
+                done,
+                &path.display().to_string(),
+                "store_load_untrusted",
+            );
+        }
         if !self.schema_gate_ok(slot, path, "store_load_untrusted") {
             return false;
         }
@@ -6640,29 +6661,22 @@ impl Stores {
         })
     }
 
-    /// Run `convert` for a whole-image load of a store written under an older layout, and
-    /// answer whether it took; a refusal says why on stderr, as a layout refusal does.
-    fn converted(
-        &mut self,
-        slot: u16,
-        path: &std::path::Path,
-        builtin: &str,
-        convert: fn(&mut Self, u16, &std::path::Path) -> Result<(), String>,
-    ) -> bool {
-        match convert(self, slot, path) {
+    /// Did the conversion of a whole-image load of `what`, written under an older layout,
+    /// take?  A refusal says why on stderr, as a layout refusal does.
+    fn conversion_took(done: Result<(), String>, what: &str, builtin: &str) -> bool {
+        match done {
             Ok(()) => true,
             Err(why) => {
                 crate::loft_eprintln!(
-                    "{builtin}: refusing {} — it was written with an older layout, and it \
-                     cannot be converted to this program's: {why}.",
-                    path.display()
+                    "{builtin}: refusing {what} — it was written with a different layout, and \
+                     it cannot be converted to this program's: {why}."
                 );
                 false
             }
         }
     }
 
-    /// [`schema_gate_ok`](Self::schema_gate_ok) for a store image fetched from `url`: the
+    /// The layout gate ([`schema_gate_ok`](Self::schema_gate_ok)) for a store image fetched from `url`: the
     /// sidecar is `<url>.dschema`, read over the same transport as the image.  A fetch
     /// that fails is an absent sidecar — a server answers 404 for one it does not have,
     /// and a missing `file://` sidecar is the same answer — so it passes, as a local
@@ -6673,18 +6687,32 @@ impl Stores {
         feature = "registry",
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
-    fn url_schema_gate_ok(&self, slot: u16, url: &str, builtin: &str) -> bool {
+    ///
+    /// `Ok(None)` reads the image raw; `Ok(Some(sidecar))` converts it from the older layout
+    /// that sidecar records (@PLN196), once the caller has the bytes; `Err(())` refuses it,
+    /// with the reason on stderr.
+    fn url_layout_gate(&self, slot: u16, url: &str, builtin: &str) -> Result<Option<String>, ()> {
         let Some(current) = self.slot_layout_identity(slot) else {
-            return true; // untyped store — no identity to compare against
+            return Ok(None); // untyped store — no identity to compare against
         };
-        let verdict = match crate::net::fetch_bytes(&format!("{url}.dschema")) {
-            Ok(bytes) => match std::str::from_utf8(&bytes) {
-                Ok(text) => crate::schema_sidecar::verdict_for_sidecar_text(text, &current),
-                Err(_) => crate::schema_sidecar::SchemaVerdict::Unreadable,
+        let (verdict, text) = match crate::net::fetch_bytes(&format!("{url}.dschema")) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => (
+                    crate::schema_sidecar::verdict_for_sidecar_text(&text, &current),
+                    Some(text),
+                ),
+                Err(_) => (crate::schema_sidecar::SchemaVerdict::Unreadable, None),
             },
-            Err(_) => crate::schema_sidecar::SchemaVerdict::Fresh,
+            Err(_) => (crate::schema_sidecar::SchemaVerdict::Fresh, None),
         };
-        Self::layout_verdict_ok(&verdict, url, builtin)
+        if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
+            return Ok(text);
+        }
+        if Self::layout_verdict_ok(&verdict, url, builtin) {
+            Ok(None)
+        } else {
+            Err(())
+        }
     }
 
     /// The layout identity of the type `slot` is read through, or `None` for an untyped
