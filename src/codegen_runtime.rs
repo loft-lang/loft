@@ -1046,6 +1046,34 @@ pub fn OpGetRecord(
 ///
 /// # Panics
 /// Under `LOFT_KEYED_VERIFY=1`, when the typed lookup and the general one disagree.
+/// `@FR-R-TypedKeyed` — [`OpGetHashLong`] with the key's byte position handed in by the
+/// emitter: an inline table (`(Col-Inline)`) answers from one checked walk, and every other
+/// table — or a lazy-bound collection's miss, which fetches — takes [`OpGetHashLong`].
+#[inline]
+pub fn OpGetHashLongAt(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    db_tp: i32,
+    key_pos: u32,
+    key: i64,
+) -> DbRef {
+    let stores: &Stores = unsafe { &*cell.get() };
+    if data.rec != 0
+        && (data.store_nr as usize) < stores.allocations.len()
+        && !crate::keys::keyed_verify()
+    {
+        let store = &stores.allocations[data.store_nr as usize];
+        let claim = store.collection_rec(data.rec, data.pos);
+        if claim != 0
+            && let Some(found) = crate::hash::inline_find_int(store, data.store_nr, claim, key_pos, key)
+            && (found.rec != 0 || !stores.lazy_bound(&data))
+        {
+            return found.or_null();
+        }
+    }
+    OpGetHashLong(cell, data, db_tp, key)
+}
+
 #[inline]
 pub fn OpGetHashLong(
     cell: &std::cell::UnsafeCell<Stores>,
