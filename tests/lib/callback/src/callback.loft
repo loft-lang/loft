@@ -9,6 +9,8 @@ pub fn hold_and_call(f: fn(integer) -> integer, n: integer) -> integer {
   r.a + r.b + v
 }
 pub fn twice_lib(x: integer) -> integer { x * 2 }
+pub fn label_with(f: fn(integer) -> text, n: integer) -> text { "[{f(n)}]" }
+pub fn shout(s: text) -> text { "{s}!" }
 pub fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
 pub fn apply_text(f: fn(text, integer) -> integer, s: text) -> integer { f(s, 3) }
 pub fn apply_float(f: fn(float, boolean) -> float, x: float) -> float { f(x, true) }

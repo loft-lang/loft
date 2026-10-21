@@ -177,9 +177,9 @@ pub fn parallel_worker_arg(op_name: &str) -> Option<(usize, usize)> {
 /// callee the library does not carry, by calling back into the interpreter that loaded it
 /// (`HostTable::call_ref`, `State::call_back`)?  The call back marshals each visible
 /// parameter in one `LibArg` and answers in one: a full-width integer, a float, a boolean, a
-/// text or a store reference in, a full-width integer, a float, a boolean or nothing out.
-/// Such a callee takes no hidden buffer — those come with a text or a heap return — so the
-/// visible parameters and the closure are its whole frame.
+/// text or a store reference in, a full-width integer, a float, a boolean, a text or nothing
+/// out.  The only hidden buffers such a callee takes are a text result's work buffers, which
+/// the call back provides; a heap result's return buffer it does not.
 #[must_use]
 pub fn upcall_carries(fn_type: &Type) -> bool {
     let Type::Function(params, ret, ..) = fn_type.base() else {
@@ -194,5 +194,5 @@ pub fn upcall_carries(fn_type: &Type) -> bool {
     params
         .iter()
         .all(|p| scalar(p) || matches!(p.base(), Type::Text(_)) || crate::data::is_dbref(p.base()))
-        && (matches!(ret.base(), Type::Void | Type::Null) || scalar(ret.base()))
+        && (matches!(ret.base(), Type::Void | Type::Null | Type::Text(_)) || scalar(ret.base()))
 }

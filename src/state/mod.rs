@@ -265,6 +265,12 @@ fn fast_stack_allowed() -> bool {
 pub use crate::database::COROUTINE_STORE;
 
 std::thread_local! {
+    /// @PLN199 C2 — the text result of this thread's last call back into the interpreter
+    /// (`State::call_back`), which the compiled caller copies before it calls back again.
+    static CALL_BACK_TEXT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+std::thread_local! {
     /// @PLN199 D1 — the text each compiled generator handle last yielded to the interpreter:
     /// it arrives as an owned `String`, and the interpreter's yield is a `Str` over it, so the
     /// bytes live here until the handle's next advance replaces them or its free drops them.
@@ -8566,11 +8572,36 @@ impl State {
             .expect("a call back into the interpreter needs the program's definitions");
         let def = data.def(d_nr);
         let pos = self.fn_positions[d_nr as usize];
+        // A text result is delivered through the callee's hidden `&text` work buffers: they
+        // are `String` slots above every live frame, below the frame `reenter_ret` builds,
+        // each handed over as the `DbRef` `OpCreateStack` makes for a local.
+        let saved_high = self.stack_high;
+        let mut bufs: Vec<DbRef> = Vec::new();
+        if def.text_work_buffers() > 0 {
+            let saved_sp = self.stack_pos;
+            self.stack_pos = self.stack_high.next_multiple_of(8);
+            for _ in 0..def.text_work_buffers() {
+                bufs.push(DbRef {
+                    store_nr: self.stack_cur.store_nr,
+                    rec: self.stack_cur.rec,
+                    pos: self.stack_cur.pos + self.stack_pos,
+                });
+                self.put_stack(String::new());
+            }
+            self.stack_high = self.stack_high.max(self.stack_pos);
+            self.stack_pos = saved_sp;
+        }
         let push = |st: &mut Self| {
             let mut at = 0;
+            let mut buf = 0;
             for a in def.attributes() {
                 if a.name == "__closure" {
                     st.put_stack(closure);
+                    continue;
+                }
+                if a.hidden && crate::native_gate::is_text_work_buffer(&a.typedef) {
+                    st.put_stack(bufs[buf]);
+                    buf += 1;
                     continue;
                 }
                 let arg = args[at];
@@ -8590,10 +8621,27 @@ impl State {
         let mut ret = crate::native_lib::LibArg::ZERO;
         match def.returned().base() {
             Type::Void | Type::Null => self.reenter(d_nr, pos, push),
+            Type::Text(_) => {
+                let s = self.reenter_ret::<Str>(d_nr, pos, push);
+                // Copied out before the buffers it points into are dropped; the compiled
+                // caller copies it again before its next call back.
+                CALL_BACK_TEXT.with(|t| {
+                    let mut t = t.borrow_mut();
+                    t.clear();
+                    t.push_str(s.str());
+                    ret.text_ptr = t.as_ptr();
+                    ret.text_len = t.len();
+                });
+            }
             Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,
             Type::Boolean => ret.scalar = i64::from(self.reenter_ret::<u8>(d_nr, pos, push)),
             _ => ret.scalar = self.reenter_ret::<i64>(d_nr, pos, push),
         }
+        for b in bufs {
+            let slot = self.database.store_mut(&b).addr_mut::<String>(b.rec, b.pos);
+            drop(std::mem::take(slot));
+        }
+        self.stack_high = saved_high;
         ret
     }
 

@@ -16,7 +16,7 @@ arg_ref_more 3 true 12 13
 arg_ref_field 7 5000
 arg_fn 11
 ret_fn 21
-local_lambda 11 n4
+local_lambda 11 n4 15
 gen 60
 gen_text t0t7t14 <s0><s1><s2> <t0><t7>
 gen_float 3 gen_bool 3

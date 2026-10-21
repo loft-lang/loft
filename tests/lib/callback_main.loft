@@ -12,6 +12,8 @@ fn tlen(s: text, k: integer) -> integer { len(s) * k }
 fn fl(x: float, b: boolean) -> float { if b { x * 4.0 } else { 0.0 } }
 fn rec(b: Box2) -> integer { b.a * 10 + b.b }
 fn work(x: integer) -> integer { apply(churn, x) }
+fn tag(n: integer) -> text { "t{n * 2}" }
+fn via_lib(n: integer) -> text { shout("v{n}") }
 fn main() {
   println("hold {hold_and_call(churn, 5)}");
   println("nested {apply(nested, 7)}");
@@ -26,6 +28,11 @@ fn main() {
   t = 0;
   for w in ws par(r = work(w), 2) { t += r; }
   println("par {t}");
+  pre = "p";
+  tcap = fn(n: integer) -> text { "{pre}{n}" };
+  tl = 0;
+  for i in 0..1000 { tl += len(label_with(tag, i)); }
+  println("text {label_with(tag, 4)} {label_with(tcap, 9)} {label_with(via_lib, 3)} {tl}");
   hs = [Holder { f: sq, v: 2 }, Holder { f: twice_lib, v: 5 }];
   println("holders {par_holders(hs)}");
 }

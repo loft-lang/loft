@@ -2087,6 +2087,10 @@ impl Output<'_> {
         )?;
         let read = match ret_type.base() {
             Type::Void | Type::Null => "()",
+            Type::Text(_) => {
+                "unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(__ur.text_ptr, \
+                 __ur.text_len)) }.to_string()"
+            }
             Type::Float => "f64::from_bits(__ur.scalar as u64)",
             Type::Boolean => "(__ur.scalar as u8)",
             _ => "__ur.scalar",

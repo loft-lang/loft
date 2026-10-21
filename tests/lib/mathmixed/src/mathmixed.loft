@@ -1,6 +1,6 @@
 // @PLN11 Arc N / N3 (B3) — a mixed library: `triple` compiles, and so does `apply_inc`,
 // which calls through a function value (@PLN199 C2), while `label` calls through one whose
-// text result the compiled library cannot be called back with, so it stays interpreted.
+// record result the compiled library cannot be called back with, so it stays interpreted.
 // The gate splits the library silently — no user-facing "can't compile this" error; the
 // script calls all three alike.
 
@@ -13,7 +13,9 @@ pub fn apply_inc(x: integer) -> integer {
     f(x)
 }
 
-pub fn label(x: integer) -> text {
-    f = fn(a: integer) -> text { "n{a}" };
-    f(x)
+pub struct Pair { pub a: integer, pub b: integer }
+
+pub fn label(x: integer) -> integer {
+    f = fn(a: integer) -> Pair { Pair { a: a, b: a * 10 } };
+    f(x).b
 }
