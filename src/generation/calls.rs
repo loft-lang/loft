@@ -160,6 +160,24 @@ impl Output<'_> {
         crate::generation::ops::emit_op(&mut ctx, &name, vals)
     }
 
+    /// `@FR-R-HandOver`'s rotate clause — is this the rotate site's call of the suffix-keep
+    /// callee (matched by callee and argument slice)?  It calls the `__nk` twin, the body
+    /// without its keep, and records the request for it.
+    fn nokeep_call(&mut self, vals: &[Value]) -> bool {
+        let d = self.current_call_def;
+        if !self
+            .nk_site_next
+            .is_some_and(|(c, at)| c == d && at == vals.as_ptr() as usize)
+        {
+            return false;
+        }
+        self.nk_site_next = None;
+        if !self.nk_requests.contains(&d) {
+            self.nk_requests.push(d);
+        }
+        true
+    }
+
     /// `@FR-R-AppendTwin` — does this call of `d` go to its append twin?  The caller-side
     /// rewrite's own call (matched by callee and argument slice), or — inside a twin — a call
     /// handed the twin's buffer, or a view of it, as the callee's buffer.  Either records the
@@ -279,12 +297,15 @@ impl Output<'_> {
         if !dest && self.vr_call(w, def_fn, vals)? {
             return Ok(());
         }
+        let nokeep = !dest && self.nokeep_call(vals);
         let append = !dest
+            && !nokeep
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.append_call(self.current_call_def, vals);
         let twin_args = if !append
             && !dest
+            && !nokeep
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
         {
@@ -310,6 +331,7 @@ impl Output<'_> {
         let ranged = forward.is_none()
             && !append
             && !dest
+            && !nokeep
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
@@ -317,17 +339,18 @@ impl Output<'_> {
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some() || append || dest,
+            twin_args.is_some() || ranged || forward.is_some() || append || dest || nokeep,
         )?;
         write!(
             w,
-            "{}{}{}{}{}{}(",
+            "{}{}{}{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
             if ranged { "__rg" } else { "" },
             if refill_twin { "__rt" } else { "" },
             if append { "__ap" } else { "" },
-            if dest { "__d" } else { "" }
+            if dest { "__d" } else { "" },
+            if nokeep { "__nk" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::runtime_abi::Abi::Cell) {

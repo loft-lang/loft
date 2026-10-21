@@ -1707,9 +1707,9 @@ pub fn append_twin_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_TWIN"))
 }
 
-/// `LOFT_NO_HAND_OVER=1` — a dying element's vectors are released and the next element
-/// appended claims its own again (`@FR-R-HandOver` off): the first bisect step for a wrong
-/// element or length after an append beside a drop of the same vector.
+/// `LOFT_NO_HAND_OVER=1` — an append to a full vector beside the drop of its oldest element
+/// runs as written, a claim and a free per vector (`@FR-R-HandOver`'s rotate clause off): the
+/// first bisect step for a wrong element, order or length after such an append.
 pub fn hand_over_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_HAND_OVER"))
