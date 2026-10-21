@@ -22,10 +22,13 @@ SLOWER while every admission stayed shows nowhere until the next portal run, day
 fact).  This is the same comparison at the moment it is cheap to act on: the lanes this
 change reached, against the rows the machine last committed.
 
-What is compared is the RATIO to the Rust twin, measured interleaved on the same core in
-the same minute, so the day's load cancels; the native time is shown beside it.  A move of
-`--threshold` percent or more (15) in either direction is listed, a slowdown makes the exit
-code 1.  A report for the committer's judgement, never a gate: a routine on a 200 ns twin
+A routine MOVED when both of its numbers did, in the same direction, by `--threshold`
+percent or more (15): the RATIO to the Rust twin, measured interleaved on the same core in
+the same minute so the day's load cancels, and loft's OWN time (`native_ns`), which the
+twin's noise cannot reach.  Either alone misleads: the ratio moves when only the twin did (a
+file read, a 200 ns routine), the native time when only the machine did (both lanes slower).
+A ratio that moved while loft's time stayed is listed apart, as the Rust lane moving; a
+slowdown makes the exit code 1.  A report for the committer's judgement, never a gate: a routine on a 200 ns twin
 swings 10 % run to run (`bench/stats.py` flags those rows noisy), and a genuine move is
 one that repeats.
 
@@ -137,7 +140,7 @@ def main():
             record(cmd, out)
         return 0
     base = read_tsv(base_path)
-    moved, missing = [], 0
+    moved, twin_only, missing = [], [], 0
     for key, r in sorted(now.items()):
         b = base.get(key)
         if not b:
@@ -150,19 +153,26 @@ def main():
             continue
         d_ratio = (r1 - r0) / r0 * 100.0 if r0 else 0.0
         d_ns = (n1 - n0) / n0 * 100.0 if n0 else 0.0
-        if abs(d_ratio) >= a.threshold:
-            moved.append((d_ratio, d_ns, key, r0, r1, n0, n1, r.get("flags", ""), b.get("commit", "?"), b.get("date", "?")))
+        row = (d_ratio, d_ns, key, r0, r1, n0, n1, r.get("flags", ""), b.get("commit", "?"), b.get("date", "?"))
+        if abs(d_ratio) >= a.threshold and abs(d_ns) >= a.threshold and (d_ratio > 0) == (d_ns > 0):
+            moved.append(row)
+        elif abs(d_ratio) >= a.threshold:
+            twin_only.append(row)
     print(f"{len(now)} routine(s) measured, {len(now) - missing} with a baseline row in {base_path.name}"
           + (f", {missing} new" if missing else ""))
     slower = [m for m in moved if m[0] > 0]
     if not moved:
-        print(f"no routine moved {a.threshold:g} % or more against its baseline ratio")
+        print(f"no routine moved {a.threshold:g} % or more against its baseline, in its ratio and its own time")
     else:
         moved.sort(key=lambda m: -abs(m[0]))
         print(f"{'Δ ratio':>8} {'Δ native':>9}  {'routine':24} {'bench':16}  ratio before → after   native before → after   baseline")
         for d_ratio, d_ns, (bench, routine), r0, r1, n0, n1, flags, bc, bd in moved:
             tag = " SLOWER" if d_ratio > 0 else " faster"
             print(f"{d_ratio:+7.1f}% {d_ns:+8.1f}%  {routine:24} {bench:16}  {r0:5.2f} → {r1:5.2f}   {n0:12,.0f} → {n1:12,.0f}   {bc} ({bd}){tag}{' ' + flags if flags else ''}")
+    if twin_only:
+        print(f"the ratio moved but loft's own time did not ({a.threshold:g} %): the Rust lane moved")
+        for d_ratio, d_ns, (bench, routine), r0, r1, n0, n1, flags, bc, bd in sorted(twin_only, key=lambda m: -abs(m[0])):
+            print(f"{d_ratio:+7.1f}% {d_ns:+8.1f}%  {routine:24} {bench:16}  ratio {r0:5.2f} → {r1:5.2f}, native {n0:,.0f} → {n1:,.0f}")
     if a.record:
         record(cmd, out)
     os.unlink(out)
