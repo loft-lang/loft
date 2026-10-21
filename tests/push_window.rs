@@ -311,6 +311,39 @@ fn the_verify_form_checks_every_windowed_push_and_the_close() {
 }
 
 #[test]
+fn a_straight_line_run_of_byte_appends_is_one_append() {
+    // `@FR-R-PushFill`'s run clause: `tests/scripts/158-push-run.loft`.
+    let out = std::env::temp_dir().join(format!("loft_push_run_{}.rs", std::process::id()));
+    let cells = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/158-push-run.loft");
+    let status = loft(
+        &[
+            "--native-emit",
+            out.to_str().unwrap(),
+            cells.to_str().unwrap(),
+        ],
+        &[],
+    );
+    let rust = fa::read_to_string(&out).unwrap_or_else(|e| {
+        panic!(
+            "no emission ({e}): {}",
+            String::from_utf8_lossy(&status.stderr)
+        )
+    });
+    let _ = fa::remove_file(&out);
+    for (name, want) in [
+        ("n_r1", 1),
+        ("n_r2_mk", 1),
+        ("n_r3", 1),
+        ("n_r5", 1),
+        ("n_r4", 0),
+        ("n_r7", 0),
+    ] {
+        let got = body(&rust, name).matches("one append of the run").count();
+        assert_eq!(got, want, "{name}: runs written as one append");
+    }
+}
+
+#[test]
 fn a_file_read_through_a_one_line_reader_takes_the_window_on_the_release_tier() {
     // The crawler's `read_i16_vec`: `out += [f_read(bf)]` with `f_read` a one-line
     // `bf#read(2) as i16 as integer`.  The release tier inlines the reader, so `bf` is named

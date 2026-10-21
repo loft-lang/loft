@@ -497,13 +497,15 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  record's length once after every copy of the loop.  THE RUN
                  CLAUSE: a STRAIGHT-LINE run of k >= 2 byte appends to one vector
                  path, `v += [a]; v += [b]; …` with only line markers between them,
-                 is one reservation of k and one window, closed after the last —
-                 the loop's window over a count known statically.  No pushed value
+                 is ONE append of the k bytes, built in a stack array — the vector's
+                 header resolved once, not once per pre-allocation, reservation,
+                 header and close.  No pushed value
                  may read v's root or any non-scalar local (a view could reach v's
                  store and read the length the window has not written back), nor
                  call anything but an operator; a path a loop already holds a push
-                 header or window for keeps its pushes, and a vector with no record
-                 runs the appends as they stand.
+                 header or window for keeps its pushes, and a vector with no record,
+                 a reference at position 0 or a locked store (the append does not ask
+                 the lock, @FR-H-WriteLocked) runs the appends as they stand.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop

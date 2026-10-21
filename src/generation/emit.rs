@@ -3099,9 +3099,13 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
-    /// `@FR-R-PushFill`'s run clause ([`super::hoist::push_run`]): reserve the run's bytes
-    /// once and write them through one push window, closed after the last.  A vector with
-    /// no record takes the statements as they stand — the runtime's own refusal.
+    /// `@FR-R-PushFill`'s run clause ([`super::hoist::push_run`]): the run's bytes built in
+    /// a stack array and appended by ONE `vector::append_bytes`, which resolves the vector's
+    /// header once — where the window form resolved it in the pre-allocation, the
+    /// reservation, two headers and the close (cbor `encode_bytes` −10.1 %, priced on the
+    /// emitted Rust, hash unchanged).  A vector `append_bytes` refuses (no record, or a
+    /// reference at position 0) or a locked store (`@FR-H-WriteLocked`, which `append_bytes`
+    /// does not ask) takes the statements as they stand — the runtime's own refusal.
     fn output_push_run(
         &mut self,
         w: &mut dyn Write,
@@ -3117,37 +3121,21 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "if !({vec}).is_null() && ({vec}).rec != 0 {{ //@FR-R-PushFill run of {k}"
+            "if !({vec}).is_null() && ({vec}).rec != 0 && ({vec}).pos != 0 && !vector::rec_locked(&({vec}), &stores.allocations) {{ //@FR-R-PushFill run of {k}"
         )?;
-        self.indent(w)?;
-        writeln!(
-            w,
-            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations);"
-        )?;
-        // One binding a line, each with its tag: the emission audit binds a holder by the
-        // line that declares it.
-        self.indent(w)?;
-        writeln!(
-            w,
-            "  let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); //@FR-R-PushFill run header"
-        )?;
-        self.indent(w)?;
-        writeln!(
-            w,
-            "  let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations); //@FR-R-PushFill push window, run of {k}"
-        )?;
+        let mut bytes = Vec::with_capacity(k);
         for val in &run.vals {
             let e = self.expr_string(val)?;
-            self.indent(w)?;
-            writeln!(
-                w,
-                "  {{ let __pv = loft::store::Store::byte_raw(({min}) as i32, ({e}) as i32); unsafe {{ stores.push_windowed::<u8, false>(&mut __ph_{n}, &mut __pw_{n}, &({vec}), 1, __pv) }} }};"
-            )?;
+            bytes.push(format!(
+                "loft::store::Store::byte_raw(({min}) as i32, ({e}) as i32)"
+            ));
         }
+        self.indent(w)?;
+        writeln!(w, "  let __run_{n}: [u8; {k}] = [{}];", bytes.join(", "))?;
         self.indent(w)?;
         writeln!(
             w,
-            "  stores.push_window_close::<false>(&mut __ph_{n}, __pw_{n}.len, &({vec}));"
+            "  vector::append_bytes(&({vec}), &__run_{n}, &mut stores.allocations); //@FR-R-PushFill one append of the run"
         )?;
         self.indent(w)?;
         writeln!(w, "}} else {{")?;

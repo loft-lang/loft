@@ -501,9 +501,10 @@ and each call site refused with its reason.
 
 **`LOFT_NO_PUSH_RUN=1`** (`@FR-R-PushFill`'s run clause, default-ON, generation time,
 `--native` only) pushes a straight-line run of byte appends (`v += [a]; v += [b]; …`) one by
-one through the runtime again — with it off, the run reserves once and writes through one
-push window (cbor's `head`, the encode_bytes probe −13 %).  The first bisect step for a wrong
-byte or length after such a run.
+one through the runtime again — with it on, the run's bytes are built in a stack array and
+appended by one `vector::append_bytes` (cbor's `head`: `encode_bytes` −10 % over the earlier
+one-window form).  The first bisect step for a wrong byte or length after such a run; cells
+`tests/scripts/158-push-run.loft`.
 
 **`LOFT_NO_TYPED_READ=1`** (`@FR-R-TypedRead`, default-ON, generation time, `--native` only)
 sends every `f#read` through the generic `OpReadFile` again — with it off, a read that lands a
