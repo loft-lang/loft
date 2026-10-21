@@ -54,6 +54,10 @@ pub(crate) struct FieldSinks {
     /// or runs code that must precede the release the rebuild makes: the literal is parsed
     /// again, built apart and bound (`parse_object`'s retry).
     build_apart: bool,
+    /// loft#2117 — a COLLECTION field's value, built in the field itself, reads the
+    /// projection place the literal is written into: the literal is parsed again, built apart
+    /// and copied in (`Parser::inplace_place_declined`).
+    decline_place: bool,
 }
 impl Parser {
     /// Does `name` name a TYPE — a collection former (`hash`, `vector`, …), a struct, an enum?
@@ -5056,6 +5060,49 @@ impl Parser {
         hits_destination || occurrences > disjoint
     }
 
+    /// `@FR-R-InPlaceLiteral`'s staging clause under `@FR-B-Copy` (loft#2117) — what a field
+    /// initialiser stages for a literal written into a PROJECTION place must be the VALUE the
+    /// copy road would have read.  Bound to a temp, an embedded record's read is a VIEW
+    /// (`@FR-B-View-Base`), and the field writes then overwrite what it names: a swap of two
+    /// embedded records answered one of them twice, on both backends.  So a read of a PLACE —
+    /// a variable or a projection — is copied into a frame-local backing first, the copy's ops
+    /// join the hoists, and the field takes the backing.  A value that is no place (a call's
+    /// fresh result) is already a value and keeps the temp.  A COLLECTION field never comes
+    /// here: it is built in the field, and the literal declines instead (`decline_place`).  A
+    /// pointer field keeps its read, because assigning one re-points it (`@FR-H-RefSet`); so
+    /// does a record that owns a droppable, which a copy would leave in two records
+    /// (`@FR-H-Copy-Refuse`), and a nullable field, whose copy must keep the null arm.
+    fn staged_heap_copy(
+        &mut self,
+        value: &Value,
+        tp: &Type,
+        hoists: &mut Vec<Value>,
+    ) -> Option<u16> {
+        let record = matches!(tp, Type::Reference(d, deps)
+            if !deps.is_pointer_marker() && self.data.def_type(*d) == DefType::Struct);
+        let place = match value.unspan() {
+            Value::Var(_) => true,
+            Value::Call(d, _) => crate::use_analysis::is_projection_op(&self.data, *d),
+            _ => false,
+        };
+        if !record || !place || self.data.type_owns_droppable_anywhere(tp) {
+            return None;
+        }
+        let mut copy = value.clone();
+        self.owned_heap_copy(&mut copy, value.unspan().clone(), tp)?;
+        let Value::Block(bl) = copy.unspan() else {
+            return None;
+        };
+        let (Some(Value::Var(o)), Some(ops)) = (
+            bl.operators.last().map(Value::unspan),
+            bl.operators.get(..bl.operators.len() - 1),
+        ) else {
+            return None;
+        };
+        hoists.extend(ops.iter().cloned());
+        Some(*o)
+    }
+
     /// Does rebuilding the place `(root, off)` release a record, through a hook, that the
     /// literal's initialisers must be computed BEFORE?
     ///
@@ -5535,10 +5582,28 @@ impl Parser {
             {
                 sinks.build_apart = true;
             }
-            if let Some((xv, xoff)) = self_read_root
-                && !primed
+            // loft#2117 — for a PROJECTION place, a staged heap read is a copy, not a view.  A
+            // COLLECTION field is primed: its value is built in the field after every
+            // collection header of the place was zeroed, so one that reads the place cannot be
+            // staged at all, and the literal declines to the copy road instead.
+            let staged = if let Some((xv, xoff)) = self_read_root
                 && self.reads_place(&value, xv, xoff)
             {
+                if xoff == crate::use_analysis::ANY_FIELD {
+                    !primed
+                } else if primed {
+                    sinks.decline_place = true;
+                    false
+                } else if let Some(o) = self.staged_heap_copy(&value, &exp_tp, &mut sinks.hoists) {
+                    value = Value::Var(o);
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+            if staged {
                 let tmp = self.vars.work_refs(&exp_tp, &mut self.lexer);
                 if !self.first_pass {
                     self.change_var_type(tmp, &exp_tp);
@@ -6075,6 +6140,8 @@ impl Parser {
         // Keep the opening brace's position to point the caret at the literal it names
         // (DIAGNOSTICS.md § Adding a code, step 4).
         let literal_pos = *self.lexer.pos();
+        let declined_place = std::mem::take(&mut self.inplace_place_declined);
+        let mut place_hint: Option<Value> = None;
         let mut list = Vec::new();
         let mut new_object = false;
         let mut in_place_var: Option<u16> = None;
@@ -6116,11 +6183,13 @@ impl Parser {
         // the two cannot disagree; a destination it cannot name yields no root and keeps
         // today's behaviour.
         if !self.first_pass
+            && !declined_place
             && !matches!(code, Value::Var(_))
             && let Some(place) = crate::use_analysis::projection_container_place(&self.data, code)
             && !self.vars.is_compiler_generated(place.0)
         {
             self_read_root = Some(place);
+            place_hint = Some(code.clone());
         }
         if let Value::Var(v_nr) = code
             && hint_is_the_whole_value
@@ -6292,7 +6361,7 @@ impl Parser {
                 *code = Value::Var(w);
             }
         } else if !self.first_pass
-            && !self.is_field(code)
+            && (!self.is_field(code) || declined_place)
             && (!self.is_captured_dbref(code) || self.reads_a_pointer_field(code))
             && !self.builds_into_element(code, td_nr)
         {
@@ -6412,6 +6481,20 @@ impl Parser {
             let tp = self.parse_object(td_nr, code);
             self.inplace_hint_declined = outer;
             return tp;
+        }
+        // loft#2117 — a collection field built in place read the place it is written into, and
+        // the in-place road zeroes that place's collection headers before any field value runs:
+        // parse the literal again, built apart, so the assignment copies it in as `o.f = r`
+        // copies a record — the element clause's decline, asked per literal.
+        if sinks.decline_place
+            && let Some(hint) = place_hint.take()
+        {
+            self.lexer.revert(link);
+            self.vars.clean_work_refs(work);
+            self.vars.clean_work_refs_p2(work_p2);
+            *code = hint;
+            self.inplace_place_declined = true;
+            return self.parse_object(td_nr, code);
         }
         // #437 splice: every vector-field header zeroed as one block, directly
         // after the prelude and before the first field's value.  loft#924's group

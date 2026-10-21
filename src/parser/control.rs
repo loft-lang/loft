@@ -427,6 +427,16 @@ struct EnumArm {
     cond: Option<Value>,
 }
 
+/// The subject a vector match's slice patterns read: its held copy `v`, its element type and
+/// size, and the variable its element views borrow from.
+#[derive(Clone, Copy)]
+struct SliceSubject<'a> {
+    v: u16,
+    elm_tp: &'a Type,
+    elm_size: &'a Value,
+    borrow_src: u16,
+}
+
 /// One arm of a vector or tuple `match`, collected before the if-chain is assembled.
 ///
 /// `guard` stays SEPARATE from `cond` instead of being ANDed into it, because the arm's
@@ -11851,6 +11861,13 @@ impl Parser {
                 crate::scopes::apply_places(&mut def.variables, &mut def.code, &here, ops);
             }
         }
+        for &(d, v) in &found.named {
+            if !self.data.def(d).variables.done {
+                self.data.definitions[d as usize]
+                    .variables
+                    .mark_ref_named(v);
+            }
+        }
         for e in &found.evacuations {
             if self.data.def(e.d_nr).variables.done {
                 continue;
@@ -11997,644 +12014,41 @@ impl Parser {
             // @PLN35 L2 — conditions from element sub-patterns (`[Variant { f }, ..]`); empty for
             // bare-name / `..` / `_` slice patterns, so those stay byte-identical.
             let mut elem_conds: Vec<Value> = Vec::new();
+            // `@FR-P-Multi` — the further `|` / `,` slice patterns of this arm, each its own
+            // bindings and condition; the body runs under whichever matched (loft#2107).
+            let mut alternatives: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
             if self.lexer.has_token("[") {
-                // Parse slice pattern elements
-                // @PLN35 Phase 4.3: set when a whole-slice MULTI-element alternation built the
-                // arm `cond` itself (predictive dispatch); suppresses the fixed-length gate below.
-                let mut multi_alt = false;
-                let mut head: Vec<String> = Vec::new();
-                let mut tail: Vec<String> = Vec::new();
-                // How many fixed elements follow the `..`, known as soon as the rest is seen.
-                let mut tail_total: i32 = 0;
-                let mut has_rest = false;
-                let mut rest_name: Option<String> = None;
-                // How the rest was spelled (`..xs` or `xs:integer*`), for the second-rest refusal.
-                let mut rest_label = String::new();
-                // The fewest elements the rest may take: 1 for a scalar `xs:T+`, else 0.
-                let mut rest_min: i32 = 0;
-                loop {
-                    if self.lexer.has_token("]") {
-                        break;
-                    }
-                    // @PLN35 — classify a `( … )` group ONCE per element (a second look-ahead
-                    // over the same region corrupts the lexer replay buffer).  A `Repetition`
-                    // may sit MID-slice (fixed head before it); an `Alt` is whole-slice only, so
-                    // its branch keeps the `head.is_empty()` guard.
-                    let group_kind = if !has_rest && self.lexer.peek_token("(") {
-                        self.peek_group_kind()
-                    } else {
-                        SliceGroupKind::Other
-                    };
-                    if self.lexer.has_token("..") {
-                        // @PLN35 Phase 2 (P-Rest) — `..name` with the name ADJACENT to `..` (no
-                        // comma) captures the tail sub-slice as a FRESH vector. `.., x` (a comma
-                        // before the name) stays a bare gap plus a tail binding. Named rest is
-                        // tail-only (enforced after the loop).
-                        let name = self.lexer.has_identifier();
-                        // `@FR-P-Rest` — `t` counts the FIXED patterns after the rest, so a
-                        // second variable-length part has no length of its own: the first takes
-                        // every element the fixed ones leave.  Accepting it dropped the first
-                        // rest's binding without a word (`[..a, ..b]` bound only `b`).
-                        if has_rest && !self.first_pass {
-                            let second = format!("..{}", name.as_deref().unwrap_or(""));
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "a slice pattern holds one variable-length part, and `{second}` is a second one after `{rest_label}` — the first already takes every element the fixed ones leave; drop one of them"
-                            );
-                        }
-                        if has_rest {
-                            // Declared so the arm body still parses: the refusal above is the
-                            // one error, not an `Unknown variable` cascade behind it.
-                            if let Some(n) = &name {
-                                self.declare_refused_rest(n, &elm_tp);
-                            }
-                        } else {
-                            rest_label = format!("..{}", name.as_deref().unwrap_or(""));
-                            rest_name = name;
-                        }
-                        has_rest = true;
-                        // Everything from here to `]` is the fixed TAIL, and each of its
-                        // elements is read from the end.  Count them now so a variant
-                        // sub-pattern or a literal there knows its own index while it parses
-                        // (loft#1419); a bare name does not need it, which is why only bare
-                        // names used to be admitted.
-                        self.lexer.has_token(",");
-                        tail_total = self.count_slice_tail_elements();
-                    } else if self.match_cursor.is_some()
-                        && head.is_empty()
-                        && !has_rest
-                        && let Some((name, fn_nr, ret_tp)) = self.peek_subrule_capture()
-                    {
-                        // @PLN35 PC2 — sub-rule invocation `[ name: rule ]` in cursor mode: call
-                        // `rule(cursor)` (which prefix-matches over the SAME cursor, advancing its
-                        // `pos` on a match and leaving it on a miss — PC1 semantics), bind `name` to
-                        // the result, and gate the arm on `name != null`.  Whole-pattern only for
-                        // now (the running-pos + revert needed to mix a variable-width sub-rule with
-                        // fixed elements is deferred).  `multi_alt` skips the fixed length gate +
-                        // pos-advance — the sub-rule owns the pos.
-                        self.parse_subrule_slice_element(
-                            &name,
-                            fn_nr,
-                            &ret_tp,
-                            &mut cond,
+                let subject = SliceSubject {
+                    v,
+                    elm_tp: &elm_tp,
+                    elm_size: &elm_size,
+                    borrow_src,
+                };
+                let first_names = self.pattern_binds_pending.len();
+                self.parse_slice_pattern(
+                    &subject,
+                    &mut bindings,
+                    &mut cond,
+                    &mut elem_conds,
+                    &mut prechain,
+                );
+                alternatives = self.parse_pattern_alternatives(
+                    first_names,
+                    &mut bindings,
+                    |p| p.lexer.has_token("["),
+                    |p, binds, conds| {
+                        let mut cond_i = None;
+                        let mut elem_i = Vec::new();
+                        p.parse_slice_pattern(
+                            &subject,
+                            binds,
+                            &mut cond_i,
+                            &mut elem_i,
                             &mut prechain,
                         );
-                        multi_alt = true;
-                        break;
-                    } else if self.pattern_variant_enum(&elm_tp).is_none()
-                        && let Some(is_rep) = self.peek_scalar_type_capture()
-                        && (is_rep || !has_rest)
-                    {
-                        // @PLN35 slice 1 — a scalar type-annotated capture `name:Type` (single —
-                        // a type-as-match that always holds for the element type) OR its
-                        // `name:Type*` / `+` repetition collected into a `vector<elm_tp>`.  Only
-                        // for a SCALAR element type; enum elements keep the `name:pat` /
-                        // `(x: V)*` paths below.
-                        if is_rep {
-                            // `@FR-P-Rep-Scalar` — `Type` is the element type, so EVERY element
-                            // matches it and the run is a TYPED REST: `(P-Rest)` with `t` the
-                            // fixed patterns after it, whatever they are, and `+` asking one
-                            // element more.  It is parsed as the rest it is, so its tail takes
-                            // every element form a `..rest` tail takes (loft#1736).
-                            let name = self.lexer.has_identifier().unwrap_or_default();
-                            self.lexer.token(":");
-                            let tname = self.lexer.has_identifier().unwrap_or_default();
-                            let elm_name = elm_tp.source_name(&self.data);
-                            if !self.first_pass && tname != elm_name {
-                                diagnostic!(
-                                    self.lexer,
-                                    Level::Error,
-                                    "a scalar repetition `{name}:{tname}*` must match the vector's element type {elm_name}"
-                                );
-                            }
-                            let plus = self.lexer.has_token("+");
-                            if !plus {
-                                self.lexer.token("*");
-                            }
-                            let label = format!("{name}:{tname}{}", if plus { "+" } else { "*" });
-                            if has_rest {
-                                if !self.first_pass {
-                                    diagnostic!(
-                                        self.lexer,
-                                        Level::Error,
-                                        "a slice pattern holds one variable-length part, and `{label}` is a second one after `{rest_label}` — the first already takes every element the fixed ones leave; drop one of them"
-                                    );
-                                }
-                                self.declare_refused_rest(&name, &elm_tp);
-                            } else {
-                                has_rest = true;
-                                rest_label = label;
-                                rest_name = Some(name);
-                                rest_min = i32::from(plus);
-                                if self.lexer.has_token(",") {
-                                    tail_total = self.count_slice_tail_elements();
-                                }
-                            }
-                            continue;
-                        }
-                        // Single `name:Type`: bind `name = v[pos]`; the annotation matches the
-                        // element type so no condition is needed (a "_" keeps position alignment
-                        // for following bare-name indices).
-                        let position = head.len() as i32;
-                        let name = self.lexer.has_identifier().unwrap();
-                        self.lexer.token(":");
-                        let tname = self.lexer.has_identifier().unwrap_or_default();
-                        let elm_name = elm_tp.source_name(&self.data);
-                        if !self.first_pass && tname != elm_name {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "a scalar capture `{name}:{tname}` must match the element type {elm_name}"
-                            );
-                        }
-                        let bind_nr = self.pattern_binding(&name, &elm_tp);
-                        self.vars.defined(bind_nr);
-                        let val = self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
-                        bindings.push(v_set(bind_nr, val));
-                        self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
-                        head.push("_".to_string());
-                    } else if !has_rest && self.lexer.peek_named_arg().is_some() {
-                        // @PLN35 Phase 2 (P-Cap) — `name:pat` element capture. Bind the whole
-                        // element to `name` (a VIEW of the subject, exactly the read a bare head
-                        // binding emits) AND require sub-pattern `pat` to match the same element.
-                        // Head position only (before any `..`); a `_` placeholder keeps the
-                        // position count aligned for following bare-name indices, as the variant
-                        // sub-pattern branch does.
-                        let name = self.lexer.has_identifier().unwrap();
-                        self.lexer.token(":");
-                        let position = head.len() as i32;
-                        // Bind name = v[position] — the same read as the head-binding loop below.
-                        let bind_nr = self.pattern_binding(&name, &elm_tp);
-                        self.vars.defined(bind_nr);
-                        let bval =
-                            self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
-                        bindings.push(v_set(bind_nr, bval));
-                        self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
-                        // Sub-pattern condition on the SAME element. Read v[position] AGAIN: the
-                        // binding var is assigned only in the arm body (after the condition runs),
-                        // so the condition must read the element directly, never the binding.
-                        let cread =
-                            self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
-                        let mut sub_conds: Vec<Value> = Vec::new();
-                        let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
-                        if let Some(c) = self.parse_field_sub_pattern(
-                            cread,
-                            &elm_tp,
-                            &mut bindings,
-                            &mut sub_conds,
-                            &mut aliases,
-                        ) {
-                            elem_conds.push(c);
-                        }
-                        elem_conds.append(&mut sub_conds);
-                        // The names a sub-pattern bound belong to this arm; its end restores them.
-                        self.pattern_binds_pending.append(&mut aliases);
-                        head.push("_".to_string());
-                    } else if self.peek_is_variant_subpattern(&elm_tp) {
-                        // Read v[pos] and tag-test + bind via parse_field_sub_pattern; a "_"
-                        // placeholder keeps the position count so following bare-name indices align.
-                        // A head element counts forward from 0; a tail element counts BACK from
-                        // the end, exactly as a bare tail name does.
-                        let position = if has_rest {
-                            -(tail_total - tail.len() as i32)
-                        } else {
-                            head.len() as i32
-                        };
-                        let read =
-                            self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
-                        let mut sub_conds: Vec<Value> = Vec::new();
-                        let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
-                        if let Some(c) = self.parse_field_sub_pattern(
-                            read,
-                            &elm_tp,
-                            &mut bindings,
-                            &mut sub_conds,
-                            &mut aliases,
-                        ) {
-                            elem_conds.push(c);
-                        }
-                        elem_conds.append(&mut sub_conds);
-                        // The names a sub-pattern bound belong to this arm; its end restores them.
-                        self.pattern_binds_pending.append(&mut aliases);
-                        if has_rest {
-                            tail.push("_".to_string());
-                        } else {
-                            head.push("_".to_string());
-                        }
-                    } else if group_kind == SliceGroupKind::Repetition {
-                        // @PLN35 Phase 6 — a repetition `[ head…, ( [name:] V )*[(Sep)] [tail…]
-                        // [, ..rest] ]` / `…+`.  `head` is any fixed prefix already parsed (its
-                        // binds/conds are in `bindings`/`elem_conds`); the run starts at `head_len`
-                        // and any fixed `tail` after the group is matched from the END.
-                        // `parse_slice_repetition` builds the run-loop cond + collection and
-                        // consumes through `]`, so break the element loop.
-                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
-                            let head_len = head.len() as i32;
-                            // Bind any BARE-NAME head element (a variant sub-pattern / literal
-                            // already emitted its own bind/cond and left a "_").  These are safe:
-                            // the arm's `cond` requires `len >= head_len` before bindings run.
-                            for (i, name) in head.iter().enumerate() {
-                                if name == "_" {
-                                    continue;
-                                }
-                                let bind_nr = self.pattern_binding(name, &elm_tp);
-                                self.vars.defined(bind_nr);
-                                let val = self.read_slice_elem(
-                                    v,
-                                    &elm_size,
-                                    &elm_tp,
-                                    Value::Int(i as i32),
-                                );
-                                bindings.push(v_set(bind_nr, val));
-                                self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
-                            }
-                            self.parse_slice_repetition(
-                                e_nr,
-                                v,
-                                &elm_size,
-                                &elm_tp,
-                                head_len,
-                                borrow_src,
-                                &mut cond,
-                                &mut bindings,
-                            );
-                            multi_alt = true;
-                        } else {
-                            if !self.first_pass {
-                                let elm_name = self.slice_element_name(&elm_tp);
-                                diagnostic!(
-                                    self.lexer,
-                                    Level::Error,
-                                    "a repetition `( … )*` slice element needs a struct-enum element type, not `{elm_name}`"
-                                );
-                            }
-                            self.skip_rest_of_slice();
-                        }
-                        break;
-                    } else if group_kind == SliceGroupKind::Alt
-                        && (head.is_empty() || self.match_cursor.is_none())
-                    {
-                        // @PLN35 Phase 4.3 / 5 — a WHOLE-SLICE MULTI-element alternation
-                        // `[ (A B | C) [, ..rest] ]` OR an OPTIONAL group `[ (a)? [, ..rest] ]`
-                        // (a degenerate alternation `(a | ε)`).  Predictive dispatch on the leading
-                        // tags over a sequence per branch; it builds the arm `cond` itself and
-                        // consumes through `]`, so break the element loop and skip the length gate.
-                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
-                            // A fixed head before an optional group (loft#2048): its bare names
-                            // bind as a repetition's head does — the arm's `cond` gates them.
-                            let head_len = head.len() as i32;
-                            for (i, name) in head.iter().enumerate() {
-                                if name == "_" {
-                                    continue;
-                                }
-                                let bind_nr = self.pattern_binding(name, &elm_tp);
-                                self.vars.defined(bind_nr);
-                                let val = self.read_slice_elem(
-                                    v,
-                                    &elm_size,
-                                    &elm_tp,
-                                    Value::Int(i as i32),
-                                );
-                                bindings.push(v_set(bind_nr, val));
-                                self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
-                            }
-                            self.parse_multi_element_alternation(
-                                e_nr,
-                                v,
-                                &elm_size,
-                                &elm_tp,
-                                head_len,
-                                borrow_src,
-                                &mut cond,
-                                &mut bindings,
-                            );
-                            multi_alt = true;
-                        } else {
-                            if !self.first_pass {
-                                let elm_name = self.slice_element_name(&elm_tp);
-                                diagnostic!(
-                                    self.lexer,
-                                    Level::Error,
-                                    "an alternation `( … | … )` slice element needs a struct-enum element type, not `{elm_name}`"
-                                );
-                            }
-                            self.skip_rest_of_slice();
-                        }
-                        break;
-                    } else if let Type::Tuple(elems) = elm_tp.base()
-                        && group_kind == SliceGroupKind::Other
-                        && self.lexer.has_token("(")
-                    {
-                        // `@FR-P-Point` × `(G-Pat-Group)` — a `( … )` with no pattern operator is
-                        // a TUPLE pattern, and over a tuple element it tests that one element,
-                        // position by position, exactly as a tuple subject's arm does.  It was
-                        // read as an alternation and refused (loft#1737).  A head element
-                        // counts forward from 0, a tail element back from the end.
-                        let elems = elems.clone();
-                        let position = if has_rest {
-                            -(tail_total - tail.len() as i32)
-                        } else {
-                            head.len() as i32
-                        };
-                        let tmp = self.create_unique("slice_tuple", &elm_tp);
-                        self.vars.defined(tmp);
-                        let mut t_binds: Vec<Value> = Vec::new();
-                        let mut t_conds: Vec<Value> = Vec::new();
-                        self.parse_tuple_pattern_elements(tmp, &elems, &mut t_binds, &mut t_conds);
-                        // The test reads the element itself, because the bindings run only once
-                        // the arm commits; the bindings read it again for the same reason.
-                        if !t_conds.is_empty() {
-                            let mut test = t_conds.remove(0);
-                            for c in t_conds {
-                                test = v_if(test, c, Value::Boolean(false));
-                            }
-                            let read =
-                                self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
-                            elem_conds.push(v_block(
-                                vec![v_set(tmp, read), test],
-                                Type::Boolean,
-                                "tuple element test",
-                            ));
-                        }
-                        if !t_binds.is_empty() {
-                            let read =
-                                self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
-                            bindings.push(v_set(tmp, read));
-                            bindings.append(&mut t_binds);
-                        }
-                        if has_rest {
-                            tail.push("_".to_string());
-                        } else {
-                            head.push("_".to_string());
-                        }
-                    } else if !has_rest && self.lexer.peek_token("(") {
-                        // @PLN35 Phase 4 (P-Alt) — a parenthesized single-element alternation
-                        // `( V1 { f } | V2 { f } )` in a head slice-element position. Tag-test
-                        // the element against each branch and bind the shared captures from the
-                        // matching variant's offsets. A `_` placeholder keeps position alignment
-                        // for following bare-name indices, as the variant sub-pattern branch does.
-                        if let Some((e_nr, true)) = self.pattern_variant_enum(&elm_tp) {
-                            let position = head.len() as i32;
-                            let read =
-                                self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
-                            self.parse_slice_alternation_element(
-                                e_nr,
-                                &read,
-                                Some(borrow_src),
-                                &mut bindings,
-                                &mut elem_conds,
-                                true,
-                            );
-                            head.push("_".to_string());
-                        } else {
-                            if !self.first_pass {
-                                let elm_name = self.slice_element_name(&elm_tp);
-                                diagnostic!(
-                                    self.lexer,
-                                    Level::Error,
-                                    "an alternation `( … | … )` slice element needs a struct-enum element type, not `{elm_name}`"
-                                );
-                            }
-                            self.skip_rest_of_slice();
-                            break;
-                        }
-                    } else if self.peek_is_slice_literal() {
-                        // @PLN35 Phase 6.3 (P-Lit) — a LITERAL head element `[ 1, … ]` /
-                        // `[ "kw", … ]`.  On a SCALAR element it matches by direct EQUALITY
-                        // against `v[pos]`.  On a STRUCT-ENUM element (a token stream) it matches
-                        // against the variant's `#lexeme` field — so `"fn"` reads like the
-                        // grammar, standing in for `Keyword { name: "fn" }`.  A "_" placeholder
-                        // keeps following bare-name indices AND the length gate aligned, and the
-                        // condition is AND'd into the arm like a variant tag test.  In the TAIL
-                        // it reads at a negative index, the same way a bare tail name does.
-                        let position = if has_rest {
-                            -(tail_total - tail.len() as i32)
-                        } else {
-                            head.len() as i32
-                        };
-                        let mut lit = Value::Null;
-                        let lit_tp = self.expression(&mut lit);
-                        match self.build_literal_match(
-                            v,
-                            &elm_size,
-                            &elm_tp,
-                            &Value::Int(position),
-                            &lit,
-                            &lit_tp,
-                        ) {
-                            Some(c) => elem_conds.push(c),
-                            None if !self.first_pass => {
-                                self.slice_literal_mismatch(&elm_tp, &lit_tp)
-                            }
-                            None => {}
-                        }
-                        if has_rest {
-                            tail.push("_".to_string());
-                        } else {
-                            head.push("_".to_string());
-                        }
-                    } else if let Some(id) = self.lexer.has_identifier() {
-                        if has_rest {
-                            tail.push(id);
-                        } else {
-                            head.push(id);
-                        }
-                    } else {
-                        // Unrecognized element token (`{`, an unsupported tail sub-pattern, …).
-                        // None of the branches above consumed anything, so this MUST break to make
-                        // progress — otherwise the loop spins forever on the same token in the
-                        // first pass (where diagnostics are silent).
-                        if !self.first_pass {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "expected identifier, literal, or '..' in slice pattern"
-                            );
-                        }
-                        break;
-                    }
-                    self.lexer.has_token(",");
-                }
-                // @PLN35 Phase 4.3: a whole-slice multi-element alternation built the arm cond +
-                // bindings itself (predictive dispatch), so skip the fixed-position length gate,
-                // the head/tail binds, and the rest materialisation below.
-                if !multi_alt {
-                    let fixed = (head.len() + tail.len()) as i32;
-                    // Generate length condition
-                    let len_call = self.cursor_len(v);
-                    if let Some((cursor_var, cursor_def, pos_field, pos_var)) = self.match_cursor {
-                        // @PLN35 PC1 — cursor PREFIX-consume: need `fixed` elements from `pos`
-                        // (`pos + fixed <= len`), and on a match advance `cursor.pos` by `fixed`.
-                        // `pos_var` stays the ENTRY position, so every read AND this write share it.
-                        let ispec = Type::Integer(IntegerSpec {
-                            min: 0,
-                            max: 0,
-                            not_null: false,
-                            forced_size: None,
-                        });
-                        let need = self.conv_op(
-                            "+",
-                            Value::Var(pos_var),
-                            Value::Int(fixed),
-                            I32.clone(),
-                            I32.clone(),
-                        );
-                        self.call_op(
-                            cond.get_or_insert(Value::Null),
-                            "<=",
-                            &[need, len_call],
-                            &[ispec.clone(), ispec],
-                        );
-                        let new_pos = self.conv_op(
-                            "+",
-                            Value::Var(pos_var),
-                            Value::Int(fixed),
-                            I32.clone(),
-                            I32.clone(),
-                        );
-                        let adv = self.set_field(
-                            cursor_def,
-                            pos_field,
-                            0,
-                            Value::Var(cursor_var),
-                            new_pos.clone(),
-                        );
-                        bindings.push(adv);
-                        // @PLN35 PC5 — maintain the farthest high-water mark: `farthest =
-                        // max(farthest, new_pos)`.  Monotonic across arms + sub-rules (the shared
-                        // cursor carries it), so after a failed parse it names the deepest token
-                        // reached.  Opt-in — only when the cursor has a `farthest` field.
-                        if let Some(ff) = self.match_cursor_farthest {
-                            let old_far = self.get_field(cursor_def, ff, Value::Var(cursor_var));
-                            let is_less = self.conv_op(
-                                "<",
-                                old_far.clone(),
-                                new_pos.clone(),
-                                I32.clone(),
-                                I32.clone(),
-                            );
-                            let maxed = v_if(is_less, new_pos, old_far);
-                            let set_far =
-                                self.set_field(cursor_def, ff, 0, Value::Var(cursor_var), maxed);
-                            bindings.push(set_far);
-                        }
-                    } else if has_rest {
-                        // length >= fixed (+1 for a `xs:T+` rest)  →  fixed <= length
-                        self.call_op(
-                            cond.get_or_insert(Value::Null),
-                            "<=",
-                            &[Value::Int(fixed + rest_min), len_call],
-                            &[
-                                Type::Integer(IntegerSpec {
-                                    min: 0,
-                                    max: 0,
-                                    not_null: false,
-                                    forced_size: None,
-                                }),
-                                Type::Integer(IntegerSpec {
-                                    min: 0,
-                                    max: 0,
-                                    not_null: false,
-                                    forced_size: None,
-                                }),
-                            ],
-                        );
-                    } else {
-                        // length == fixed
-                        self.call_op(
-                            cond.get_or_insert(Value::Null),
-                            "==",
-                            &[len_call, Value::Int(fixed)],
-                            &[
-                                Type::Integer(IntegerSpec {
-                                    min: 0,
-                                    max: 0,
-                                    not_null: false,
-                                    forced_size: None,
-                                }),
-                                Type::Integer(IntegerSpec {
-                                    min: 0,
-                                    max: 0,
-                                    not_null: false,
-                                    forced_size: None,
-                                }),
-                            ],
-                        );
-                    }
-                    // Bind head elements: head[i] = v[i]
-                    for (i, name) in head.iter().enumerate() {
-                        if name == "_" {
-                            continue;
-                        }
-                        let bind_nr = self.pattern_binding(name, &elm_tp);
-                        self.vars.defined(bind_nr);
-                        let val = self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(i as i32));
-                        bindings.push(v_set(bind_nr, val));
-                        self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
-                    }
-                    // Bind tail elements: tail[j] = v[len - tail.len() + j]
-                    for (j, name) in tail.iter().enumerate() {
-                        if name == "_" {
-                            continue;
-                        }
-                        let bind_nr = self.pattern_binding(name, &elm_tp);
-                        self.vars.defined(bind_nr);
-                        let idx = Value::Int(-((tail.len() - j) as i32));
-                        let val = self.read_slice_elem(v, &elm_size, &elm_tp, idx);
-                        bindings.push(v_set(bind_nr, val));
-                        self.mark_slice_element_view(bind_nr, &elm_tp, borrow_src);
-                    }
-                    // @FR-P-Rest — `..name` binds `name` to the FRESH sub-slice
-                    // `v[head_len .. len - tail_len]`, so fixed elements MAY follow the rest and
-                    // the middle shrinks by however many do.  Reuse the proven compile-time slice
-                    // materialisation (`materialize_iterator`): a minimal slice `Value::Iter` over the
-                    // index range, copied element-type-aware into a fresh vector (P-Cap-Fresh — the
-                    // result is INDEPENDENT of the subject, so it is safe to return or mutate).
-                    // Bounds are in range by the `fixed <= len` arm condition, which counts head AND
-                    // tail.  The tail elements are already bound above, at negative indices — the
-                    // same reads the un-named gap `[a, .., z]` has always used, which is why naming
-                    // the middle needs no machinery of its own.  A tail element is a BARE NAME:
-                    // a variant sub-pattern or literal after a `..` is not parsed in either
-                    // spelling (loft#1419), which is the one part of `t` still outstanding.
-                    if let Some(name) = rest_name.clone() {
-                        let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-                        let rest_var = self.pattern_binding(&name, &vec_tp);
-                        self.vars.defined(rest_var);
-                        if !self.first_pass && rest_var != u16::MAX {
-                            let lo_val = Value::Int(head.len() as i32);
-                            let len_c = self.cursor_len(v);
-                            let hi_val = self.conv_op(
-                                "-",
-                                len_c,
-                                Value::Int(tail.len() as i32),
-                                I32.clone(),
-                                I32.clone(),
-                            );
-                            self.materialize_named_rest(
-                                v,
-                                &elm_tp,
-                                &elm_size,
-                                rest_var,
-                                &vec_tp,
-                                lo_val,
-                                hi_val,
-                                1,
-                                &mut bindings,
-                            );
-                        }
-                    }
-                } // end `if !multi_alt`
-                // @PLN35 L2 — AND element sub-pattern conditions into the arm condition AFTER the
-                // length check, so `&&` short-circuit never reads past the end.
-                for ec in elem_conds.drain(..) {
-                    match cond.take() {
-                        // `c && ec` via short-circuit if (the AND idiom used elsewhere in match
-                        // lowering) — avoids reading v[pos] when the length check already failed.
-                        Some(c) => cond = Some(v_if(c, ec, Value::Boolean(false))),
-                        None => cond = Some(ec),
-                    }
-                }
+                        conds.extend(cond_i);
+                    },
+                );
             } else if let Some(id) = self.lexer.has_identifier() {
                 if id == "_" {
                     is_total = true;
@@ -12698,6 +12112,14 @@ impl Parser {
             // so native delivered 0 (interpret happened to still surface the value).
             let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+            // The alternatives run the BODY under their own bindings, so they take it before
+            // the first pattern's bindings fold into it below.
+            let mut bare_body = if alternatives.is_empty() {
+                Value::Null
+            } else {
+                arm_code.clone()
+            };
+            let bare_type = arm_type.clone();
             // loft#978 — every arm can deliver this match's value, so the result carries
             // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
@@ -12729,12 +12151,44 @@ impl Parser {
                 }
                 Vec::new()
             };
+            // Each alternative runs a CLONE of the arm body under its own bindings, which
+            // assign the shared slots the first pattern's do — as the tuple match does.
+            if !alternatives.is_empty() && bare_type != arm_type {
+                self.convert_arm_tail(&mut bare_body, &bare_type, &arm_type);
+            }
+            let alternative_arms: Vec<PatternArm> = alternatives
+                .into_iter()
+                .map(|(mut binds_i, conds_i)| {
+                    let cond_i = conds_i
+                        .into_iter()
+                        .reduce(|a, b| v_if(a, b, Value::Boolean(false)));
+                    let (code_i, bindings_i) = if guard_opt.is_some() || binds_i.is_empty() {
+                        (bare_body.clone(), binds_i)
+                    } else {
+                        binds_i.push(bare_body.clone());
+                        (
+                            v_block(binds_i, arm_type.clone(), "slice_binding"),
+                            Vec::new(),
+                        )
+                    };
+                    PatternArm {
+                        cond: cond_i,
+                        guard: guard_opt.clone(),
+                        bindings: bindings_i,
+                        code: code_i,
+                    }
+                })
+                .collect();
             arms.push(PatternArm {
                 cond,
                 guard: guard_opt,
                 bindings: arm_bindings,
                 code: arm_code,
             });
+            for alt in alternative_arms {
+                arm_types.push(arm_type.clone());
+                arms.push(alt);
+            }
             if has_wildcard {
                 self.lexer.has_token(",");
                 break;
@@ -12782,6 +12236,617 @@ impl Parser {
         // the merged type is a view (`Parser::own_joined_call_arms`).
         self.own_joined_call_arms(code, &result_type);
         result_type
+    }
+
+    /// One slice pattern `[ … ]` of a vector match arm, the `[` already taken: its bindings,
+    /// its condition and the element sub-pattern conditions ANDed onto it, and any sub-rule
+    /// call hoisted ahead of the arm chain.  Called once per pattern of an arm, so a
+    /// multi-pattern arm (`@FR-P-Multi`) parses each of its slice patterns here.
+    #[expect(clippy::too_many_lines, reason = "inherited from parse_vector_match")]
+    fn parse_slice_pattern(
+        &mut self,
+        subject: &SliceSubject,
+        bindings: &mut Vec<Value>,
+        cond: &mut Option<Value>,
+        elem_conds: &mut Vec<Value>,
+        prechain: &mut Vec<Value>,
+    ) {
+        let SliceSubject {
+            v,
+            elm_tp,
+            elm_size,
+            borrow_src,
+        } = *subject;
+        // Parse slice pattern elements
+        // @PLN35 Phase 4.3: set when a whole-slice MULTI-element alternation built the
+        // arm `cond` itself (predictive dispatch); suppresses the fixed-length gate below.
+        let mut multi_alt = false;
+        let mut head: Vec<String> = Vec::new();
+        let mut tail: Vec<String> = Vec::new();
+        // How many fixed elements follow the `..`, known as soon as the rest is seen.
+        let mut tail_total: i32 = 0;
+        let mut has_rest = false;
+        let mut rest_name: Option<String> = None;
+        // How the rest was spelled (`..xs` or `xs:integer*`), for the second-rest refusal.
+        let mut rest_label = String::new();
+        // The fewest elements the rest may take: 1 for a scalar `xs:T+`, else 0.
+        let mut rest_min: i32 = 0;
+        loop {
+            if self.lexer.has_token("]") {
+                break;
+            }
+            // @PLN35 — classify a `( … )` group ONCE per element (a second look-ahead
+            // over the same region corrupts the lexer replay buffer).  A `Repetition`
+            // may sit MID-slice (fixed head before it); an `Alt` is whole-slice only, so
+            // its branch keeps the `head.is_empty()` guard.
+            let group_kind = if !has_rest && self.lexer.peek_token("(") {
+                self.peek_group_kind()
+            } else {
+                SliceGroupKind::Other
+            };
+            if self.lexer.has_token("..") {
+                // @PLN35 Phase 2 (P-Rest) — `..name` with the name ADJACENT to `..` (no
+                // comma) captures the tail sub-slice as a FRESH vector. `.., x` (a comma
+                // before the name) stays a bare gap plus a tail binding. Named rest is
+                // tail-only (enforced after the loop).
+                let name = self.lexer.has_identifier();
+                // `@FR-P-Rest` — `t` counts the FIXED patterns after the rest, so a
+                // second variable-length part has no length of its own: the first takes
+                // every element the fixed ones leave.  Accepting it dropped the first
+                // rest's binding without a word (`[..a, ..b]` bound only `b`).
+                if has_rest && !self.first_pass {
+                    let second = format!("..{}", name.as_deref().unwrap_or(""));
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a slice pattern holds one variable-length part, and `{second}` is a second one after `{rest_label}` — the first already takes every element the fixed ones leave; drop one of them"
+                    );
+                }
+                if has_rest {
+                    // Declared so the arm body still parses: the refusal above is the
+                    // one error, not an `Unknown variable` cascade behind it.
+                    if let Some(n) = &name {
+                        self.declare_refused_rest(n, elm_tp);
+                    }
+                } else {
+                    rest_label = format!("..{}", name.as_deref().unwrap_or(""));
+                    rest_name = name;
+                }
+                has_rest = true;
+                // Everything from here to `]` is the fixed TAIL, and each of its
+                // elements is read from the end.  Count them now so a variant
+                // sub-pattern or a literal there knows its own index while it parses
+                // (loft#1419); a bare name does not need it, which is why only bare
+                // names used to be admitted.
+                self.lexer.has_token(",");
+                tail_total = self.count_slice_tail_elements();
+            } else if self.match_cursor.is_some()
+                && head.is_empty()
+                && !has_rest
+                && let Some((name, fn_nr, ret_tp)) = self.peek_subrule_capture()
+            {
+                // @PLN35 PC2 — sub-rule invocation `[ name: rule ]` in cursor mode: call
+                // `rule(cursor)` (which prefix-matches over the SAME cursor, advancing its
+                // `pos` on a match and leaving it on a miss — PC1 semantics), bind `name` to
+                // the result, and gate the arm on `name != null`.  Whole-pattern only for
+                // now (the running-pos + revert needed to mix a variable-width sub-rule with
+                // fixed elements is deferred).  `multi_alt` skips the fixed length gate +
+                // pos-advance — the sub-rule owns the pos.
+                self.parse_subrule_slice_element(&name, fn_nr, &ret_tp, cond, prechain);
+                multi_alt = true;
+                break;
+            } else if self.pattern_variant_enum(elm_tp).is_none()
+                && let Some(is_rep) = self.peek_scalar_type_capture()
+                && (is_rep || !has_rest)
+            {
+                // @PLN35 slice 1 — a scalar type-annotated capture `name:Type` (single —
+                // a type-as-match that always holds for the element type) OR its
+                // `name:Type*` / `+` repetition collected into a `vector<elm_tp>`.  Only
+                // for a SCALAR element type; enum elements keep the `name:pat` /
+                // `(x: V)*` paths below.
+                if is_rep {
+                    // `@FR-P-Rep-Scalar` — `Type` is the element type, so EVERY element
+                    // matches it and the run is a TYPED REST: `(P-Rest)` with `t` the
+                    // fixed patterns after it, whatever they are, and `+` asking one
+                    // element more.  It is parsed as the rest it is, so its tail takes
+                    // every element form a `..rest` tail takes (loft#1736).
+                    let name = self.lexer.has_identifier().unwrap_or_default();
+                    self.lexer.token(":");
+                    let tname = self.lexer.has_identifier().unwrap_or_default();
+                    let elm_name = elm_tp.source_name(&self.data);
+                    if !self.first_pass && tname != elm_name {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "a scalar repetition `{name}:{tname}*` must match the vector's element type {elm_name}"
+                        );
+                    }
+                    let plus = self.lexer.has_token("+");
+                    if !plus {
+                        self.lexer.token("*");
+                    }
+                    let label = format!("{name}:{tname}{}", if plus { "+" } else { "*" });
+                    if has_rest {
+                        if !self.first_pass {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "a slice pattern holds one variable-length part, and `{label}` is a second one after `{rest_label}` — the first already takes every element the fixed ones leave; drop one of them"
+                            );
+                        }
+                        self.declare_refused_rest(&name, elm_tp);
+                    } else {
+                        has_rest = true;
+                        rest_label = label;
+                        rest_name = Some(name);
+                        rest_min = i32::from(plus);
+                        if self.lexer.has_token(",") {
+                            tail_total = self.count_slice_tail_elements();
+                        }
+                    }
+                    continue;
+                }
+                // Single `name:Type`: bind `name = v[pos]`; the annotation matches the
+                // element type so no condition is needed (a "_" keeps position alignment
+                // for following bare-name indices).
+                let position = head.len() as i32;
+                let name = self.lexer.has_identifier().unwrap();
+                self.lexer.token(":");
+                let tname = self.lexer.has_identifier().unwrap_or_default();
+                let elm_name = elm_tp.source_name(&self.data);
+                if !self.first_pass && tname != elm_name {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a scalar capture `{name}:{tname}` must match the element type {elm_name}"
+                    );
+                }
+                let bind_nr = self.pattern_binding(&name, elm_tp);
+                self.vars.defined(bind_nr);
+                let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
+                bindings.push(v_set(bind_nr, val));
+                self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+                head.push("_".to_string());
+            } else if !has_rest && self.lexer.peek_named_arg().is_some() {
+                // @PLN35 Phase 2 (P-Cap) — `name:pat` element capture. Bind the whole
+                // element to `name` (a VIEW of the subject, exactly the read a bare head
+                // binding emits) AND require sub-pattern `pat` to match the same element.
+                // Head position only (before any `..`); a `_` placeholder keeps the
+                // position count aligned for following bare-name indices, as the variant
+                // sub-pattern branch does.
+                let name = self.lexer.has_identifier().unwrap();
+                self.lexer.token(":");
+                let position = head.len() as i32;
+                // Bind name = v[position] — the same read as the head-binding loop below.
+                let bind_nr = self.pattern_binding(&name, elm_tp);
+                self.vars.defined(bind_nr);
+                let bval = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
+                bindings.push(v_set(bind_nr, bval));
+                self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+                // Sub-pattern condition on the SAME element. Read v[position] AGAIN: the
+                // binding var is assigned only in the arm body (after the condition runs),
+                // so the condition must read the element directly, never the binding.
+                let cread = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
+                let mut sub_conds: Vec<Value> = Vec::new();
+                let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
+                if let Some(c) = self.parse_field_sub_pattern(
+                    cread,
+                    elm_tp,
+                    bindings,
+                    &mut sub_conds,
+                    &mut aliases,
+                ) {
+                    elem_conds.push(c);
+                }
+                elem_conds.append(&mut sub_conds);
+                // The names a sub-pattern bound belong to this arm; its end restores them.
+                self.pattern_binds_pending.append(&mut aliases);
+                head.push("_".to_string());
+            } else if self.peek_is_variant_subpattern(elm_tp) {
+                // Read v[pos] and tag-test + bind via parse_field_sub_pattern; a "_"
+                // placeholder keeps the position count so following bare-name indices align.
+                // A head element counts forward from 0; a tail element counts BACK from
+                // the end, exactly as a bare tail name does.
+                let position = if has_rest {
+                    -(tail_total - tail.len() as i32)
+                } else {
+                    head.len() as i32
+                };
+                let read = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
+                let mut sub_conds: Vec<Value> = Vec::new();
+                let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
+                if let Some(c) = self.parse_field_sub_pattern(
+                    read,
+                    elm_tp,
+                    bindings,
+                    &mut sub_conds,
+                    &mut aliases,
+                ) {
+                    elem_conds.push(c);
+                }
+                elem_conds.append(&mut sub_conds);
+                // The names a sub-pattern bound belong to this arm; its end restores them.
+                self.pattern_binds_pending.append(&mut aliases);
+                if has_rest {
+                    tail.push("_".to_string());
+                } else {
+                    head.push("_".to_string());
+                }
+            } else if group_kind == SliceGroupKind::Repetition {
+                // @PLN35 Phase 6 — a repetition `[ head…, ( [name:] V )*[(Sep)] [tail…]
+                // [, ..rest] ]` / `…+`.  `head` is any fixed prefix already parsed (its
+                // binds/conds are in `bindings`/`elem_conds`); the run starts at `head_len`
+                // and any fixed `tail` after the group is matched from the END.
+                // `parse_slice_repetition` builds the run-loop cond + collection and
+                // consumes through `]`, so break the element loop.
+                if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
+                    let head_len = head.len() as i32;
+                    // Bind any BARE-NAME head element (a variant sub-pattern / literal
+                    // already emitted its own bind/cond and left a "_").  These are safe:
+                    // the arm's `cond` requires `len >= head_len` before bindings run.
+                    for (i, name) in head.iter().enumerate() {
+                        if name == "_" {
+                            continue;
+                        }
+                        let bind_nr = self.pattern_binding(name, elm_tp);
+                        self.vars.defined(bind_nr);
+                        let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                        bindings.push(v_set(bind_nr, val));
+                        self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+                    }
+                    self.parse_slice_repetition(
+                        e_nr, v, elm_size, elm_tp, head_len, borrow_src, cond, bindings,
+                    );
+                    multi_alt = true;
+                } else {
+                    if !self.first_pass {
+                        let elm_name = self.slice_element_name(elm_tp);
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "a repetition `( … )*` slice element needs a struct-enum element type, not `{elm_name}`"
+                        );
+                    }
+                    self.skip_rest_of_slice();
+                }
+                break;
+            } else if group_kind == SliceGroupKind::Alt
+                && (head.is_empty() || self.match_cursor.is_none())
+            {
+                // @PLN35 Phase 4.3 / 5 — a WHOLE-SLICE MULTI-element alternation
+                // `[ (A B | C) [, ..rest] ]` OR an OPTIONAL group `[ (a)? [, ..rest] ]`
+                // (a degenerate alternation `(a | ε)`).  Predictive dispatch on the leading
+                // tags over a sequence per branch; it builds the arm `cond` itself and
+                // consumes through `]`, so break the element loop and skip the length gate.
+                if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
+                    // A fixed head before an optional group (loft#2048): its bare names
+                    // bind as a repetition's head does — the arm's `cond` gates them.
+                    let head_len = head.len() as i32;
+                    for (i, name) in head.iter().enumerate() {
+                        if name == "_" {
+                            continue;
+                        }
+                        let bind_nr = self.pattern_binding(name, elm_tp);
+                        self.vars.defined(bind_nr);
+                        let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                        bindings.push(v_set(bind_nr, val));
+                        self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+                    }
+                    self.parse_multi_element_alternation(
+                        e_nr, v, elm_size, elm_tp, head_len, borrow_src, cond, bindings,
+                    );
+                    multi_alt = true;
+                } else {
+                    if !self.first_pass {
+                        let elm_name = self.slice_element_name(elm_tp);
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "an alternation `( … | … )` slice element needs a struct-enum element type, not `{elm_name}`"
+                        );
+                    }
+                    self.skip_rest_of_slice();
+                }
+                break;
+            } else if let Type::Tuple(elems) = elm_tp.base()
+                && group_kind == SliceGroupKind::Other
+                && self.lexer.has_token("(")
+            {
+                // `@FR-P-Point` × `(G-Pat-Group)` — a `( … )` with no pattern operator is
+                // a TUPLE pattern, and over a tuple element it tests that one element,
+                // position by position, exactly as a tuple subject's arm does.  It was
+                // read as an alternation and refused (loft#1737).  A head element
+                // counts forward from 0, a tail element back from the end.
+                let elems = elems.clone();
+                let position = if has_rest {
+                    -(tail_total - tail.len() as i32)
+                } else {
+                    head.len() as i32
+                };
+                let tmp = self.create_unique("slice_tuple", elm_tp);
+                self.vars.defined(tmp);
+                let mut t_binds: Vec<Value> = Vec::new();
+                let mut t_conds: Vec<Value> = Vec::new();
+                self.parse_tuple_pattern_elements(tmp, &elems, &mut t_binds, &mut t_conds);
+                // The test reads the element itself, because the bindings run only once
+                // the arm commits; the bindings read it again for the same reason.
+                if !t_conds.is_empty() {
+                    let mut test = t_conds.remove(0);
+                    for c in t_conds {
+                        test = v_if(test, c, Value::Boolean(false));
+                    }
+                    let read = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
+                    elem_conds.push(v_block(
+                        vec![v_set(tmp, read), test],
+                        Type::Boolean,
+                        "tuple element test",
+                    ));
+                }
+                if !t_binds.is_empty() {
+                    let read = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
+                    bindings.push(v_set(tmp, read));
+                    bindings.append(&mut t_binds);
+                }
+                if has_rest {
+                    tail.push("_".to_string());
+                } else {
+                    head.push("_".to_string());
+                }
+            } else if !has_rest && self.lexer.peek_token("(") {
+                // @PLN35 Phase 4 (P-Alt) — a parenthesized single-element alternation
+                // `( V1 { f } | V2 { f } )` in a head slice-element position. Tag-test
+                // the element against each branch and bind the shared captures from the
+                // matching variant's offsets. A `_` placeholder keeps position alignment
+                // for following bare-name indices, as the variant sub-pattern branch does.
+                if let Some((e_nr, true)) = self.pattern_variant_enum(elm_tp) {
+                    let position = head.len() as i32;
+                    let read = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(position));
+                    self.parse_slice_alternation_element(
+                        e_nr,
+                        &read,
+                        Some(borrow_src),
+                        bindings,
+                        elem_conds,
+                        true,
+                    );
+                    head.push("_".to_string());
+                } else {
+                    if !self.first_pass {
+                        let elm_name = self.slice_element_name(elm_tp);
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "an alternation `( … | … )` slice element needs a struct-enum element type, not `{elm_name}`"
+                        );
+                    }
+                    self.skip_rest_of_slice();
+                    break;
+                }
+            } else if self.peek_is_slice_literal() {
+                // @PLN35 Phase 6.3 (P-Lit) — a LITERAL head element `[ 1, … ]` /
+                // `[ "kw", … ]`.  On a SCALAR element it matches by direct EQUALITY
+                // against `v[pos]`.  On a STRUCT-ENUM element (a token stream) it matches
+                // against the variant's `#lexeme` field — so `"fn"` reads like the
+                // grammar, standing in for `Keyword { name: "fn" }`.  A "_" placeholder
+                // keeps following bare-name indices AND the length gate aligned, and the
+                // condition is AND'd into the arm like a variant tag test.  In the TAIL
+                // it reads at a negative index, the same way a bare tail name does.
+                let position = if has_rest {
+                    -(tail_total - tail.len() as i32)
+                } else {
+                    head.len() as i32
+                };
+                let mut lit = Value::Null;
+                let lit_tp = self.expression(&mut lit);
+                match self.build_literal_match(
+                    v,
+                    elm_size,
+                    elm_tp,
+                    &Value::Int(position),
+                    &lit,
+                    &lit_tp,
+                ) {
+                    Some(c) => elem_conds.push(c),
+                    None if !self.first_pass => self.slice_literal_mismatch(elm_tp, &lit_tp),
+                    None => {}
+                }
+                if has_rest {
+                    tail.push("_".to_string());
+                } else {
+                    head.push("_".to_string());
+                }
+            } else if let Some(id) = self.lexer.has_identifier() {
+                if has_rest {
+                    tail.push(id);
+                } else {
+                    head.push(id);
+                }
+            } else {
+                // Unrecognized element token (`{`, an unsupported tail sub-pattern, …).
+                // None of the branches above consumed anything, so this MUST break to make
+                // progress — otherwise the loop spins forever on the same token in the
+                // first pass (where diagnostics are silent).
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "expected identifier, literal, or '..' in slice pattern"
+                    );
+                }
+                break;
+            }
+            self.lexer.has_token(",");
+        }
+        // @PLN35 Phase 4.3: a whole-slice multi-element alternation built the arm cond +
+        // bindings itself (predictive dispatch), so skip the fixed-position length gate,
+        // the head/tail binds, and the rest materialisation below.
+        if !multi_alt {
+            let fixed = (head.len() + tail.len()) as i32;
+            // Generate length condition
+            let len_call = self.cursor_len(v);
+            if let Some((cursor_var, cursor_def, pos_field, pos_var)) = self.match_cursor {
+                // @PLN35 PC1 — cursor PREFIX-consume: need `fixed` elements from `pos`
+                // (`pos + fixed <= len`), and on a match advance `cursor.pos` by `fixed`.
+                // `pos_var` stays the ENTRY position, so every read AND this write share it.
+                let ispec = Type::Integer(IntegerSpec {
+                    min: 0,
+                    max: 0,
+                    not_null: false,
+                    forced_size: None,
+                });
+                let need = self.conv_op(
+                    "+",
+                    Value::Var(pos_var),
+                    Value::Int(fixed),
+                    I32.clone(),
+                    I32.clone(),
+                );
+                self.call_op(
+                    cond.get_or_insert(Value::Null),
+                    "<=",
+                    &[need, len_call],
+                    &[ispec.clone(), ispec],
+                );
+                let new_pos = self.conv_op(
+                    "+",
+                    Value::Var(pos_var),
+                    Value::Int(fixed),
+                    I32.clone(),
+                    I32.clone(),
+                );
+                let adv = self.set_field(
+                    cursor_def,
+                    pos_field,
+                    0,
+                    Value::Var(cursor_var),
+                    new_pos.clone(),
+                );
+                bindings.push(adv);
+                // @PLN35 PC5 — maintain the farthest high-water mark: `farthest =
+                // max(farthest, new_pos)`.  Monotonic across arms + sub-rules (the shared
+                // cursor carries it), so after a failed parse it names the deepest token
+                // reached.  Opt-in — only when the cursor has a `farthest` field.
+                if let Some(ff) = self.match_cursor_farthest {
+                    let old_far = self.get_field(cursor_def, ff, Value::Var(cursor_var));
+                    let is_less = self.conv_op(
+                        "<",
+                        old_far.clone(),
+                        new_pos.clone(),
+                        I32.clone(),
+                        I32.clone(),
+                    );
+                    let maxed = v_if(is_less, new_pos, old_far);
+                    let set_far = self.set_field(cursor_def, ff, 0, Value::Var(cursor_var), maxed);
+                    bindings.push(set_far);
+                }
+            } else if has_rest {
+                // length >= fixed (+1 for a `xs:T+` rest)  →  fixed <= length
+                self.call_op(
+                    cond.get_or_insert(Value::Null),
+                    "<=",
+                    &[Value::Int(fixed + rest_min), len_call],
+                    &[
+                        Type::Integer(IntegerSpec {
+                            min: 0,
+                            max: 0,
+                            not_null: false,
+                            forced_size: None,
+                        }),
+                        Type::Integer(IntegerSpec {
+                            min: 0,
+                            max: 0,
+                            not_null: false,
+                            forced_size: None,
+                        }),
+                    ],
+                );
+            } else {
+                // length == fixed
+                self.call_op(
+                    cond.get_or_insert(Value::Null),
+                    "==",
+                    &[len_call, Value::Int(fixed)],
+                    &[
+                        Type::Integer(IntegerSpec {
+                            min: 0,
+                            max: 0,
+                            not_null: false,
+                            forced_size: None,
+                        }),
+                        Type::Integer(IntegerSpec {
+                            min: 0,
+                            max: 0,
+                            not_null: false,
+                            forced_size: None,
+                        }),
+                    ],
+                );
+            }
+            // Bind head elements: head[i] = v[i]
+            for (i, name) in head.iter().enumerate() {
+                if name == "_" {
+                    continue;
+                }
+                let bind_nr = self.pattern_binding(name, elm_tp);
+                self.vars.defined(bind_nr);
+                let val = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(i as i32));
+                bindings.push(v_set(bind_nr, val));
+                self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+            }
+            // Bind tail elements: tail[j] = v[len - tail.len() + j]
+            for (j, name) in tail.iter().enumerate() {
+                if name == "_" {
+                    continue;
+                }
+                let bind_nr = self.pattern_binding(name, elm_tp);
+                self.vars.defined(bind_nr);
+                let idx = Value::Int(-((tail.len() - j) as i32));
+                let val = self.read_slice_elem(v, elm_size, elm_tp, idx);
+                bindings.push(v_set(bind_nr, val));
+                self.mark_slice_element_view(bind_nr, elm_tp, borrow_src);
+            }
+            // @FR-P-Rest — `..name` binds `name` to the FRESH sub-slice
+            // `v[head_len .. len - tail_len]`, so fixed elements MAY follow the rest and
+            // the middle shrinks by however many do.  Reuse the proven compile-time slice
+            // materialisation (`materialize_iterator`): a minimal slice `Value::Iter` over the
+            // index range, copied element-type-aware into a fresh vector (P-Cap-Fresh — the
+            // result is INDEPENDENT of the subject, so it is safe to return or mutate).
+            // Bounds are in range by the `fixed <= len` arm condition, which counts head AND
+            // tail.  The tail elements are already bound above, at negative indices — the
+            // same reads the un-named gap `[a, .., z]` has always used, which is why naming
+            // the middle needs no machinery of its own.  A tail element is a BARE NAME:
+            // a variant sub-pattern or literal after a `..` is not parsed in either
+            // spelling (loft#1419), which is the one part of `t` still outstanding.
+            if let Some(name) = rest_name.clone() {
+                let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
+                let rest_var = self.pattern_binding(&name, &vec_tp);
+                self.vars.defined(rest_var);
+                if !self.first_pass && rest_var != u16::MAX {
+                    let lo_val = Value::Int(head.len() as i32);
+                    let len_c = self.cursor_len(v);
+                    let hi_val = self.conv_op(
+                        "-",
+                        len_c,
+                        Value::Int(tail.len() as i32),
+                        I32.clone(),
+                        I32.clone(),
+                    );
+                    self.materialize_named_rest(
+                        v, elm_tp, elm_size, rest_var, &vec_tp, lo_val, hi_val, 1, bindings,
+                    );
+                }
+            }
+        } // end `if !multi_alt`
+        // @PLN35 L2 — AND element sub-pattern conditions into the arm condition AFTER the
+        // length check, so `&&` short-circuit never reads past the end.
+        for ec in elem_conds.drain(..) {
+            match cond.take() {
+                // `c && ec` via short-circuit if (the AND idiom used elsewhere in match
+                // lowering) — avoids reading v[pos] when the length check already failed.
+                Some(c) => *cond = Some(v_if(c, ec, Value::Boolean(false))),
+                None => *cond = Some(ec),
+            }
+        }
     }
 
     /// Does the sub-pattern at the cursor list alternatives — a `|` before the `,`, `)`, `}`
@@ -22943,6 +23008,7 @@ impl Parser {
         let mut in_named = false;
         if self.lexer.has_token(")") {
             let selected = self.select_method_def(select, &types);
+            self.refuse_unpublished_method(selected, false);
             if std::mem::take(&mut self.reported_dynamic_refusal) {
                 return if self.first_pass {
                     Type::Unknown(0)
@@ -23064,6 +23130,7 @@ impl Parser {
             return Type::Never;
         }
         let selected = self.select_method_def(select, &types);
+        self.refuse_unpublished_method(selected, false);
         // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
         // the whole answer, as `Parser::call` makes it for the bare spelling.
         if std::mem::take(&mut self.reported_dynamic_refusal) {

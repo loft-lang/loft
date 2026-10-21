@@ -110,14 +110,22 @@ impl Parser {
         // The base relation first, then the nullability step on top of it.
         let base: Rank = if same {
             EXACT
-        } else if let (Type::Integer(from), Type::Integer(to)) = (arg.base(), param.base())
+        } else if let (Type::Integer(_), Type::Integer(_)) = (a, p)
             && crate::keys::element_key_enabled()
-            && to.min <= from.min
-            && from.max <= to.max
         {
-            // `(C-Int)` — an integer into a range that holds all of it is the widening the
+            // `@FR-C-Int` — an integer into a range that holds all of it is the widening the
             // integer lattice has, as a variant into its enum is below: two widths are two
-            // types (@PLN165 B1), and the wider one takes the narrower without loss.
+            // types (@PLN165 B1), and the wider one takes the narrower without loss.  "Holds"
+            // is asked of `is_narrowing_int_store`, the one home every implicit integer store
+            // asks (`@FR-I-Sub`), never of the raw bounds: a plain `integer` REPORTS the 32-bit
+            // bounds while it holds the 64-bit range, so a bound comparison read a `u32` as no
+            // widening into `integer` and an `integer` as a widening into `i32` (loft#2113).
+            // A store that narrows is no candidate (`@FR-Disp-Applicable`: the lone twin
+            // refuses it), and is answered here rather than by `can_convert`, whose integer
+            // equality ignores the width and would rank `integer` into `i32` CONVERTED.
+            if Self::is_narrowing_int_store(a, p) {
+                return None;
+            }
             WIDENED
         } else if let (Type::Reference(v_nr, _), Type::Enum(e_nr, _, _)) =
             (arg.base(), param.base())

@@ -521,6 +521,11 @@ pub struct Function {
     /// from `scopes::stored_reference_homes`; read by `scopes::insert_evacuations` after the
     /// scope pass has placed the frees.
     ref_evacuations: Vec<[u16; 4]>,
+    /// `@FR-H-RefHome` — the locals whose store holds a record a stored reference names,
+    /// however long the holder lasts (`scopes::StoredRefs::named`).  Set by
+    /// `Parser::check_reshape_under_reference`; read by the rewrites that would move such a
+    /// store's records into another value (`literal_host`, loft#2118).
+    ref_named: Vec<u16>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -869,6 +874,7 @@ impl Function {
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
             ref_evacuations: Vec::new(),
+            ref_named: Vec::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -1101,6 +1107,7 @@ impl Function {
         self.join_owners.clear();
         self.join_owners.clone_from(&other.join_owners);
         self.ref_evacuations.clone_from(&other.ref_evacuations);
+        self.ref_named.clone_from(&other.ref_named);
         // CARRIED: pass 1 promotes a `text?` local to a hidden work buffer and pass 2 reads
         // the mark at that local's own declaration (loft#1616).
         self.nullable_text_buffers.clear();
@@ -1184,6 +1191,7 @@ impl Function {
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),
             ref_evacuations: other.ref_evacuations.clone(),
+            ref_named: other.ref_named.clone(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -4178,6 +4186,20 @@ impl Function {
     #[must_use]
     pub fn ref_evacuations(&self) -> &[[u16; 4]] {
         &self.ref_evacuations
+    }
+
+    /// `@FR-H-RefHome` — see the field's own doc.
+    pub fn mark_ref_named(&mut self, var_nr: u16) {
+        if !self.ref_named.contains(&var_nr) {
+            self.ref_named.push(var_nr);
+        }
+    }
+
+    /// Does a stored reference name a record of `var_nr`'s store (`ref_named`), or has
+    /// its store moved out as a home (`ref_home`)?
+    #[must_use]
+    pub fn is_ref_named(&self, var_nr: u16) -> bool {
+        self.ref_named.contains(&var_nr) || self.is_ref_home(var_nr)
     }
 
     /// `@FR-H-RefHome` — see the field's own doc.

@@ -10,7 +10,7 @@ pub struct Log {
   pub errors: i32 = 0
 }
 
-fn error(self: Log, message: text) {
+pub fn error(self: Log, message: text) {
   self.messages += ["Error: {message}"];
   println(message);
   self.errors += 1;
@@ -22,13 +22,13 @@ fn error(self: Log, message: text) {
   }
 }
 
-fn fatal(self: Log, message: text) {
+pub fn fatal(self: Log, message: text) {
   self.messages += ["Fatal: {message}"];
   if self.level < Fatal {
     self.level = Fatal;
   }
 }
 
-fn warning(self: Log, message: text) {
+pub fn warning(self: Log, message: text) {
   self.messages += ["Warning: {message}"];
 }

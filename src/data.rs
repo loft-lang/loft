@@ -9312,6 +9312,25 @@ impl Data {
             }
             if own(self, &key) == u32::MAX {
                 self.admit_overload_set(lexer, fn_name, d_nr);
+                // `@FR-F-Recv` / `@FR-Disp-Applicable` — `m(τ)` and `m(τ?)` are one receiver's
+                // two spellings, and the set decides between them only if it carries both: the
+                // `τ?` twin has a key of its own, so no collision admits it, and left outside
+                // the set a `τ?` receiver ranked the dense member LOSSY and ran it with
+                // `self == null` (loft#2114).  A `both` twin is a member already.
+                if is_self || is_both {
+                    let twin = self
+                        .def(d_nr)
+                        .attributes
+                        .first()
+                        .and_then(|a| receiver_key(self, &nullability_twin(&a.typedef)))
+                        .map_or(u32::MAX, |k| own(self, &k));
+                    if twin != u32::MAX
+                        && self.def(twin).source == self.def(d_nr).source
+                        && incumbent_joins(self, twin)
+                    {
+                        self.admit_overload_set(lexer, fn_name, twin);
+                    }
+                }
                 name = key;
                 overload_label = Some(full);
                 d_nr = u32::MAX;
@@ -9383,6 +9402,30 @@ impl Data {
                     join_as_method = is_self;
                 }
             }
+        }
+        // `@FR-F-Recv` — the other order: a `self` method whose receiver's nullability twin is
+        // already a member of this source's set joins it under its own receiver key, as the
+        // twin would have admitted it had the set formed after both (loft#2114).
+        if is_self
+            && d_nr == u32::MAX
+            && overload_label.is_none()
+            && !join_as_method
+            && (generic_members || !newcomer_is_template)
+            && o_nr != u32::MAX
+            && self.def(o_nr).def_type == DefType::Dynamic
+            && self.def(o_nr).source == self.source
+            && let Some(twin) = arguments
+                .first()
+                .and_then(|a| receiver_key(self, &nullability_twin(&a.typedef)))
+                .map(|k| own(self, &k))
+            && twin != u32::MAX
+            && self
+                .def(o_nr)
+                .attributes
+                .iter()
+                .any(|a| matches!(a.typedef.base(), Type::Routine(r) if *r == twin))
+        {
+            join_as_method = true;
         }
         if d_nr != u32::MAX {
             // Name WHERE the winner lives, exactly as the shadowing branch above does.

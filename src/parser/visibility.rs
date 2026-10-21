@@ -152,6 +152,50 @@ impl Parser {
         diagnostic!(self.lexer, Level::Error, "{why}.\n  fix: {fix}");
     }
 
+    /// @FR-F-Surface (loft#2115) — a METHOD its library declares without `pub` is not on the
+    /// library's surface, so a call from outside its file reaches it by neither spelling:
+    /// `x.m(…)`, which finds it in the receiver type's attribute table (every method of the
+    /// type is there once its package is loaded, by any `use` or by a trigger), nor
+    /// `lib::m(x)`, which [`crate::data::Data::qualified_refusal`] asks by NAME while a method
+    /// is keyed by its receiver.  `d_nr` is the definition the call SELECTED — a generic
+    /// method's template, before it is instantiated, because an instance is minted where it is
+    /// first called and carries no `pub` of its own.  The stdlib, the caller's own file and
+    /// source, and a synthesised dispatcher are not judged.
+    pub(super) fn refuse_unpublished_method(&mut self, d_nr: u32, qualified: bool) {
+        if self.first_pass || self.default || d_nr >= self.data.definitions() {
+            return;
+        }
+        let def = self.data.def(d_nr);
+        if def.pub_visible
+            || def.synthetic.is_some()
+            || !matches!(def.def_type, DefType::Function | DefType::Generic)
+            || def.source == crate::data::STD_SOURCE
+            || def.source == self.data.source
+            || def.position.file == self.lexer.pos().file
+        {
+            return;
+        }
+        let Some(key) = crate::data::Data::split_key(&def.name)
+            .filter(|k| k.kind == crate::data::KeyKind::Method)
+        else {
+            return;
+        };
+        let name = key.rest.to_string();
+        let lib = Self::library_of(&def.position.file);
+        let spelling = if qualified {
+            format!("`{lib}::{name}`")
+        } else {
+            format!("`.{name}(…)`")
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{name}` is not `pub` in `{lib}`, so {spelling} cannot reach it: a library's \
+             surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, or the program \
+             uses something `{lib}` does publish"
+        );
+    }
+
     /// @PLN187 (@C140, @FR-F-Visible) — a type that is NAME ONLY outside its file (not `pub`, but named by a
     /// `pub` signature there) can be named, passed and stored there, never BUILT: a literal of it
     /// outside its file is refused.  Building a non-`pub` type was refused before name-only

@@ -194,6 +194,9 @@ impl Scan<'_> {
             Value::Block(bl) => bl.operators.last().is_some_and(|l| self.yields_buffer(l)),
             Value::Insert(ops) => ops.last().is_some_and(|l| self.yields_buffer(l)),
             Value::If(_, t, e) => self.yields_buffer(t) && self.yields_buffer(e),
+            // `return B` ending a block — the copy tail `{ …; return __retbuf }` a body with an
+            // `if` gets — answers what it returns (loft#2116).
+            Value::Return(r) => self.yields_buffer(r),
             // The null a match's fallthrough answers: appended, it adds nothing — as the twin's
             // exit adds nothing.
             Value::Call(d, args)

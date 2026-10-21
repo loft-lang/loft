@@ -2686,8 +2686,8 @@ exactly as the append copies them.  No guard is needed: the conditions are all s
                  a byte or short type 1 or 2 with the sign its range gives, a 4-byte type
                  signed — reads through the same format test, `#next` and handle as the
                  generic read, decoding W = n bytes at sign S fixed at the site, the bytes
-                 taken by value.  A short read leaves t unchanged and advances `#next` by
-                 what arrived, as the generic read does.  `boolean`, `character`, text, a
+                 taken by value.  A short read leaves t unchanged and `#next` where it
+                 was, as the generic read does.  `boolean`, `character`, text, a
                  float, a collection, an n that is not τ's width and a slot that is not an
                  `i64` local keep the generic read.  Native only; the interpreter's read is
                  the reference the guard compares against.

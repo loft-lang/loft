@@ -280,6 +280,12 @@ pub struct Parser {
     ///
     /// One retry, never two: the flag both requests the second parse and stops it asking again.
     pub(crate) inplace_hint_declined: bool,
+    /// loft#2117 — the literal about to be parsed again is built apart and copied into its
+    /// PROJECTION place (`o.f = S { … }`) rather than written into it: a field of it built
+    /// inside a collection field read the place, whose collection headers the in-place road
+    /// zeroes before any field value runs.  Taken (and cleared) by the literal it is meant
+    /// for, so a literal nested inside keeps its own road.
+    pub(crate) inplace_place_declined: bool,
     /// The local a literal is being rebuilt into, while one of its COLLECTION members is
     /// parsed, or `u16::MAX`.  Such a member is written through its field after the record is
     /// re-initialised, so a read of the local inside it would read the cleared record
@@ -1830,6 +1836,7 @@ impl Parser {
             in_format_expr: false,
             prefix_operand: false,
             inplace_hint_declined: false,
+            inplace_place_declined: false,
             rebuild_watch: u16::MAX,
             rebuild_watch_hit: false,
             in_tuple_lhs: false,

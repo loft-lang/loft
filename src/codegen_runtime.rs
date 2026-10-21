@@ -2966,6 +2966,7 @@ pub fn OpReadFile<T: FileVal>(
     stores
         .store_mut(&file)
         .set_long(file.rec, file.pos + 8, next_pos);
+    let n = bytes.max(0) as usize;
     let file_ref = if open_ref == i32::MIN {
         file_handle_read(stores, &file, next_pos)
     } else {
@@ -2974,7 +2975,6 @@ pub fn OpReadFile<T: FileVal>(
     if file_ref == i32::MIN {
         return;
     }
-    let n = bytes.max(0) as usize;
     // A scalar read is 1–8 bytes, and a heap buffer per read was a third of a binary
     // read loop; the stack takes every read up to 16 bytes.
     let mut small = [0u8; 16];
@@ -2986,7 +2986,13 @@ pub fn OpReadFile<T: FileVal>(
         &mut large
     };
     let is_text = stores.is_text_type(db_tp as u16);
-    let nread = if let Some(f) = stores
+    // STDLIB_FILES § `f#read(n) as T`: a count below T's storage width answers null and
+    // `#next` does not move — read as a short read, which takes no byte (loft#2119).
+    // `State::read_file`'s rule.
+    let narrow = !is_text && n < stores.binary_size(db_tp as u16);
+    let nread = if narrow {
+        0
+    } else if let Some(f) = stores
         .files
         .get_mut(file_ref as usize)
         .and_then(|x| x.as_mut())
@@ -3018,7 +3024,7 @@ pub fn OpReadFile<T: FileVal>(
 /// taken by value (`LoftFile::take_array`).  `W` is 1, 2, 4 or 8 bytes;
 /// `SIGNED` is the sign the type's range gives (`State::dispatch_read_data`'s rule), and a
 /// 4- or 8-byte read is signed as the generic decode reads it.  A short read leaves `val`
-/// unchanged and advances `#next` by what arrived, exactly as the generic path does.
+/// unchanged and `#next` where it was, exactly as the generic path does.
 #[cfg(not(host_fs))]
 pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
     cell: &std::cell::UnsafeCell<Stores>,
@@ -3344,15 +3350,24 @@ pub fn OpReadFile<T: FileVal>(
     let path = file_record_path(stores, &file);
     let n = bytes.max(0) as usize;
     crate::wasm::host_fs_seek(&path, next_pos);
-    // A read past the end answers FEWER bytes, and `#next` must advance by what
-    // actually arrived — advancing by the requested `n` would walk the cursor
-    // past the file and make every following read empty.
-    if let Some(data) = crate::wasm::host_fs_read_bytes(&path, n) {
+    // A count below T's storage width answers null and `#next` does not move: it reads as
+    // a short read, which takes no byte (loft#2119).
+    let read = if !stores.is_text_type(db_tp as u16) && n < stores.binary_size(db_tp as u16) {
+        Some(Vec::new())
+    } else {
+        crate::wasm::host_fs_read_bytes(&path, n)
+    };
+    // A text read past the end answers FEWER bytes, and `#next` advances by what arrived.
+    if let Some(data) = read {
         let actual = data.len() as i64;
         val.file_from_bytes(stores, db_tp, little_endian, &data);
-        stores
-            .store_mut(&file)
-            .set_long(file.rec, file.pos + 16, next_pos + actual);
+        // A SHORT binary read answers null and `#next` stays where it was (STDLIB_FILES §
+        // `f#read(n) as T`, the non-host read's rule, loft#2119); text takes what arrived.
+        if stores.is_text_type(db_tp as u16) || data.len() >= n {
+            stores
+                .store_mut(&file)
+                .set_long(file.rec, file.pos + 16, next_pos + actual);
+        }
     }
 }
 

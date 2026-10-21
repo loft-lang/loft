@@ -7444,6 +7444,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             _ => return None,
         };
+        self.owned_heap_copy(val, src, tp)
+    }
+
+    /// The COPY half of [`Self::tuple_member_owned_copy`]: rewrite `val` into a block that
+    /// copies `src`, a heap value of type `tp`, into a frame-local backing and answers it,
+    /// answering the copy's type.  A keyed collection, a record, a tuple with a heap leaf and
+    /// a vector each copy as a plain bind copies them; any other type answers `None` and
+    /// leaves `val` alone.  Which sources are COPIED is the caller's question — this half
+    /// only builds the copy.  `@FR-B-Copy`.
+    #[expect(clippy::too_many_lines, reason = "one branch per heap kind")]
+    pub(crate) fn owned_heap_copy(
+        &mut self,
+        val: &mut Value,
+        src: Value,
+        tp: &Type,
+    ) -> Option<Type> {
         // The KEYED half of `D-tup-4`, closed with the copy the keyed family already has.
         // `OpReplaceKeyed` is what a STRUCT literal emits for a keyed member (`S { h: a }`),
         // and a tuple RETURN copies through the synthetic `__tuple<…>` record — so both
