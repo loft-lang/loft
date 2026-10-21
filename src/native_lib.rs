@@ -1572,6 +1572,7 @@ pub fn build_shared_cdylib(
         tmp_so.display().to_string(),
         rs.display().to_string(),
     ];
+    args.extend(crate::cache::native_release_flags());
     args.extend(crate::native_lib::loft_extern_args(&rlib));
     args.extend(["-L".to_string(), deps.display().to_string()]);
     // macOS records the `-o` path inside the Mach-O as its INSTALL NAME, and the
@@ -2208,7 +2209,10 @@ pub fn cached_or_build_shared_cdylib(
             ),
             layout_fp,
         ),
-        contributing_fingerprint(contributing),
+        mix_fp(
+            contributing_fingerprint(contributing),
+            crate::cache::native_release_flags_fingerprint(),
+        ),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
     // never name the same file.  The fingerprint alone was not enough: the fast
