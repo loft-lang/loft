@@ -2785,7 +2785,21 @@ the IR rewrites.  Guard `tests/scripts/a-file-read-loop-holds-its-cursor.loft`, 
                  `clear` or a free, and each variable serving it — the store a local is minted
                  into, the save of a work buffer's incoming value — has no other mention.
                  Nothing of it crosses into the store, so this instance needs no plan of the
-                 whole program and is made in every native build.
+                 whole program and is made in every native build.  Instance 4, a RECORD OF
+                 RECORD VECTORS: a struct whose every field is a vector of a struct of
+                 scalar fields (`integer`, `float`, `boolean`) is one byte buffer per field
+                 in the element's own layout, kept across a loop's iterations, when it is a
+                 local of a body (the OWNER) whose every mention is its null init, its mint,
+                 a field emptied, a PUSH GROUP — the element minted on a field, every field
+                 of the element written once, the element finished, the element named by
+                 nothing else — a field's length, an argument of a TWIN, or its free, and it
+                 reaches at least one twin.  A twin `n_<f>__apr` takes the parameter as a
+                 reference to the value; it exists when every mention of that parameter is a
+                 field's length, an argument of a twin (greatest fixpoint over the calls),
+                 or the copy of an APPEND GROUP — the BOUNDARY, where the bytes are written
+                 into fresh blocks of the appended element, or under `(R-HandOver)`'s
+                 rotate clause into the oldest element's blocks.  Nothing writes the
+                 parameter and nothing returns it.
 ```
 
 **In words.**  The store protocol is for data that lasts.  A matrix built, multiplied and
@@ -2804,6 +2818,16 @@ so a mention the emitter fails to rewrite is a `rustc` type error.  A build that
 tier has no plan, since a twin's call would run the native body of a function flipped to the
 interpreter.  A twin and a body holding a region are emitted with the vector hoists off, so no
 loop in them plans a header, a base or an address on a variable the apart value replaced.
+
+Instance 4 is the frame-local half of `(R-HandOver)`'s division: a value BUILT each iteration,
+read by one callee and copied into a collection that keeps it, never needs a record of its own.
+Its element bytes are the bytes the store would hold — each field written by the op the store
+path runs, in the element's layout — so the boundary is a byte copy into the blocks it claims
+(or reuses), and no field is left to a default: a push group that does not write every field
+of the element declines, because the store path would have prefilled it.  The buffers are
+cleared, not freed, at the mint of each iteration, so after the first iterations the build
+allocates nothing.  Priced on dryopea `truncate_to` (the driver's `e` and `history_push`
+edited by hand): 44.2 → 16.6 µs, −62.5 %, ≈ 1.2× the Rust twin.
 
 An inline vector answers what the store's vector answers — empty at its init, an index from
 the end, an index out of range reported or, for `v[i]?`, null — and its loops plan no header,

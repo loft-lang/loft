@@ -271,6 +271,20 @@ hand-over pays only where it also removes bookkeeping.  Not yet built: the stack
 (`(R-Apart)` for `Timeline` and `Stroke`, *est.* −5 %) and `e` built apart (*est.* −12–15 %),
 which together are the rest of the distance to ≈ 2.4×.
 
+**`truncate_to` to 2.5×: three forms priced (2026-10-21, at 3.23×, 44.0 µs against 13.6).**
+- MOVE `e` into the timeline (the Rust form): `e` must live in the timeline's store, since a
+  block does not change stores; moved out, its refill claims fresh blocks through vector
+  growth, which goes to the best-fit free tree — `fl_*` ≈ 40 % of the profile, **+63 %**.
+- SWAP on steady pushes, copy on growing ones: the swapped-in blocks are exact-size, so the
+  driver's reservation regrows them every push (`reserve_vector → resize → claim_best_fit`),
+  **+48 %**.  In its own store `e`'s blocks grew once and kept their slack.
+- `e` APART: the three `PaintedDelta` and one `MarkerDelta` built as bytes in the frame, and a
+  `history_push` twin writing them into the entry's blocks (rotate) or fresh exact blocks
+  (growing): 44.2 → 16.6 µs, **−62.5 %**, hash unchanged, ≈ 1.2×.  The store-side build of
+  `e` (kept-record test, two clears, a push header, a reservation, three record pushes, a field
+  append, two finishes) and the copy out of it were ≈ 60 % of the routine.  Built as
+  `(R-Apart)` instance 4.
+
 **Zero fills in the runtime, classified.**  NEEDED (the structure reads 0 as "empty"): a hash
 table's buckets when made or grown (`hash.rs`), the entry arena's directory and chunks
 (`arena.rs`), a fresh store's root record (`codegen_runtime.rs`, `state/io.rs`: its collection

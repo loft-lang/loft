@@ -214,6 +214,70 @@ fn ap_index_slow(cell: &std::cell::UnsafeCell<Stores>, i: i64, n: usize) -> Opti
 /// answers for the vector it stands for: an empty vector at its init, a negative index from
 /// the end, an index out of range reported (`Stores::index_or_raise_runtime`) or, for `v[i]?`,
 /// null without a report.
+/// `@FR-R-Apart` instance 4 — one field of a record of record vectors held apart: the
+/// elements' bytes, `E` each, in the element's store layout, so the boundary copies them as
+/// they stand.  `clear` keeps the capacity: a value rebuilt every iteration allocates nothing
+/// once it has grown.  A pushed element starts as zeros only so that its padding is defined;
+/// the gate admits a push only when every field is written.
+#[derive(Default)]
+pub struct AprVec<const E: usize> {
+    b: Vec<u8>,
+}
+
+impl<const E: usize> AprVec<E> {
+    #[must_use]
+    pub const fn new() -> Self {
+        AprVec { b: Vec::new() }
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.b.clear();
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.b.len() / E
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.b.is_empty()
+    }
+
+    /// Append an element; answers its byte offset.
+    #[inline]
+    pub fn push_elem(&mut self) -> usize {
+        let at = self.b.len();
+        self.b.resize(at + E, 0);
+        at
+    }
+
+    #[inline]
+    pub fn set_i64(&mut self, at: usize, v: i64) {
+        self.b[at..at + 8].copy_from_slice(&v.to_ne_bytes());
+    }
+
+    #[inline]
+    pub fn set_f64(&mut self, at: usize, v: f64) {
+        self.b[at..at + 8].copy_from_slice(&v.to_ne_bytes());
+    }
+
+    /// A `boolean` field's byte, as `OpSetBoolean` writes it.
+    #[inline]
+    pub fn set_byte(&mut self, at: usize, v: u8) {
+        self.b[at] = v;
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.b
+    }
+}
+
 pub struct ApVec<const C: usize> {
     /// The inline slots: only `[0, min(n, C))` is ever read, and each of those was written by
     /// a push — so the array is never filled up front, which cost a store of all `C` slots on

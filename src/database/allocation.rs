@@ -3697,6 +3697,138 @@ impl Stores {
         true
     }
 
+    /// `@FR-R-Apart` instance 4's boundary — an apart record written into the FRESH element
+    /// `dst`: per part `(slot, bytes, n)`, a block of exactly `n` elements claimed in `dst`'s
+    /// store with the bytes copied in, its reference written at the slot; an empty part writes
+    /// the empty vector (0).  Nothing is done for a null or read-only destination, which the
+    /// store path's copy also leaves untouched.
+    pub fn apart_write_fresh(&mut self, dst: &DbRef, parts: &[(u32, &[u8], u32)]) {
+        if dst.store_nr == u16::MAX
+            || dst.rec == 0
+            || (dst.store_nr as usize) >= self.allocations.len()
+            || !self.store(dst).write_allowed(dst.rec, dst.pos)
+        {
+            return;
+        }
+        for &(slot, bytes, n) in parts {
+            if n == 0 {
+                self.store_mut(dst).set_u32_raw(dst.rec, dst.pos + slot, 0);
+                continue;
+            }
+            let b = self.apart_block(dst, 0, bytes, n);
+            self.store_mut(dst).set_u32_raw(dst.rec, dst.pos + slot, b);
+        }
+    }
+
+    /// A block of `dst`'s store holding `n` elements whose bytes are `bytes`: `reuse` when it
+    /// is a block large enough (0 claims one), grown when too small.  Answers the block.
+    fn apart_block(&mut self, dst: &DbRef, reuse: u32, bytes: &[u8], n: u32) -> u32 {
+        let words = 1 + (bytes.len() as u32).div_ceil(8);
+        let store = self.store_mut(dst);
+        let b = if reuse == 0 {
+            store.claim(words)
+        } else if store.record_words(reuse) < words {
+            store.resize(reuse, words)
+        } else {
+            reuse
+        };
+        store.set_u32_raw(b, 4, n);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                store.base_ptr().add(b as usize * 8 + 8),
+                bytes.len(),
+            );
+        }
+        b
+    }
+
+    /// `@FR-R-HandOver`'s rotate clause from an apart record (`@FR-R-Apart` instance 4): as
+    /// [`Self::rotate_into`], with the new element's vectors given as parts `(slot, bytes, n)`
+    /// rather than read from a record.  `false`, with nothing changed, on the tests
+    /// `rotate_into` makes of the vector and of element 0, or when the parts are not the
+    /// element type's vectors.
+    pub fn rotate_from_parts(
+        &mut self,
+        vec: &DbRef,
+        parts: &[(u32, &[u8], u32)],
+        elem_tp: u16,
+        k: i64,
+    ) -> bool {
+        if !crate::keys::hand_over_enabled()
+            || k < 1
+            || vec.is_null()
+            || vec.rec == 0
+            || (vec.store_nr as usize) >= self.allocations.len()
+        {
+            return false;
+        }
+        let vstore = &self.allocations[vec.store_nr as usize];
+        if vstore.read_only || vstore.is_foreign() || vstore.shadow_armed() {
+            return false;
+        }
+        let vec_rec = vstore.collection_rec(vec.rec, vec.pos);
+        if vec_rec == 0 || i64::from(vstore.get_u32_raw(vec_rec, 4)) != k {
+            return false;
+        }
+        let Some((plan, count)) = self.plain_vectors_of(elem_tp) else {
+            return false;
+        };
+        let size = u32::from(self.size(elem_tp));
+        const ROT_MAX: usize = 64;
+        if count != parts.len()
+            || size as usize > ROT_MAX
+            || plan[..count]
+                .iter()
+                .zip(parts)
+                .any(|(&(off, esize), &(slot, bytes, n))| {
+                    off != slot || bytes.len() != (esize * n) as usize
+                })
+        {
+            return false;
+        }
+        let vstore = &self.allocations[vec.store_nr as usize];
+        let cap = vstore.capacity_words();
+        let mut held = [0u32; PLAIN_MAX];
+        for (i, &(off, _)) in plan[..count].iter().enumerate() {
+            let cur = vstore.get_u32_raw(vec_rec, 8 + off);
+            if cur == 0 || Self::owned_edge_absent(cur) {
+                continue;
+            }
+            if cur >= cap || vstore.is_referenced(cur) {
+                return false;
+            }
+            held[i] = cur;
+        }
+        let first = DbRef {
+            store_nr: vec.store_nr,
+            rec: vec_rec,
+            pos: 8,
+        };
+        for (i, &(slot, bytes, n)) in parts.iter().enumerate() {
+            if n == 0 {
+                if held[i] != 0 {
+                    self.store_mut(&first).delete(held[i]);
+                }
+                self.store_mut(&first).set_u32_raw(vec_rec, 8 + slot, 0);
+                continue;
+            }
+            let b = self.apart_block(&first, held[i], bytes, n);
+            self.store_mut(&first).set_u32_raw(vec_rec, 8 + slot, b);
+        }
+        let store = self.store_mut(&first);
+        let n = usize::try_from(k).unwrap_or(0);
+        let sz = size as usize;
+        unsafe {
+            let base = store.base_ptr().add(vec_rec as usize * 8 + 8);
+            let mut tmp = [0u8; ROT_MAX];
+            std::ptr::copy_nonoverlapping(base, tmp.as_mut_ptr(), sz);
+            std::ptr::copy(base.add(sz), base, (n - 1) * sz);
+            std::ptr::copy_nonoverlapping(tmp.as_ptr(), base.add((n - 1) * sz), sz);
+        }
+        true
+    }
+
     /// `len` bytes from `from` to `to`, in one store or two, for a caller that has checked
     /// both writable and both ranges inside their records.
     fn move_bytes(&mut self, from: &DbRef, to: &DbRef, len: u32) {
