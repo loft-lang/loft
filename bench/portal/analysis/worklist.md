@@ -135,6 +135,47 @@ prefill on both sides of the call: `panel_build` 3.67× → 3.44×.
 4.66×.  Store creation is ~950 instructions (12 % of `encode`) spread over slot bookkeeping,
 `Store::init` and a fresh store's first claim through the tree path; no single fold moves it
 more than ~2 %.
+#### The rows still near or over 4×, toward WELL below 3× (2026-10-21, at `8308712f1`)
+
+Re-measured at the tip (`stats.py --routine`, loop alignment on): `field_add_cell` 4.29×,
+`slope_path_with_undo` 4.22×, `truncate_to` 3.95×.  Well below 3× (≈ 2.5×) means −40 % or more
+on each.  Two runtime CEILINGS were measured by runtime swap under the same emitted programs
+(9 interleaved rounds, hashes unchanged), as the bound on what any validate-once rewrite or
+growth change can deliver:
+
+| ceiling | `truncate_to` | `panel_build` | `field_add_cell` | `collect_dirty_inputs` | `slope_path_with_undo` |
+|---|--:|--:|--:|--:|--:|
+| every store access unchecked (bounds, lock, shadow) | −22.8 % | −15.2 % | −9.3 % | −9.9 % | −3.5 % |
+| no zero fill when a store grows | −4.6 % | +0.8 % | +0.4 % | −0.2 % | −0.9 % |
+
+The checks are 19 % of `field_add_cell`'s instructions and cost 9 % of its time: predicted
+branches.  What each row needs:
+
+- **`truncate_to`.**  The checks inside the copy, release and allocator paths validated once per
+  record or block (realistic half the ceiling, *est.* −12 %) and the growth fill dropped (−4.6 %,
+  sound only if nothing reads a word it did not write, `@C137`, falsifier `LOFT_POISON_CLAIM=1`):
+  ≈ 3.3×.  Below that is the allocator's unit cost: a claim ~150 and a delete ~140 instructions
+  against `malloc` / `free`'s 30–50 — a size-class pool per store that touches no tree and one
+  bit set (*est.* −15–20 %, ≈ 2.7×).  The parked lists' raw form was priced and dropped
+  (+2.5 %): the lever is fewer steps, not cheaper ones.
+- **`slope_path_with_undo`.**  The index arithmetic guarded once for range and then plain (the
+  owner's "proved away by ranges": −12.3 % priced 2026-10-20), the element read's two header
+  reads shared (−4.8 % priced), the `Hex` value read and written as one block instead of
+  seven checked fields (*est.* −8 %), `s.us_redo = []` skipped on an empty vector (*est.* −2 %):
+  ≈ 3.2×.  Well below 3× needs the three chunk walks per step to stop re-deriving the chunk
+  vector's and each `ck_hexes` header: L7, the caller's held headers handed into
+  `map_get_hex` / `map_set_hex` (*est.* −25–30 %, ≈ 2.3×), which must re-derive after
+  `map_ensure_chunk` appends a chunk.
+- **`field_add_cell`.**  The keyed runtime's checks validated once per probe (*est.* −5 %), each
+  keyed operation's fixed metadata (`keyed_entry_long` 64, `Entries::of` 37, `read_seed` 17,
+  `sub_record_type` 14 instructions) resolved by the emitter where the type, field and key
+  position are static (*est.* −12 %), a cheaper rehash (*est.* −2 %): ≈ 3.5×.  The hash itself
+  is not the gap (SipHash-1-3 on both sides).  Well below 3× needs the table's LAYOUT: keys
+  inline in the bucket array, so a probe is one cache line with no arena-directory hop and a
+  rehash reads no record (hashbrown's ~150 instructions an operation against ~435–600 now;
+  *est.* −40 % of the row, ≈ 2.5×).  That layout is the placement contract
+  (`crate::placement::HASH`): a decision before a design.
+
 #### The five rows over 4× at `bc9b9d724`, re-analysed on the production runtime (2026-10-21)
 
 `scripts/gap_report.py --lean` (callgrind on the `target/install-lib` runtime, the one
