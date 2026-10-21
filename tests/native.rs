@@ -4129,6 +4129,73 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
     Ok(())
 }
 
+/// @PLN199 B2 — a loft function that calls a `#c` binding compiles into its library's
+/// cdylib: the gate used to turn the binding into an interpreted CALLEE, so every loft
+/// wrapper of a C function ran interpreted.  The cdylib is linked against no C library — its
+/// host has bound them — so each symbol resolves at its first call (`PackageLink::Library`).
+/// The trace must count both wrappers compiled, and the bindings neither compiled nor
+/// interpreted; the answers are hand-computed (17 mod 5 = 2, plus 100; the shim answers
+/// `shim-<n>`) and must hold interpreted, mixed, `--native` and `--native --static`.
+#[test]
+fn a_loft_wrapper_over_a_c_binding_compiles() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if find_loft_rlib().is_none()
+        || loft::platform::process::harness_command("cc")
+            .arg("--version")
+            .output()
+            .is_err()
+    {
+        println!("a_loft_wrapper_over_a_c_binding_compiles: skipped (no rustc / cc)");
+        return Ok(());
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
+    let libdir = root.join("pkg");
+    let _ = fa::remove_dir_all(libdir.join("lcshim").join("native-auto"));
+    let prog = std::env::temp_dir().join(format!("loft_pln199_b2_{}.loft", std::process::id()));
+    fa::write(
+        &prog,
+        "use lcshim::*;\nfn main() {\n  println(\"{wrapped_mod(17, 5)} {wrapped_owned(7)} {shim_mod(17, 5)}\");\n}\n",
+    )?;
+    let run = |args: &[&str], env: &[(&str, &str)]| -> std::io::Result<(String, String)> {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.args(args)
+            .arg("--lib")
+            .arg(&libdir)
+            .arg(&prog)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "600");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output()?;
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(
+            out.status.success(),
+            "{args:?} exited {}: stdout={stdout:?} stderr={stderr}",
+            out.status
+        );
+        Ok((stdout, stderr))
+    };
+    let want = "102 <shim-7> 2\n";
+    let (interp, _) = run(&["--interpret"], &[("LOFT_NO_NATIVE_LIBS", "1")])?;
+    assert_eq!(interp, want, "interpreted");
+    let (mixed, trace) = run(&["--interpret"], &[("LOFT_TRACE_NATIVE_GATE", "1")])?;
+    assert_eq!(mixed, want, "mixed:\n{trace}");
+    assert!(
+        trace.contains("lcshim: 2 of 2 callable functions compiled"),
+        "both wrappers compiled, the bindings not counted:\n{trace}"
+    );
+    let (native, _) = run(&["--native"], &[])?;
+    assert_eq!(native, want, "--native");
+    let (stat, _) = run(&["--native", "--static"], &[])?;
+    assert_eq!(stat, want, "--native --static");
+    let _ = fa::remove_file(&prog);
+    Ok(())
+}
+
 /// @PLN24 arc D — the return spellings a `#c` declaration must refuse, because
 /// nothing at runtime would.
 ///

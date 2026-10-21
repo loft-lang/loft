@@ -190,6 +190,14 @@ pub fn mark(data: &mut Data, stores: &Stores, default_dir: &str) -> usize {
     marked
 }
 
+/// Does the standard library carry a compiled body for the function stored as `name`?
+/// [`mark`] points its calls at that body after the program is parsed, so the parser asks
+/// this to give such a call what a bridged call needs (`Parser::crosses_text_bridge`).
+#[must_use]
+pub fn carries(name: &str) -> bool {
+    generated::BRIDGES.iter().any(|(n, _, _)| *n == name)
+}
+
 /// The compiled bridge for a `loft_shared_…` symbol, when the standard library carries it.
 #[must_use]
 pub fn bridge(sym: &str) -> Option<*const ()> {

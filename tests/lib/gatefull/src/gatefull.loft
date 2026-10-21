@@ -59,6 +59,14 @@ pub fn par_sum(xs: vector<integer>) -> integer {
     s
 }
 
+// A `parallel { }` block: one arm, joined before the function returns.
+fn show_arm(n: integer) { println("arm {n}"); }
+pub fn par_block(x: integer) -> integer {
+    n = x * 2;
+    parallel { show_arm(n); }
+    n + 1
+}
+
 // A generic, and a function that instantiates it.
 pub fn generic<T: Numeric>(a: T, b: T) -> T { a * b }
 pub fn uses_generic(x: integer) -> integer { generic(x, 4) }

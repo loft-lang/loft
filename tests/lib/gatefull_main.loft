@@ -28,6 +28,12 @@ fn main() {
     w += ret_lit();
     w += ret_field_text(c);
     println("ret_lit [{ret_lit()}] {len(ret_lit())} {w}"); // [fixed] 5 <fixedhello
+    // The standard library's compiled `basename` / `dir` return a slice of their argument:
+    // the same shape, reached through `compiled_stdlib::mark` rather than a library.
+    path = "/usr/local/bin/tool";
+    tail = "<";
+    tail += path.basename();
+    println("stdlib [{path.basename()}] [{path.dir()}] {len(path.dir())} {tail}"); // [tool] [/usr/local/bin] 14 <tool
     t = ret_tuple(4);
     println("ret_tuple {t.0} {t.1}"); // 8 t4
     println("arg_tuple {arg_tuple((3, 4))}"); // 304
@@ -43,5 +49,6 @@ fn main() {
     println("gen {g}"); // 0 + 10 + 20 + 30 = 60
     println("sum_gen {sum_gen(4)}"); // 60
     println("par_sum {par_sum([1, 2, 3])}"); // 3 + 6 + 9 = 18
+    println("par_block {par_block(7)}"); // the arm prints "arm 14" first; 7 * 2 + 1 = 15
     println("uses_generic {uses_generic(5)}"); // 20
 }

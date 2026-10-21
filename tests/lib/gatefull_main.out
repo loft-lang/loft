@@ -5,6 +5,7 @@ ret_hash 3 22
 ret_sorted_loop 13000
 ret_field_text hello [hello] 5
 ret_lit [fixed] 5 <fixedhello
+stdlib [tool] [/usr/local/bin] 14 <tool
 ret_tuple 8 t4
 arg_tuple 304
 arg_ref 6
@@ -14,4 +15,6 @@ local_lambda 11
 gen 60
 sum_gen 60
 par_sum 18
+arm 14
+par_block 15
 uses_generic 20

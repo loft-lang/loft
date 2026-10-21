@@ -1,60 +1,7 @@
-diff --git b/src/native_gate.rs a/src/native_gate.rs
-index 35686b28b..b1a5e9a42 100644
---- b/src/native_gate.rs
-+++ a/src/native_gate.rs
-@@ -329,21 +329,9 @@ fn walk_decline(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> Option<De
-         // Dynamic dispatch: the runtime callee is unknown → can't prove native.
-         Value::CallRef(_, _) => Some(Decline::CallRef),
-         // A static call: the callee must itself be native, and so must the args.
--        // @PLN199 B2 — a `#c` callee is: the cdylib calls its C symbol through the bind
--        // table every generated library carries (`__C_LIBS` / `__C_LIB_SYMS`, @PLN197), as
--        // a whole-program build does.  Only the `#c` DEFINITION stays out of the export set
--        // (`fn_decline`'s `CBinding`): the binding is its implementation.
--        Value::Call(callee, args) => {
--            let c_binding =
--                *callee < data.definitions() && !data.def(*callee).c_sig.is_empty();
--            (if c_binding {
--                None
--            } else {
--                fn_decline(data, *callee, visited)
--            })
-+        Value::Call(callee, args) => fn_decline(data, *callee, visited)
-             .map(|_| Decline::Callee(*callee))
--            .or_else(|| all(args, visited))
--        }
-+            .or_else(|| all(args, visited)),
-         // Structural nodes carrying children — recurse into all of them.
-         Value::Span(b) => walk_decline(&b.1, data, visited),
-         Value::Block(b) | Value::Loop(b) => all(&b.operators, visited),
-diff --git b/src/native_lib.rs a/src/native_lib.rs
-index d8c7d2cdf..42d7778d9 100644
---- b/src/native_lib.rs
-+++ a/src/native_lib.rs
-@@ -526,12 +526,6 @@ pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
- 
- /// The functions of the library at `pkg_dir` a script can name and call — the candidates
- /// [`library_export_set`] narrows to those that compile.
--///
--/// @PLN199 E1 — a function already bound to a native symbol is not one: a body-less
--/// `#native` declaration walks clean through the gate (its body is `Null`), and exporting a
--/// `loft_shared_` bridge for it would replace the binding with a bridge to a function that
--/// has no loft body — the @PLN24 hazard, for `#native` instead of `#c`.  A symbol that IS
--/// a `loft_shared_` bridge was set by an earlier marking of this same set.
- fn library_candidates(data: &Data, pkg_dir: &str) -> HashSet<u32> {
-     (0..data.definitions())
-         .filter(|&d| {
-@@ -539,7 +533,6 @@ fn library_candidates(data: &Data, pkg_dir: &str) -> HashSet<u32> {
-             matches!(def.def_type(), DefType::Function)
-                 && def.pub_visible
-                 && !is_synthetic_name(def.name())
--                && (def.native().is_empty() || def.native().starts_with("loft_shared_"))
-                 && crate::file_access::is_under(def.position().file.as_str(), pkg_dir)
-         })
-         .collect()
-diff --git b/src/parallel.rs a/src/parallel.rs
+diff --git a/src/parallel.rs b/src/parallel.rs
 index 9c6acf138..407aeaf71 100644
---- b/src/parallel.rs
-+++ a/src/parallel.rs
+--- a/src/parallel.rs
++++ b/src/parallel.rs
 @@ -1530,7 +1530,6 @@ pub fn run_parallel_block(
      program: WorkerProgram,
      arm_positions: &[u32],
@@ -81,10 +28,10 @@ index 9c6acf138..407aeaf71 100644
          }
      }
  }
-diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
 index f23cb5605..6fd3ffed6 100644
---- b/src/state/codegen.rs
-+++ a/src/state/codegen.rs
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
 @@ -1657,14 +1657,9 @@ impl State {
              let offset = (arm_start - join_pos) as u16;
              self.code_put(arm_offset_positions[i], offset);
@@ -102,10 +49,10 @@ index f23cb5605..6fd3ffed6 100644
              self.code_add(0u16); // return_size = 0
              self.code_add(stack.position);
          }
-diff --git b/src/state/mod.rs a/src/state/mod.rs
+diff --git a/src/state/mod.rs b/src/state/mod.rs
 index c5dae5018..2428b5b2d 100644
---- b/src/state/mod.rs
-+++ a/src/state/mod.rs
+--- a/src/state/mod.rs
++++ b/src/state/mod.rs
 @@ -3521,19 +3521,7 @@ impl State {
              frame_headroom: Arc::clone(&self.frame_headroom),
              line_numbers: Arc::new(self.line_numbers.clone()),

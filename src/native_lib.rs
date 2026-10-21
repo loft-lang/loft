@@ -526,6 +526,14 @@ pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
 
 /// The functions of the library at `pkg_dir` a script can name and call — the candidates
 /// [`library_export_set`] narrows to those that compile.
+///
+/// @PLN199 E1 — a function already bound to a native symbol is not one: a body-less
+/// `#native` declaration walks clean through the gate (its body is `Null`), and exporting a
+/// `loft_shared_` bridge for it would replace the binding with a bridge to a function that
+/// has no loft body — the @PLN24 hazard, for `#native` instead of `#c`.  A symbol that IS
+/// a `loft_shared_` bridge was set by an earlier marking of this same set.  A `#c`
+/// binding is left out for the same reason: its C symbol is its implementation, so it is
+/// neither compiled nor interpreted, and the trace does not list it as either.
 fn library_candidates(data: &Data, pkg_dir: &str) -> HashSet<u32> {
     (0..data.definitions())
         .filter(|&d| {
@@ -533,6 +541,8 @@ fn library_candidates(data: &Data, pkg_dir: &str) -> HashSet<u32> {
             matches!(def.def_type(), DefType::Function)
                 && def.pub_visible
                 && !is_synthetic_name(def.name())
+                && (def.native().is_empty() || def.native().starts_with("loft_shared_"))
+                && def.c_sig.is_empty()
                 && crate::file_access::is_under(def.position().file.as_str(), pkg_dir)
         })
         .collect()
@@ -730,6 +740,7 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
         // gate drives the matching link flags in `build_shared_cdylib`, so codegen
         // and link never disagree.  No-op when the library uses no native package.
         out.native_cabi = native_cabi_link_enabled();
+        out.library_unit = true;
         // @PLN157 — a library cdylib is a SHIPPED binary: the lean tier, exactly as a
         // `--native-release` program.  Its functions run under the consumer's every
         // call, and the named per-call frame push was that lane's largest cost.

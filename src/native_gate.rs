@@ -11,13 +11,11 @@
 //! (compiled, dispatched via `OpStaticCall`) and the rest (run by the
 //! interpreter).  This module computes that partition.
 //!
-//! **The denylist is small.**  Investigating the native backend (`generation/`)
-//! found it emits *everything* — structs, enums, vectors, **generics, closures** —
-//! except the concurrency constructs `parallel{}` / `par_for` / `yield`, for which
-//! `emit.rs` writes a non-code comment.  (`NATIVE_SKIP` / `SCRIPTS_NATIVE_SKIP` in
-//! `tests/native.rs` are both empty — the whole corpus compiles.)  So the
-//! generics/closures "research problem" the plan feared was a phantom; the gate is
-//! simply "uses no concurrency construct, transitively."
+//! **The denylist is small.**  The native backend (`generation/`) emits everything —
+//! structs, enums, vectors, generics, closures, `par` loops and `parallel { }` blocks
+//! (`n_parallel_block_native`, loft#1054).  What a compiled LIBRARY still cannot carry
+//! is a generator body (`yield`) and a call through a function value, whose callee the
+//! cdylib cannot name; @PLN199 removes those in turn.
 //!
 //! **The gate is transitive and conservative** (Goal F — when unsure, interpret):
 //! a function is native iff its body *and every function it `Call`s* are native.
@@ -274,8 +272,6 @@ pub enum Decline {
     CBinding,
     /// The body uses `yield` — it is a generator.
     Yield,
-    /// The body uses `parallel` / `par_for`.
-    Parallel,
     /// The body calls through a function value, whose callee cannot be proven compiled.
     CallRef,
     /// The body calls this function, which itself stays interpreted.
@@ -322,20 +318,32 @@ fn walk_decline(v: &Value, data: &Data, visited: &mut HashSet<u32>) -> Option<De
         vs.iter().find_map(|x| walk_decline(x, data, visited))
     };
     match v {
-        // The native backend cannot emit these (concurrency / coroutine) — see
-        // `generation/emit.rs` (Parallel emits a non-code comment).
-        Value::Parallel(_) => Some(Decline::Parallel),
+        // A generator body: its frame lives in the cdylib's own coroutine table, which is
+        // not the interpreter's (@PLN199 D).
         Value::Yield(_) => Some(Decline::Yield),
         // Dynamic dispatch: the runtime callee is unknown → can't prove native.
         Value::CallRef(_, _) => Some(Decline::CallRef),
         // A static call: the callee must itself be native, and so must the args.
-        Value::Call(callee, args) => fn_decline(data, *callee, visited)
+        // @PLN199 B2 — a `#c` callee is: the cdylib calls its C symbol through the bind
+        // table every generated library carries (`__C_LIBS` / `__C_LIB_SYMS`, @PLN197), as
+        // a whole-program build does.  Only the `#c` DEFINITION stays out of the export set
+        // (`fn_decline`'s `CBinding`): the binding is its implementation.
+        Value::Call(callee, args) => {
+            let c_binding = *callee < data.definitions() && !data.def(*callee).c_sig.is_empty();
+            (if c_binding {
+                None
+            } else {
+                fn_decline(data, *callee, visited)
+            })
             .map(|_| Decline::Callee(*callee))
-            .or_else(|| all(args, visited)),
+            .or_else(|| all(args, visited))
+        }
         // Structural nodes carrying children — recurse into all of them.
         Value::Span(b) => walk_decline(&b.1, data, visited),
         Value::Block(b) | Value::Loop(b) => all(&b.operators, visited),
-        Value::Insert(vs) | Value::Tuple(vs) => all(vs, visited),
+        // @PLN199 B1 — a `parallel { }` block compiles (`n_parallel_block_native`); its
+        // arms are walked like any other code.
+        Value::Insert(vs) | Value::Tuple(vs) | Value::Parallel(vs) => all(vs, visited),
         Value::Set(_, x) | Value::Return(x) | Value::Drop(x) | Value::TuplePut(_, _, x) => {
             walk_decline(x, data, visited)
         }
@@ -389,7 +397,6 @@ pub fn explain_interpreted(data: &Data, d_nr: u32) -> Option<String> {
                         "a `#c` binding (the C symbol is the implementation)".to_string()
                     }
                     Decline::Yield => "a generator (`yield`)".to_string(),
-                    Decline::Parallel => "`parallel` / `par_for`".to_string(),
                     Decline::CallRef => "a call through a function value".to_string(),
                     Decline::Callee(c) => format!("a cycle through `{}`", data.def(c).name()),
                 };
@@ -415,8 +422,12 @@ mod tests {
         // Leaves are native-OK.
         assert!(walk(&Value::Int(1), &data, &mut seen));
         assert!(walk(&Value::Text("x".into()), &data, &mut seen));
-        // The concurrency / coroutine constructs are not.
-        assert!(!walk(&Value::Parallel(vec![]), &data, &mut seen));
+        // A `parallel` block of leaves compiles; a generator body does not.
+        assert!(walk(
+            &Value::Parallel(vec![Value::Int(1)]),
+            &data,
+            &mut seen
+        ));
         assert!(!walk(&Value::Yield(b::new(Value::Null)), &data, &mut seen));
         // Dynamic dispatch is conservatively excluded.
         assert!(!walk(&Value::CallRef(0, vec![]), &data, &mut seen));
@@ -426,11 +437,11 @@ mod tests {
     fn walk_finds_nested_denylist_construct() {
         let data = Data::new();
         let mut seen = HashSet::new();
-        // A `parallel` buried in a branch must still flip the verdict — the walk
-        // is exhaustive, so nesting cannot hide it.
+        // A `yield` buried in a branch, inside a `parallel` arm, must still flip the
+        // verdict — the walk is exhaustive, so nesting cannot hide it.
         let nested = Value::If(
             b::new(Value::Boolean(true)),
-            b::new(Value::Parallel(vec![Value::Int(1)])),
+            b::new(Value::Parallel(vec![Value::Yield(b::new(Value::Int(1)))])),
             b::new(Value::Null),
         );
         assert!(!walk(&nested, &data, &mut seen));

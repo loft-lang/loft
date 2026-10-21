@@ -629,26 +629,27 @@ impl Parser {
     /// the caller hands over, so in value position it needs a temporary to write into.
     ///
     /// @PLN199 A2 — a `use`d library's functions are marked for the bridge after the whole
-    /// program is parsed (`native_lib::probe_and_mark_exports`), so `def.native` is still
-    /// empty when the calls to them are parsed: [`text_calls::is_cdylib_text_call`] alone
-    /// answered no, the call went unwrapped, and a function whose text it does not own (a
-    /// field read, a literal) answered `""` in every value position (loft#773).  A public
-    /// text function of a library that is to be compiled is wrapped too; when it ends up
-    /// interpreted the temporary costs one copy.
+    /// program is parsed (`native_lib::probe_and_mark_exports`), and so are the standard
+    /// library's compiled bodies (`compiled_stdlib::mark`), so `def.native` is still empty
+    /// when the calls to them are parsed: [`text_calls::is_cdylib_text_call`] alone answered
+    /// no, the call went unwrapped, and a function whose text it does not own (a field read,
+    /// a literal, `"/a/b".basename()`) answered `""` in every value position (loft#773).  A
+    /// BUFFERLESS text function that is to be compiled is wrapped too
+    /// (`generation::def_returns_owned_text`); a buffered one already writes into the call's
+    /// own work buffer.  When it ends up interpreted, the temporary costs one copy.
     ///
     /// [`text_calls::is_cdylib_text_call`]: crate::text_calls::is_cdylib_text_call
     pub(crate) fn crosses_text_bridge(&self, d_nr: u32) -> bool {
         let def = self.data.def(d_nr);
         crate::text_calls::is_cdylib_text_call(def)
-            || (matches!(def.returned().base(), Type::Text(_))
-                && matches!(def.def_type(), crate::data::DefType::Function)
-                && def.pub_visible
+            || (crate::generation::def_returns_owned_text(def)
                 && def.native().is_empty()
                 && def.c_sig.is_empty()
-                && self
-                    .pending_native_compile
-                    .iter()
-                    .any(|dir| crate::file_access::is_under(def.position().file.as_str(), dir)))
+                && (crate::compiled_stdlib::carries(def.name())
+                    || (def.pub_visible
+                        && self.pending_native_compile.iter().any(|dir| {
+                            crate::file_access::is_under(def.position().file.as_str(), dir)
+                        }))))
     }
 
     /// @PLN10 — wrap every text-dest native called in *value position* in a

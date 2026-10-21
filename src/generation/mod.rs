@@ -730,6 +730,10 @@ enum PackageLink {
     CAbi,
     /// @PLN195 — slots the program fills itself at start (`loft::native_bind`).
     Bound,
+    /// @PLN199 B2 — `CAbi` inside a library cdylib: the host that loads it has bound the C
+    /// libraries already, and the cdylib is linked against none of them, so each `#c`
+    /// symbol resolves at its first call (`loft::c_call::resolve_native`).
+    Library,
     /// @PLN197 — `Crate` for the packages (a static link), while the program still binds,
     /// at start, the C libraries packages ship that have no archive to link into it.
     StaticBound,
@@ -1657,6 +1661,10 @@ pub struct Output<'a> {
     /// `main`.  Off for a library unit (its host loads the libraries) and for every other
     /// target; [`Self::binds_libraries`] adds the rest of the condition.
     pub native_bind: bool,
+    /// @PLN199 B2 — this unit is a `use`d library's cdylib, loaded by a host
+    /// (`native_lib::emit_program`): its `#c` symbols resolve at first call
+    /// ([`PackageLink::Library`]).
+    pub library_unit: bool,
     /// @PLN26 phase 1 — `#native` symbols exported by 2+ packages.  A *reachable*
     /// call to one is rejected at native codegen (the flat C-ABI namespace can't
     /// disambiguate); two packages sharing an UNUSED symbol still build.  Computed
@@ -2638,6 +2646,7 @@ impl<'a> Output<'a> {
             wasm_wasi: false,
             native_cabi: false,
             native_bind: false,
+            library_unit: false,
             native_collisions: data
                 .native_symbol_collisions()
                 .into_iter()
@@ -8175,6 +8184,8 @@ fn loft_ckpt_report() {{
             } else {
                 PackageLink::StaticBound
             }
+        } else if self.native_cabi && self.library_unit {
+            PackageLink::Library
         } else if self.native_cabi {
             PackageLink::CAbi
         } else {
@@ -8457,7 +8468,10 @@ fn loft_ckpt_report() {{
         reachable: &HashSet<u32>,
         checkpoints: CkptMode,
     ) -> std::io::Result<()> {
-        let native_cabi = matches!(package_link, PackageLink::CAbi | PackageLink::Bound);
+        let native_cabi = matches!(
+            package_link,
+            PackageLink::CAbi | PackageLink::Bound | PackageLink::Library
+        );
         // `native_bind`: the packages' functions are slots; `c_bind`: the C libraries packages
         // ship are bound at start too (always when the packages are, and under a static link
         // for the ones with no archive to link in).
@@ -8924,7 +8938,9 @@ extern crate loft;"
                     linked_pkgs.iter().any(|l| l == p)
                         && shipped_exports.defines(data, p, &sig.symbol)
                 });
-                if data.c_symbol_is_lazy(file) && !archived {
+                if (data.c_symbol_is_lazy(file) || package_link == PackageLink::Library)
+                    && !archived
+                {
                     let fn_ty = format!(
                         "unsafe extern \"C\" fn({}){ret}",
                         sig.params
