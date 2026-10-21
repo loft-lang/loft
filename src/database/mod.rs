@@ -38,7 +38,7 @@ pub use allocation::{CLEAR_KEYED_VIEW, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};
 pub use journal::Journal;
 pub use types::Type;
-pub use upgrade::FileUpgrade;
+pub use upgrade::{FileUpgrade, FileUpgradeJob, Fills, PendingFills};
 pub use upgrade_map::{FieldFrom, How, Pair, Refusal, UpgradeMap};
 
 /// Store index reserved for compile-time constant data (vectors, long strings).

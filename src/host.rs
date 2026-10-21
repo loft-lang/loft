@@ -246,6 +246,80 @@ impl Program {
         })
     }
 
+    /// @PLN196 — load the program FILE at `entry` for a store upgrade: compiled as a run
+    /// would compile it, plus the fill function of every field whose default is not a
+    /// constant (`Parser::upgrade_fills`), which [`Program::upgrade_file`] calls.
+    ///
+    /// # Errors
+    /// [`LoftError::Parse`] with the program's diagnostics when it does not compile.
+    pub fn for_upgrade(entry: &std::path::Path, stdlib_dir: &str) -> Result<Program, LoftError> {
+        let mut p = parser::Parser::new();
+        p.data.open_world = true;
+        p.upgrade_fills = true;
+        if let Some(dir) = entry.parent() {
+            p.lib_dirs.push(dir.to_string_lossy().to_string());
+        }
+        p.parse_stdlib(stdlib_dir)
+            .map_err(|e| LoftError::Parse(format!("cannot read stdlib at {stdlib_dir}: {e}")))?;
+        p.parse(&entry.to_string_lossy(), false);
+        if p.diagnostics.error_count() > 0 {
+            return Err(LoftError::Parse(p.diagnostics.lines().join("\n")));
+        }
+        scopes::check(&mut p.data, &mut p.database);
+        let mut data = p.data;
+        let mut state = State::new(p.database);
+        compile::byte_code(&mut state, &mut data);
+        Ok(Program {
+            data: std::sync::Arc::new(data),
+            state,
+        })
+    }
+
+    /// The fill function of each (type, field) whose default the program must run.
+    fn upgrade_fills(&self) -> crate::database::Fills {
+        let mut fills = crate::database::Fills::new();
+        for d_nr in 0..self.data.definitions() {
+            let def = self.data.def(d_nr);
+            let kt = def.known_type();
+            if self.data.def_type(d_nr) != crate::data::DefType::Struct || kt == u16::MAX {
+                continue;
+            }
+            for (a_nr, a) in def.attributes().iter().enumerate() {
+                let name = parser::Parser::upgrade_fill_name(&self.data, d_nr, a_nr);
+                if self.data.def_nr(&format!("n_{name}")) != u32::MAX {
+                    fills.insert((kt, a.name.clone()), name);
+                }
+            }
+        }
+        fills
+    }
+
+    /// @PLN196 — upgrade the store file at `path` into this program's layout, running the
+    /// program's own default for every added field whose default is not a constant: per
+    /// upgraded record, after the fields it carried, in declaration order — as a constructor
+    /// fills an omitted field.  A failing fill abandons the upgrade with the store untouched.
+    ///
+    /// # Errors
+    /// Why the store cannot be upgraded (`Stores::upgrade_file`), or the fill that failed.
+    #[cfg(feature = "mmap")]
+    pub fn upgrade_file(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<crate::database::FileUpgrade, String> {
+        let fills = self.upgrade_fills();
+        let Some((job, pending)) = self.state.database.upgrade_file_begin(path, None, &fills)?
+        else {
+            return Ok(crate::database::FileUpgrade::Current);
+        };
+        for (rec, f) in pending {
+            if let Err(e) = self.call(&f, &[Value::Ref(rec)]) {
+                self.state.database.upgrade_file_abandon(&job);
+                return Err(format!("the default `{f}` failed: {e}"));
+            }
+        }
+        self.state.database.upgrade_file_finish(job)
+    }
+
     /// How many stores this program holds — the base a caller translates a
     /// `DbRef` against when references start crossing a placement boundary
     /// (@PLN119 arc B).

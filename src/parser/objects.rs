@@ -594,6 +594,17 @@ impl Parser {
         // '$' refers to the current record in struct field default expressions
         // …and in a generic struct's own declaration (@PLN165), where a field read defers to
         // each instance (`Parser::TV_FIELD`, bound by `bind_instance_code`).
+        // Inside the function a `$`-reading default was lowered into, `$` is that function's
+        // first parameter (`dollar_record`), which IS `Var(0)` there too.
+        if name == "$"
+            && let Some(record) = self.dollar_record
+        {
+            if self.init_field_tracking {
+                self.init_reads_record = true;
+            }
+            *code = Value::Var(0);
+            return Type::Reference(record, crate::data::Deps::none());
+        }
         if name == "$"
             && matches!(
                 self.data.def_type(self.context),

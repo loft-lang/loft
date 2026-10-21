@@ -382,9 +382,12 @@ Fields are declared as `name: type` with optional modifiers **after** the type:
 - `= expr` — stored default value, applied when field is omitted in constructor.
   The expression may build a value of its own — `= [1, 2]`, `= "a" + "b"`, `= mk()`,
   `= P { … }`, `= [K { … }]` for a keyed field — and is evaluated once per
-  construction. One form is refused, and says so: an expression that reads `$` **and**
-  needs a temporary, since a `$`-reading default is built against the record at each
-  construction site and so cannot be built once and shared.
+  construction. It may also read the record through `$`, building from it as freely:
+  `= "{$.id}: {$.label}"`, `= $.label.to_uppercase() + "!"`, `= [$.label]`,
+  `= if $.price > 10 { Big } else { Small }`, `= describe($.label)`. Such a default is
+  lowered into a function of the record and called with the record as it stands.
+  The same default fills the field when a store written before the field existed is
+  upgraded (`loft layout upgrade`, [plans/196-store-upgrade.md](plans/196-store-upgrade.md)).
 
   **Where a default reaches depends on whether it is a constant** (loft#876). A default
   that is a LITERAL — `= 1.5`, `= 7`, `= "hi"`, `= true` — is part of the type: it is

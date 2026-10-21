@@ -6757,37 +6757,32 @@ fn run_layout_upgrade(file: &str, stores: &[String]) -> i32 {
     }
     let abs = file_access::plain_canonical(&entry);
     let default_str = stdlib_default_dir().to_string_lossy().to_string();
-    let mut p = parser::Parser::new();
-    if let Some(src_dir) = entry.parent() {
-        p.lib_dirs.push(src_dir.to_string_lossy().to_string());
-    }
-    let _ = p.parse_stdlib(&default_str);
-    // `parse` answers whether there was nothing to say; a warning still compiles.
-    p.parse(&abs.to_string_lossy(), false);
-    if p.diagnostics.error_count() > 0 {
-        for l in p.diagnostics.lines() {
-            eprintln!("{l}");
+    let mut program = match loft::host::Program::for_upgrade(&abs, &default_str) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("loft layout: {file} does not compile");
+            return 1;
         }
-        eprintln!("loft layout: {file} does not compile");
-        return 1;
-    }
+    };
     #[cfg(not(feature = "mmap"))]
     {
+        let _ = &mut program;
         eprintln!("loft layout: this build reads no store files");
         1
     }
     #[cfg(feature = "mmap")]
     {
-        upgrade_each(&mut p.database, stores)
+        upgrade_each(&mut program, stores)
     }
 }
 
-/// Upgrade each store file through `db`'s layout; the exit code of the whole command.
+/// Upgrade each store file into `program`'s layout; the exit code of the whole command.
 #[cfg(feature = "mmap")]
-fn upgrade_each(db: &mut loft::database::Stores, stores: &[String]) -> i32 {
+fn upgrade_each(program: &mut loft::host::Program, stores: &[String]) -> i32 {
     let mut exit = 0;
     for store in stores {
-        match db.upgrade_file(std::path::Path::new(store), None) {
+        match program.upgrade_file(std::path::Path::new(store)) {
             Ok(loft::database::FileUpgrade::Current) => {}
             Ok(loft::database::FileUpgrade::Upgraded { kept, changes }) => {
                 println!(
@@ -6858,7 +6853,7 @@ fn layout_upgrade_report(
         let user = !matches!(old.nodes.get(id), Some(loft::database::LayoutNode::Base(_)))
             && name.chars().next().is_some_and(char::is_uppercase)
             && !name.contains("::");
-        if user && !new_names.contains(name.as_str()) && db.names.get(name).is_none() {
+        if user && !new_names.contains(name.as_str()) && !db.names.contains_key(name) {
             changes.push(format!(
                 "{name} is gone: a store whose root is a `{name}` cannot be read"
             ));

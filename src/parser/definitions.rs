@@ -7570,20 +7570,27 @@ impl Parser {
             // wherever it stood alone, so there was nothing for the function
             // it moves into to return.  loft#703 gave it one, so it is now
             // lowered like any other default needing a temporary.
-            if !reads_record {
-                self.lexer.revert(value_start);
+            self.lexer.revert(value_start);
+            if reads_record {
+                // `@FR-F-Default-Field` — a default that reads `$` AND builds a value becomes a
+                // function OF THE RECORD: its one parameter `self` is what `$` names inside it, and the stored
+                // default is the call with `Var(0)` — the placeholder every construction
+                // site rewrites to the record it builds — so each construction calls it with
+                // its own record, as it stands at that moment (declaration order).  This is
+                // also the function a store upgrade calls to fill an added field (@PLN196).
+                let record = Argument {
+                    name: "self".to_string(),
+                    typedef: Type::Reference(d_nr, crate::data::Deps::none()),
+                    default: Value::Null,
+                    constant: false,
+                    ref_pos: (0, 0),
+                    const_pos: (0, 0),
+                };
+                let outer = self.dollar_record.replace(d_nr);
+                *value = self.default_value_fn(&dflt_fn, &[record], a_type, vec![Value::Var(0)]);
+                self.dollar_record = outer;
+            } else {
                 *value = self.default_value_fn(&dflt_fn, &[], a_type, Vec::new());
-            } else if !self.first_pass {
-                let tn = a_type.source_name(&self.data);
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "the default for `{a_name}: {tn}` both reads `$` and \
-                     needs a temporary value — one that reads `$` is built \
-                     against the record at every construction site, so it \
-                     cannot be built once and shared; drop the `$` reference \
-                     or set the field at each construction site"
-                );
             }
         }
         true
@@ -8191,6 +8198,10 @@ impl Parser {
         // `(H-Copy-Lease)`'s cascades are independent of the drop ones and can exist in a program
         // that declares no `OpDrop`, so they are made before the drop pass's early return.
         self.synth_copy_cascades();
+        // @PLN196 — likewise the fill functions a store upgrade calls, when asked for.
+        if self.upgrade_fills {
+            self.synth_upgrade_fills();
+        }
         // Cheap exit for the overwhelmingly common program: no `OpDrop` anywhere means no
         // type can own a droppable, so nothing below can fire.
         // …and a generator handle held by a record or a collection (loft#1585), which its
@@ -8282,6 +8293,103 @@ impl Parser {
                 self.fill_drop_cascade(t, c_nr);
             }
         }
+    }
+
+    /// @PLN196 — the name of the function that fills field `a_nr` of struct `d_nr` with its
+    /// default, for a store upgrade: `__fill_<Struct>__<field>`, called by name through the
+    /// host API (`n_` is the key every plain function is registered under).
+    #[must_use]
+    pub fn upgrade_fill_name(data: &crate::data::Data, d_nr: u32, a_nr: usize) -> String {
+        let clean = |s: &str| -> String {
+            s.chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .collect()
+        };
+        format!(
+            "__fill_{}__{}",
+            clean(data.def(d_nr).name()),
+            clean(&data.def(d_nr).attributes()[a_nr].name)
+        )
+    }
+
+    /// `@FR-F-Default-Field`, @PLN196 step 5 — give every stored field whose default is NOT a constant a function
+    /// that writes that default into a record, exactly as a construction site writes it for
+    /// an omitted field: `fn __fill_<T>__<f>(self: T)`.  A store upgrade fills an added field
+    /// by calling it on each upgraded record, after the fields the record carried, so the
+    /// default reads `$` as a constructor's does.  A constant default needs none: the store
+    /// layer writes it directly (`Stores::write_absent_value`).
+    pub(crate) fn synth_upgrade_fills(&mut self) {
+        let mut todo: Vec<(u32, usize)> = Vec::new();
+        for d_nr in 0..self.data.definitions() {
+            if self.data.def_type(d_nr) != DefType::Struct
+                || self.data.def(d_nr).known_type() == u16::MAX
+                || self.data.def(d_nr).name().starts_with("__")
+            {
+                continue;
+            }
+            for (a_nr, a) in self.data.def(d_nr).attributes().iter().enumerate() {
+                if a.constant
+                    || matches!(a.value.unspan(), Value::Null)
+                    || crate::typedef::fold_declared_default(&self.data, &a.value).is_some()
+                {
+                    continue;
+                }
+                todo.push((d_nr, a_nr));
+            }
+        }
+        for (d_nr, a_nr) in todo {
+            self.synth_upgrade_fill(d_nr, a_nr);
+        }
+    }
+
+    /// One fill function — see [`Self::synth_upgrade_fills`].
+    fn synth_upgrade_fill(&mut self, d_nr: u32, a_nr: usize) {
+        let name = Self::upgrade_fill_name(&self.data, d_nr, a_nr);
+        let key = format!("n_{name}");
+        if self.data.def_nr(&key) != u32::MAX {
+            return;
+        }
+        let pos = *self.data.def(d_nr).position();
+        let f_nr = self.data.add_def(&key, &pos, DefType::Function);
+        self.data.set_returned(f_nr, Type::Void);
+        let self_tp = Type::Reference(d_nr, crate::data::Deps::none());
+        let _ = self
+            .data
+            .add_attribute(&mut self.lexer, f_nr, "self", self_tp.clone());
+        let mut vars = Function::new(&name, pos.file.as_str());
+        let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
+        vars.become_argument(self_var);
+        vars.defined(self_var);
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = f_nr;
+        let a_type = self.data.def(d_nr).attributes()[a_nr].typedef.clone();
+        let mut default = self.data.def(d_nr).attributes()[a_nr].value.clone();
+        // The two shapes `object_init` treats apart, treated the same: a struct-enum unit
+        // variant builds in a work-ref of its own, every other default reads `$` as the record.
+        if matches!(&default, Value::Block(b) if b.name == "EnumUnitLit") {
+            let fresh = self.vars.work_refs(&a_type, &mut self.lexer);
+            default = Self::replace_record_ref(default, &Value::Var(fresh));
+        } else {
+            default = Self::replace_record_ref(default, &Value::Var(self_var));
+        }
+        if let Value::Call(d, args) = &default
+            && args.len() < self.data.attributes(*d)
+        {
+            let (d, mut actual) = (*d, args.clone());
+            let mut types = vec![Type::Unknown(0); actual.len()];
+            self.add_defaults(d, &mut actual, &mut types);
+            default = Value::Call(d, actual);
+        }
+        let write = self.set_field_no_check(d_nr, a_nr, 0, Value::Var(self_var), default);
+        // `finish_body`, not a cascade's finish: a default that calls a function returning a
+        // heap value takes a return buffer, a work-ref this body minted, and `finish_body` is
+        // what declares the body's work-refs and work-texts at its entry.
+        self.finish_body(v_block(vec![write], Type::Void, "block"), Type::Void);
+        let built = std::mem::replace(&mut self.vars, outer_vars);
+        self.data.definitions[f_nr as usize].variables = built;
+        self.context = outer_context;
+        self.data.def_used(f_nr);
     }
 
     /// The `self` parameter type of a type's cascade — a struct-enum carries its

@@ -1353,6 +1353,14 @@ pub struct Parser {
     /// the record" and did not, and the function pass 1 left behind held a `$` no frame
     /// ever allocated (loft#1086).
     pub(crate) init_reads_record: bool,
+    /// @PLN196 — while a field default that reads `$` and builds a value is re-parsed into a
+    /// function of its own, the struct whose record `$` is there: inside that function `$`
+    /// is its first parameter, `self`.
+    pub(crate) dollar_record: Option<u32>,
+    /// @PLN196 — synthesise `__fill_<T>__<field>(self: T)` for every field whose default is
+    /// not a constant, so a store upgrade can fill an added field the way a constructor does.
+    /// Off for an ordinary parse: only `loft layout upgrade` and a live swap ask for them.
+    pub upgrade_fills: bool,
     /// M11-a: true while parsing the body of a `for … par(…) { … }` loop.
     /// `yield` inside a `par()` body is illegal — the worker runs in a separate
     /// thread with its own store; there is no safe coroutine resumption path.
@@ -2029,6 +2037,8 @@ impl Parser {
             init_field_tracking: false,
             init_field_deps: Vec::new(),
             init_reads_record: false,
+            dollar_record: None,
+            upgrade_fills: false,
             in_par_body: false,
             is_capture_aliases: Vec::new(),
             capture_took_body: None,

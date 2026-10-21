@@ -34,6 +34,13 @@ load" for a change every loader in fact refuses.
   so `"label" as E` parsed and adding a method refused every stored `E` (loft#2100); and a
   stored `reference<T>` kept the slot number of the program that wrote it, so a load into
   another slot read another store (loft#2099).
+- **Step 5 — expression defaults.**  A field default may read `$` and build a value (a format
+  string, a method, a vector, a struct, a call); it is lowered into a function of the record
+  (`(F-Default-Field)`, formal/calls.md).  `loft layout upgrade` compiles the reading program
+  (`host::Program::for_upgrade`) and runs each added field's default on every upgraded record
+  through a synthesised `__fill_<T>__<f>`; a constant default is still written directly.
+  Guards: `tests/store_upgrade.rs` (construction and upgrade, both backends; the two-step
+  rename) and `loft-suite rules/calls/F-Default-Field`.
 - **Version-2 sidecar.**  Adds `root=` and `slot=` headers and a facts section after the dump
   (`LayoutDesc::render_facts` / `apply_facts`); the dump and its hash are unchanged, a
   version-1 sidecar is still read, and an older build refuses a version-2 one rather than

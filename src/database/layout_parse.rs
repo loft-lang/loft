@@ -89,56 +89,7 @@ impl LayoutDesc {
             }
             desc.nodes.insert(id, node);
         }
-        // An `enum{…}` line names each variant.  A struct-enum's variants are all types (an
-        // `enumvalue` whose tag is its position plus one), a value enum's are none
-        // (`u16::MAX`), as in `Parts`.  A variant whose type has another name says so
-        // (`Item=src1::Item`, loft#2096); a bare name is that variant's type only when EVERY
-        // variant of the line resolves that way — a value enum's `Integer` is not the
-        // struct-enum variant type `Integer` some other enum declares.
-        let mut resolved: Vec<(u16, Vec<(u16, String)>)> = Vec::new();
-        for (id, n) in &desc.nodes {
-            let LayoutNode::Choices(vs) = n else {
-                continue;
-            };
-            // A variant type is an `enumvalue` carrying its position as its tag — or, for a
-            // unit variant whose type had to be renamed, a plain record holding only the tag
-            // field (`src1::Nil  struct{enum@0:byte}`), which is how such a row registers.
-            let typed = |i: usize, t: u16| match desc.nodes.get(&t) {
-                Some(LayoutNode::EnumValue(tag, _)) => usize::from(*tag) == i + 1,
-                Some(LayoutNode::Record(fs)) => fs.first().is_some_and(|f| f.name == "enum"),
-                _ => false,
-            };
-            let mut explicit = false;
-            let mut all = true;
-            let mut out = Vec::with_capacity(vs.len());
-            for (i, (_, v)) in vs.iter().enumerate() {
-                let (name, ty) = match v.split_once('=') {
-                    Some((n, t)) => {
-                        explicit = true;
-                        (n, t)
-                    }
-                    None => (v.as_str(), v.as_str()),
-                };
-                let t = ids.get(ty).copied().filter(|t| typed(i, *t));
-                all &= t.is_some();
-                out.push((t.unwrap_or(u16::MAX), name.to_string()));
-            }
-            if !all {
-                if explicit {
-                    return Err(format!(
-                        "type `{}`: names a variant type that is not one of its variants",
-                        desc.names[id]
-                    ));
-                }
-                for v in &mut out {
-                    v.0 = u16::MAX;
-                }
-            }
-            resolved.push((*id, out));
-        }
-        for (id, vs) in resolved {
-            desc.nodes.insert(id, LayoutNode::Choices(vs));
-        }
+        resolve_variants(&mut desc, &ids)?;
         let back = desc.render_dump();
         if back != dump {
             let at = back
@@ -312,18 +263,16 @@ impl LayoutDesc {
                 .get(tname)
                 .ok_or_else(|| format!("no type `{tname}`"))?;
             // A target outside the closure has a name and no node (`layout_descriptor`).
-            let target = match fact.strip_prefix("target=") {
-                Some(t) => Some(match by_name.get(t) {
-                    Some(id) => *id,
-                    None => {
-                        let id = self.names.keys().max().map_or(0, |m| m + 1);
-                        self.names.insert(id, t.to_string());
-                        by_name.insert(t.to_string(), id);
-                        id
-                    }
-                }),
-                None => None,
-            };
+            let target = fact.strip_prefix("target=").map(|t| {
+                if let Some(id) = by_name.get(t) {
+                    *id
+                } else {
+                    let id = self.names.keys().max().map_or(0, |m| m + 1);
+                    self.names.insert(id, t.to_string());
+                    by_name.insert(t.to_string(), id);
+                    id
+                }
+            });
             let Some(LayoutNode::Record(fs) | LayoutNode::EnumValue(_, fs)) =
                 self.nodes.get_mut(&id)
             else {
@@ -467,6 +416,61 @@ impl LayoutDesc {
     }
 }
 
+/// Bind each `enum{…}` line's variants to their types, once every node exists.
+fn resolve_variants(desc: &mut LayoutDesc, ids: &BTreeMap<String, u16>) -> Result<(), String> {
+    // An `enum{…}` line names each variant.  A struct-enum's variants are all types (an
+    // `enumvalue` whose tag is its position plus one), a value enum's are none
+    // (`u16::MAX`), as in `Parts`.  A variant whose type has another name says so
+    // (`Item=src1::Item`, loft#2096); a bare name is that variant's type only when EVERY
+    // variant of the line resolves that way — a value enum's `Integer` is not the
+    // struct-enum variant type `Integer` some other enum declares.
+    let mut resolved: Vec<(u16, Vec<(u16, String)>)> = Vec::new();
+    for (id, n) in &desc.nodes {
+        let LayoutNode::Choices(vs) = n else {
+            continue;
+        };
+        // A variant type is an `enumvalue` carrying its position as its tag — or, for a
+        // unit variant whose type had to be renamed, a plain record holding only the tag
+        // field (`src1::Nil  struct{enum@0:byte}`), which is how such a row registers.
+        let typed = |i: usize, t: u16| match desc.nodes.get(&t) {
+            Some(LayoutNode::EnumValue(tag, _)) => usize::from(*tag) == i + 1,
+            Some(LayoutNode::Record(fs)) => fs.first().is_some_and(|f| f.name == "enum"),
+            _ => false,
+        };
+        let mut explicit = false;
+        let mut all = true;
+        let mut out = Vec::with_capacity(vs.len());
+        for (i, (_, v)) in vs.iter().enumerate() {
+            let (name, ty) = match v.split_once('=') {
+                Some((n, t)) => {
+                    explicit = true;
+                    (n, t)
+                }
+                None => (v.as_str(), v.as_str()),
+            };
+            let t = ids.get(ty).copied().filter(|t| typed(i, *t));
+            all &= t.is_some();
+            out.push((t.unwrap_or(u16::MAX), name.to_string()));
+        }
+        if !all {
+            if explicit {
+                return Err(format!(
+                    "type `{}`: names a variant type that is not one of its variants",
+                    desc.names[id]
+                ));
+            }
+            for v in &mut out {
+                v.0 = u16::MAX;
+            }
+        }
+        resolved.push((*id, out));
+    }
+    for (id, vs) in resolved {
+        desc.nodes.insert(id, LayoutNode::Choices(vs));
+    }
+    Ok(())
+}
+
 /// The resolution context for one dump line: the name→id table, and the line's type name
 /// for the error text.
 struct Cx<'a> {
@@ -575,7 +579,11 @@ impl Cx<'_> {
             });
             return Ok((node, placement));
         }
-        // `kind<E>(args)` — the vectors and the keyed collections.
+        self.collection(s)
+    }
+
+    /// `kind<E>(args)` — a vector, an array or a keyed collection.
+    fn collection(&self, s: &str) -> Result<(LayoutNode, Option<String>), String> {
         let (kind, rest) = s
             .split_once('<')
             .ok_or_else(|| self.err(&format!("unknown parts `{s}`")))?;

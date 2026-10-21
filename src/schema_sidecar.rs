@@ -123,7 +123,8 @@ impl LayoutIdentity {
             format!("root={}\n", self.root)
         };
         if let Some(slot) = self.slot {
-            root_line.push_str(&format!("slot={slot}\n"));
+            use std::fmt::Write as _;
+            let _ = writeln!(root_line, "slot={slot}");
         }
         format!(
             "{SIDECAR_MAGIC} v{SIDECAR_VERSION}\nhash={}\n{schema_line}{root_line}--\n{}{FACTS_FENCE}{}",

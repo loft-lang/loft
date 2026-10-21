@@ -355,8 +355,8 @@ fn upgrade_refused(name: &str, writer: &str, reader: &str, reason: &str) {
     let dir = write_store(name, writer);
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
     let before = (
-        std::fs::read(dir.join("a.store")).unwrap(),
-        std::fs::read(dir.join("a.store.dschema")).unwrap(),
+        loft::file_access::read(dir.join("a.store")).unwrap(),
+        loft::file_access::read(dir.join("a.store.dschema")).unwrap(),
     );
     let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
     assert_eq!(code, 1, "{name}: expected a refusal:\n{out}\n{err}");
@@ -365,8 +365,8 @@ fn upgrade_refused(name: &str, writer: &str, reader: &str, reason: &str) {
         "{name}: missing `{reason}` in:\n{err}"
     );
     let after = (
-        std::fs::read(dir.join("a.store")).unwrap(),
-        std::fs::read(dir.join("a.store.dschema")).unwrap(),
+        loft::file_access::read(dir.join("a.store")).unwrap(),
+        loft::file_access::read(dir.join("a.store.dschema")).unwrap(),
     );
     assert!(
         before == after,
@@ -398,7 +398,7 @@ fn reader(types: &str, body: &str) -> String {
 fn cell_unchanged_needs_no_upgrade() {
     let dir = write_store("same", &writer_w(T_W));
     loft::file_access::write(dir.join("b.loft"), reader(T_W, "  println(\"{w.a}\");\n")).unwrap();
-    let before = std::fs::read(dir.join("a.store")).unwrap();
+    let before = loft::file_access::read(dir.join("a.store")).unwrap();
     let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
     assert_eq!(
         (code, out.as_str(), err.as_str()),
@@ -406,7 +406,7 @@ fn cell_unchanged_needs_no_upgrade() {
         "silent when current"
     );
     assert_eq!(
-        std::fs::read(dir.join("a.store")).unwrap(),
+        loft::file_access::read(dir.join("a.store")).unwrap(),
         before,
         "untouched"
     );
@@ -642,7 +642,7 @@ fn cell_every_kind_survives_an_upgrade() {
 #[test]
 fn the_identity_conversion_reproduces_the_store() {
     let dir = write_store("identity", &sink_writer());
-    let bytes = std::fs::read(dir.join("a.store")).unwrap();
+    let bytes = loft::file_access::read(dir.join("a.store")).unwrap();
     let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
     let id = loft::schema_sidecar::LayoutIdentity::from_sidecar(&side).expect("sidecar");
     let old = LayoutDesc::from_dump(&id.dump).expect("the sink layout reads back");
@@ -942,4 +942,137 @@ fn a_spatial_and_a_trie_field_render() {
         );
     }
     let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+// ── Step 5: an added field is filled by its default, and a default may be an expression ───
+
+/// The defaults these cells exercise: arithmetic, a default reading an earlier default, a
+/// format string, a method and a concatenation, a vector literal, an `if` choosing a variant,
+/// a nested struct literal, a nullable conditional, and a call to a user function.
+const FILLED: &str = "\
+enum Size { Small, Big }
+struct P { x: integer, y: integer }
+fn describe(l: text, p: integer) -> text { \"{l}@{p}\" }
+struct Item {
+  id: integer,
+  label: text,
+  price: integer,
+  a: integer = $.id * 2,
+  b: integer = $.a + 1,
+  title: text = \"{$.id}: {$.label}\",
+  shout: text = $.label.to_uppercase() + \"!\",
+  tags: vector<text> = [$.label, \"x\"],
+  size: Size = if $.price > 10 { Big } else { Small },
+  at: P = P { x: $.id, y: $.price },
+  half: integer? = if $.price % 2 == 0 { $.price / 2 } else { null },
+  word: text = describe($.label, $.price)
+}
+fn line(x: Item) -> text {
+  \"{x.a} {x.b} {x.title} {x.shout} {x.tags} {x.size} {x.at.x},{x.at.y} {x.half ?? -1} {x.word}\"
+}
+";
+
+/// Hand-computed for (7, \"pen\", 12) and (2, \"ink\", 3).
+const FILLED_PEN: &str = "14 15 7: pen PEN! [\"pen\",\"x\"] Big 7,12 6 pen@12";
+const FILLED_INK: &str = "4 5 2: ink INK! [\"ink\",\"x\"] Small 2,3 -1 ink@3";
+
+/// The construction half: every one of these defaults was refused or compiled before only in
+/// part (*"both reads `$` and needs a temporary value"*).  A supplied field still beats its
+/// default (`title: "given"`).
+#[test]
+fn dollar_defaults_construct_on_both_backends() {
+    let dir = cell_dir("dollar_construct");
+    let src = format!(
+        "{FILLED}fn main() {{\n  i = Item {{ id: 7, label: \"pen\", price: 12 }};\n  j = Item {{ id: 2, label: \"ink\", price: 3, title: \"given\" }};\n  println(line(i));\n  println(line(j));\n}}\n"
+    );
+    loft::file_access::write(dir.join("p.loft"), &src).unwrap();
+    let expect = format!("{FILLED_PEN}\n{}\n", FILLED_INK.replace("2: ink", "given"));
+    for mode in [&["--interpret"][..], &["--native"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("p.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, expect.as_str()),
+            "{mode:?}:\n{err}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// The upgrade half: a store of items written before any of those fields existed, upgraded,
+/// reads every added field as its default evaluated over the stored record.  `items` and `h`
+/// are two collections over `Item` in one struct, so they are ONE record set
+/// (`@FR-Col-Group`): the writer's four appends leave four records in `items` (pen, ink, pen,
+/// ink) and one per key in `h` — the writer's own semantics, which the upgrade keeps.
+#[test]
+fn cell_expression_defaults_fill_an_upgrade() {
+    let writer = "struct Item { id: integer, label: text, price: integer }\nstruct W { items: vector<Item>, h: hash<Item[id]> }\nfn main() {\n  w = W {};\n  w.items += [Item { id: 7, label: \"pen\", price: 12 }, Item { id: 2, label: \"ink\", price: 3 }];\n  w.h += [Item { id: 7, label: \"pen\", price: 12 }, Item { id: 2, label: \"ink\", price: 3 }];\n  println(\"saved {store_persist_copy(w, \\\"a.store\\\")}\");\n}\n";
+    let reader = format!(
+        "{FILLED}struct W {{ items: vector<Item>, h: hash<Item[id]> }}\nfn main() {{\n  w = W {{}};\n  if !store_load(w, \"a.store\") {{ println(\"not loaded\"); return; }}\n  for x in w.items {{ println(line(x)); }}\n  println(line(w.h[2]));\n  println(line(w.h[7]));\n}}\n"
+    );
+    upgrades(
+        "dollar_upgrade",
+        writer,
+        &reader,
+        &format!(
+            "{FILLED_PEN}\n{FILLED_INK}\n{FILLED_PEN}\n{FILLED_INK}\n{FILLED_INK}\n{FILLED_PEN}\n"
+        ),
+    );
+}
+
+/// A rename is two upgrades: v2 keeps `label` and fills `name` from it, v3 drops `label`.
+/// Skipping v2 is refused with the cure in the reason, and leaves the store as it was.
+#[test]
+fn cell_rename_in_two_upgrades() {
+    let v1 = "struct T { k: integer, label: text }\nstruct W { items: vector<T> }\n";
+    let v2 = "struct T { k: integer, label: text, name: text = $.label }\nstruct W { items: vector<T> }\n";
+    let v3 = "struct T { k: integer, name: text }\nstruct W { items: vector<T> }\n";
+    let writer = format!(
+        "{v1}fn main() {{\n  w = W {{}};\n  w.items += [T {{ k: 1, label: \"one\" }}, T {{ k: 2, label: \"two\" }}];\n  println(\"saved {{store_persist_copy(w, \\\"a.store\\\")}}\");\n}}\n"
+    );
+    let body = "  o = \"\"; for t in w.items { o += \" {t.k}={t.name}\"; }\n  println(o);\n";
+    // Skipping step 1 is refused.
+    upgrade_refused(
+        "rename_skip",
+        &writer,
+        &reader(v3, body),
+        "give the new one a default that reads it",
+    );
+    // Step 1 then step 2.
+    let dir = write_store("rename_two", &writer);
+    loft::file_access::write(dir.join("b.loft"), reader(v2, body)).unwrap();
+    let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
+    assert_eq!(code, 0, "step 1:\n{out}\n{err}");
+    loft::file_access::write(dir.join("c.loft"), reader(v3, body)).unwrap();
+    let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "c.loft", "a.store"]);
+    assert_eq!(code, 0, "step 2:\n{out}\n{err}");
+    assert!(out.contains("T.label removed"), "{out}");
+    for mode in [&["--interpret"][..], &["--native"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("c.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, " 1=one 2=two\n"),
+            "{mode:?}:\n{err}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// The same fill for a hash on its own: its entries live in the hash's arena, not in records
+/// of their own, and each one is filled in place.
+#[test]
+fn cell_expression_defaults_fill_hash_entries() {
+    let writer = "struct Item { id: integer, label: text, price: integer }\nstruct H { h: hash<Item[id]> }\nfn main() {\n  w = H {};\n  w.h += [Item { id: 7, label: \"pen\", price: 12 }, Item { id: 2, label: \"ink\", price: 3 }];\n  println(\"saved {store_persist_copy(w, \\\"a.store\\\")}\");\n}\n";
+    let reader = format!(
+        "{FILLED}struct H {{ h: hash<Item[id]> }}\nfn main() {{\n  w = H {{}};\n  if !store_load(w, \"a.store\") {{ println(\"not loaded\"); return; }}\n  println(\"{{len(w.h)}}\");\n  for k in [2, 7] {{ if w.h[k] != null {{ println(line(w.h[k]?)); }} }}\n}}\n"
+    );
+    upgrades(
+        "dollar_hash",
+        writer,
+        &reader,
+        &format!("2\n{FILLED_INK}\n{FILLED_PEN}\n"),
+    );
 }

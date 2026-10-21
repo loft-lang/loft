@@ -83,6 +83,11 @@ site.)
                Whatever `e`'s shape (a literal, a tuple, a record, an `if` or `match`, a call), a
                default is well-formed exactly where the same `e` written as the argument is, and
                it answers what that argument would.
+  (F-Default-Field)  a field's `= e` default fills the field at EACH construction that omits
+               it, after every field that construction writes and in declaration order, with
+               `$` bound to the record as it stands.  Any `e` well-formed as that field's value
+               is well-formed as its default, `$` reads included.  A store upgrade fills a field
+               the stored records lack in the same way, record by record (plans/196).
 ```
 
 **In words.** A default is shorthand for writing the argument yourself, with the earlier

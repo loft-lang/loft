@@ -52,7 +52,20 @@ struct Run<'m> {
     /// Every reference converted so far: where it goes in the new store, and the old
     /// `(store, rec, pos)` it held.  Written after the whole tree exists.
     fixups: Vec<(DbRef, (u16, u32, u32))>,
+    /// The fill function of each (new type, field name) whose default is not a constant.
+    fills: &'m Fills,
+    /// Every record that still owes one of those fills, in conversion order.
+    pending: Vec<(DbRef, String)>,
 }
+
+/// @PLN196 step 5 — per (new type, field name), the function that writes that field's
+/// default into a record (`Parser::synth_upgrade_fills`): a default that is not a constant
+/// is evaluated by the program, not by the store layer.
+pub type Fills = BTreeMap<(u16, String), String>;
+
+/// The records an upgrade left owing an expression default, with the function that fills
+/// each: the caller runs them, in this order, on the new store (`host::Program`).
+pub type PendingFills = Vec<(DbRef, String)>;
 
 impl Stores {
     /// @PLN196 — upgrade the store in `slot`, written under `old` with its root at `old_root`
@@ -76,6 +89,36 @@ impl Stores {
         self_slot: Option<u16>,
         whole_copies: bool,
     ) -> Result<u16, String> {
+        let (new_slot, pending) = self.upgrade_store_with(
+            slot,
+            old,
+            old_root,
+            new_root,
+            self_slot,
+            whole_copies,
+            &Fills::new(),
+        )?;
+        debug_assert!(pending.is_empty(), "no fills were offered");
+        Ok(new_slot)
+    }
+
+    /// [`Stores::upgrade_store`] with the program's fill functions: an added field whose
+    /// default is not a constant takes its direct write here and is listed in the answer,
+    /// with the function that fills it, for the caller to run.
+    ///
+    /// # Errors
+    /// As [`Stores::upgrade_store`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn upgrade_store_with(
+        &mut self,
+        slot: u16,
+        old: &LayoutDesc,
+        old_root: u16,
+        new_root: u16,
+        self_slot: Option<u16>,
+        whole_copies: bool,
+        fills: &Fills,
+    ) -> Result<(u16, PendingFills), String> {
         let new = self.layout_descriptor(&[new_root]);
         let map = UpgradeMap::derive_with(old, old_root, &new, new_root, whole_copies);
         if let Some(r) = map.refusals.first() {
@@ -90,8 +133,11 @@ impl Stores {
                 self_slot,
                 rec_map: std::collections::HashMap::new(),
                 fixups: Vec::new(),
+                fills,
+                pending: Vec::new(),
             };
-            self.upgrade_into_new_store(&mut run, slot, new_root)
+            let new_slot = self.upgrade_into_new_store(&mut run, slot, new_root)?;
+            Ok((new_slot, run.pending))
         });
         // The appended rows go, whatever happened: nothing outside this call names them.
         self.rollback_types_to(keep);
@@ -123,56 +169,9 @@ impl Stores {
                 next += 1;
             }
         }
-        let re = |k: u16| -> u16 {
-            if k == u16::MAX {
-                k
-            } else {
-                ids.get(&k).copied().unwrap_or(u16::MAX)
-            }
-        };
-        let fields = |fs: &[crate::database::LayoutField]| -> Vec<Field> {
-            fs.iter()
-                .map(|f| {
-                    Field::from_stored(
-                        f.name.clone(),
-                        re(f.content),
-                        f.position,
-                        Field::default_to_wire(None),
-                        f.nullable,
-                        re(f.target),
-                        f.group.clone(),
-                    )
-                })
-                .collect()
-        };
         for (id, node) in &closure.nodes {
-            let parts = match node {
-                LayoutNode::Base(_) => continue,
-                LayoutNode::Record(fs) => Parts::Struct(fields(fs)),
-                LayoutNode::EnumValue(t, fs) => Parts::EnumValue(*t, fields(fs)),
-                LayoutNode::Choices(vs) => {
-                    Parts::Enum(vs.iter().map(|(t, n)| (re(*t), n.clone())).collect())
-                }
-                LayoutNode::Byte { start, nullable } => Parts::Byte(*start, *nullable),
-                LayoutNode::Short { start, nullable } => Parts::Short(*start, *nullable),
-                LayoutNode::Int { start, nullable } => Parts::Int(*start, *nullable),
-                LayoutNode::ShortRaw { start, nullable } => Parts::ShortRaw(*start, *nullable),
-                LayoutNode::IntRaw { start, nullable } => Parts::IntRaw(*start, *nullable),
-                LayoutNode::Vector(e) => Parts::Vector(re(*e)),
-                LayoutNode::Array(e) => Parts::Array(re(*e)),
-                LayoutNode::ChildRec(e) => Parts::ChildRec(re(*e)),
-                LayoutNode::Ref => Parts::DbRef,
-                LayoutNode::Iterated(it) => match it {
-                    Iterated::Sorted { elem, keys } => Parts::Sorted(re(*elem), keys.clone()),
-                    Iterated::Ordered { elem, keys } => Parts::Ordered(re(*elem), keys.clone()),
-                    Iterated::Hash { elem, keys } => Parts::Hash(re(*elem), keys.clone()),
-                    Iterated::Index { elem, keys } => Parts::Index(re(*elem), keys.clone()),
-                    Iterated::Radix { elem, keys } => Parts::Radix(re(*elem), keys.clone()),
-                    Iterated::Trie { elem, key } => Parts::Trie(re(*elem), *key),
-                },
-                LayoutNode::FlatArray { .. } => {
-                    return Err("a browser delivery node is not a store layout".to_string());
-                }
+            let Some(parts) = layout_parts(node, &ids)? else {
+                continue;
             };
             let size = closure.sizes[id];
             let linked = closure.linked.contains(id)
@@ -344,54 +343,11 @@ impl Stores {
                 Ok(())
             }
             How::Reference => {
-                let st = &self.allocations[from.store_nr as usize];
-                let sn = st.get_u32_raw(from.rec, from.pos);
-                let (rec, pos) = (
-                    st.get_u32_raw(from.rec, from.pos + 4),
-                    st.get_u32_raw(from.rec, from.pos + 8),
-                );
-                if sn == u32::from(u16::MAX) && rec == 0 {
-                    self.set_db_ref(
-                        to,
-                        0,
-                        DbRef {
-                            store_nr: u16::MAX,
-                            rec: 0,
-                            pos: 0,
-                        },
-                    );
-                } else {
-                    let sn = u16::try_from(sn).unwrap_or(u16::MAX - 1);
-                    run.fixups.push((*to, (sn, rec, pos)));
-                }
+                self.convert_reference(run, from, to);
                 Ok(())
             }
             How::Variants { to: map, pairs } => {
-                // The discriminant byte holds `index + 1`; 0 is null.
-                let raw = self.allocations[from.store_nr as usize].get_byte(from.rec, from.pos, 0);
-                let at = usize::try_from(raw - 1).ok();
-                let target = at.and_then(|i| map.get(i).copied().flatten());
-                match (at, target) {
-                    (Some(i), Some(j)) => {
-                        if let Some(vp) = pairs.get(i).copied().flatten() {
-                            // A struct-enum: the variant record writes its own tag.
-                            self.convert(run, vp, from, to, into)
-                        } else {
-                            self.allocations[to.store_nr as usize].set_byte(
-                                to.rec,
-                                to.pos,
-                                0,
-                                i32::from(j) + 1,
-                            );
-                            Ok(())
-                        }
-                    }
-                    // Null, or a variant the new program removed: null.
-                    _ => {
-                        self.allocations[to.store_nr as usize].set_byte(to.rec, to.pos, 0, 0);
-                        Ok(())
-                    }
-                }
+                self.convert_variant(run, map, pairs, from, to, into)
             }
             How::Record(plan) => {
                 let of = Self::old_fields(run, p.old);
@@ -425,6 +381,9 @@ impl Stores {
                         // Filled by filing through the group's source member.
                         FieldFrom::Group { .. } => {}
                         FieldFrom::Default => {
+                            if let Some(f) = run.fills.get(&(new_tp, nname.clone())) {
+                                run.pending.push((*to, f.clone()));
+                            }
                             self.write_absent_value(ncontent, new_tp, i as u16, &field_to);
                         }
                         FieldFrom::Layout => {
@@ -444,6 +403,54 @@ impl Stores {
                 Ok(())
             }
             How::Elements { elem } => self.convert_elements(run, *elem, from, old_tp, into),
+        }
+    }
+
+    /// An enum value through its variant map: the discriminant byte holds `index + 1`, and 0
+    /// is null.  A struct-enum's variant record converts through its own pair and writes its
+    /// own tag; a variant the new program removed becomes null.
+    fn convert_variant(
+        &mut self,
+        run: &mut Run,
+        map: &[Option<u8>],
+        pairs: &[Option<usize>],
+        from: &DbRef,
+        to: &DbRef,
+        into: Container,
+    ) -> Result<(), String> {
+        let raw = self.allocations[from.store_nr as usize].get_byte(from.rec, from.pos, 0);
+        let at = usize::try_from(raw - 1).ok();
+        if let (Some(i), Some(j)) = (at, at.and_then(|i| map.get(i).copied().flatten())) {
+            if let Some(vp) = pairs.get(i).copied().flatten() {
+                return self.convert(run, vp, from, to, into);
+            }
+            self.allocations[to.store_nr as usize].set_byte(to.rec, to.pos, 0, i32::from(j) + 1);
+        } else {
+            self.allocations[to.store_nr as usize].set_byte(to.rec, to.pos, 0, 0);
+        }
+        Ok(())
+    }
+
+    /// A stored reference: null stays null; any other is set aside until every record it can
+    /// name exists (`repoint_references`).
+    fn convert_reference(&mut self, run: &mut Run, from: &DbRef, to: &DbRef) {
+        let st = &self.allocations[from.store_nr as usize];
+        let sn = st.get_u32_raw(from.rec, from.pos);
+        let rec = st.get_u32_raw(from.rec, from.pos + 4);
+        let pos = st.get_u32_raw(from.rec, from.pos + 8);
+        if sn == u32::from(u16::MAX) && rec == 0 {
+            self.set_db_ref(
+                to,
+                0,
+                DbRef {
+                    store_nr: u16::MAX,
+                    rec: 0,
+                    pos: 0,
+                },
+            );
+        } else {
+            let sn = u16::try_from(sn).unwrap_or(u16::MAX - 1);
+            run.fixups.push((*to, (sn, rec, pos)));
         }
     }
 
@@ -754,6 +761,17 @@ impl Stores {
     }
 }
 
+#[cfg_attr(not(feature = "mmap"), allow(dead_code))]
+/// An upgrade begun by [`Stores::upgrade_file_begin`]: the new store is built in `new_slot`
+/// and nothing is on disk yet.
+#[derive(Debug)]
+pub struct FileUpgradeJob {
+    path: std::path::PathBuf,
+    current: crate::schema_sidecar::LayoutIdentity,
+    changes: Vec<String>,
+    new_slot: u16,
+}
+
 /// What [`Stores::upgrade_file`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileUpgrade {
@@ -774,6 +792,9 @@ impl Stores {
     /// `<path>.old`.  A refusal, or a failure anywhere before the swap, leaves the store and
     /// its sidecar byte for byte as they were.
     ///
+    /// A field whose default is not a constant needs the program to run it; this entry has
+    /// no program, so such an upgrade goes through [`crate::host::Program::upgrade_file`].
+    ///
     /// # Errors
     /// Why the store cannot be upgraded: no recorded layout, a layout this build cannot read,
     /// a refusal of the upgrade map, or an I/O failure.
@@ -782,6 +803,26 @@ impl Stores {
         path: &std::path::Path,
         new_root: Option<u16>,
     ) -> Result<FileUpgrade, String> {
+        match self.upgrade_file_begin(path, new_root, &Fills::new())? {
+            None => Ok(FileUpgrade::Current),
+            Some((job, _)) => self.upgrade_file_finish(job),
+        }
+    }
+
+    /// The first half of [`Stores::upgrade_file`]: read the store and its recorded layout,
+    /// convert it into a new store in this table, and answer the job and the records that
+    /// still owe an expression default (`fills`).  `None` when the store is already current.
+    /// Nothing is written to disk; [`Stores::upgrade_file_finish`] does that, and
+    /// [`Stores::upgrade_file_abandon`] drops the job instead.
+    ///
+    /// # Errors
+    /// As [`Stores::upgrade_file`].
+    pub fn upgrade_file_begin(
+        &mut self,
+        path: &std::path::Path,
+        new_root: Option<u16>,
+        fills: &Fills,
+    ) -> Result<Option<(FileUpgradeJob, PendingFills)>, String> {
         use crate::schema_sidecar::{LayoutIdentity, dschema_path};
         let side = dschema_path(path);
         let text = crate::file_access::read_to_string(&side).map_err(|_| {
@@ -818,27 +859,46 @@ impl Stores {
         };
         let current = LayoutIdentity::of(self, &[new_root]);
         if current.layout_hash == id.layout_hash && current.dump == id.dump {
-            return Ok(FileUpgrade::Current);
+            return Ok(None);
         }
         let new = self.layout_descriptor(&[new_root]);
         let changes = UpgradeMap::derive(&old, old_root, &new, new_root).changes;
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bytes =
+            crate::file_access::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let store = crate::store::Store::from_bytes(&bytes)
             .ok_or_else(|| format!("{} is not a store image", path.display()))?;
         let old_slot = self.adopt_store(store);
-        let result = self.upgrade_store(old_slot, &old, old_root, new_root, id.slot, true);
-        let gone = self.take_store(old_slot);
-        drop(gone);
+        let result =
+            self.upgrade_store_with(old_slot, &old, old_root, new_root, id.slot, true, fills);
+        drop(self.take_store(old_slot));
         self.release_slot(old_slot);
-        let new_slot = result?;
+        let (new_slot, pending) = result?;
         // The new image's references name the slot it was built in.
         let mut current = current;
         current.slot = Some(new_slot);
-        let image = self.store_image(new_slot);
-        let gone = self.take_store(new_slot);
-        drop(gone);
-        self.release_slot(new_slot);
+        Ok(Some((
+            FileUpgradeJob {
+                path: path.to_path_buf(),
+                current,
+                changes,
+                new_slot,
+            },
+            pending,
+        )))
+    }
+
+    /// Write a begun upgrade's new store beside the old one and swap it in; the old pair is
+    /// kept as `<path>.old`.
+    ///
+    /// # Errors
+    /// An I/O failure; the store at `path` is the old one until the first rename succeeds.
+    pub fn upgrade_file_finish(&mut self, job: FileUpgradeJob) -> Result<FileUpgrade, String> {
+        use crate::schema_sidecar::dschema_path;
+        let image = self.store_image(job.new_slot);
+        self.upgrade_file_abandon(&job);
         let image = image.ok_or_else(|| "the upgraded store did not form an image".to_string())?;
+        let path = job.path.as_path();
+        let side = dschema_path(path);
         // Beside, then swapped: the old pair is renamed away first, so at every moment one
         // complete store with its own sidecar sits at `path`, or the old one does.
         let with = |suffix: &str| {
@@ -849,12 +909,27 @@ impl Stores {
         let (next, kept) = (with(".upgrade"), with(".old"));
         let io = |e: std::io::Error| e.to_string();
         super::allocation::write_image_atomic(&next, &image).map_err(io)?;
-        current.write_beside(&next).map_err(io)?;
-        std::fs::rename(path, &kept).map_err(io)?;
-        std::fs::rename(&side, dschema_path(&kept)).map_err(io)?;
-        std::fs::rename(&next, path).map_err(io)?;
-        std::fs::rename(dschema_path(&next), &side).map_err(io)?;
-        Ok(FileUpgrade::Upgraded { kept, changes })
+        job.current.write_beside(&next).map_err(io)?;
+        crate::file_access::rename(path, &kept).map_err(io)?;
+        crate::file_access::rename(&side, dschema_path(&kept)).map_err(io)?;
+        crate::file_access::rename(&next, path).map_err(io)?;
+        crate::file_access::rename(dschema_path(&next), &side).map_err(io)?;
+        Ok(FileUpgrade::Upgraded {
+            kept,
+            changes: job.changes,
+        })
+    }
+
+    /// Release a begun upgrade's new store without writing anything.
+    pub fn upgrade_file_abandon(&mut self, job: &FileUpgradeJob) {
+        drop(self.take_store(job.new_slot));
+        self.release_slot(job.new_slot);
+    }
+
+    /// The new store a begun upgrade built, for running its fills on.
+    #[must_use]
+    pub fn upgrade_file_store(job: &FileUpgradeJob) -> u16 {
+        job.new_slot
     }
 
     /// The byte image of the store in `slot`, ending at its last live record.
@@ -869,6 +944,61 @@ impl Stores {
             live_end.max(crate::store::MIN_BOUND_WORDS),
         )
     }
+}
+
+/// The `Parts` an old description node becomes in the appended table, its type references
+/// moved through `ids`; `None` for a base type, which maps onto its seed row instead.
+fn layout_parts(node: &LayoutNode, ids: &BTreeMap<u16, u16>) -> Result<Option<Parts>, String> {
+    let re = |k: u16| -> u16 {
+        if k == u16::MAX {
+            k
+        } else {
+            ids.get(&k).copied().unwrap_or(u16::MAX)
+        }
+    };
+    let fields = |fs: &[crate::database::LayoutField]| -> Vec<Field> {
+        fs.iter()
+            .map(|f| {
+                Field::from_stored(
+                    f.name.clone(),
+                    re(f.content),
+                    f.position,
+                    Field::default_to_wire(None),
+                    f.nullable,
+                    re(f.target),
+                    f.group.clone(),
+                )
+            })
+            .collect()
+    };
+    Ok(Some(match node {
+        LayoutNode::Base(_) => return Ok(None),
+        LayoutNode::Record(fs) => Parts::Struct(fields(fs)),
+        LayoutNode::EnumValue(t, fs) => Parts::EnumValue(*t, fields(fs)),
+        LayoutNode::Choices(vs) => {
+            Parts::Enum(vs.iter().map(|(t, n)| (re(*t), n.clone())).collect())
+        }
+        LayoutNode::Byte { start, nullable } => Parts::Byte(*start, *nullable),
+        LayoutNode::Short { start, nullable } => Parts::Short(*start, *nullable),
+        LayoutNode::Int { start, nullable } => Parts::Int(*start, *nullable),
+        LayoutNode::ShortRaw { start, nullable } => Parts::ShortRaw(*start, *nullable),
+        LayoutNode::IntRaw { start, nullable } => Parts::IntRaw(*start, *nullable),
+        LayoutNode::Vector(e) => Parts::Vector(re(*e)),
+        LayoutNode::Array(e) => Parts::Array(re(*e)),
+        LayoutNode::ChildRec(e) => Parts::ChildRec(re(*e)),
+        LayoutNode::Ref => Parts::DbRef,
+        LayoutNode::Iterated(it) => match it {
+            Iterated::Sorted { elem, keys } => Parts::Sorted(re(*elem), keys.clone()),
+            Iterated::Ordered { elem, keys } => Parts::Ordered(re(*elem), keys.clone()),
+            Iterated::Hash { elem, keys } => Parts::Hash(re(*elem), keys.clone()),
+            Iterated::Index { elem, keys } => Parts::Index(re(*elem), keys.clone()),
+            Iterated::Radix { elem, keys } => Parts::Radix(re(*elem), keys.clone()),
+            Iterated::Trie { elem, key } => Parts::Trie(re(*elem), *key),
+        },
+        LayoutNode::FlatArray { .. } => {
+            return Err("a browser delivery node is not a store layout".to_string());
+        }
+    }))
 }
 
 /// Where a value's collection elements are filed, in the terms `record_new` takes.

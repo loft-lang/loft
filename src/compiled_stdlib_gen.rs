@@ -354,7 +354,6 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     db.value(t8, "Less", u16::MAX);
     db.value(t8, "Equal", u16::MAX);
     db.value(t8, "Greater", u16::MAX);
-    db.value(t8, "then", u16::MAX);
     db.value(t9, "FvBool", t29);
     db.value(t9, "FvInt", t31);
     db.value(t9, "FvLong", t32);
@@ -373,7 +372,6 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     db.value(t46, "IsDirectory", u16::MAX);
     db.value(t46, "NotEmpty", u16::MAX);
     db.value(t46, "Other", u16::MAX);
-    db.value(t46, "ok", u16::MAX);
     db.value(t53, "NullVal", t54);
     db.value(t53, "BoolVal", t55);
     db.value(t53, "IntVal", t56);
@@ -396,19 +394,6 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
     db.value(t73, "JArray", t78);
     db.value(t73, "JObject", t80);
     db.value(t73, "JInteger", t83);
-    db.value(t73, "field", u16::MAX);
-    db.value(t73, "item", u16::MAX);
-    db.value(t73, "len", u16::MAX);
-    db.value(t73, "as_text", u16::MAX);
-    db.value(t73, "as_number", u16::MAX);
-    db.value(t73, "as_long", u16::MAX);
-    db.value(t73, "as_bool", u16::MAX);
-    db.value(t73, "kind", u16::MAX);
-    db.value(t73, "keys", u16::MAX);
-    db.value(t73, "fields", u16::MAX);
-    db.value(t73, "has_field", u16::MAX);
-    db.value(t73, "to_json", u16::MAX);
-    db.value(t73, "to_json_pretty", u16::MAX);
     db.value(t86, "IntegerKind", u16::MAX);
     db.value(t86, "LongKind", u16::MAX);
     db.value(t86, "SingleKind", u16::MAX);

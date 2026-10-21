@@ -409,40 +409,7 @@ impl Deriver<'_> {
                     );
                     return None;
                 }
-                let mut to = Vec::new();
-                let mut pairs = Vec::new();
-                for (ot, oname) in ov {
-                    match nv.iter().position(|(_, n)| n == oname) {
-                        Some(i) => {
-                            to.push(Some(i as u8));
-                            let nt = nv[i].0;
-                            pairs.push(if *ot != u16::MAX && nt != u16::MAX {
-                                Some(self.pair(*ot, nt, &format!("{path}.{oname}"))?)
-                            } else if *ot != nt && (*ot == u16::MAX || nt == u16::MAX) {
-                                self.refuse(
-                                    &format!("{path}.{oname}"),
-                                    "a variant gains or loses its fields".to_string(),
-                                );
-                                return None;
-                            } else {
-                                None
-                            });
-                        }
-                        None => {
-                            to.push(None);
-                            pairs.push(None);
-                            self.map.changes.push(format!(
-                                "{new_name}.{oname} removed: such a value becomes null"
-                            ));
-                        }
-                    }
-                }
-                for (_, n) in nv {
-                    if !ov.iter().any(|(_, o)| o == n) {
-                        self.map.changes.push(format!("{new_name}.{n} added"));
-                    }
-                }
-                Some(How::Variants { to, pairs })
+                self.variants(ov, nv, &new_name, path)
             }
             (LayoutNode::Base(BaseKind::Single), LayoutNode::Base(BaseKind::Float)) => {
                 self.map
@@ -466,32 +433,7 @@ impl Deriver<'_> {
                 Some(How::Elements { elem })
             }
             (LayoutNode::Iterated(oi), LayoutNode::Iterated(ni)) => {
-                let same_kind = std::mem::discriminant(oi) == std::mem::discriminant(ni)
-                    || matches!(
-                        (oi, ni),
-                        (
-                            Iterated::Sorted { .. } | Iterated::Ordered { .. },
-                            Iterated::Sorted { .. } | Iterated::Ordered { .. }
-                        )
-                    );
-                if !same_kind {
-                    self.refuse(
-                        path,
-                        format!("changes from {} to {}", kind_word(on), kind_word(nn)),
-                    );
-                    return None;
-                }
-                let (oe, ne) = (oi.elem(), ni.elem());
-                let elem = self.pair(oe, ne, &format!("{path}[]"))?;
-                let (ok, nk) = (self.key_names(false, oi), self.key_names(true, ni));
-                if ok != nk {
-                    self.map.changes.push(format!(
-                        "{path}: rebuilt under the key [{}] (was [{}])",
-                        nk.join(", "),
-                        ok.join(", ")
-                    ));
-                }
-                Some(How::Elements { elem })
+                self.keyed(oi, on, ni, nn, path)
             }
             // What the reference points at is checked on the FIELD (`record`), where the
             // target is recorded; the 12 bytes themselves are re-pointed.
@@ -528,6 +470,86 @@ impl Deriver<'_> {
                 None
             }
         }
+    }
+
+    /// The plan of a keyed collection kept as the same kind: rebuilt element by element,
+    /// under its new key when the key changed.
+    fn keyed(
+        &mut self,
+        oi: &Iterated,
+        on: &LayoutNode,
+        ni: &Iterated,
+        nn: &LayoutNode,
+        path: &str,
+    ) -> Option<How> {
+        let same_kind = std::mem::discriminant(oi) == std::mem::discriminant(ni)
+            || matches!(
+                (oi, ni),
+                (
+                    Iterated::Sorted { .. } | Iterated::Ordered { .. },
+                    Iterated::Sorted { .. } | Iterated::Ordered { .. }
+                )
+            );
+        if !same_kind {
+            self.refuse(
+                path,
+                format!("changes from {} to {}", kind_word(on), kind_word(nn)),
+            );
+            return None;
+        }
+        let (oe, ne) = (oi.elem(), ni.elem());
+        let elem = self.pair(oe, ne, &format!("{path}[]"))?;
+        let (ok, nk) = (self.key_names(false, oi), self.key_names(true, ni));
+        if ok != nk {
+            self.map.changes.push(format!(
+                "{path}: rebuilt under the key [{}] (was [{}])",
+                nk.join(", "),
+                ok.join(", ")
+            ));
+        }
+        Some(How::Elements { elem })
+    }
+
+    /// The plan of a value enum whose name did not change: each old variant to the new one of
+    /// its name, or to null when the new program removed it.
+    fn variants(
+        &mut self,
+        ov: &[(u16, String)],
+        nv: &[(u16, String)],
+        new_name: &str,
+        path: &str,
+    ) -> Option<How> {
+        let mut to = Vec::new();
+        let mut pairs = Vec::new();
+        for (ot, oname) in ov {
+            let Some(i) = nv.iter().position(|(_, n)| n == oname) else {
+                to.push(None);
+                pairs.push(None);
+                self.map.changes.push(format!(
+                    "{new_name}.{oname} removed: such a value becomes null"
+                ));
+                continue;
+            };
+            to.push(Some(i as u8));
+            let nt = nv[i].0;
+            pairs.push(if *ot != u16::MAX && nt != u16::MAX {
+                Some(self.pair(*ot, nt, &format!("{path}.{oname}"))?)
+            } else if *ot != nt {
+                self.refuse(
+                    &format!("{path}.{oname}"),
+                    "a variant gains or loses its fields".to_string(),
+                );
+                return None;
+            } else {
+                None
+            });
+        }
+        for (_, n) in nv {
+            if !ov.iter().any(|(_, o)| o == n) {
+                self.map.changes.push(format!("{new_name}.{n} added"));
+            }
+        }
+        Some(How::Variants { to, pairs })
     }
 
     /// The key field names of a keyed collection, `-name` for a descending one.
@@ -613,7 +635,8 @@ impl Deriver<'_> {
                 path,
                 format!(
                     "`{name}` loses {} and gains {} in one upgrade, which looks like a rename; \
-                     add the new field first, upgrade, then remove the old one",
+                     keep the old field, give the new one a default that reads it \
+                     (`new: T = $.old`), upgrade, then remove the old one",
                     dropped.join(", "),
                     added.join(", ")
                 ),
