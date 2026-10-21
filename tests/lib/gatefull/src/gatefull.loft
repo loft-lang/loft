@@ -1,0 +1,59 @@
+// @PLN199 — one `pub fn` per signature and body shape the native gate judges.  A script
+// that `use`s this library compiles what the gate admits and interprets the rest; the
+// guards (`tests/n3_use_native.rs`, `tests/n3_parity.rs`) pin the answers in every mode
+// and the list of functions that still run interpreted, with the reason for each.
+
+pub struct Ck { pub k: integer, pub v: integer }
+
+pub fn plain(x: integer) -> integer { x * 3 }
+
+// Keyed collections returned: a fresh store the caller owns.
+pub fn ret_sorted(n: integer) -> sorted<Ck[k]> {
+    out: sorted<Ck[k]> = [];
+    for i in 0..n { out += [Ck { k: i, v: i * 11 }]; }
+    out
+}
+pub fn ret_index(n: integer) -> index<Ck[k]> {
+    out: index<Ck[k]> = [];
+    for i in 0..n { out += [Ck { k: i, v: i * 11 }]; }
+    out
+}
+pub fn ret_hash(n: integer) -> hash<Ck[k]> {
+    out: hash<Ck[k]> = [];
+    for i in 0..n { out += [Ck { k: i, v: i * 11 }]; }
+    out
+}
+
+// Tuples, either way across.
+pub fn ret_tuple(q: integer) -> (integer, text) { (q * 2, "t{q}") }
+pub fn arg_tuple(t: (integer, integer)) -> integer { t.0 * 100 + t.1 }
+
+// A reference to the caller's variable.
+pub fn arg_ref(n: &integer) { n += 5; }
+
+// Function values: passed in, returned, and local.
+pub fn arg_fn(f: fn(integer) -> integer, x: integer) -> integer { f(x) + 1 }
+pub fn ret_fn() -> fn(integer) -> integer { fn(a: integer) -> integer { a * 7 } }
+pub fn local_lambda(x: integer) -> integer {
+    f = fn(a: integer) -> integer { a + 1 };
+    f(x)
+}
+
+// Generators: returned to the script, and iterated inside the library.
+pub fn gen(n: integer) -> iterator<integer> { for i in 0..n { yield i * 10; } }
+pub fn sum_gen(n: integer) -> integer {
+    s = 0;
+    for v in gen(n) { s += v; }
+    s
+}
+
+// A `par` loop over a library function.
+pub fn par_sum(xs: vector<integer>) -> integer {
+    s = 0;
+    for x in xs par(r = plain(x), 2) { s += r; }
+    s
+}
+
+// A generic, and a function that instantiates it.
+pub fn generic<T: Numeric>(a: T, b: T) -> T { a * b }
+pub fn uses_generic(x: integer) -> integer { generic(x, 4) }

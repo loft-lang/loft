@@ -199,6 +199,83 @@ fn datalib_store_touching_types_parity() {
     let _ = fa::remove_dir_all(native_auto);
 }
 
+/// @PLN199 — every shape the native gate judges, run interpreted, mixed and `--native`,
+/// against the answers computed by hand (`tests/lib/gatefull_main.out`).  The functions a
+/// step of the plan moves from the interpreter into the compiled library keep their
+/// answers, and the stores they return are freed once: each mode runs under
+/// `LOFT_STORES=warn` (a leak in the program's thousand-call loop passes its 30-store
+/// bar) and the store guard, and the mixed mode once more under `LOFT_POISON=1`.
+#[test]
+fn gatefull_every_gate_shape_parity() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable (mixed + native modes need it)");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_gatefull_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let lib = tmp.join("lib");
+    fa::create_dir_all(lib.join("gatefull/src")).unwrap();
+    for f in ["loft.toml", "src/gatefull.loft"] {
+        fa::copy(
+            Path::new("tests/lib/gatefull").join(f),
+            lib.join("gatefull").join(f),
+        )
+        .unwrap();
+    }
+    let prog = tmp.join("main.loft");
+    fa::copy(Path::new("tests/lib/gatefull_main.loft"), &prog).unwrap();
+    let expected = fa::read_to_string("tests/lib/gatefull_main.out").unwrap();
+
+    let warn = ("LOFT_STORES", "warn");
+    let guard = ("LOFT_STORE_GUARD", "1");
+    let interp = run_against(&lib, &prog, &[("LOFT_NO_NATIVE_LIBS", "1"), warn, guard]);
+    let mixed = run_against(&lib, &prog, &[warn, guard]);
+    let poison = run_against(&lib, &prog, &[("LOFT_POISON", "1")]);
+    let mut native_cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+    let native = native_cmd
+        .arg("--lib")
+        .arg(&lib)
+        .arg("--native")
+        .arg(&prog)
+        .env("LOFT_NO_CACHE", "1")
+        .env(warn.0, warn.1)
+        .env(guard.0, guard.1)
+        .output()
+        .expect("spawn loft binary");
+    let native = Run {
+        success: native.status.success(),
+        stdout: String::from_utf8_lossy(&native.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&native.stderr).into_owned(),
+    };
+    let _ = fa::remove_dir_all(&tmp);
+    for (name, r) in [
+        ("interp", &interp),
+        ("mixed", &mixed),
+        ("mixed under LOFT_POISON", &poison),
+        ("native", &native),
+    ] {
+        assert!(
+            r.success,
+            "{name} failed.\nstdout:\n{}\nstderr:\n{}",
+            r.stdout, r.stderr
+        );
+        assert_eq!(
+            r.stdout, expected,
+            "{name}: wrong answers.\nstderr:\n{}",
+            r.stderr
+        );
+        assert!(
+            !r.stderr.contains("[store] WARNING") && !r.stderr.contains("[store-guard]"),
+            "{name}: a store outlived its use.\nstderr:\n{}",
+            r.stderr
+        );
+    }
+}
+
 /// @PLN11 Arc N / N3 Step 2 — the build-failure fallback.
 ///
 /// *Invariant:* a library that can't compile native **silently interprets** —

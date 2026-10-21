@@ -243,8 +243,38 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
 /// `LOFT_TRACE_NATIVE_GATE=1` names, per `use`d library, how many of the functions a script
 /// can call run compiled and, for each that stays interpreted, the rule that kept it there —
 /// before it, a function left out of the compiled library ran slower and nothing said so.
-/// `mathmixed` is the split the test above pins: `triple` compiles, `apply_inc` calls
-/// through a function value and stays interpreted.
+///
+/// @PLN199 — `gatefull` holds one function per shape the gate judges, and
+/// [`GATEFULL_INTERPRETED`] is what still runs interpreted, with the reason.  The list is
+/// exact: a step of the plan that compiles one more shape deletes its line here, and a
+/// function that silently drops back to the interpreter adds one and fails.
+const GATEFULL_INTERPRETED: &[(&str, &str)] = &[
+    ("n_arg_fn", "a call through a function value"),
+    (
+        "n_arg_ref",
+        "parameter `n: &integer` cannot cross the bridge",
+    ),
+    (
+        "n_arg_tuple",
+        "parameter `t: (integer, integer)` cannot cross the bridge",
+    ),
+    ("n_gen", "a generator (`yield`)"),
+    ("n_local_lambda", "a call through a function value"),
+    ("n_ret_fn", "returns `fn(integer) -> integer`"),
+    ("n_ret_hash", "returns `hash<Ck"),
+    ("n_ret_index", "returns `index<Ck"),
+    ("n_ret_sorted", "returns `sorted<Ck"),
+    (
+        "n_sum_gen",
+        "calls `n_gen`, which uses a generator (`yield`)",
+    ),
+];
+
+/// The callable functions the trace counts for `gatefull`: its fourteen non-generic `pub fn`s,
+/// `generic` as its one instantiation (`i_7integer_n_generic`), and the four operator stubs
+/// the `Numeric` bound declares (`t_6T_6_g1_OpMin`, …).
+const GATEFULL_CALLABLE: usize = 19;
+
 #[test]
 fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
     if loft::platform::process::harness_command("rustc")
@@ -258,15 +288,12 @@ fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
     let tmp = std::env::temp_dir().join(format!("loft_n3_gate_trace_{}", std::process::id()));
     let _ = fa::remove_dir_all(&tmp);
     fa::create_dir_all(&tmp).unwrap();
+    let lib = private_lib(&tmp, &["gatefull"]);
     let prog = tmp.join("main.loft");
-    fa::write(
-        &prog,
-        "use mathmixed::*;\nfn main() { println(\"{triple(7)} {apply_inc(10)}\"); }\n",
-    )
-    .unwrap();
+    fa::copy(std::path::Path::new("tests/lib/gatefull_main.loft"), &prog).unwrap();
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--lib")
-        .arg("tests/lib")
+        .arg(&lib)
         .arg(&prog)
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_TRACE_NATIVE_GATE", "1")
@@ -274,24 +301,37 @@ fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
         .expect("run the loft binary");
     let stderr = String::from_utf8_lossy(&out.stderr);
     let _ = fa::remove_dir_all(&tmp);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "21 11\n", "{stderr}");
+    // The answers computed by hand beside each call in the program.
+    let expected = fa::read_to_string("tests/lib/gatefull_main.out").unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{stderr}");
     let gate: Vec<&str> = stderr
         .lines()
         .filter(|l| l.contains("[native-gate]"))
         .collect();
+    let compiled = GATEFULL_CALLABLE - GATEFULL_INTERPRETED.len();
+    let summary =
+        format!("gatefull: {compiled} of {GATEFULL_CALLABLE} callable functions compiled");
     assert!(
-        gate.iter()
-            .any(|l| l.contains("mathmixed:") && l.contains("callable functions compiled")),
-        "a summary line for the library:\n{stderr}"
+        gate.iter().any(|l| l.contains(&summary)),
+        "the summary line `{summary}`:\n{stderr}"
     );
-    assert!(
-        gate.iter()
-            .any(|l| l.contains("`n_apply_inc` interpreted") && l.contains("function value")),
-        "apply_inc named with its reason:\n{stderr}"
-    );
-    assert!(
-        !gate.iter().any(|l| l.contains("`n_triple`")),
-        "a compiled function is not listed:\n{stderr}"
+    let listed: Vec<&str> = gate
+        .iter()
+        .copied()
+        .filter(|l| l.contains(" interpreted"))
+        .collect();
+    for (name, why) in GATEFULL_INTERPRETED {
+        assert!(
+            listed
+                .iter()
+                .any(|l| l.contains(&format!("`{name}` interpreted")) && l.contains(why)),
+            "`{name}` named with its reason ({why}):\n{stderr}"
+        );
+    }
+    assert_eq!(
+        listed.len(),
+        GATEFULL_INTERPRETED.len(),
+        "exactly the listed functions run interpreted:\n{stderr}"
     );
 }
 
