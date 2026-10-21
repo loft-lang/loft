@@ -60,6 +60,12 @@ pub fn local_lambda_text(x: integer) -> text {
 
 // Generators: returned to the script, and iterated inside the library.
 pub fn gen(n: integer) -> iterator<integer> { for i in 0..n { yield i * 10; } }
+pub fn gen_text(n: integer) -> iterator<text> { for i in 0..n { yield "t{i * 7}"; } }
+pub fn joined(g: iterator<text>) -> text {
+    out = "";
+    for t in g { out += "<{t}>"; }
+    out
+}
 pub fn gen_float(n: integer) -> iterator<float> { for i in 0..n { yield i as float * 0.5; } }
 pub fn gen_bool(n: integer) -> iterator<boolean> { for i in 0..n { yield i % 2 == 0; } }
 pub fn gen_rec(n: integer) -> iterator<Ck> { for i in 0..n { yield Ck { k: i, v: i * i }; } }

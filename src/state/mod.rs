@@ -264,6 +264,50 @@ fn fast_stack_allowed() -> bool {
 
 pub use crate::database::COROUTINE_STORE;
 
+std::thread_local! {
+    /// @PLN199 D1 — the text each compiled generator handle last yielded to the interpreter:
+    /// it arrives as an owned `String`, and the interpreter's yield is a `Str` over it, so the
+    /// bytes live here until the handle's next advance replaces them or its free drops them.
+    /// Per thread, as the generator table it shadows.
+    static NATIVE_TEXT_YIELDS: std::cell::RefCell<Vec<(DbRef, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
+/// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
+pub(crate) fn hold_native_text_yield(gen_ref: DbRef, text: String) -> Str {
+    if text == STRING_NULL {
+        release_native_text_yield(gen_ref);
+        return Str::new(STRING_NULL);
+    }
+    NATIVE_TEXT_YIELDS.with(|y| {
+        let mut y = y.borrow_mut();
+        let at = match y
+            .iter()
+            .position(|(g, _)| g.rec == gen_ref.rec && g.pos == gen_ref.pos)
+        {
+            Some(i) => {
+                y[i].1 = text;
+                i
+            }
+            None => {
+                y.push((gen_ref, text));
+                y.len() - 1
+            }
+        };
+        // The `String`'s buffer stays put while the vector moves its header.
+        Str::new(y[at].1.as_str())
+    })
+}
+
+/// Drop the text compiled generator `gen_ref` last yielded — at its free.
+pub(crate) fn release_native_text_yield(gen_ref: DbRef) {
+    NATIVE_TEXT_YIELDS.with(|y| {
+        y.borrow_mut()
+            .retain(|(g, _)| !(g.rec == gen_ref.rec && g.pos == gen_ref.pos));
+    });
+}
+
 /// Lifecycle state of a coroutine frame (CO1.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoroutineStatus {
@@ -2546,6 +2590,12 @@ impl State {
             (0, n) if n == size_ref() => {
                 let v = cr::coroutine_next_dbref(gen_ref, &mut self.database);
                 self.put_stack(v);
+            }
+            // A text arrives OWNED; the interpreter's yield is a `Str` over it, kept for the
+            // handle until its next advance or its free (`hold_native_text_yield`).
+            (0, n) if n == std::mem::size_of::<Str>() as u32 => {
+                let v = cr::coroutine_next_text(gen_ref, &mut self.database);
+                self.put_stack(hold_native_text_yield(gen_ref, v));
             }
             _ => self.push_null_value(packed_size),
         }

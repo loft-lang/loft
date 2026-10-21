@@ -7,6 +7,8 @@ fn twice(a: integer) -> integer { a * 2 }
 
 fn script_gen(n: integer) -> iterator<integer> { for i in 0..n { yield i + 1; } }
 
+fn script_words(n: integer) -> iterator<text> { for i in 0..n { yield "s{i}"; } }
+
 fn main() {
     println("plain {plain(7)}"); // 21
     s = ret_sorted(3);
@@ -65,6 +67,9 @@ fn main() {
     g = 0;
     for v in gen(4) { g += v; }
     println("gen {g}"); // 0 + 10 + 20 + 30 = 60
+    tx = "";
+    for word in gen_text(3) { tx += word; }
+    println("gen_text {tx} {joined(script_words(3))} {joined(gen_text(2))}"); // t0t7t14 <s0><s1><s2> <t0><t7>
     gfl = 0.0;
     for v in gen_float(4) { gfl += v; }
     gbo = 0;

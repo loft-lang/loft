@@ -783,7 +783,7 @@ const HOST_COROUTINES: crate::codegen_runtime::CoroutineHost =
         next_i64: host_coroutine_next_i64,
         next_into: crate::codegen_runtime::CoroutineHost::HERE.next_into,
         next_dbref: host_coroutine_next_dbref,
-        next_text: crate::codegen_runtime::CoroutineHost::HERE.next_text,
+        next_text: host_coroutine_next_text,
         exhausted: host_coroutine_exhausted,
     };
 
@@ -824,6 +824,19 @@ fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
     } else {
         unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<DbRef>()) }
     }
+}
+
+fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
+    let Some(st) = interpreter_for(gen_ref) else {
+        return (crate::codegen_runtime::CoroutineHost::HERE.next_text)(gen_ref, stores);
+    };
+    // The interpreter yields a `Str` into its own memory; the compiled consumer owns a copy.
+    let v = st.advance_for_native(gen_ref);
+    if v.len() < std::mem::size_of::<crate::keys::Str>() {
+        return crate::store::STRING_NULL.to_string();
+    }
+    let s = unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<crate::keys::Str>()) };
+    s.str().to_string()
 }
 
 fn host_coroutine_exhausted(gen_ref: DbRef) -> bool {

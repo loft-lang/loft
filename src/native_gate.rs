@@ -282,7 +282,7 @@ fn is_bridge_type(t: &Type) -> bool {
 pub(crate) fn generator_crosses(t: &Type) -> bool {
     match t.base() {
         Type::Integer(s) => s.forced_size.is_none(),
-        Type::Float | Type::Boolean => true,
+        Type::Float | Type::Boolean | Type::Text(_) => true,
         t => crate::data::is_dbref(t),
     }
 }
