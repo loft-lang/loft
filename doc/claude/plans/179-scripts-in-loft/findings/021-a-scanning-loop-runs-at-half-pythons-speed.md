@@ -2,7 +2,7 @@
 axis: performance
 met-by: scripts/opl_points (1.9× its original over 200k lines), tests/dump_ignored_tests (2.2×, 0.68 s against 0.31 s)
 status: open
-fix: interpreter mechanism work on the operations such a loop is made of — a split per line, a slice and a character per field, a comparison chain — measured first (loft-optimize skill), not a kernel for this shape; the call into a library native already went from ~270 ns to ~170 ns less dispatch (756e8a99f)
+fix: measured 2026-10-21 (probe 426 ms interpreted, Python 249): `split` ~125 ms against Python's ~58, the per-field loop ~285 against ~178.  The loop's largest cost is the loop variable — every field copied into an owned `String` and freed (`B-Copy`), ~100 ms: read in place the probe is −28 %.  The native generator already elides that copy (`@FR-R-TextBorrow`); bringing its admission to the interpreter is @PLN198.  `split`'s allocator cost is partly gone: a claim on an empty free tree bumps the wilderness (ae79c6e1b, split −10 %).  Left after @PLN198: the character tests (each `==` converts both sides to integer) and `split`'s per-part vector append
 ref: —
 probe: 021.probe.loft
 expect: over:250
