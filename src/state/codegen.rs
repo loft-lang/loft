@@ -4455,6 +4455,19 @@ impl State {
             self.gen_cdylib_text_dest_call(stack, dest_var, inner_op, &inner_args, c_lib);
             return true;
         }
+        // @PLN199 A2 — and the cdylib twin: a compiled library's text function appends into
+        // `dest_var` through the bridge (`gen_cdylib_text_dest_call`, whose bridge
+        // `push_str`s).  The parser leaves `w += lib_fn()` unwrapped for this arm
+        // (`descend_skip_direct`), so without it the bufferless call had no destination.
+        if is_cdylib_text_call(stack.data.def(*inner_op)) {
+            let native_sym = stack.data.def(*inner_op).native().to_owned();
+            if let Some(&cdylib_lib) = self.library_names.get(&native_sym) {
+                let (dest_var, inner_op) = (*dest_var, *inner_op);
+                let inner_args = inner_args.clone();
+                self.gen_cdylib_text_dest_call(stack, dest_var, inner_op, &inner_args, cdylib_lib);
+                return true;
+            }
+        }
         if !is_text_dest_native(&inner_name) {
             return false;
         }

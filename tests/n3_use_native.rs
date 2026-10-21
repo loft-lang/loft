@@ -267,10 +267,10 @@ const GATEFULL_INTERPRETED: &[(&str, &str)] = &[
     ),
 ];
 
-/// The callable functions the trace counts for `gatefull`: its fourteen non-generic `pub fn`s,
+/// The callable functions the trace counts for `gatefull`: its sixteen non-generic `pub fn`s,
 /// `generic` as its one instantiation (`i_7integer_n_generic`), and the four operator stubs
 /// the `Numeric` bound declares (`t_6T_6_g1_OpMin`, …).
-const GATEFULL_CALLABLE: usize = 19;
+const GATEFULL_CALLABLE: usize = 21;
 
 #[test]
 fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
@@ -289,6 +289,7 @@ fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
     let prog = tmp.join("main.loft");
     fa::copy(std::path::Path::new("tests/lib/gatefull_main.loft"), &prog).unwrap();
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
         .arg("--lib")
         .arg(&lib)
         .arg(&prog)

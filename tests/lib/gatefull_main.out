@@ -3,6 +3,8 @@ ret_sorted 3 22
 ret_index 3 11
 ret_hash 3 22
 ret_sorted_loop 13000
+ret_field_text hello [hello] 5
+ret_lit [fixed] 5 <fixedhello
 ret_tuple 8 t4
 arg_tuple 304
 arg_ref 6

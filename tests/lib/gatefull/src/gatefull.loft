@@ -24,6 +24,11 @@ pub fn ret_hash(n: integer) -> hash<Ck[k]> {
     out
 }
 
+// A returned text the function does not own: a field read and a literal (loft#773).
+pub struct Named { pub nm: text, pub n: integer }
+pub fn ret_field_text(c: Named) -> text { c.nm }
+pub fn ret_lit() -> text { "fixed" }
+
 // Tuples, either way across.
 pub fn ret_tuple(q: integer) -> (integer, text) { (q * 2, "t{q}") }
 pub fn arg_tuple(t: (integer, integer)) -> integer { t.0 * 100 + t.1 }

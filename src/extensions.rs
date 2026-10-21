@@ -1215,8 +1215,10 @@ fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate
                 stores.put(stack, result);
             } else {
                 // A text return with neither an external dest nor a work
-                // buffer (e.g. a constant-text body) — there is no caller cell
-                // to carry the bytes; degrade to an empty `Str` and flag in dev.
+                // buffer — there is no caller cell to carry the bytes.  The parser
+                // hands every value-position call a temporary
+                // (`Parser::crosses_text_bridge`), so reaching here is a coverage gap;
+                // degrade to an empty `Str` and flag in dev.
                 debug_assert!(
                     ret.text_ptr.is_null(),
                     "auto-native text return reached the dispatcher without any \

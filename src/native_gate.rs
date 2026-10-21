@@ -131,8 +131,10 @@ pub fn bridge_decline(data: &Data, d: u32) -> Option<String> {
             // allocates it); a struct `reference` return does NOT (the body
             // allocates the record fresh and returns its `DbRef` —
             // `n_make_point(cell, a, b) -> DbRef`), so it needs no hidden dest.  A
-            // `text` return uses `text_return`'s `&mut String` work buffer (the
-            // bridge owns a local `String` and copies the result into scratch).
+            // `text` return is written into the destination the caller hands over
+            // (`bridge_text_dest`): a local it is assigned to, or the temporary the
+            // parser gives a call in value position (`Parser::crosses_text_bridge`,
+            // which also covers a function returning a text it does not own — loft#773).
             let ret_text = matches!(ret, Type::Text(_));
             // Enum(_, _, _) covers both a plain (tag-only) enum (returned as a u8
             // tag) and a data enum (a DbRef, allocated fresh like a struct — no
@@ -154,30 +156,11 @@ pub fn bridge_decline(data: &Data, d: u32) -> Option<String> {
                         | Type::Trie(_, _, _)
                 )
                 || ret_text;
-            // loft#773 — a text return crosses the bridge THROUGH the `text_return`
-            // work buffer, and the sentence above assumed every text-returning
-            // function has one.  A function that returns a text it does not OWN — a
-            // field read (`return self.nm`) or a literal (`return "fixed"`) — is
-            // bufferless (`generation::def_returns_owned_text`), so the bridge holds
-            // the bytes in a `String` local and has nowhere to put them: it dropped
-            // them and the caller read `""`.  Dest-passing hid it wherever the result
-            // was assigned to a local, so only using the call IN PLACE (an argument,
-            // a format hole) showed it — silently, in the default mode of every
-            // published library.  Such a function is not dispatchable; leaving it
-            // unmarked makes it interpret, which is the same answer more slowly.
-            let text_ret_has_buffer = !ret_text
-                || def
-                    .attributes()
-                    .iter()
-                    .any(|a| is_text_work_buffer(&a.typedef));
             if !ret_ok {
                 return Some(format!(
                     "it returns `{}`, which the bridge cannot carry",
                     ret.name(data)
                 ));
-            }
-            if !text_ret_has_buffer {
-                return Some("it returns a text it does not own (no work buffer)".to_string());
             }
             def.attributes()
                 .iter()

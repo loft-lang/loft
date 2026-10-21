@@ -624,6 +624,33 @@ impl Parser {
             .is_some_and(|a| a.hidden)
     }
 
+    /// Does a call to `d_nr` return its text through the shared-store bridge — a cdylib text
+    /// function, or one that WILL be one?  Such a call writes its result into a destination
+    /// the caller hands over, so in value position it needs a temporary to write into.
+    ///
+    /// @PLN199 A2 — a `use`d library's functions are marked for the bridge after the whole
+    /// program is parsed (`native_lib::probe_and_mark_exports`), so `def.native` is still
+    /// empty when the calls to them are parsed: [`text_calls::is_cdylib_text_call`] alone
+    /// answered no, the call went unwrapped, and a function whose text it does not own (a
+    /// field read, a literal) answered `""` in every value position (loft#773).  A public
+    /// text function of a library that is to be compiled is wrapped too; when it ends up
+    /// interpreted the temporary costs one copy.
+    ///
+    /// [`text_calls::is_cdylib_text_call`]: crate::text_calls::is_cdylib_text_call
+    pub(crate) fn crosses_text_bridge(&self, d_nr: u32) -> bool {
+        let def = self.data.def(d_nr);
+        crate::text_calls::is_cdylib_text_call(def)
+            || (matches!(def.returned().base(), Type::Text(_))
+                && matches!(def.def_type(), crate::data::DefType::Function)
+                && def.pub_visible
+                && def.native().is_empty()
+                && def.c_sig.is_empty()
+                && self
+                    .pending_native_compile
+                    .iter()
+                    .any(|dir| crate::file_access::is_under(def.position().file.as_str(), dir)))
+    }
+
     /// @PLN10 — wrap every text-dest native called in *value position* in a
     /// scope-bound work-text temp, so its result lives in a freed local instead
     /// of the never-cleared `stores.scratch` buffer.  Replaces
@@ -639,7 +666,7 @@ impl Parser {
         let wrap_here = matches!(
             &*v,
             Value::Call(op, _) if crate::text_calls::is_text_dest_native(self.data.def(*op).name())
-                || crate::text_calls::is_cdylib_text_call(self.data.def(*op))
+                || self.crosses_text_bridge(*op)
                 // @PLN24 arc D — a `#c` binding returning text is a value-position
                 // producer like the other two, and needs the same work-text temp.
                 || crate::text_calls::is_c_text_call(self.data.def(*op))
@@ -715,7 +742,7 @@ impl Parser {
     fn descend_skip_direct(&mut self, v: &mut Value) {
         if let Value::Call(op, args) = v.unspan_mut() {
             let is_dest = crate::text_calls::is_text_dest_native(self.data.def(*op).name())
-                || crate::text_calls::is_cdylib_text_call(self.data.def(*op));
+                || self.crosses_text_bridge(*op);
             if is_dest {
                 for a in args.iter_mut() {
                     self.wrap_value_text_dest(a);

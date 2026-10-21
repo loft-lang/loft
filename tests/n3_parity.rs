@@ -49,9 +49,12 @@ fn run(args: &[&str], env: &[(&str, &str)], prog: &Path) -> Run {
 
 /// Run the loft binary on `prog` against an explicit (usually tmp, writable) `libdir`
 /// — for tests that own their fixtures so they never race on a shared `native-auto/`.
+/// The program interprets (`--interpret`; a bare run would compile it whole), so the
+/// libraries are what crosses into native code.
 fn run_against(libdir: &Path, prog: &Path, env: &[(&str, &str)]) -> Run {
     let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
-    cmd.arg("--lib")
+    cmd.arg("--interpret")
+        .arg("--lib")
         .arg(libdir)
         .arg(prog)
         .env("LOFT_NO_CACHE", "1");
@@ -110,8 +113,14 @@ fn write_lib(libdir: &Path, name: &str, dep: Option<&str>, body: &str) -> std::p
 ///   the real gate.)
 fn assert_three_mode_parity(prog: &Path) -> String {
     let guard = ("LOFT_STORE_GUARD", "1");
-    let interp = run(&[], &[("LOFT_NO_NATIVE_LIBS", "1"), guard], prog);
-    let mixed = run(&[], &[guard], prog);
+    // `--interpret` on both: a bare run compiles the whole program (`--native` is the
+    // default), which made these two legs a second and third native run.
+    let interp = run(
+        &["--interpret"],
+        &[("LOFT_NO_NATIVE_LIBS", "1"), guard],
+        prog,
+    );
+    let mixed = run(&["--interpret"], &[guard], prog);
     let native = run(&["--native"], &[guard], prog);
 
     for (name, r) in [("interp", &interp), ("mixed", &mixed), ("native", &native)] {
@@ -232,25 +241,27 @@ fn gatefull_every_gate_shape_parity() {
 
     let warn = ("LOFT_STORES", "warn");
     let guard = ("LOFT_STORE_GUARD", "1");
-    let interp = run_against(&lib, &prog, &[("LOFT_NO_NATIVE_LIBS", "1"), warn, guard]);
-    let mixed = run_against(&lib, &prog, &[warn, guard]);
-    let poison = run_against(&lib, &prog, &[("LOFT_POISON", "1")]);
-    let mut native_cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
-    let native = native_cmd
-        .arg("--lib")
-        .arg(&lib)
-        .arg("--native")
-        .arg(&prog)
-        .env("LOFT_NO_CACHE", "1")
-        .env(warn.0, warn.1)
-        .env(guard.0, guard.1)
-        .output()
-        .expect("spawn loft binary");
-    let native = Run {
-        success: native.status.success(),
-        stdout: String::from_utf8_lossy(&native.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&native.stderr).into_owned(),
+    let run_mode = |mode: &str, env: &[(&str, &str)]| {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--lib")
+            .arg(&lib)
+            .arg(mode)
+            .arg(&prog)
+            .env("LOFT_NO_CACHE", "1");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("spawn loft binary");
+        Run {
+            success: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }
     };
+    let interp = run_mode("--interpret", &[("LOFT_NO_NATIVE_LIBS", "1"), warn, guard]);
+    let mixed = run_mode("--interpret", &[warn, guard]);
+    let poison = run_mode("--interpret", &[("LOFT_POISON", "1")]);
+    let native = run_mode("--native", &[warn, guard]);
     let _ = fa::remove_dir_all(&tmp);
     for (name, r) in [
         ("interp", &interp),
@@ -374,11 +385,11 @@ fn default_native_dispatches_unopted_library() {
     fa::write(&prog, PLAINLIB_PROG).unwrap();
     let native_auto = std::path::Path::new("tests/lib/plainlib/native-auto");
 
-    let interp = run(&[], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
+    let interp = run(&["--interpret"], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
 
     // ESCAPE: `LOFT_NO_NATIVE_LIBS` interprets and builds no cdylib.
     let _ = fa::remove_dir_all(native_auto);
-    let escaped = run(&[], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
+    let escaped = run(&["--interpret"], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
     assert!(
         escaped.success,
         "interpret-escape run failed:\n{}",
@@ -391,7 +402,7 @@ fn default_native_dispatches_unopted_library() {
 
     // DEFAULT: plainlib never opted in, yet default-native auto-builds + dispatches.
     let _ = fa::remove_dir_all(native_auto);
-    let dflt = run(&[], &[], &prog);
+    let dflt = run(&["--interpret"], &[], &prog);
     assert!(
         dflt.success,
         "default-native run failed:\nstdout:\n{}\nstderr:\n{}",

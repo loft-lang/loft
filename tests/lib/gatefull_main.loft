@@ -21,6 +21,13 @@ fn main() {
         kept += len(k) + k[1].v;
     }
     println("ret_sorted_loop {kept}"); // 1000 * (2 + 11) = 13000
+    c = Named { nm: "hello", n: 3 };
+    kept_text = ret_field_text(c);
+    println("ret_field_text {kept_text} [{ret_field_text(c)}] {len(ret_field_text(c))}"); // hello [hello] 5
+    w = "<";
+    w += ret_lit();
+    w += ret_field_text(c);
+    println("ret_lit [{ret_lit()}] {len(ret_lit())} {w}"); // [fixed] 5 <fixedhello
     t = ret_tuple(4);
     println("ret_tuple {t.0} {t.1}"); // 8 t4
     println("arg_tuple {arg_tuple((3, 4))}"); // 304
