@@ -10915,20 +10915,7 @@ extern crate loft;"
             let r = self.output_function(w, dnr, program_store.as_ref());
             self.ps_mode = None;
             r?;
-            // `@FR-R-Apart` — the function's apart twin beside it: the same body over values.
-            if self.apart.twins.contains_key(&dnr) {
-                self.apart_twin = true;
-                let r = self.output_function(w, dnr, program_store.as_ref());
-                self.apart_twin = false;
-                r?;
-            }
-            // `@FR-R-Apart` instance 4 — the twin taking a record of record vectors apart.
-            if self.apr.twins.contains_key(&dnr) {
-                self.apr_twin = true;
-                let r = self.output_function(w, dnr, program_store.as_ref());
-                self.apr_twin = false;
-                r?;
-            }
+            self.output_apart_twins(w, dnr, program_store.as_ref())?;
             // @PLN157 § V-p — the callee's TWIN beside it (`@FR-R-Inputs`): the same body,
             // with its invariant inputs as extra parameters.
             if let Some(inputs) = self.callee_inputs_of(dnr) {
@@ -11083,6 +11070,29 @@ extern crate loft;"
             r?;
             self.output_ranged_variants(w, program_store)?;
             self.output_refill_twins(w, program_store)?;
+        }
+        Ok(())
+    }
+
+    /// `@FR-R-Apart` — the function's apart twins beside it, the same body over values: an
+    /// instance-2 twin (`__apv`) and an instance-4 twin (`__apr`).
+    fn output_apart_twins(
+        &mut self,
+        w: &mut dyn Write,
+        dnr: u32,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        if self.apart.twins.contains_key(&dnr) {
+            self.apart_twin = true;
+            let r = self.output_function(w, dnr, program_store);
+            self.apart_twin = false;
+            r?;
+        }
+        if self.apr.twins.contains_key(&dnr) {
+            self.apr_twin = true;
+            let r = self.output_function(w, dnr, program_store);
+            self.apr_twin = false;
+            r?;
         }
         Ok(())
     }

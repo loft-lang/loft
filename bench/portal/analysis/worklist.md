@@ -282,8 +282,11 @@ which together are the rest of the distance to ≈ 2.4×.
   `history_push` twin writing them into the entry's blocks (rotate) or fresh exact blocks
   (growing): 44.2 → 16.6 µs, **−62.5 %**, hash unchanged, ≈ 1.2×.  The store-side build of
   `e` (kept-record test, two clears, a push header, a reservation, three record pushes, a field
-  append, two finishes) and the copy out of it were ≈ 60 % of the routine.  Built as
-  `(R-Apart)` instance 4.
+  append, two finishes) and the copy out of it were ≈ 60 % of the routine.  BUILT as
+  `(R-Apart)` instance 4: 43.8 → 25.6 µs, **−41.7 %**, ≈ 1.9×.  What separates it from the
+  hand price (16.6 µs): `rotate_from_parts` and `apart_block` ask the element type's plan,
+  test it against the parts and copy through generic loops, where the hand form had the
+  offsets and sizes as constants — an emitted, layout-specialised boundary is the next step.
 
 **Zero fills in the runtime, classified.**  NEEDED (the structure reads 0 as "empty"): a hash
 table's buckets when made or grown (`hash.rs`), the entry arena's directory and chunks

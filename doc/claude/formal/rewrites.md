@@ -2837,8 +2837,16 @@ rooted at it, and a loop whose only growth was such a vector grows no store.
 **BUILT** (`generation::apart_value::plan` the gate, `generation::apart_emit` the twins, the
 regions and the boundary, runtime `codegen_runtime::ap_get_f64` / `ap_get_f64_or_null` /
 `ap_set_f64` / `ap_store_f64`; instance 3: `generation::apart_vector::roles` the gate, runtime
-`codegen_runtime::ApVec`; `LOFT_NO_APART=1` both, `LOFT_NO_APART_VECTOR=1` instance 3,
-`LOFT_TRACE_APART=1`).  Not admitted yet: an
+`codegen_runtime::ApVec`; instance 4: `generation::apart_records::plan` the gate,
+`generation::apart_records_emit` the owners, the `__apr` twins and the boundary, runtime
+`codegen_runtime::AprVec`, `Stores::apart_write_fresh` and `Stores::rotate_from_parts`;
+`LOFT_NO_APART=1` all, `LOFT_NO_APART_VECTOR=1` instance 3, `LOFT_NO_APART_RECORDS=1`
+instance 4, `LOFT_TRACE_APART=1`).  Instance 4 measured on dryopea `truncate_to`: 43.8 →
+25.6 µs (−41.7 %, ≈ 1.9× the Rust twin); `reload_and_record` −3.0 %.  The hand price's 16.6
+µs inlined the boundary with the layout's constants; the built form asks the element type's
+plan at run time.  Instance 4's guard `tests/scripts/158-apart-records.loft`, its pins
+`tests/apart_records.rs`; like instance 2 it is made only where no live tier ships
+(`--native-release`).  Not admitted yet: an
 element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
 text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
 Guards `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:

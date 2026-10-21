@@ -10,7 +10,10 @@
 // x = 0.5 for an even j and 1.25 for an odd one, on = (j even).  `LOFT_NO_APART_RECORDS=1`
 // must answer the same.  Pinned by tests/apart_records.rs.
 //
-// @falsified-at: hand-measured (sabotage, 2026-10-21) — see tests/apart_records.rs.
+// @falsified-at: hand-measured (sabotage, 2026-10-21) — a boolean field's byte lost failed
+// a1, a2, a3, a6 and a7; the fresh boundary dropping its last part failed a3 and a6 and
+// panicked before a7 (a7 alone fails it too: its markers read 0:0); the rotate keeping the
+// reused block's old length failed a1 and a3.
 
 struct P { q: integer, x: float, on: boolean }
 struct M { k: integer }

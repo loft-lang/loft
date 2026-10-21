@@ -249,23 +249,23 @@ impl Walk<'_> {
     }
 
     /// A field's length `len(OpGetField(v, off, _))`: the tracked variable.
-    fn length(&self, x: &Value) -> Option<u16> {
-        let Value::Call(d, a) = x.unspan() else {
+    fn length(&self, node: &Value) -> Option<u16> {
+        let Value::Call(def, args) = node.unspan() else {
             return None;
         };
-        if !matches!(op_name(self.data, *d), "t_6vector_len" | "OpLengthVector") {
+        if !matches!(op_name(self.data, *def), "t_6vector_len" | "OpLengthVector") {
             return None;
         }
-        let [f] = &a[..] else { return None };
-        let Value::Call(g, fa) = f.unspan() else {
+        let [field] = &args[..] else { return None };
+        let Value::Call(getter, gargs) = field.unspan() else {
             return None;
         };
-        if op_name(self.data, *g) != "OpGetField" {
+        if op_name(self.data, *getter) != "OpGetField" {
             return None;
         }
-        let v = var_of(fa.first()?)?;
-        let off = int_of(fa.get(1)?)?;
-        (self.tracked.contains_key(&v) && self.layout(v).field(off).is_some()).then_some(v)
+        let var = var_of(gargs.first()?)?;
+        let off = int_of(gargs.get(1)?)?;
+        (self.tracked.contains_key(&var) && self.layout(var).field(off).is_some()).then_some(var)
     }
 
     /// Walk one node: an admitted mention takes its tracked variable, and the walk goes on
@@ -317,22 +317,52 @@ impl Walk<'_> {
         }
     }
 
-    fn call(&mut self, d: u32, a: &[Value]) {
-        let name = op_name(self.data, d);
-        let first = a.first().and_then(var_of);
+    /// `OpSet*(elm, off, x)` in an open push group: a field of the element, in the encoding
+    /// its type has, written once.
+    fn element_write(&mut self, name: &str, elm: u16, args: &[Value]) {
+        let (owner, f) = self.elems[&elm];
+        let enc = match name {
+            "OpSetInt" => Enc::I64,
+            "OpSetFloat" => Enc::F64,
+            _ => Enc::Bool,
+        };
+        let off = args
+            .get(1)
+            .and_then(int_of)
+            .and_then(|o| u32::try_from(o).ok());
+        let field = &self.layout(owner).fields[f];
+        let fits = off.is_some_and(|o| field.elem_fields.contains(&(o, enc)));
+        match (fits, self.open.get_mut(&elm)) {
+            (true, Some(written)) if !written.contains(&off.unwrap_or(0)) => {
+                written.push(off.unwrap_or(0));
+            }
+            _ => self.decline(
+                owner,
+                "an element field written twice, out of its group or in another encoding",
+            ),
+        }
+        if let Some(val) = args.get(2) {
+            self.node(val);
+        }
+    }
+
+    fn call(&mut self, def: u32, args: &[Value]) {
+        let name = op_name(self.data, def);
+        let first = args.first().and_then(var_of);
         match (name, first) {
             ("OpDatabase", Some(v)) if self.tracked.contains_key(&v) => {
-                if self.param || a.get(1).and_then(int_of) != Some(i64::from(self.layout(v).rec_tp))
+                if self.param
+                    || args.get(1).and_then(int_of) != Some(i64::from(self.layout(v).rec_tp))
                 {
                     self.decline(v, "a mint of another type");
                 }
                 return;
             }
             ("OpSetInt4", Some(v)) if self.tracked.contains_key(&v) => {
-                let off = a.get(1).and_then(int_of).unwrap_or(-1);
+                let off = args.get(1).and_then(int_of).unwrap_or(-1);
                 if self.param
                     || self.layout(v).field(off).is_none()
-                    || a.get(2).and_then(int_of) != Some(0)
+                    || args.get(2).and_then(int_of) != Some(0)
                 {
                     self.decline(v, "a field written other than emptied");
                 }
@@ -347,37 +377,14 @@ impl Walk<'_> {
             ("OpSetInt" | "OpSetFloat" | "OpSetBoolean", Some(elm))
                 if self.elems.contains_key(&elm) =>
             {
-                let (owner, f) = self.elems[&elm];
-                let enc = match name {
-                    "OpSetInt" => Enc::I64,
-                    "OpSetFloat" => Enc::F64,
-                    _ => Enc::Bool,
-                };
-                let off = a
-                    .get(1)
-                    .and_then(int_of)
-                    .and_then(|o| u32::try_from(o).ok());
-                let field = &self.layout(owner).fields[f];
-                let fits = off.is_some_and(|o| field.elem_fields.contains(&(o, enc)));
-                match (fits, self.open.get_mut(&elm)) {
-                    (true, Some(written)) if !written.contains(&off.unwrap_or(0)) => {
-                        written.push(off.unwrap_or(0));
-                    }
-                    _ => self.decline(
-                        owner,
-                        "an element field written twice, out of its group or in another encoding",
-                    ),
-                }
-                if let Some(val) = a.get(2) {
-                    self.node(val);
-                }
+                self.element_write(name, elm, args);
                 return;
             }
             ("OpFinishRecord", Some(v)) if self.tracked.contains_key(&v) => {
-                let elm = a.get(1).and_then(var_of);
-                match elm.and_then(|e| self.open.remove(&e).map(|w| (e, w))) {
-                    Some((e, written)) if self.elems[&e].0 == v => {
-                        let f = self.elems[&e].1;
+                let closed = args.get(1).and_then(var_of);
+                match closed.and_then(|e| self.open.remove(&e).map(|w| (e, w))) {
+                    Some((group, written)) if self.elems[&group].0 == v => {
+                        let f = self.elems[&group].1;
                         if written.len() != self.layout(v).fields[f].elem_fields.len() {
                             self.decline(v, "an element whose fields are not all written");
                         }
@@ -388,18 +395,18 @@ impl Walk<'_> {
             }
             ("OpCopyRecord", Some(p)) if self.tracked.contains_key(&p) => {
                 // The boundary: a FRESH destination that keeps its source.
-                let flags = a
+                let flags = args
                     .get(2)
                     .and_then(int_of)
-                    .and_then(|t| u16::try_from(t).ok());
+                    .and_then(|tp| u16::try_from(tp).ok());
                 let rec_tp = self.layout(p).rec_tp;
                 let ok = self.param
-                    && flags.is_some_and(|t| {
-                        t & crate::keys::COPY_FRESH_DEST != 0
-                            && t & crate::keys::COPY_FREE_SOURCE == 0
-                            && t & crate::keys::COPY_TP_MASK == rec_tp
+                    && flags.is_some_and(|tp| {
+                        tp & crate::keys::COPY_FRESH_DEST != 0
+                            && tp & crate::keys::COPY_FREE_SOURCE == 0
+                            && tp & crate::keys::COPY_TP_MASK == rec_tp
                     })
-                    && a.get(1).and_then(var_of).is_some();
+                    && args.get(1).and_then(var_of).is_some();
                 if !ok {
                     self.decline(p, "a copy that is no append's fresh element");
                 }
@@ -408,13 +415,13 @@ impl Walk<'_> {
             _ => {}
         }
         // A user call: a tracked variable as an argument at a candidate twin's apart position.
-        for (i, arg) in a.iter().enumerate() {
+        for (i, arg) in args.iter().enumerate() {
             if let Some(v) = var_of(arg)
                 && self.tracked.contains_key(&v)
             {
-                match self.candidates.get(&d) {
+                match self.candidates.get(&def) {
                     Some(&(at, rec)) if at == i && rec == self.tracked[&v] => {
-                        self.calls.entry(v).or_default().insert(d);
+                        self.calls.entry(v).or_default().insert(def);
                     }
                     _ => self.decline(v, "handed to a function that is no twin"),
                 }
@@ -532,46 +539,8 @@ pub fn plan(data: &Data, stores: &Stores) -> RecPlan {
         plan.twins.insert(f, (params[&f], i, rec));
     }
     // The owners: locals of an apart type in any body, each reaching a twin.
-    for (d, def) in data.definitions.iter().enumerate() {
-        let f = d as u32;
-        if !matches!(def.def_type, DefType::Function)
-            || data.is_placeholder_instance(f)
-            || *def.code() == Value::Null
-        {
-            continue;
-        }
-        let vars = def.variables();
-        let mut tracked: HashMap<u16, u32> = HashMap::default();
-        for v in 0..vars.count() {
-            if vars.is_argument(v) {
-                continue;
-            }
-            if let Some(rec) = record_of(vars.tp(v), &types) {
-                tracked.insert(v, rec);
-            }
-        }
-        if tracked.is_empty() {
-            continue;
-        }
-        let w = walk(data, &types, &candidates, f, tracked.clone(), false);
-        let mut owners: HashMap<u16, u32> = HashMap::default();
-        for (v, rec) in tracked {
-            let why = w.declined.get(&v).copied().or_else(|| {
-                (!w.calls.get(&v).is_some_and(|c| !c.is_empty())).then_some("reaches no twin")
-            });
-            if let Some(why) = why {
-                if trace_on() {
-                    eprintln!(
-                        "[apart-records] {}: `{}` stays in the store: {why}",
-                        def.name(),
-                        vars.name(v)
-                    );
-                }
-                continue;
-            }
-            owners.insert(v, rec);
-        }
-        if !owners.is_empty() {
+    for f in 0..data.definitions.len() as u32 {
+        if let Some(owners) = owners_of(data, &types, &candidates, f) {
             plan.owners.insert(f, owners);
         }
     }
@@ -580,26 +549,78 @@ pub fn plan(data: &Data, stores: &Stores) -> RecPlan {
     }
     plan.types = types;
     if trace_on() {
-        for (f, (v, _, _)) in &plan.twins {
-            let def = data.def(*f);
+        trace_plan(data, &plan);
+    }
+    plan
+}
+
+/// The apart owners of `f`'s body: its locals of an apart type whose every mention a clause
+/// admits and which reach a twin.  `None` for a body with none.
+fn owners_of(
+    data: &Data,
+    types: &HashMap<u32, RecLayout>,
+    candidates: &HashMap<u32, (usize, u32)>,
+    f: u32,
+) -> Option<HashMap<u16, u32>> {
+    let def = data.def(f);
+    if !matches!(def.def_type, DefType::Function)
+        || data.is_placeholder_instance(f)
+        || *def.code() == Value::Null
+    {
+        return None;
+    }
+    let vars = def.variables();
+    let tracked: HashMap<u16, u32> = (0..vars.count())
+        .filter(|&v| !vars.is_argument(v))
+        .filter_map(|v| record_of(vars.tp(v), types).map(|rec| (v, rec)))
+        .collect();
+    if tracked.is_empty() {
+        return None;
+    }
+    let w = walk(data, types, candidates, f, tracked.clone(), false);
+    let mut owners: HashMap<u16, u32> = HashMap::default();
+    for (v, rec) in tracked {
+        let why = w.declined.get(&v).copied().or_else(|| {
+            w.calls
+                .get(&v)
+                .is_none_or(HashSet::is_empty)
+                .then_some("reaches no twin")
+        });
+        if let Some(why) = why {
+            if trace_on() {
+                eprintln!(
+                    "[apart-records] {}: `{}` stays in the store: {why}",
+                    def.name(),
+                    vars.name(v)
+                );
+            }
+            continue;
+        }
+        owners.insert(v, rec);
+    }
+    (!owners.is_empty()).then_some(owners)
+}
+
+/// `LOFT_TRACE_APART=1` — every twin and owner the plan admitted.
+fn trace_plan(data: &Data, plan: &RecPlan) {
+    for (f, (v, _, _)) in &plan.twins {
+        let def = data.def(*f);
+        eprintln!(
+            "[apart-records] twin {}__apr takes `{}` apart",
+            def.name(),
+            def.variables().name(*v)
+        );
+    }
+    for (f, o) in &plan.owners {
+        let def = data.def(*f);
+        for v in o.keys() {
             eprintln!(
-                "[apart-records] twin {}__apr takes `{}` apart",
+                "[apart-records] {}: `{}` is apart",
                 def.name(),
                 def.variables().name(*v)
             );
         }
-        for (f, o) in &plan.owners {
-            let def = data.def(*f);
-            for v in o.keys() {
-                eprintln!(
-                    "[apart-records] {}: `{}` is apart",
-                    def.name(),
-                    def.variables().name(*v)
-                );
-            }
-        }
     }
-    plan
 }
 
 /// The roles of `f`'s body: its owners and their push groups' elements, or — for its twin —
