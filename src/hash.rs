@@ -2301,7 +2301,7 @@ fn inline_checked(store: &Store, claim: u32, kp: u32) -> Option<(*const u8, u32,
 
 /// [`entry_one_int`] on an inline table: `None` where the general path must answer (not
 /// inline, or a miss that grows the table first), else its answer.
-fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &mut [Store]) -> Option<DbRef> {
+pub fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &mut [Store]) -> Option<DbRef> {
     let store = keys::store(hash, stores);
     let (base, count, stride) = inline_checked(store, claim, kp)?;
     let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);
@@ -2342,7 +2342,7 @@ fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &mut 
 
 /// [`find_long`] on an inline table with an 8-byte integer key: `None` where the general walk
 /// must answer, else the entry (record 0 for a miss).
-fn inline_find_int(store: &Store, store_nr: u16, claim: u32, kp: u32, value: i64) -> Option<DbRef> {
+pub fn inline_find_int(store: &Store, store_nr: u16, claim: u32, kp: u32, value: i64) -> Option<DbRef> {
     let (base, count, stride) = inline_checked(store, claim, kp)?;
     let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);
     let tag = tag_of(keys::long_hash(value, seed));

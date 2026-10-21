@@ -531,6 +531,19 @@ impl Stores {
                 rec: data.rec,
                 pos: data.pos + field_off,
             };
+            // `(Col-Inline)` — the table checked once and walked in place, the key's position
+            // a constant: no key list, no kind, no second header read.
+            let key_pos = self.types[elem_tp as usize].keys.first().map(|k| u32::from(k.position));
+            if let Some(kp) = key_pos
+                && (d.store_nr as usize) < self.allocations.len()
+            {
+                let claim = self.allocations[d.store_nr as usize].collection_rec(d.rec, d.pos);
+                if claim != 0
+                    && let Some(rec) = crate::hash::inline_entry_int(&d, claim, kp, key, &mut self.allocations)
+                {
+                    return rec;
+                }
+            }
             if let Some(rec) = crate::hash::entry_one_int(
                 &d,
                 &mut self.allocations,

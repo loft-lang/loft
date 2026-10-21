@@ -90,9 +90,18 @@ impl OpEmitter for OpGetRecordEmitter {
             && matches!(key_types.as_slice(), [k] if matches!(k.unsigned_abs(), 1 | 2 | 8 | 12));
         if typed {
             crate::rewrite_census::fired("R-TypedKeyed", 1);
-            write!(ctx.w, "OpGetHashLong(cell,")?;
-            ctx.emit(&args[0])?;
-            write!(ctx.w, ", {db_tp}_i32, ")?;
+            // An 8-byte integer key's position is a constant the call carries
+            // (`OpGetHashLongAt`); the narrow widths keep the general typed entry.
+            let wide = row.and_then(|t| t.keys.first()).filter(|k| matches!(k.type_nr.unsigned_abs(), 1 | 2));
+            if let Some(k) = wide {
+                write!(ctx.w, "OpGetHashLongAt(cell,")?;
+                ctx.emit(&args[0])?;
+                write!(ctx.w, ", {db_tp}_i32, {}_u32, ", k.position)?;
+            } else {
+                write!(ctx.w, "OpGetHashLong(cell,")?;
+                ctx.emit(&args[0])?;
+                write!(ctx.w, ", {db_tp}_i32, ")?;
+            }
             ctx.output.emit_long_key(&mut *ctx.w, &key_vals[0])?;
             return write!(ctx.w, ")");
         }
