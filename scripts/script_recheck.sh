@@ -17,14 +17,32 @@
 # Bash today because it runs programs; strand 4's `run` ports it.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-# The INSTALLED loft first (its program cache is on; a from-source target/release/loft runs
-# with it off — PERFORMANCE.md rule 4 — and a start-up probe would measure the wrong thing).
-if command -v loft > /dev/null; then loft="loft"; else loft="target/release/loft"; fi
+# The build under test first: the program cache is on for every binary since @C133, so a
+# from-source target/release/loft measures the path an installed one takes, and an installed
+# loft may be months older than the tree it is asked about.
+if [ -x target/release/loft ]; then loft="target/release/loft"; else loft="loft"; fi
 [ "${1:-}" = "--loft" ] && loft="$2"
 echo "recheck with: $(command -v "$loft") ($($loft --version 2>/dev/null | head -1))"
 dir=doc/claude/plans/179-scripts-in-loft/findings
 sha=$(git rev-parse --short HEAD)
 tmp=$(mktemp); trap 'rm -f "$tmp" "$tmp.w"' EXIT
+# Best-of-5 wall time of one command, in microseconds, timed around `posix_spawn` inside ONE
+# process.  Two perl launches bracketing the run put a whole perl start-up inside every
+# interval — about 9 ms on a laptop, so `/bin/echo` read 14–18 ms and a start-up bar of
+# 12 ms measured perl — and perl's `system` forks all of perl first, another 2 ms.
+best_us() {
+  python3 -c '
+import os, sys, time
+out = os.open(os.devnull, os.O_WRONLY)
+fa = [(os.POSIX_SPAWN_DUP2, out, 1), (os.POSIX_SPAWN_DUP2, out, 2)]
+best = None
+for _ in range(5):
+    t = time.perf_counter()
+    os.waitpid(os.posix_spawnp(sys.argv[1], sys.argv[1:], os.environ, file_actions=fa), 0)
+    us = int((time.perf_counter() - t) * 1e6)
+    best = us if best is None else min(best, us)
+print(best)' "$@"
+}
 n=0; stale=0
 for f in "$dir"/[0-9][0-9][0-9]-*.md; do
   probe=$(sed -n 's/^probe: *//p' "$f" | head -1); expect=$(sed -n 's/^expect: *//p' "$f" | head -1)
@@ -45,22 +63,13 @@ for f in "$dir"/[0-9][0-9][0-9]-*.md; do
     crash)
       LOFT_TIMEOUT=120 "$loft" --interpret "$dir/$probe" > /dev/null 2> "$tmp"; rc=$?
       { [ $rc -ge 128 ] || grep -q SIGSEGV "$tmp"; } && holds=yes ;;
-    startup-over:*)
-      bar=${expect#startup-over:}; best=""
-      for i in 1 2 3 4 5; do
-        s=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); ms=$(( (e - s) / 1000000 ))
-        [ -z "$best" ] || [ "$ms" -lt "$best" ] && best=$ms
-      done
-      [ "$best" -gt "$bar" ] && holds=yes
-      printf '  %s: start-up %s ms (bar %s)\n' "$(basename "$f")" "$best" "$bar" ;;
-    over:*)
-      bar=${expect#over:}; best=""
-      for i in 1 2 3 4 5; do
-        s=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); ms=$(( (e - s) / 1000000 ))
-        [ -z "$best" ] || [ "$ms" -lt "$best" ] && best=$ms
-      done
-      [ "$best" -gt "$bar" ] && holds=yes
-      printf '  %s: %s ms (bar %s)\n' "$(basename "$f")" "$best" "$bar" ;;
+    startup-over:*|over:*)
+      bar=${expect#*over:}
+      best=$(best_us "$loft" --interpret "$dir/$probe")
+      [ "$best" -gt $((bar * 1000)) ] && holds=yes
+      label=$([ "${expect%%:*}" = startup-over ] && echo "start-up " || echo "")
+      printf '  %s: %s%d.%d ms (bar %s)\n' "$(basename "$f")" "$label" \
+        $((best / 1000)) $((best % 1000 / 100)) "$bar" ;;
     *) echo "script_recheck: $f: unknown expect '$expect'" >&2; continue ;;
   esac
   # Through a temp file: `sed -i` takes a mandatory suffix on macOS and none on GNU, so a
