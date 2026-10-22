@@ -489,6 +489,16 @@ impl Diagnostics {
     /// package's entry is `tests/*.loft` while the code under review is `src/*.loft`, so an
     /// entry-file rule would silence a library's lints in exactly the run that exists to
     /// catch them.
+    /// The directory this compilation's author owns ([`Self::set_lint_scope_for`]): the
+    /// project's, or the bare entry's own; `None` for a virtual entry or before it is set.
+    #[must_use]
+    pub fn lint_project(&self) -> Option<&std::path::Path> {
+        match self.lint_scope.as_ref()? {
+            LintScope::Project(d) | LintScope::Directory(d) => Some(d),
+            LintScope::Virtual(_) => None,
+        }
+    }
+
     pub fn set_lint_scope_for(&mut self, entry: &str) {
         self.lint_scope = Some(
             crate::resolution_scope::project_root(entry)

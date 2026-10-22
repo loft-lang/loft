@@ -6692,10 +6692,6 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
-    // The types whose values outlive the program: stored, swapped across a reload, or `pub`.
-    let roots = loft::layout_schema::surviving_roots(&p.data);
-    // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
-    let mut identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     // The baseline sits beside `loft.toml`; a program with no manifest keeps it beside itself.
     let project =
         loft::resolution_scope::project_root(&abs.to_string_lossy()).unwrap_or_else(|| {
@@ -6703,6 +6699,11 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .to_path_buf()
         });
+    // The types whose values outlive the program: stored, swapped across a reload, or `pub`.
+    p.compute_surviving(&project);
+    let roots = loft::layout_schema::surviving_roots(&p.data);
+    // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
+    let mut identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     let release = loft::manifest::release_of(&project.to_string_lossy());
 
     match sub {

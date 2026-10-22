@@ -244,9 +244,7 @@ impl Parser {
             // be asked whether it removes from a `&` parameter.
             self.check_reshape_under_reference();
             self.synth_drop_cascades();
-            let project = Self::project_of(filename);
-            self.compute_surviving(&project);
-            self.check_layout_baseline(&project);
+            self.check_layout_baseline();
         }
         self.diagnostics.fill(self.lexer.diagnostics());
         self.diagnostics.is_empty()
@@ -1679,44 +1677,42 @@ impl Parser {
         }
     }
 
-    /// The project `filename` belongs to: the directory of the nearest `loft.toml` above it,
-    /// else the file's own directory — where the release baseline sits.
-    fn project_of(filename: &str) -> std::path::PathBuf {
-        crate::resolution_scope::project_root(filename)
-            .or_else(|| {
-                std::path::Path::new(filename)
-                    .parent()
-                    .map(std::path::Path::to_path_buf)
-            })
-            .unwrap_or_default()
-    }
-
     /// `Data::surviving`: the types whose values outlive this program.  Seeds are the types
     /// the store and swap calls hand over (`store_handoffs`) and every `pub` struct or enum
     /// the project's own sources declare — a library's user may store any of them; the set is
     /// closed over what each one holds, through fields, collections and enum variants.  A
     /// call whose argument names no concrete type (`r: reference`) leaves it `None`: every
     /// user type counts.
-    fn compute_surviving(&mut self, project: &std::path::Path) {
+    ///
+    /// Run only where a baseline is read or written: an ordinary compile with no
+    /// `layout.lock` pays nothing for it.
+    pub fn compute_surviving(&mut self, project: &std::path::Path) {
         let mut todo: Vec<u32> = Vec::new();
-        for t in std::mem::take(&mut self.store_handoffs) {
-            if !type_defs(&self.data, &t, &mut todo) {
+        for t in &self.store_handoffs {
+            if !type_defs(&self.data, t, &mut todo) {
                 self.data.surviving = None;
                 return;
             }
         }
         let root = crate::file_access::plain_canonical(project);
+        // One canonical path per source file, not per definition.
+        let mut owned: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
         for d_nr in 0..self.data.definitions() {
             let def = self.data.def(d_nr);
-            if matches!(def.def_type, DefType::Struct | DefType::Enum)
-                && def.pub_visible
-                && !def.name.starts_with("__")
-                && !def.name.contains('<')
-                && crate::file_access::plain_canonical(std::path::Path::new(
-                    def.position.file.as_str(),
-                ))
-                .starts_with(&root)
+            if !matches!(def.def_type, DefType::Struct | DefType::Enum)
+                || !def.pub_visible
+                || def.name.starts_with("__")
+                || def.name.contains('<')
             {
+                continue;
+            }
+            let file = def.position.file.as_str();
+            let mine = *owned.entry(file).or_insert_with(|| {
+                !crate::file_access::is_stdlib_source(file)
+                    && crate::file_access::plain_canonical(std::path::Path::new(file))
+                        .starts_with(&root)
+            });
+            if mine {
                 todo.push(d_nr);
             }
         }
@@ -1747,8 +1743,16 @@ impl Parser {
     /// warning, at the stored type's declaration: the program still runs while a refactor is
     /// half done, a library's CI denies warnings, and `loft package` refuses to release over
     /// one.  The baseline is a source of this compile, so editing it is a program-cache miss.
-    fn check_layout_baseline(&mut self, project: &std::path::Path) {
+    fn check_layout_baseline(&mut self) {
         use crate::schema_sidecar::baseline_path;
+        let Some(project) = self
+            .diagnostics
+            .lint_project()
+            .map(std::path::Path::to_path_buf)
+        else {
+            return;
+        };
+        let project = project.as_path();
         let lock = [
             baseline_path(project),
             project.join(".loft").join("layout.lock"),
@@ -1762,6 +1766,7 @@ impl Parser {
             self.parsed_sources
                 .push(lock.to_string_lossy().into_owned());
         }
+        self.compute_surviving(project);
         let routines = Self::upgrade_routines(&self.data);
         let report = crate::layout_schema::baseline_report(
             project,
