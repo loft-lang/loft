@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index 7428d13b3..75099f067 100644
+index c67572a56..cfee470d4 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -8981,40 +8981,6 @@ impl Data {
+@@ -8452,40 +8452,6 @@ impl Data {
      }
  
      /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
@@ -44,10 +44,10 @@ index 7428d13b3..75099f067 100644
          self.def(d_nr)
              .attributes
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index f3130d070..0fbf8978a 100644
+index ec9ff2785..be33b9be3 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -20130,18 +20130,7 @@ impl Parser {
+@@ -21132,18 +21132,7 @@ impl Parser {
                              if self.data.def(*t).name().starts_with("__tuple<")))
              });
              self.prepare_lambda_argument(name, arg_idx, &arg_aliases); // @PLN187
@@ -66,7 +66,7 @@ index f3130d070..0fbf8978a 100644
              self.tuple_place_wanted = prev_place;
              // A member of a call result handed on as an argument is read where it lives
              // (`call_member_view`): the argument binds without copying, so the copy the terminal
-@@ -20190,10 +20179,6 @@ impl Parser {
+@@ -21192,10 +21181,6 @@ impl Parser {
              }
          }
          self.last_called = u32::MAX;
@@ -77,7 +77,7 @@ index f3130d070..0fbf8978a 100644
          let ret = self.dispatch_call(
              val,
              source,
-@@ -21581,9 +21566,6 @@ impl Parser {
+@@ -22720,9 +22705,6 @@ impl Parser {
          let Some(receiver) = types.first().filter(|t| !t.is_unknown()) else {
              return u32::MAX;
          };
@@ -87,7 +87,7 @@ index f3130d070..0fbf8978a 100644
          match self.data.candidates(u16::MAX, name, receiver).as_slice() {
              [one] if self.data.def(*one).name().starts_with("t_") => *one,
              _ => u32::MAX,
-@@ -21708,11 +21690,8 @@ impl Parser {
+@@ -22847,11 +22829,8 @@ impl Parser {
                          // The slot holds the SET itself (a `self` set that dispatches past its
                          // receiver, with no enum-level definition): there is no routine to
                          // fall back to, and the answer is the bare spelling's refusal.
@@ -100,7 +100,7 @@ index f3130d070..0fbf8978a 100644
                          {
                              if !self.first_pass {
                                  self.report_selection(name, &routed, &sel, None);
-@@ -21961,17 +21940,7 @@ impl Parser {
+@@ -23101,17 +23080,7 @@ impl Parser {
              arg_pos.push(*self.lexer.peek_pos());
              let before = self.method_facts.0.clone();
              self.prepare_lambda_argument(method, list.len(), &before); // @PLN187
@@ -118,7 +118,7 @@ index f3130d070..0fbf8978a 100644
              self.expected = Type::Unknown(0);
              let fact = std::mem::take(&mut self.operand_fact);
              self.method_facts.0.push(fact);
-@@ -21984,10 +21953,6 @@ impl Parser {
+@@ -23124,10 +23093,6 @@ impl Parser {
          self.lexer.token(")");
          // @PLN187 — what the arguments called is not this call (a special form records none)
          self.last_called = u32::MAX;
@@ -127,13 +127,13 @@ index f3130d070..0fbf8978a 100644
 -            return Type::Never;
 -        }
          let selected = self.select_method_def(select, &types);
+         self.refuse_unpublished_method(selected, false);
          // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
-         // the whole answer, as `Parser::call` makes it for the bare spelling.
 diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
-index e76dea3cb..149bef662 100644
+index 38ff35226..1af67fbfe 100644
 --- a/src/parser/dispatch.rs
 +++ b/src/parser/dispatch.rs
-@@ -655,41 +655,6 @@ impl Parser {
+@@ -730,41 +730,6 @@ impl Parser {
          out
      }
  
@@ -176,10 +176,10 @@ index e76dea3cb..149bef662 100644
      pub(crate) fn report_selection(
          &mut self,
 diff --git a/src/parser/fields.rs b/src/parser/fields.rs
-index 8d0760e3c..c1b976035 100644
+index 15ed284c3..94566849e 100644
 --- a/src/parser/fields.rs
 +++ b/src/parser/fields.rs
-@@ -730,11 +730,7 @@ impl Parser {
+@@ -772,11 +772,7 @@ impl Parser {
              // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
              // has at this receiver, else under the slot's routine; the definition the call
              // reaches is selected once the argument types exist (`parse_method_selecting`).
@@ -192,10 +192,10 @@ index 8d0760e3c..c1b976035 100644
                  _ => r_nr,
              };
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 9740906a6..650be68fa 100644
+index c29e0c0ff..d01e6b6a3 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -1194,13 +1194,6 @@ pub struct Parser {
+@@ -1173,13 +1173,6 @@ pub struct Parser {
      /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
      /// than falling to the ladder and reporting the same site a second way.
      pub(crate) reported_dynamic_refusal: bool,
@@ -209,7 +209,7 @@ index 9740906a6..650be68fa 100644
      /// A call refused because two parameters bind one type variable to two types (@PLN165
      /// C1, F9): the refusal names both, and `call` answers nothing further for it.
      pub(crate) reported_binding_clash: bool,
-@@ -1974,8 +1967,6 @@ impl Parser {
+@@ -2017,8 +2010,6 @@ impl Parser {
              lambda_counter: 0,
              expected: Type::Unknown(0),
              reported_dynamic_refusal: false,
@@ -219,10 +219,10 @@ index 9740906a6..650be68fa 100644
              declared_fn_names: HashMap::new(),
              positionless_loops: HashSet::new(),
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 2c3a88940..5a8fe1ce7 100644
+index e291a1f92..8c39ca134 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -1784,10 +1784,7 @@ or build a local and use that."
+@@ -1950,10 +1950,7 @@ or build a local and use that."
          self.lambda_counter += 1;
          let stored_name = format!("n_{lambda_name}");
  
@@ -234,7 +234,7 @@ index 2c3a88940..5a8fe1ce7 100644
          let hint_params_ret = self.lambda_hint();
          let (hint_params, hint_consts): (Vec<Type>, crate::data::ConstParams) =
              if let Type::Function(pts, _, _, consts) = &hint_params_ret {
-@@ -1852,35 +1849,7 @@ or build a local and use that."
+@@ -2018,35 +2015,7 @@ or build a local and use that."
          // Error on second pass for any parameter whose type is still Unknown.
          if !self.first_pass {
              for a in &arguments {
