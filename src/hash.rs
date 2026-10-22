@@ -2503,13 +2503,12 @@ fn inline_remove(hash_ref: &DbRef, claim: u32, rec: &DbRef, stores: &mut [Store]
 }
 
 /// [`records_sorted`] for an INLINE table whose key is one to four integer parts: one sweep of
-/// the slots reads each live entry's key parts ([`keys::int_key_part`], the read the decorated
-/// sort makes) into `([i64; N], position)`, and the pairs are sorted — no list of records
-/// first, no index to gather back through (`hash_walk` 355 → 2xx µs,
-/// `bench/portal/analysis/keyed.md`).  The position is the tie-break, which a hash never
-/// needs (its keys are unique) and which keeps the order a function of the table alone.
-/// `None` — the general path answers — for an arena table, a text or float part, or a table
-/// whose record does not hold what its header names.
+/// the slots reads each live entry's key parts (the bytes [`keys::int_key_part`] reads) into
+/// `([i64; N], position)`, and the pairs are sorted by key — no list of records first, no
+/// index to gather back through.  With the inlined ordered step, `hash_walk` 355 → 147 µs
+/// (`bench/portal/analysis/keyed.md`).  A hash's keys are unique, so the key alone orders the
+/// pairs.  `None` — the general path answers — for an arena table, a text or float part, or a
+/// table whose record does not hold what its header names.
 ///
 /// # Panics
 /// Under `LOFT_KEYED_VERIFY=1`, when the order disagrees with [`keys::compare`].
@@ -2578,7 +2577,7 @@ fn inline_sorted<const N: usize>(
     if N == 1 {
         pairs.sort_unstable_by_key(|p| p.0[0]);
     } else {
-        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        pairs.sort_unstable_by_key(|p| p.0);
     }
     let sorted: Vec<DbRef> = pairs.into_iter().map(|(_, pos)| at(pos)).collect();
     if keys::keyed_verify() {
