@@ -84,11 +84,16 @@ fn test_store_reclaim_leaves_a_growth_reserve_the_report_does_not_show() {
 // than one hole.  What reclaim itself adds is the TAIL give-back, which is why
 // the contiguous drop still returns more bytes.
 fn test_what_reclaim_gives_back_depends_on_where_you_dropped() {
+  // Both tables are sized before they fill, so the records follow their table in the
+  // order they were added and the last half dropped is the store's tail.  A table that
+  // GROWS is claimed again past them, and then the tail is the table, not the drop.
   contiguous: hash<Rec947[id]> = [];
+  reserve(contiguous, 4000);
   for i in 0..4000 { contiguous += [Rec947 { id: i, label: "cell-{i}-padding-padding" }] }
   for i in 2000..4000 { contiguous[i] = null }
 
   scattered: hash<Frag947[id]> = [];
+  reserve(scattered, 4000);
   for i in 0..4000 { scattered += [Frag947 { id: i, label: "cell-{i}-padding-padding" }] }
   for i in 0..4000 { if i % 2 == 0 { scattered[i] = null } }
 
