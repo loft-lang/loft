@@ -1216,7 +1216,12 @@ fn cell_two_converting_loads_in_one_program() {
 fn cell_every_whole_image_loader_converts() {
     let dir = write_store("other_loaders", &item_writer());
     let before = store_bytes(&dir);
-    let url = format!("file://{}", dir.join("a.store").display());
+    // Forward slashes: the URL is spliced into a loft string literal, where a Windows `\`
+    // starts an escape sequence.
+    let url = format!(
+        "file://{}",
+        dir.join("a.store").display().to_string().replace('\\', "/")
+    );
     let pin = loft::integrity::sha256_hex(&before.0);
     let show = "  println(\"{h[1].price} [{h[2].title}] {len(h)}\");\n";
     for (name, call) in [

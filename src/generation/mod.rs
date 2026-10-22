@@ -8180,7 +8180,10 @@ fn loft_ckpt_report() {{
             } else {
                 PackageLink::StaticBound
             }
-        } else if self.native_cabi && self.library_unit {
+        } else if self.library_unit {
+            // On either link: the cdylib is linked against none of the C libraries the host
+            // bound, so a `#c` symbol resolves at its first call.  A plain `extern "C"` for it
+            // links on Linux, where a cdylib may leave symbols undefined, and not on macOS.
             PackageLink::Library
         } else if self.native_cabi {
             PackageLink::CAbi
