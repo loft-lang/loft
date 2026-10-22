@@ -9079,7 +9079,7 @@ pub fn store_persist_bind(r: reference, path: text) -> boolean fs#update
 "The collection IS the file."  Re-root the Store backing the given reference at a file path so mutations are durable via mmap without any explicit save/load loop.
 Works for any store-rooted collection — `hash`, `sorted`, `ordered`, `index` (each keyed local/field is a dedicated Store).  `hash` carries its bucket seed in its own record and `sorted`/`ordered`/`index` are comparison-based (no per-process state), so the persisted image is portable: a different process (a restart, or a remote reader) both iterates AND key-looks-up correctly.  A reference that is NOT its own Store root fails soft (returns `false`), same as any I/O error.
 First call on a path that does NOT exist: serialises the current in-memory Store at the reference's slot to disk (padded to a valid ≥1024-word image with a tail free block), then mmaps it back.  Caller's existing DbRefs into that slot remain valid.
-Call on a path that DOES exist: opens the file via mmap; the caller's prior in-memory contents at that slot are dropped in favour of the on-disk image.  This is the load-on-startup path. The `.dschema` file written beside the store records the layout it was written with.  When that layout differs from `r`'s type — a struct gained, lost or changed a field — the bind is refused (`false`, with the difference on stderr), exactly as `store\_load` refuses it.  The file, its `.dschema` and `r` are left untouched.
+Call on a path that DOES exist: opens the file via mmap; the caller's prior in-memory contents at that slot are dropped in favour of the on-disk image.  This is the load-on-startup path. The `.dschema` file written beside the store records the layout it was written with.  When that layout is older than `r`'s type — a struct gained, lost or widened a field — the FILE is upgraded in place: every added field takes its default (which may read the record through `\$`), the new store is written beside the old one and swapped in, and the old file is kept as `\<path\>.old`, replacing an earlier `.old`.  A change the upgrade cannot carry, such as one that looks like a rename, is refused (`false`, the reason on stderr), and the file, its `.dschema` and `r` are left untouched.
 Both modes return `true` on success, `false` on any I/O / format / layout error (no panic — the binding is fail-soft, callers fall back to JSON or rebuild-from-source).
 Typical dryopea-style pattern: pw = PaintedWorld { painted: \[\] }   // painted's declared type is hash\<PaintedHex\[q, r\]\> store\_persist\_bind(pw.painted, "dryopea\_world.store") // …mutations to pw.painted now hit mmap'd bytes… `r` is any store-rooted collection — `hash`, `sorted`, `index`, `spatial`. A bare `reference` parameter accepts them all.
 It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash\<PaintedHex\[q, r\]\>`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.
@@ -9097,7 +9097,38 @@ Returns `false` on an I/O or format error, and for a collection whose shape the 
 pub fn store_load(r: reference, path: text) -> boolean fs#read
 ```
 
-Load a persisted store IMAGE fully into memory, populating the empty store-rooted collection `r` so it can be queried like any in-memory collection.  The portable, read-only counterpart of `store\_persist\_bind`: it HEAP-COPIES the file (no mmap), so it works on EVERY backend — including wasm, which has no mmap — but is NOT durable (writes stay in memory and never reach the file).  Use it to open a snapshot for querying where `store\_persist\_bind` can't run (a browser / wasm target) or where a durable live binding isn't wanted.  Returns `false` on a missing / truncated / wrong-format file, and on a file whose `.dschema` records a different layout than `r`'s declared type (no panic; the difference is printed on stderr).  This is the whole-file load that the browser's working-set path builds on. h: hash\<Rec\[id\]\> = \[\] store\_load(h, "world.store")   // h now holds the file's records
+Load a persisted store IMAGE fully into memory, populating the empty store-rooted collection `r` so it can be queried like any in-memory collection.  The portable, read-only counterpart of `store\_persist\_bind`: it HEAP-COPIES the file (no mmap), so it works on EVERY backend — including wasm, which has no mmap — but is NOT durable (writes stay in memory and never reach the file).  Use it to open a snapshot for querying where `store\_persist\_bind` can't run (a browser / wasm target) or where a durable live binding isn't wanted.  A file whose `.dschema` records an older layout than `r`'s declared type is converted in memory: every added field takes its default (which may read the record through `\$`), and the file itself is left as it is.  Returns `false` on a missing / truncated / wrong-format file, and on a change the conversion cannot carry, such as one that looks like a rename (no panic; the reason is printed on stderr). This is the whole-file load that the browser's working-set path builds on. h: hash\<Rec\[id\]\> = \[\] store\_load(h, "world.store")   // h now holds the file's records
+
+```rust
+pub struct Release { pub major: integer, pub minor: integer, pub patch: integer }
+
+```
+
+A release number, `major.minor.patch`: what a store records as the release of the program that wrote it, and what an `upgrade` routine is told its stored data came from. Releases are ordered by number, so `10.0` comes after `9.0`, and a text compares as the release it spells: fn upgrade(from: Release, old: ItemBefore2, item: Item) { if from \< "2.0" { item.count = len(old.label) } }
+
+```rust
+pub operator to_release(self: text) -> Release
+```
+
+The release a text spells: `"2"`, `"2.1"`, `"2.1.3"`; a part that is missing or not a number counts as 0. v = "2.1" as Release   // v.major == 2, v.minor == 1, v.patch == 0
+
+```rust
+pub operator compare(self: Release, other: Release) -> Ordering
+```
+
+Releases in the order they were made: by major, then minor, then patch.
+
+```rust
+pub operator compare(self: Release, other: text) -> Ordering
+```
+
+A release against the release a text spells: `from \< "2.0"`.
+
+```rust
+pub operator to_text(self: Release) -> text
+```
+
+`major.minor.patch`.
 
 ```rust
 pub fn store_load_url(r: reference, url: text, sha256: text) -> boolean fs#read
