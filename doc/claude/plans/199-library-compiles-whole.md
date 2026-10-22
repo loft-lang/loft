@@ -366,7 +366,8 @@ same stem and byte-identical source.
   - A release bundle's binary (`LOFT_RELEASE_BUNDLE`) is named by its build, not by its
     file's modification time, and its artifact key hashes no rlib: the user's copy has none.
   - Linux builds none: the static-pie musl binary cannot load a library (loft#2127).
-  - The registry validator template's gate 2b re-checks every artifact's hash.
+  - Open beside it, the registry's: its validator's gate 2b re-checks `binaries` hashes by
+    download and not yet `artifacts` (a wrong one only makes `loft install` refuse it).
 
 **G3 — the consumer (done).**
 - G3a: `install::fetch_release_artifacts` reads the running loft's release row after every

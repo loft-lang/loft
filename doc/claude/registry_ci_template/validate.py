@@ -194,12 +194,10 @@ def gate_binaries_verify(idx: dict, prev: dict) -> None:
     own hash is what this gate is for.  Its presence is checked by the schema gate.
     """
     for name, ver, vobj in _new_entries(idx, prev):
-        # A loft release's row also names the library artifacts it built (@PLN199 G2c):
-        # compiled code users run, so checked the same way.
-        named = [(t, b) for t, b in sorted((vobj.get("binaries") or {}).items())]
-        for lib, by_triple in sorted((vobj.get("artifacts") or {}).items()):
-            named += [(f"{lib} {t}", b) for t, b in sorted(by_triple.items())]
-        for triple, b in named:
+        binaries = vobj.get("binaries")
+        if not binaries:
+            continue
+        for triple, b in sorted(binaries.items()):
             print(f"[verify] downloading {name} v{ver} {triple} from {b['url']}")
             try:
                 with urllib.request.urlopen(b["url"], timeout=120) as resp:

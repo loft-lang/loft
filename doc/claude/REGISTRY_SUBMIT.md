@@ -460,9 +460,10 @@ and `installer_and_self_update_agree_on_the_published_triples`.
 **Registry-side gates.**  `tools/validate.py` exempts the toolchain from gate 3
 (reproducible build): there is no `loft.toml` at loft's repo root to re-package, and
 the version artifact is a `git archive` zip, not a `loft package` tarball.  Gate 2b
-verifies every `binaries` and `artifacts` hash by download, so the exemption does not
-leave the binaries — the things users actually run — unchecked.  The registry's copy of
-the validator takes the `artifacts` half from `doc/claude/registry_ci_template/validate.py`.
+verifies every `binaries` hash by download, so the exemption does not leave the
+binaries — the things users actually run — unchecked.  A release's `artifacts` are not
+re-checked there: a wrong hash makes `loft install` refuse that artifact, and the library
+interprets.
 
 > **Both landed in [loft-lang/registry#22](https://github.com/loft-lang/registry/pull/22),
 > merged 2026-08-31** — before which `loft` was in no index at all, and had never been.
