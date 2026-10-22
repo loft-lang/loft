@@ -9,10 +9,10 @@
 // an absent field, a field reached through an inline sub-record, and writes a value record
 // into an element; the sums are hand-computed.  Both backends.
 //
-// @falsified-at: hand-measured (sabotage, 2026-10-22) — `field_header` reading the length
-// as 0 answered `n1 0 0 0` and `n2 out of range` on `--native`; reading the field four bytes
-// past its offset answered `n1 10 0 0`; the interpreter, which has no such clause, was
-// unchanged — the cells read the field only where the clause serves it.
+// @falsified-at: hand-measured (sabotage, 2026-10-22) — `vector::field_header` answering
+// length 0 made `--native` answer `n1 0 210 14`; reading the field four bytes past its
+// offset (the neighbouring `ps`) answered `n1 6 210 14`.  The interpreter has no such
+// clause and answered right under both.
 
 struct P { a: integer, b: integer }
 struct C { id: integer, items: vector<integer>, ps: vector<P> }
