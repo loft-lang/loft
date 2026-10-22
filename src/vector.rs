@@ -1157,6 +1157,22 @@ fn get_vector_cold(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef 
     get_vector(db, size, from, stores)
 }
 
+/// `(R-Header)`'s KEPT clause under `LOFT_HOIST_VERIFY=1` — a holder's read, checked
+/// against the header derived from the store now.
+///
+/// # Panics
+/// When they differ: something changed the vector's record or length and no refresh
+/// followed it.
+#[must_use]
+pub fn kept_header(h: VecHeader, db: &DbRef, stores: &[Store]) -> VecHeader {
+    let fresh = vec_header(db, stores);
+    assert!(
+        h == fresh,
+        "@FR-R-Header kept clause: held {h:?} but the store holds {fresh:?}"
+    );
+    h
+}
+
 /// @PLN157 § V-ak (`@FR-R-Base`) — the address of element 0 of the vector `h` describes,
 /// or null for an absent vector.  Bound once beside a header in a loop the emitter proved
 /// GROWS NO STORE, so the buffer the address points into cannot be reallocated while the

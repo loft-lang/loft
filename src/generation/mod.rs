@@ -32,6 +32,7 @@ pub mod file_hold;
 pub use crate::fnref;
 pub mod hand_over;
 pub mod hoist;
+pub mod kept;
 pub mod keyed_entry;
 pub mod keyed_place;
 pub mod non_sentinel;
@@ -1364,6 +1365,15 @@ pub struct Output<'a> {
     pub in_adopt_delivery: u32,
     /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
     pub input_cache: hoist::InputCache,
+    /// `@FR-R-Header`'s kept clause — per-function memo of [`kept::kept_paths`].
+    pub kept_cache: kept::KeptCache,
+    /// The kept fields the `__kh` twin being emitted receives by `&mut`, in parameter order.
+    pub kh_twin: Option<std::rc::Rc<Vec<kept::KeptPath>>>,
+    /// The kept holders of the function body being emitted (`Output::begin_kept_headers`).
+    pub kept_holders: Vec<kept::KeptHolder>,
+    /// The argument lists of the calls this function emitted as a callee's `__kh` twin: the
+    /// twin keeps the holder current, so no refresh follows them.
+    pub kh_twin_sites: HashSet<usize>,
     /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
     /// form, as before @PLN157 § V-p (`@FR-R-Inputs`): the bisect step for a wrong value read
     /// through a record parameter inside a callee that a hoisting loop calls.
@@ -2484,6 +2494,10 @@ impl<'a> Output<'a> {
                 .is_ok_and(|v| v != "0"),
             wrapper_cache: HashMap::new(),
             input_cache: hoist::InputCache::default(),
+            kept_cache: kept::KeptCache::default(),
+            kh_twin: None,
+            kept_holders: Vec::new(),
+            kh_twin_sites: HashSet::new(),
             push_headers: Vec::new(),
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
@@ -10985,6 +10999,13 @@ extern crate loft;"
                 self.output_function(w, dnr, program_store.as_ref())?;
                 self.twin = None;
             }
+            // `(R-Header)`'s KEPT clause — the `__kh` twin beside it: the same body, handed
+            // the caller's holders of the fields it keeps.
+            if let Some(kept) = self.kept_of(dnr) {
+                self.kh_twin = Some(kept);
+                self.output_function(w, dnr, program_store.as_ref())?;
+                self.kh_twin = None;
+            }
             self.output_plan_twins(w, dnr, program_store.as_ref())?;
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
@@ -12035,6 +12056,8 @@ extern crate loft;"
                 "__apr"
             } else if self.nk_twin {
                 "__nk"
+            } else if self.kh_twin.is_some() {
+                "__kh"
             } else {
                 ""
             },
@@ -12122,6 +12145,13 @@ extern crate loft;"
             // the caller holds them; a null address is one the caller did not hold.
             for k in 0..t.records.len() {
                 write!(w, ", __ip_{k}: *const u8, __il_{k}: bool")?;
+            }
+        }
+        // `(R-Header)`'s KEPT clause — the caller's holder of each kept field, by `&mut`: the
+        // twin reads through it and keeps it current.
+        if let Some(kh) = &self.kh_twin {
+            for k in 0..kh.len() {
+                write!(w, ", __kh_{k}: &mut vector::VecHeader")?;
             }
         }
         write!(
@@ -12638,6 +12668,13 @@ extern crate loft;"
                     // inputs are derived from them).
                     if let Some(s) = self.twin.as_ref().and(self.live_check_by_def.get(&def_nr)) {
                         s.clone()
+                    } else if self.kh_twin.is_some()
+                        && let Some(s) = self.live_check_by_def.get(&def_nr).cloned()
+                    {
+                        // `(R-Header)`'s KEPT clause — the original's check too, and the
+                        // parked call may have changed a kept field: every holder handed
+                        // in is derived again before the answer goes back.
+                        self.kh_live_check(&s)?
                     } else {
                         let s = self.live_entry_check(def).unwrap_or_default();
                         self.live_check_by_def.insert(def_nr, s.clone());

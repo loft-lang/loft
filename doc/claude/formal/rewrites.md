@@ -653,6 +653,46 @@ also grows; falsifiers `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1`.  Sites: `hoist
 `LOFT_POISON=1` by a plant that keeps the base: t2 reads `null`); pin
 `tests/text_set_header.rs`.
 
+```
+  (R-Header), the KEPT clause: a vector field p.f of a plain-record PARAMETER p
+                 that a body never rebinds is KEPT by that body when everything
+                 in it that could change the field's header — its record or its
+                 length — is one of: (a) a record append to p.f itself (the
+                 OpNewRecord … OpFinishRecord group) as a statement outside any
+                 loop; (b) a statement that is a call to a loft function, or
+                 the assignment of one; nothing else.  A store-free op, a scalar
+                 setter and a heap-free record copy change no header; any other
+                 writer mentions no variable that may name p's record or the
+                 vector — p, a variable whose type reaches p's record type, a
+                 vector of the field's element type — unless it is its own
+                 store's; a call that is not a statement leaves every such
+                 argument untouched (the function clause's question); no `CallRef`,
+                 `par` or `yield`, and nothing it calls can lock or unlock a
+                 store (the header carries the lock).  A kept field the body
+                 READS — a walk, an element, a length, or a call that hands p to
+                 a function keeping the field at that position — has ONE holder:
+                 bound at entry where the body reads it twice or more, received
+                 from the caller by `&mut` in the body's KEPT TWIN.  Every read
+                 serves from the holder; after each op of (a) and each call of
+                 (b) the holder is derived again, except a call to the callee's
+                 kept twin, which hands the holder down and so keeps it current
+                 itself.  No base is kept: a claim anywhere may move the store's
+                 memory, never a record number or a length.
+```
+
+**The kept clause, in words.**  L7 (`bench/portal/analysis/worklist.md`): lane 17's
+`slope_path_with_undo` walks `m.m_chunks` four times a step in four callees
+(`map_get_hex` twice, `map_ensure_chunk`, `map_set_hex`), each deriving the header from the
+store, and one of them appends to it.  The function clause cannot hold it (a callee writes the
+vector) and the twin clause cannot hand it over (the callee grows a store).  A header changes
+only where something names its record: the apart clause's mention argument, applied to a
+whole body, with the appends that DO name it refreshing the holder at their own site
+(`(R-Refresh)`).  Hand price −13.5 %.  Switch `LOFT_NO_KEPT_HEADER=1`; falsifier
+`LOFT_HOIST_VERIFY=1` (every read of a holder asserts it against a fresh derivation);
+`LOFT_TRACE_KEPT=1` names each declined key and why.  Sites: `hoist::kept_paths` (the verdict),
+`Output::begin_kept_headers` (the holders), `Output::refresh_kept` (the refresh),
+`Output::kept_twin_call` (the hand-down).
+
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
 it), with @PLN157 P4d's path key (`lay.px` is `(lay, [32])`) and the hoisted loop
 bound (`len(P)` served by the header, queue item 1).  The path is pure, so evaluating

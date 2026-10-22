@@ -689,7 +689,11 @@ pub fn written_vars(body: &Block, data: &Data, vars: &crate::variables::Function
 /// allowance took a heap-holding record: a push header hoisted off the literal buffer's
 /// vector field before the loop, the buffer re-minted per pass, the element lost —
 /// `1575-…`'s c3 read `null(oob)` for `1`.)
-fn rebound_vars(body: &Block, data: &Data, vars: &crate::variables::Function) -> HashSet<u16> {
+pub(super) fn rebound_vars(
+    body: &Block,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> HashSet<u16> {
     let mut rebound: HashSet<u16> = HashSet::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
@@ -1278,7 +1282,7 @@ pub(super) fn mover_roots(
 /// Can a value of type `t` hold a record of definition `target`, at any depth — through a
 /// reference, an enum's payload, a collection's elements, a tuple?  A type this walk does not
 /// know answers YES: a miss here would let a loop hold a header something can still move.
-fn type_reaches(data: &Data, t: &Type, target: u32, seen: &mut HashSet<u32>) -> bool {
+pub(super) fn type_reaches(data: &Data, t: &Type, target: u32, seen: &mut HashSet<u32>) -> bool {
     match t {
         Type::Integer(_)
         | Type::Boolean
@@ -2038,7 +2042,7 @@ fn lazy_buffer_mint(name: &str, args: &[Value], vars: Option<&crate::variables::
 /// struct-enum, a variant, a nullable and a synthetic `__nullable<S>` answer `None`: their
 /// payload offsets are a layout question this key does not model, so they are neither
 /// hoisted nor classified as a write target (which keeps every scalar out of that loop).
-fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
+pub(super) fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
     if matches!(tp, Type::Optional(_)) {
         return None;
     }
@@ -8299,7 +8303,7 @@ pub fn param_untouched(
 /// alone) — that owns the store it names: its deps name its own `__vdb_` witness, it is no
 /// link and no closure capture.  Its store is fresh to this frame, so it cannot be a
 /// parameter's.
-fn local_owns_store(
+pub(super) fn local_owns_store(
     data: &Data,
     d_nr: u32,
     vars: &crate::variables::Function,
@@ -9040,7 +9044,7 @@ const TEXT_VARIABLE_OPS: [&str; 16] = [
 /// scalar?" accepts, turning every mutator into a reader. That is not a hypothetical: it
 /// is how the first cut of this gate let `v.remove(0)` run inside a hoisted loop.
 /// `parameters_declared` is the guard that keeps it from coming back.
-fn native_op_is_store_free(def: &crate::data::Definition) -> bool {
+pub(super) fn native_op_is_store_free(def: &crate::data::Definition) -> bool {
     if PURE_NULLARY_OPS.contains(&def.name())
         || READ_ONLY_COLLECTION_OPS.contains(&def.name())
         || TEXT_VARIABLE_OPS.contains(&def.name())
@@ -9058,7 +9062,7 @@ fn native_op_is_store_free(def: &crate::data::Definition) -> bool {
 
 /// True for the types that cannot name a store. Anything else — a reference, a collection,
 /// text, a tuple, an iterator, an unresolved type — counts as one that can.
-fn is_scalar(tp: &Type) -> bool {
+pub(super) fn is_scalar(tp: &Type) -> bool {
     matches!(
         tp.base(),
         Type::Integer(_)

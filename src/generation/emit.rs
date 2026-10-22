@@ -3765,6 +3765,9 @@ impl Output<'_> {
         } else {
             false
         };
+        // `(R-Header)`'s KEPT clause — the holders of the kept fields, bound or received here
+        // for the whole body; refreshed after each statement that may change one.
+        let kept_frame = is_fn_body && self.begin_kept_headers(w)?;
         // @PLN157 § V-j (`@FR-R-MoveAppend`) — a paired `for f in call(…)`: place the
         // call's buffer as a record in the destination's own store, and arm the loop
         // variable so the append's OpCopyRecord emits the move.  The destination's
@@ -4977,6 +4980,7 @@ impl Output<'_> {
                 self.indent(w)?;
                 writeln!(w, "}}")?;
             }
+            view_frames += self.kept_after_statement(w, operators, vnr)?;
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
@@ -5059,6 +5063,9 @@ impl Output<'_> {
         }
         if adopt_delivery {
             self.in_adopt_delivery -= 1;
+        }
+        if is_fn_body {
+            self.end_kept_headers(kept_frame);
         }
         if fn_frame {
             self.end_vector_hoist(w, true)?;
