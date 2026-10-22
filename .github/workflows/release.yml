@@ -66,9 +66,14 @@ jobs:
       # runs as root inside the manylinux image, which has dnf and no sudo.  macOS
       # ships zip already; Windows runs the script under Git-Bash and gets zip from
       # chocolatey.
+      # The image keeps its Pythons under /opt/python; release-lib-artifacts.sh calls
+      # `python3`, so one goes on PATH when none is there.
       - name: Install packaging tools (Linux)
         if: runner.os == 'Linux'
-        run: timeout 600 dnf -y -q install zip unzip
+        run: |
+          timeout 600 dnf -y -q install zip unzip
+          command -v python3 >/dev/null || ln -s "$(ls -d /opt/python/cp3*/bin/python3 | sort -V | tail -1)" /usr/local/bin/python3
+          python3 --version
 
       - name: Install packaging tools (Windows)
         if: runner.os == 'Windows'

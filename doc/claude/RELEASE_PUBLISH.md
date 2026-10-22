@@ -99,7 +99,8 @@ toolchain ships through it — signed, with checksums a user can verify offline.
   manylinux image `release.yml` pins by digest.  Dynamic, because a static binary cannot
   load a library's native code (loft#2127); glibc 2.28, the version RHEL 8 and Debian 10
   ship, so it starts on those and on every newer distribution.  The bundle smoke checks
-  both: an ELF interpreter, and no glibc symbol newer than the floor.  A musl system builds from source; `scripts/install.sh` says so.
+  both: an ELF interpreter, and no glibc symbol newer than the floor.  A musl system builds
+  from source; `scripts/install.sh` says so.
 - **Each bundle is a self-contained zip** — `bin/loft`, the `default/` stdlib, examples,
   `loft-reference.pdf`, `BUILD-INFO` and `SHA256SUMS` — attached to the draft as
   `loft-<version>-<triple>.zip` with its `.zip.sha256`.
@@ -127,9 +128,10 @@ the published libraries' artifacts itself, with the binary it ships, and the rel
 in the registry names them.
 
 - **Which legs.**  A leg builds them when its matrix row says `artifacts: true`:
-  `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`.  The `x86_64-apple-darwin` leg
-  cross-builds and cannot run its own binary.  The Linux binary is static-pie musl and
-  cannot load a shared library at all (loft#2127).
+  `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`.  The
+  `x86_64-apple-darwin` leg cross-builds and cannot run its own binary.  The Linux leg
+  builds them inside the manylinux image, so they link against the same glibc 2.28 as the
+  binary that loads them.
 - **How.**  `scripts/release-lib-artifacts.sh --loft <bin> --out <dir>` installs every
   published library at its latest version into a scratch home, and runs a program that only
   `use`s it.  That ordinary run compiles the library and its dependencies under the names a

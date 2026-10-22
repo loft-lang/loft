@@ -365,7 +365,8 @@ same stem and byte-identical source.
   and every release carries its own — so the consumer reads its own loft's row.
   - A release bundle's binary (`LOFT_RELEASE_BUNDLE`) is named by its build, not by its
     file's modification time, and its artifact key hashes no rlib: the user's copy has none.
-  - Linux builds none: the static-pie musl binary cannot load a library (loft#2127).
+  - Linux builds them too, now that its bundle is a dynamically linked gnu build
+    (loft#2127), inside the same manylinux image.
   - Open beside it, the registry's: its validator's gate 2b re-checks `binaries` hashes by
     download and not yet `artifacts` (a wrong one only makes `loft install` refuse it).
 
