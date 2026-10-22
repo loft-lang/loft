@@ -2865,6 +2865,12 @@ impl Store {
                 unsafe {
                     std::ptr::copy_nonoverlapping(old, fresh, old_bytes.min(bytes));
                     old.write_bytes(0xA5, old_bytes);
+                    // Poison keeps the scribbled block, so a stale read finds the
+                    // scribble; a forced move frees it, so a stale read is a
+                    // use-after-free the sanitizers report, and nothing leaks.
+                    if !crate::keys::poison_enabled() {
+                        A.dealloc(old, l);
+                    }
                 }
             }
             fresh
