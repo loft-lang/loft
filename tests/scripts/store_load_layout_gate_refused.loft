@@ -7,6 +7,11 @@
 // `store_persist_bind` on the existing file and the URL loaders all refuse it: the
 // call answers false, the collection stays empty (and usable), and the file and its
 // `.dschema` are left as they were.  Driven by `store_persist_loft.rs`.
+//
+// @falsified-at: none — this half is the refusal the build before @PLN196 step 8 gave to
+//   every changed layout, so that build answers the same; what it guards is that the
+//   converter step 8 added never widens to a change it cannot carry.  The half that moved
+//   is `store_load_layout_gate_changed.loft`'s (a grown Tile converts).
 
 struct Tile {
   id: integer,
