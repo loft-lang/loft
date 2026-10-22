@@ -21,7 +21,8 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
         .env("LOFT_TIMEOUT", "300")
         .env_remove("LOFT_NO_RECORD_PTR")
         .env_remove("LOFT_NO_VECTOR_BASE")
-        .env_remove("LOFT_HOIST_VERIFY");
+        .env_remove("LOFT_HOIST_VERIFY")
+        .env_remove("LOFT_NO_FIELD_HEADER");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -29,7 +30,11 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
 }
 
 fn emit(tag: &str, env: &[(&str, &str)]) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
+    emit_src(CELLS, tag, env)
+}
+
+fn emit_src(cells: &str, tag: &str, env: &[(&str, &str)]) -> String {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(cells);
     // One file per TEST: the tests run on threads of one process.
     let out = std::env::temp_dir().join(format!("loft_record_ptr_{}_{tag}.rs", std::process::id()));
     let status = loft(
@@ -203,5 +208,60 @@ fn the_declines_are_the_designed_ones() {
             .iter()
             .any(|l| l.contains("`e2`") && l.contains("frees a record before a use")),
         "r12's copy is a fresh record released before a use of it:\n{trace}"
+    );
+}
+
+/// The nested clause's cells: a view's VECTOR field read through the view's address.
+const NESTED: &str = "tests/scripts/a-vector-field-of-a-view-reads-through-its-address.loft";
+
+/// The nested cells answer their hand-computed values on both backends, with the clause on
+/// and off, under the falsifiers — `LOFT_HOIST_VERIFY=1` compares every header read through
+/// an address with the store's.
+#[test]
+fn the_nested_cells_hold_on_both_backends_and_under_the_falsifiers() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(NESTED);
+    let src = src.to_str().unwrap();
+    for (backend, env) in [
+        ("--interpret", vec![]),
+        ("--native", vec![("LOFT_HOIST_VERIFY", "1")]),
+        ("--native", vec![("LOFT_POISON", "1")]),
+        ("--native", vec![("LOFT_NO_FIELD_HEADER", "1")]),
+    ] {
+        let out = loft(&[backend, src], &env);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("n5 6 57"),
+            "{backend} {env:?}: exit {:?}\nstdout: {stdout}\nstderr: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_vector_field_of_a_view_reads_its_header_through_the_address() {
+    let rust = emit_src(NESTED, "nested", &[]);
+    // n1, n2, n3, n5: views whose only uses are vector-field reads take an address for them
+    // (two reads, or one under a held iteration); set_first: the element clause's write.
+    for f in ["n_n1", "n_n2", "n_n3", "n_n5", "n_set_first"] {
+        let b = body(&rust, f);
+        assert!(
+            b.contains("vector::field_header::<false>(__pa_"),
+            "{f} must read its view's vector field through the address:\n{b}"
+        );
+    }
+    assert!(
+        body(&rust, "n_set_first")
+            .contains("let (__er, __el) = { let __h = unsafe { vector::field_header::<false>("),
+        "the element write takes the field's record and length through the address"
+    );
+    assert!(
+        body(&rust, "n_n2").contains("stores.vec_get_hoisted_or_raise_runtime::<false>(&__vh"),
+        "the raising element read takes the nested header"
+    );
+    let off = emit_src(NESTED, "nested_off", &[("LOFT_NO_FIELD_HEADER", "1")]);
+    assert!(
+        !off.contains("vector::field_header::<"),
+        "LOFT_NO_FIELD_HEADER=1 must resolve every vector field through the store"
     );
 }
