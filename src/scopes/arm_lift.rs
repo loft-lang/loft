@@ -476,6 +476,14 @@ impl Scopes<'_> {
                 holders.push(w);
             }
         }
+        // @FR-O-Complete, @FR-L-CapOwn (loft#2131) — the same holders are the binding's JOIN
+        // OWNERS: the stores it may hold, one per path, settled by store identity wherever a
+        // closure record adopts the binding.  Without them the capture side saw one dep (the
+        // copied arm's lift) and no join, so a record that leaves the frame adopted the binding
+        // while the frame still freed every arm — the escaping closure read a released store.
+        if bound != u16::MAX && holders.len() > 1 {
+            function.add_join_owners(bound, &holders);
+        }
         if bound != u16::MAX && !holders.is_empty() {
             let slot = self.join_holders.entry(bound).or_default();
             for w in holders {

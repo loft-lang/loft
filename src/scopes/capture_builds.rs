@@ -512,7 +512,14 @@ pub(super) fn join_capture_witness(
             && function.is_captured(c)
             && !built_with.rebuilt_in_loop.contains(&c)
             && !built_with.reassigned_after_build.contains(&c)
-            && capture_join_candidates(function, c).contains(&v)
+            // The arms read off the assignment at the build name a PROJECTION arm's root too
+            // (`r = if p { mk(5) } else { base.inner }` holds `base`'s store on that path),
+            // which no dep or join owner records (loft#2131).
+            && (capture_join_candidates(function, c).contains(&v)
+                || built_with
+                    .join_arms_at_build
+                    .get(&c)
+                    .is_some_and(|arms| arms.contains(&v)))
             && capture_is_adopted(data, function, built_with, c)
     })
 }
