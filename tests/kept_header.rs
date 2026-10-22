@@ -35,7 +35,11 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let out =
         std::env::temp_dir().join(format!("loft_kept_header_{}_{tag}.rs", std::process::id()));
     let status = loft(
-        &["--native-emit", out.to_str().unwrap(), src.to_str().unwrap()],
+        &[
+            "--native-emit",
+            out.to_str().unwrap(),
+            src.to_str().unwrap(),
+        ],
         env,
     );
     assert!(
@@ -115,7 +119,9 @@ fn a_kept_field_is_held_once_and_handed_down_the_chain() {
     // ensure's twin derives it again after its append's two halves, and nowhere else.
     let ensure = body(&rust, "n_ensure__kh");
     assert_eq!(
-        ensure.matches("//@FR-R-Header kept clause: refreshed").count(),
+        ensure
+            .matches("//@FR-R-Header kept clause: refreshed")
+            .count(),
         2,
         "ensure's twin refreshes after the append and after its finish:\n{ensure}"
     );
@@ -132,7 +138,13 @@ fn a_kept_field_is_held_once_and_handed_down_the_chain() {
 #[test]
 fn a_body_whose_changes_no_holder_follows_keeps_nothing() {
     let rust = emit("decline", &[]);
-    for f in ["n_fill_loop", "n_nested", "n_self_len", "n_via_view", "n_reset"] {
+    for f in [
+        "n_fill_loop",
+        "n_nested",
+        "n_self_len",
+        "n_via_view",
+        "n_reset",
+    ] {
         let b = body(&rust, f);
         assert!(
             !b.contains("__kh"),
