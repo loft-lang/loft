@@ -966,15 +966,18 @@ mod tests {
         let at10 = sites[&10].nanos;
         let at12 = sites[&12].nanos;
         // Bounds a preempted test thread cannot break: the spin is at least 3 ms (less a
-        // margin for the counter's resolution and its calibrated rate), and the sample's
-        // interval holds only what ran after the settle.
+        // margin for the counter's resolution and its calibrated rate), and the two credits
+        // together are exactly the time from arming to the sample.  Comparing the sample's
+        // interval with the spin is not such a bound: a thread preempted between the settle
+        // and the sample gives the sample the longer interval.
         assert!(
             at10 >= 2_900_000,
             "the long op's time is on its own position: {at10}"
         );
+        let elapsed = p.elapsed_ns();
         assert!(
-            at12 < at10,
-            "and not on the next sample's: {at12} vs {at10}"
+            at10 + at12 <= elapsed,
+            "and not on the next sample's as well: {at10} + {at12} > {elapsed}"
         );
         assert_eq!(sites[&10].samples, 0, "a timed op is not a sample");
         assert_eq!(p.samples, 1);
