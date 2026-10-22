@@ -181,9 +181,9 @@ fn a_symbolised_build_is_not_served_the_stripped_one() {
         .collect();
     sizes.sort_unstable();
     assert_eq!(sizes.len(), 2, "one binary per strip decision: {sizes:?}");
-    // On Windows the symbols go to a separate `.pdb`, so both executables are one size.
+    // Where the symbols go to a `.pdb` beside the binary, both executables are one size.
     assert!(
-        cfg!(windows) || sizes[1] > sizes[0],
+        !loft::platform::native_symbols_in_the_binary() || sizes[1] > sizes[0],
         "the symbolised binary carries its symbols: {sizes:?}"
     );
     let _ = fa::remove_dir_all(&dir);

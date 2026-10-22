@@ -764,6 +764,13 @@ pub fn native_strip_symbols() -> bool {
     std::env::var_os("LOFT_NATIVE_KEEP_SYMBOLS").is_none()
 }
 
+/// Whether a native binary's symbols live in the executable itself, so keeping them makes it
+/// larger.  The MSVC linker writes them to a `<binary>.pdb` beside it instead.
+#[must_use]
+pub fn native_symbols_in_the_binary() -> bool {
+    !cfg!(windows)
+}
+
 /// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:
 /// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by the
 /// library cdylib's codegen and link (`native_lib`) and by the parser, which compiles a
