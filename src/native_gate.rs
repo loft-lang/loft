@@ -253,9 +253,12 @@ fn is_bridge_type(t: &Type) -> bool {
         return elems.iter().all(is_tuple_leaf);
     }
     // @PLN199 A4 — a `&T` to a scalar crosses as the `DbRef` of the caller's slot; the bridge
-    // hands the inner fn a pointer into it (`*mut i64`), the form `--native` passes.
+    // hands the inner fn a pointer into it (`*mut i64`), the form `--native` passes.  A `&T`
+    // to a record, a vector, a keyed collection or a data enum the same: the slot holds that
+    // value's `DbRef`, and the inner fn takes `&mut DbRef` — it may write through it, and
+    // rebind it.
     if let Type::RefVar(inner) = t.base() {
-        return is_ref_scalar(inner);
+        return is_ref_scalar(inner) || crate::data::is_dbref(inner.base());
     }
     // @PLN199 D3 — a generator handle, interpreted or compiled: both advance through the
     // host's table (`codegen_runtime::CoroutineHost`).

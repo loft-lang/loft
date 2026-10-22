@@ -75,6 +75,20 @@ fn main() {
     acc = 0;
     for _ in 0..1000 { arg_ref(acc); }
     println("arg_ref_field {rec.v} {acc}"); // 7 5000
+    rc = Ck { k: 1, v: 10 };
+    arg_ref_rec(rc, 5);
+    for _ in 0..1000 { arg_ref_rec(rc, 1); }
+    println("arg_ref_rec {rc.v}"); // 10 + 5 + 1000 = 1015
+    // A thousand rebinds keep the live-store count flat (`LOFT_STORES=warn`).
+    for rb in 0..1000 { arg_ref_rec_rebind(rc, rb); }
+    arg_ref_rec_rebind(rc, 77);
+    println("arg_ref_rec_rebind {rc.k} {rc.v}"); // 0 77
+    xs: vector<integer> = [1];
+    nx = arg_ref_vec(xs, 3);
+    println("arg_ref_vec {nx} {xs}"); // 3 [1,3,6]
+    hh: hash<Ck[k]> = [];
+    for hk in 0..100 { arg_ref_hash(hh, hk % 10, hk); }
+    println("arg_ref_hash {len(hh)} {hh[3].v}"); // 10 93 (key 3 last written at 93)
     println("arg_fn {arg_fn(twice, 5)}"); // 11
     f = ret_fn();
     println("ret_fn {f(3)}"); // 21

@@ -1436,6 +1436,8 @@ fn shared_bridge_wrapper(
 
     let mut body = String::new();
     let mut fwd = String::new();
+    // Statements after the call: a `&T` argument's local, back into the caller's slot.
+    let mut write_backs = String::new();
     let mut slot = 0usize; // next public-arg LibArg slot
     // @PLN118 arc F — hidden dests the bridge allocated as a FALLBACK (caller
     // forwarded a null/empty ref).  If the inner fn ignores its retbuf and returns
@@ -1549,6 +1551,27 @@ fn shared_bridge_wrapper(
                 let _ = writeln!(body, "    let mut {var}: String = String::new();");
                 let _ = write!(fwd, ", &mut {var}");
             }
+            // @PLN199 — `&T` to a record, vector, keyed collection or data enum: the slot the
+            // caller's `DbRef` names holds that value's `DbRef`.  It is copied into a local,
+            // `--native`'s `&mut DbRef` parameter writes through or rebinds the local, and the
+            // local goes back to the slot after the call — re-resolved then, because a call
+            // back into the interpreter may grow its stack, and the slot with it.
+            crate::native_gate::BridgeAttrKind::Marshal if matches!(a.typedef.base(), Type::RefVar(inner) if crate::data::is_dbref(inner.base())) =>
+            {
+                let at = slot;
+                slot += 1;
+                let _ = writeln!(body, "    let {var}_at: DbRef = a[{at}].dbref;");
+                let _ = writeln!(
+                    body,
+                    "    let mut {var}_v: DbRef = if {var}_at.rec == 0 {{ DbRef::NULL }} else {{ \
+                     *unsafe {{ &*cell.get() }}.store(&{var}_at).addr::<DbRef>({var}_at.rec, {var}_at.pos) }};"
+                );
+                let _ = write!(fwd, ", &mut {var}_v");
+                let _ = writeln!(
+                    write_backs,
+                    "    if {var}_at.rec != 0 {{ *unsafe {{ &mut *cell.get() }}.store_mut(&{var}_at).addr_mut::<DbRef>({var}_at.rec, {var}_at.pos) = {var}_v; }}"
+                );
+            }
             crate::native_gate::BridgeAttrKind::Marshal => {
                 let ty = rust_type(&a.typedef, &Context::Argument);
                 // @PLN199 A3 — a tuple reads one slot per leaf (`extensions::tuple_leaves`).
@@ -1655,6 +1678,7 @@ fn shared_bridge_wrapper(
          let _ = ({slot}, a);\n\
          {body}    \
          {ret_stmt}\n\
+         {write_backs}\
          {free_orphans}\
          }}\n",
     )

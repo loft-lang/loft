@@ -384,6 +384,12 @@ same stem and byte-identical source.
   bridge writes one `ret[i]` per leaf, and the dispatcher pushes them in element order —
   the mirror of the tuple parameters of A3.  `gatefull` carries the shapes (`ret_pair`,
   `ret_fpair`, `ret_mixed`, `ret_nested`, `ret_pair_null`).
+- **F4 — a `&T` parameter of a heap type (done).**  A `&` to a record, vector, keyed
+  collection or data enum: the bridge copies the caller's `DbRef` out of the slot, `--native`'s
+  `&mut DbRef` writes through or rebinds the copy, and the copy goes back to the slot after the
+  call, re-resolved there because a call back may grow the interpreter's stack.  `gatefull`:
+  `arg_ref_rec`, `arg_ref_rec_rebind` (a thousand rebinds under `LOFT_STORES=warn`),
+  `arg_ref_vec`, `arg_ref_hash`.  After it the census finds no published function interpreted.
 - **F2 — the generators `--native` cannot carry.**  `coroutine_layout::channel_tag` answers
   `CHANNEL_NONE` for a tuple yield holding a text or a nested tuple (`coroutine_layout.rs` ~181),
   which the generator answers with a `compile_error!` on `--native` too (loft#1132) — so this is
@@ -407,8 +413,7 @@ is scheduled.  One is lifted when a consumer or a profile meets it — the trace
 
 | shape | where it declines |
 |---|---|
-| a `&Struct` or `&hash<…>` parameter | `native_gate::bridge_decline` |
-| `&text`, `&vector`, `&(…)` parameters | `native_gate::is_ref_scalar` |
+| `&text`, `&(…)` parameters | `native_gate::is_ref_scalar` |
 | a narrow scalar (`single`, `character`, a plain enum, a sized `integer`) in a tuple parameter, a generator's yield, a `&T`, or a function value's signature | `is_tuple_leaf`, `generator_crosses`, `is_ref_scalar`, `fnref::upcall_carries` |
 | a tuple yield | `generator_crosses` |
 | a function value with a `&T` parameter, or a keyed-collection result | `fnref::upcall_carries` |
