@@ -106,33 +106,42 @@ fn spawn_loft(prog: &PathBuf, piped: bool) -> Child {
 }
 
 /// Environment-skip detection for the node/chromium harness
-/// (`tools/html_render_check.mjs`): returns the skip reason when the run
-/// died WITHOUT delivering a product verdict.  A real product failure
-/// always carries output — exit 1 prints the JSON failure block, exit 3 a
-/// `harness error:` line — so the silent shapes are the environment's:
-///  * exit 2 — the harness's own no-chrome skip;
-///  * `timeout waiting for` — chrome exists but cannot LAUNCH here (CI
-///    runner sandbox; the CDP endpoint never comes up);
+/// (`tools/html_render_check.mjs`): true when the run died WITHOUT
+/// delivering a product verdict, after printing the reason and recording it
+/// to the skip ledger (`browser_skip`).  A real product failure always carries output —
+/// exit 1 prints the JSON failure block, exit 3 a `harness error:` line — so
+/// the silent shapes are the environment's:
+///  * exit 2 — the harness's own skips: no chrome binary, or a chrome that
+///    never answers its debugging port (the harness turns that into exit 2
+///    itself, so a `timeout waiting for` line never reaches this check);
 ///  * empty-output non-zero / signal death — node killed under suite load
 ///    (OOM / chrome contention; `status.code()` is None on a signal, so
 ///    the exit-2 arm never sees it either).
-fn harness_env_skip(out: &std::process::Output) -> Option<String> {
+fn harness_env_skip(test: &str, out: &std::process::Output) -> bool {
     let stderr = String::from_utf8_lossy(&out.stderr);
-    if out.status.code() == Some(2) {
-        return Some(format!("SKIP: {stderr}"));
-    }
-    if stderr.contains("timeout waiting for") {
-        return Some(format!(
-            "SKIP: chromium present but not launchable: {stderr}"
-        ));
-    }
-    if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
-        return Some(format!(
+    let reason = if out.status.code() == Some(2) {
+        format!("SKIP: {stderr}")
+    } else if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
+        format!(
             "SKIP: harness died without a verdict ({:?} — signal/OOM under suite load)",
             out.status
-        ));
-    }
-    None
+        )
+    } else {
+        return false;
+    };
+    browser_skip(test, &reason);
+    true
+}
+
+/// Print a browser test's skip and record it to the skip ledger: a skip prints `ok` like a
+/// pass, so without the ledger a runner that lost its browser reads as green.
+fn browser_skip(test: &str, reason: &str) {
+    eprintln!("{reason}");
+    common::record_env_skips(
+        "engine_host_connector",
+        "browser",
+        &[(test.to_string(), reason.to_string())],
+    );
 }
 
 #[test]
@@ -550,7 +559,10 @@ fn s6_browser_swap_under_living_page() {
     let harness = root.join("tools/html_render_check.mjs");
     if !chrome_ok || !node_ok || !fa::exists(&harness) || !fa::exists(root.join("doc/pkg/loft.js"))
     {
-        eprintln!("SKIP: chromium/node/harness/bundle missing");
+        browser_skip(
+            "s6_browser_swap_under_living_page",
+            "SKIP: chromium/node/harness/bundle missing",
+        );
         return;
     }
     assert_bundle_describes_this_tree();
@@ -659,6 +671,11 @@ fn main() {{
     // the void — `rejected` then never flips and the page times out).  The
     // server relays the page clients' "c:" heartbeats to every connection,
     // so each step waits for the page state it needs.
+    // Raised once the harness has its verdict: the page stops heartbeating when it logs
+    // `SWAP-OK`, so a pusher still waiting for a frame would otherwise hold the join below
+    // until its own deadline.
+    let harness_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pusher_stop = harness_done.clone();
     let pusher = std::thread::spawn(move || {
         let t0 = Instant::now();
         let log = move |msg: &str| {
@@ -679,7 +696,9 @@ fn main() {{
                         return true;
                     }
                 }
-                if Instant::now() >= deadline {
+                if Instant::now() >= deadline
+                    || pusher_stop.load(std::sync::atomic::Ordering::Relaxed)
+                {
                     return false;
                 }
             }
@@ -762,7 +781,9 @@ fn main() {{
 
     // The page's verdict budget scales with the runner (vm_deadline's
     // factor) and stays INSIDE the harness watch window — page-throw
-    // before harness-timeout, never a false pass.
+    // before harness-timeout.  The harness waits for the page's `SWAP-OK`
+    // line and fails without it: a page that hangs without throwing would
+    // otherwise pass by saying nothing, after sleeping the whole window.
     let scale: u64 = if std::env::var_os("CI").is_some() {
         3
     } else {
@@ -777,14 +798,15 @@ fn main() {{
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", &harness_wait_ms.to_string()])
+        .args(["--expect-log", "SWAP-OK"])
         .args(["--port", "18104"])
         .output()
         .expect("node harness");
+    harness_done.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = pusher.join();
     let _ = http.kill();
     let _ = http.wait();
-    if let Some(reason) = harness_env_skip(&out) {
-        eprintln!("{reason}");
+    if harness_env_skip("s6_browser_swap_under_living_page", &out) {
         let _ = fa::remove_file(&server_prog);
         return;
     }
@@ -865,7 +887,10 @@ fn browser_kernel_one_script_differential() {
     let harness = root.join("tools/html_render_check.mjs");
     if !chrome_ok || !node_ok || !fa::exists(&harness) || !fa::exists(root.join("doc/pkg/loft.js"))
     {
-        eprintln!("SKIP: chromium/node/harness/bundle missing");
+        browser_skip(
+            "browser_kernel_one_script_differential",
+            "SKIP: chromium/node/harness/bundle missing",
+        );
         return;
     }
     assert_bundle_describes_this_tree();
@@ -1020,8 +1045,7 @@ fn main() {{
     let _ = server_killer.join();
     let _ = http.kill();
     let _ = http.wait();
-    if let Some(reason) = harness_env_skip(&out) {
-        eprintln!("{reason}");
+    if harness_env_skip("browser_kernel_one_script_differential", &out) {
         return;
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1068,7 +1092,10 @@ fn a_refused_connect_reads_the_same_on_a_seat_and_in_a_page() {
         || !fa::exists(&harness)
         || !fa::exists(root.join("doc/pkg/loft.js"))
     {
-        eprintln!("SKIP: chromium/node/harness/bundle missing");
+        browser_skip(
+            "a_refused_connect_reads_the_same_on_a_seat_and_in_a_page",
+            "SKIP: chromium/node/harness/bundle missing",
+        );
         return;
     }
     assert_bundle_describes_this_tree();
@@ -1151,8 +1178,10 @@ fn a_refused_connect_reads_the_same_on_a_seat_and_in_a_page() {
         .args(["--port", &common::bind_port(18142).to_string()])
         .output()
         .expect("node harness");
-    if let Some(reason) = harness_env_skip(&out) {
-        eprintln!("{reason}");
+    if harness_env_skip(
+        "a_refused_connect_reads_the_same_on_a_seat_and_in_a_page",
+        &out,
+    ) {
         return;
     }
     assert!(
