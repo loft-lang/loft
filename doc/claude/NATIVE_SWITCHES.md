@@ -331,13 +331,13 @@ and under each growth refusal a `class` line gives the view's and each mover's c
 `use-after-growth`: whether any address-served use follows the first growth, the question an
 ordered remainder clause would ask (priced, not built: `bench/portal/analysis/recptr-remainder.md`).
 `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
-**`LOFT_NO_ELEMENT_ADDRESS=1`** (`@FR-R-RecPtr`'s element clause, default-ON, generation
-time, `--native` only) writes a value record into `v[i]` through the element read and its
-address taken back out of the reference — with it off, the element is derived where it is
-written: one header read, the in-range test, the reference and the address both from the
-record and the index (`map_set_hex` −5.6 % of `slope_path_with_undo`).  The first bisect step
-for a value record written into the wrong element, or an out-of-range write that raised
-twice or not at all.
+**`LOFT_NO_ELEMENT_ADDRESS=1`** (`@FR-R-RecPtr`'s element clause, `--native`) writes a value
+record into `v[i]` through the element read, not derived where it is written from one header
+read and the index.  First bisect step for a record written into the wrong element, or an
+out-of-range write that raised twice or not at all.
+**`LOFT_NO_FIELD_HEADER=1`** (`@FR-R-RecPtr`'s nested clause, `--native`) resolves a view's
+VECTOR field (`len(c.items)`, `c.items[i]`) through the store again, not through the view's
+address.  First bisect step for a wrong length or element of a record's vector field.
 **`LOFT_NO_TEXT_FIELD=1`** (`@FR-R-RecPtr`'s text clause, default-ON, generation time,
 `--native` only) makes a TEXT field of a `for e in v` loop variable (`e.name`) resolve the
 store, the record and the text at each read again — with it off, the view's address from

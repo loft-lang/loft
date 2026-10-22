@@ -1340,6 +1340,18 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  and an index out of range takes the element read itself, so its
                  raise and the null it answers are that read's.  Pre-evaluation
                  asks the same question and leaves the element read in place.
+                 THE NESTED CLAUSE: a VECTOR field of r — `r.items`, or through
+                 inline sub-records `r.pos.items` at the summed offset — read by
+                 a length (`len`, OpLengthVector) or an element read (OpGetVector,
+                 OpGetVectorNullable, the element clause's write) takes its header
+                 through the address: the field's vector record one load at it,
+                 the length one read of that record, at each use, so a write to
+                 the field before the read is seen.  The null address holds the
+                 absent vector.  A view whose only uses are such reads takes its
+                 address on this clause alone when two reads share the one store
+                 resolution the address costs, or one under the base clause, where
+                 the address is free; that use enters the verdict before its
+                 growth, free and rebind conditions, as the text clause's does.
 ```
 
 **In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -1366,7 +1378,10 @@ address, where a `vec_get_or_raise_runtime` reference and an address read out of
 round trip — `map_set_hex` in `slope_path_with_undo` 200.9 → 189.6 µs native, −5.6 %, the hand-written form exactly;
 switch `LOFT_NO_ELEMENT_ADDRESS`, guard
 `tests/scripts/a-record-written-into-an-element-is-addressed-once.loft`), `vector::rec_ptr` / `rec_get` /
-`rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
+`rec_set`; the nested clause `Output::field_header_expr`, `Output::extra_view_use`,
+`hoist::vector_field_reads` and `vector::field_header` (switch `LOFT_NO_FIELD_HEADER`, guard
+`tests/scripts/a-vector-field-of-a-view-reads-through-its-address.loft`;
+`slope_path_with_undo` −7.0 %, `resolve_move` −6.1 % native, hashes equal).  Cells `tests/scripts/157-record-ptr.loft` and
 `loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft`, pins
 `tests/record_ptr.rs`.  The `for e in v` loop
 variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
