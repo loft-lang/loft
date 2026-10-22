@@ -374,10 +374,12 @@ same stem and byte-identical source.
 
 ## Phase F — the gate is the rule
 
-- **F1 — the census.**  `LOFT_TRACE_NATIVE_GATE=1` over every registry library's published
-  version (`scripts/revalidate_libs_local.sh` already resolves them), counted per decline
-  reason, as `make gate-census`: a report, never a gate.  It orders the standing shapes below
-  by how many published functions each keeps interpreted.
+- **F1 — the census (done).**  `make gate-census` (`scripts/gate_census.sh`) installs every
+  registry library's published version into a scratch home and runs a one-line `use` of it
+  under `LOFT_TRACE_NATIVE_GATE=only` (the partition, no build, no `rustc`), then counts the
+  decline reasons over the registry by the shape they name.  A report, never a gate; its
+  latest reading is on the plan issue.  At its first reading every decline was a bridge
+  shape, and returning a tuple of scalars led by far.
 - **F2 — the generators `--native` cannot carry.**  `coroutine_layout::channel_tag` answers
   `CHANNEL_NONE` for a tuple yield holding a text or a nested tuple (`coroutine_layout.rs` ~181),
   which the generator answers with a `compile_error!` on `--native` too (loft#1132) — so this is
@@ -401,6 +403,8 @@ is scheduled.  One is lifted when a consumer or a profile meets it — the trace
 
 | shape | where it declines |
 |---|---|
+| a returned tuple of scalars (`(integer, integer)`, `(float, float)`, …) | `native_gate::bridge_decline` |
+| a `&Struct` or `&hash<…>` parameter | `native_gate::bridge_decline` |
 | `&text`, `&vector`, `&(…)` parameters | `native_gate::is_ref_scalar` |
 | a narrow scalar (`single`, `character`, a plain enum, a sized `integer`) in a tuple parameter, a generator's yield, a `&T`, or a function value's signature | `is_tuple_leaf`, `generator_crosses`, `is_ref_scalar`, `fnref::upcall_carries` |
 | a tuple yield | `generator_crosses` |
@@ -417,9 +421,9 @@ The procedure, the one every step above followed:
 
 ## Order
 
-Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c, G1, G2a, G2b, G3.  D4
-is dropped.  The open steps, each one commit:
+Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c, G1, G2a, G2b, G3, F1.
+D4 is dropped.  The open steps, each one commit:
 
 G2c (the release job — the owner's), and,
-independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G2c, the release job,
+independent of G: F2 → the standing shapes in F1's order → F-last.  G2c, the release job,
 is last because it publishes.

@@ -26,6 +26,7 @@ scripts/doc-review.sh	--help
 scripts/doc_probe_sweep.sh	--help
 scripts/file-sizes.py	--help
 scripts/find_problems.sh	--help
+scripts/gate_census.sh	--help
 scripts/gen-library-catalogue.py	--help
 scripts/gen-toolchain-entry.py	--help
 scripts/install.sh	--help

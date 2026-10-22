@@ -9938,8 +9938,13 @@ fn main() {
         {
             continue;
         }
-        if std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some() {
+        if let Some(trace) = std::env::var_os("LOFT_TRACE_NATIVE_GATE") {
             loft::native_lib::trace_partition(&p.data, pkg_dir);
+            // @PLN199 F1 — `=only` reports the partition and builds nothing: the census
+            // (`make gate-census`) asks it of every published library, with no `rustc`.
+            if trace == "only" {
+                continue;
+            }
         }
         let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
         if export.is_empty() {
