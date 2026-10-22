@@ -6707,29 +6707,19 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     match sub {
         // @PLN196 step 9 — the baseline records the release it was accepted as and where each
         // computed field's value comes from, carrying forward when each line first appeared.
-        "accept" => {
-            let previous = ss::read_baseline(&project)
-                .and_then(|t| ss::LayoutIdentity::from_sidecar(&t))
-                .map(|id| id.sources)
-                .unwrap_or_default();
-            identity.version.clone_from(&release.version);
-            identity.sources =
-                loft::layout_schema::render_sources(&p.data, &previous, &release.version);
-            let written = identity.write_baseline(&project);
-            match written {
-                Ok(()) => {
-                    println!(
-                        "loft layout: recorded baseline ({} user types)",
-                        roots.len()
-                    );
-                    0
-                }
-                Err(e) => {
-                    eprintln!("loft layout: could not write baseline: {e}");
-                    1
-                }
+        "accept" => match record_baseline(&mut identity, &project, &p.data, &release) {
+            Ok(()) => {
+                println!(
+                    "loft layout: recorded baseline ({} user types)",
+                    roots.len()
+                );
+                0
             }
-        }
+            Err(e) => {
+                eprintln!("loft layout: could not write baseline: {e}");
+                1
+            }
+        },
         "check" => match ss::check_against_baseline(&project, &identity) {
             Ok(ss::SchemaVerdict::Fresh) => {
                 println!("loft layout: no baseline yet — run `loft layout accept {file}`.");
@@ -6779,6 +6769,25 @@ fn record_release_baseline(pkg_path: &std::path::Path) {
     if run_layout_command("accept", &entry.to_string_lossy()) != 0 {
         eprintln!("loft package: the layout baseline was not recorded");
     }
+}
+
+/// `loft layout accept`: write `identity` as the project's baseline, with the release it is
+/// accepted as and where each computed field's value comes from — each line keeping the
+/// release that first recorded it in the baseline it replaces (@PLN196 step 9).
+fn record_baseline(
+    identity: &mut loft::schema_sidecar::LayoutIdentity,
+    project: &std::path::Path,
+    data: &loft::data::Data,
+    release: &loft::database::Release,
+) -> std::io::Result<()> {
+    use loft::schema_sidecar as ss;
+    let previous = ss::read_baseline(project)
+        .and_then(|t| ss::LayoutIdentity::from_sidecar(&t))
+        .map(|id| id.sources)
+        .unwrap_or_default();
+    identity.version.clone_from(&release.version);
+    identity.sources = loft::layout_schema::render_sources(data, &previous, &release.version);
+    identity.write_baseline(project)
 }
 
 /// @PLN196 step 7 — `loft layout upgrade <file> <store>…`: carry each store file into the
@@ -9589,6 +9598,25 @@ fn main() {
         None
     };
     let program_warm = warm_user_start.is_some();
+    // @PLN196 step 9 — a cached image carries no release (the parser sets it from the
+    // manifest, which the image does not record), so a warm run reads it here: without this
+    // a warm run recorded none in the stores it wrote, and a `--native` build after an
+    // interpreted run of the same program baked none into the binary.
+    {
+        let dir = std::path::Path::new(&abs_file)
+            .parent()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let release = loft::manifest::release_of(&dir);
+        if p.database.release.get().is_none() {
+            let _ = p.database.release.set(release.clone());
+        }
+        if let Some((stores, _)) = warm_store.as_mut()
+            && stores.release.get().is_none()
+        {
+            let _ = stores.release.set(release);
+        }
+    }
     // The image is a CLOSED program (`compile::close_program`): its rewrites ran before it was
     // taken, and must not run again over a table that no longer carries what they read.
     if program_warm {

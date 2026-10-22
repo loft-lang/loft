@@ -1635,7 +1635,7 @@ fn version_orders_releases_by_number() {
     let dir = cell_dir("version_order");
     loft::file_access::write(
         dir.join("b.loft"),
-        "fn main() {\n  a = \"10.0\" as Release;\n  b = \"9.2.7\" as Release;\n  println(\"{a > b} {a < \\\"9.0\\\"} {b < \\\"9.10\\\"} {\\\"2\\\" as Release == \\\"2.0.0\\\" as Release} {b}\");\n}\n",
+        "fn main() {\n  a = Release { major: 10 };\n  b = Release { major: 9, minor: 2, patch: 7 };\n  println(\"{a > b} {a < \\\"9.0\\\"} {b < \\\"9.10\\\"} {a >= \\\"10\\\"} {b}\");\n}\n",
     )
     .unwrap();
     reads("version_order", &dir, "true false true true 9.2.7\n", "");

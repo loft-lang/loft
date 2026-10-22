@@ -407,9 +407,8 @@ impl Manifest {
 #[must_use]
 pub fn release_of(source_dir: &str) -> crate::database::Release {
     let none = crate::database::Release::default();
-    if source_dir.is_empty() {
-        return none;
-    }
+    // An empty directory is the current one, as `project_root` reads it: a program run by a
+    // relative name (`loft b.loft`) has no directory of its own in the path.
     let Some(root) = crate::resolution_scope::project_root(source_dir) else {
         return none;
     };

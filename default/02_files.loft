@@ -541,26 +541,20 @@ pub fn store_load(r: reference, path: text) -> boolean fs#read;
 ///   }
 pub struct Release { pub major: integer, pub minor: integer, pub patch: integer }
 
-/// The release a text spells: `"2"`, `"2.1"`, `"2.1.3"`; a part that is missing or not a
-/// number counts as 0.
-///   v = "2.1" as Release   // v.major == 2, v.minor == 1, v.patch == 0
-pub operator to_release(self: text) -> Release {
-  p = self.split('.');
-  Release {
-    major: if len(p) > 0 { p[0] as integer ?? 0 } else { 0 },
-    minor: if len(p) > 1 { p[1] as integer ?? 0 } else { 0 },
-    patch: if len(p) > 2 { p[2] as integer ?? 0 } else { 0 }
-  }
-}
-
 /// Releases in the order they were made: by major, then minor, then patch.
 pub operator compare(self: Release, other: Release) -> Ordering {
   self.major.compare(other.major).then(self.minor.compare(other.minor)).then(self.patch.compare(other.patch))
 }
 
-/// A release against the release a text spells: `from < "2.0"`.
+/// A release against the release a text spells (`"2"`, `"2.1"`, `"2.1.3"`; a part that is
+/// missing or not a number counts as 0): `from < "2.0"`.
 pub operator compare(self: Release, other: text) -> Ordering {
-  self.compare(other.to_release())
+  // The parts are compared as they are read: no `Release` is built for them (loft#2123).
+  p = other.split('.');
+  major = if len(p) > 0 { p[0] as integer ?? 0 } else { 0 };
+  minor = if len(p) > 1 { p[1] as integer ?? 0 } else { 0 };
+  patch = if len(p) > 2 { p[2] as integer ?? 0 } else { 0 };
+  self.major.compare(major).then(self.minor.compare(minor)).then(self.patch.compare(patch))
 }
 
 /// `major.minor.patch`.

@@ -128,16 +128,8 @@ impl Parser {
             self.lexer.set_lint_scope_for(filename);
             self.diagnostics.set_lint_scope_for(filename);
         }
-        if !default && self.database.source_dir.is_empty() {
-            self.database.source_dir = std::path::Path::new(filename)
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            // @PLN196 step 9 — the release every store this program writes records.
-            let _ = self
-                .database
-                .release
-                .set(crate::manifest::release_of(&self.database.source_dir));
+        if !default {
+            self.note_entry_dir(filename);
         }
         if !default && self.own_lib.is_none() {
             self.own_lib = Self::own_lib_of(filename);
@@ -1382,16 +1374,8 @@ impl Parser {
             self.lexer.set_lint_scope_for(filename);
             self.diagnostics.set_lint_scope_for(filename);
         }
-        if !default && self.database.source_dir.is_empty() {
-            self.database.source_dir = std::path::Path::new(filename)
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            // @PLN196 step 9 — the release every store this program writes records.
-            let _ = self
-                .database
-                .release
-                .set(crate::manifest::release_of(&self.database.source_dir));
+        if !default {
+            self.note_entry_dir(filename);
         }
         if !default && self.own_lib.is_none() {
             // The manifest's `[package] name` when there is one, else the file
@@ -1670,6 +1654,25 @@ impl Parser {
             diagnostic!(self.lexer, Level::Error, "Could not write: {to}");
         }
         Ok(())
+    }
+
+    /// The entry program's directory (`source_dir`, unless the caller set one) and the release
+    /// its `loft.toml` declares (@PLN196 step 9), which every store the program writes records.
+    /// Set whether or not the caller chose the directory: a release read only when the parser
+    /// chose it left the native build of a program run from its own directory without one.
+    fn note_entry_dir(&mut self, filename: &str) {
+        if self.database.source_dir.is_empty() {
+            self.database.source_dir = std::path::Path::new(filename)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+        }
+        if self.database.release.get().is_none() {
+            let _ = self
+                .database
+                .release
+                .set(crate::manifest::release_of(&self.database.source_dir));
+        }
     }
 
     /// Only parse a specific string, only useful for parser tests.

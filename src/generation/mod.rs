@@ -9653,13 +9653,15 @@ extern crate loft;"
         };
         // @PLN196 step 9 — the release the program's stores record, from the manifest it is
         // compiled against: a shipped binary need not sit beside its `loft.toml`.  Empty (and
-        // so byte-identical) for a program whose project records none.
+        // so byte-identical) for a program whose project records none.  It REPLACES what the
+        // stores hold: a live-dispatch boot parses the program first, and that parse has
+        // already set a release from wherever the binary runs.
         let rel = self.stores.release();
         let release = if rel.is_empty() {
             String::new()
         } else {
             format!(
-                " let _ = stores.release.set(loft::database::Release {{ version: {:?}.to_string(), oldest: {:?}.to_string(), bridge: {:?}.to_string() }});",
+                " stores.release = std::sync::OnceLock::from(loft::database::Release {{ version: {:?}.to_string(), oldest: {:?}.to_string(), bridge: {:?}.to_string() }});",
                 rel.version, rel.oldest, rel.bridge
             )
         };

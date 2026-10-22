@@ -430,7 +430,6 @@ t_4text_split_text
 t_4text_starts_with
 t_4text_starts_with_at
 t_4text_to_lowercase
-t_4text_to_release
 t_4text_to_text
 t_4text_to_uppercase
 t_4text_trim
