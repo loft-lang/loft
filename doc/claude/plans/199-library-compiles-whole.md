@@ -378,8 +378,12 @@ same stem and byte-identical source.
   registry library's published version into a scratch home and runs a one-line `use` of it
   under `LOFT_TRACE_NATIVE_GATE=only` (the partition, no build, no `rustc`), then counts the
   decline reasons over the registry by the shape they name.  A report, never a gate; its
-  latest reading is on the plan issue.  At its first reading every decline was a bridge
-  shape, and returning a tuple of scalars led by far.
+  latest reading is on the plan issue.
+- **F3 — a returned tuple of scalars (done).**  The census's leading shape: the gate admits a
+  tuple of plain `integer`, `float` and `boolean` leaves (`is_returned_tuple_leaf`), the
+  bridge writes one `ret[i]` per leaf, and the dispatcher pushes them in element order —
+  the mirror of the tuple parameters of A3.  `gatefull` carries the shapes (`ret_pair`,
+  `ret_fpair`, `ret_mixed`, `ret_nested`, `ret_pair_null`).
 - **F2 — the generators `--native` cannot carry.**  `coroutine_layout::channel_tag` answers
   `CHANNEL_NONE` for a tuple yield holding a text or a nested tuple (`coroutine_layout.rs` ~181),
   which the generator answers with a `compile_error!` on `--native` too (loft#1132) — so this is
@@ -403,7 +407,6 @@ is scheduled.  One is lifted when a consumer or a profile meets it — the trace
 
 | shape | where it declines |
 |---|---|
-| a returned tuple of scalars (`(integer, integer)`, `(float, float)`, …) | `native_gate::bridge_decline` |
 | a `&Struct` or `&hash<…>` parameter | `native_gate::bridge_decline` |
 | `&text`, `&vector`, `&(…)` parameters | `native_gate::is_ref_scalar` |
 | a narrow scalar (`single`, `character`, a plain enum, a sized `integer`) in a tuple parameter, a generator's yield, a `&T`, or a function value's signature | `is_tuple_leaf`, `generator_crosses`, `is_ref_scalar`, `fnref::upcall_carries` |

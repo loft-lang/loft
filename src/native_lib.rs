@@ -1691,6 +1691,18 @@ pub(crate) fn hidden_dest_type_name(data: &Data, stores: &Stores, t: &Type) -> O
     }
 }
 
+/// The leaves of the returned tuple `t`, each with its field path in the Rust tuple the inner
+/// fn answers (`.1.0`), in element order.
+fn returned_tuple_leaves<'t>(t: &'t Type, path: String, out: &mut Vec<(String, &'t Type)>) {
+    if let Type::Tuple(elems) = t.base() {
+        for (i, e) in elems.iter().enumerate() {
+            returned_tuple_leaves(e, format!("{path}.{i}"), out);
+        }
+    } else {
+        out.push((path, t));
+    }
+}
+
 /// Rust expression reading an argument of loft type `t` starting at `LibArg` slot `*slot`,
 /// advancing it past the slots read: one for a plain value, one per leaf for a tuple, which
 /// is rebuilt as the Rust tuple the inner fn takes (`(i64, (f64, u8))`).
@@ -1771,6 +1783,25 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool, own_ids: bool) -> S
     // `Optional(τ)` rides τ's sentinel layout (@PLN25) — write as the base type.
     match t.base() {
         Type::Void | Type::Null => format!("let _ = {expr};"),
+        // @PLN199 — a tuple of scalars (`native_gate::is_returned_tuple_leaf`): the inner fn
+        // answers a Rust tuple, and each leaf goes to its own `ret[i]`, in element order —
+        // the slots the dispatcher pushes back onto the interpreter's stack one by one.
+        Type::Tuple(_) => {
+            use std::fmt::Write as _;
+            let mut leaves = Vec::new();
+            returned_tuple_leaves(t, String::new(), &mut leaves);
+            let mut out = format!("let __t = ({expr});\n    unsafe {{\n");
+            for (i, (path, leaf)) in leaves.iter().enumerate() {
+                let value = if matches!(leaf.base(), Type::Float) {
+                    format!("__t{path}.to_bits() as i64")
+                } else {
+                    format!("(__t{path}) as i64")
+                };
+                let _ = writeln!(out, "        (*ret.add({i})).scalar = {value};");
+            }
+            out.push_str("    }");
+            out
+        }
         // Plain (tag-only) enum returns a `u8` tag → widen into the scalar slot.
         Type::Integer(_) | Type::Character | Type::Boolean | Type::Enum(_, false, _) => {
             format!("unsafe {{ (*ret).scalar = ({expr}) as i64; }}")

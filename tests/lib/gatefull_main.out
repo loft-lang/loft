@@ -7,6 +7,11 @@ ret_field_text hello [hello] 5
 ret_lit [fixed] 5 <fixedhello
 stdlib [tool] [/usr/local/bin] 14 <tool
 ret_tuple 8 t4
+ret_pair 6 15 1999000
+ret_fpair 1.5 3.25
+ret_mixed 6 -6 true
+ret_nested 36 1.5 true
+ret_pair_null -1 7
 arg_tuple 304
 arg_tuple_var 709 x7
 arg_tuple_nested 6 0

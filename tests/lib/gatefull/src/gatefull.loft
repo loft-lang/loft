@@ -38,6 +38,13 @@ pub fn arg_tuple_nested(t: (integer, (float, boolean))) -> float {
 }
 pub fn arg_tuple_ref(t: (Ck, integer)) -> integer { t.0.v * t.1 }
 
+// Tuples of scalars returned by value — the shape most published functions declined on.
+pub fn ret_pair(n: integer) -> (integer, integer) { (n + 1, n * 3) }
+pub fn ret_fpair(x: float) -> (float, float) { (x * 0.5, x + 0.25) }
+pub fn ret_mixed(n: integer) -> (float, integer, boolean) { (n as float * 1.5, n - 10, n > 3) }
+pub fn ret_nested(n: integer) -> (integer, (float, boolean)) { (n * n, (n as float / 4.0, n % 2 == 0)) }
+pub fn ret_pair_null(n: integer) -> (integer, integer) { (null, n) }
+
 // A reference to the caller's variable.
 pub fn arg_ref(n: &integer) { n += 5; }
 pub fn arg_ref_float(f: &float) { f = f * 2.0; }

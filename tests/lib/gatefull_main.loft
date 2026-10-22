@@ -40,6 +40,21 @@ fn main() {
     println("stdlib [{path.basename()}] [{path.dir()}] {len(path.dir())} {tail}"); // [tool] [/usr/local/bin] 14 <tool
     t = ret_tuple(4);
     println("ret_tuple {t.0} {t.1}"); // 8 t4
+    p = ret_pair(5);
+    sum = 0;
+    for rp in 0..1000 {
+        q = ret_pair(rp);
+        sum += q.0 + q.1;
+    }
+    println("ret_pair {p.0} {p.1} {sum}"); // 6 15, and the sum of 4i+1 over 0..1000 = 1999000
+    fp = ret_fpair(3.0);
+    println("ret_fpair {fp.0} {fp.1}"); // 1.5 3.25
+    m = ret_mixed(4);
+    println("ret_mixed {m.0} {m.1} {m.2}"); // 6 -6 true
+    nt = ret_nested(6);
+    println("ret_nested {nt.0} {nt.1.0} {nt.1.1}"); // 36 1.5 true
+    pn = ret_pair_null(7);
+    println("ret_pair_null {pn.0 ?? -1} {pn.1}"); // -1 7
     println("arg_tuple {arg_tuple((3, 4))}"); // 304
     q = (7, 9);
     println("arg_tuple_var {arg_tuple(q)} {arg_tuple_text((5, "x"), 2)}"); // 709 x7

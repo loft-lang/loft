@@ -159,6 +159,9 @@ pub fn bridge_decline(data: &Data, d: u32) -> Option<String> {
                 // @PLN199 C1 — a function value is returned as its `(d_nr, closure)`; the
                 // interpreter calls it like any of its own.
                 || matches!(ret, Type::Function(..))
+                // @PLN199 — a tuple of scalars, returned by value: one `LibArg` per leaf,
+                // pushed in element order where the interpreter's tuple lies.
+                || matches!(ret, Type::Tuple(_) if is_returned_tuple_leaf(ret))
                 || ret_text;
             if !ret_ok {
                 return Some(format!(
@@ -305,6 +308,19 @@ pub(crate) fn is_ref_scalar(t: &Type) -> bool {
 /// agree for a full-width integer, a float, a boolean, a text and a store reference; a
 /// `single`, a `character` and a plain enum are narrower in the slot than the dispatcher's
 /// read, and stay out until it reads them at their own width.  A nested tuple flattens.
+/// @PLN199 — a returned tuple the bridge carries by value: plain `integer`, `float` and
+/// `boolean` leaves, nested tuples of them.  (A tuple holding a text or a reference is lowered
+/// to a record, and crosses as one.)  A narrow scalar is the shape `is_tuple_leaf` declines.
+#[must_use]
+pub(crate) fn is_returned_tuple_leaf(t: &Type) -> bool {
+    match t.base() {
+        Type::Tuple(elems) => !elems.is_empty() && elems.iter().all(is_returned_tuple_leaf),
+        Type::Integer(s) => s.forced_size.is_none(),
+        Type::Float | Type::Boolean => true,
+        _ => false,
+    }
+}
+
 pub(crate) fn is_tuple_leaf(t: &Type) -> bool {
     match t.base() {
         Type::Tuple(elems) => elems.iter().all(is_tuple_leaf),
