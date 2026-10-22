@@ -6560,7 +6560,14 @@ impl Stores {
             | Parts::Index(_, _)
             | Parts::ChildRec(_) => {
                 let walk = self.for_each_owned_child(rec, tp);
-                let mut total = 0u32;
+                // `(Col-Inline)` — the table's own excess: an inline table carries its entries,
+                // so the buckets it outgrew its live count by are words a rebuild returns.
+                let mut total = if matches!(self.types[tp as usize].parts, Parts::Hash(..)) {
+                    let claim = self.store(rec).collection_rec(rec.rec, rec.pos);
+                    crate::hash::inline_slack(self.store(rec), claim)
+                } else {
+                    0
+                };
                 for c in walk.children {
                     total =
                         total.saturating_add(self.intra_record_slack(&c.child, c.child_tp, budget));
@@ -6845,6 +6852,15 @@ impl Stores {
         // there forever and `allocations` would grow per load.  The scratch
         // slot is ours, so releasing it is ours too.
         self.release_slot(dst_slot);
+        // The rebuild claimed into a fresh arena, so its capacity is where that arena's own
+        // growth last landed — a fact about how it was built, not what it holds (loft#710).
+        // Trimmed to its content plus the format's eighth, as an image of it is written
+        // (`compact_bound_store`, `bind_path`), the comparison below is of what each holds:
+        // compared raw, a store already written tight read as dense whatever its slack.
+        let mark = rebuilt.usage();
+        if mark.walk_complete {
+            rebuilt.shrink_to(crate::store::slack_target(mark.live_end_words));
+        }
         let after_words = rebuilt.capacity_words();
         if after_words >= before_words {
             // Nothing gained — leave the loaded store exactly as it is.
