@@ -50,6 +50,7 @@ pub struct KeptCache {
     locks: HashMap<u32, bool>,
     writes: HashMap<u32, bool>,
     fields: HashMap<(u32, u16, u32, Option<u16>), bool>,
+    clear: HashMap<u32, bool>,
 }
 
 /// `LOFT_NO_KEPT_HEADER=1` switches the clause off (`@FR-R-Switch`).
@@ -699,10 +700,64 @@ impl super::Output<'_> {
     /// flips into the interpreter is followed by its twin's entry check
     /// ([`Self::kh_live_check`]).
     pub(super) fn kept_of(&mut self, d_nr: u32) -> Option<Rc<Vec<KeptPath>>> {
-        if self.hoist_disabled {
+        if self.hoist_disabled || !self.kept_rewrites_clear(d_nr) {
             return None;
         }
         kept_paths(d_nr, self.data, self.stores, &mut self.kept_cache)
+    }
+
+    /// No rewrite that emits a RUN of statements itself runs in `d_nr`'s body: the
+    /// hand-over's rotate (an append and the drop beside it), `(R-Apart)`'s construction
+    /// runs, a stream walk's consumer or producer.  Each emits the statements it takes
+    /// outside the statement loop where a holder is refreshed, and reads inside the run
+    /// would see the holder from before its own append.  A callee declined here is called
+    /// plainly, and the holder is derived again after the call.
+    fn kept_rewrites_clear(&mut self, d_nr: u32) -> bool {
+        if let Some(&known) = self.kept_cache.clear.get(&d_nr) {
+            return known;
+        }
+        let clear = !self.sw.sites.contains_key(&d_nr)
+            && !self.sw.producers.contains_key(&d_nr)
+            && !self.apart.regions.get(&d_nr).is_some_and(|r| r.profitable)
+            && super::apart_vector::roles(self.data, d_nr).is_none_or(|v| v.is_empty())
+            && super::apart_records::roles(self.data, &self.apr, d_nr, false).is_empty()
+            && (d_nr as usize) < self.data.definitions.len()
+            && !self.data.def(d_nr).code().any_node(&mut |n| {
+                matches!(n, Value::Block(b) if (0..b.operators.len()).any(|i| {
+                    super::hand_over::site(&b.operators, i, self.data, self.stores).is_some()
+                }))
+            });
+        self.kept_cache.clear.insert(d_nr, clear);
+        clear
+    }
+
+    /// `(R-Header)`'s KEPT clause — the statements `from..to` of a block were taken by a
+    /// rewrite that emitted them itself (they never reached [`Self::kept_after_statement`]).
+    /// None may change a held field: no refresh followed it.  [`Self::kept_rewrites_clear`]
+    /// keeps every such rewrite out of a body that holds a field, so reaching this is an
+    /// emission fault, and it stops the generation rather than emit a stale read.
+    pub(super) fn kept_check_taken(&self, stmts: &[Value], from: usize, to: usize) {
+        if self.kept_holders.is_empty() {
+            return;
+        }
+        for op in &stmts[from.min(to)..to] {
+            for h in &self.kept_holders {
+                assert!(
+                    !refreshes(
+                        op,
+                        self.data,
+                        self.stores,
+                        self.def_nr,
+                        h.param,
+                        h.off,
+                        &|_| false
+                    ),
+                    "@FR-R-Header kept clause: a statement that changes {}'s held field was emitted by another rewrite in {}",
+                    self.data.def(self.def_nr).variables().name(h.param),
+                    self.data.def(self.def_nr).name()
+                );
+            }
+        }
     }
 
     /// Is the body being emitted the plain function, its ranged variant (`__rg`) or its `__kh`

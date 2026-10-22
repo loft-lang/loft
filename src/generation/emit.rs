@@ -4384,6 +4384,8 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
+        // `(R-Header)`'s KEPT clause — the first statement not yet seen by the refresh.
+        let mut kept_next = 0usize;
         // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed, and
         // at a function body's head the ones its record PARAMETERS take for the whole body.
         let mut ptr_frames = if is_fn_body {
@@ -5209,6 +5211,8 @@ impl Output<'_> {
                 self.indent(w)?;
                 writeln!(w, "}}")?;
             }
+            self.kept_check_taken(operators, kept_next, vnr);
+            kept_next = vnr + 1;
             view_frames += self.kept_after_statement(w, operators, vnr)?;
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
@@ -5221,6 +5225,7 @@ impl Output<'_> {
             }
             self.bind_group_push(w, operators, vnr, block_serial)?;
         }
+        self.kept_check_taken(operators, kept_next, operators.len());
         if rt_call_at.is_some() {
             self.refill_text_unconsumed()?;
         }
