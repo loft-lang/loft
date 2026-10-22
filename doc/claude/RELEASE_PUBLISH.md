@@ -91,9 +91,14 @@ The registry ([PKG_REGISTRY.md](PKG_REGISTRY.md)) is the trusted distribution po
 toolchain ships through it — signed, with checksums a user can verify offline.
 
 - **One bundle per supported target**, built by `release.yml` through
-  `scripts/make-release.sh`: `x86_64-unknown-linux-musl`, `x86_64-apple-darwin`,
+  `scripts/make-release.sh`: `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`,
   `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.  An `aarch64-unknown-linux-*` target is a
   matrix row to add when it is needed.
+- **The Linux bundle is dynamically linked and built against glibc 2.28**, inside the
+  manylinux image `release.yml` pins by digest.  Dynamic, because a static binary cannot
+  load a library's native code (loft#2127); glibc 2.28, the version RHEL 8 and Debian 10
+  ship, so it starts on those and on every newer distribution.  The bundle smoke checks
+  both: an ELF interpreter, and no glibc symbol newer than the floor.  A musl system builds from source; `scripts/install.sh` says so.
 - **Each bundle is a self-contained zip** — `bin/loft`, the `default/` stdlib, examples,
   `loft-reference.pdf`, `BUILD-INFO` and `SHA256SUMS` — attached to the draft as
   `loft-<version>-<triple>.zip` with its `.zip.sha256`.
@@ -226,8 +231,11 @@ exempt, because it is not a `loft package`, and the weekly `repro-build.yml` cov
 - **The Windows link:** `rust-lld` stamps a wall-clock TimeDateStamp and PDB GUID;
   `scripts/repro-flags.sh` passes `/Brepro` and `/DEBUG:NONE` on a Windows host.  A Windows
   bundle ships no PDB.
-- **Comparing with a GitHub artifact** needs the musl target: releases ship
-  `x86_64-unknown-linux-musl`, and a local `cargo build --release` is `-gnu`.
+- **Comparing with a GitHub artifact** needs the release's image: the Linux bundle is built
+  in the manylinux container `release.yml` names, and a local build links against this
+  machine's glibc and gcc, so its bytes differ.  `repro-build.yml` rebuilds in that image;
+  `linux_bundle_image_is_one_image` (`tests/doc_hygiene.rs`) keeps the three workflows on
+  one.
 
 ## Release artifacts
 

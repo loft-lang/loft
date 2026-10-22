@@ -1761,8 +1761,7 @@ fn brick_buster_pack_step_matches_its_manifest() {
 /// `self_update::host_triple` derives the registry lookup key the same way.  They are
 /// two hand-written derivations of one fact, in different languages, and the failure
 /// when they drift is silent: the installer 404s, or `self-update` reports "published,
-/// but not built for your platform" about the artifact meant for that host.  That
-/// already happened once — Linux composed `-gnu` while releases ship `-musl`.
+/// but not built for your platform" about the artifact meant for that host.
 ///
 /// So pin them together: every triple the shell can produce must appear in
 /// `PUBLISHED_TRIPLES`, which is itself checked against a real release.
@@ -1777,7 +1776,7 @@ fn installer_and_self_update_agree_on_the_published_triples() {
     let sh = fa::read_to_string("scripts/install.sh").expect("read install.sh");
     let published = loft::self_update::PUBLISHED_TRIPLES;
     // The shell composes `$arch-<rest>`; check each literal suffix it can emit.
-    for suffix in ["-apple-darwin", "-unknown-linux-musl", "-pc-windows-msvc"] {
+    for suffix in ["-apple-darwin", "-unknown-linux-gnu", "-pc-windows-msvc"] {
         if !sh.contains(suffix) {
             continue;
         }
@@ -1991,6 +1990,47 @@ fn repro_matrix_covers_every_published_triple() {
             "repro-build.yml rebuilds `{target}` on `{os}` but release.yml builds it on \
              `{release_os}`: a rebuild on another architecture is a different build, so it \
              could only ever report a mismatch. Give it a runner of the release's architecture"
+        );
+    }
+}
+
+/// The Linux release bundle is built in one container image, and every workflow that
+/// builds or rebuilds it names that image.  Its glibc decides which systems the binary
+/// starts on and its C toolchain is part of the bytes, so a daily build on another image
+/// is not the artefact a release ships, and a rebuild on another image can only report a
+/// difference that says nothing about the source (loft#2127).
+#[test]
+fn linux_bundle_image_is_one_image() {
+    let mut seen: Vec<(&str, String)> = Vec::new();
+    for wf in [
+        ".github/workflows/release.yml",
+        ".github/workflows/daily-build.yml",
+        ".github/workflows/repro-build.yml",
+    ] {
+        let text = fa::read_to_string(wf).expect("read workflow");
+        let images: Vec<String> = text
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("container:"))
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.starts_with("${{"))
+            .collect();
+        assert_eq!(
+            images.len(),
+            1,
+            "{wf} must name exactly one container image, the Linux bundle's: {images:?}"
+        );
+        assert!(
+            images[0].contains("@sha256:"),
+            "{wf} names `{}` without a digest, so the image can change under the same name",
+            images[0]
+        );
+        seen.push((wf, images[0].clone()));
+    }
+    for (wf, image) in &seen[1..] {
+        assert_eq!(
+            image, &seen[0].1,
+            "{wf} builds the Linux bundle in another image than {}",
+            seen[0].0
         );
     }
 }

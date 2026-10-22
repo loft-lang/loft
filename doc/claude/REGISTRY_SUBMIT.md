@@ -451,8 +451,8 @@ merges, refuses to overwrite a version already present, and leaves `yanked` alon
 
 **Two things the entry must keep.**  `loft_ffi_fp` is **absent** on every binary (it
 gates cdylib ABI compatibility and means nothing for an executable that links nothing
-of the host's), and the triples are the published ones — `x86_64-unknown-linux-musl`,
-never `-gnu`.  Both are pinned by tests rather than by this paragraph:
+of the host's), and the triples are the published ones — `x86_64-unknown-linux-gnu`
+for Linux.  Both are pinned by tests rather than by this paragraph:
 `generated_toolchain_entry_parses_and_drives_self_update` (`tests/mock_registry.rs`)
 and `installer_and_self_update_agree_on_the_published_triples`.
 

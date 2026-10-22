@@ -113,13 +113,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     # No published release to verify on a PR; `roundtrip` covers that case instead.
     if: github.event_name != 'pull_request'
+    # Empty on every row but Linux, which then runs on the runner itself.
+    container: ${{ matrix.container }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
+          # In release.yml's image: its glibc and C toolchain are part of the bytes.
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
+            container: quay.io/pypa/manylinux_2_28_x86_64:2026.10.16-1@sha256:1e7b8460ad8fb3fb0fbe1cd818845159ac896b4fd17452d56e892c291f3b97a8
           - os: macos-latest
             target: aarch64-apple-darwin
           # Every triple release.yml PUBLISHES, verified — otherwise we ship a binary
@@ -138,11 +142,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # rustup is preinstalled on every runner; the script installs the RELEASE's rustc
-      # itself, so no toolchain action here — one would only pin the wrong compiler.
-      - name: Install musl tools (Linux)
+      # rustup and gh are preinstalled on every runner but not in the manylinux image the
+      # Linux row runs in.  rustup comes with no toolchain: the script installs the
+      # RELEASE's rustc itself, so a toolchain here would only be the wrong compiler.
+      - name: Install rustup and gh (Linux)
         if: runner.os == 'Linux'
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y musl-tools
+        run: |
+          set -e
+          timeout 300 curl -fsSL --retry 3 https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          timeout 300 curl -fsSL --retry 3 -o /etc/yum.repos.d/gh-cli.repo https://cli.github.com/packages/rpm/gh-cli.repo
+          timeout 600 dnf -y -q install gh unzip
 
       - name: Rebuild the release and compare
         shell: bash

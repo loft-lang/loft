@@ -137,6 +137,15 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**The Linux download can load libraries with native code.**  The Linux release is now
+`x86_64-unknown-linux-gnu` instead of the static `x86_64-unknown-linux-musl`, which could not
+load any shared library, so a package such as `graphics` failed with the downloaded loft and
+worked only with one built from source.  It runs on any Linux with glibc 2.28 or newer (RHEL 8,
+Debian 10 and later).  On a musl system such as Alpine, build loft from a source checkout
+(`make install-user`); `scripts/install.sh` says so instead of installing a binary that cannot
+start.  A Linux install from an earlier release does not find this one through `loft
+self-update`, because it looks for the musl name: run `scripts/install.sh` once.
+
 **A native program can ship as one file.**  Put `#link static` at the top of a program (or
 pass `--static`) and a native build links the code of the libraries it uses — `regex`,
 `crypto`, the graphics libraries — into the binary itself.  The result runs on its own: no

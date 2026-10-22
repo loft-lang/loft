@@ -58,8 +58,9 @@ it and run it; nothing else is required.
 | **Daily build** | the newest code, built for every pull request and every push to `main` | the [Daily build](https://github.com/loft-lang/loft/actions/workflows/daily-build.yml) workflow → open the newest green run → **Artifacts** |
 
 Four platforms are built each time: `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`,
-`aarch64-apple-darwin` (Apple Silicon), and `x86_64-unknown-linux-musl` (static, runs on
-any Linux).
+`aarch64-apple-darwin` (Apple Silicon), and `x86_64-unknown-linux-gnu` (runs on any Linux
+with glibc 2.28 or newer: RHEL 8, Debian 10, Ubuntu 20.04 and later; on a musl system such
+as Alpine, build from source).
 
 The fastest way to the daily build is the [`gh` CLI](https://cli.github.com), which skips
 the web UI entirely — replace the target with your own:
@@ -71,7 +72,7 @@ gh run download -R loft-lang/loft -n loft-daily-x86_64-pc-windows-msvc
 # or pin it to main, ignoring pull requests
 id=$(gh run list -R loft-lang/loft --workflow daily-build.yml --branch main \
        --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-gh run download -R loft-lang/loft "$id" -n loft-daily-x86_64-unknown-linux-musl
+gh run download -R loft-lang/loft "$id" -n loft-daily-x86_64-unknown-linux-gnu
 
 unzip loft-*.zip && cd loft-*/                        # then run it in place:
 bin/loft --interpret examples/hello.loft              # bin\loft.exe on Windows

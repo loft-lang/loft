@@ -47,13 +47,18 @@ jobs:
   bundle:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Empty on every leg but Linux, which then runs on the runner itself.
+    container: ${{ matrix.container }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
+          # The same image as release.yml's Linux row (glibc 2.28): the reason is there.
+          - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64:2026.10.16-1@sha256:1e7b8460ad8fb3fb0fbe1cd818845159ac896b4fd17452d56e892c291f3b97a8
+            glibc: '2.28'
           - target: x86_64-apple-darwin
             # macos-15 is Apple Silicon, so this leg CROSS-builds — the bundle it
             # produces cannot run on the runner that made it.  Same note as release.yml.
@@ -89,11 +94,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Mirrors release.yml: make-release.sh needs `zip`; Linux also needs musl-tools for
-      # the static target; macOS ships zip; Windows takes it from chocolatey.
+      # Mirrors release.yml: make-release.sh needs `zip`; the Linux leg runs as root in the
+      # manylinux image (dnf, no sudo); macOS ships zip; Windows takes it from chocolatey.
       - name: Install packaging tools (Linux)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y musl-tools zip unzip
+        run: timeout 600 dnf -y -q install zip unzip
 
       - name: Install packaging tools (Windows)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Windows'
@@ -175,6 +180,16 @@ jobs:
           out=$("$exe" --interpret _smoke/hello.loft)
           echo "$out"
           [ "$out" = "daily build ok" ] || { echo "the bundle did not run its own program"; exit 1; }
+          # The same artefact checks as release.yml's smoke: dynamically linked, so it can
+          # load a library's native code, and no glibc newer than the row's floor.
+          if [ -n "${{ matrix.glibc }}" ]; then
+            readelf -l "$exe" | grep -q 'program interpreter' \
+              || { echo "$exe is statically linked, so it cannot load a library's native code"; exit 1; }
+            newest=$(objdump -T "$exe" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+            [ "$(printf '%s\n%s\n' "$newest" "${{ matrix.glibc }}" | sort -V | tail -1)" = "${{ matrix.glibc }}" ] \
+              || { echo "$exe needs glibc $newest, newer than ${{ matrix.glibc }}"; exit 1; }
+            echo "dynamically linked, glibc $newest at most"
+          fi
 
       - name: Upload the bundle
         if: steps.want.outputs.run == 'yes'

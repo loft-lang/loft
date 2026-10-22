@@ -47,8 +47,9 @@ while [ $# -gt 0 ]; do
 done
 
 # The triple naming the artifact for this host.  Must agree with
-# `self_update::host_triple` / `PUBLISHED_TRIPLES`; Linux is musl (static, so it runs on
-# glibc systems too), which is why this is not simply uname's idea of the platform.
+# `self_update::host_triple` / `PUBLISHED_TRIPLES`.  Linux is gnu, dynamically linked so
+# loft can load a library's native code, and built against glibc 2.28: a system on musl,
+# or on an older glibc, cannot run it and is told so here rather than after the download.
 arch=$(uname -m)
 case "$arch" in
   x86_64|amd64) arch=x86_64 ;;
@@ -57,9 +58,15 @@ case "$arch" in
 esac
 case "$(uname -s)" in
   Darwin) TRIPLE="$arch-apple-darwin" ;;
-  Linux)  TRIPLE="$arch-unknown-linux-musl" ;;
+  Linux)  TRIPLE="$arch-unknown-linux-gnu" ;;
   *) die "unsupported system: $(uname -s) — on Windows use the .zip from the releases page" ;;
 esac
+if [ "$(uname -s)" = Linux ]; then
+  glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | sed -n 's/^glibc //p')
+  [ -n "$glibc" ] || die "this system has no glibc (musl?): the Linux release needs glibc 2.28 or newer — build loft from a source checkout instead (make install-user)"
+  oldest=$(printf '%s\n%s\n' "$glibc" 2.28 | sort -V | head -1)
+  [ "$oldest" = 2.28 ] || die "this system has glibc $glibc: the Linux release needs 2.28 or newer — build loft from a source checkout instead (make install-user)"
+fi
 
 # Whichever hashing tool this system has; both print `<hash>  <file>`.
 if command -v sha256sum >/dev/null 2>&1; then SHA="sha256sum"
