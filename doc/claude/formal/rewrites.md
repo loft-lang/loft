@@ -6463,7 +6463,7 @@ into it), and `rotate_into` declines it as a defence.
 **−17.1 %**, hash unchanged; the routine looped alone 1.01 → 0.85 s.  The hand price, −34 %,
 also removed the `truncate_to` call (a no-op on a steady push) and the build of `e`, which the
 clause leaves.  The truncating take that preceded it measured a loss and is not built
-(`rewrites-history.md` § 2026-10-21).
+(`rewrites-history.md`).
 
 **What it may not do — the limitations** (written for the general rule; the rotate clause
 meets each by the run-time test above).
@@ -6523,7 +6523,7 @@ meets each by the run-time test above).
 **The division (an owner ruling).**  The vector hand-over is this rule's canonical case:
 storage whose size is only known at run time, kept across statements, where the block and its
 capacity are worth carrying from the dying value to the new one.  It may serve more shapes,
-but a separate FIXED-SIZE object — a record whose fields are scalars, or a value whose size the
+but a separate fixed-size object — a record whose fields are scalars, or a value whose size the
 type fixes — is not one of them: it lives on the stack (`(R-Apart)`), where it needs no block
 to hand over at all.
 
@@ -6548,7 +6548,7 @@ purer case: its whole panel is frame-local (built, hit-tested, read, rebound eac
 the ~19 claims and ~19 deletes a frame vanish with `(R-Apart)` alone — once it holds texts and
 vectors of texts, which it does not yet.
 
-**Status: the rotate clause BUILT** (switch `LOFT_NO_HAND_OVER=1`, trace
+**The rotate clause is built** (switch `LOFT_NO_HAND_OVER=1`, trace
 `LOFT_TRACE_HAND_OVER=1`; guard `tests/scripts/158-rotate.loft` — every cell hand-computed, the
 interpreter as oracle, both switch states under `LOFT_POISON`, `LOFT_POISON_CLAIM`,
 `LOFT_STRICT_STORES` and the leak check, falsified by sabotage; pin `tests/hand_over_rotate.rs`).
