@@ -533,6 +533,9 @@ pub struct Store {
     /// `@FR-H-Park` — whether this store parks small freed blocks: a heap store with
     /// `LOFT_NO_PARK` unset; a store bound to a file never does, as it never enters the
     /// lazy phase.
+    /// A test's switch: every growth MOVES the buffer and scribbles the block it leaves, as
+    /// `LOFT_POISON=1` makes every store do — so a test can rely on the move it is about.
+    move_on_grow: bool,
     park: bool,
     /// `@FR-H-Park` — the parked blocks, by exact size.  Empty when `park` is off.
     parked: Parked,
@@ -1198,6 +1201,7 @@ impl Store {
             dead_words: 0,
             lazy_free: Claims::default(),
             park: park_enabled(),
+            move_on_grow: false,
             parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
@@ -1363,6 +1367,7 @@ impl Store {
             dead_words: 0,
             lazy_free: Claims::default(),
             park: false,
+            move_on_grow: false,
             parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
@@ -1474,6 +1479,7 @@ impl Store {
             dead_words: 0,
             lazy_free: Claims::default(),
             park: false,
+            move_on_grow: false,
             parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
@@ -1587,6 +1593,7 @@ impl Store {
             dead_words: 0,
             lazy_free: Claims::default(),
             park: park_enabled(),
+            move_on_grow: false,
             parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
@@ -2852,7 +2859,7 @@ impl Store {
         // assignment below — which a reader of this function (or an analyser) has to take
         // on trust.  The field is written exactly once, with the grown block.
         let old = self.ptr;
-        let grown = if crate::keys::poison_enabled() {
+        let grown = if crate::keys::poison_enabled() || self.move_on_grow {
             let fresh = unsafe { A.alloc(Layout::from_size_align(bytes, 8).unwrap_or(l)) };
             if !fresh.is_null() {
                 unsafe {
@@ -3310,6 +3317,7 @@ impl Store {
             dead_words: 0,
             lazy_free: Claims::default(),
             park: false,
+            move_on_grow: false,
             parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
@@ -3382,6 +3390,7 @@ impl Store {
             dead_words: self.dead_words,
             lazy_free: self.lazy_free.clone(),
             park: self.park,
+            move_on_grow: self.move_on_grow,
             parked: self.parked.clone(),
             released_bytes: 0,
             claimed_end: 0,
@@ -3435,6 +3444,7 @@ impl Store {
             dead_words: 0,
             lazy_free: Claims::default(),
             park: false,
+            move_on_grow: false,
             parked: Parked::default(),
             released_bytes: 0,
             claimed_end: 0,
@@ -7576,38 +7586,33 @@ mod tests {
     fn a_text_from_its_own_store_survives_the_claim_that_moves_it() {
         let long = "the quick brown fox jumps over the lazy dog ".repeat(20);
         for how in 0..3 {
-            // `realloc` may grow a block in place, and then this case proves nothing.  A
-            // block allocated right after the store's own makes in-place growth unlikely;
-            // a few attempts make a move certain enough, and none at all is a failure.
-            let mut moved = false;
-            for _attempt in 0..8 {
-                let mut store = store_with(false);
-                let rec = store.claim(2);
-                store.set_u32_raw(rec, 4, 0);
-                let src = store.set_str(&long);
-                let blocker = vec![0u8; 64];
-                let before = store.ptr;
-                let val = store.get_str(src);
-                let got = match how {
-                    0 => store.set_str(val),
-                    1 => store.set_str_ptr(val.as_ptr(), val.len()),
-                    _ => {
-                        store.refill_str(rec, 4, val);
-                        store.get_u32_raw(rec, 4)
-                    }
-                };
-                assert_eq!(
-                    store.get_str(got),
-                    long,
-                    "case {how}: the copy reads the source text"
-                );
-                drop(blocker);
-                if store.ptr != before {
-                    moved = true;
-                    break;
+            // `realloc` may grow a block in place, and then this case proves nothing: the
+            // store moves on every growth here and scribbles the block it leaves, so a read
+            // of the source after the claim reads poison, not the old bytes.
+            let mut store = store_with(false);
+            store.move_on_grow = true;
+            let rec = store.claim(2);
+            store.set_u32_raw(rec, 4, 0);
+            let src = store.set_str(&long);
+            let before = store.ptr;
+            let val = store.get_str(src);
+            let got = match how {
+                0 => store.set_str(val),
+                1 => store.set_str_ptr(val.as_ptr(), val.len()),
+                _ => {
+                    store.refill_str(rec, 4, val);
+                    store.get_u32_raw(rec, 4)
                 }
-            }
-            assert!(moved, "case {how}: no attempt's claim moved the store");
+            };
+            assert_ne!(
+                store.ptr, before,
+                "case {how}: the claim grew and moved the store"
+            );
+            assert_eq!(
+                store.get_str(got),
+                long,
+                "case {how}: the copy reads the source text"
+            );
         }
     }
 
