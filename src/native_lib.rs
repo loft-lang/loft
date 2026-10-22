@@ -1769,7 +1769,7 @@ pub fn platform_cdylib_name(stem: &str) -> String {
 /// reads): both read the ONE env gate, so the cdylib's codegen + link agree with
 /// the executable's on a given host.  `LOFT_NATIVE_CABI=0` forces the legacy rlib
 /// link (the escape hatch); the C-ABI path is the default on every host.
-fn native_cabi_link_enabled() -> bool {
+pub(crate) fn native_cabi_link_enabled() -> bool {
     !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
 }
 

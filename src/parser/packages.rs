@@ -1570,8 +1570,10 @@ impl Parser {
         // cdylib and its direct calls interpret.  A hand-written cdylib (`native`) serves
         // the library's `#native` calls; its LOFT functions compile too when the library
         // also declares the `[native] crate` that cdylib is built from, which is what the
-        // generated code links its `#native` calls against (@PLN199 E2).
-        if (m.native.is_none() || m.native_crate.is_some())
+        // generated code links its `#native` calls against (@PLN199 E2) — on the C-ABI link
+        // only: the legacy rlib link cannot put that crate into a cdylib, so there the
+        // cdylib keeps standing in for the library.
+        if (m.native.is_none() || Self::links_its_native_crate(&m))
             && !self.pending_native_compile.iter().any(|d| d == &pkg_dir)
         {
             self.pending_native_compile.push(pkg_dir.clone());
@@ -1865,6 +1867,14 @@ impl Parser {
         }
     }
 
+    /// Whether a library with a hand-written cdylib (`[library] native`) also compiles its
+    /// loft functions: it declares the `[native] crate` that cdylib is built from, and the
+    /// build links native crates by C-ABI — the legacy rlib link (`LOFT_NATIVE_CABI=0`)
+    /// cannot take that crate into a library cdylib (@PLN199 E2).
+    fn links_its_native_crate(m: &manifest::Manifest) -> bool {
+        m.native_crate.is_some() && crate::native_lib::native_cabi_link_enabled()
+    }
+
     pub(super) fn register_c_libraries(&mut self, m: &manifest::Manifest, pkg_dir: &str) {
         let mut entries: Vec<String> = m.c_libs.clone();
         if !m.c_shim.is_empty() {
@@ -1935,7 +1945,7 @@ impl Parser {
         //     that can't compile native is harmless.
         // The legacy `[library] compile = "native"` opt-in is now redundant but still
         // accepted (a no-op): default-native already records it.
-        if (m.native.is_none() || m.native_crate.is_some())
+        if (m.native.is_none() || Self::links_its_native_crate(m))
             && !self.pending_native_compile.iter().any(|d| d == pkg_dir)
         {
             self.pending_native_compile.push(pkg_dir.to_string());
@@ -1944,7 +1954,7 @@ impl Parser {
         // hand-written native cdylib with no `[native] crate` to link against, so its LOFT
         // functions (the wrappers around its natives) all run interpreted.
         if let Some(stem) = &m.native
-            && m.native_crate.is_none()
+            && !Self::links_its_native_crate(m)
             && std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some()
         {
             let pkg = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| pkg_dir.to_string());
