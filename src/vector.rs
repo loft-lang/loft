@@ -1286,6 +1286,70 @@ pub unsafe fn rec_get<T: Copy + PartialEq + std::fmt::Debug>(
     v
 }
 
+/// `@FR-R-RecPtr`'s nested clause — the header of the vector held in field `fld` of the record
+/// view whose address is `ptr`: the field's vector record one load through the address, its
+/// length one read of that record, where [`vec_header`] resolves the store and reads the
+/// field through it again.  The null record (a null address) holds the absent vector, as
+/// `vec_header` answers for a null `DbRef`; `locked` is the view's own lock state, held
+/// beside its address, and a vector field lives in its record's store.
+///
+/// # Safety
+///
+/// As [`rec_get`]: `ptr` must be [`rec_ptr`] of `db` with no store reallocated since, and
+/// `fld` the offset of a vector field of the record's type.
+///
+/// # Panics
+///
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header disagrees with `vec_header` of the
+/// field.  Never in the emitted default.
+#[must_use]
+#[inline]
+pub unsafe fn field_header<const VERIFY: bool>(
+    ptr: *const u8,
+    locked: bool,
+    db: &DbRef,
+    fld: u32,
+    stores: &[Store],
+) -> VecHeader {
+    let h = if ptr.is_null() {
+        VecHeader {
+            store_nr: db.store_nr,
+            rec: 0,
+            len: 0,
+            locked: false,
+        }
+    } else {
+        // SAFETY: the caller's block proof — `ptr` addresses a live record whose store has
+        // not moved, and `fld` is a field of it.
+        let raw = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };
+        let rec = if raw == DbRef::ABSENT_REC { 0 } else { raw };
+        let len = if rec == 0 {
+            0
+        } else {
+            stores[db.store_nr as usize].get_u32_raw(rec, 4)
+        };
+        VecHeader {
+            store_nr: db.store_nr,
+            rec,
+            len,
+            locked,
+        }
+    };
+    if VERIFY {
+        let field = DbRef {
+            store_nr: db.store_nr,
+            rec: db.rec,
+            pos: db.pos + fld,
+        };
+        assert_eq!(
+            h,
+            vec_header(&field, stores),
+            "a vector field's header read through its record's address disagrees with the store"
+        );
+    }
+    h
+}
+
 /// `@FR-R-RecPtr` — one in-place scalar field write through a record address: nothing for
 /// the null record (the setter's own `rec != 0` test, `@FR-H-WriteNull` — a view bound to an
 /// absent element, `e = r[9]; e.x = 5`, holds the null address and the write lands nowhere),

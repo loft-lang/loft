@@ -904,6 +904,10 @@ pub struct Output<'a> {
     /// written into `v[i]` takes its element through `vec_get_or_raise_runtime` and its
     /// address back out of the reference ([`Output::element_copy_dest`]).
     pub element_address_disabled: bool,
+    /// `LOFT_NO_FIELD_HEADER=1` — `@FR-R-RecPtr`'s nested clause off: a vector field of a
+    /// record view (`v.items`) resolves its store and record again at each length or
+    /// element read ([`Output::field_header_expr`]).
+    pub field_header_disabled: bool,
     /// Set while a tuple is written into an element whose address the element clause
     /// derived beside its reference (`__cp` beside `__cd`): the tuple write takes that address
     /// instead of reading it back out of `__cd`.
@@ -2409,6 +2413,7 @@ impl<'a> Output<'a> {
             index_rec_ptr_disabled: std::env::var("LOFT_NO_INDEX_RECPTR").is_ok_and(|v| v != "0"),
             element_address_disabled: std::env::var("LOFT_NO_ELEMENT_ADDRESS")
                 .is_ok_and(|v| v != "0"),
+            field_header_disabled: std::env::var("LOFT_NO_FIELD_HEADER").is_ok_and(|v| v != "0"),
             element_ptr_held: false,
             guarded_fill_disabled: std::env::var("LOFT_NO_GUARDED_FILL").is_ok_and(|v| v != "0"),
             held_index_subst: HashMap::new(),
@@ -4833,6 +4838,7 @@ impl Output<'_> {
                         _ => u16::MAX,
                     },
                 );
+                let extra_use = this.extra_view_use(&stmts, at);
                 hoist::record_view_ptr(
                     &stmts,
                     at,
@@ -4850,6 +4856,7 @@ impl Output<'_> {
                         assumed,
                     }),
                     Some(&this.hoist_owned),
+                    extra_use,
                 )
                 .is_ok()
             };
@@ -5739,6 +5746,59 @@ impl Output<'_> {
         ))
     }
 
+    /// The uses of the view bound at `stmts[at]` that [`hoist::record_view_ptr`]'s own walk does
+    /// not count, so a view whose only uses they are still meets every condition of the
+    /// verdict: `@FR-R-RecPtr`'s text clause (a TEXT field read, when the binding is a held
+    /// iteration with a text span beside its base) and its nested clause (VECTOR field reads
+    /// — two, which share the one store resolution the address costs, or one when a held
+    /// iteration gives the address for free).
+    fn extra_view_use(&self, stmts: &[Value], at: usize) -> bool {
+        let Some(Value::Set(r, _)) = stmts.get(at).map(Value::unspan) else {
+            return false;
+        };
+        let rest = &stmts[at + 1..];
+        let held = self.held_iteration_base(&stmts[at]);
+        let text = hoist::reads_text_field(rest, *r, self.data)
+            && held
+                .as_ref()
+                .is_some_and(|(_, base, ..)| self.held_text_span(base).is_some());
+        let nested = !self.field_header_disabled && {
+            let reads = hoist::vector_field_reads(rest, *r, self.data);
+            reads >= 2 || (reads == 1 && held.is_some())
+        };
+        text || nested
+    }
+
+    /// `@FR-R-RecPtr`'s nested clause — a `VecHeader` expression for vector operand `vec` when
+    /// it is a field of a record view whose address an enclosing block holds (`v.items`, or
+    /// through inline sub-records `v.pos.items` at the summed offset): the field's vector
+    /// record one load through the address, its length one read of that record
+    /// (`vector::field_header`).  The address is valid for the block the view's proof
+    /// covers, and the field is read at the use, so a write to the field before it is
+    /// seen.  `None` when no address is held — a bare vector, a value local, a view the
+    /// block declined — and the operand is resolved as before.
+    pub fn field_header_expr(&mut self, vec: &Value) -> Option<String> {
+        if self.field_header_disabled {
+            return None;
+        }
+        let (root, offs) = hoist::vector_path(self.data, vec)?;
+        if offs.is_empty() {
+            return None;
+        }
+        let ptr = self.active_rec_ptr(root)?.to_owned();
+        let lock = rec_ptr_lock(&ptr);
+        let off: i64 = offs.iter().sum();
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(root))
+            .ok()?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        crate::rewrite_census::fired("R-RecPtr/nested", 1);
+        Some(format!(
+            "unsafe {{ vector::field_header::<{}>({ptr}, {lock}, &({operand}), ({off}_i64) as u32, &stores.allocations) }}",
+            self.hoist_verify
+        ))
+    }
+
     /// `@FR-R-RecPtr`'s text clause — the expression reading TEXT field `fld` of record view
     /// `v` through its held address and the text span beside the base it came from, or
     /// `None` when the view holds no address or its address has no span.
@@ -5788,6 +5848,7 @@ impl Output<'_> {
             return Ok(false);
         }
         let twin_params = self.twin_params_of(&stmts[at + 1..], *r);
+        let extra_use = self.extra_view_use(stmts, at);
         let verdict = hoist::record_view_ptr(
             stmts,
             at,
@@ -5807,6 +5868,7 @@ impl Output<'_> {
                 })
                 .as_ref(),
             Some(&self.hoist_owned),
+            extra_use,
         );
         // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
         // append grows a store) may still hold its address for its own WINDOW, up to its
@@ -5833,20 +5895,6 @@ impl Output<'_> {
                 }
             }
             (v, _) => v,
-        };
-        // `@FR-R-RecPtr`'s text clause — a view whose only served use is a TEXT field read
-        // still takes an address when the binding is a held iteration with a text span beside
-        // its base: every other condition of the verdict held (`NO_FUSABLE_USE` is its last).
-        let verdict = match verdict {
-            Err(hoist::NO_FUSABLE_USE)
-                if hoist::reads_text_field(&stmts[at + 1..], *r, self.data)
-                    && self
-                        .held_iteration_base(&stmts[at])
-                        .is_some_and(|(_, base, ..)| self.held_text_span(&base).is_some()) =>
-            {
-                Ok(*r)
-            }
-            v => v,
         };
         let r = match verdict {
             Ok(r) => r,

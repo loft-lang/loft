@@ -410,6 +410,10 @@ impl OpEmitter for HoistedLengthEmitter {
             {
                 return write!(ctx.w, "(__st_{t}.len() as i64)");
             }
+            // `@FR-R-RecPtr`'s nested clause — a vector field of a view with an address.
+            if let Some(h) = args.first().and_then(|v| ctx.output.field_header_expr(v)) {
+                return write!(ctx.w, "(i64::from(({h}).len))");
+            }
             return super::default::DefaultEmitter.emit(ctx, args);
         };
         write!(ctx.w, "(i64::from({header}.len))")
@@ -595,12 +599,18 @@ pub struct OpGetVectorNullableEmitter;
 
 impl OpEmitter for OpGetVectorNullableEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        let (Some(header), [vec_val, size_val, index_val]) =
-            (args.first().and_then(|a| header_for(ctx, a)), args)
-        else {
+        let [vec_val, size_val, index_val] = args else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        let header = header.to_string();
+        // A loop's held header, else `@FR-R-RecPtr`'s nested clause — the header of a
+        // vector field read through its view's address, valued at the read.
+        let header = match header_for(ctx, vec_val) {
+            Some(h) => h.to_string(),
+            None => match ctx.output.field_header_expr(vec_val) {
+                Some(h) => format!("({h})"),
+                None => return super::default::DefaultEmitter.emit(ctx, args),
+            },
+        };
         let verify = verify(ctx);
         write!(
             ctx.w,
@@ -626,17 +636,26 @@ pub struct OpGetVectorEmitter;
 
 impl OpEmitter for OpGetVectorEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        let (Some(header), [vec_val, size_val, index_val]) =
-            (args.first().and_then(|a| header_for(ctx, a)), args)
-        else {
+        let [vec_val, size_val, index_val] = args else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        let header = header.to_string();
+        // A loop's held header, else `@FR-R-RecPtr`'s nested clause, bound after the index
+        // so the header is the field's value at the read.
+        let (header, nested) = match header_for(ctx, vec_val) {
+            Some(h) => (h.to_string(), None),
+            None => match ctx.output.field_header_expr(vec_val) {
+                Some(h) => ("__vh".to_string(), Some(h)),
+                None => return super::default::DefaultEmitter.emit(ctx, args),
+            },
+        };
         let verify = verify(ctx);
         write!(ctx.w, "{{let __vr = ")?;
         ctx.emit(vec_val)?;
         write!(ctx.w, "; let __vi = ")?;
         ctx.emit(index_val)?;
+        if let Some(h) = nested {
+            write!(ctx.w, "; let __vh = {h}")?;
+        }
         write!(
             ctx.w,
             "; stores.vec_get_hoisted_or_raise_runtime::<{verify}>(&{header}, &__vr, ("
