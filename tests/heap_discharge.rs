@@ -60,8 +60,10 @@ fn count(hay: &str, needle: &str) -> usize {
 fn a_loop_discharging_a_heap_record_holds_its_header_and_base() {
     let rust = emit("hoist", &[]);
     let f = body(&rust, "n_find_set");
+    // The header is the loop's own, or — `m` a parameter whose field the body reads twice —
+    // the body's (`(R-Header)`'s kept clause), which the loop then serves its base from.
     assert!(
-        f.contains("let __vh_") && f.contains("let __vb_"),
+        (f.contains("let __vh_") || f.contains("let mut __kh_")) && f.contains("let __vb_"),
         "find_set: the loop over `m.chunks` holds a header and an element base"
     );
     // `len(m.chunks)` in the range's bound reads the header too: `(R-Wrapper)` inlines
@@ -79,8 +81,9 @@ fn a_loop_discharging_a_heap_record_holds_its_header_and_base() {
     );
     // The two-site loop and the outer/inner shape hold theirs too.
     for name in ["n_two_sites", "n_sum_hexes", "n_probe"] {
+        let b = body(&rust, name);
         assert!(
-            body(&rust, name).contains("let __vh_"),
+            b.contains("let __vh_") || b.contains("let mut __kh_"),
             "{name}: a discharge of a heap-holding record no longer declines the headers"
         );
     }
