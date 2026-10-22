@@ -6707,7 +6707,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     match sub {
         // @PLN196 step 9 — the baseline records the release it was accepted as and where each
         // computed field's value comes from, carrying forward when each line first appeared.
-        "accept" => match {
+        "accept" => {
             let previous = ss::read_baseline(&project)
                 .and_then(|t| ss::LayoutIdentity::from_sidecar(&t))
                 .map(|id| id.sources)
@@ -6715,20 +6715,21 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
             identity.version.clone_from(&release.version);
             identity.sources =
                 loft::layout_schema::render_sources(&p.data, &previous, &release.version);
-            identity.write_baseline(&project)
-        } {
-            Ok(()) => {
-                println!(
-                    "loft layout: recorded baseline ({} user types)",
-                    roots.len()
-                );
-                0
+            let written = identity.write_baseline(&project);
+            match written {
+                Ok(()) => {
+                    println!(
+                        "loft layout: recorded baseline ({} user types)",
+                        roots.len()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("loft layout: could not write baseline: {e}");
+                    1
+                }
             }
-            Err(e) => {
-                eprintln!("loft layout: could not write baseline: {e}");
-                1
-            }
-        },
+        }
         "check" => match ss::check_against_baseline(&project, &identity) {
             Ok(ss::SchemaVerdict::Fresh) => {
                 println!("loft layout: no baseline yet — run `loft layout accept {file}`.");

@@ -764,6 +764,15 @@ pub fn native_strip_symbols() -> bool {
     std::env::var_os("LOFT_NATIVE_KEEP_SYMBOLS").is_none()
 }
 
+/// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:
+/// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by the
+/// library cdylib's codegen and link (`native_lib`) and by the parser, which compiles a
+/// library's loft functions beside its native crate only on the C-ABI link.
+#[must_use]
+pub fn native_cabi_link() -> bool {
+    !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
+}
+
 /// Worker-thread count for a parallel native run of `job_count` jobs in
 /// `scratch`: the CPU parallelism, capped by the job count and by how many
 /// concurrent compiles the temp filesystem can hold.  `reserve_per_worker` is

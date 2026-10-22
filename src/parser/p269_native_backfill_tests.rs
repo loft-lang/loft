@@ -133,3 +133,27 @@ fn native_symbol_collision_across_packages_detected() {
         "expected a `collide_shared` collision across >= 2 sources, got {collisions:?}"
     );
 }
+
+/// A script's own `#native` line binding a symbol a native package exports is ONE
+/// exporter, not a collision: the script ships no cdylib.  Counting it made the package's
+/// own cdylib refuse to compile once its loft functions compiled (@PLN199 E2), the
+/// multiplayer server binding `n_ws_send_binary` beside `server`.
+#[test]
+fn a_script_binding_a_package_export_is_no_collision() {
+    let sep = crate::platform::sep_str();
+    let mut p = Parser::new();
+    p.parse_dir("default", true, true).unwrap();
+    p.lib_dirs = vec![format!("tests{sep}lib")];
+    p.parse(&format!("tests{sep}lib{sep}native_bind_main.loft"), false);
+    assert_eq!(
+        p.diagnostics.error_count(),
+        0,
+        "{:?}",
+        p.diagnostics.lines()
+    );
+    let collisions = p.data.native_symbol_collisions();
+    assert!(
+        !collisions.iter().any(|(sym, _)| sym == "n_native_answer"),
+        "a script binding a package's export is not a collision, got {collisions:?}"
+    );
+}

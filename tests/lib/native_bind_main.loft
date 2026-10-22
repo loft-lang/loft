@@ -1,0 +1,11 @@
+// A script that binds a native package's export with its own `#native` line, beside the
+// package's own declaration of it.  The script ships no cdylib, so this is one exporter
+// (native_scalar_pkg) and no collision — see tests/lib/collide_main.loft for two.
+use native_scalar_pkg;
+
+fn my_answer() -> integer;
+#native "n_native_answer"
+
+fn main() {
+  print("{my_answer()} {native_scalar_pkg::native_answer()}")
+}

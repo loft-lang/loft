@@ -1415,6 +1415,7 @@ fn shared_store_dispatch_raw(
 
 /// The attribute count a shared-bridge call marshals without allocating
 /// ([`shared_store_dispatch_raw`]); a wider signature spills to the heap.
+#[cfg(feature = "native-extensions")]
 const INLINE_ARGS: usize = 16;
 
 /// The interpreter's function-value slot: an 8-byte `d_nr`, then the closure `DbRef`
@@ -1424,6 +1425,7 @@ const FN_REF_SIZE: usize = 20;
 const _: () = assert!(FN_REF_SIZE == 8 + std::mem::size_of::<crate::keys::DbRef>());
 
 /// The `(d_nr, closure)` a function-value slot holds.
+#[cfg(feature = "native-extensions")]
 fn read_fn_ref(raw: [u8; FN_REF_SIZE]) -> (i64, crate::keys::DbRef) {
     let d_nr = i64::from_ne_bytes(raw[0..8].try_into().unwrap_or_default());
     let closure =
@@ -1432,6 +1434,7 @@ fn read_fn_ref(raw: [u8; FN_REF_SIZE]) -> (i64, crate::keys::DbRef) {
 }
 
 /// The function-value slot for `(d_nr, closure)`.
+#[cfg(feature = "native-extensions")]
 fn write_fn_ref(d_nr: i64, closure: crate::keys::DbRef) -> [u8; FN_REF_SIZE] {
     let mut raw = [0u8; FN_REF_SIZE];
     raw[0..8].copy_from_slice(&d_nr.to_ne_bytes());

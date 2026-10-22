@@ -1872,7 +1872,7 @@ impl Parser {
     /// build links native crates by C-ABI — the legacy rlib link (`LOFT_NATIVE_CABI=0`)
     /// cannot take that crate into a library cdylib (@PLN199 E2).
     fn links_its_native_crate(m: &manifest::Manifest) -> bool {
-        m.native_crate.is_some() && crate::native_lib::native_cabi_link_enabled()
+        m.native_crate.is_some() && crate::platform::native_cabi_link()
     }
 
     pub(super) fn register_c_libraries(&mut self, m: &manifest::Manifest, pkg_dir: &str) {

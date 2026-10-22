@@ -6893,12 +6893,20 @@ impl Data {
     /// silently the wrong fn.  Native codegen turns each collision into a
     /// `compile_error!`.  Returns `(symbol, sorted distinct sources)` per
     /// collision (deterministic order).
+    ///
+    /// A declaration counts only where something can EXPORT the symbol: a script
+    /// that is no native package (its file under no registered `[native] crate`
+    /// directory) ships no cdylib, so its `#native` line binds a library's export
+    /// rather than competing with it.
     #[must_use]
     pub fn native_symbol_collisions(&self) -> Vec<(String, Vec<u16>)> {
         let mut by_sym: HashMap<String, Vec<u16>> = HashMap::new();
         for d in 0..self.definitions() {
             let def = self.def(d);
-            if def.code == Value::Null && !def.native().is_empty() {
+            if def.code == Value::Null
+                && !def.native().is_empty()
+                && !self.binds_without_exporting(def)
+            {
                 by_sym
                     .entry(def.native().to_string())
                     .or_default()
@@ -6915,6 +6923,14 @@ impl Data {
             .collect();
         out.sort();
         out
+    }
+
+    /// The main program's `#native` declaration when the program is no native package.
+    fn binds_without_exporting(&self, def: &Definition) -> bool {
+        def.source == MAIN_SOURCE
+            && !self.native_packages.iter().any(|(_, pkg_dir)| {
+                crate::file_access::is_under(def.position().file.as_str(), pkg_dir)
+            })
     }
 
     #[must_use]
