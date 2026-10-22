@@ -5,7 +5,9 @@
 //
 // Admitted: c1 (the cursor shape — a call's result, its store a work buffer), c3 (exits before and after the literal),
 // c4 (repeated: the live record count holds once warm), c5 (two vector fields: the first
-// moved, the second copied into the store the first lives in).  c2 needs no rewrite: a
+// moved, the second copied into the store the first lives in), c7 (a slice match on the
+// cursor itself, whose arms bind views THROUGH the literal: they name the literal's elements,
+// which the copy and the move answer alike, loft#2135).  c2 needs no rewrite: a
 // vector built in the body is built in the literal's field already.  Declined, the copy kept:
 // c6 (a later field of the same literal reads the source), d1 (the source read after the
 // literal), d2 (the source grown after it), d3 (the literal inside a loop), d4 (the source a
@@ -76,6 +78,27 @@ fn c3(n: integer) -> integer {
     cur.pos += 1;
   }
   len(cur.src)
+}
+
+/// A slice match on the cursor itself (the arguments library's parse): each arm consumes a
+/// prefix and advances `pos`, and the names it binds are views through the literal.
+fn c7(n: integer) -> integer {
+  t = toks(n);
+  cur = Cur { src: t, pos: 0 };
+  s = 0;
+  guard = 0;
+  while cur.pos < cur.src.len() {
+    guard += 1;
+    if guard > 100 { break }
+    step = match cur {
+      [ A { n }, B { w } ] => n + len(w) * 100,
+      [ A { n } ] => n * 1000,
+      _ => -1,
+    };
+    if step < 0 { break }
+    s += step;
+  }
+  s * 10 + cur.pos
 }
 
 fn c5(n: integer) -> integer {
@@ -149,6 +172,9 @@ fn main() {
   }
   // toks(7): A0 A2 A4 A6 = 12, B w1 w3 w5 = 600: 612 * 10 + 7 = 6127 per pass.
   assert(s == 40 * 6127 && r1 > 0 && r2 == r1 && len(keep) == 3, "c4 {s} records {r1} -> {r2}");
+  // c7 — toks(5) = A0 B"w1" A2 B"w3" A4: [A0 B"w1"] 0 + 200, [A2 B"w3"] 2 + 200, [A4] 4000:
+  // 4402, pos 5.  toks(4) ends after two pairs: 402, pos 4.
+  assert(c7(5) == 44025 && c7(4) == 4024, "c7 {c7(5)} {c7(4)}");
   // c5 — 4 and 5 tokens: 400 + 50 + 7.
   assert(c5(4) == 457, "c5 {c5(4)}");
   // c6 — the later field reads the source's length: 3 * 100 + 3.

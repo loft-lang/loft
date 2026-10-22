@@ -1786,3 +1786,43 @@ fn a_dependency_copy_is_reported_against_the_dependency_file() {
         "the echoed line must be the copy site, not a `const` or a comment; output:\n{all}"
     );
 }
+
+/// `@FR-R-MoveLast`'s host clause, by cell: which literals of
+/// `tests/scripts/a-literal-takes-a-dead-vector-into-its-store.loft` are claimed in their
+/// vector's store and which keep the copy.  The cells' values hold either way, so only this
+/// pin sees an admission move; the library rows of the rewrite census saw one only where the
+/// bench library checkouts exist (loft#2135, the cursor matched by slice patterns).
+#[test]
+fn the_literal_host_admits_and_declines_where_the_cells_say() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/a-literal-takes-a-dead-vector-into-its-store.loft");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .args(["--interpret"])
+        .arg(&path)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TRACE_PLACE", "1")
+        .env_remove("LOFT_NO_LITERAL_HOST")
+        .output()
+        .expect("spawn loft");
+    let err = String::from_utf8_lossy(&out.stderr);
+    let verdict = |f: &str| -> Option<&str> {
+        err.lines()
+            .filter_map(|l| l.strip_prefix(&format!("[literal-host] fn=n_{f} ")))
+            .find_map(|l| {
+                if l.contains(": ADMITTED") {
+                    Some("admitted")
+                } else if l.contains(": DECLINED") {
+                    Some("declined")
+                } else {
+                    None
+                }
+            })
+    };
+    assert!(out.status.success(), "the cells failed:\n{err}");
+    for f in ["c1", "c3", "c5", "c7"] {
+        assert_eq!(verdict(f), Some("admitted"), "{f}:\n{err}");
+    }
+    for f in ["c6", "d1", "d2", "d5"] {
+        assert_eq!(verdict(f), Some("declined"), "{f}:\n{err}");
+    }
+}
