@@ -90,16 +90,19 @@ jobs:
     # CALIBRATION.  A GitHub runner has 4 vCPUs against this project's 24-core
     # dev box, so the gates measure the same claims at floors the hardware can
     # actually deliver — lowered, not switched off.  A `par` that stops
-    # parallelising still fails: 4 workers must beat 1 by 1.5x and the frame
-    # count must still rise by half.  Every VALUE assertion is untouched; these
-    # only retune what is sampled and how fast it must be.
+    # parallelising still fails both timing bars, because each sits between
+    # what one worker measures (100 %) and what this runner's slowest healthy
+    # run measures.  Every VALUE assertion is untouched; these only retune what
+    # is sampled and how fast it must be.
     #
-    # Measured on the runner (kept here so the numbers have a source): scaling
-    # 100/159/224% over 1/2/4 workers, `--html` and dispatch both over 4
-    # workers, every value equal to the interpreter's.  The UI gate's floor
-    # sits below what the runner shows rather than just under it: this runs
-    # nightly, and a gate that goes red on runner noise gets ignored, which
-    # costs more than the tenths it buys.
+    # MIN_SPEEDUP_PCT is the scaling gate's 4-worker bar.  ubuntu-latest comes
+    # in two CPU types: on the faster one (one worker ~2.0 s) four workers
+    # measure 139–148 %, on the slower one (3–4.7 s) 156–180 %, and the
+    # sequential fallback equals one worker on both.  125 sits between 100 and
+    # 139; 150 sat inside the faster type's range (loft#2133).  A bar under
+    # what the runner shows rather than just under it: this runs nightly, and a
+    # gate that goes red on runner noise gets ignored, which costs more than
+    # the tenths it buys.
     #
     # MIN_PAR_SPEEDUP_PCT is the UI gate's bar on the PART of each frame's
     # main-thread block that par decides — the block less the frame's serial
@@ -125,7 +128,7 @@ jobs:
       WAIT_SCALE: "3"
       POOLS: "1 2 4"
       SPEEDUP_AT: "4"
-      MIN_SPEEDUP_PCT: "150"
+      MIN_SPEEDUP_PCT: "125"
       CONCURRENCY_STAT: "max"
       THREADS: "4"
       MIN_PAR_SPEEDUP_PCT: "120"

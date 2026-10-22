@@ -677,9 +677,13 @@ Two properties keep it honest:
   --ci` preflights the prerequisites and turns any `SKIP` into a red job, because a
   gate that skips itself green is the one way this can rot unnoticed.
 - **The performance floors are calibrated, not disabled.** A runner has 4 vCPUs
-  against the dev box's 24, so the workflow lowers the scaling and frame-rate floors
-  (`POOLS`, `SPEEDUP_AT`, `MIN_SPEEDUP_PCT`, `THREADS`, `MIN_FRAME_RATIO_X10`) to what
-  that hardware delivers — a `par` that stops parallelising still fails.
+  against the dev box's 24, so the workflow lowers the scaling and UI floors
+  (`POOLS`, `SPEEDUP_AT`, `MIN_SPEEDUP_PCT`, `THREADS`, `MIN_PAR_SPEEDUP_PCT`) to what
+  that hardware delivers.  Each floor sits between one worker's 100 % and the
+  runner's slowest healthy measurement, so a `par` that stops parallelising still
+  fails and runner noise does not.  Both gates time only the part `par` decides —
+  the scaling page subtracts a trivial program's run, the UI page the same program
+  run with no work — and re-measure a miss before failing it.
 
 A red run is surfaced on every PR by ci.yml's `Nightly health (informational)` job.
 
