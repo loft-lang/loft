@@ -135,6 +135,177 @@ prefill on both sides of the call: `panel_build` 3.67× → 3.44×.
 4.66×.  Store creation is ~950 instructions (12 % of `encode`) spread over slot bookkeeping,
 `Store::init` and a fresh store's first claim through the tree path; no single fold moves it
 more than ~2 %.
+#### The rows still near or over 4×, toward WELL below 3× (2026-10-21, at `8308712f1`)
+
+Re-measured at the tip (`stats.py --routine`, loop alignment on): `field_add_cell` 4.29×,
+`slope_path_with_undo` 4.22×, `truncate_to` 3.95×.  Well below 3× (≈ 2.5×) means −40 % or more
+on each.  Two runtime CEILINGS were measured by runtime swap under the same emitted programs
+(9 interleaved rounds, hashes unchanged), as the bound on what any validate-once rewrite or
+growth change can deliver:
+
+| ceiling | `truncate_to` | `panel_build` | `field_add_cell` | `collect_dirty_inputs` | `slope_path_with_undo` |
+|---|--:|--:|--:|--:|--:|
+| every store access unchecked (bounds, lock, shadow) | −22.8 % | −15.2 % | −9.3 % | −9.9 % | −3.5 % |
+| no zero fill when a store grows | −4.6 % | +0.8 % | +0.4 % | −0.2 % | −0.9 % |
+
+The checks are 19 % of `field_add_cell`'s instructions and cost 9 % of its time: predicted
+branches.  What each row needs:
+
+- **`truncate_to`.**  The checks inside the copy, release and allocator paths validated once per
+  record or block (realistic half the ceiling, *est.* −12 %) and the growth fill dropped (−4.6 %,
+  sound only if nothing reads a word it did not write, `@C137`, falsifier `LOFT_POISON_CLAIM=1`):
+  ≈ 3.3×.  Below that is the allocator's unit cost: a claim ~150 and a delete ~140 instructions
+  against `malloc` / `free`'s 30–50 — a size-class pool per store that touches no tree and one
+  bit set (*est.* −15–20 %, ≈ 2.7×).  The parked lists' raw form was priced and dropped
+  (+2.5 %): the lever is fewer steps, not cheaper ones.
+- **`slope_path_with_undo`.**  The index arithmetic guarded once for range and then plain (the
+  owner's "proved away by ranges": −12.3 % priced 2026-10-20), the element read's two header
+  reads shared (−4.8 % priced), the `Hex` value read and written as one block instead of
+  seven checked fields (*est.* −8 %), `s.us_redo = []` skipped on an empty vector (*est.* −2 %):
+  ≈ 3.2×.  Well below 3× needs the three chunk walks per step to stop re-deriving the chunk
+  vector's and each `ck_hexes` header: L7, the caller's held headers handed into
+  `map_get_hex` / `map_set_hex` (*est.* −25–30 %, ≈ 2.3×), which must re-derive after
+  `map_ensure_chunk` appends a chunk.
+- **`field_add_cell`.**  The keyed runtime's checks validated once per probe (*est.* −5 %), each
+  keyed operation's fixed metadata (`keyed_entry_long` 64, `Entries::of` 37, `read_seed` 17,
+  `sub_record_type` 14 instructions) resolved by the emitter where the type, field and key
+  position are static (*est.* −12 %), a cheaper rehash (*est.* −2 %): ≈ 3.5×.  The hash itself
+  is not the gap (SipHash-1-3 on both sides).  Well below 3× needs the table's LAYOUT: keys
+  inline in the bucket array, so a probe is one cache line with no arena-directory hop and a
+  rehash reads no record (hashbrown's ~150 instructions an operation against ~435–600 now;
+  *est.* −40 % of the row, ≈ 2.5×).  That layout is the placement contract
+  (`crate::placement::HASH`): a decision before a design.
+
+#### The five rows over 4× at `bc9b9d724`, re-analysed on the production runtime (2026-10-21)
+
+`scripts/gap_report.py --lean` (callgrind on the `target/install-lib` runtime, the one
+`bench/stats.py` measures), then each lever as a hand form of the emitted Rust,
+`hand_price.sh` with `HAND_PRICE_REL=target/install-lib/release`, 11 interleaved rounds
+pinned to the fastest core with the first dropped, every hash unchanged.  "Lands at" multiplies
+the portal row by the price; *est.* marks a share read off the profile, never timed.
+
+| × | row | loft / twin instr | where the excess goes | priced | lands at |
+|--:|---|---|---|---|---|
+| 4.11 | `binary_read` | 14.8× (125 / 8.5 per element) | `(R-FileHold)` already holds the cursor; the push takes `push_hoisted` because `(R-PushFill)`'s window declines: "the body names `bf`, which may view the pushed vector".  `bf` is reached only by `(R-InPlace)`'s typed file read, which writes the File record's cursor fields and never claims | the window over `while i < n`, reserved `n - i` up front: **−29.6 %** | **≈ 2.89×** |
+| 4.01 | cbor `encode_bytes` | 5.0× | `head__ap` 37 % inclusive: ~367 instructions to write a 3-byte head (`pre_alloc_vector`, `reserve_more`, two `push_header`, the window, its close, each resolving the header); the payload's `append_bytes` resolves it again; the recursion's frame per item | the run of k bytes as ONE `append_bytes` of a stack array **−10.1 %**; the variant tag read once instead of five times −2.7 % alone, nothing on top; head and payload as one append (the ceiling of `(R-PushFill)` across the call, L8) **−21.0 %**.  REFUTED: reserving head + payload exactly before the head, **+14 %** (an exact reserve per text gives up the doubling) | ≈ 3.17× at the L8 ceiling; the per-item call frame (`cr_call_push_lean`, the guard, eight `OpFreeRef` tests) *est.* −5 % → ≈ 3.0× |
+| 4.10 | `truncate_to` | 4.5× (3.5 k / 790 per push) | the entry deep-copied into the timeline (`h.entries += [hp_entry]`, ~970 a push); the dropped entry released (~500 in `drop_oldest`, ~210 in `truncate_to`); `e`'s store minted per iteration (~125); the claim / delete pair of the allocator under all of it (25 % of the instructions) | nothing new; L3 (built in place) stays REFUTED at +30 % without a reservation | runtime tightening of copy, release, claim and delete *est.* −25 % → ≈ 3.1×; L3 with the `for j in 0..3` reservation is the untried structural form |
+| 4.21 | `field_add_cell` | 4.3× (3.5 k / 810 per paint) | keyed 2.45 twins of 4.33: ~4.3 keyed operations a paint at ~260 instructions each against hashbrown's; fixed metadata per operation (`keyed_entry_long` 64, `Entries::of` 37, `read_seed` 17, `sub_record_type` 14); rehash 191 per moved entry (10 %).  The hash is SipHash-1-3 on both sides | none timed | the metadata held per hash per call *est.* −13 %, a cheaper rehash *est.* −7 % → ≈ 3.4×.  Under 3× needs the table itself: a hash tag in the bucket so a mismatch and a rehash read no record — the placement contract (`crate::placement::HASH`), a decision |
+| 4.18 | `slope_path_with_undo` | 5.0× (2.3 k / 460 per step) | the emitted lines alone are 1.57 twins: `chunk_idx_32` / `hex_idx_32`, six per helper call, are the null-checked `%`, `/` and `-` of `@C120` (12.7 % of the instructions); the store's growth zero-fills (`resize_store` → memset, 5 %); `rec_and_len` out of line | the read's two header reads shared −4.8 % (2026-10-20) | −4.8 % and the growth without the fill *est.* −5 % → ≈ 3.8×; the arithmetic is the focus's exception (−12 %, the 2026-10-20 hand form) → ≈ 3.3× |
+
+**`truncate_to`, continued (2026-10-21).**  Per push, at the tip: 3 511 instructions against
+the twin's 790 — the entry's copy into the timeline 963 (`OpCopyRecord` → `copy_plain_vectors`,
+two claims and two block copies), the dropped entries' release 696 (`keep_vector_range` →
+`release_plain_vectors`, two deletes), the claims ~150 and deletes ~140 each against
+`malloc`/`free`'s ~30–50, and the store's per-access checks spread through all of it (~330 a
+push in bounds tests alone).  BUILT: `OpCopyRecord`'s fresh-slot fast path for a record of
+plain vectors (`Stores::copy_fresh_plain`) −3.7 % by runtime swap (the hand form that skipped
+`OpCopyRecord` whole priced −6.4 %, but skipped the fn-ref flag it must take).  PRICED AND
+DROPPED: the parked lists' header, footer and links written raw after one bound of the block,
+`truncate_to` +2.5 %, `panel_build` −1.5 %.  Not worth pricing: a typed release, since
+`remove_claims` already takes `release_plain_vectors` first (~37 a push left).  Building the
+entry where the timeline keeps it is not admissible here as written: `history_push` truncates
+BEFORE it appends, so an entry placed first would be cut by the truncation.  What is left is
+the allocator's unit cost; the row stands near 3.9×.
+
+**`truncate_to`: how many allocations (2026-10-21, `LOFT_STORE_CENSUS`, `op-census` build).**
+Per push over 3 000: 2.03 claims, 1.69 deletes, 0.01 store growths, 384 bytes copied.  That is
+the data structure's own minimum — one block for each of the new entry's two vectors, freed when
+the entry falls off the 50-deep timeline — and the Rust twin's count: two `malloc`s (each vector
+grows once) and the same frees; the driver's `e` is refilled in place and claims nothing after
+the first push.  So the row does not allocate MORE; each allocation costs more (claim ~150,
+delete ~140) and carries a copy and a release walk.  Allocating LESS than the twin needs a
+representation without a heap block per small vector (a short vector held inside its record),
+which would remove the claim, the copy and the delete together: a design question.
+
+**`truncate_to` against the two allocation levers (fewer than the twin; reuse an old structure).**
+Per push: the driver's `e` (`undo_entry_empty()`, three `e.painted` and one `e.markers` push) is
+REFILLED in place (`(R-RefillBuffer)`): 0 claims, where the twin's fresh `Vec`s make 2 `malloc`s —
+loft already does less there.  `h.entries += [hp_entry]` copies the entry into the timeline's store:
+2 claims and 384 bytes, where the twin MOVES its `Vec`s (0).  `drop_oldest` / `truncate_to` (one
+in-place keep each, `(R-Compact)`) release the dropped entries' blocks: 1.69 deletes, the twin's
+`drain` frees the same.  The released blocks ARE reused — the next push's two claims pop them off
+the exact-size lists (`(H-Park)`) — but through a delete and a claim (~290 instructions a pair)
+where a direct hand-over would cost ~20.  Doing less than the twin needs the dropped entry handed
+to the new one directly: either the entry MOVED (it lives in another store, so a move is a copy
+and a release: X10, +16 %) or the drop before the append so the new entry is copied into the
+dropped one's blocks (`clone_from`) — a reorder of `history_push`'s statements no rule proves
+today.  Keeping released blocks as spares in a vector's tail for the next append would make
+every vector release path know about them: the model complication `@C125` rules out.
+
+**`truncate_to`: the direct hand-over, PRICED (2026-10-21).**  `history_push` edited by hand so
+that, when the timeline is full and nothing is truncated, `hp_entry`'s two vectors are copied
+into the oldest entry's blocks and the slots rotate by one: 53.7 → 35.4 µs, **−34.0 %**, hash
+unchanged (≈ 2.6×); no claim and no delete per push.  Written up as the rule `(R-HandOver)`
+with its rotate clause, its limits and the work to admit it (`formal/rewrites.md` § A dying
+value's blocks are handed to the value built after it).
+
+**`truncate_to` under the two rules (2026-10-21).**  One call's 300 pushes, simulated from the
+driver: 162 STEADY (the timeline full, nothing truncated: the oldest entry dies after the
+append), 30 TRUNCATING (three entries die before the append), 108 GROWING (nothing dies in the
+call: the first 50, and the two after each truncation).
+- Rotate clause, steady pushes: no claim, no delete — the priced −34.0 % covers exactly these.
+- Canonical vector hand-over, truncating pushes: the first dropped entry's vectors go to the
+  new entry (no claim for it); the other two entries are released.  *est.* −2 %.
+- Growing pushes: claims stay — the blocks the truncation freed are wanted one and two calls
+  later, which needs a holder across calls (`@C125`).
+- Fixed-size objects on the stack (`(R-Apart)`): the `Timeline` shell (a vector reference and
+  the cursor) and the `Stroke` shell `e` (two vector references) — `history_push`'s reads and
+  writes of `h.cursor` and the entries header, and the driver's `e.painted` / `e.markers`
+  paths, become frame accesses.  *est.* −5 %.  The elements (`PaintedDelta`, `MarkerDelta`)
+  are inline in their vectors and stay there.
+Allocations per push after all three: 0.72 claims and 0.4 deletes, from 2.03 and 1.69 — under
+the twin's 2 `malloc`s.  Landing ≈ 2.4× (−40 %).  What then remains: `e`'s vector build (~600
+instructions a push: a header per push, the reservation, the refill's clears — the dynamic
+part, kept), the growing pushes' copies, and the keep's shift on non-steady pushes.  Build
+order: the callee effects visible in `history_push` (inline or a keep summary), the rotate
+clause, the canonical hand-over, the stack shells.
+
+**`truncate_to` under the two rules, BUILT and measured (2026-10-21).**  The rotate clause:
+52.1 → 43.2 µs, **−17.1 %** (≈ 4.2× → ≈ 3.5×), hash unchanged, interleaved on one core; looped
+alone 1.01 → 0.85 s.  The hand price's −34 % also dropped the `truncate_to` call and `e`'s
+build, which the clause keeps (`truncate_to` is now 4 % of `history_push`, `rotate_into` 9 %).
+The canonical hand-over on truncating pushes measured a LOSS — −16.6 % with it against −17.1 %
+without, `history_push`'s own code 13.3 % → 18.5 % of the profile — and is not built: on the
+exact-size free lists a release then a claim of one plan already reuses the block, so a
+hand-over pays only where it also removes bookkeeping.  Not yet built: the stack shells
+(`(R-Apart)` for `Timeline` and `Stroke`, *est.* −5 %) and `e` built apart (*est.* −12–15 %),
+which together are the rest of the distance to ≈ 2.4×.
+
+**`truncate_to` to 2.5×: three forms priced (2026-10-21, at 3.23×, 44.0 µs against 13.6).**
+- MOVE `e` into the timeline (the Rust form): `e` must live in the timeline's store, since a
+  block does not change stores; moved out, its refill claims fresh blocks through vector
+  growth, which goes to the best-fit free tree — `fl_*` ≈ 40 % of the profile, **+63 %**.
+- SWAP on steady pushes, copy on growing ones: the swapped-in blocks are exact-size, so the
+  driver's reservation regrows them every push (`reserve_vector → resize → claim_best_fit`),
+  **+48 %**.  In its own store `e`'s blocks grew once and kept their slack.
+- `e` APART: the three `PaintedDelta` and one `MarkerDelta` built as bytes in the frame, and a
+  `history_push` twin writing them into the entry's blocks (rotate) or fresh exact blocks
+  (growing): 44.2 → 16.6 µs, **−62.5 %**, hash unchanged, ≈ 1.2×.  The store-side build of
+  `e` (kept-record test, two clears, a push header, a reservation, three record pushes, a field
+  append, two finishes) and the copy out of it were ≈ 60 % of the routine.  BUILT as
+  `(R-Apart)` instance 4: 43.8 → 25.6 µs, **−41.7 %**, ≈ 1.9×.  What separates it from the
+  hand price (16.6 µs): `rotate_from_parts` and `apart_block` ask the element type's plan,
+  test it against the parts and copy through generic loops, where the hand form had the
+  offsets and sizes as constants — an emitted, layout-specialised boundary is the next step.
+
+**Zero fills in the runtime, classified.**  NEEDED (the structure reads 0 as "empty"): a hash
+table's buckets when made or grown (`hash.rs`), the entry arena's directory and chunks
+(`arena.rs`), a fresh store's root record (`codegen_runtime.rs`, `state/io.rs`: its collection
+handles are read before anything writes them), the radix / data-store / IR nodes.  DEFENSIVE
+only (`@C137`: a claim promises no value, a reader of an unwritten word is the defect): the
+whole buffer of `Store::new` (`alloc_zeroed`) and every growth in `resize_store`.  The program
+reads only claimed memory, which `LOFT_POISON_CLAIM=1` already fills with garbage under test,
+and the allocator reads unclaimed memory only through headers it writes.  DEBUG only, off by
+default: `finish_claim` and the in-place grow under `LOFT_ZERO_CLAIM=1`.  The two defensive fills
+removed, priced by runtime swap: `truncate_to` −3.5 %, `map_json` −2.8 %, `slope_path_with_undo`
+−1.0 %, `encode`, `encode_bytes`, `decode`, `panel_build`, `reload_and_record` level.
+
+Read together: `binary_read` is one emitter clause from the bar.  `encode_bytes` and
+`truncate_to` stand on the runtime's unit cost of an append and of a claim/release pair, and
+reach ≈ 3× only with every lever.  `field_add_cell` and `slope_path_with_undo` do not reach
+3× inside the current focus: one needs a change to the keyed table's layout, the other the
+null-integer arithmetic proved away.
+
 #### The five rows over 4× at `4cc416af4`, analysed (2026-10-20)
 
 Callgrind per op against the twin, compiled from the release emission with line tables; a
@@ -613,6 +784,10 @@ time against the row measured at `7df5a4f4b`:
 | x86-64 laptop, with the library merge | `arguments/parse` +24 %, `stage/render_stage` +19 %, `zttext/insert_text` +9 % | the library source changed under them (arguments 0.2.4–0.2.5, stage 0.18.6–0.18.7, zttext 0.1.3): a library change or loft's is not yet told apart |
 | x86-64 laptop | `gridmesh/build_index` +14 %, `cbor/encode_bytes` +16 % | FIXED: @C138's per-access alignment test in `Store::read` / `write` kept them from inlining; the check is now the compiler's (`Stores::validate_all_layouts`).  build_index 20.3 → 18.4 ms, encode_bytes 880 → 771 µs |
 | x86-64 laptop | `hex_form/form_write` +31 % (2.82× → 3.69×), `hex_recover/index_build` +13 % | FIXED: the H-Elide gate took a promoted return buffer (renamed `outk`, `s`) for a caller's parameter and copied every `u = s.v` beside it; it now reads the `hidden` flag.  form_write 2.81×, index_build 3.84×.  Its alias matrix found loft#1895 (`acc = g(acc)` on a returned local answered `[]`), fixed first |
+| x86-64 laptop, across the join `f2bcfd112` | `graphics/fill_polygon` 3.78× → 4.01× (+4.4 % interleaved, Rust lane level) | ATTRIBUTED: LAYOUT.  `fill_polygon`, `polygon_crossings` and `hline__inv` emit byte-identical Rust on both sides and run the same 65,565,321 instructions (callgrind); only `native_bind`'s preamble, `init` and `main` changed, which moved the three to the other half of a 64-byte line (`polygon_crossings` and `fill_polygon` 0 → 32 mod 64, `hline__inv` 32 → 0).  The pre-join emission on the post-join runtime is −2.1 %, so not the runtime; with `-C llvm-args=-align-all-functions=6` both emissions are level (1028 / 1021 µs against 1038 / 1106).  The lever is the shipped tier's alignment, judged on a full run, not this row |
+| x86-64 laptop, 2026-10-21 | the alignment experiments (`LOFT_NATIVE_RELEASE_FLAGS`), against an unaligned run of the same tree | FUNCTION alignment (`-align-all-functions=6`, 130 of 205 routines before it was stopped): median 1.67× → 1.65×, geomean level, 20 faster and 24 slower outside their ranges (`join` −18 %, `fill_polygon` −10 %; `fill_triangle` +34 %, `replace` +23 %, `comprehension` +19 %, `fibonacci` +14 %) — a reshuffle, not adopted.  LOOP alignment (`-align-loops=64`, a 19-routine sample of the layout-sensitive rows, three builds back to back): geomean 1.96× → 1.90×, 9 faster and 4 slower (`join` −23 %, `ssh/byte_at` −20 %, `split_walk` −11 %, `web/byte_at` −10 %, `fill_polygon` −9 %; `materialise` +14 %, `build_vis` +13 %, `html_escape` +7 %, `truncate_to` +5 %); loops and functions together the same.  Code size +0.2 % (the flag reaches the program crate and the runtime inlined into it, not the rlib's own functions).  A better trade than functions, still a trade; not adopted without a full run.  `binary_read`'s ratio swings with its TWIN (`std::fs::read`, 201–254 µs), the native lane is level at 586 µs |
+| x86-64 laptop, 2026-10-21 | the LAYOUT NOISE test: each program's emission built four times with 0/16/32/48 bytes of padding ahead of its functions (an inert function placed first and called from `main`), plain and with loop alignment, the eight binaries interleaved per program (51 routines over lanes 13, 17, 18 and graphics, zttext, markdown, ssh) | Plain, shifting the code moves a routine by a median 2.7 %, 17 routines by more than 5 % and 6 by more than 10 % (`ssh/byte_at` 26.9 %, `join` 20.8 %, `fill_triangle` 12.3 %, `html_escape` 10.8 %).  With `-align-loops=64` the median move is 0.5 %, 3 routines above 5 % (`zttext/insert_text` 12.3 %, `fill_rect` 6.9 %, `canvas` 5.3 %, the memory-bound ones), and the level is −0.8 % geomean: faster `byte_at` −16 %, `join` −11 %, `slice_shrink` −8 %, `find_contains` and `render_inline` −6 %; slower `fill_triangle` +19 % (reproduced), `build_vis` +12 %, `truncate_to` +7 %.  `-align-loops=32` removes less of the noise (8 above 5 % of 37) and regresses others (`replace` +22 %): 64 is the candidate |
+| x86-64 laptop, 2026-10-21, with loop alignment the default (`e786df807`) | `graphics/fill_triangle` +16 % (16.0 → 18.6 ms, both code shifts, stable run to run on the stats core) | ATTRIBUTED: the 64-bit DIVISION BYPASS.  LLVM's generic x86-64 tuning (`idivq-to-divl`) puts a branch before each 64-bit divide that takes `div r32` when both operands fit in 32 bits; `fill_triangle`'s three edge divisions take the slow arm whenever an edge runs leftward, which is constant per triangle and flips between triangles, so the branch is predicted from history and its cost depends on where it sits.  Instructions +0.9 % with the loops aligned, cycles +8 % over the lane, branch misses +56 % — `fill_triangle`'s own ×2.4, concentrated on that `je` after `shr $0x20`.  Built with `-C target-feature=-idivq-to-divl` (no bypass): aligned +4.0 %, unaligned −3 to −4 %, `fill_polygon` −5 to −8 % in every build.  Not adopted: on cores before Ice Lake a 64-bit `idiv` is several times a 32-bit one, and a shipped binary tunes for generic x86-64.  ⚠ Time these on the stats core (`stats.fastest_cpus`): on CPU 2, shared with the desktop, `draw_line` alternated 12.4 / 26.5 ms per process, which reads as layout and is not |
 | — | a `for x in u` walk over a view `u = s.v` of a parameter | NOT a regression, a lever: the copy stays, before the H-Elide gate and after it, while an index walk over the same view elides.  The walk lowers to `Op…` calls only and binds `_vector_1 = u`; which elision condition declines is not attributed.  Unpriced |
 
 ## 3. Units with a price

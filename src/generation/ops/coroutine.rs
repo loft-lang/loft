@@ -33,6 +33,12 @@ pub struct OpCoroutineNextEmitter;
 impl OpEmitter for OpCoroutineNextEmitter {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // @PLN199 D2 — the host's coroutine table in a library cdylib, the runtime's otherwise.
+        let cr = if ctx.output.library_unit {
+            "__coro"
+        } else {
+            "loft::codegen_runtime"
+        };
         if let Some(gen_val) = args.first() {
             let gen_code = ctx.output.generate_expr_buf(gen_val)?;
             let raw_value_size = if let Some(Value::Int(n)) = args.get(1) {
@@ -77,7 +83,7 @@ impl OpEmitter for OpCoroutineNextEmitter {
                     write!(
                         ctx.w,
                         "{{ let mut _loft_yield_buf: [i64; {slots}] = [0; {slots}]; \
-                         loft::codegen_runtime::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
+                         {cr}::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
                          ("
                     )?;
                     for i in 0..slots {
@@ -94,7 +100,7 @@ impl OpEmitter for OpCoroutineNextEmitter {
                 write!(
                     ctx.w,
                     "{{ let mut _loft_yield_buf: [i64; {slots}] = {init}; \
-                     loft::codegen_runtime::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
+                     {cr}::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
                      ("
                 )?;
                 let mut slot = 0usize;
@@ -132,7 +138,7 @@ impl OpEmitter for OpCoroutineNextEmitter {
                 write!(
                     ctx.w,
                     "{{ let mut _loft_yield_buf: [i64; 2] = [0xFFFF_i64 << 32, 0]; \
-                     loft::codegen_runtime::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
+                     {cr}::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
                      ((_loft_yield_buf[0] as u32), DbRef {{ \
                        store_nr: ((_loft_yield_buf[0] >> 32) & 0xFFFF) as u16, \
                        rec: _loft_yield_buf[1] as u32, \
@@ -148,7 +154,7 @@ impl OpEmitter for OpCoroutineNextEmitter {
                 // float: the i64 transport holds the f64 bit-pattern.
                 write!(
                     ctx.w,
-                    "f64::from_bits(loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) as u64)"
+                    "f64::from_bits({cr}::coroutine_next_i64({gen_code}, stores) as u64)"
                 )?;
                 return Ok(());
             }
@@ -156,7 +162,7 @@ impl OpEmitter for OpCoroutineNextEmitter {
                 // single: the low 32 bits hold the f32 bit-pattern.
                 write!(
                     ctx.w,
-                    "f32::from_bits(loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) as u32)"
+                    "f32::from_bits({cr}::coroutine_next_i64({gen_code}, stores) as u32)"
                 )?;
                 return Ok(());
             }
@@ -170,42 +176,32 @@ impl OpEmitter for OpCoroutineNextEmitter {
                 };
                 write!(
                     ctx.w,
-                    "loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) as {uty}"
+                    "{cr}::coroutine_next_i64({gen_code}, stores) as {uty}"
                 )?;
                 return Ok(());
             }
             match byte_size {
-                8 => write!(
-                    ctx.w,
-                    "loft::codegen_runtime::coroutine_next_i64({gen_code}, stores)"
-                )?,
+                8 => write!(ctx.w, "{cr}::coroutine_next_i64({gen_code}, stores)")?,
                 // `boolean`: the transport carries its storage byte, and `255` is its null — a
                 // `!= 0` test read a yielded null as `true` (`(G-Next)`).  The value is only
                 // ever stored into a `u8` slot (the `for` binding, a delegation's item), so
                 // the byte goes through as it is.
                 1 => write!(
                     ctx.w,
-                    "(loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) as u8)"
+                    "({cr}::coroutine_next_i64({gen_code}, stores) as u8)"
                 )?,
                 // size_of::<DbRef>() == 12 — Reference-yielding generator (@P326).
-                12 => write!(
-                    ctx.w,
-                    "loft::codegen_runtime::coroutine_next_dbref({gen_code}, stores)"
-                )?,
+                12 => write!(ctx.w, "{cr}::coroutine_next_dbref({gen_code}, stores)")?,
                 // Text-yielding generator.  `byte_size` is a `text` slot, whose
                 // width is HOST-dependent (`&str` = pointer + length: 16 bytes
                 // where a pointer is 8 wide, 8 on wasm32).  Matching the literal
                 // would silently fall through to the i64 arm on a 32-bit host, so
                 // the arm is keyed on the type instead.  Only the host compiles
                 // today, which is why a literal survived here.
-                n if n as usize == size_of::<&str>() => write!(
-                    ctx.w,
-                    "loft::codegen_runtime::coroutine_next_text({gen_code}, stores)"
-                )?,
-                _ => write!(
-                    ctx.w,
-                    "loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) as i32"
-                )?,
+                n if n as usize == size_of::<&str>() => {
+                    write!(ctx.w, "{cr}::coroutine_next_text({gen_code}, stores)")?
+                }
+                _ => write!(ctx.w, "{cr}::coroutine_next_i64({gen_code}, stores) as i32")?,
             }
         }
         Ok(())
@@ -218,12 +214,15 @@ pub struct OpCoroutineExhaustedEmitter;
 
 impl OpEmitter for OpCoroutineExhaustedEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // @PLN199 D2 — the host's coroutine table in a library cdylib, the runtime's otherwise.
+        let cr = if ctx.output.library_unit {
+            "__coro"
+        } else {
+            "loft::codegen_runtime"
+        };
         if let Some(gen_val) = args.first() {
             let gen_code = ctx.output.generate_expr_buf(gen_val)?;
-            write!(
-                ctx.w,
-                "loft::codegen_runtime::coroutine_is_exhausted({gen_code})"
-            )?;
+            write!(ctx.w, "{cr}::coroutine_is_exhausted({gen_code})")?;
         }
         Ok(())
     }
@@ -235,9 +234,15 @@ pub struct OpCoroutineRetainEmitter;
 
 impl OpEmitter for OpCoroutineRetainEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // @PLN199 D2 — the host's coroutine table in a library cdylib, the runtime's otherwise.
+        let cr = if ctx.output.library_unit {
+            "__coro"
+        } else {
+            "loft::codegen_runtime"
+        };
         if let Some(gen_val) = args.first() {
             let gen_code = ctx.output.generate_expr_buf(gen_val)?;
-            write!(ctx.w, "loft::codegen_runtime::coroutine_retain({gen_code})")?;
+            write!(ctx.w, "{cr}::coroutine_retain({gen_code})")?;
         }
         Ok(())
     }

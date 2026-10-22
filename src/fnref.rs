@@ -172,3 +172,35 @@ pub fn parallel_worker_arg(op_name: &str) -> Option<(usize, usize)> {
         _ => None,
     }
 }
+
+/// @PLN199 C2 — can a call through a value of `fn_type` made in a compiled LIBRARY reach a
+/// callee the library does not carry, by calling back into the interpreter that loaded it
+/// (`HostTable::call_ref`, `State::call_back`)?  The call back marshals each visible
+/// parameter in one `LibArg` and answers in one: a full-width integer, a float, a boolean, a
+/// text or a store reference in; a full-width integer, a float, a boolean, a text, a record,
+/// a vector, a data enum or nothing out.  The hidden buffers such a callee takes — a text
+/// result's work buffers, a heap result's return buffer — the call back provides.
+#[must_use]
+pub fn upcall_carries(fn_type: &Type) -> bool {
+    let Type::Function(params, ret, ..) = fn_type.base() else {
+        return false;
+    };
+    // `τ?` rides τ's layout (@FR-N-Shape): each type is read through `base()`.
+    let scalar = |t: &Type| match t.base() {
+        Type::Integer(s) => s.forced_size.is_none(),
+        Type::Float | Type::Boolean => true,
+        _ => false,
+    };
+    params
+        .iter()
+        .all(|p| scalar(p) || matches!(p.base(), Type::Text(_)) || crate::data::is_dbref(p.base()))
+        && (matches!(
+            ret.base(),
+            Type::Void
+                | Type::Null
+                | Type::Text(_)
+                | Type::Reference(_, _)
+                | Type::Vector(_, _)
+                | Type::Enum(_, true, _)
+        ) || scalar(ret.base()))
+}

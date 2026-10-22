@@ -201,9 +201,9 @@ the table below is derived from the chapters and says nothing the chapters do no
 | [paths.md](paths.md) | what a path means to a loft program, on every platform | **0 open** — `\` separates as `/` does, a name no platform could hold is refused everywhere, a name means its exact spelling, a refusal is the operation's failure answer; register in [paths-history.md](paths-history.md) |
 | [concurrency.md](concurrency.md) | `par` — the one parallel construct | **0 own** — a parallel map consumed in source order; determinism CONDITIONAL on a pure worker; conformance via the oracle |
 | [calls.md](calls.md) | function call & return — args, parameter binding, the frame | **0 open** — a private field outside its file is refused on every build (`F-Visible`, @C140); args left-to-right; scalar params by value, heap params share (`F-ParamHeap`), `&` writes back; returns independent; a void tail is dropped (`F-Drop`) and a block's value is its tail's (`F-Block`); register in [calls-history.md](calls-history.md) |
-| [dispatch.md](dispatch.md) | overload sets — which definition of a name a call reaches; which library a bare method loads | **2 open** (D-disp-5, D-disp-6: a trigger two packages derive is dropped rather than refused by name; `LOFT_LIB` is no trigger source) — the most specific applicable definition (exact > widened > lossy > converted; a generic loses to a concrete one), a tie or no fit refused at compile time, an enum-held argument dispatched on its variant as the canonical `match` would; a bare method loads the copy a `use` would; register in [dispatch-history.md](dispatch-history.md) |
+| [dispatch.md](dispatch.md) | overload sets — which definition of a name a call reaches; which library a bare method loads | **0 open** — the most specific applicable definition (exact > widened > lossy > converted; a generic loses to a concrete one), a tie or no fit refused at compile time, an enum-held argument dispatched on its variant as the canonical `match` would; a bare method loads the copy a `use` would; register in [dispatch-history.md](dispatch-history.md) |
 | [operators.md](operators.md) | operator syntax on a user type — `operator compare`, `plus`, `minus`, `times` | **0 open** — an order or arithmetic form is one call of the left operand's `operator` method; a plain `fn` of the name backs nothing; `Ordered`, `Addable`, `Subtractable` are met by them |
-| [matching.md](matching.md) | `match` — enum-variant dispatch + payload binding | **0 own** — an expression; struct-payload patterns bind by name; `_` is the final catch-all; compile-time exhaustiveness |
+| [matching.md](matching.md) | `match` — enum-variant dispatch + payload binding | **0 open** (D-match-25, loft#2107, closed 2026-10-21) — an expression; struct-payload patterns bind by name; `_` is the final catch-all; compile-time exhaustiveness |
 | [tuples.md](tuples.md) | tuples — construct / project / destructure | **0 open** — D-tup-9 (a type-variable member of a tuple literal, loft#1365) opened and closed 2026-09-05 — positional products (n≥2), `.i` a compile-time index, destructuring, tuple returns, the reference tuple (`T-Ref-Rep`); ⚠ its differential oracle is all-`(integer, integer)`; register in [tuples-history.md](tuples-history.md) |
 | [closures.md](closures.md) | lambdas / closures / fn-refs — capture + apply | **0 open** — both lambda forms capture identically; scalar-by-value / heap-shared capture; first-class into every container (`L-Escape`); `D-clo-18`/`D-clo-20` are decided refusals (@C115); register in [closures-history.md](closures-history.md) |
 | [formatting.md](formatting.md) | text formatting — `"{x}"` interpolation + value→text rendering | **0 own** — arbitrary-expression interpolation, per-type render, the width/align/pad/precision/radix specs, fault-safe interpolation, one rendering sink, `F-Target` (a template builds a VALUE against a type defining `lit`/`hole_*`); register in [formatting-history.md](formatting-history.md) |
@@ -251,6 +251,14 @@ What that buys, and none of it is available from a rule NAME alone:
   carry the directory as a prefix: `./scripts/idx tag:@FR-B-Copy` lists the cells there
   beside the sites here) and by `rule_tags.py coverage` (its `rules/` is a guard directory
   by default).  Without the checkout both still answer, from this tree alone.
+- **the composition question is a lookup too** — *which rule applies where two do?* is
+  stated as prose under the rule that GOVERNS: one sentence naming the other rule with a
+  `when`, `where`, `instead`, `exactly as` or `governs` beside it, and the cell that fails
+  when the order is wrong citing both. Never a pair notation: it would grow as the square of
+  the rules and index nothing the two names do not. `scripts/rule_tags.py pairs` reads a
+  rule named in any spelling, tells such a sentence from a bare cross-reference, and
+  `--unstated` lists the pairs the text names without saying which applies, the ones a
+  defect-born cell cites together first.
 
 **Two constraints the measurement forced** (numbers in [IMPLEMENTATIONS.md](IMPLEMENTATIONS.md)):
 

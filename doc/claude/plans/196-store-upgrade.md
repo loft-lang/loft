@@ -53,6 +53,56 @@ load" for a change every loader in fact refuses.
   (`src/database/upgrade.rs`) appends the old layout's types to the table for the length of
   the upgrade, checks that they re-render the old dump, and builds the new store through
   `record_new`/`record_finish`; `loft layout upgrade <file> <store>…` writes beside and swaps.
+- **Step 8 — the callers.**  Every whole-image loader converts an older layout in memory
+  (`store_load`, `store_load_untrusted`, `store_load_url`, `store_load_url_trusted`; the
+  pinned one checks its hash first), `store_persist_bind` upgrades its file in place keeping
+  one `<path>.old`, and the live build swap hands the world over as a store image that
+  `swap_world` loads through the same path.  The swap's verdict is reached when the next
+  instance is compiled (owner, 2026-10-21): the rebuild checks the build against the running
+  world's layout (`LOFT_CHECK_WORLD`, `Stores::world_upgrade_plan`), so a refused change
+  fails the build and the swap is never offered.  A computed default runs in the program: the
+  converter lists the records that owe one (`Stores::owed_*`) and the parser wraps each of
+  those calls in a synthesised `__upgrade_drain`.  The paged loaders (`store_load_key*`)
+  still refuse a changed layout.  Guards: `tests/store_upgrade.rs` (every upgrade cell also
+  read by `store_load` on the OLD file), `tests/store_persist_loft.rs`
+  `*_converts_or_refuses_a_changed_layout_both_backends`, and
+  `tests/engine_host_kernel.rs` `s5_native_swap_under_running_world` (a world grown by a
+  computed field), `cell_a_rebuild_checks_the_running_world_before_it_compiles`.  Open: the
+  browser swap (S6) — the page compiles B, checks it against A's world and keeps the plan
+  before it touches A; the wasm build compiles the converter.
+- **Step 9 — skipped versions.**  The sidecar records the writing release (`version=`, from
+  the entry program's `loft.toml`; a native build carries it as a constant).  The floor is
+  the manifest's existing `data_compatible_with`, and `data_bridge` names the release a
+  refusal sends the user to (`Release::admits`, `src/database/release.rs`); every loader
+  asks it where a sidecar becomes a verdict (`verdict_for_sidecar_text`), and the converter
+  asks it before anything is read.  A routine `upgrade(from: Release, old: O, item: T)` (an
+  overload set, one per `T`) runs on each record of `T` converted from a store older than
+  the program, after its carried fields and defaults: the parser gives each a wrapper
+  `__upgrade_<T>`, registers the routines before every wrapped load, and the drain calls
+  them; `loft layout upgrade` calls them through the host.  `old` is filled by name into a
+  scratch store released after the drain.  `Release` is a stdlib struct ordered by number,
+  compared against a text with `operator compare`.  Rules: `(L-Release)`,
+  `(L-Upgrade-Routine)`, `(L-Upgrade-Old)` in formal/layout.md.  A live rebuild's check
+  (`world_upgrade_plan`) takes the same decision from the release the running world
+  records — the exact old version — so a build it admits is a swap that converts.  Guards:
+  the `cell_a_*` step-9 cells in `tests/store_upgrade.rs`.  Two readings of the design that
+  differ from its wording (owner, 2026-10-21: no preference, provided in-process
+  replacements are right): (1) the routine runs for every store older than the program, not
+  only those older than "the previous release" — the program has no record of which release
+  that was, and the routine's own `from` branches decide; (2) a field of `old` the stored
+  record lacks takes its default (what a constructor writes for an omitted field) rather than a refusal, because a refusal would refuse every store
+  written after that field was dropped (a v3 store opened by v4 with a routine that reads
+  `label` for `from < 2.0`).  A value an intermediate release computed and the next one drops — in one record or across
+  records (`$.inner.x`) — cannot be seen in the store; `loft layout accept` records what each
+  computed field reads and the release that started it (`--sources--` in the baseline), and
+  `loft layout check` refuses the drop unless a routine for that struct or a floor at that
+  release covers it (`(L-Upgrade-Source)`, the `layout_check_*` cells).  The baseline moved to `layout.lock` beside `loft.toml`: at `.loft/layout.lock` it sat in
+  the cache directory every project ignores, so it could never be committed (the old path is
+  still read).  A library release records it — `loft package` runs `accept` on the entry
+  before the tarball (owner, 2026-10-21: written at release time), and an APPLICATION
+  releases through the same command (owner, 2026-10-22): its manifest is the same `[package]`
+  shape, so `loft package` records the baseline of the types its entry program reaches.  A
+  stored type only a side program declares is not recorded.
 
 ## Goal
 
@@ -261,10 +311,69 @@ in both directions (measured), so a hash-only flip needs no conversion of its ow
 | 5 | Expression defaults fill added fields: the converter calls the default the constructor calls, per upgraded record, after the carried fields; a rename is two upgrades, one-step refused. | A rename, a unit change and a combination cell (hand-computed per record, both backends); step 1 then step 2 ends with the values under the new name; the one-step pair is refused with a reason that names the step-1 default; a constant default still takes the direct write. |
 | 6 | References re-pointed; cross-store refused. | A reference cell reads the same record after the upgrade; the cross-store cell refuses. |
 | 7 | Every save writes the version-2 sidecar; a binary build prints its description; `loft layout upgrade <store>`: new file beside, atomic swap, old kept. | A refusal and an interrupted run both leave the old store byte-identical. |
-| 8 | **Callers**: `store_load` offering the upgrade, the whole-program swap carrying the world through the converter instead of the JSON snapshot ([`08-live-build-swap.md`](18-engine-host/08-live-build-swap.md) loses references, hashes and sorted collections there), and the wasm build. | The swap scenarios keep a world with a hash and a reference; the converter builds for `wasm32` and passes the matrix there. |
+| 8 | **Callers**: `store_load` converting an older layout in memory (open question 3), the whole-program swap carrying the world through the converter instead of the JSON snapshot ([`08-live-build-swap.md`](18-engine-host/08-live-build-swap.md) loses references, hashes and sorted collections there), and the wasm build. | The swap scenarios keep a world with a hash and a reference; the converter builds for `wasm32` and passes the matrix there. |
+
+| 9 | **Skipped versions.** The sidecar records the writing release; a store from the previous release takes the one-step conversion, an older one the programmer's `upgrade(from, old, item)` routine after it; see § Skipped versions. | A v1 store opened by v3, where v2 moved a field and v3 dropped it, arrives with the moved value through the routine, both backends, in the program and in a separate upgrade module; without a routine the drop is refused, naming 1.x; a store below the minimum is refused naming the bridge release, byte for byte untouched. |
 
 Steps 0 and 1 settle the design: if the two producers cannot agree, or the
 description-driven reader cannot reproduce `copy_claims`, the plan changes before step 2.
+
+## Skipped versions
+
+A conversion pairs two layouts: the one recorded beside the store and the program's own.  That
+is enough for a live swap, which always comes from the build just before, and for a store
+saved by the previous release.  It is not enough for a user who skips releases.
+
+```loft
+// v1
+struct Item { id: integer, label: text }
+// v2 moves the value: count is computed from label
+struct Item { id: integer, label: text, count: integer = len($.label) }
+// v3 drops label, which v2 made safe to drop
+struct Item { id: integer, count: integer }
+```
+
+A v1 store opened by v3 sees `label` removed and `count` added, with v3's default: the moved
+value is lost, and nothing says so.  The one-step rename refusal catches this only when the
+two fields share a type.  This is data safety, not a swap question, so it outranks the
+browser swap.
+
+**The design** (owner, 2026-10-21):
+
+- **The version is the identity.**  The sidecar records the release that wrote the store
+  (`loft.toml`'s `version`) beside its layout.  No history of old layouts is kept: the store
+  carries its own layout, and the version says which steps it still needs.
+- **The normal case is one step.**  A store from the previous release converts by the
+  upgrade map with the new defaults, as steps 1–8 build it: the fast path, in the program.
+- **Older stores go through ONE loft routine** the programmer writes, which takes the version
+  the store came from and runs the steps that version still needs.  It is called after the
+  fields carried by name are in place.  It reads only the old fields it declares, as a small
+  struct the converter fills by name from the stored record, through the layout the file
+  records — typed, so it compiles like any other code, natively too:
+
+  ```loft
+  struct Item { id: integer, count: integer }       // release 3.0
+
+  struct ItemBefore2 { label: text }                // the old fields the routine reads
+  fn upgrade(from: version, old: ItemBefore2, item: Item) {
+    if from < "2.0" { item.count = len(old.label) } // 2.0 moved label into count
+  }
+  ```
+
+  A field the routine declares that the stored record lacks refuses the load with its name.
+- **Where it lives is the programmer's choice.**  In the program, it ships with every build;
+  in a separate upgrade module, the normal build carries no code for a one-time conversion,
+  and the module is used to bring old stores forward (`loft layout upgrade`).
+- **A store older than the previous release with no routine for it** converts directly only
+  when nothing is dropped; a conversion that would drop a field is refused, naming the
+  version that wrote it.
+- **The oldest accepted version** is the programmer's to set in `loft.toml`, never raised
+  automatically; raising it is how branches of the routine are retired.  A store older than
+  it is refused, and the refusal names the release that bridges the gap: raising the minimum
+  records the last release that still read the older versions, so the message reads, for a
+  store written by 1.4 into a program whose minimum is 3.0: *this store was written by 1.4;
+  open it once with 2.3 (or any release from 1.4 to 2.3), then with this one*.  A refused
+  store is left byte for byte as it was.
 
 ## Acceptance — the setup the claim is made in
 
@@ -287,11 +396,18 @@ runs a full game or a long simulation, which is its goal.  The converter builds 
    field's default, which may be an expression over `$`, fills it on upgrade.
 2. **Does `loft layout check` exit non-zero** on a refused upgrade, so a project's CI gates on
    it?
-3. **Upgrade on load:** offered automatically by `store_load`, or only through
-   `loft layout upgrade`?
-4. **Which structures count as long-lived** and publish a description: saved stores and the
-   swap world for certain; also every global store of a running program, so a hot reload of a
-   changed struct can upgrade it in place?
+3. ~~Upgrade on load~~ — answered (owner, 2026-10-21): `store_load` converts an older layout
+   IN MEMORY.  The call answers true with every added field filled by its default, the file
+   on disk keeps its old layout until the program writes it, and a change the upgrade map
+   refuses still answers false with the reason.  `store_persist_bind` on an older file
+   upgrades the FILE in place (owner, 2026-10-21): the converted store is written beside it
+   and swapped in, the original is kept as `<path>.old`, and only then is the store bound —
+   after every added field holds its default, so no file on disk ever lacks one.  Upgrading
+   the same file again replaces that `.old`: one upgrade back stays on disk.
+4. ~~Which structures count as long-lived~~ — answered (owner, 2026-10-21): saved stores, the
+   swap world, and every global store of a running program.  A hot reload of a changed struct
+   converts the live data in place with the same converter; a change the map refuses keeps
+   the old program running and says why.
 
 ## Cross-arc dependencies
 

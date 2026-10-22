@@ -384,15 +384,11 @@ fn main() {
     );
 }
 
-/// Production: a clean run produces no runtime-event log entries.
-/// Phase 4e.1 — format-string interpolation MUST NEVER halt, log, or
-/// warn even when the interpolated expression is undefended.  Format
-/// strings are the developer's debugging surface (per C66 + chat
-/// 2026-05-11): the `println("{x}")` you reach for to inspect a bug
-/// must not itself become the next bug.  Every fault-prone op inside
-/// `{...}` is auto-swapped to its Nullable peer at parse time.
+/// `@FR-F-FaultSafe` × `@FR-E-Report` — a fault inside a format-string hole renders `null`,
+/// never halts, and is LOGGED like the same fault anywhere else (owner, 2026-10-21; until then
+/// the hole swapped every fault-prone op to its silent peer and logged nothing).
 #[test]
-fn prod_format_string_div_by_zero_does_not_log() {
+fn prod_format_string_div_by_zero_logs() {
     let source = "\
 fn main() {
   z = 0;
@@ -404,15 +400,16 @@ fn main() {
     assert_eq!(code, Some(0), "format-string div should not halt");
     assert!(stdout.contains("a=null"), "got {stdout:?}");
     assert!(stdout.contains("b=null"), "got {stdout:?}");
-    assert!(
-        !log.contains("[divide_by_zero]"),
-        "format-string div MUST NOT log; got {log:?}"
+    assert_eq!(
+        log.matches("[divide_by_zero]").count(),
+        2,
+        "each format-string fault logs once; got {log:?}"
     );
 }
 
-/// Phase 4e.1 — format-string vector OOB must not halt or log.
+/// The same for an index out of range inside a hole.
 #[test]
-fn prod_format_string_vector_oob_does_not_log() {
+fn prod_format_string_vector_oob_logs() {
     let source = "\
 fn main() {
   v = [10, 20, 30];
@@ -423,11 +420,99 @@ fn main() {
     assert_eq!(code, Some(0), "format-string OOB should not halt");
     assert!(stdout.contains("v[999]=null"), "got {stdout:?}");
     assert!(
-        !log.contains("[index_out_of_bounds]"),
-        "format-string OOB MUST NOT log; got {log:?}"
+        log.contains("[index_out_of_bounds]"),
+        "format-string OOB logs; got {log:?}"
     );
 }
 
+/// `@FR-E-Report` (owner, 2026-10-21) — an uncomputable divide, modulo or index logs one Warn
+/// line wherever it sits: an assignment, a `%`, a callee's `return` (a leaf the IR inlines), a
+/// float division, a vector and a text index, and each of those inside a format hole.  A site
+/// the program guards (`?? d`) logs nothing.  Both backends name the statement's line: native
+/// named the running function's for all of them, so the per-site rate limit counted every fault
+/// of `main` as one site and stopped logging after five.
+#[test]
+fn every_unguarded_fault_logs_on_both_backends() {
+    let source = "\
+fn half(n: integer, d: integer) -> integer {
+  return n / d;
+}
+
+fn main() {
+  z = 0;
+  v = [1, 2];
+  t = \"ab\";
+  a = 10 / z;
+  r = 7 % z;
+  h = half(9, z);
+  f = 1.0 / 0.0;
+  e = v[5];
+  c = t[8];
+  println(\"s {20 / z} {v[7]} {t[9]} {3 % z}\");
+  g = (30 / z) ?? 4;
+  k = v[6] ?? 0;
+  println(\"{a ?? -1} {r ?? -1} {h ?? -1} {f} {e ?? -1} {g} {k} {len(c)}\");
+}
+";
+    let mut legs = vec!["--interpret"];
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        legs.push("--native");
+    }
+    for leg in legs {
+        let (script_path, log_path) = setup_prod_run(&format!("every_fault{}", &leg[1..]), source);
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg(leg)
+            .arg(&script_path)
+            .env("LOFT_TIMEOUT", "120")
+            .current_dir(workspace_root())
+            .output()
+            .expect("invoke loft binary");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let log = fa::read_to_string(&log_path).unwrap_or_default();
+        let _ = fa::remove_dir_all(script_path.parent().unwrap());
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[{leg}] a fault never halts; log {log:?}"
+        );
+        assert!(
+            stdout.contains("s null null"),
+            "[{leg}] holes render null: {stdout:?}"
+        );
+        assert!(
+            stdout.contains("-1 -1 -1 inf -1 4 0 0"),
+            "[{leg}] values: {stdout:?}"
+        );
+        assert_eq!(
+            log.matches("[divide_by_zero]").count(),
+            6,
+            "[{leg}] divides: {log}"
+        );
+        assert_eq!(
+            log.matches("[index_out_of_bounds]").count(),
+            4,
+            "[{leg}] indexes: {log}"
+        );
+        let lines: Vec<String> = log
+            .lines()
+            .filter_map(|l| {
+                let at = l.split_whitespace().find(|w| w.contains(".loft:"))?;
+                Some(at.rsplit(':').next()?.to_string())
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            ["9", "10", "2", "12", "13", "14", "15", "15", "15", "15"],
+            "[{leg}] each fault at its own line: {log}"
+        );
+    }
+}
+
+/// Production: a clean run produces no runtime-event log entries.
 /// Guards against the production code emitting spurious log entries
 /// for normal program execution.
 #[test]

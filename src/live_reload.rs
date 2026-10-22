@@ -220,7 +220,7 @@ pub fn poll(state: &mut State) -> bool {
             host.files[i].last_content = content;
             let source = host.files[i].source;
             // A head that is gone is a removal or a re-signature; neither half-applies
-            // (`Disp-World`: the world only ever GROWS, and a signature is a call site's frame).
+            // (`@FR-Disp-World`: the world only ever GROWS, and a signature is a call site's frame).
             // The names it touches are refused whole; every other head is judged on its own.
             let mut refused: Vec<&str> = Vec::new();
             for (head, (name, _)) in &old_fns {
@@ -446,7 +446,7 @@ fn same_signature(data: &crate::data::Data, a: u32, b: u32) -> bool {
         && format!("{:?}", a.returned()) == format!("{:?}", b.returned())
 }
 
-/// `Disp-World` (@PLN162 step 14): a `fn` block whose head the file did not have before.
+/// `@FR-Disp-World` (@PLN162 step 14): a `fn` block whose head the file did not have before.
 ///
 /// Tier 0 used to skip it — *"nothing calls it yet"* — which is true of a new NAME and false
 /// of a new OVERLOAD: every site of the set is its caller, and the selection those sites

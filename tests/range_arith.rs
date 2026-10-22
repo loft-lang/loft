@@ -76,7 +76,10 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     ("n_c5_opt", [0, 0, 0, 0, 1, 0, 0, 0, 0, 0]),
     ("n_c5", [0, 0, 0, 0, 2, 0, 0, 0, 0, 0]),
     ("n_c6", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
-    ("n_c7", [0, 0, 0, 0, 2, 2, 0, 0, 0, 2]),
+    // c7: a boxed capture is not ranged, so all four steps stay checked — and since C80 the
+    // two format holes take the LOGGING form a statement takes (`op_mul_int`, not the silent
+    // nullable twin a `??` would guard), so the four are one form.
+    ("n_c7", [0, 0, 0, 0, 4, 4, 0, 0, 0, 0]),
     // c8: three declared ranges that leave codes spare — two signed byte/short aliases and
     // `limit(1000, 1100)`, whose range excludes zero.  Every step and every read after it is
     // PLAIN since C127; the one `wrapping_neg` is the negative literal in `y -= 1`.

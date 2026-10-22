@@ -236,6 +236,7 @@ pub fn rewrite_program(data: &mut Data) {
         return;
     }
     let trace = crate::keys::trace_bound_append();
+    let append = data.def_nr("OpAppendVector");
     for f in 0..data.definitions() {
         let def = data.def(f);
         if !matches!(def.def_type, DefType::Function)
@@ -243,6 +244,14 @@ pub fn rewrite_program(data: &mut Data) {
             || matches!(def.code(), Value::Null)
             || !def.name().starts_with("n_")
         {
+            continue;
+        }
+        // Most functions append no local at all: they keep their body, and the whole-body
+        // snapshot below is never taken (it was every user function's, on every compile).
+        if !def.code().any_node(&mut |n| {
+            matches!(n, Value::Call(d, a) if *d == append
+                && matches!(a.get(1).map(Value::unspan), Some(Value::Var(_))))
+        }) {
             continue;
         }
         let mut code = std::mem::replace(&mut data.definitions[f as usize].code, Value::Null);

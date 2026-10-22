@@ -325,27 +325,49 @@ fn write_store(name: &str, writer: &str) -> std::path::PathBuf {
     dir
 }
 
-/// An upgrade that must succeed: B reads `expect` on both backends.
+/// Run `b.loft` on both backends and require `expect` on stdout.
+#[track_caller]
+fn reads(name: &str, dir: &std::path::Path, expect: &str, when: &str) {
+    for mode in [&[][..], &["--native"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("b.loft");
+        let (code, out, err) = run_loft(dir, &args);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, expect),
+            "{name} {mode:?} {when}: the reader saw\n{out}\n{err}"
+        );
+    }
+}
+
+/// The store file and its sidecar, to compare before and after.
+fn store_bytes(dir: &std::path::Path) -> (Vec<u8>, Vec<u8>) {
+    (
+        loft::file_access::read(dir.join("a.store")).unwrap(),
+        loft::file_access::read(dir.join("a.store.dschema")).unwrap(),
+    )
+}
+
+/// An upgrade that must succeed: B reads `expect` on both backends — first from the OLD file,
+/// which its `store_load` converts in memory and leaves as it was, then from the file
+/// `loft layout upgrade` converted.
 #[track_caller]
 fn upgrades(name: &str, writer: &str, reader: &str, expect: &str) {
     let dir = write_store(name, writer);
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    let before = store_bytes(&dir);
+    reads(name, &dir, expect, "converting in memory");
+    assert!(
+        store_bytes(&dir) == before,
+        "{name}: a converting store_load changed the file"
+    );
     let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
     assert_eq!(code, 0, "{name}: the upgrade was refused:\n{out}\n{err}");
     assert!(
         loft::file_access::exists(dir.join("a.store.old")),
         "{name}: the old store is kept"
     );
-    for mode in [&[][..], &["--native"][..]] {
-        let mut args: Vec<&str> = mode.to_vec();
-        args.push("b.loft");
-        let (code, out, err) = run_loft(&dir, &args);
-        assert_eq!(
-            (code, out.as_str()),
-            (0, expect),
-            "{name} {mode:?}: the reader saw\n{out}\n{err}"
-        );
-    }
+    reads(name, &dir, expect, "after the upgrade");
     let _ = loft::file_access::remove_dir_all(&dir);
 }
 
@@ -354,20 +376,24 @@ fn upgrades(name: &str, writer: &str, reader: &str, expect: &str) {
 fn upgrade_refused(name: &str, writer: &str, reader: &str, reason: &str) {
     let dir = write_store(name, writer);
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
-    let before = (
-        loft::file_access::read(dir.join("a.store")).unwrap(),
-        loft::file_access::read(dir.join("a.store.dschema")).unwrap(),
-    );
+    let before = store_bytes(&dir);
+    // The reader's own `store_load` refuses it too, with the same reason.
+    for mode in [&[][..], &["--native"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert!(
+            code == 0 && out.starts_with("not loaded") && err.contains(reason),
+            "{name} {mode:?}: store_load must refuse with `{reason}` ({code}):\n{out}\n{err}"
+        );
+    }
     let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
     assert_eq!(code, 1, "{name}: expected a refusal:\n{out}\n{err}");
     assert!(
         err.contains(reason),
         "{name}: missing `{reason}` in:\n{err}"
     );
-    let after = (
-        loft::file_access::read(dir.join("a.store")).unwrap(),
-        loft::file_access::read(dir.join("a.store.dschema")).unwrap(),
-    );
+    let after = store_bytes(&dir);
     assert!(
         before == after,
         "{name}: a refused upgrade changed the store"
@@ -1075,4 +1101,816 @@ fn cell_expression_defaults_fill_hash_entries() {
         &reader,
         &format!("2\n{FILLED_INK}\n{FILLED_PEN}\n"),
     );
+}
+
+// @PLN196 step 8 — the loads that convert by themselves.
+
+const ITEM_V1: &str = "struct Item { id: integer, name: text }\n";
+const ITEM_V2: &str = "struct Item { id: integer, name: text, price: integer = 10, title: text = \"{$.id}: {$.name}\" }\n";
+const ITEM_V3: &str = "struct Item { id: integer, name: text, price: integer = 10, title: text = \"{$.id}: {$.name}\", stock: integer = $.price * 3 }\n";
+
+/// Version 1 binds `a.store` with four items, `id = 1..4`, `name = "n1".."n4"`.
+fn item_writer() -> String {
+    format!(
+        "{ITEM_V1}fn main() {{\n  h: hash<Item[id]> = [];\n  for i in 1..5 {{ h += [Item {{ id: i, name: \"n{{i}}\" }}]; }}\n  println(\"saved {{store_persist_bind(h, \\\"a.store\\\")}}\");\n}}\n"
+    )
+}
+
+/// `store_persist_bind` of an older file upgrades the FILE in place: the call answers true with
+/// every field filled (a constant, a format string over `$`, an expression over another
+/// default), the original is kept as `a.store.old`, and what the program writes afterwards is
+/// in the file.  A second upgrade replaces that `.old` with the file it upgraded, so one
+/// upgrade back stays on disk.  Interpreter for the first upgrade, native for the second.
+#[test]
+fn cell_bind_upgrades_the_file_in_place_and_keeps_one_old() {
+    let dir = write_store("bind_in_place", &item_writer());
+    let v1 = store_bytes(&dir);
+    let binder = |types: &str, show: &str| {
+        format!(
+            "{types}fn main() {{\n  h: hash<Item[id]> = [];\n  if !store_persist_bind(h, \"a.store\") {{ println(\"not bound\"); return; }}\n  for e in h {{ println({show}); }}\n  h += [Item {{ id: 9, name: \"late\" }}];\n}}\n"
+        )
+    };
+    loft::file_access::write(
+        dir.join("b.loft"),
+        binder(ITEM_V2, "\"{e.id} {e.price} [{e.title}]\""),
+    )
+    .unwrap();
+    let (code, out, err) = run_loft(&dir, &["b.loft"]);
+    assert_eq!(
+        (code, out.as_str()),
+        (
+            0,
+            "1 10 [1: n1]\n2 10 [2: n2]\n3 10 [3: n3]\n4 10 [4: n4]\n"
+        ),
+        "the first bind upgrades:\n{out}\n{err}"
+    );
+    let old = (
+        loft::file_access::read(dir.join("a.store.old")).unwrap(),
+        loft::file_access::read(dir.join("a.store.old.dschema")).unwrap(),
+    );
+    assert!(
+        old == v1,
+        "a.store.old is the version-1 file, byte for byte"
+    );
+    let v2 = store_bytes(&dir);
+    loft::file_access::write(
+        dir.join("c.loft"),
+        binder(ITEM_V3, "\"{e.id} {e.price} [{e.title}] {e.stock}\""),
+    )
+    .unwrap();
+    let (code, out, err) = run_loft(&dir, &["--native", "c.loft"]);
+    assert_eq!(
+        (code, out.as_str()),
+        (
+            0,
+            "1 10 [1: n1] 30\n2 10 [2: n2] 30\n3 10 [3: n3] 30\n4 10 [4: n4] 30\n9 10 [9: late] 30\n"
+        ),
+        "the second bind upgrades the first one's file, with the record it added:\n{out}\n{err}"
+    );
+    let old = (
+        loft::file_access::read(dir.join("a.store.old")).unwrap(),
+        loft::file_access::read(dir.join("a.store.old.dschema")).unwrap(),
+    );
+    assert!(old == v2, "a.store.old is now the version-2 file: one .old");
+    for gone in [
+        "a.store.upgrade",
+        "a.store.upgrade.dschema",
+        "a.store.old.old",
+    ] {
+        assert!(
+            !loft::file_access::exists(dir.join(gone)),
+            "{gone}: no half-swapped file and no second .old"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Two converting loads in one program: each fills its own records, and the second starts
+/// with nothing left owed from the first.
+#[test]
+fn cell_two_converting_loads_in_one_program() {
+    let dir = write_store("two_loads", &item_writer());
+    let reader = format!(
+        "{ITEM_V2}fn main() {{\n  a: hash<Item[id]> = [];\n  b: hash<Item[id]> = [];\n  if !store_load(a, \"a.store\") {{ println(\"not loaded\"); return; }}\n  a[2].price = 77;\n  if !store_load(b, \"a.store\") {{ println(\"not loaded\"); return; }}\n  println(\"{{a[2].price}} [{{a[3].title}}] {{b[2].price}} [{{b[4].title}}] {{len(a)}} {{len(b)}}\");\n}}\n"
+    );
+    loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    let before = store_bytes(&dir);
+    reads(
+        "two_loads",
+        &dir,
+        "77 [3: n3] 10 [4: n4] 4 4\n",
+        "two loads",
+    );
+    assert!(
+        store_bytes(&dir) == before,
+        "store_load leaves the file as it was"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// The other whole-image loaders convert an older layout as `store_load` does: the untrusted
+/// local loader, the trusted URL loader and the pinned URL loader (whose pin is the OLD file's
+/// hash, checked before anything is converted).  A `file://` URL keeps the cell off the
+/// network.  A wrong pin still refuses, before any conversion.
+#[test]
+fn cell_every_whole_image_loader_converts() {
+    let dir = write_store("other_loaders", &item_writer());
+    let before = store_bytes(&dir);
+    let url = format!("file://{}", dir.join("a.store").display());
+    let pin = loft::integrity::sha256_hex(&before.0);
+    let show = "  println(\"{h[1].price} [{h[2].title}] {len(h)}\");\n";
+    for (name, call) in [
+        (
+            "untrusted",
+            "store_load_untrusted(h, \"a.store\")".to_string(),
+        ),
+        (
+            "url_trusted",
+            format!("store_load_url_trusted(h, \"{url}\")"),
+        ),
+        (
+            "url_pinned",
+            format!("store_load_url(h, \"{url}\", \"{pin}\")"),
+        ),
+    ] {
+        let reader = format!(
+            "{ITEM_V2}fn main() {{\n  h: hash<Item[id]> = [];\n  if !{call} {{ println(\"not loaded\"); return; }}\n{show}}}\n"
+        );
+        loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+        reads(name, &dir, "10 [2: n2] 4\n", name);
+        assert!(
+            store_bytes(&dir) == before,
+            "{name}: the file is left as it was"
+        );
+    }
+    let wrong = "0".repeat(64);
+    let reader = format!(
+        "{ITEM_V2}fn main() {{\n  h: hash<Item[id]> = [];\n  if !store_load_url(h, \"{url}\", \"{wrong}\") {{ println(\"not loaded {{len(h)}}\"); return; }}\n{show}}}\n"
+    );
+    loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    reads("url_wrong_pin", &dir, "not loaded 0\n", "a wrong pin");
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// The live build swap's restore (@PLN196 step 8, open question 4): `swap_world` takes the
+/// previous build's world from `LOFT_RESUME` as a store image and converts it into this
+/// build's types.  The world holds a hash and a REFERENCE into it, which survive the load into
+/// another slot (`@FR-L-Ref-Slot`); both structs grew a field whose default is computed from
+/// the record (`size = len($.name)` per item, `bonus = len($.items) * 10` on the world), filled
+/// by the drain the parser puts after `swap_world`.  Both backends.  The writer binds its
+/// world, which writes the live bytes and the slot exactly as the swap's snapshot does.
+#[test]
+fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
+    let writer = "struct Item { id: integer, name: text }\nstruct World { items: hash<Item[id]>, best: reference<Item>? }\nfn main() {\n  w = World {};\n  w.items += [Item { id: 1, name: \"a\" }, Item { id: 2, name: \"bb\" }, Item { id: 3, name: \"ccc\" }];\n  w.best = w.items[2];\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let reader = "use engine_host;\nstruct Item { id: integer, name: text, size: integer = len($.name) }\nstruct World { items: hash<Item[id]>, best: reference<Item>?, bonus: integer = len($.items) * 10 }\nfn main() {\n  w = World {};\n  r = engine_host::swap_world(w);\n  println(\"{r} {len(w.items)} {w.best.id} {w.best.name} {w.best.size} {w.bonus} {w.items[3].size}\");\n}\n";
+    let dir = write_store("swap_world_restore", writer);
+    loft::file_access::write(dir.join("b.loft"), reader).unwrap();
+    let lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("lib");
+    for mode in ["--interpret", "--native"] {
+        let out = loft::platform::process::harness_command(loft_bin())
+            .args([mode, "--lib"])
+            .arg(&lib)
+            .arg("b.loft")
+            .current_dir(&dir)
+            .env("LOFT_TIMEOUT", "120")
+            .env("LOFT_RESUME", dir.join("a.store"))
+            .output()
+            .expect("loft runs");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            (out.status.code(), stdout.as_ref()),
+            (Some(0), "true 3 2 bb 2 30 3\n"),
+            "{mode}: the restored world:\n{stdout}\n{stderr}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// A live rebuild decides at COMPILE time whether the next instance can take over the running
+/// world (owner, 2026-10-21): the build is checked against the world's layout
+/// (`LOFT_CHECK_WORLD`, written by `live_rebuild::spawn_build`), so a refused change fails the
+/// BUILD and the swap is never offered.  An unchanged world checks silently, a grown one names
+/// what converts, a refused one fails with the reason — under `--check --native` too, before
+/// any code is generated.
+#[test]
+fn cell_a_rebuild_checks_the_running_world_before_it_compiles() {
+    let writer = "struct W { events: integer, name: text }\nfn main() {\n  w = W { events: 3, name: \"a\" };\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let dir = write_store("rebuild_check", writer);
+    let check = |name: &str, src: &str, native: bool| -> (i32, String, String) {
+        loft::file_access::write(dir.join(format!("{name}.loft")), src).unwrap();
+        let mut args = vec!["--check"];
+        if native {
+            args.push("--native");
+        }
+        let file = format!("{name}.loft");
+        args.push(&file);
+        let out = loft::platform::process::harness_command(loft_bin())
+            .args(&args)
+            .current_dir(&dir)
+            .env("LOFT_TIMEOUT", "120")
+            .env("LOFT_CHECK_WORLD", dir.join("a.store.dschema"))
+            .output()
+            .expect("loft runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    // Every version builds the world without naming `name`, whose type is what changes.
+    let main = "fn main() {\n  w = W { events: 0 };\n  println(\"{w.events}\");\n}\n";
+    let (code, out, err) = check(
+        "same",
+        &format!("struct W {{ events: integer, name: text }}\n{main}"),
+        false,
+    );
+    assert_eq!((code, out.as_str()), (0, "ok\n"), "unchanged:\n{err}");
+    assert!(
+        !err.contains("loft-live"),
+        "an unchanged world checks silently:\n{err}"
+    );
+    let (code, out, err) = check(
+        "grown",
+        &format!(
+            "struct W {{ events: integer, name: text, bonus: integer = $.events * 10 }}\n{main}"
+        ),
+        false,
+    );
+    assert_eq!((code, out.as_str()), (0, "ok\n"), "grown:\n{err}");
+    assert!(
+        err.contains("the running world converts to this build") && err.contains("bonus"),
+        "a grown world names what converts:\n{err}"
+    );
+    for native in [false, true] {
+        let (code, out, err) = check(
+            "refused",
+            &format!("struct W {{ events: integer, name: integer }}\n{main}"),
+            native,
+        );
+        assert!(
+            code == 1
+                && out.is_empty()
+                && err.contains("this build cannot take over the running world")
+                && err.contains("name"),
+            "native={native}: a refused world fails the build with the reason ({code}):\n{out}\n{err}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+// ── Step 9: skipped versions ─────────────────────────────────────────────────────────────────
+//
+// The sidecar records the release that wrote the store (its `loft.toml` version).  A store
+// older than the reading program goes through the `upgrade(from, old, item)` routines it wrote,
+// after the fields carried by name; `data_compatible_with` is the oldest release it reads, and
+// `data_bridge` the release a refusal names.  Each cell writes the store under one manifest and
+// reads it under the next, in the same directory.  Rules: @FR-L-Release, @FR-L-Upgrade-Routine,
+// @FR-L-Upgrade-Old (formal/layout.md § Releases a store skipped).
+
+/// The manifest of a release: `version`, plus any extra `[package]` lines.
+fn manifest(dir: &std::path::Path, version: &str, extra: &str) {
+    loft::file_access::write(
+        dir.join("loft.toml"),
+        format!("[package]\nname = \"cell\"\nversion = \"{version}\"\n{extra}"),
+    )
+    .unwrap();
+}
+
+/// Write the store with `writer` as release `version` (none when empty).
+fn write_store_as(name: &str, version: &str, writer: &str) -> std::path::PathBuf {
+    let dir = cell_dir(name);
+    if !version.is_empty() {
+        manifest(&dir, version, "");
+    }
+    loft::file_access::write(dir.join("a.loft"), writer).unwrap();
+    let (code, out, err) = run_loft(&dir, &["a.loft"]);
+    assert!(
+        code == 0 && out.contains("saved true"),
+        "{name}: the writer failed ({code}):\n{out}\n{err}"
+    );
+    dir
+}
+
+/// v1: three items `id = 10, 20, 30`, `label = "x", "yyyy", "zzzzzzz"`, in a root that holds
+/// `tag = "ab"`.
+const V1: &str =
+    "struct Item { id: integer, label: text }\nstruct S { tag: text, items: vector<Item> }\n";
+
+fn writer_v1(types: &str) -> String {
+    format!(
+        "{types}fn main() {{\n  s = S {{ tag: \"ab\" }};\n  s.items += [Item {{ id: 10, label: \"x\" }}];\n  s.items += [Item {{ id: 20, label: \"yyyy\" }}];\n  s.items += [Item {{ id: 30, label: \"zzzzzzz\" }}];\n  println(\"saved {{store_persist_copy(s, \\\"a.store\\\")}}\");\n}}\n"
+    )
+}
+
+/// v3: `label` and `tag` are gone, `count` and `size` arrived.  v2 (never run here) computed
+/// `count = len($.label)`; a v1 store skipped it.
+const V3: &str = "struct Item { id: integer, count: integer }\nstruct S { size: integer, items: vector<Item> }\n";
+
+/// The routines a v3 program writes: one per converted type, an overload set.
+const V3_ROUTINES: &str = "struct ItemBefore2 { label: text }\nstruct SBefore2 { tag: text }\nfn upgrade(from: Release, old: ItemBefore2, item: Item) {\n  if from < \"2.0\" { item.count = len(old.label) }\n}\nfn upgrade(from: Release, old: SBefore2, item: S) {\n  if from < \"2.0\" { item.size = len(old.tag) * 100 }\n}\n";
+
+fn reader_s(types: &str) -> String {
+    format!(
+        "{types}fn main() {{\n  s = S {{}};\n  if !store_load(s, \"a.store\") {{ println(\"not loaded\"); return; }}\n  t = \"{{s.size}}\";\n  for i in s.items {{ t += \" {{i.id}}:{{i.count}}\"; }}\n  println(t);\n}}\n"
+    )
+}
+
+/// Cases 1 and 8: a v1 store opened by v3 arrives with the value v2 would have moved, through
+/// the routine — on every element and on the root, read by `store_load` from the old file and
+/// again after `loft layout upgrade`, both backends.
+#[test]
+fn cell_a_skipped_version_runs_the_routine() {
+    let dir = write_store_as("skip_routine", "1.0", &writer_v1(V1));
+    manifest(&dir, "3.0", "");
+    loft::file_access::write(dir.join("b.loft"), reader_s(&format!("{V3}{V3_ROUTINES}"))).unwrap();
+    let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
+    assert!(
+        side.contains("\nversion=1.0\n"),
+        "the writer's release is recorded:\n{side}"
+    );
+    let before = store_bytes(&dir);
+    // len("ab") * 100 = 200; len("x"), len("yyyy"), len("zzzzzzz") = 1, 4, 7.
+    reads(
+        "skip_routine",
+        &dir,
+        "200 10:1 20:4 30:7\n",
+        "converting in memory",
+    );
+    assert!(
+        store_bytes(&dir) == before,
+        "a converting store_load changed the file"
+    );
+    let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
+    assert_eq!(code, 0, "the upgrade was refused:\n{out}\n{err}");
+    let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
+    assert!(
+        side.contains("\nversion=3.0\n"),
+        "the upgraded store records 3.0:\n{side}"
+    );
+    reads(
+        "skip_routine",
+        &dir,
+        "200 10:1 20:4 30:7\n",
+        "after the upgrade",
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 2: the same change with no routine is refused, naming the release that wrote the store,
+/// and the store is left as it was.
+#[test]
+fn cell_a_skipped_version_without_a_routine_is_refused() {
+    let dir = write_store_as("skip_refused", "1.0", &writer_v1(V1));
+    manifest(&dir, "3.0", "");
+    loft::file_access::write(dir.join("b.loft"), reader_s(V3)).unwrap();
+    let before = store_bytes(&dir);
+    for mode in [&[][..], &["--native"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert!(
+            code == 0
+                && out == "not loaded\n"
+                && err.contains("the store was written by 1.0")
+                && err.contains("looks like a rename")
+                && err.contains("fn upgrade(from: Release"),
+            "{mode:?}: ({code})\n{out}\n{err}"
+        );
+    }
+    let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
+    assert!(
+        code == 1 && err.contains("the store was written by 1.0"),
+        "({code})\n{out}\n{err}"
+    );
+    assert!(store_bytes(&dir) == before, "a refusal changed the store");
+    assert!(
+        !loft::file_access::exists(dir.join("a.store.old")),
+        "nothing was swapped"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 3: a v2 store already holds the moved value; the routine runs with `from = 2.0`, its
+/// branch for older stores is skipped, and the stored counts (v2's `len * 100`) arrive.
+#[test]
+fn cell_a_routine_skips_the_steps_a_store_already_took() {
+    let v2 = "struct Item { id: integer, label: text, count: integer = len($.label) * 100 }\nstruct S { tag: text, size: integer = 5, items: vector<Item> }\n";
+    let dir = write_store_as("skip_v2", "2.0", &writer_v1(v2));
+    manifest(&dir, "3.0", "");
+    loft::file_access::write(dir.join("b.loft"), reader_s(&format!("{V3}{V3_ROUTINES}"))).unwrap();
+    reads("skip_v2", &dir, "5 10:100 20:400 30:700\n", "from 2.0");
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 9: a store a LATER release wrote is not older than this program, so no routine runs on
+/// it (this one would add 1 to every count).
+#[test]
+fn cell_a_newer_store_runs_no_routine() {
+    let v2 = "struct Item { id: integer, label: text, count: integer = len($.label) * 100 }\nstruct S { tag: text, size: integer = 5, items: vector<Item> }\n";
+    let dir = write_store_as("skip_newer", "4.0", &writer_v1(v2));
+    manifest(&dir, "3.0", "");
+    let routine = "struct ItemOld { label: text }\nfn upgrade(from: Release, old: ItemOld, item: Item) {\n  item.count += 1;\n}\n";
+    loft::file_access::write(dir.join("b.loft"), reader_s(&format!("{V3}{routine}"))).unwrap();
+    reads("skip_newer", &dir, "5 10:100 20:400 30:700\n", "from 4.0");
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 6: a field the routine's `old` declares that the stored record lacks takes the value a
+/// constructor gives an omitted field — `""` for a text — never another field's value, so a
+/// routine tells the releases apart by `from`.
+#[test]
+fn cell_a_routine_field_the_store_lacks_is_absent() {
+    let dir = write_store_as("skip_absent", "1.0", &writer_v1(V1));
+    manifest(&dir, "3.0", "");
+    let routine = "struct ItemOld { label: text, note: text }\nfn upgrade(from: Release, old: ItemOld, item: Item) {\n  item.count = len(old.label) + len(old.note) * 1000;\n}\nfn upgrade(from: Release, old: ItemOld, item: S) { item.size = 9 }\n";
+    // `ItemOld` reads `label` from a stored `S` too: S has no `label`, so nothing there.
+    let types = V3.to_string();
+    loft::file_access::write(dir.join("b.loft"), reader_s(&format!("{types}{routine}"))).unwrap();
+    reads(
+        "skip_absent",
+        &dir,
+        "9 10:1 20:4 30:7\n",
+        "absent old field",
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 7: the routine lives in a separate upgrade module, so the program's normal build
+/// carries no code for it: `loft layout upgrade up.loft` brings the store forward once, and the
+/// program, which has no routine, then reads it as its own.
+#[test]
+fn cell_a_routine_in_a_separate_upgrade_module() {
+    let dir = write_store_as("skip_module", "1.0", &writer_v1(V1));
+    manifest(&dir, "3.0", "");
+    loft::file_access::write(dir.join("b.loft"), reader_s(V3)).unwrap();
+    loft::file_access::write(
+        dir.join("up.loft"),
+        format!("{V3}{V3_ROUTINES}fn main() {{}}\n"),
+    )
+    .unwrap();
+    let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "up.loft", "a.store"]);
+    assert_eq!(code, 0, "the upgrade module was refused:\n{out}\n{err}");
+    reads(
+        "skip_module",
+        &dir,
+        "200 10:1 20:4 30:7\n",
+        "after the upgrade module ran",
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 4: a store older than the oldest release the program reads is refused naming the
+/// release that bridges the gap — whether or not its layout changed — and is left byte for
+/// byte as it was.
+#[test]
+fn cell_a_store_below_the_oldest_release_is_refused() {
+    for (cell, reader_types) in [("below_same", V1), ("below_changed", V3)] {
+        let dir = write_store_as(cell, "1.4", &writer_v1(V1));
+        manifest(
+            &dir,
+            "3.0",
+            "data_compatible_with = \"2.0\"\ndata_bridge = \"2.3\"\n",
+        );
+        let body = "  println(\"{len(s.items)}\");\n";
+        loft::file_access::write(
+            dir.join("b.loft"),
+            format!(
+                "{reader_types}{}fn main() {{\n  s = S {{}};\n  if !store_load(s, \"a.store\") {{ println(\"not loaded\"); return; }}\n{body}}}\n",
+                if reader_types == V3 { V3_ROUTINES } else { "" }
+            ),
+        )
+        .unwrap();
+        let before = store_bytes(&dir);
+        let reason = "this store was written by 1.4, and this program reads stores from 2.0 on; open it once with 2.3, then with this one";
+        for mode in [&[][..], &["--native"][..]] {
+            let mut args: Vec<&str> = mode.to_vec();
+            args.push("b.loft");
+            let (code, out, err) = run_loft(&dir, &args);
+            assert!(
+                code == 0 && out == "not loaded\n" && err.contains(reason),
+                "{cell} {mode:?}: ({code})\n{out}\n{err}"
+            );
+        }
+        let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
+        assert!(
+            code == 1 && err.contains(reason),
+            "{cell}: ({code})\n{out}\n{err}"
+        );
+        assert!(
+            store_bytes(&dir) == before,
+            "{cell}: a refusal changed the store"
+        );
+        assert!(
+            !loft::file_access::exists(dir.join("a.store.old")),
+            "{cell}: nothing swapped"
+        );
+        let _ = loft::file_access::remove_dir_all(&dir);
+    }
+}
+
+/// Case 5: a store that records no release predates the recording and is read, as a sidecar
+/// without a `schema=` line is — an existing store is never newly refused by a floor.
+#[test]
+fn cell_a_store_without_a_recorded_release_passes_the_floor() {
+    let dir = write_store_as("below_unrecorded", "", &writer_v1(V1));
+    let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
+    assert!(
+        !side.contains("version="),
+        "no manifest, no release:\n{side}"
+    );
+    manifest(&dir, "3.0", "data_compatible_with = \"2.0\"\n");
+    loft::file_access::write(
+        dir.join("b.loft"),
+        format!("{V1}fn main() {{\n  s = S {{}};\n  if !store_load(s, \"a.store\") {{ println(\"not loaded\"); return; }}\n  println(\"{{len(s.items)}} {{s.tag}}\");\n}}\n"),
+    )
+    .unwrap();
+    reads("below_unrecorded", &dir, "3 ab\n", "unrecorded release");
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 10: `Release` orders releases by number and compares against the text of one.
+#[test]
+fn version_orders_releases_by_number() {
+    let dir = cell_dir("version_order");
+    loft::file_access::write(
+        dir.join("b.loft"),
+        "fn main() {\n  a = Release { major: 10 };\n  b = Release { major: 9, minor: 2, patch: 7 };\n  println(\"{a > b} {a < \\\"9.0\\\"} {b < \\\"9.10\\\"} {a >= \\\"10\\\"} {b}\");\n}\n",
+    )
+    .unwrap();
+    reads("version_order", &dir, "true false true true 9.2.7\n", "");
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// A conversion that stops part way — here on a duplicate under the new key, after the root
+/// already owed `b` its computed default — leaves nothing owed: the drain after the refused
+/// `store_load` must not fill a record of the store the conversion released.  Before, both
+/// backends wrote into freed memory and died at exit (`unaligned tcache chunk detected`).
+#[test]
+fn cell_a_conversion_refused_part_way_leaves_nothing_owed() {
+    let writer = "struct T { k: integer, n: text }\nstruct W { a: integer, h: hash<T[k]> }\nfn main() {\n  w = W { a: 21 };\n  for i in 0..4 { w.h += [T { k: i + 1, n: \"n{i % 2}\" }]; }\n  println(\"saved {store_persist_copy(w, \\\"a.store\\\")}\");\n}\n";
+    let dir = write_store("refused_part_way", writer);
+    loft::file_access::write(
+        dir.join("b.loft"),
+        "struct T { k: integer, n: text, m: integer = $.k * 1000 }\nstruct W { a: integer, b: integer = $.a * 2, h: hash<T[n]> }\nfn main() {\n  w = W {};\n  ok = store_load(w, \"a.store\");\n  println(\"ok={ok} a={w.a} b={w.b} len={len(w.h)}\");\n}\n",
+    )
+    .unwrap();
+    for mode in [&[][..], &["--native"][..]] {
+        let mut args: Vec<&str> = mode.to_vec();
+        args.push("b.loft");
+        let (code, out, err) = run_loft(&dir, &args);
+        assert!(
+            code == 0
+                && out == "ok=false a=0 b=0 len=0\n"
+                && err.contains("share the key [\"n0\"]")
+                && !err.contains("tcache"),
+            "{mode:?}: ({code})\n{out}\n{err}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// The in-process case: a live rebuild checks the next build against the running world, whose
+/// sidecar records the EXACT release of the instance that runs it.  The same decision as a
+/// load: built as a later release with a routine, the world converts; without one the drop and
+/// the add are refused naming that release; rebuilt as the SAME release (the edit loop) the
+/// routine does not run, and the one-step rule stands.  `--check` on both backends.
+#[test]
+fn cell_a_rebuild_decides_the_routine_by_the_worlds_release() {
+    let writer = "struct W { events: integer, name: text }\nfn main() {\n  w = W { events: 3, name: \"abcd\" };\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let dir = write_store_as("rebuild_release", "1.0", writer);
+    let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
+    assert!(
+        side.contains("\nversion=1.0\n"),
+        "the world records its release:\n{side}"
+    );
+    let check = |version: &str, src: &str, native: bool| -> (i32, String) {
+        manifest(&dir, version, "");
+        loft::file_access::write(dir.join("next.loft"), src).unwrap();
+        let mut args = vec!["--check"];
+        if native {
+            args.push("--native");
+        }
+        args.push("next.loft");
+        let out = loft::platform::process::harness_command(loft_bin())
+            .args(&args)
+            .current_dir(&dir)
+            .env("LOFT_TIMEOUT", "120")
+            .env("LOFT_CHECK_WORLD", dir.join("a.store.dschema"))
+            .output()
+            .expect("loft runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let types = "struct W { events: integer, label: integer }\n";
+    let routine = "struct WOld { name: text }\nfn upgrade(from: Release, old: WOld, item: W) { item.label = len(old.name) }\n";
+    let main = "fn main() {\n  w = W { events: 0 };\n  println(\"{w.events}\");\n}\n";
+    for native in [false, true] {
+        let (code, err) = check("2.0", &format!("{types}{routine}{main}"), native);
+        assert!(
+            code == 0 && err.contains("the running world converts to this build"),
+            "native={native}: a later release with a routine takes over ({code}):\n{err}"
+        );
+        let (code, err) = check("2.0", &format!("{types}{main}"), native);
+        assert!(
+            code == 1
+                && err.contains("the store was written by 1.0")
+                && err.contains("looks like a rename"),
+            "native={native}: without a routine the build is refused ({code}):\n{err}"
+        );
+        let (code, err) = check("1.0", &format!("{types}{routine}{main}"), native);
+        assert!(
+            code == 1 && err.contains("looks like a rename") && !err.contains("written by"),
+            "native={native}: the same release keeps the one-step rule ({code}):\n{err}"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+// ── Step 9: the baseline records where a computed field's value comes from ─────────────────
+//
+// `loft layout accept` writes, beside the layout, the stored fields each computed field's
+// default reads and the release that started computing it (`@FR-L-Upgrade-Source`).  A later
+// release that drops one of them is refused by `loft layout check` — at the edit, before any
+// store meets it — unless an `upgrade` routine for the struct or a floor at that release says
+// what happens to older stores.
+
+/// `loft layout <sub> prog.loft` in `dir` as release `version` with extra manifest lines.
+fn layout_as(
+    dir: &std::path::Path,
+    sub: &str,
+    version: &str,
+    extra: &str,
+    src: &str,
+) -> (i32, String) {
+    manifest(dir, version, extra);
+    loft::file_access::write(dir.join("prog.loft"), src).unwrap();
+    let (code, out, err) = run_loft(dir, &["layout", sub, "prog.loft"]);
+    (code, format!("{out}{err}"))
+}
+
+const SRC_V2: &str = "struct Inner { label: text, size: integer }\nstruct Item { id: integer, note: text, inner: Inner, count: integer = len($.inner.label), tag: integer = len($.note) }\nfn main() {}\n";
+const SRC_V3: &str = "struct Inner { size: integer }\nstruct Item { id: integer, note: text, inner: Inner, count: integer, tag: integer }\nfn main() {}\n";
+
+/// Cases 2 and 7: the sources are recorded, and a drop across records is refused naming the
+/// dropped field, the computed one and the release; the in-record case (`note`, cell below)
+/// is the same check.
+#[test]
+fn layout_check_refuses_a_dropped_source() {
+    let dir = cell_dir("src_cross");
+    let (code, out) = layout_as(&dir, "accept", "2.0", "", SRC_V2);
+    assert_eq!(code, 0, "{out}");
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock")).unwrap();
+    assert!(
+        lock.contains("\nversion=2.0\n")
+            && lock.contains(
+                "--sources--\nItem.count <- inner.label since 2.0\nItem.tag <- note since 2.0\n"
+            ),
+        "the baseline records the sources:\n{lock}"
+    );
+    let (code, out) = layout_as(&dir, "check", "3.0", "", SRC_V3);
+    assert!(
+        code == 1
+            && out.contains("refused: Inner.label is dropped, and 2.0 computes Item.count from it")
+            && out.contains("fn upgrade(from: Release, old: <the old fields>, item: Item)")
+            && out.contains("raise `data_compatible_with` to \"2.0\"")
+            && !out.contains("Item.tag from it"),
+        "({code})\n{out}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 1, and cases 3 and 4: the in-record drop is refused too, and each cure clears it — a
+/// routine for the struct, or a floor at the release that started computing the field.
+#[test]
+fn layout_check_dropped_source_is_cured_by_a_routine_or_the_floor() {
+    let dir = cell_dir("src_cures");
+    assert_eq!(layout_as(&dir, "accept", "2.0", "", SRC_V2).0, 0);
+    let v3 = "struct Inner { label: text, size: integer }\nstruct Item { id: integer, inner: Inner, count: integer, tag: integer }\nfn main() {}\n";
+    let (code, out) = layout_as(&dir, "check", "3.0", "", v3);
+    assert!(
+        code == 1
+            && out.contains("refused: Item.note is dropped, and 2.0 computes Item.tag from it"),
+        "in-record ({code})\n{out}"
+    );
+    let routine = "struct ItemOld { note: text }\nfn upgrade(from: Release, old: ItemOld, item: Item) { if from < \"2.0\" { item.tag = len(old.note) } }\n";
+    let (code, out) = layout_as(&dir, "check", "3.0", "", &format!("{v3}{routine}"));
+    assert!(
+        code == 0 && !out.contains("refused"),
+        "a routine cures it ({code})\n{out}"
+    );
+    let (code, out) = layout_as(&dir, "check", "3.0", "data_compatible_with = \"2.0\"\n", v3);
+    assert!(
+        code == 0 && !out.contains("refused"),
+        "the floor cures it ({code})\n{out}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Case 5: a line keeps the release that FIRST recorded it across later accepts, so the floor
+/// is compared with when the value started being computed; and case 6, a drop nothing was
+/// computed from is a plain removal.
+#[test]
+fn layout_check_source_release_carries_forward() {
+    let dir = cell_dir("src_since");
+    assert_eq!(layout_as(&dir, "accept", "2.0", "", SRC_V2).0, 0);
+    assert_eq!(layout_as(&dir, "accept", "2.3", "", SRC_V2).0, 0);
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock")).unwrap();
+    assert!(
+        lock.contains("\nversion=2.3\n") && lock.contains("Item.count <- inner.label since 2.0\n"),
+        "the release a line started in is kept:\n{lock}"
+    );
+    let (code, out) = layout_as(
+        &dir,
+        "check",
+        "3.0",
+        "data_compatible_with = \"2.3\"\n",
+        SRC_V3,
+    );
+    assert!(
+        code == 0 && !out.contains("refused"),
+        "floor 2.3 >= 2.0 ({code})\n{out}"
+    );
+    let (code, out) = layout_as(
+        &dir,
+        "check",
+        "3.0",
+        "data_compatible_with = \"1.5\"\n",
+        SRC_V3,
+    );
+    assert!(
+        code == 1 && out.contains("2.0 computes Item.count"),
+        "floor 1.5 < 2.0 ({code})\n{out}"
+    );
+    // Dropping `size`, which no default reads, is a plain removal.
+    let v3b = "struct Inner { label: text }\nstruct Item { id: integer, note: text, inner: Inner, count: integer = len($.inner.label), tag: integer = len($.note) }\nfn main() {}\n";
+    let (code, out) = layout_as(&dir, "check", "3.0", "", v3b);
+    assert!(
+        code == 0 && out.contains("Inner.size removed") && !out.contains("refused"),
+        "an unrelated drop ({code})\n{out}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// A library release records its baseline: `loft package` writes `layout.lock` beside
+/// `loft.toml` — where it is committed, unlike the cache directory `.loft/` — with the
+/// release and the sources, before the tarball; `--tarball-only`, a byte comparison, writes
+/// nothing.
+#[test]
+fn loft_package_records_the_release_baseline() {
+    let dir = cell_dir("pkg_baseline");
+    loft::file_access::write(
+        dir.join("loft.toml"),
+        "[package]\nname = \"cellpkg\"\nversion = \"2.0\"\nloft = \">=0.8\"\n",
+    )
+    .unwrap();
+    loft::file_access::create_dir_all(dir.join("src")).unwrap();
+    loft::file_access::write(
+        dir.join("src/cellpkg.loft"),
+        "pub struct Item { pub id: integer, pub label: text, pub count: integer = len($.label) }\n",
+    )
+    .unwrap();
+    let (code, out, err) = run_loft(&dir, &["package", "--tarball-only", "."]);
+    assert_eq!(code, 0, "tarball-only:\n{out}\n{err}");
+    assert!(
+        !loft::file_access::exists(dir.join("layout.lock")),
+        "a byte comparison records nothing"
+    );
+    let _ = run_loft(&dir, &["package", "."]);
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock"))
+        .unwrap_or_else(|_| panic!("no layout.lock beside loft.toml"));
+    assert!(
+        lock.contains("\nversion=2.0\n")
+            && lock.contains("--sources--\nItem.count <- label since 2.0\n"),
+        "the release's baseline:\n{lock}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// An application releases the same way: a manifest with no `[library]` section, its program
+/// at the default entry, `loft package` records the baseline of the types that program reaches.
+#[test]
+fn loft_package_records_an_applications_baseline() {
+    let dir = cell_dir("app_baseline");
+    loft::file_access::write(
+        dir.join("loft.toml"),
+        "[package]\nname = \"cellgame\"\nversion = \"0.0.2\"\nloft = \">=0.8\"\n",
+    )
+    .unwrap();
+    loft::file_access::create_dir_all(dir.join("src")).unwrap();
+    loft::file_access::write(
+        dir.join("src/cellgame.loft"),
+        "struct Unit { id: integer, hp: integer, hp_max: integer = $.hp }\nfn main() { u = Unit { id: 1, hp: 5 }; println(\"{u.hp_max}\"); }\n",
+    )
+    .unwrap();
+    let _ = run_loft(&dir, &["package", "."]);
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock"))
+        .unwrap_or_else(|_| panic!("no layout.lock beside the application's loft.toml"));
+    assert!(
+        lock.contains("\nversion=0.0.2\n") && lock.contains("Unit.hp_max <- hp since 0.0.2\n"),
+        "the application's baseline:\n{lock}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
 }

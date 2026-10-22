@@ -74,6 +74,12 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  F-ParamHeap — capture, like a call, shares heap state, copies scalars).  A
                  captured FN-REF is such a value: its closure record is shared, and owned or
                  borrowed by (L-CapOwn) exactly as a captured struct is.
+                 WHICH store is shared is (O-Latest)'s answer — the backing the capture named AT
+                 THE BUILD — so a local rebound after the capture does not release the store it
+                 displaces, since the closure still shares it (loft#1085), the record keeps that
+                 store whatever the local is rebound to, a join chosen by an `if` (loft#1725) or
+                 a null that arrived as a value (loft#1715) included, and the one release is
+                 then (L-CapOwn)'s.
   (L-CapWrite)   a captured SCALAR the closure REASSIGNS is SHARED IN THE WRITE DIRECTION:
                  the closure's write reaches the outer variable, and a later call sees what
                  the previous one wrote.  This does not weaken (L-CapScalar) — the closure
@@ -97,6 +103,12 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  skips it — so there the frame's release is the store's only one.  The record's
                  reach is its CASCADE: a capture attribute the cascade does not follow is not
                  covered by any adoption, whatever the free-suppression believes.
+                 The release a leaving closure takes over is the WHOLE of one — the
+                 captures' (H-Drop) hooks as well as their stores, dispatched on the
+                 record's own type ahead of the free (loft#1609).
+                 Which record owns is (L-CapOne)'s pick: among records adopting one store that
+                 can coexist exactly one owns it, and that one's release runs the captures'
+                 hooks first, once (loft#1606).
   (L-CapKeep)    each RUN of a closure build is its own record.  A fn-ref that still names
                  the record an earlier run built (a pass of a loop kept in a local declared
                  outside it, a `&fn(…)` link, a copy in another local) goes on answering from
@@ -221,6 +233,11 @@ vector shares it — mutating a field of the captured value afterwards shows up 
   (L-Escape)  a closure is a VALUE: it may be stored in a variable or struct field, passed as an
               argument, and RETURNED from a function — a returned closure keeps its captures
               (it escapes cleanly).
+              What a returned closure keeps, (L-CapOwn) decides: a struct whose fn field holds a
+              capturing closure leaves the frame with the record built in its own store,
+              adopting its captures, and the struct releases them once at its death (loft#1867);
+              placed into another struct's field, overwriting that field releases what the
+              displaced closure adopted (loft#1877).
 ```
 
 **In words.** A closure is an ordinary value. You can put it in a variable or a struct field, pass

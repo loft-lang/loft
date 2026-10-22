@@ -29,6 +29,54 @@ fn repl(args: &[&str], input: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// `@FR-R-KeyList` — a keyed type's key list is derived on its first lookup and reset when the
+/// descriptors are derived again.  A REPL definition re-runs the layout for EVERY type
+/// (`parse_str` → `Stores::finish` → `determine_keys`), so a hash looked up before a later
+/// declaration is looked up again after the reset, beside a sorted collection declared in
+/// between.  `LOFT_KEY_LIST_VERIFY=1` re-derives each cached list on every read and stops the
+/// run on a disagreement; the values are hand-computed (`sorted<Kv[-n]>` at key 9 is `y`).
+#[test]
+fn a_key_list_survives_a_later_declaration() {
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("repl")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("LOFT_KEY_LIST_VERIFY", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn loft");
+    let input = "struct Kv { k: text, n: integer }\n\
+                 struct Db { m: hash<Kv[k]> }\n\
+                 db = Db { m: [Kv { k: \"a\", n: 1 }, Kv { k: \"b\", n: 2 }] }\n\
+                 println(\"first {db.m[\\\"b\\\"].n}\")\n\
+                 struct KlOther { x: integer }\n\
+                 struct Db2 { s: sorted<Kv[-n]> }\n\
+                 println(\"again {db.m[\\\"a\\\"].n} {db.m[\\\"b\\\"].n}\")\n\
+                 d2 = Db2 { s: [Kv { k: \"x\", n: 5 }, Kv { k: \"y\", n: 9 }] }\n\
+                 println(\"both {d2.s[9].k} {db.m[\\\"a\\\"].n}\")\n\
+                 :quit\n";
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("wait");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for want in ["first 2", "again 1 2", "both y 1"] {
+        assert!(
+            stdout.contains(want),
+            "expected {want:?} in stdout {stdout:?}; stderr {stderr:?}"
+        );
+    }
+    assert!(
+        !stderr.contains("Error"),
+        "a REPL input was refused: {stderr}"
+    );
+}
+
 /// Acceptance #1 — `loft repl` evaluates input and prints results; a binding
 /// persists so a later read shows it.
 #[test]

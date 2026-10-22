@@ -80,12 +80,8 @@ impl Drop for InBody {
 
 fn by_fn_target() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
-    PATH.get_or_init(|| {
-        std::env::var("LOFT_REWRITE_CENSUS_FN")
-            .ok()
-            .filter(|p| !p.is_empty())
-    })
-    .as_deref()
+    PATH.get_or_init(|| crate::platform::env_output("LOFT_REWRITE_CENSUS_FN"))
+        .as_deref()
 }
 
 /// Counting is suspended while one of these lives: an emission made FOR something other than
@@ -116,22 +112,14 @@ impl Drop for Pause {
 
 fn target() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
-    PATH.get_or_init(|| {
-        std::env::var("LOFT_REWRITE_CENSUS")
-            .ok()
-            .filter(|p| !p.is_empty())
-    })
-    .as_deref()
+    PATH.get_or_init(|| crate::platform::env_output("LOFT_REWRITE_CENSUS"))
+        .as_deref()
 }
 
 fn decline_target() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
-    PATH.get_or_init(|| {
-        std::env::var("LOFT_DECLINE_CENSUS")
-            .ok()
-            .filter(|p| !p.is_empty())
-    })
-    .as_deref()
+    PATH.get_or_init(|| crate::platform::env_output("LOFT_DECLINE_CENSUS"))
+        .as_deref()
 }
 
 /// Rewrite `rule` refused `site` — a loop, a local, a function the rule is shaped for —
@@ -208,10 +196,7 @@ pub fn write() {
     for (rule, n) in c.iter() {
         let _ = writeln!(out, "{rule}\t{n}");
     }
-    // The error names the file.
-    if let Err(e) = crate::file_access::write(path, out) {
-        eprintln!("loft: cannot write the rewrite census: {e}");
-    }
+    crate::platform::write_env_output(path, &out, "the rewrite census");
 }
 
 fn write_declines() {
@@ -231,10 +216,7 @@ fn write_declines() {
             let _ = writeln!(out, "{rule}\tadmitted\t{n}");
         }
     }
-    // The error names the file.
-    if let Err(e) = crate::file_access::write(path, out) {
-        eprintln!("loft: cannot write the decline census: {e}");
-    }
+    crate::platform::write_env_output(path, &out, "the decline census");
 }
 
 fn write_by_fn() {
@@ -244,8 +226,5 @@ fn write_by_fn() {
     for ((phase, function, rule), n) in c.iter() {
         let _ = writeln!(out, "{phase}\t{function}\t{rule}\t{n}");
     }
-    // The error names the file.
-    if let Err(e) = crate::file_access::write(path, out) {
-        eprintln!("loft: cannot write the rewrite census: {e}");
-    }
+    crate::platform::write_env_output(path, &out, "the rewrite census");
 }

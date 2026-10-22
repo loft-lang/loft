@@ -451,10 +451,14 @@ pub fn store_durable_seal(path: text) -> boolean fs#update;
 /// caller's prior in-memory contents at that slot are dropped in
 /// favour of the on-disk image.  This is the load-on-startup path.
 /// The `.dschema` file written beside the store records the layout
-/// it was written with.  When that layout differs from `r`'s type —
-/// a struct gained, lost or changed a field — the bind is refused
-/// (`false`, with the difference on stderr), exactly as `store_load`
-/// refuses it.  The file, its `.dschema` and `r` are left untouched.
+/// it was written with.  When that layout is older than `r`'s type —
+/// a struct gained, lost or widened a field — the FILE is upgraded in
+/// place: every added field takes its default (which may read the
+/// record through `$`), the new store is written beside the old one
+/// and swapped in, and the old file is kept as `<path>.old`, replacing
+/// an earlier `.old`.  A change the upgrade cannot carry, such as one
+/// that looks like a rename, is refused (`false`, the reason on
+/// stderr), and the file, its `.dschema` and `r` are left untouched.
 ///
 /// Both modes return `true` on success, `false` on any I/O / format
 /// / layout error (no panic — the binding is fail-soft, callers fall
@@ -515,15 +519,72 @@ pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update;
 /// wasm, which has no mmap — but is NOT durable (writes stay in memory and
 /// never reach the file).  Use it to open a snapshot for querying where
 /// `store_persist_bind` can't run (a browser / wasm target) or where a durable
-/// live binding isn't wanted.  Returns `false` on a missing / truncated /
-/// wrong-format file, and on a file whose `.dschema` records a different
-/// layout than `r`'s declared type (no panic; the difference is printed on
-/// stderr).  This is the whole-file load that the browser's working-set
-/// path builds on.
+/// live binding isn't wanted.  A file whose `.dschema` records an older
+/// layout than `r`'s declared type is converted in memory: every added field
+/// takes its default (which may read the record through `$`), and the file
+/// itself is left as it is.  Returns `false` on a missing / truncated /
+/// wrong-format file, and on a change the conversion cannot carry, such as
+/// one that looks like a rename (no panic; the reason is printed on stderr).
+/// This is the whole-file load that the browser's working-set path builds on.
 ///   h: hash<Rec[id]> = []
 ///   store_load(h, "world.store")   // h now holds the file's records
 pub fn store_load(r: reference, path: text) -> boolean fs#read;
 #rust"stores.load_path((@r).store_nr, std::path::Path::new(@path))"
+#impure(io)
+
+/// A release number, `major.minor.patch`: what a store records as the release of the
+/// program that wrote it, and what an `upgrade` routine is told its stored data came from.
+/// Releases are ordered by number, so `10.0` comes after `9.0`, and a text compares as the
+/// release it spells:
+///   fn upgrade(from: Release, old: ItemBefore2, item: Item) {
+///     if from < "2.0" { item.count = len(old.label) }
+///   }
+pub struct Release { pub major: integer, pub minor: integer, pub patch: integer }
+
+/// Releases in the order they were made: by major, then minor, then patch.
+pub operator compare(self: Release, other: Release) -> Ordering {
+  self.major.compare(other.major).then(self.minor.compare(other.minor)).then(self.patch.compare(other.patch))
+}
+
+/// A release against the release a text spells (`"2"`, `"2.1"`, `"2.1.3"`; a part that is
+/// missing or not a number counts as 0): `from < "2.0"`.
+pub operator compare(self: Release, other: text) -> Ordering {
+  // The parts are compared as they are read: no `Release` is built for them (loft#2123).
+  p = other.split('.');
+  major = if len(p) > 0 { p[0] as integer ?? 0 } else { 0 };
+  minor = if len(p) > 1 { p[1] as integer ?? 0 } else { 0 };
+  patch = if len(p) > 2 { p[2] as integer ?? 0 } else { 0 };
+  self.major.compare(major).then(self.minor.compare(minor)).then(self.patch.compare(patch))
+}
+
+/// `major.minor.patch`.
+pub operator to_text(self: Release) -> text {
+  "{self.major}.{self.minor}.{self.patch}"
+}
+
+// Private natives of the drain the parser puts after every `store_load` and
+// `store_persist_bind` (@PLN196): a load that converted an older layout lists the
+// records whose added field has a computed default; the drain takes each one's key
+// and record and calls that field's fill function, then finishes the call.
+fn store_upgrade_owed_next() -> integer;
+#rust"stores.owed_next()"
+#impure(io)
+fn store_upgrade_owed_record() -> reference;
+#rust"stores.owed_record()"
+#impure(io)
+fn store_upgrade_owed_finish() -> boolean fs#update;
+#rust"stores.owed_finish()"
+#impure(io)
+// The `upgrade` routines (@PLN196 step 9): the drain's wrapper registers each one before
+// the load, and an owed routine call takes its `old` record and the release it came from.
+fn store_upgrade_owed_old() -> reference;
+#rust"stores.owed_old()"
+#impure(io)
+fn store_upgrade_owed_from() -> reference;
+#rust"stores.owed_from()"
+#impure(io)
+fn store_upgrade_routine(tp: integer, old: integer, version: integer);
+#rust"stores.upgrade_routine(@tp as u16, @old as u16, @version as u16)"
 #impure(io)
 
 /// Load a persisted store IMAGE over HTTP(S) from a TRUSTED source, establishing

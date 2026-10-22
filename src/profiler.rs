@@ -31,16 +31,24 @@
 //! millisecond inside one op shows up as a millisecond, because the next sample's
 //! interval is a millisecond long.
 //!
-//! What that costs when off: nothing. What it costs when on: one `Instant::now()` and
-//! one map update per `interval` ops (1024 by default).
+//! What that costs when off: nothing. What it costs when on: a tick read and a count per
+//! op, and one `Instant::now()` and one map update per `interval` ops (1024 by default) —
+//! +9–18 % on the benchmarks, because a run only this profiler watches keeps the lean
+//! dispatch loop and holds the per-op state ([`Cursor`]) in that loop's locals
+//! (`Debugger::only_cpu_profiling`).  Allocation paths and the op census need the full
+//! loop, +46–116 % on its own.
 //!
 //! What it still cannot do, stated because a profiler that hides its blind spots is
 //! worse than none:
 //!
-//! * **The interval lands *after* the expensive op, not inside it.** Time spent in a
-//!   single long native call is credited to the frame executing when the next sample
-//!   fires. That is the same loft function in every ordinary case (the op and its
-//!   successor are in one body) and wrong across a call boundary.
+//! * **A long op is timed, not sampled** (@PLN179 finding 022). One op can run for
+//!   milliseconds — a native, a `use`d library's compiled code, a sort, a read — and the
+//!   op clock would land all of it in the interval of whatever op the next sample falls
+//!   on: a later line, often another function.  So every op of a profiled run reads the
+//!   CPU's tick counter (`platform::ticks`, a few ns — `Instant::now()` per op tripled a
+//!   run and skewed its shares), and an op that ran [`SETTLE_NANOS`] or longer is credited
+//!   to its own position and taken out of the next sample's interval.  A sample taken
+//!   inside it (loft code a native ran) keeps what it credited; the op gets the rest.
 //! * **`par` workers are not sampled.** A worker runs its own `State`; its frames
 //!   never reach this one. The report says so rather than quietly reporting the main
 //!   thread's share of a parallel program as the whole.
@@ -50,6 +58,43 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
+
+/// An op this long or longer is credited to its own position when it ends
+/// ([`Profiler::settle_op`]); a shorter one is left to the sampler.  The default interval is
+/// 1024 ops, tens of microseconds: an op well past that — one native call, one sort, one
+/// read — is the one whose time would otherwise land on a later line.
+pub const SETTLE_NANOS: u64 = 50_000;
+
+/// A [`Profiler`]'s per-op state as a dispatch loop keeps it in locals
+/// ([`Profiler::cursor`] / [`Profiler::restore`]).  `settle_ticks` is `u64::MAX` and
+/// `left` large for an unarmed one, so the loop's checks never fire.
+#[derive(Debug, Clone, Copy)]
+pub struct Cursor {
+    pub left: u32,
+    pub op_ticks: u64,
+    pub op_pc: u32,
+    pub settle_ticks: u64,
+}
+
+impl Default for Cursor {
+    fn default() -> Cursor {
+        Cursor {
+            left: u32::MAX,
+            op_ticks: 0,
+            op_pc: u32::MAX,
+            settle_ticks: u64::MAX,
+        }
+    }
+}
+
+/// An op that ran [`SETTLE_NANOS`] or longer, to be credited to its own position.
+#[derive(Debug, Clone, Copy)]
+pub struct LongOp {
+    pc: u32,
+    began: Instant,
+    now: Instant,
+    dt: u64,
+}
 
 /// How many innermost frames a recorded path keeps.
 ///
@@ -139,6 +184,8 @@ pub struct Totals {
     /// Wall-clock nanoseconds the sampler was armed for, summed over the runs.
     pub elapsed_ns: u64,
     pub paths_dropped: u64,
+    /// Long ops timed and credited to their own line rather than sampled.
+    pub settled: u64,
     by_fn: HashMap<String, Site>,
     /// `(file:line, function) → self time`, the same pairing the single-run report
     /// used, so a line is never ambiguous between two functions.
@@ -167,6 +214,7 @@ impl Totals {
         self.nanos += prof.nanos;
         self.elapsed_ns += prof.elapsed_ns();
         self.paths_dropped += prof.paths_dropped;
+        self.settled += prof.settled;
         self.alloc_armed |= prof.alloc_armed();
         if prof.alloc_armed() {
             self.alloc_interval = prof.alloc_interval();
@@ -237,6 +285,17 @@ impl Totals {
             self.samples,
             self.extent()
         );
+        // An op that ran long — a native call, a sort, a read — was timed and credited to its
+        // own line, which is exact where the rest is sampled.  Said, because it explains a
+        // line holding time with few samples on it.
+        if self.settled > 0 {
+            eprintln!(
+                "  {} long {} timed to {} own line",
+                self.settled,
+                if self.settled == 1 { "op" } else { "ops" },
+                if self.settled == 1 { "its" } else { "their" }
+            );
+        }
         // The sample count is the first thing on the banner for the same reason the
         // perf script prints it: a percentage computed from a handful of samples is
         // noise wearing a number's clothes, and the fix is a longer run, not a
@@ -410,6 +469,15 @@ pub struct Profiler {
     jitter: Jitter,
     /// When the previous sample was taken — the start of the interval being credited.
     last: Instant,
+    /// When the op now running began, in [`crate::platform::ticks`], and its position
+    /// (`u32::MAX` before the first).
+    op_ticks: u64,
+    op_pc: u32,
+    /// [`SETTLE_NANOS`] in ticks, and the rate that converts them.
+    settle_ticks: u64,
+    ticks_per_milli: u64,
+    /// Long ops credited to their own position ([`Profiler::settle_op`]).
+    pub settled: u64,
     /// When sampling began, for the "over N seconds" banner.
     started: Instant,
     pub samples: u64,
@@ -456,7 +524,6 @@ impl Profiler {
         if !cpu && !alloc {
             return None;
         }
-        let now = Instant::now();
         let interval = env_count("LOFT_PROFILE", 1024).max(1);
         let alloc_interval = if alloc {
             env_count("LOFT_ALLOC_PATHS", 16).max(1)
@@ -470,6 +537,23 @@ impl Profiler {
             .and_then(|v| v.trim().parse::<u64>().ok())
             .filter(|n| *n > 0)
             .map(Duration::from_secs);
+        Some(Profiler::armed(cpu, interval, alloc_interval, flush_every))
+    }
+
+    /// A profiler armed as [`Self::from_env`] reads it: CPU sampling every `interval` ops
+    /// on average when `cpu`, allocation paths one in `alloc_interval` when that is not 0.
+    #[must_use]
+    pub fn armed(
+        cpu: bool,
+        interval: u32,
+        alloc_interval: u32,
+        flush_every: Option<Duration>,
+    ) -> Profiler {
+        let alloc = alloc_interval > 0;
+        // Calibrated BEFORE the clock starts: the half-millisecond it measures over would
+        // otherwise be credited to the first sample.
+        let ticks_per_milli = crate::platform::ticks_per_milli();
+        let now = Instant::now();
         let mut jitter = Jitter::new();
         let first_tick = jitter.next(interval);
         let first_alloc_tick = if alloc {
@@ -477,13 +561,18 @@ impl Profiler {
         } else {
             0
         };
-        Some(Profiler {
+        Profiler {
             cpu,
             interval,
             // A sample on the very first op would credit it the whole of start-up.
             tick: first_tick,
             jitter,
             last: now,
+            op_ticks: crate::platform::ticks(),
+            op_pc: u32::MAX,
+            settle_ticks: ticks_per_milli.saturating_mul(SETTLE_NANOS) / 1_000_000,
+            ticks_per_milli,
+            settled: 0,
             started: now,
             samples: 0,
             nanos: 0,
@@ -497,7 +586,7 @@ impl Profiler {
             alloc_paths: HashMap::new(),
             flush_every,
             next_flush: now + flush_every.unwrap_or(Duration::ZERO),
-        })
+        }
     }
 
     /// Whether a periodic report is due, re-arming the timer when it is.
@@ -555,22 +644,95 @@ impl Profiler {
         let dt = now.duration_since(self.last).as_nanos() as u64;
         self.last = now;
         self.samples += 1;
+        self.credit(pc, frames, 1, dt);
+    }
+
+    /// The op at `pc` is about to run, so the previous one has ended: when that one took
+    /// [`SETTLE_NANOS`] or more, the [`LongOp`] to settle — its position, when it began, and
+    /// the part of it no sample has credited (a sample inside it, from loft code a native
+    /// ran, credited what came before).  One clock read per op of a profiled run.
+    #[inline]
+    pub fn op_boundary(&mut self, pc: u32) -> Option<LongOp> {
+        let t = crate::platform::ticks();
+        let ran = t.wrapping_sub(std::mem::replace(&mut self.op_ticks, t));
+        let at = std::mem::replace(&mut self.op_pc, pc);
+        if ran < self.settle_ticks || at == u32::MAX {
+            return None;
+        }
+        self.long_op(at, ran)
+    }
+
+    /// The op at `at` ran `ran` ticks, at least [`SETTLE_NANOS`] by the tick count: the
+    /// [`LongOp`] to settle, once the exact clock agrees.
+    #[must_use]
+    pub fn long_op(&self, at: u32, ran: u64) -> Option<LongOp> {
+        // The exact clock, and the op's start recovered from its length.
+        let now = Instant::now();
+        let len = Duration::from_nanos(
+            u64::try_from(u128::from(ran) * 1_000_000 / u128::from(self.ticks_per_milli))
+                .unwrap_or(u64::MAX),
+        );
+        let began = now.checked_sub(len).unwrap_or(now);
+        let dt = now.duration_since(self.last.max(began)).as_nanos() as u64;
+        (dt >= SETTLE_NANOS).then_some(LongOp {
+            pc: at,
+            began,
+            now,
+            dt,
+        })
+    }
+
+    /// The per-op state a dispatch loop may keep in locals: ops to the next sample, when the
+    /// running op began and where, and the long-op threshold in ticks.
+    #[must_use]
+    pub fn cursor(&self) -> Cursor {
+        Cursor {
+            left: self.tick,
+            op_ticks: self.op_ticks,
+            op_pc: self.op_pc,
+            settle_ticks: self.settle_ticks,
+        }
+    }
+
+    /// Take back the state a loop kept in a [`Cursor`].
+    pub fn restore(&mut self, cur: &Cursor) {
+        self.tick = cur.left.max(1);
+        self.op_ticks = cur.op_ticks;
+        self.op_pc = cur.op_pc;
+    }
+
+    /// The length of the next sampling interval, drawn as [`Self::tick`] draws it.
+    pub fn next_interval(&mut self) -> u32 {
+        self.jitter.next(self.interval)
+    }
+
+    /// Credit a long op to its own position and to `frames`, and take it out of the interval
+    /// the next sample credits — which would otherwise land it on whatever op that sample
+    /// falls on, a later line or another function.  The ops before it keep their share: with
+    /// no sample inside it, the interval's start moves forward by its length, not to now.
+    pub fn settle_op(&mut self, op: LongOp, frames: &[u32]) {
+        // Not a sample: the op was timed, so it adds to the time and not to the count the
+        // report's "too few samples to rank" warning reads.
+        self.credit(op.pc, frames, 0, op.dt);
+        self.settled += 1;
+        if self.last <= op.began {
+            self.last += Duration::from_nanos(op.dt);
+        } else {
+            self.last = op.now;
+        }
+    }
+
+    fn credit(&mut self, pc: u32, frames: &[u32], samples: u64, dt: u64) {
         self.nanos += dt;
         let e = self.sites.entry(pc).or_default();
-        e.samples += 1;
+        e.samples += samples;
         e.nanos += dt;
         let key = tail(frames);
         if let Some(p) = self.paths.get_mut(&key) {
-            p.samples += 1;
+            p.samples += samples;
             p.nanos += dt;
         } else if self.paths.len() < MAX_PATHS {
-            self.paths.insert(
-                key,
-                Site {
-                    samples: 1,
-                    nanos: dt,
-                },
-            );
+            self.paths.insert(key, Site { samples, nanos: dt });
         } else {
             self.paths_dropped += 1;
         }
@@ -780,6 +942,80 @@ mod tests {
 
     /// The mean must survive the jitter, or every reported rate is wrong by a
     /// constant factor.
+    fn spin(d: std::time::Duration) {
+        let t = std::time::Instant::now();
+        while t.elapsed() < d {}
+    }
+
+    /// @PLN179 finding 022 — a long op is credited to ITS position, and the next sample's
+    /// interval no longer carries it: before, the sort below landed on whatever op the
+    /// next sample fell on, a later line or another function.
+    #[test]
+    fn a_long_op_is_charged_to_its_own_position_not_the_next_sample() {
+        let mut p = Profiler::armed(true, 1_000_000, 0, None);
+        assert!(
+            p.op_boundary(10).is_none(),
+            "the first op has no predecessor"
+        );
+        spin(std::time::Duration::from_millis(3)); // op 10 runs long
+        let long = p.op_boundary(11).expect("op 10 ran 3 ms");
+        assert_eq!(long.pc, 10);
+        p.settle_op(long, &[1]);
+        p.record(12, &[1]); // the next sample
+        let sites: HashMap<u32, Site> = p.sites.iter().map(|(k, v)| (*k, *v)).collect();
+        let at10 = sites[&10].nanos;
+        let at12 = sites[&12].nanos;
+        // Bounds a preempted test thread cannot break: the spin is at least 3 ms (less a
+        // margin for the counter's resolution and its calibrated rate), and the sample's
+        // interval holds only what ran after the settle.
+        assert!(
+            at10 >= 2_900_000,
+            "the long op's time is on its own position: {at10}"
+        );
+        assert!(
+            at12 < at10,
+            "and not on the next sample's: {at12} vs {at10}"
+        );
+        assert_eq!(sites[&10].samples, 0, "a timed op is not a sample");
+        assert_eq!(p.samples, 1);
+        assert_eq!(p.settled, 1);
+    }
+
+    /// A long op that ran loft code which was sampled (a native calling back) is credited
+    /// only with what came after the last sample inside it — never twice.
+    #[test]
+    fn a_sample_inside_a_long_op_is_not_counted_again() {
+        let mut p = Profiler::armed(true, 1_000_000, 0, None);
+        let _ = p.op_boundary(20);
+        spin(std::time::Duration::from_millis(2));
+        p.record(30, &[1, 2]); // a sample in the loft code the op ran
+        spin(std::time::Duration::from_millis(2));
+        let long = p.op_boundary(21).expect("op 20 ran 4 ms");
+        assert_eq!(long.pc, 20);
+        p.settle_op(long, &[1]);
+        let total: u64 = p.sites.values().map(|s| s.nanos).sum();
+        let elapsed = p.elapsed_ns();
+        assert!(
+            total <= elapsed,
+            "credited {total} ns of {elapsed} ns elapsed: something was counted twice"
+        );
+        // Each half spun at least 2 ms: the sample took the first, the op the second.
+        let (at20, at30) = (p.sites[&20].nanos, p.sites[&30].nanos);
+        assert!(
+            at30 >= 2_000_000,
+            "the inner sample keeps what it credited: {at30}"
+        );
+        assert!(at20 >= 2_000_000, "the op gets what came after it: {at20}");
+    }
+
+    #[test]
+    fn a_short_op_is_left_to_the_sampler() {
+        let mut p = Profiler::armed(true, 1_000_000, 0, None);
+        let _ = p.op_boundary(1);
+        assert!(p.op_boundary(2).is_none());
+        assert_eq!(p.settled, 0);
+    }
+
     #[test]
     fn jitter_keeps_the_mean_it_was_given() {
         let mut j = Jitter::new();

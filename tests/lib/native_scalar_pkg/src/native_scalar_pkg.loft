@@ -31,3 +31,12 @@ pub fn native_sentinel() -> integer;
 // VALUES, not just a length: a wrong element ordering or a truncated copy is visible.
 pub fn native_span(n: integer) -> vector<integer>;
 #native
+
+// @PLN199 E2 — loft functions over the natives.  They compile into the library's
+// auto-native cdylib, which links the `[native] crate` for the `#native` calls.
+pub fn answer_plus(k: integer) -> integer { native_answer() + k }
+pub fn span_sum(n: integer) -> integer {
+    s = 0;
+    for v in native_span(n) { s += v; }
+    s
+}

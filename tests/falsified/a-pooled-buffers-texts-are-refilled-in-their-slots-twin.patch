@@ -1,11 +1,11 @@
 diff --git a/src/store.rs b/src/store.rs
-index 1b7fd8904..87ac6f222 100644
+index 14d0299aa..557bcd771 100644
 --- a/src/store.rs
 +++ b/src/store.rs
-@@ -5001,7 +5001,7 @@ impl Store {
-     /// emitter proves at the call site; a slot holding anything else is read as a block.
-     #[inline]
-     pub fn refill_str(&mut self, rec: u32, fld: u32, val: &str) {
+@@ -5561,7 +5561,7 @@ impl Store {
+             self.refill_str(rec, fld, &moved_out);
+             return;
+         }
 -        let old = self.get_u32_raw(rec, fld);
 +        let old = 0u32;
          if old != 0 && !self.read_only {

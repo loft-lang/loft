@@ -70,8 +70,25 @@ impl Parser {
         self.native_lib_regs.clone_from(&base.native_lib_regs);
         self.pending_native_compile
             .clone_from(&base.pending_native_compile);
+        self.compiled_bridges.clone_from(&base.compiled_bridges);
+        self.library_bridges = base.library_bridges;
         self.pending_placed_libs
             .clone_from(&base.pending_placed_libs);
+    }
+
+    /// The program's own library name: the manifest's `[package] name` when there is one,
+    /// else the file stem — the same answer for a conventional package, whose entry defaults
+    /// to `src/<name>.loft`.
+    fn own_lib_of(filename: &str) -> Option<String> {
+        let path = std::path::Path::new(filename);
+        let from_manifest = path
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(|root| root.join("loft.toml"))
+            .filter(|m| crate::file_access::exists(m))
+            .and_then(|m| crate::manifest::read_manifest(&m.to_string_lossy()))
+            .and_then(|m| m.name);
+        from_manifest.or_else(|| crate::file_access::file_stem(path))
     }
 
     pub(super) fn parse_main(
@@ -111,25 +128,11 @@ impl Parser {
             self.lexer.set_lint_scope_for(filename);
             self.diagnostics.set_lint_scope_for(filename);
         }
-        if !default && self.database.source_dir.is_empty() {
-            self.database.source_dir = std::path::Path::new(filename)
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
+        if !default {
+            self.note_entry_dir(filename);
         }
         if !default && self.own_lib.is_none() {
-            // The manifest's `[package] name` when there is one, else the file
-            // stem — the same answer for a conventional package, whose entry
-            // defaults to `src/<name>.loft`.
-            let path = std::path::Path::new(filename);
-            let from_manifest = path
-                .parent()
-                .and_then(std::path::Path::parent)
-                .map(|root| root.join("loft.toml"))
-                .filter(|m| crate::file_access::exists(m))
-                .and_then(|m| crate::manifest::read_manifest(&m.to_string_lossy()))
-                .and_then(|m| m.name);
-            self.own_lib = from_manifest.or_else(|| crate::file_access::file_stem(path));
+            self.own_lib = Self::own_lib_of(filename);
         }
         self.vars.logging = false;
         Self::load_main_file(&mut self.lexer, filename, content);
@@ -1371,11 +1374,8 @@ impl Parser {
             self.lexer.set_lint_scope_for(filename);
             self.diagnostics.set_lint_scope_for(filename);
         }
-        if !default && self.database.source_dir.is_empty() {
-            self.database.source_dir = std::path::Path::new(filename)
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
+        if !default {
+            self.note_entry_dir(filename);
         }
         if !default && self.own_lib.is_none() {
             // The manifest's `[package] name` when there is one, else the file
@@ -1654,6 +1654,25 @@ impl Parser {
             diagnostic!(self.lexer, Level::Error, "Could not write: {to}");
         }
         Ok(())
+    }
+
+    /// The entry program's directory (`source_dir`, unless the caller set one) and the release
+    /// its `loft.toml` declares (@PLN196 step 9), which every store the program writes records.
+    /// Set whether or not the caller chose the directory: a release read only when the parser
+    /// chose it left the native build of a program run from its own directory without one.
+    fn note_entry_dir(&mut self, filename: &str) {
+        if self.database.source_dir.is_empty() {
+            self.database.source_dir = std::path::Path::new(filename)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+        }
+        if self.database.release.get().is_none() {
+            let _ = self
+                .database
+                .release
+                .set(crate::manifest::release_of(&self.database.source_dir));
+        }
     }
 
     /// Only parse a specific string, only useful for parser tests.

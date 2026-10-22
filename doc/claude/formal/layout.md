@@ -281,6 +281,11 @@ struct's own layout.
               not-null form; absence is a sentinel IN those bytes (i64::MIN / nullref), never an
               extra byte or a moved offset.  Nullability is a SCHEMA fact (semantics), not a
               LAYOUT fact.
+              Where τ reserves no value to spend, (L-Null-Tag) takes over — a struct stored
+              INLINE: a `vector` or keyed element, an embedded field, a tuple member, a
+              `value struct` — and nowhere else: a stored `reference<T>?` is still a pointer
+              spending `nullref` (loft#1316), and a `value struct` is nullable through its
+              tag (loft#1471).
 ```
 
 **In words.** Making a field nullable does not change the bytes — the "missing" value is a
@@ -431,8 +436,50 @@ it silently misreads data fetched over the network. `schema_sidecar::check_besid
 that gate, now applied across a network boundary.
 
 A layout change (`(L-Align)` was one) changes the identity, so a store written by an older
-build is refused by this rule and rebuilt from its source; it is never read under the new
-offsets. A binary file written with `f#write` is not a store: its records carry the WIRE width
+build is refused by this rule or converted by the upgrade map
+([@PLN196](../plans/196-store-upgrade.md)); it is never read under the new offsets.
+
+### Releases a store skipped
+
+```
+  (L-Release)         a store records the release that wrote it (the writing program's
+                      loft.toml `version`, the sidecar's `version=`).  A reader whose manifest
+                      declares data_compatible_with = m refuses a store written by a release
+                      below m — whatever its layout — naming the release data_bridge records,
+                      and leaves it byte for byte as it was.  A store that records no release
+                      predates the recording and passes the floor.
+  (L-Upgrade-Routine) a program may write, per record type T, one
+                      fn upgrade(from: Release, old: O, item: T) with O a struct.  Each record
+                      of T converted from a store whose release is older than the program's
+                      (or unrecorded) is passed to it once, after its carried fields and its
+                      added fields' defaults, with from = the store's release.  For such a
+                      store T may lose and gain fields in one upgrade: the routine is what
+                      carries a moved value.  For any other store the rename refusal stands.
+  (L-Upgrade-Old)     old is filled from the stored record by field name, through the same
+                      conversion a carried field takes; a field of O the stored record lacks
+                      takes the value a constructor gives an omitted field (O's default),
+                      never a value from another field.  O holds no reference.
+  (L-Upgrade-Source)  a project baseline records, per computed field (a default that reads
+                      the record), the stored fields it reads — through nested structs too —
+                      and the release that first recorded that line, carried across later
+                      accepts.  `loft layout check` refuses a build that drops one of them
+                      while the computed field remains, unless the build has an upgrade
+                      routine for that struct or data_compatible_with is at or above that
+                      release: an older store would otherwise lose the value with no record
+                      that it existed.
+```
+
+**In words.** A user who skips releases opens a store two layouts back.  The one-step
+conversion sees only the two ends, so a value an intermediate release moved and the next one
+dropped would be lost without a word; the drop and the add in one record are refused as a
+rename.  The routine is the programmer's account of the steps in between: it is told which
+release the store came from and reads the old fields it names, so it runs the steps that
+release still needs.  A routine branch is retired by raising the floor.  The one move the
+store cannot show — a value an intermediate release computed from a field the next one
+drops — is caught where the drop is written: the baseline remembers what each computed field
+was made of, so `loft layout check` names the field, the computed one and the release, and
+asks for the routine or the floor.  Versions compare as
+numbers (`Release`, `default/02_files.loft`), so `10.0` comes after `9.0`. A binary file written with `f#write` is not a store: its records carry the WIRE width
 — the sum of the field widths, with no padding — so its format does not follow the store
 layout, and `f#read` infers a record count from the same width.
 
@@ -454,6 +501,16 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   spanning every storage kind. Any change is a red diff; proven to fail on a #477-class
   perturbation. The **coverage audit** (exhaustive over `Parts`) keeps a new storage kind from
   slipping in unpinned.
+- **`L-Release` / `L-Upgrade-Routine` / `L-Upgrade-Old`** — `tests/store_upgrade.rs`, the
+  `cell_a_*` step-9 cells: a store two releases back converted through the routine on every
+  element and on the root, read by `store_load` and after `loft layout upgrade`, both backends;
+  the same change refused without a routine, naming the release; a store that already took a
+  step, and one a later release wrote, left alone by the routine; an `old` field the store
+  lacks read as its default; the routine in a separate upgrade module; a store below the floor
+  refused naming the bridge, byte for byte untouched, with and without a layout change.
+- **`L-Upgrade-Source`** — `tests/store_upgrade.rs` `layout_check_*`: the sources recorded
+  (nested and in-record), a dropped source refused naming it, each cure (routine, floor)
+  clearing it, the first release carried across a re-accept, and an unrelated drop allowed.
 - **`L-Align`** — `tests/layout_alignment.rs` asks `Stores::alignment_violations` of every
   finished type (the standard library and a corpus of the spellings that reach the layout
   differently), compares the restated tuple storage view with the `__tuple<…>` record's own

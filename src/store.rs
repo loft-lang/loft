@@ -77,6 +77,15 @@ fn scan_index_enabled() -> bool {
     *ON.get_or_init(|| !std::env::var("LOFT_NO_SCAN_INDEX").is_ok_and(|v| v != "0"))
 }
 
+/// `LOFT_NO_WILD_BUMP=1` sends a claim on a store whose free tree is empty through
+/// `claim_best_fit` again instead of carving it off the wilderness directly
+/// ([`Store::bump_wild`]); the same block either way, so the bisect step for a claim the
+/// fast path got wrong.
+fn wild_bump_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILD_BUMP").is_ok_and(|v| v != "0"))
+}
+
 fn wilderness_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILDERNESS").is_ok_and(|v| v != "0"))
@@ -1146,7 +1155,10 @@ impl Store {
         // (0xc0000374).
         let size = size.max(2);
         let l = Layout::from_size_align(size as usize * 8, 8).expect("Problem");
-        let ptr = unsafe { A.alloc_zeroed(l) };
+        // Not zeroed (`@FR-H-Claim`, `@C137`): a claim promises no value, and nothing reads a
+        // word it did not write.  The program reads only claimed memory, which
+        // `LOFT_POISON_CLAIM=1` fills with garbage under test.
+        let ptr = unsafe { A.alloc(l) };
         // The value used on is the GUARDED one: an allocation that failed is null.
         let ptr = if ptr.is_null() {
             std::alloc::handle_alloc_error(l)
@@ -1759,6 +1771,15 @@ impl Store {
             self.fl_validate();
             return self.finish_claim(pos);
         }
+        // The same for a store that keeps a wilderness: with the tree empty it is the only
+        // block the best fit could choose (`@FR-H-Wilderness`).
+        if self.wilderness
+            && let Some(pos) = self.bump_wild(size)
+        {
+            #[cfg(debug_assertions)]
+            self.fl_validate();
+            return self.finish_claim(pos);
+        }
         // Fast path: claim from the smallest tracked free block that fits.
         if let Some(result) = self.claim_best_fit(size) {
             #[cfg(debug_assertions)]
@@ -2008,6 +2029,37 @@ impl Store {
         self.free_root = new_free;
         self.claims.insert(pos);
         self.claimed_end = self.claimed_end.max(new_free);
+        if let Some(log) = self.recording.as_mut() {
+            log.push(StoreChange::Insert { pos, size });
+        }
+        Some(pos)
+    }
+
+    /// `bump_tail`'s twin for a store that keeps a wilderness (`@FR-H-Wilderness`): while the
+    /// free tree is empty the wilderness is the only block `claim_best_fit` could choose, so
+    /// the claim is carved off its front here — the block, the split and the remainder
+    /// `claim_best_fit` → `claim_block` → `fl_insert` would produce, without the tree walk
+    /// and the two calls.  Only the case where `claim_block` splits and the remainder stays
+    /// the wilderness; any other leaves the claim to the general path.  A store reset per
+    /// call (`clear_vector_release`'s root reset) claims every record here: a third of a
+    /// `split` was the allocator walking an empty tree (@PLN179 finding 021).
+    #[inline]
+    fn bump_wild(&mut self, size: u32) -> Option<u32> {
+        let pos = self.wild;
+        if pos == 0 || self.free_root != 0 || !wild_bump_enabled() {
+            return None;
+        }
+        let req = size as i32;
+        let block = self.fl_size(pos);
+        if block <= req * 4 / 3 || block - req < MIN_FREE_TREE {
+            return None;
+        }
+        self.write(pos, 0, req);
+        let rest = pos + size;
+        self.set_free_header(rest, block - req);
+        self.wild = rest;
+        self.claims.insert(pos);
+        self.claimed_end = self.claimed_end.max(rest);
         if let Some(log) = self.recording.as_mut() {
             log.push(StoreChange::Insert { pos, size });
         }
@@ -2817,9 +2869,8 @@ impl Store {
         } else {
             grown
         };
-        if bytes > old_bytes {
-            unsafe { self.ptr.add(old_bytes).write_bytes(0, bytes - old_bytes) };
-        }
+        // The grown tail is not zeroed, for the reason `Store::new` gives: it joins the free
+        // space, whose headers the allocator writes (`@FR-H-Claim`).
         self.size = size;
         // @PLN154 — the shadow spans the buffer, so it grows with it.  The new bytes are
         // tagged unwritten, which is what they are: nothing has been put there yet.  The
@@ -5204,6 +5255,13 @@ impl Store {
         rec > PRIMARY && rec < self.size && self.read::<i32>(rec, 0) > 0
     }
 
+    /// Does a stored reference name record `rec` (`@FR-H-Removed`)?  Such a record keeps its
+    /// position when it is removed, so its block may not change hands (`(R-HandOver)`).
+    #[must_use]
+    pub fn is_referenced(&self, rec: u32) -> bool {
+        self.referenced.contains(rec)
+    }
+
     /// 4-byte unsigned raw read — for internal collection headers
     /// (vector `[rec:u32][len:u32]`, hash buckets, tree node ptrs,
     /// string-record lengths).  NOT for user `integer` fields.
@@ -7514,26 +7572,38 @@ mod tests {
     fn a_text_from_its_own_store_survives_the_claim_that_moves_it() {
         let long = "the quick brown fox jumps over the lazy dog ".repeat(20);
         for how in 0..3 {
-            let mut store = store_with(false);
-            let rec = store.claim(2);
-            store.set_u32_raw(rec, 4, 0);
-            let src = store.set_str(&long);
-            let before = store.ptr;
-            let val = store.get_str(src);
-            let got = match how {
-                0 => store.set_str(val),
-                1 => store.set_str_ptr(val.as_ptr(), val.len()),
-                _ => {
-                    store.refill_str(rec, 4, val);
-                    store.get_u32_raw(rec, 4)
+            // `realloc` may grow a block in place, and then this case proves nothing.  A
+            // block allocated right after the store's own makes in-place growth unlikely;
+            // a few attempts make a move certain enough, and none at all is a failure.
+            let mut moved = false;
+            for _attempt in 0..8 {
+                let mut store = store_with(false);
+                let rec = store.claim(2);
+                store.set_u32_raw(rec, 4, 0);
+                let src = store.set_str(&long);
+                let blocker = vec![0u8; 64];
+                let before = store.ptr;
+                let val = store.get_str(src);
+                let got = match how {
+                    0 => store.set_str(val),
+                    1 => store.set_str_ptr(val.as_ptr(), val.len()),
+                    _ => {
+                        store.refill_str(rec, 4, val);
+                        store.get_u32_raw(rec, 4)
+                    }
+                };
+                assert_eq!(
+                    store.get_str(got),
+                    long,
+                    "case {how}: the copy reads the source text"
+                );
+                drop(blocker);
+                if store.ptr != before {
+                    moved = true;
+                    break;
                 }
-            };
-            assert_ne!(store.ptr, before, "case {how}: the claim moved the store");
-            assert_eq!(
-                store.get_str(got),
-                long,
-                "case {how}: the copy reads the source text"
-            );
+            }
+            assert!(moved, "case {how}: no attempt's claim moved the store");
         }
     }
 

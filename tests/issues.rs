@@ -1124,6 +1124,76 @@ fn n9_generated_fill_matches_src() {
     );
 }
 
+/// `@FR-R-OpPriority` — every operator `default/` declares is numbered in its priority class's
+/// band (`#hot` first, then the unmarked ones, then `#cold`), in declaration order within the
+/// band, at the slot whose name the generated table carries; and every hot operator has a
+/// one-byte opcode.  The drift test above only says the committed tables are what the
+/// generator writes; this says the numbering the parser gives is the layout those tables use.
+#[test]
+fn every_operator_is_numbered_in_its_priority_band() {
+    use loft::data::{OP_COLD, OP_HOT, OP_NORMAL};
+    use loft::op_layout;
+    let mut p = Parser::new();
+    p.parse_dir("default", true, false).unwrap();
+    let data = &p.data;
+    let hot = usize::from(op_layout::OP_HOT);
+    let normal = usize::from(op_layout::OP_NORMAL);
+    let mut last = [None::<u16>; 3];
+    let mut count = [0usize; 3];
+    for d_nr in 0..data.definitions() {
+        let def = data.def(d_nr);
+        if !def.is_operator() {
+            continue;
+        }
+        let code = usize::from(def.op_code);
+        let class = def.op_priority;
+        let band = match class {
+            OP_HOT => 0..hot,
+            OP_NORMAL => hot..hot + normal,
+            OP_COLD => hot + normal..op_layout::OPERATOR_NAMES.len(),
+            other => panic!("{}: priority class {other}", def.name),
+        };
+        assert!(
+            band.contains(&code),
+            "{} (class {class}) numbered {code}, outside {band:?}",
+            def.name
+        );
+        assert_eq!(
+            op_layout::OPERATOR_NAMES[code],
+            def.name,
+            "slot {code} names another operator"
+        );
+        let at = usize::from(class);
+        assert!(
+            last[at].is_none_or(|prev| prev < def.op_code),
+            "{} numbered {code} after a later-declared operator of its class took {:?}",
+            def.name,
+            last[at]
+        );
+        last[at] = Some(def.op_code);
+        count[at] += 1;
+        if class == OP_HOT {
+            assert!(
+                code < 255,
+                "hot operator {} has the two-byte opcode {code}",
+                def.name
+            );
+        }
+    }
+    assert_eq!(
+        count[0], hot,
+        "the table's hot band differs from the #hot operators"
+    );
+    assert_eq!(
+        count[1], normal,
+        "the table's middle band differs from the unmarked operators"
+    );
+    assert!(
+        count[0] > 0 && count[2] > 0,
+        "no hot or no cold operator: the bands are untested"
+    );
+}
+
 // N8: Sort must work correctly in native-codegen mode.
 // The #rust template for OpSortVector is inlined directly (no OpSortVector runtime fn needed).
 #[test]
@@ -16314,7 +16384,7 @@ fn test_it() {
          sharing a mutable variable between closures is not supported — hold the \
          shared state in a struct field instead (e.g. `state = State { t: ... }` \
          captured by all closures) \
-         at issue_314_scalar_shared_by_two_closures_rejected:5:2",
+         at issue_314_scalar_shared_by_two_closures_rejected:4:53",
     );
 }
 

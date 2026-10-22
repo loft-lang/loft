@@ -14,10 +14,10 @@
 # A price counts only when the hash is unchanged and two runs agree.  It is a CEILING for
 # the form, not a proof of the rewrite: the conditions under which the form is sound are the
 # rule's to state and the emitter's to validate (formal/rewrites.md).  The flags are the ones
-# `src/main.rs` passes for a shipped binary; `target/release` must be current (it links the
-# DEVELOPMENT runtime, with `strict-stores`: a price is a difference, the absolute numbers are
-# `bench/stats.py`'s, which measures the production pair) — `cargo build --release --lib
-# --bin loft`, `make check-rlib`.
+# loft passes for a shipped binary (`src/native_release_args.txt`); `target/release` must be
+# current (it links the DEVELOPMENT runtime, with `strict-stores`: a price is a difference, the
+# absolute numbers are `bench/stats.py`'s, which measures the production pair) — `cargo build
+# --release --lib --bin loft`, `make check-rlib`.
 #
 # A RUNTIME change (an edit to the rlib, not to the emitter) is A/B'd the same way without
 # editing any Rust: emit once, save `target/release/deps/libloft.rlib` from each build, copy
@@ -37,7 +37,9 @@
 #
 # Only the source and the output are replaced, and the symbols are kept (a profile needs them).
 # HAND_PRICE_RUSTFLAGS adds flags to either compile (`-C debuginfo=line-tables-only`, which
-# scripts/gap_report.py uses to charge instructions to loft lines).
+# scripts/gap_report.py uses to charge instructions to loft lines).  HAND_PRICE_REL names the
+# build directory to link instead of `target/release`: `target/install-lib/release` is the
+# production runtime (`scripts/lean_build.sh`), the one `bench/stats.py` measures.
 set -euo pipefail
 read -r -a extra <<< "${HAND_PRICE_RUSTFLAGS:-}"
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
@@ -63,14 +65,15 @@ if [ $# -eq 3 ]; then
   exit
 fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-rel="$root/target/release"
+rel="${HAND_PRICE_REL:-$root/target/release}"
 ffi="$(ls -t "$rel"/deps/libloft_ffi-*.rlib 2>/dev/null | head -1 || true)"
 ring="$(ls -d "$rel"/build/ring-*/out 2>/dev/null | head -1 || true)"
 if [ ! -f "$rel/deps/libloft.rlib" ] || [ -z "$ffi" ]; then
-  echo "$0: no release rlib under $rel — run: cargo build --release --lib --bin loft" >&2
+  echo "$0: no release rlib under $rel — run: cargo build --release --lib --bin loft (scripts/lean_build.sh --lib --bin loft for target/install-lib)" >&2
   exit 2
 fi
-args=(--edition=2024 -o "$2" "$1" -C opt-level=3 -C codegen-units=1
+mapfile -t release < <(grep -vE '^[[:space:]]*(#|$)' "$root/src/native_release_args.txt")
+args=(--edition=2024 -o "$2" "$1" "${release[@]}"
       --extern "loft=$rel/deps/libloft.rlib" -L "dependency=$rel/deps"
       --extern "loft_ffi=$ffi")
 [ -n "$ring" ] && args+=(-L "native=$ring")

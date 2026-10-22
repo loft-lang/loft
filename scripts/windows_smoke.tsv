@@ -83,3 +83,4 @@ bench/portal/analysis/gap-sweep/sweep.sh	--help
 scripts/gap_report.py	--help
 scripts/lean_build.sh	--help
 scripts/wait_for.sh	--help
+scripts/rule_depth.py	--help

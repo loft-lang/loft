@@ -110,14 +110,22 @@ impl Parser {
         // The base relation first, then the nullability step on top of it.
         let base: Rank = if same {
             EXACT
-        } else if let (Type::Integer(from), Type::Integer(to)) = (arg.base(), param.base())
+        } else if let (Type::Integer(_), Type::Integer(_)) = (arg.base(), param.base())
             && crate::keys::element_key_enabled()
-            && to.min <= from.min
-            && from.max <= to.max
         {
-            // `(C-Int)` — an integer into a range that holds all of it is the widening the
+            // `@FR-C-Int` — an integer into a range that holds all of it is the widening the
             // integer lattice has, as a variant into its enum is below: two widths are two
-            // types (@PLN165 B1), and the wider one takes the narrower without loss.
+            // types (@PLN165 B1), and the wider one takes the narrower without loss.  "Holds"
+            // is asked of `is_narrowing_int_store`, the one home every implicit integer store
+            // asks (`@FR-I-Sub`), never of the raw bounds: a plain `integer` REPORTS the 32-bit
+            // bounds while it holds the 64-bit range, so a bound comparison read a `u32` as no
+            // widening into `integer` and an `integer` as a widening into `i32` (loft#2113).
+            // A store that narrows is no candidate (`@FR-Disp-Applicable`: the lone twin
+            // refuses it), and is answered here rather than by `can_convert`, whose integer
+            // equality ignores the width and would rank `integer` into `i32` CONVERTED.
+            if Self::is_narrowing_int_store(a, p) {
+                return None;
+            }
             WIDENED
         } else if let (Type::Reference(v_nr, _), Type::Enum(e_nr, _, _)) =
             (arg.base(), param.base())
@@ -765,6 +773,69 @@ impl Parser {
         sel: &Selection,
         at: Option<&crate::lexer::Position>,
     ) {
+        self.report_selection_with(name, given, sel, at, &[]);
+    }
+
+    /// `@FR-Disp-Hint` — the typed spelling that cures a refusal where an integer LITERAL
+    /// argument is what no definition takes: the literal has no width of its own, so each
+    /// narrower integer a definition declares at that position is a way to say which
+    /// (`5 as u8`).  Empty when no literal argument meets one (loft#2089).
+    fn literal_width_cure(&self, name: &str, given: &[Type], args: &[Value]) -> String {
+        let bare = self.data.def_nr(name);
+        if bare == u32::MAX {
+            return String::new();
+        }
+        let members: Vec<u32> = self
+            .data
+            .def(bare)
+            .attributes
+            .iter()
+            .filter_map(|a| match a.typedef.base() {
+                Type::Routine(r) => Some(*r),
+                _ => None,
+            })
+            .collect();
+        for (i, arg) in args.iter().enumerate() {
+            let n = match arg.unspan() {
+                Value::Int(n) => i64::from(*n),
+                Value::Long(n) => *n,
+                _ => continue,
+            };
+            let Some(given_name) = given.get(i).map(|t| t.source_name(&self.data)) else {
+                continue;
+            };
+            let mut widths: Vec<String> = Vec::new();
+            for &r in &members {
+                if let Some(p) = self.data.visible_params(r).get(i)
+                    && matches!(p.base(), Type::Integer(_))
+                {
+                    let w = p.source_name(&self.data);
+                    if w != given_name && !widths.contains(&w) {
+                        widths.push(w);
+                    }
+                }
+            }
+            if !widths.is_empty() {
+                let spelled: Vec<String> = widths.iter().map(|w| format!("`{n} as {w}`")).collect();
+                return format!(
+                    "; a literal takes no width from the call — write {}",
+                    spelled.join(" or ")
+                );
+            }
+        }
+        String::new()
+    }
+
+    /// [`Self::report_selection`] with the call's argument VALUES, which a refusal of a literal
+    /// argument needs to spell its cure.
+    pub(crate) fn report_selection_with(
+        &mut self,
+        name: &str,
+        given: &[Type],
+        sel: &Selection,
+        at: Option<&crate::lexer::Position>,
+        args: &[Value],
+    ) {
         let shown: Vec<String> = given.iter().map(|t| t.source_name(&self.data)).collect();
         // `@FR-Disp-Ambiguous` is the one refusal of the two with a frozen code: a tie is
         // where a program that compiled under a coarser rule meets this one.
@@ -795,9 +866,10 @@ impl Parser {
                     .map(|r| self.data.overload_signature(name, r))
                     .collect();
                 format!(
-                    "no definition of `{name}` takes ({}) — declared: {}",
+                    "no definition of `{name}` takes ({}) — declared: {}{}",
                     shown.join(", "),
-                    declared.join(", ")
+                    declared.join(", "),
+                    self.literal_width_cure(name, given, args)
                 )
             }
             _ => return,
@@ -1320,7 +1392,7 @@ pub(crate) fn open_world() -> bool {
 }
 
 impl Parser {
-    /// `Disp-World` (@PLN162 step 14): the specialisation `old` — a `__sel_` stub or a
+    /// `@FR-Disp-World` (@PLN162 step 14): the specialisation `old` — a `__sel_` stub or a
     /// `__dyn_` dispatcher — built AGAIN in world `world`, as a new def `<old>__w<world>` over
     /// the same routed types with every leaf selected from the set as it is now, for the
     /// reload host to swap in behind the old def's number.  `None` when the new world cannot
@@ -1407,6 +1479,12 @@ impl Parser {
         };
         let call = shown(&self.data, routed);
         let tuple = shown(&self.data, leaf);
+        // One dispatched argument is a variant, not a pair (loft#2089).
+        let what = match leaf.len() {
+            1 => "variant",
+            2 => "pair",
+            _ => "combination",
+        };
         let text = match sel {
             Selection::Ambiguous(taken) => {
                 let by: Vec<String> = taken
@@ -1414,7 +1492,7 @@ impl Parser {
                     .map(|&r| self.data.overload_signature(name, r))
                     .collect();
                 format!(
-                    "`{name}({call})` is ambiguous at ({tuple}) — that pair is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
+                    "`{name}({call})` is ambiguous at ({tuple}) — that {what} is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
                     by.join(" and ")
                 )
             }
@@ -1432,7 +1510,7 @@ impl Parser {
                     .map(|r| self.data.overload_signature(name, r))
                     .collect();
                 format!(
-                    "`{name}({call})` has no definition for the pair ({tuple}) — declared: {}; add one, or a definition at the enum",
+                    "`{name}({call})` has no definition for the {what} ({tuple}) — declared: {}; add one, or a definition at the enum",
                     declared.join(", ")
                 )
             }

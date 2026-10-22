@@ -993,9 +993,14 @@ impl Parser {
             // 256 overflows the `u8` — an internal compiler error under debug assertions,
             // a wrap to the reserved `0` without them.
             if nr == 253 {
-                self.lexer.diagnostic(
+                // Reported at the 255th variant — the one refused — not after the comma that
+                // closes the 254th (loft#2089).
+                let at = *self.lexer.peek_pos();
+                diagnostic_at!(
+                    self.lexer,
+                    &at,
                     Level::Error,
-                    "Too many enum variants — an enum holds at most 254, because a variant is one byte and 0 and 255 are reserved",
+                    "Too many enum variants — an enum holds at most 254, because a variant is one byte and 0 and 255 are reserved"
                 );
                 // Skip the rest of the variant list rather than breaking out mid-name: the
                 // caller's `token("}")` is standing at the next variant otherwise, and one
@@ -2492,24 +2497,48 @@ impl Parser {
         }
     }
 
+    /// The table's names not built yet: the form each will back.
+    const OPERATOR_FORMS_NOT_BUILT: &[(&str, &str)] = &[
+        ("at", "`x[i]`"),
+        ("set_at", "`x[i] = v`"),
+        ("slice", "`x[a..b]`"),
+        ("key_range", "a keyed slice"),
+        ("power", "`**`"),
+        ("bit_and", "`&`"),
+        ("bit_or", "`|`"),
+        ("bit_xor", "`^`"),
+        ("bit_not", "`~`"),
+        ("shift_left", "`<<`"),
+        ("shift_right", "`>>`"),
+    ];
+
+    /// Does `refuse_operator_name` refuse `fn_name` — `equals`, a form not built yet, or a name
+    /// that is no form at all?  Asked before the definition exists, so a refused name never
+    /// meets another definition of it (`index` is a stdlib name, loft#2089).
+    fn backs_no_form(fn_name: &str) -> bool {
+        fn_name == "equals"
+            || Self::OPERATOR_FORMS_NOT_BUILT
+                .iter()
+                .any(|(n, _)| *n == fn_name)
+            || !(matches!(
+                fn_name,
+                "compare"
+                    | "plus"
+                    | "minus"
+                    | "times"
+                    | "divided_by"
+                    | "remainder"
+                    | "negate"
+                    | "next"
+                    | "to_text"
+            ) || fn_name.starts_with("to_"))
+    }
+
     /// `@FR-Op-Def`'s name half: a form of the table not built yet is refused by name, saying
     /// what it will back, and a name that is no form at all is refused as one.  Answers whether
     /// it refused.
     fn refuse_operator_name(&mut self, fn_name: &str) -> bool {
-        // The table's names not built yet: the form each will back.
-        const PLACED: &[(&str, &str)] = &[
-            ("at", "`x[i]`"),
-            ("set_at", "`x[i] = v`"),
-            ("slice", "`x[a..b]`"),
-            ("key_range", "a keyed slice"),
-            ("power", "`**`"),
-            ("bit_and", "`&`"),
-            ("bit_or", "`|`"),
-            ("bit_xor", "`^`"),
-            ("bit_not", "`~`"),
-            ("shift_left", "`<<`"),
-            ("shift_right", "`>>`"),
-        ];
+        let placed = Self::OPERATOR_FORMS_NOT_BUILT;
         // @C134 (owner) — `==` is always structural, for every type at every depth; no
         // type defines it, so a deep comparison of its own is a named method.
         if fn_name == "equals" {
@@ -2521,7 +2550,7 @@ impl Parser {
             );
             return true;
         }
-        if let Some((_, form)) = PLACED.iter().find(|(n, _)| *n == fn_name) {
+        if let Some((_, form)) = placed.iter().find(|(n, _)| *n == fn_name) {
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -2550,7 +2579,7 @@ impl Parser {
                  — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, \
                  `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a \
                  unary `-`, `next` for `for e in x`, `to_text` for \
-                 `\"{{x}}\"`; declare an ordinary method with `fn`"
+                 `\"{{x}}\"`, `to_<type>` for `x as <type>`; declare an ordinary method with `fn`"
             );
             return true;
         }
@@ -2840,6 +2869,15 @@ impl Parser {
         let Some(fn_name) = self.parse_fn_name() else {
             return false;
         };
+        // `@FR-Op-Def` — an `operator` whose name backs no form is refused in the second pass by
+        // the name as written; its definition takes a private name so that it collides with
+        // nothing first (`operator index(…)` met the stdlib's `index`, loft#2089).
+        let (fn_name, written_name) =
+            if is_operator && !self.default && Self::backs_no_form(&fn_name) {
+                (format!("__refused_operator_{fn_name}"), Some(fn_name))
+            } else {
+                (fn_name, None)
+            };
         // Marked or not: an unmarked `fn to_<t>` is what `as` names in its refusal (`@FR-Op-Mark`).
         if !self.default && fn_name.starts_with("to_") && fn_name != "to_text" {
             self.data.user_operator_conversions = true;
@@ -3138,7 +3176,8 @@ impl Parser {
             Type::Void
         };
         if is_operator && !self.first_pass {
-            self.check_operator_definition(&fn_name, &arguments, &result);
+            let written = written_name.as_deref().unwrap_or(&fn_name);
+            self.check_operator_definition(written, &arguments, &result);
         }
         if !is_operator && !self.first_pass && !self.default {
             self.report_retired_operator_function(&fn_name, &arguments);
@@ -7459,6 +7498,26 @@ impl Parser {
     /// has no frame, and replayed at every construction site.
     ///
     /// Answers whether a default was consumed.
+    /// `@FR-L-Upgrade-Source` — keep the stored fields field `a_name` of `d_nr`'s default
+    /// reads (`Data::default_sources`): the paths the parse of the default met, less any that
+    /// is only the way to a longer one.  Pass 2's answer replaces pass 1's.
+    fn record_default_sources(&mut self, d_nr: u32, a_name: &str) {
+        let paths = std::mem::take(&mut self.default_paths);
+        self.default_path_reads.clear();
+        let mut leaves: Vec<String> = paths
+            .iter()
+            .filter(|p| !paths.iter().any(|q| q.starts_with(&format!("{p}."))))
+            .cloned()
+            .collect();
+        leaves.sort();
+        let key = (self.data.def(d_nr).name().to_string(), a_name.to_string());
+        if leaves.is_empty() {
+            self.data.default_sources.remove(&key);
+        } else {
+            self.data.default_sources.insert(key, leaves);
+        }
+    }
+
     pub(crate) fn parse_stored_default(
         &mut self,
         d_nr: u32,
@@ -7473,6 +7532,8 @@ impl Parser {
         // for circular-init detection (same as init(expr) path).
         self.init_field_tracking = true;
         self.init_field_deps.clear();
+        self.default_paths.clear();
+        self.default_path_reads.clear();
         self.init_reads_record = false;
         // @PLN22 Phase 1 — hint the field's enum so a bare variant
         // default (`level: Level = Warning`) resolves against the
@@ -7499,6 +7560,7 @@ impl Parser {
                 || (self.unresolved_names, self.unresolved_types) != unresolved_before);
         self.expected = Type::Unknown(0);
         self.init_field_tracking = false;
+        self.record_default_sources(d_nr, a_name);
         if a_type.is_unknown() {
             *a_type = tp.clone();
         }
@@ -8198,10 +8260,13 @@ impl Parser {
         // `(H-Copy-Lease)`'s cascades are independent of the drop ones and can exist in a program
         // that declares no `OpDrop`, so they are made before the drop pass's early return.
         self.synth_copy_cascades();
-        // @PLN196 — likewise the fill functions a store upgrade calls, when asked for.
+        // @PLN196 — likewise the fill functions a store upgrade calls, when asked for, and the
+        // drain after every whole-image load, which calls them for a converting load.
         if self.upgrade_fills {
             self.synth_upgrade_fills();
+            self.synth_upgrade_routines();
         }
+        self.synth_upgrade_drain();
         // Cheap exit for the overwhelmingly common program: no `OpDrop` anywhere means no
         // type can own a droppable, so nothing below can fire.
         // …and a generator handle held by a record or a collection (loft#1585), which its
@@ -8390,6 +8455,372 @@ impl Parser {
         self.data.definitions[f_nr as usize].variables = built;
         self.context = outer_context;
         self.data.def_used(f_nr);
+    }
+
+    /// `@FR-L-Upgrade-Routine`, @PLN196 step 9 — every `upgrade` routine the program wrote:
+    /// `fn upgrade(from: Release, old: O, item: T)`, with `O` and `T` structs.  A store older
+    /// than the program's release runs it on each record of `T` it converts.  Several, one
+    /// per `T`, are an overload set.
+    #[must_use]
+    pub fn upgrade_routine_defs(data: &crate::data::Data) -> Vec<UpgradeRoutineDef> {
+        // One routine is a plain function; several are an overload set, which joins its
+        // members to `Release` as methods and is keyed by the bare name.
+        let mut candidates = data.overload_routines("upgrade");
+        let single = data.def_nr("n_upgrade");
+        if single != u32::MAX && !candidates.contains(&single) {
+            candidates.push(single);
+        }
+        let strukt = |t: &Type| match t.base() {
+            Type::Reference(d, _) if data.def_type(*d) == DefType::Struct => Some(*d),
+            _ => None,
+        };
+        let mut out = Vec::new();
+        for r in candidates {
+            let def = data.def(r);
+            if def.def_type() != DefType::Function || !matches!(def.returned().base(), Type::Void) {
+                continue;
+            }
+            let [from, old, item] = def.attributes() else {
+                continue;
+            };
+            let (Some(version), Some(old), Some(item)) = (
+                strukt(&from.typedef),
+                strukt(&old.typedef),
+                strukt(&item.typedef),
+            ) else {
+                continue;
+            };
+            let fields: Vec<&str> = data
+                .def(version)
+                .attributes()
+                .iter()
+                .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
+                .map(|a| a.name.as_str())
+                .collect();
+            if data.def(version).name() != "Release" || fields != ["major", "minor", "patch"] {
+                continue;
+            }
+            out.push(UpgradeRoutineDef {
+                routine: r,
+                version,
+                old,
+                item,
+            });
+        }
+        out
+    }
+
+    /// Each `upgrade` routine by the record type it converts, as the store layer takes them:
+    /// the converter on a load, `loft layout upgrade`, and a live rebuild's world check.
+    #[must_use]
+    pub fn upgrade_routines(data: &crate::data::Data) -> crate::database::Routines {
+        Self::upgrade_routine_defs(data)
+            .into_iter()
+            .map(|r| {
+                let kt = |d: u32| data.def(d).known_type();
+                (
+                    kt(r.item),
+                    crate::database::Routine {
+                        old: kt(r.old),
+                        version: kt(r.version),
+                        name: Self::upgrade_routine_name(data, r.item),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// The function an `upgrade` routine for struct `item` is called through:
+    /// `__upgrade_<Struct>`, by name through the host API as a fill function is.
+    #[must_use]
+    pub fn upgrade_routine_name(data: &crate::data::Data, item: u32) -> String {
+        let clean: String = data
+            .def(item)
+            .name()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        format!("__upgrade_{clean}")
+    }
+
+    /// Give each `upgrade` routine its wrapper ([`Self::upgrade_routine_name`]), which takes
+    /// the three records as the drain and the host hand them over and calls the routine.
+    pub(crate) fn synth_upgrade_routines(&mut self) {
+        for r in Self::upgrade_routine_defs(&self.data) {
+            self.synth_upgrade_routine(&r);
+        }
+    }
+
+    fn synth_upgrade_routine(&mut self, r: &UpgradeRoutineDef) {
+        let name = Self::upgrade_routine_name(&self.data, r.item);
+        let key = format!("n_{name}");
+        if self.data.def_nr(&key) != u32::MAX {
+            return;
+        }
+        let pos = *self.data.def(r.routine).position();
+        let f_nr = self.data.add_def(&key, &pos, DefType::Function);
+        self.data.set_returned(f_nr, Type::Void);
+        let params = [("from", r.version), ("old", r.old), ("item", r.item)]
+            .map(|(n, d)| (n, Type::Reference(d, crate::data::Deps::none())));
+        for (n, t) in &params {
+            let _ = self.data.add_attribute(&mut self.lexer, f_nr, n, t.clone());
+        }
+        let mut vars = Function::new(&name, pos.file.as_str());
+        let mut args = Vec::new();
+        for (n, t) in &params {
+            let v = vars.add_variable(n, t, &mut self.lexer);
+            vars.become_argument(v);
+            vars.defined(v);
+            args.push(Value::Var(v));
+        }
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = f_nr;
+        let call = Value::Call(r.routine, args);
+        self.finish_body(v_block(vec![call], Type::Void, "block"), Type::Void);
+        let built = std::mem::replace(&mut self.vars, outer_vars);
+        self.data.definitions[f_nr as usize].variables = built;
+        self.context = outer_context;
+        self.data.def_used(f_nr);
+        self.data.def_used(r.routine);
+    }
+
+    /// `fn __upgrade_register()`: tell the store layer each `upgrade` routine's types
+    /// (`store_upgrade_routine`), so the converting load it precedes knows which records owe
+    /// one.  `u32::MAX` when the program wrote none.
+    fn synth_upgrade_register(&mut self) -> u32 {
+        let routines = Self::upgrade_routine_defs(&self.data);
+        if routines.is_empty() {
+            return u32::MAX;
+        }
+        let native = self.data.def_nr("n_store_upgrade_routine");
+        let pos = *self.data.def(self.data.def_nr("n_store_load")).position();
+        let f_nr = self
+            .data
+            .add_def("n___upgrade_register", &pos, DefType::Function);
+        self.data.set_returned(f_nr, Type::Void);
+        let vars = Function::new("__upgrade_register", pos.file.as_str());
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = f_nr;
+        let tp = |d: u32| Value::Int(i32::from(self.data.def(d).known_type()));
+        let body: Vec<Value> = routines
+            .iter()
+            .map(|r| Value::Call(native, vec![tp(r.item), tp(r.old), tp(r.version)]))
+            .collect();
+        self.finish_body(v_block(body, Type::Void, "block"), Type::Void);
+        let built = std::mem::replace(&mut self.vars, outer_vars);
+        self.data.definitions[f_nr as usize].variables = built;
+        self.context = outer_context;
+        self.data.def_used(f_nr);
+        f_nr
+    }
+
+    /// @PLN196 step 8 — a `store_load` or `store_persist_bind` of a file written under an
+    /// older layout converts it (open question 3) — as do `store_load_untrusted` and the
+    /// two URL loaders — and an added field whose default the program must compute is left
+    /// owed (`Stores::owed_next`).  So every call of one of them is wrapped in `__upgrade_drain(call)`, which fills each owed field through its fill
+    /// function ([`Self::synth_upgrade_fills`]) and then finishes the call
+    /// (`Stores::owed_finish`): a bind upgrades its file only after every field holds its
+    /// default.  A program that calls neither gets no drain.
+    fn synth_upgrade_drain(&mut self) {
+        // By name in every source: `swap_world` is declared by the `engine_host` library, which
+        // `def_nr` (this source and the stdlib) does not search.
+        const LOADS: [&str; 6] = [
+            "n_store_load",
+            "n_store_load_untrusted",
+            "n_store_load_url",
+            "n_store_load_url_trusted",
+            "n_store_persist_bind",
+            "n_swap_world",
+        ];
+        let loads: Vec<u32> = (0..self.data.definitions())
+            .filter(|&d| {
+                self.data.def_type(d) == DefType::Function
+                    && LOADS.contains(&self.data.def(d).name())
+            })
+            .collect();
+        if loads.is_empty() {
+            return;
+        }
+        let mut drain = self.data.def_nr("n___upgrade_drain");
+        let callers: Vec<u32> = (0..self.data.definitions())
+            .filter(|&d| d != drain && Self::calls_unwrapped(&self.data.def(d).code, &loads, drain))
+            .collect();
+        if callers.is_empty() {
+            return;
+        }
+        if drain == u32::MAX {
+            self.synth_upgrade_fills();
+            self.synth_upgrade_routines();
+            drain = self.synth_drain_fn();
+        }
+        let mut register = self.data.def_nr("n___upgrade_register");
+        if register == u32::MAX {
+            register = self.synth_upgrade_register();
+        }
+        for d in callers {
+            let mut code =
+                std::mem::replace(&mut self.data.definitions[d as usize].code, Value::Null);
+            Self::wrap_loads(&mut code, &loads, drain, register);
+            self.data.definitions[d as usize].code = code;
+        }
+    }
+
+    /// Does `v` call one of `loads` outside a `drain` call?
+    fn calls_unwrapped(v: &Value, loads: &[u32], drain: u32) -> bool {
+        match v {
+            Value::Call(d, _) if *d == drain => false,
+            Value::Call(d, _) if loads.contains(d) => true,
+            _ => {
+                let mut found = false;
+                v.for_each_child(&mut |c| found |= Self::calls_unwrapped(c, loads, drain));
+                found
+            }
+        }
+    }
+
+    /// Wrap every call of one of `loads` in `v` that is not wrapped yet in `drain(call)`, or,
+    /// when the program wrote `upgrade` routines, in `drain({register(); call})`.
+    fn wrap_loads(v: &mut Value, loads: &[u32], drain: u32, register: u32) {
+        match v {
+            Value::Call(d, _) if *d == drain => {}
+            Value::Call(d, args) if loads.contains(d) => {
+                for a in args.iter_mut() {
+                    Self::wrap_loads(a, loads, drain, register);
+                }
+                let call = std::mem::replace(v, Value::Null);
+                let arg = if register == u32::MAX {
+                    call
+                } else {
+                    v_block(
+                        vec![Value::Call(register, Vec::new()), call],
+                        Type::Boolean,
+                        "block",
+                    )
+                };
+                *v = Value::Call(drain, vec![arg]);
+            }
+            _ => v.for_each_child_mut(&mut |c| Self::wrap_loads(c, loads, drain, register)),
+        }
+    }
+
+    /// `fn __upgrade_drain(ok: boolean) -> boolean`: take each owed fill and call the fill
+    /// function its key names, then finish the call it follows.
+    ///
+    /// ```text
+    /// loop {
+    ///   k = store_upgrade_owed_next();
+    ///   if k < 0 { break }
+    ///   if k == <key of T.f> { __fill_T__f(store_upgrade_owed_record()) } else if …
+    /// }
+    /// if store_upgrade_owed_finish() { ok } else { false }
+    /// ```
+    fn synth_drain_fn(&mut self) -> u32 {
+        let natives = [
+            "n_store_upgrade_owed_next",
+            "n_store_upgrade_owed_record",
+            "n_store_upgrade_owed_finish",
+        ]
+        .map(|n| self.data.def_nr(n));
+        let [next, record, finish] = natives;
+        let pos = *self.data.def(self.data.def_nr("n_store_load")).position();
+        let f_nr = self
+            .data
+            .add_def("n___upgrade_drain", &pos, DefType::Function);
+        self.data.set_returned(f_nr, Type::Boolean);
+        let _ = self
+            .data
+            .add_attribute(&mut self.lexer, f_nr, "ok", Type::Boolean);
+        let mut vars = Function::new("__upgrade_drain", pos.file.as_str());
+        let ok = vars.add_variable("ok", &Type::Boolean, &mut self.lexer);
+        vars.become_argument(ok);
+        let k = vars.add_variable("k", &crate::data::I64, &mut self.lexer);
+        vars.defined(k);
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = f_nr;
+        // Every fill, by the key the converter owes it under (`database::owed_key`).
+        let mut arms = Value::Null;
+        for (key, fill) in self.upgrade_fill_keys().into_iter().rev() {
+            let lit = i32::try_from(key).map_or(Value::Long(key), Value::Int);
+            let test = self.cl("OpEqInt", &[Value::Var(k), lit]);
+            let call = Value::Call(fill, vec![Value::Call(record, Vec::new())]);
+            arms = v_if(test, call, arms);
+        }
+        // Every routine, by `database::routine_key`: its release, its old fields, its record.
+        let (owed_from, owed_old) = (
+            self.data.def_nr("n_store_upgrade_owed_from"),
+            self.data.def_nr("n_store_upgrade_owed_old"),
+        );
+        for r in Self::upgrade_routine_defs(&self.data) {
+            let wrapper = self.data.def_nr(&format!(
+                "n_{}",
+                Self::upgrade_routine_name(&self.data, r.item)
+            ));
+            let key = crate::database::routine_key(self.data.def(r.item).known_type());
+            let lit = i32::try_from(key).map_or(Value::Long(key), Value::Int);
+            let test = self.cl("OpEqInt", &[Value::Var(k), lit]);
+            let call = Value::Call(
+                wrapper,
+                vec![
+                    Value::Call(owed_from, Vec::new()),
+                    Value::Call(owed_old, Vec::new()),
+                    Value::Call(record, Vec::new()),
+                ],
+            );
+            arms = v_if(test, call, arms);
+        }
+        let done = self.cl("OpLtInt", &[Value::Var(k), Value::Int(0)]);
+        let step = vec![
+            crate::data::v_set(k, Value::Call(next, Vec::new())),
+            v_if(done, Value::Break(0), Value::Null),
+            arms,
+        ];
+        let body = vec![
+            crate::data::v_loop(step, "upgrade drain"),
+            v_if(
+                Value::Call(finish, Vec::new()),
+                Value::Var(ok),
+                Value::Boolean(false),
+            ),
+        ];
+        self.finish_body(v_block(body, Type::Boolean, "block"), Type::Boolean);
+        let built = std::mem::replace(&mut self.vars, outer_vars);
+        self.data.definitions[f_nr as usize].variables = built;
+        self.context = outer_context;
+        self.data.def_used(f_nr);
+        f_nr
+    }
+
+    /// Each fill function [`Self::synth_upgrade_fills`] made, with the key the converter owes
+    /// its field under: the struct's type and the field's position in it.
+    fn upgrade_fill_keys(&self) -> Vec<(i64, u32)> {
+        let mut keys = Vec::new();
+        for d_nr in 0..self.data.definitions() {
+            let kt = self.data.def(d_nr).known_type();
+            if self.data.def_type(d_nr) != DefType::Struct || kt == u16::MAX {
+                continue;
+            }
+            let crate::database::Parts::Struct(fields) = &self.database.types[kt as usize].parts
+            else {
+                continue;
+            };
+            for a_nr in 0..self.data.def(d_nr).attributes().len() {
+                let fill = self.data.def_nr(&format!(
+                    "n_{}",
+                    Self::upgrade_fill_name(&self.data, d_nr, a_nr)
+                ));
+                let name = &self.data.def(d_nr).attributes()[a_nr].name;
+                if fill == u32::MAX {
+                    continue;
+                }
+                if let Some(i) = fields.iter().position(|f| &f.name == name) {
+                    keys.push((crate::database::owed_key(kt, i as u16), fill));
+                }
+            }
+        }
+        keys
     }
 
     /// The `self` parameter type of a type's cascade — a struct-enum carries its
@@ -9228,6 +9659,20 @@ pub(crate) fn visit_constant_vars(val: &mut Value, f: &mut dyn FnMut(&mut u16)) 
         | Value::FnRef(..)
         | Value::FnRefDnr(_) => false,
     }
+}
+
+/// @PLN196 step 9 — one `upgrade(from: Release, old: O, item: T)` routine
+/// ([`Parser::upgrade_routine_defs`]).
+#[derive(Clone, Copy, Debug)]
+pub struct UpgradeRoutineDef {
+    /// The routine.
+    pub routine: u32,
+    /// The stdlib `Release` struct.
+    pub version: u32,
+    /// `O`: the stored fields it reads.
+    pub old: u32,
+    /// `T`: the record type it converts.
+    pub item: u32,
 }
 
 /// Where a stored default is replayed, which is what decides the variables it may name.

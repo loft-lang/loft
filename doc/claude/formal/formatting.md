@@ -221,9 +221,10 @@ Nothing is still a rendering, and a width pads whatever the rendering is.
                  a value NEVER traps or halts — the template always produces text.
 ```
 
-**In words.** `"{a / b}"` with `b = 0` renders `null` rather than crashing the program — the
-formatter rewrites fault-prone operations in interpolation position to their nullable peers (@C66 /
-@P376), so building a diagnostic string can never itself fault.  The null a fault yields is the
+**In words.** `"{a / b}"` with `b = 0` renders `null` rather than crashing the program: no
+operation halts (@C80), so building a diagnostic string can never itself fault.  The fault is
+reported as it is anywhere else — one log line under `(E-Report)` — because the hole keeps the
+plain operation; a `??` inside the hole takes the silent peer as it does outside.  The null a fault yields is the
 null any other null is: `"{a / b}"`, `"{v[9]}"` and `"{c}"` after `c = a / b` all render `null`,
 whatever type the hole has, so a rendering never depends on where in the expression the fault sat.
 A null whose type has its own `operator to_text` renders `null` too: the hole tests for the null

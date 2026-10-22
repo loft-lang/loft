@@ -311,6 +311,36 @@ freeze, not targets to stop at, and the work goes on past them
 being picked up and put down — which is why the freeze list also carries a LIGHTER pass that
 reads each remaining rule once for suspicion rather than walking it.
 
+**Depth, once presence is done.** `coverage` counts a rule NAMED by a test, and says so; with
+the language suite beside the tree nearly every rule has one. The question left is whether the
+cells would FAIL were the rule broken, and how much of what the rule promises they reach:
+
+```bash
+make rule-depth                      # or: python3 scripts/rule_depth.py; ARGS="--rule B-Copy" for one
+```
+
+Per guarded rule it reads the cells that cite it and whether they run on both backends, the
+defects they name (a cell written from a defect has failed once; one written from the rule's
+text never has), a falsification receipt (`@falsified-at`, a `tests/falsified` control, a
+rewrite-census admission, a `LOFT_NO_*` A/B — the one column that says a test would fail),
+the reach over the composition axes the rule's chapter quantifies over
+(`scripts/rule_axes.tsv`, the by-hand input; `scripts/matrix_axes.py` measures the cells),
+with an axis every cell pins at ONE value named (the pinned-axis shape `matrix_axes.py`'s
+vocabulary was built from) — and the enforcing
+sites in `src/`, the targets of a site-mutation pass the report does not run. Rules are
+ordered by the defects behind them, the walk's own yield order. A report of reach, never a
+gate, and a floor: ROUTE and ESCAPE are not composition axes and stay a by-hand read.
+
+**Where two rules meet.** A third of the defect-born cells cite two rules or more, and the
+questions that reached the owner by hand were mostly of that kind: each rule clear alone, the
+text silent on which applies where both do. A COMPOSITION is stated as prose under the rule
+that governs — one sentence naming the other rule with a `when`, `where`, `instead`, `exactly
+as` or `governs` beside it, and the cell that fails when the order is wrong citing both — never
+as a pair notation, which would grow as the square of the rules and index nothing the two
+names do not. `python3 scripts/rule_tags.py pairs --unstated` lists the pairs the text names
+without saying which applies, and the pairs a defect-born cell cites together that no rule's
+entry names at all, the ones that have already failed first.
+
 ⚠ **"A queue measured in years" was this doc's own projection, and it was wrong.** Measured
 2026-09-17 off `git grep "@FR-" <rev> -- src`: citation went from none to most of the corpus
 inside about five weeks, running several times the afternoon-per-rule estimate. Two things keep

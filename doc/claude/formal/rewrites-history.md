@@ -632,3 +632,20 @@ handle), so "one position per handle" would have made `g = f` mean two things by
 Each record keeps its position; native's read now places the handle at `#next` first
 (`LoftFile::place`, a compare when it is there), as writes, seeks and the interpreter did.
 
+## 2026-10-21 — `(R-HandOver)`: the truncating take, built and removed
+
+Beside the rotate clause, the take for `truncate_to(h, c); h.entries += [e]` was built: before
+the truncation, element c's vector blocks were taken (its slots set to 0, so the keep freed
+nothing of them) and the copy of `e` wrote into them (`hand_over_detach` / `hand_over_copy`).
+Measured on dryopea `truncate_to` against the rotate alone: −16.6 % with it, −17.1 % without
+(the routine looped alone: 0.87 s against 0.84 s, with the bound test emitted inline so the
+call ran only on the 30 truncating pushes of 300).  `history_push`'s own code grew from 13.3 %
+to 18.5 % of the profile to carry the take and the conditional copy, and the take saved only a
+claim and a free: the exact-size free lists already hand the freed block to the next claim.
+Removed; the general rule's status line records the reason.
+
+While bisecting it, `Store::get_u32_raw` was found split from its `#[inline]` by a function
+inserted between the attribute and the item: a +24 % slowdown on `truncate_to` from one
+out-of-line raw read, found by a flat profile of the two runtimes (8.6 % of samples in a
+symbol the fast build does not have).
+

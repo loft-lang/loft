@@ -10,6 +10,62 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Compositions in the formal rules, and the pairs check reads them
+
+- A composition — which rule applies where two do — is stated as prose under the rule that
+  governs, naming the other rule with a `when`/`where`/`instead`/`governs` beside it; no pair
+  notation.  Seven written from the cells the defects left: `H-Spent` with `H-Move`, `G-Hold`
+  and `H-Copy-Refuse`; `H-Drop` with `H-Move`, `O-Latest` and `L-CapOwn`; `N-Decl` with
+  `I-Narrow`; `F-Ret` with `B-Copy`, `O-Move` and `G-Mono`; `B-Copy` with `B-View`,
+  `B-Ref-Alias` and `T-Cons`; `B-Ref-Uniform` with `B-Ref-Intro`; `L-CapOwn` with `H-Drop`;
+  then `O-NoDiverge` with `B-Copy`, `O-Complete` with `O-NoDiverge`, `O-Buffer` with `O-Move`
+  and `R-Reuse`, `L-CapHeap` with `O-Latest` and `L-CapOwn` — every pair three or more
+  defect-born cells cited together; then the sixteen every pair two cells cited: `L-Null`
+  with `L-Null-Tag`; `B-Copy` with `L-Null` and `H-Copy`; `N-Road` with `B-Copy` and
+  `N-Store`; `O-Owner` with `B-Copy`; `R-ReturnField` with `N-Road`; `H-Materialise` with
+  `B-View`; `B-View` with `B-View-Depth`; `O-Derived` with `B-View`; `H-Drop` with
+  `B-Scope`; `B-Ref-Alias` with `B-View` and `B-Ref-Reshape`; `O-Override` with
+  `O-Detach`; `O-Detach` with `O-Latest` and `L-CapHeap`; `L-Escape` with `L-CapOwn`;
+  `F-Ret` with `F-Call` and `O-NoDiverge`; `N-Store` with `I-Narrow`; `L-CapOwn` with
+  `L-CapOne`.  The connectives the check reads grew to consequences (`so`, `because`,
+  `decides`, `never`, …), since a composition states what follows as often as when.
+- `rule_tags.py pairs` reads a rule named bare or in backticks as well as in parentheses or
+  by tag (517 pairs named, from 311), tells a STATED composition (the naming sentence carries a
+  conditional or ordering connective: 302) from a cross-reference, and `--unstated` lists the
+  rest with the defect-born cells citing both first — and, strongest, the pairs such a cell
+  cites that no rule's entry names at all (276 before the seven; a third of defect-born cells
+  cite two rules or more).
+
+### The per-rule depth report: how thoroughly the tests match a formal rule
+
+- `make rule-depth` (`scripts/rule_depth.py`): where `rule_tags.py coverage` counts a rule
+  NAMED by a test (97 % of rules with the language suite beside the tree), this reads each
+  guarded rule's cells — how many, on both backends, the defects they name, a falsification
+  receipt (`@falsified-at`, a `tests/falsified` control, a rewrite-census admission, a
+  `LOFT_NO_*` A/B), the reach over the composition axes the rule's chapter quantifies over
+  (`scripts/rule_axes.tsv`, by hand; `matrix_axes.py` measures), an axis every cell pins at one
+  value named, and the enforcing sites in `src/` — and ranks the shallow rules by the defects
+  behind them.  First read: of 517 guarded rules, 415 have two or more cell files, 508 a cell
+  on both backends, 439 a receipt, 320 of 480 pin no axis, 157 carry no shallow flag.  A
+  report, never a gate (STABILITY_METHOD.md § Depth, once presence is done).
+
+### A run-time fault logs at every unguarded site, on both backends (@C80, owner 2026-10-21)
+
+An uncomputable divide, modulo or index logs one Warn line wherever it sits.  A format-string
+hole no longer swaps its operations to their silent peers (`rewrite_subtree_to_nullable` is
+gone, and with it the gate that kept its swap table equal to the `??` one), so `"{a / b}"`
+renders `null` and logs as `c = a / b` does; a `??` inside the hole stays silent.  `--log-conf`
+now reaches a `--native` run.  The 2026-10-16 entry below ("a division by zero is silent")
+rested on a probe of the hole alone.  Guard
+`tests/runtime_logging.rs::every_unguarded_fault_logs_on_both_backends`.
+
+### A fault keeps its own position under soft-halt and inside an inlined leaf (loft#2111)
+
+`--dev-soft-halt` printed `at ?` for a fault in an op with no span of its own; it now takes the
+position the log line takes.  A fault inside a leaf `(R-InlineLeaf)` inlines named the call:
+the span table kept one span per start pc and the call's replaced the body's.  An inner span
+now keeps its range.
+
 ### Two gate reds of the joined tree: the prefill cells' native half, a twin's registry notice
 
 - `tests/prefill_image.rs::the_cells_use_the_image_on_both_backends` read `Mix`'s image

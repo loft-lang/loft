@@ -221,6 +221,17 @@ pub fn variant(
 fn insert_param(data: &mut Data, def_nr: u32, at: usize, tp: &Type) -> u16 {
     let def = &mut data.definitions[def_nr as usize];
     let mut code = std::mem::replace(&mut def.code, Value::Null);
+    // The body's own result type is the function's return type: its deps are ATTRIBUTE
+    // indices, which the new parameter moves as it moves the attributes' (`shift` below) — not
+    // frame variables for the renumber, which read `[1]` (a hidden buffer's attribute) as the
+    // variable that happens to hold that number.
+    let returned = def.returned.clone();
+    let body_result = match &mut code {
+        Value::Block(bl) if bl.result == returned && !returned.has_no_deps() => {
+            Some(std::mem::replace(&mut bl.result, Type::Void))
+        }
+        _ => None,
+    };
     let vars = &mut def.variables;
     let mut given = vars.add_unique("given", tp, u16::MAX);
     vars.become_argument(given);
@@ -247,6 +258,9 @@ fn insert_param(data: &mut Data, def_nr: u32, at: usize, tp: &Type) -> u16 {
             .collect();
         t.with_deps(&Deps::attrs(moved))
     };
+    if let (Some(r), Value::Block(bl)) = (body_result, &mut code) {
+        bl.result = shift(&r);
+    }
     def.returned = shift(&def.returned);
     for a in &mut def.attributes {
         a.typedef = shift(&a.typedef);

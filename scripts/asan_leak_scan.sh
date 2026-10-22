@@ -38,9 +38,13 @@ total=$i
 # expressions overflowed the default 8 MiB.
 ulimit -s unlimited 2>/dev/null || ulimit -s 131072 2>/dev/null || true
 scan_one() {
-  local f
+  local f args
   f=$(cat "$tmp/$1.name")
-  ASAN_OPTIONS="detect_leaks=1:${ASAN_OPTIONS:-}" "$ABIN" --interpret "$f" >"$tmp/$1.out" 2>&1
+  # The file's own `@ARGS:` (test_runner.rs) — without its `--lib tests/lib` an import falls
+  # through to the registry, and the network stack's allocations read as the program's leak.
+  args="$(sed -n 's#^// @ARGS: *##p' "$f" | head -1)"
+  # shellcheck disable=SC2086  # the annotation is a word list
+  ASAN_OPTIONS="detect_leaks=1:${ASAN_OPTIONS:-}" "$ABIN" --interpret $args "$f" >"$tmp/$1.out" 2>&1
   echo $? > "$tmp/$1.rc"
 }
 export -f scan_one

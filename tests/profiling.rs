@@ -102,6 +102,157 @@ fn cpu_profile_names_the_hot_line_inside_it() {
     );
 }
 
+/// The share a `── <section> ──` block gives the row that names `name`, 0 when none does.
+fn share_of(out: &str, section: &str, name: &str) -> f64 {
+    out.lines()
+        .skip_while(|l| !l.starts_with(section))
+        .skip(1)
+        .take_while(|l| !l.starts_with("──"))
+        .find(|l| l.split_whitespace().last() == Some(name))
+        .and_then(|l| l.split_whitespace().next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0)
+}
+
+/// @PLN179 finding 022 — one op that runs long (here the runtime's own `sort`, one op over
+/// three million integers) is charged to the line that made it.  The sampler counts ops,
+/// so before this the whole sort fell into the interval of whatever op the next sample
+/// landed on: `sorter` did not appear at all, and `after` — a short loop in another
+/// function — was charged three times its own time.  A `use`d library's compiled code is
+/// the same single op, which is what the finding met.
+const ONE_LONG_OP: &str = r#"
+fn build(n: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for i in 0..n { v += [(i * 7919) % 1000003]; }
+  v
+}
+fn sorter(v: vector<integer>) {
+  sort(v);
+}
+fn after(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { t += i % 3; }
+  t
+}
+fn main() {
+  v = build(3000000);
+  sorter(v);
+  println("{after(20000)} {v[0]}");
+}
+"#;
+
+#[test]
+fn a_long_op_is_charged_to_the_line_that_made_it() {
+    let out = run("long_op", ONE_LONG_OP, &[("LOFT_PROFILE", "1")]);
+    let sorter = share_of(&out, "── by function", "sorter");
+    let after = share_of(&out, "── by function", "after");
+    assert!(
+        sorter > 0.0,
+        "the sort's time must be charged to `sorter`, which made it:\n{out}"
+    );
+    assert!(
+        after < sorter,
+        "`after` ({after} %) must not carry the sort ({sorter} %) it ran after:\n{out}"
+    );
+    // The literal opens with a newline: `sort(v);` is line 8.
+    assert!(
+        out.lines()
+            .skip_while(|l| !l.starts_with("── by line"))
+            .take_while(|l| !l.starts_with("── hottest"))
+            .any(|l| l.contains(".loft:8") && l.ends_with("sorter")),
+        "the time is on the sort's own line:\n{out}"
+    );
+    assert!(
+        out.contains("timed to"),
+        "the banner says a long op was timed rather than sampled:\n{out}"
+    );
+}
+
+/// A frame-driven program — a game's loop, `yield_frame()` here — is profiled over every
+/// frame, not its first.  After a yield the run continues through `State::resume`, which had
+/// a bare dispatch loop of its own with no profiler hook: three hundred frames reported 155
+/// samples and 0.5 ms of a 139 ms run, under a banner that read like a whole profile.
+const FRAME_LOOP: &str = r#"
+fn frame_work(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { t += i % 7; }
+  t
+}
+fn main() {
+  total = 0;
+  for _f in 0..300 {
+    total += frame_work(20000);
+    yield_frame();
+  }
+  println("{total}");
+}
+"#;
+
+#[test]
+fn a_frame_driven_program_is_profiled_after_its_first_frame() {
+    let out = run("frames", FRAME_LOOP, &[("LOFT_PROFILE", "1")]);
+    assert!(
+        out.contains("17999100"),
+        "the program ran to its end:\n{out}"
+    );
+    let samples: u64 = out
+        .lines()
+        .find(|l| l.contains("loft CPU profile"))
+        .and_then(|l| l.split(" — ").nth(1))
+        .and_then(|l| l.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    // One frame is ~140k ops, ~140 samples at the default rate; the run is 300 of them.
+    assert!(
+        samples > 10_000,
+        "{samples} samples: only the first frame was sampled\n{out}"
+    );
+    let row = top_row(&out, "── by function");
+    assert!(
+        row.ends_with("frame_work"),
+        "the work is `frame_work`:\n{out}"
+    );
+}
+
+/// A census switch armed as every other `LOFT_*` switch is — `=1` — prints to standard
+/// error, and a relative file name lands in the current directory.  Both used to resolve
+/// as a PROGRAM's file does, against the program's directory: `LOFT_OP_CENSUS=1` left a
+/// file named `1` beside the program, inside the user's tree.
+#[test]
+fn a_census_switch_writes_where_its_user_expects() {
+    let root = std::env::temp_dir().join(format!("loft_census_out_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&root);
+    let (prog_dir, cwd) = (root.join("prog"), root.join("cwd"));
+    fa::create_dir_all(&prog_dir).expect("prog dir");
+    fa::create_dir_all(&cwd).expect("cwd");
+    let program = prog_dir.join("p.loft");
+    fa::write(&program, "fn main() { println(\"ok\"); }\n").expect("program");
+    let run = |value: &str| {
+        loft::platform::process::harness_command(loft_bin())
+            .arg("--interpret")
+            .arg(&program)
+            .current_dir(&cwd)
+            .env("LOFT_OP_CENSUS", value)
+            .output()
+            .expect("spawn loft")
+    };
+    let armed = run("1");
+    let err = String::from_utf8_lossy(&armed.stderr);
+    assert!(err.contains("n_main\tOp"), "`=1` prints the census:\n{err}");
+    assert!(
+        !fa::exists(prog_dir.join("1")),
+        "and leaves no file named `1` beside the program"
+    );
+    let _ = run("census.tsv");
+    let in_cwd = fa::exists(cwd.join("census.tsv"));
+    let beside = fa::exists(prog_dir.join("census.tsv"));
+    let _ = fa::remove_dir_all(&root);
+    assert!(
+        in_cwd && !beside,
+        "a relative name is the current directory's (cwd {in_cwd}, beside the program {beside})"
+    );
+}
+
 /// A profiler that cannot name `main` names nothing: four out of five real programs
 /// would also pass an instrument that simply reported the deepest frame.
 #[test]
@@ -427,8 +578,10 @@ fn a_native_run_says_the_sampler_cannot_follow_it() {
 /// functions cannot be sampled — their time lands on the calling line.
 ///
 /// The probe is built so the true answer is not a matter of opinion: the library loops
-/// 150× what the program does, so it owns ~99 % of the run. Unwarned, the table said
-/// `100 % app_bit`.
+/// 500× what the program does, so it owns nearly all of the run.  The library's time is
+/// one op, and it lands on the line that CALLED it — `main`'s, which is what the warning
+/// says.  Until @PLN179 finding 022 it landed on whatever op the next sample fell on —
+/// `app_bit`, a function that ran after the call — and this test asserted that.
 #[test]
 fn a_profile_says_when_a_used_library_is_invisible_to_it() {
     let root = std::env::temp_dir().join("loft_prof_libblind");
@@ -451,7 +604,7 @@ fn a_profile_says_when_a_used_library_is_invisible_to_it() {
         root.join("app/prog.loft"),
         "use hotlib::*;\n\nfn app_bit(n: integer) -> integer {\n  t = 0;\n  \
          for i in 0..n { t = t + i % 3; }\n  t\n}\n\n\
-         fn main() {\n  a = lib_grind(3000000);\n  b = app_bit(20000);\n  \
+         fn main() {\n  a = lib_grind(10000000);\n  b = app_bit(20000);\n  \
          println(\"{a} {b}\");\n}\n",
     )
     .unwrap();
@@ -495,11 +648,11 @@ fn a_profile_says_when_a_used_library_is_invisible_to_it() {
         "with LOFT_NO_NATIVE_LIBS=1 the library must dominate — it loops 150× the \
          program's work.\nGot: {top}\n{seeing}"
     );
-    let blind_top = top_row(&blind, "── by function");
+    let blind_top = top_row(&blind, "── by line");
     assert!(
-        blind_top.contains("app_bit"),
-        "…and without it, the CALLER is what the table shows, which is the whole \
-         hazard.\nGot: {blind_top}\n{blind}"
+        blind_top.contains("prog.loft:10") && blind_top.ends_with("main"),
+        "…and without it, the CALLER is what the table shows — the line that called the \
+         library, which is the whole hazard.\nGot: {blind_top}\n{blind}"
     );
     let _ = fa::remove_dir_all(&root);
 }

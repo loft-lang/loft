@@ -214,6 +214,70 @@ fn ap_index_slow(cell: &std::cell::UnsafeCell<Stores>, i: i64, n: usize) -> Opti
 /// answers for the vector it stands for: an empty vector at its init, a negative index from
 /// the end, an index out of range reported (`Stores::index_or_raise_runtime`) or, for `v[i]?`,
 /// null without a report.
+/// `@FR-R-Apart` instance 4 — one field of a record of record vectors held apart: the
+/// elements' bytes, `E` each, in the element's store layout, so the boundary copies them as
+/// they stand.  `clear` keeps the capacity: a value rebuilt every iteration allocates nothing
+/// once it has grown.  A pushed element starts as zeros only so that its padding is defined;
+/// the gate admits a push only when every field is written.
+#[derive(Default)]
+pub struct AprVec<const E: usize> {
+    b: Vec<u8>,
+}
+
+impl<const E: usize> AprVec<E> {
+    #[must_use]
+    pub const fn new() -> Self {
+        AprVec { b: Vec::new() }
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.b.clear();
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.b.len() / E
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.b.is_empty()
+    }
+
+    /// Append an element; answers its byte offset.
+    #[inline]
+    pub fn push_elem(&mut self) -> usize {
+        let at = self.b.len();
+        self.b.resize(at + E, 0);
+        at
+    }
+
+    #[inline]
+    pub fn set_i64(&mut self, at: usize, v: i64) {
+        self.b[at..at + 8].copy_from_slice(&v.to_ne_bytes());
+    }
+
+    #[inline]
+    pub fn set_f64(&mut self, at: usize, v: f64) {
+        self.b[at..at + 8].copy_from_slice(&v.to_ne_bytes());
+    }
+
+    /// A `boolean` field's byte, as `OpSetBoolean` writes it.
+    #[inline]
+    pub fn set_byte(&mut self, at: usize, v: u8) {
+        self.b[at] = v;
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.b
+    }
+}
+
 pub struct ApVec<const C: usize> {
     /// The inline slots: only `[0, min(n, C))` is ever read, and each of those was written by
     /// a push — so the array is never filled up front, which cost a store of all `C` slots on
@@ -1526,6 +1590,26 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
             stores.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
         return;
+    }
+    // A record of plain vectors copied into a FRESH slot of another store that keeps its
+    // source: the bytes and the plan's vector blocks (`Stores::copy_fresh_plain`), without
+    // the general path's dispatch.  A whole store root (its parse errors travel), a foreign
+    // source, and a traced or checked copy take the general path.  The fn-ref hand-off flag
+    // is taken as the general path takes it; with the source kept, its answer is unused there
+    // too.
+    let raw = tp as u16;
+    if raw & (crate::keys::COPY_FREE_SOURCE | crate::keys::COPY_FRESH_DEST)
+        == crate::keys::COPY_FRESH_DEST
+        && (to.rec, to.pos) != (1, 8)
+        && (data.store_nr as usize) < stores.allocations.len()
+        && !stores.allocations[data.store_nr as usize].is_foreign()
+        && !crate::keys::trace_copy()
+        && !stores.copy_check_enabled()
+    {
+        let _ = cr_take_fnref_borrowed(data.store_nr);
+        if stores.copy_fresh_plain(&data, &to, raw & crate::keys::COPY_TP_MASK) {
+            return;
+        }
     }
     // `@FR-R-FlatCopy` — a record that owns no heap is its bytes: the release of the
     // destination's claims and the walk of the source's both find nothing, so a copy that
@@ -2966,6 +3050,7 @@ pub fn OpReadFile<T: FileVal>(
     stores
         .store_mut(&file)
         .set_long(file.rec, file.pos + 8, next_pos);
+    let n = bytes.max(0) as usize;
     let file_ref = if open_ref == i32::MIN {
         file_handle_read(stores, &file, next_pos)
     } else {
@@ -2974,7 +3059,6 @@ pub fn OpReadFile<T: FileVal>(
     if file_ref == i32::MIN {
         return;
     }
-    let n = bytes.max(0) as usize;
     // A scalar read is 1–8 bytes, and a heap buffer per read was a third of a binary
     // read loop; the stack takes every read up to 16 bytes.
     let mut small = [0u8; 16];
@@ -2986,7 +3070,13 @@ pub fn OpReadFile<T: FileVal>(
         &mut large
     };
     let is_text = stores.is_text_type(db_tp as u16);
-    let nread = if let Some(f) = stores
+    // STDLIB_FILES § `f#read(n) as T`: a count below T's storage width answers null and
+    // `#next` does not move — read as a short read, which takes no byte (loft#2119).
+    // `State::read_file`'s rule.
+    let narrow = !is_text && n < stores.binary_size(db_tp as u16);
+    let nread = if narrow {
+        0
+    } else if let Some(f) = stores
         .files
         .get_mut(file_ref as usize)
         .and_then(|x| x.as_mut())
@@ -3018,7 +3108,7 @@ pub fn OpReadFile<T: FileVal>(
 /// taken by value (`LoftFile::take_array`).  `W` is 1, 2, 4 or 8 bytes;
 /// `SIGNED` is the sign the type's range gives (`State::dispatch_read_data`'s rule), and a
 /// 4- or 8-byte read is signed as the generic decode reads it.  A short read leaves `val`
-/// unchanged and advances `#next` by what arrived, exactly as the generic path does.
+/// unchanged and `#next` where it was, exactly as the generic path does.
 #[cfg(not(host_fs))]
 pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
     cell: &std::cell::UnsafeCell<Stores>,
@@ -3344,15 +3434,24 @@ pub fn OpReadFile<T: FileVal>(
     let path = file_record_path(stores, &file);
     let n = bytes.max(0) as usize;
     crate::wasm::host_fs_seek(&path, next_pos);
-    // A read past the end answers FEWER bytes, and `#next` must advance by what
-    // actually arrived — advancing by the requested `n` would walk the cursor
-    // past the file and make every following read empty.
-    if let Some(data) = crate::wasm::host_fs_read_bytes(&path, n) {
+    // A count below T's storage width answers null and `#next` does not move: it reads as
+    // a short read, which takes no byte (loft#2119).
+    let read = if !stores.is_text_type(db_tp as u16) && n < stores.binary_size(db_tp as u16) {
+        Some(Vec::new())
+    } else {
+        crate::wasm::host_fs_read_bytes(&path, n)
+    };
+    // A text read past the end answers FEWER bytes, and `#next` advances by what arrived.
+    if let Some(data) = read {
         let actual = data.len() as i64;
         val.file_from_bytes(stores, db_tp, little_endian, &data);
-        stores
-            .store_mut(&file)
-            .set_long(file.rec, file.pos + 16, next_pos + actual);
+        // A SHORT binary read answers null and `#next` stays where it was (STDLIB_FILES §
+        // `f#read(n) as T`, the non-host read's rule, loft#2119); text takes what arrived.
+        if stores.is_text_type(db_tp as u16) || data.len() >= n {
+            stores
+                .store_mut(&file)
+                .set_long(file.rec, file.pos + 16, next_pos + actual);
+        }
     }
 }
 
@@ -5948,6 +6047,9 @@ pub fn coroutine_release_snapshots(stores: &mut Stores, snap: &mut DbRef) {
 /// its slot.  A handle whose generator already exhausted names a frame that is gone, and
 /// the generation check keeps this off whatever inherited the slot (loft#835).
 pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
+    if let Some(h) = forwarded() {
+        return forward_cold(|| (h.free)(gen_ref, stores));
+    }
     // Take the generator OUT of the table before running its cleanup: `drop_stores` frees
     // stores, and a nested generator handle among them re-enters this table.
     let taken = NATIVE_COROUTINES.with(|c| {
@@ -6086,6 +6188,80 @@ pub fn coroutine_is_exhausted(gen_ref: DbRef) -> bool {
         let coroutines = c.borrow();
         !native_coroutine_live(&coroutines, gen_ref)
     })
+}
+
+/// @PLN199 D2 — the native coroutine table's entry points as a value: the host's own
+/// (`HERE`), which a library cdylib's copy of this module forwards to once its host
+/// installed them (`forward_coroutines`).  Every `static` and `thread_local!` here
+/// exists once per copy of libloft, so without the forward a library's generator handle and
+/// the host's named two different tables.  Rust fn pointers, as `Box<dyn LoftCoroutine>`
+/// crosses: one rlib builds both sides.
+#[derive(Clone, Copy)]
+pub struct CoroutineHost {
+    pub alloc_held: fn(&std::cell::UnsafeCell<Stores>, Box<dyn LoftCoroutine>) -> DbRef,
+    pub alloc: fn(Box<dyn LoftCoroutine>) -> DbRef,
+    pub retain: fn(DbRef) -> DbRef,
+    pub free: fn(DbRef, &mut Stores),
+    pub next_i64: fn(DbRef, &mut Stores) -> i64,
+    pub next_into: fn(DbRef, &mut Stores, &mut [i64]) -> bool,
+    pub next_dbref: fn(DbRef, &mut Stores) -> DbRef,
+    pub next_text: fn(DbRef, &mut Stores) -> String,
+    pub exhausted: fn(DbRef) -> bool,
+}
+
+impl CoroutineHost {
+    /// This copy's own table.
+    pub const HERE: CoroutineHost = CoroutineHost {
+        alloc_held: alloc_coroutine_held,
+        alloc: alloc_coroutine,
+        retain: coroutine_retain,
+        free: free_native_coroutine,
+        next_i64: coroutine_next_i64,
+        next_into: coroutine_next_into,
+        next_dbref: coroutine_next_dbref,
+        next_text: coroutine_next_text,
+        exhausted: coroutine_is_exhausted,
+    };
+}
+
+/// The table a library cdylib's copy forwards to: its host's (`forward_coroutines`), or null.
+/// Read only by [`free_native_coroutine`], which the runtime itself reaches from inside a
+/// cdylib (`OpFreeRef`, a generator's `drop_stores`).  Every other entry point is reached
+/// from generated code, which in a library cdylib calls the host's table directly
+/// (`native_lib::HOST_INIT_SRC`'s `__coro`): a test here, even a relaxed load out of line,
+/// cost a whole-program generator loop 8 % (measured; the emitted program was identical).
+/// A relaxed load: the slot is written once, by the library's `loft_shared_init`, before any
+/// of its code runs — an acquire load per advance (`OnceLock::get`) cost a whole-program
+/// generator loop 6 %.
+static FORWARD: std::sync::atomic::AtomicPtr<CoroutineHost> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Forward this copy's coroutine table to `host`'s.  Called from a library cdylib's
+/// `loft_shared_init` only; never in the host, whose own table this is.
+pub fn forward_coroutines(host: CoroutineHost) {
+    if FORWARD.load(std::sync::atomic::Ordering::Acquire).is_null() {
+        FORWARD.store(
+            Box::into_raw(Box::new(host)),
+            std::sync::atomic::Ordering::Release,
+        );
+    }
+}
+
+/// The forwarded call, kept out of line: the entry points run in a generator's every
+/// advance, and the call through the host's table — taken only inside a library cdylib —
+/// must not shape their hot body.
+#[cold]
+#[inline(never)]
+fn forward_cold<R>(call: impl FnOnce() -> R) -> R {
+    call()
+}
+
+/// The host's table this copy forwards to, if any.
+#[inline]
+fn forwarded() -> Option<&'static CoroutineHost> {
+    let p = FORWARD.load(std::sync::atomic::Ordering::Relaxed);
+    // SAFETY: set once to a leaked `Box`, never freed or changed after.
+    unsafe { p.as_ref() }
 }
 
 // ── FS-B  File-system dispatch helpers ───────────────────────────────────────

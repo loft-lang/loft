@@ -146,6 +146,48 @@ fn second_run_reuses_safe_cache() {
     let _ = fa::remove_dir_all(&dir);
 }
 
+/// A run that asks to keep the symbols (`LOFT_NATIVE_KEEP_SYMBOLS=1`, how a native profile
+/// gets readable frames) builds its own binary rather than reusing the stripped one a plain
+/// run cached: the strip decision is part of the binary's key, as `--native-debug` is.
+#[test]
+fn a_symbolised_build_is_not_served_the_stripped_one() {
+    let dir = tmp_subdir("keep_symbols");
+    let marker = "P254_KEEP_SYMBOLS";
+    let script = write_marker_script(&dir, marker);
+    let run = |keep: bool| {
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.arg("--native").arg(&script).env("LOFT_TIMING", "1");
+        if keep {
+            cmd.env("LOFT_NATIVE_KEEP_SYMBOLS", "1");
+        } else {
+            cmd.env_remove("LOFT_NATIVE_KEEP_SYMBOLS");
+        }
+        cmd.output().expect("run loft --native")
+    };
+    let stripped = run(false);
+    assert!(String::from_utf8_lossy(&stripped.stdout).contains(marker));
+    let kept = run(true);
+    assert!(String::from_utf8_lossy(&kept.stdout).contains(marker));
+    let stderr = String::from_utf8_lossy(&kept.stderr);
+    assert!(
+        !stderr.contains("native_binary_cache=hit") && !stderr.contains("native_source_key=hit"),
+        "a symbolised run reused a cached binary: {stderr}"
+    );
+    let mut sizes: Vec<u64> = fa::read_dir(cache_dir_for(&script))
+        .expect("read cache dir")
+        .into_iter()
+        .filter(|e| e.os_spelling().to_string_lossy().contains("native-"))
+        .filter_map(|e| fa::metadata(&e).ok().map(|m| m.len()))
+        .collect();
+    sizes.sort_unstable();
+    assert_eq!(sizes.len(), 2, "one binary per strip decision: {sizes:?}");
+    assert!(
+        sizes[1] > sizes[0],
+        "the symbolised binary carries its symbols: {sizes:?}"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
 // approved exemption: POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
 #[cfg(unix)]
 // @speed 1.0

@@ -3236,18 +3236,24 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             return;
         }
         for name in &scalars {
-            let capturers = lambdas
+            let capturing: Vec<u32> = lambdas
                 .iter()
-                .filter(|&&lam| {
+                .copied()
+                .filter(|&lam| {
                     let rec = self.data.def(lam).closure_record();
                     rec != u32::MAX
                         && (0..self.data.attributes(rec))
                             .any(|a_nr| self.data.attr_name(rec, a_nr) == *name)
                 })
-                .count();
+                .collect();
+            let capturers = capturing.len();
             if capturers >= 2 {
-                diagnostic!(
+                // At the SECOND closure that captures it — the one that makes the variable
+                // shared — not wherever the lexer stands when the function ends (loft#2089).
+                let at = *self.data.def(capturing[1]).position();
+                diagnostic_at!(
                     self.lexer,
+                    &at,
                     Level::Error,
                     "variable `{name}` is mutated through a closure and captured by \
                      {capturers} closures; sharing a mutable variable between closures \
@@ -7315,7 +7321,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// Only a NAMED non-argument local is copied.  A vector ARGUMENT aliases the caller by design
     /// (`@FR-B-Ref-Alias` — a parameter reaches the source), so copying it here would change what
     /// the caller sees; and a member that is already a fresh value has no source to diverge from.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn tuple_member_owned_copy(&mut self, val: &mut Value, tp: &Type) -> Option<Type> {
         if self.first_pass {
             return None;
@@ -7438,6 +7443,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             _ => return None,
         };
+        self.owned_heap_copy(val, src, tp)
+    }
+
+    /// The COPY half of [`Self::tuple_member_owned_copy`]: rewrite `val` into a block that
+    /// copies `src`, a heap value of type `tp`, into a frame-local backing and answers it,
+    /// answering the copy's type.  A keyed collection, a record, a tuple with a heap leaf and
+    /// a vector each copy as a plain bind copies them; any other type answers `None` and
+    /// leaves `val` alone.  Which sources are COPIED is the caller's question — this half
+    /// only builds the copy.  `@FR-B-Copy`.
+    #[expect(clippy::too_many_lines, reason = "one branch per heap kind")]
+    pub(crate) fn owned_heap_copy(
+        &mut self,
+        val: &mut Value,
+        src: Value,
+        tp: &Type,
+    ) -> Option<Type> {
         // The KEYED half of `D-tup-4`, closed with the copy the keyed family already has.
         // `OpReplaceKeyed` is what a STRUCT literal emits for a keyed member (`S { h: a }`),
         // and a tuple RETURN copies through the synthetic `__tuple<…>` record — so both

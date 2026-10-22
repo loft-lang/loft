@@ -451,6 +451,17 @@ fn register_native_stubs(state: &mut State, data: &Data) {
         if let Some(&idx) = state.library_names.get(sym) {
             remember_stub_symbol(idx, sym);
         }
+        // @PLN199 — a compiled library's text function also gets the slot its
+        // destination-passing call uses (`<symbol>#dest`, `State::gen_cdylib_text_dest_call`):
+        // one native call that pops the destination with the arguments.
+        if sym.starts_with("loft_shared_") && matches!(def.returned().base(), Type::Text(_)) {
+            let dest = crate::extensions::shared_dest_symbol(sym);
+            state.static_fn(&dest, stub);
+            if let Some(&idx) = state.library_names.get(&dest) {
+                remember_stub_symbol(idx, &dest);
+            }
+            stub_syms.insert(dest);
+        }
     }
     // Record which symbols this program stubbed, so `wire_native_fns` knows which
     // it may replace.  On the State, not a process-global: a global was overwritten

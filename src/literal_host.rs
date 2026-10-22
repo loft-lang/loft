@@ -26,9 +26,10 @@
 //! and named elsewhere only as the receiver of a native op or as a borrowed argument of a
 //! loft-defined call.  Every free of `cur` stands in a statement list where a free of the
 //! owner FOLLOWS it, and every free of the owner has one before it: the distinct-free reads
-//! the owner's store number, which the owner's own free clears.  A stored reference homed in
-//! any of the three declines (`@FR-H-RefHome` copies such a record out before its home's
-//! free, by store number).  Every decline keeps the copy.  `LOFT_NO_LITERAL_HOST=1` is the
+//! the owner's store number, which the owner's own free clears.  A stored reference naming a
+//! record of any of the three declines, however long its holder lasts (`@FR-H-RefHome`), and
+//! so does a view of the vector named after the move: either would name the literal's element
+//! where `@FR-B-Copy` owes the vector's own.  Every decline keeps the copy.  `LOFT_NO_LITERAL_HOST=1` is the
 //! switch; `LOFT_TRACE_PLACE=1` names each admission and decline.  Both backends: decided in
 //! the scope pass on the settled IR.
 use crate::data::{Data, Type, Value};
@@ -291,11 +292,26 @@ fn check(
     p: &Plan,
     ops: &Ops,
 ) -> Result<(), &'static str> {
+    // `@FR-H-RefHome` — a stored reference naming a record of any of the three stores, held
+    // anywhere: after the move the record it names is the literal's element, so a write
+    // through either side shows through the other (loft#2118).  Asked of every hold, not
+    // only of a home moved out for a holder that outlives it.
     if [p.cur, p.src, p.owner]
         .iter()
-        .any(|&v| function.is_ref_home(v))
+        .any(|&v| function.is_ref_named(v))
     {
         return Err("a stored reference is homed in the literal's or the vector's store");
+    }
+    // A VIEW of the vector — a local whose deps reach `src` or its owner (`e = v[1]`, `r:
+    // reference<T> = v[2]`, a view of such a view) — names the vector's records under another
+    // name, so naming it after the move reads the literal's element where `@FR-B-Copy` owes
+    // the vector's own (loft#2118).
+    let views = views_of(function, &[p.src, p.owner, p.cur]);
+    if list[p.mv + 1..]
+        .iter()
+        .any(|s| views.iter().any(|&w| mentions(s, w) > 0))
+    {
+        return Err("a view of the vector is named after the move");
     }
     // After the move: the vector and its owner are named only by the owner's frees.
     for s in &list[p.mv + 1..] {
@@ -331,6 +347,25 @@ fn check(
         return Err("the literal is not bound once, by its null init and its mint");
     }
     pairing(code, list, p, ops)
+}
+
+/// Every local other than `roots` whose deps reach one of `roots`, directly or through
+/// another such local.
+fn views_of(function: &Function, roots: &[u16]) -> Vec<u16> {
+    let mut reach: Vec<u16> = roots.to_vec();
+    let mut views = Vec::new();
+    loop {
+        let before = views.len();
+        for w in 0..function.count() {
+            if !reach.contains(&w) && function.tp(w).depend().iter().any(|d| reach.contains(d)) {
+                reach.push(w);
+                views.push(w);
+            }
+        }
+        if views.len() == before {
+            return views;
+        }
+    }
 }
 
 fn count_frees(code: &Value, w: u16, ops: &Ops) -> usize {

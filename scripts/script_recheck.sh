@@ -10,21 +10,64 @@
 #   refused-line:N    the probe is refused, but the diagnostic does NOT point at line N
 #   crash             the probe dies with a signal (the defect is still there)
 #   startup-over:MS   `loft --interpret` of a hello takes more than MS ms, best of 5
+#   startup-over:python  `loft --interpret` of a hello starts slower than `python3` prints
+#                     hello — best of 15 each, interleaved so load hits both alike.  The
+#                     plan's own bar (README § The bar), and one no machine or load moves:
+#                     an absolute bar measured the box as much as the language
 #   over:MS           the probe itself takes more than MS ms interpreted, best of 5
-# After each probe the driver rewrites the finding's `checked:` (the loft commit) and
-# `holds:` (yes | no) lines.  A finding whose probe says `no` is the one to look at: the
+# When a probe's verdict differs from the finding's `holds:` (yes | no), the driver rewrites
+# that line and `checked:` (the loft commit that established it); an unchanged verdict
+# leaves the file alone.  A finding whose probe says `no` is the one to look at: the
 # reason it recorded no longer measures, so it is fixed, or the probe needs a new name.
 # Bash today because it runs programs; strand 4's `run` ports it.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-# The INSTALLED loft first (its program cache is on; a from-source target/release/loft runs
-# with it off — PERFORMANCE.md rule 4 — and a start-up probe would measure the wrong thing).
-if command -v loft > /dev/null; then loft="loft"; else loft="target/release/loft"; fi
+# The build under test first: the program cache is on for every binary since @C133, so a
+# from-source target/release/loft measures the path an installed one takes, and an installed
+# loft may be months older than the tree it is asked about.
+if [ -x target/release/loft ]; then loft="target/release/loft"; else loft="loft"; fi
 [ "${1:-}" = "--loft" ] && loft="$2"
 echo "recheck with: $(command -v "$loft") ($($loft --version 2>/dev/null | head -1))"
 dir=doc/claude/plans/179-scripts-in-loft/findings
 sha=$(git rev-parse --short HEAD)
 tmp=$(mktemp); trap 'rm -f "$tmp" "$tmp.w"' EXIT
+# Best-of-5 wall time of one command, in microseconds, timed around `posix_spawn` inside ONE
+# process.  Two perl launches bracketing the run put a whole perl start-up inside every
+# interval — about 9 ms on a laptop, so `/bin/echo` read 14–18 ms and a start-up bar of
+# 12 ms measured perl — and perl's `system` forks all of perl first, another 2 ms.
+best_us() {
+  python3 -c '
+import os, sys, time
+out = os.open(os.devnull, os.O_WRONLY)
+fa = [(os.POSIX_SPAWN_DUP2, out, 1), (os.POSIX_SPAWN_DUP2, out, 2)]
+best = None
+for _ in range(5):
+    t = time.perf_counter()
+    os.waitpid(os.posix_spawnp(sys.argv[1], sys.argv[1:], os.environ, file_actions=fa), 0)
+    us = int((time.perf_counter() - t) * 1e6)
+    best = us if best is None else min(best, us)
+print(best)' "$@"
+}
+# Best-of-15 of two commands, interleaved, in microseconds: "<first> <second>".  The two
+# commands are separated by `--`.
+race_us() {
+  python3 -c '
+import os, sys, time
+args = sys.argv[1:]
+cut = args.index("--")
+cmds = (args[:cut], args[cut + 1:])
+out = os.open(os.devnull, os.O_WRONLY)
+fa = [(os.POSIX_SPAWN_DUP2, out, 1), (os.POSIX_SPAWN_DUP2, out, 2)]
+best = [None, None]
+for rnd in range(17):
+    for i, argv in enumerate(cmds):
+        t = time.perf_counter()
+        os.waitpid(os.posix_spawnp(argv[0], argv, os.environ, file_actions=fa), 0)
+        us = int((time.perf_counter() - t) * 1e6)
+        if rnd >= 2:
+            best[i] = us if best[i] is None else min(best[i], us)
+print(best[0], best[1])' "$@"
+}
 n=0; stale=0
 for f in "$dir"/[0-9][0-9][0-9]-*.md; do
   probe=$(sed -n 's/^probe: *//p' "$f" | head -1); expect=$(sed -n 's/^expect: *//p' "$f" | head -1)
@@ -45,32 +88,35 @@ for f in "$dir"/[0-9][0-9][0-9]-*.md; do
     crash)
       LOFT_TIMEOUT=120 "$loft" --interpret "$dir/$probe" > /dev/null 2> "$tmp"; rc=$?
       { [ $rc -ge 128 ] || grep -q SIGSEGV "$tmp"; } && holds=yes ;;
-    startup-over:*)
-      bar=${expect#startup-over:}; best=""
-      for i in 1 2 3 4 5; do
-        s=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); ms=$(( (e - s) / 1000000 ))
-        [ -z "$best" ] || [ "$ms" -lt "$best" ] && best=$ms
-      done
-      [ "$best" -gt "$bar" ] && holds=yes
-      printf '  %s: start-up %s ms (bar %s)\n' "$(basename "$f")" "$best" "$bar" ;;
-    over:*)
-      bar=${expect#over:}; best=""
-      for i in 1 2 3 4 5; do
-        s=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(perl -MTime::HiRes=time -e 'printf "%d", time * 1000000000'); ms=$(( (e - s) / 1000000 ))
-        [ -z "$best" ] || [ "$ms" -lt "$best" ] && best=$ms
-      done
-      [ "$best" -gt "$bar" ] && holds=yes
-      printf '  %s: %s ms (bar %s)\n' "$(basename "$f")" "$best" "$bar" ;;
+    startup-over:python)
+      read -r mine theirs < <(race_us "$loft" --interpret "$dir/$probe" -- python3 -c 'print("hi")')
+      [ "$mine" -gt "$theirs" ] && holds=yes
+      printf '  %s: start-up %d.%d ms, python3 %d.%d ms\n' "$(basename "$f")" \
+        $((mine / 1000)) $((mine % 1000 / 100)) $((theirs / 1000)) $((theirs % 1000 / 100)) ;;
+    startup-over:*|over:*)
+      bar=${expect#*over:}
+      best=$(best_us "$loft" --interpret "$dir/$probe")
+      [ "$best" -gt $((bar * 1000)) ] && holds=yes
+      label=$([ "${expect%%:*}" = startup-over ] && echo "start-up " || echo "")
+      printf '  %s: %s%d.%d ms (bar %s)\n' "$(basename "$f")" "$label" \
+        $((best / 1000)) $((best % 1000 / 100)) "$bar" ;;
     *) echo "script_recheck: $f: unknown expect '$expect'" >&2; continue ;;
   esac
   # Through a temp file: `sed -i` takes a mandatory suffix on macOS and none on GNU, so a
   # bare `-i` edits nothing on one of them and the register never moves.
   rewrite() { sed "$1" "$f" > "$tmp.w" && mv "$tmp.w" "$f"; }
-  rewrite "s/^checked:.*/checked: $sha/; s/^holds:.*/holds: $holds/"
-  grep -q '^checked:' "$f" || rewrite "s/^ref:\(.*\)/ref:\1\
+  # Written only when the verdict CHANGES: `checked:` names the commit that established the
+  # current answer, not the last run, so a recheck that confirms what a finding says leaves
+  # it untouched — rewriting every probed finding's commit on every run was a diff of noise.
+  was=$(sed -n 's/^holds: *//p' "$f" | head -1)
+  if [ "$was" != "$holds" ]; then
+    rewrite "s/^checked:.*/checked: $sha/; s/^holds:.*/holds: $holds/"
+    grep -q '^checked:' "$f" || rewrite "s/^ref:\(.*\)/ref:\1\
 checked: $sha/"
-  grep -q '^holds:' "$f" || rewrite "s/^checked:\(.*\)/checked:\1\
+    grep -q '^holds:' "$f" || rewrite "s/^checked:\(.*\)/checked:\1\
 holds: $holds/"
+    echo "  CHANGED: $(basename "$f") — holds: ${was:-unset} → $holds"
+  fi
   [ "$holds" = no ] && { stale=$((stale + 1)); echo "  NO LONGER HOLDS: $(basename "$f")"; }
 done
 echo "rechecked $n findings at $sha, $stale no longer hold"

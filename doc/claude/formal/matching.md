@@ -278,10 +278,10 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — the closed entries, `D-match-1` to `-24`, are in
+OPEN: **0** — the closed entries, `D-match-1` to `-25`, are in
 [matching-history.md](matching-history.md).  P-Alt and P-Cap hold at every pattern position: the
-arm (`|` and `,` alike), a tuple subject, a tuple element, a field, a slice element, and the arm
-root's `name: pattern`.
+arm (`|` and `,` alike, over slice patterns too), a tuple subject, a tuple element, a field, a
+slice element, and the arm root's `name: pattern`.
 
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule

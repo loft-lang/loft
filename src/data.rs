@@ -2567,6 +2567,29 @@ impl Type {
         }
     }
 
+    /// `self.depend().is_empty()` without building the list: the same variants, the same
+    /// `Optional`/`&` transparency and a tuple's union of its members.  The ownership
+    /// predicates ask it of every bind the scope pass meets, where the list was built only to be
+    /// found empty.
+    #[must_use]
+    pub fn has_no_deps(&self) -> bool {
+        match self {
+            Type::Text(dep)
+            | Type::Reference(_, dep)
+            | Type::Index(_, _, dep)
+            | Type::Radix(_, _, dep)
+            | Type::Trie(_, _, dep)
+            | Type::Hash(_, _, dep)
+            | Type::Sorted(_, _, dep)
+            | Type::Enum(_, _, dep)
+            | Type::Vector(_, dep)
+            | Type::Function(_, _, dep, ..) => dep.is_empty(),
+            Type::RefVar(tp) | Type::Optional(tp) => tp.has_no_deps(),
+            Type::Tuple(elems) => elems.iter().all(Type::has_no_deps),
+            _ => true,
+        }
+    }
+
     #[must_use]
     /// The single fact @FR-O-Deps names: every store-lifetime decision — free placement,
     /// adopt-vs-copy, move-vs-clone, drop — reads THIS, and re-deriving any of them from a
@@ -4803,6 +4826,30 @@ impl Definition {
     /// want ([`Data::fnref_text_buffers`]) and the excess is popped where the target IS
     /// known (`State::fn_call_ref`).  One home for the count, so the two sides of that ABI
     /// cannot disagree about what a buffer is.
+    /// @PLN10 Phase A — a USER function returning text with no hidden work buffer ("nwb"):
+    /// on `--native` it returns an owned `String` (`generation::def_returns_owned_text`),
+    /// and through the shared-store bridge it needs the caller's destination
+    /// (`Parser::crosses_text_bridge`).  One home, so the two cannot disagree.
+    #[must_use]
+    pub fn returns_bufferless_text(&self) -> bool {
+        // nwb = a real loft **Block** body that returns text WITHOUT a `RefVar(Text)`
+        // work buffer.  The discriminator is the Block body itself, NOT
+        // `rust()/native()` emptiness: an auto-native library fn inlined into a
+        // consumer build (main's @C71) has a Block body AND `native()` set, yet is
+        // still an ordinary user text fn whose buffered-vs-bufferless shape is
+        // decided solely by the presence of the work-buffer attribute.  emit.rs only
+        // ever runs this on Block bodies, so a non-Block (FFI-direct / `#rust` / Null)
+        // body is correctly excluded here and handled by the other owned-String signals.
+        // @PLN25 slice (b): peel `Optional` — a `text?` return uses the same owned-text ABI.
+        matches!(self.returned().base(), Type::Text(_))
+            && matches!(self.code(), Value::Block(_))
+            && !self.name().starts_with("Op")
+            // A user `&text` parameter is not a work buffer: the buffered-vs-bufferless
+            // shape reads the HIDDEN buffers only (`text_work_buffers`), else a function
+            // with such a parameter is emitted buffered and returns THROUGH it (loft#1338).
+            && self.text_work_buffers() == 0
+    }
+
     #[must_use]
     pub fn text_work_buffers(&self) -> usize {
         self.attributes
@@ -5703,6 +5750,12 @@ pub struct Data {
     /// `operator` or not; `x as T` asks for one only then, so a program without conversions
     /// pays nothing at its casts.
     pub user_operator_conversions: bool,
+    /// @PLN196 step 9 (`@FR-L-Upgrade-Source`) — per (struct, field) whose default reads the
+    /// record, the paths of the stored fields it reads (`inner.label`).  What `loft layout
+    /// accept` records beside the baseline, so a later release that drops one is told which
+    /// computed field it came from.  Not part of a program image: only the layout command
+    /// reads it, from a fresh parse.
+    pub default_sources: std::collections::BTreeMap<(String, String), Vec<String>>,
     /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
     /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
     /// forever.  A refused program does not run, so this needs no place in the image.
@@ -6447,6 +6500,7 @@ impl Data {
             source: STD_SOURCE,
             value_structs: HashSet::new(),
             user_operator_conversions: false,
+            default_sources: std::collections::BTreeMap::new(),
             refused_type_templates: HashSet::new(),
             type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
@@ -6839,12 +6893,20 @@ impl Data {
     /// silently the wrong fn.  Native codegen turns each collision into a
     /// `compile_error!`.  Returns `(symbol, sorted distinct sources)` per
     /// collision (deterministic order).
+    ///
+    /// A declaration counts only where something can EXPORT the symbol: a script
+    /// that is no native package (its file under no registered `[native] crate`
+    /// directory) ships no cdylib, so its `#native` line binds a library's export
+    /// rather than competing with it.
     #[must_use]
     pub fn native_symbol_collisions(&self) -> Vec<(String, Vec<u16>)> {
         let mut by_sym: HashMap<String, Vec<u16>> = HashMap::new();
         for d in 0..self.definitions() {
             let def = self.def(d);
-            if def.code == Value::Null && !def.native().is_empty() {
+            if def.code == Value::Null
+                && !def.native().is_empty()
+                && !self.binds_without_exporting(def)
+            {
                 by_sym
                     .entry(def.native().to_string())
                     .or_default()
@@ -6861,6 +6923,14 @@ impl Data {
             .collect();
         out.sort();
         out
+    }
+
+    /// The main program's `#native` declaration when the program is no native package.
+    fn binds_without_exporting(&self, def: &Definition) -> bool {
+        def.source == MAIN_SOURCE
+            && !self.native_packages.iter().any(|(_, pkg_dir)| {
+                crate::file_access::is_under(def.position().file.as_str(), pkg_dir)
+            })
     }
 
     #[must_use]
@@ -7352,7 +7422,26 @@ impl Data {
         let base = shape.clone();
         // A form may be an overload set (several right-hand types), and `compare` always is
         // one beside the stdlib's own members on the base types.
-        let mut candidates = self.overload_routines(form);
+        //
+        // `@FR-Op-Bound` — a bound is met by the RECEIVER's own member.  The set holds every
+        // type's members of the form, and `params_fit` lets a type variable stand for anything,
+        // so a struct declaring `compare` against two right-hand types made a bare `T` meet
+        // `Ordered` through that struct's `compare(D, D)`: `sort` in an unbounded generic was
+        // admitted in every program once the stdlib declared one (`Release`).
+        let receiver = self.type_def_nr(&base);
+        let variant_of = |v: u32, e: u32| {
+            v != u32::MAX && self.def(v).def_type == DefType::EnumValue && self.def(v).parent == e
+        };
+        let mut candidates: Vec<u32> = self
+            .overload_routines(form)
+            .into_iter()
+            .filter(|&d| {
+                self.visible_params(d).first().is_some_and(|h| {
+                    let h = self.type_def_nr(h);
+                    h == receiver || variant_of(h, receiver) || variant_of(receiver, h)
+                })
+            })
+            .collect();
         let found = self.find_fn(u16::MAX, form, &base);
         if found != u32::MAX && !candidates.contains(&found) {
             candidates.push(found);
@@ -9289,6 +9378,25 @@ impl Data {
             }
             if own(self, &key) == u32::MAX {
                 self.admit_overload_set(lexer, fn_name, d_nr);
+                // `@FR-F-Recv` / `@FR-Disp-Applicable` — `m(τ)` and `m(τ?)` are one receiver's
+                // two spellings, and the set decides between them only if it carries both: the
+                // `τ?` twin has a key of its own, so no collision admits it, and left outside
+                // the set a `τ?` receiver ranked the dense member LOSSY and ran it with
+                // `self == null` (loft#2114).  A `both` twin is a member already.
+                if is_self || is_both {
+                    let twin = self
+                        .def(d_nr)
+                        .attributes
+                        .first()
+                        .and_then(|a| receiver_key(self, &nullability_twin(&a.typedef)))
+                        .map_or(u32::MAX, |k| own(self, &k));
+                    if twin != u32::MAX
+                        && self.def(twin).source == self.def(d_nr).source
+                        && incumbent_joins(self, twin)
+                    {
+                        self.admit_overload_set(lexer, fn_name, twin);
+                    }
+                }
                 name = key;
                 overload_label = Some(full);
                 d_nr = u32::MAX;
@@ -9360,6 +9468,30 @@ impl Data {
                     join_as_method = is_self;
                 }
             }
+        }
+        // `@FR-F-Recv` — the other order: a `self` method whose receiver's nullability twin is
+        // already a member of this source's set joins it under its own receiver key, as the
+        // twin would have admitted it had the set formed after both (loft#2114).
+        if is_self
+            && d_nr == u32::MAX
+            && overload_label.is_none()
+            && !join_as_method
+            && (generic_members || !newcomer_is_template)
+            && o_nr != u32::MAX
+            && self.def(o_nr).def_type == DefType::Dynamic
+            && self.def(o_nr).source == self.source
+            && let Some(twin) = arguments
+                .first()
+                .and_then(|a| receiver_key(self, &nullability_twin(&a.typedef)))
+                .map(|k| own(self, &k))
+            && twin != u32::MAX
+            && self
+                .def(o_nr)
+                .attributes
+                .iter()
+                .any(|a| matches!(a.typedef.base(), Type::Routine(r) if *r == twin))
+        {
+            join_as_method = true;
         }
         if d_nr != u32::MAX {
             // Name WHERE the winner lives, exactly as the shadowing branch above does.

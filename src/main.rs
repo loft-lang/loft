@@ -4318,6 +4318,7 @@ fn native_source_key_fingerprint(
     native_utils::native_cabi_enabled().hash(&mut h);
     platform::native_strip_symbols().hash(&mut h);
     loft::cache::rustflags_fingerprint().hash(&mut h);
+    loft::cache::release_rustc_args().hash(&mut h);
     // Every runtime rlib a build could link, not the one it would choose: choosing asks the
     // live `rustc` which copy it can read (loft#2033), a process launch this key — computed
     // on the way to EXECUTING a cached binary — has no use for.  A change to either copy
@@ -6672,7 +6673,7 @@ fn parse_baseline(
 
 /// @PLN97 Phase F — `loft layout <accept|check> <file>`: the compiler migration
 /// aid as an explicit, opt-in command (a normal build pays nothing). `accept`
-/// records the program's current layout as the baseline (`.loft/layout.lock`);
+/// records the program's current layout as the baseline (`layout.lock` beside `loft.toml`);
 /// `check` diffs the current layout against it and, on an actionable change,
 /// prints the diagnostic + writes a migration outline to fill.
 fn run_layout_command(sub: &str, file: &str) -> i32 {
@@ -6693,14 +6694,20 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
 
     let roots = loft::layout_schema::program_roots(&p.data);
     // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
-    let identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
-    let project = abs
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .to_path_buf();
+    let mut identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
+    // The baseline sits beside `loft.toml`; a program with no manifest keeps it beside itself.
+    let project =
+        loft::resolution_scope::project_root(&abs.to_string_lossy()).unwrap_or_else(|| {
+            abs.parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf()
+        });
+    let release = loft::manifest::release_of(&project.to_string_lossy());
 
     match sub {
-        "accept" => match identity.write_baseline(&project) {
+        // @PLN196 step 9 — the baseline records the release it was accepted as and where each
+        // computed field's value comes from, carrying forward when each line first appeared.
+        "accept" => match record_baseline(&mut identity, &project, &p.data, &release) {
             Ok(()) => {
                 println!(
                     "loft layout: recorded baseline ({} user types)",
@@ -6721,12 +6728,15 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
             // Nothing changed, so nothing to say.
             Ok(ss::SchemaVerdict::Match) => 0,
             Ok(ss::SchemaVerdict::Changed(_)) => {
-                layout_upgrade_report(&project, &p.database, &roots, file)
+                layout_upgrade_report(&project, &p.database, &p.data, &roots, file, &release)
+            }
+            // A baseline is read with no release floor.
+            Ok(ss::SchemaVerdict::Refused(why)) => {
+                eprintln!("loft layout: {why}");
+                1
             }
             Ok(ss::SchemaVerdict::Unreadable) => {
-                eprintln!(
-                    "loft layout: baseline unreadable — delete `.loft/layout.lock` and re-accept."
-                );
+                eprintln!("loft layout: baseline unreadable — delete `layout.lock` and re-accept.");
                 1
             }
             Err(e) => {
@@ -6739,6 +6749,45 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
             1
         }
     }
+}
+
+/// `loft package`'s baseline step: `loft layout accept` on the package's entry, when it
+/// declares types.  A failure is reported and does not stop the release.
+#[cfg(feature = "registry")]
+fn record_release_baseline(pkg_path: &std::path::Path) {
+    let Some(m) = loft::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy())
+    else {
+        return;
+    };
+    let Some(entry) = m.entry_or_default() else {
+        return;
+    };
+    let entry = pkg_path.join(entry);
+    if !fa::exists(&entry) {
+        return;
+    }
+    if run_layout_command("accept", &entry.to_string_lossy()) != 0 {
+        eprintln!("loft package: the layout baseline was not recorded");
+    }
+}
+
+/// `loft layout accept`: write `identity` as the project's baseline, with the release it is
+/// accepted as and where each computed field's value comes from — each line keeping the
+/// release that first recorded it in the baseline it replaces (@PLN196 step 9).
+fn record_baseline(
+    identity: &mut loft::schema_sidecar::LayoutIdentity,
+    project: &std::path::Path,
+    data: &loft::data::Data,
+    release: &loft::database::Release,
+) -> std::io::Result<()> {
+    use loft::schema_sidecar as ss;
+    let previous = ss::read_baseline(project)
+        .and_then(|t| ss::LayoutIdentity::from_sidecar(&t))
+        .map(|id| id.sources)
+        .unwrap_or_default();
+    identity.version.clone_from(&release.version);
+    identity.sources = loft::layout_schema::render_sources(data, &previous, &release.version);
+    identity.write_baseline(project)
 }
 
 /// @PLN196 step 7 — `loft layout upgrade <file> <store>…`: carry each store file into the
@@ -6808,23 +6857,26 @@ fn upgrade_each(program: &mut loft::host::Program, stores: &[String]) -> i32 {
 fn layout_upgrade_report(
     project: &std::path::Path,
     db: &loft::database::Stores,
+    data: &loft::data::Data,
     roots: &[u16],
     file: &str,
+    release: &loft::database::Release,
 ) -> i32 {
     use loft::database::{LayoutDesc, UpgradeMap};
-    let text = fa::read_to_string(loft::schema_sidecar::baseline_path(project)).unwrap_or_default();
+    let text = loft::schema_sidecar::read_baseline(project).unwrap_or_default();
     let old = loft::schema_sidecar::LayoutIdentity::from_sidecar(&text)
         .ok_or_else(|| "the baseline is not a layout file".to_string())
         .and_then(|id| {
             let mut d = LayoutDesc::from_dump(&id.dump)?;
             d.apply_facts(&id.facts)?;
-            Ok(d)
+            Ok((d, id.sources))
         });
-    let old = match old {
+    let (old, sources) = match old {
         Ok(d) => d,
         Err(e) => {
             eprintln!(
-                "loft layout: the baseline cannot be read by this version of loft ({e}) —                  re-run `loft layout accept {file}` with the version that wrote it, or accept anew."
+                "loft layout: the baseline cannot be read by this version of loft ({e}) — \
+                 re-run `loft layout accept {file}` with the version that wrote it, or accept anew."
             );
             return 1;
         }
@@ -6859,6 +6911,14 @@ fn layout_upgrade_report(
             ));
         }
     }
+    // @PLN196 step 9 — a dropped field a computed field was made from (`@FR-L-Upgrade-Source`).
+    let routines: Vec<String> = loft::parser::Parser::upgrade_routine_defs(data)
+        .iter()
+        .map(|r| data.def(r.item).name().to_string())
+        .collect();
+    refused.extend(loft::layout_schema::lost_sources(
+        data, &sources, release, &routines,
+    ));
     changes.sort();
     changes.dedup();
     refused.sort();
@@ -7658,6 +7718,16 @@ fn main() {
             i += 1;
         } else if a == "--log-conf" {
             log_conf = Some(argv[i].clone());
+            // A `--native` run's compiled program builds its own logger from
+            // `LOFT_LOG_CONF`, so the flag reaches it through the environment, as
+            // `--production` does; without it a native run logged nowhere the flag named.
+            //
+            // SAFETY: set_var is unsafe in Rust 2024; this runs during argument parsing,
+            // before any thread or State exists, as the `--production` arm below does.
+            let conf = std::path::absolute(&argv[i]).unwrap_or_else(|_| argv[i].clone().into());
+            unsafe {
+                std::env::set_var("LOFT_LOG_CONF", conf);
+            }
             i += 1;
         } else if a == "--production" {
             production = true;
@@ -8796,6 +8866,13 @@ fn main() {
                 } else {
                     std::env::current_dir().unwrap_or_default()
                 };
+                // @PLN196 step 9 — a release records its layout and where each computed field's
+                // value comes from (`@FR-L-Upgrade-Source`), so the next release's `loft layout
+                // check` can tell what an older store still needs.  Before the tarball, which
+                // then carries it; never for a byte comparison.
+                if !tarball_only {
+                    record_release_baseline(&pkg_path);
+                }
                 match loft::package::package_create(&pkg_path, None) {
                     Ok(out) => {
                         let stdout = std::io::stdout();
@@ -9313,6 +9390,13 @@ fn main() {
         .collect();
     let mut p = parser::Parser::new();
     p.lib_dirs = lib_dirs;
+    // @PLN199 A2 — the functions `compiled_stdlib::mark` will route below, under the same
+    // condition, named to the parser before it reads a call to one.
+    if !native_mode && html_out.is_none() {
+        p.compiled_bridges = loft::compiled_stdlib::names();
+    }
+    p.library_bridges =
+        !native_mode && html_out.is_none() && std::env::var_os("LOFT_NO_NATIVE_LIBS").is_none();
     // @P363: join with a path separator (Path::join) instead of string
     // concat.  `project_dir()` returns a trailing-separator path, but
     // `--path <dir>` sets `dir` to the raw CLI argument with no trailing
@@ -9514,6 +9598,25 @@ fn main() {
         None
     };
     let program_warm = warm_user_start.is_some();
+    // @PLN196 step 9 — a cached image carries no release (the parser sets it from the
+    // manifest, which the image does not record), so a warm run reads it here: without this
+    // a warm run recorded none in the stores it wrote, and a `--native` build after an
+    // interpreted run of the same program baked none into the binary.
+    {
+        let dir = std::path::Path::new(&abs_file)
+            .parent()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let release = loft::manifest::release_of(&dir);
+        if p.database.release.get().is_none() {
+            let _ = p.database.release.set(release.clone());
+        }
+        if let Some((stores, _)) = warm_store.as_mut()
+            && stores.release.get().is_none()
+        {
+            let _ = stores.release.set(release);
+        }
+    }
     // The image is a CLOSED program (`compile::close_program`): its rewrites ran before it was
     // taken, and must not run again over a table that no longer carries what they read.
     if program_warm {
@@ -9820,6 +9923,9 @@ fn main() {
             .is_some_and(|m| m.native_in_binary)
         {
             continue;
+        }
+        if std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some() {
+            loft::native_lib::trace_partition(&p.data, pkg_dir);
         }
         let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
         if export.is_empty() {
@@ -10181,6 +10287,35 @@ fn main() {
     // `#native` symbols, so the native backend links the same one the
     // interpreter dispatches to.  Must run before any codegen below.
     extensions::resolve_native_impl_symbols(&mut p.data);
+
+    // @PLN196 step 8 — a live rebuild hands the running world's layout to the build of the
+    // next instance (`live_rebuild::spawn_build`).  A world this program cannot be carried
+    // into refuses the BUILD, before any code is generated, so the swap is never offered and
+    // the running build keeps serving.
+    if p.diagnostics.level() < Level::Error
+        && let Ok(world) = std::env::var("LOFT_CHECK_WORLD")
+    {
+        let plan = fa::read_to_string(&world)
+            .map_err(|e| format!("{world}: {e}"))
+            .and_then(|text| {
+                state
+                    .database
+                    .world_upgrade_plan(&text, &parser::Parser::upgrade_routines(&p.data))
+            });
+        match plan {
+            Ok(loft::database::WorldPlan::Same) => {}
+            Ok(loft::database::WorldPlan::Converts(changes)) => {
+                eprintln!("loft-live: the running world converts to this build:");
+                for c in changes {
+                    eprintln!("  {c}");
+                }
+            }
+            Err(why) => {
+                eprintln!("loft-live: this build cannot take over the running world — {why}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     // --check: parse + compile only, report errors and exit.
     // When combined with --native, fall through to the native pipeline
@@ -11725,6 +11860,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `--native-release` because the debug build was cached.
             native_release.hash(&mut h);
             native_debug.hash(&mut h);
+            loft::cache::release_rustc_args().hash(&mut h);
+            // And whether the build strips its symbols (`LOFT_NATIVE_KEEP_SYMBOLS`): the
+            // same story one switch over — a profiler asking for a symbolised build was
+            // handed the stripped one the previous run cached.
+            platform::native_strip_symbols().hash(&mut h);
             // Include modification times of native package rlibs and loft's
             // own rlib so the cache invalidates when dependencies are rebuilt.
             if let Some(lib_dir) = loft_lib_dir() {
@@ -11892,12 +12032,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             }
             cmd.push_arg(&emit_path);
             if native_release {
-                // A shipped binary: full optimisation.  Measured on the drawing pass
-                // over `-O`: `hash` −15–20 %, the pixel rows −3–5 %; opt-level 3 alone
-                // and `-C target-cpu=native` moved nothing, so neither is asked for on
-                // its own.  Semantics runs (`--native`, the test runner) keep the
-                // faster compile.
-                cmd.push_args(["-C", "opt-level=3", "-C", "codegen-units=1"]);
+                // A shipped binary: full optimisation and aligned loops, the list and
+                // its measurements in `src/native_release_args.txt`.  Semantics runs
+                // (`--native`, the test runner) keep the faster compile.
+                cmd.push_args(loft::cache::release_rustc_args());
             }
             // Layer 1: strip the linked binary (~36MB → ~1MB; the bulk is
             // debug info from libloft.rlib + std).  Skipped when the user
@@ -12482,6 +12620,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             std::process::exit(1);
         }
     }
+    // The definition table the run reads, handed over rather than copied.  `execute_argv`
+    // keeps it as an `Arc`, and passing `&p.data` deep-copied all of it — every stdlib
+    // definition — to start each run, then dropped the copy: ~0.7 ms of a warm `hello`
+    // (@PLN179 finding 001).
+    let mut data = std::sync::Arc::new(p.data);
     if main_nr == u32::MAX && !dump_only {
         // No main() — execute each zero-parameter user `test_*()` function
         // INDIVIDUALLY with a fresh `state.database` per call.  This
@@ -12505,8 +12648,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // `--dump` skips this path — it wants the bytecode of the user
         // functions as parsed, not a synthetic execution.
         let mut test_names: Vec<String> = Vec::new();
-        for d_nr in start_def..p.data.definitions() {
-            let def = p.data.def(d_nr);
+        for d_nr in start_def..data.definitions() {
+            let def = data.def(d_nr);
             // The no-`main` fallback runs every zero-param void user function
             // (the #358 contract — see `tests/arc_e_program_cache.rs`).  The one
             // exclusion is `#native` host imports: a used LIBRARY's zero-param
@@ -12536,7 +12679,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `free_bits` — `find_free_slot` would then return the stale `max`
             // value as the first allocation slot, and `State::new`'s initial
             // `db.database(1000)` would panic with `allocations[max]` OOB.
-            let clean_data = p.data.clone();
+            let clean_data = (*data).clone();
             let clean_db = state.database.clone();
             let mut byte_code_secs = 0.0;
             let mut run_secs = 0.0;
@@ -12572,11 +12715,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             log_config::LogConfig::static_only()
         };
         let mut log = std::io::stderr();
-        let _ = state.dump_bytecode(&mut log, &config, &mut p.data);
+        let _ = state.dump_bytecode(
+            &mut log,
+            &config,
+            std::sync::Arc::get_mut(&mut data).expect("the run has not shared the table yet"),
+        );
     } else if std::env::var("LOFT_LOG").is_ok() {
         let config = log_config::LogConfig::from_env();
         let mut log = std::io::stderr();
-        if let Err(e) = state.execute_log(&mut log, "main", &config, &p.data) {
+        if let Err(e) = state.execute_log(&mut log, "main", &config, &data) {
             eprintln!("Execution error: {e}");
             std::process::exit(1);
         }
@@ -12586,13 +12733,13 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // session inherits the RESOLVED stdlib dir — a relative "default"
         // only exists when the cwd happens to be a loft checkout (#346).
         if std::env::var_os("LOFT_LIVE_RELOAD").is_some() {
-            loft::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &p.data);
+            loft::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
         }
         // @PLN140 arc B/C — arm the loft-level sampler before the program starts, so
         // the interval the first sample credits is the program's, not start-up's.
         state.arm_profiler();
         let t_run = std::time::Instant::now();
-        state.execute_argv("main", &p.data, &user_args);
+        state.execute_argv("main", &data, &user_args);
         // FY.3: native desktop frame loop — gl_swap_buffers sets frame_yield,
         // causing execute_argv to return. Resume until the program finishes.
         while state.database.frame_yield {
@@ -12623,17 +12770,17 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // @PLN140 — the profiling reports. Outside the leak guard on purpose: a run that
     // ended in a fault still spent its time and its memory somewhere, and that is
     // often exactly what is being asked. Both are silent unless armed.
-    state.report_alloc_sites(&p.data);
-    state.report_profile(&p.data);
+    state.report_alloc_sites(&data);
+    state.report_profile(&data);
     // `LOFT_OP_CENSUS` — on the same terms; silent unless armed.
     loft::op_census::write(&loft::op_census::Names {
-        operator: &|op| p.data.operator_name(op).map(str::to_owned),
-        function: &|d_nr| p.data.def(d_nr).name().to_string(),
+        operator: &|op| data.operator_name(op).map(str::to_owned),
+        function: &|d_nr| data.def(d_nr).name().to_string(),
     });
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {
-        loft::stack_census::report(Some(&p.data));
+        loft::stack_census::report(Some(&data));
     }
     // @PLN154 phase 1 — the stack shadow's verdict.  It prints on a CLEAN run too: silence
     // is the result this instrument exists to make trustworthy, and a detector that says
@@ -12692,6 +12839,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     if state.database.run_failed() {
         std::process::exit(1);
     }
+    // The table is not freed on the way out: the process is ending, and freeing it was a
+    // third of a warm `hello`'s exit (@PLN179 finding 001).  Plain memory with no `Drop`
+    // effect, unlike the run's stores, which `state` still drops — a durable store writes its
+    // clean-close sidecar there.
+    std::mem::forget(data);
 }
 
 /// Where `loft test` looks for a package's tests, and the prefix it prints.

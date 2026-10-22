@@ -66,7 +66,8 @@ spreadsheet model): divide / modulo by zero, and integer overflow
 — no trap, no halt, identically in dev / test / production.  Any arithmetic
 landing exactly on `i64::MIN` also reads as `null` (the in-band sentinel).
 Defend a site with `?? <fallback>` to turn the null into a value; a CONSTANT zero
-divisor warns at compile time, a runtime one is silent — the null is the signal.  A function returning `integer` may `return null` (it yields `i64::MIN`,
+divisor warns at compile time; a runtime one, like an index out of range, logs one Warn line
+unless the site is defended (`??`, a null check) — the value is null either way.  A function returning `integer` may `return null` (it yields `i64::MIN`,
 detectable with `!result`).
 
 **Prefer `x?` when the fallback is just the type's zero (@PLN116).** Postfix `?`

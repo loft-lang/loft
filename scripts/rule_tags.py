@@ -156,6 +156,21 @@ DEF_DEV = re.compile(
 )
 # A CITATION is `@FR-<Rule>`, boundary-exact so `@FR-B-View` does not match `@FR-B-View-Base`.
 CITE = re.compile(r"@FR-([A-Z][A-Za-z0-9-]{1,40})(?![-A-Za-z0-9])")
+# The connectives that make a sentence naming a second rule a COMPOSITION: it says when,
+# which, or what follows — a condition ("where", "when", "while", "unless", "until"), an
+# order ("before", "after", "then", "first", "instead", "governs", "yields", "wins", "over",
+# "overrides", "precedence", "takes over", "exempt", "refinement"), a consequence of the two
+# ("so", "because", "since", "hence", "therefore", "decides", "answer", "never", "whatever",
+# "included", "no exception", "read off", "hands"), or that none is needed ("regardless",
+# "either order", "commute", "independent of", "exactly as").  `pairs` reads it; a bare
+# cross-reference ("this is H-Copy", "see (X)") carries none of these.
+ORDERING = re.compile(
+    r"\b(if|where|when|whenever|while|unless|until|before|after|then|first|instead|governs?|"
+    r"yields?|wins|loses|over|overrides?|precedence|takes over|exempt|refinement|regardless|"
+    r"either order|commutes?|independent(?:ly)? of|exactly as|the same as|as .* says|"
+    r"applies|does not apply|never applies|only (?:where|when|if)|so|because|since|hence|"
+    r"therefore|decides?|answers?|never|whatever|included|no exception|read (?:off|from)|"
+    r"hands?)\b", re.I)
 
 
 def defined_rules():
@@ -532,7 +547,7 @@ def guard_tags(rules):
     """The rules an active guard names: a test under GUARD_DIRS citing the rule, or a rewrite
     census row admitting it.  The ONE answer to "is this rule guarded", so `coverage` and
     `worklist` cannot disagree about it."""
-    named = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+    named = {t for t in guard_citations() if t in rules}
     return named | {t for t in census_rules() if t in rules}
 
 
@@ -541,6 +556,8 @@ def guard_inputs_line():
     same as a count over all of them (the suite checkout absent read 231 where both read
     412, and nothing said why)."""
     dirs = ", ".join(_rel(d) if d.startswith(ROOT) else d for d in GUARD_DIRS)
+    if not os.environ.get("GUARD_DIRS"):
+        dirs += ", #[cfg(test)] modules under " + ", ".join(_rel(d) for d in CITE_DIRS)
     line = f"  guard inputs: {dirs}; rewrite census {_rel(CENSUS) if os.path.exists(CENSUS) else 'ABSENT'}"
     if not os.environ.get("GUARD_DIRS") and not os.path.isdir(SUITE_RULES):
         line += (f"\n  ⚠ the language suite is not beside this tree ({_rel(SUITE_DIR)}, LOFT_SUITE_DIR): the "
@@ -580,6 +597,61 @@ def citations_in(dirs, exts):
 def citations():
     """{tag: [(file, line)]} for every `@Tag` in the citation dirs (default: src/*.rs)."""
     return citations_in(CITE_DIRS, CITE_EXTS)
+
+
+TEST_ATTR = re.compile(r"^\s*#\[cfg\(test\)\]\s*$")
+TEST_MOD = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
+NOT_CODE = re.compile(r'//.*$|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])\'')
+
+
+def unit_test_citations():
+    """{tag: [(file, line)]} for the citations inside a `#[cfg(test)] mod … { … }` block of a
+    `.rs` file under CITE_DIRS: a unit test beside the code it tests is a guard like one under
+    tests/ (the allocator's H-Carve/H-Park/H-ScanIndex/H-Wilderness are verified only there,
+    and read as unguarded while their tests cited them).  The block ends where its braces
+    balance, counted outside comments and string or char literals; one that never balances
+    runs to the end of the file, where a test module sits."""
+    out = collections.defaultdict(list)
+    for d in CITE_DIRS:
+        for path in glob.glob(os.path.join(d, "**/*.rs"), recursive=True):
+            try:
+                lines = open(path, encoding="utf-8", errors="replace").readlines()
+            except (FileNotFoundError, IsADirectoryError):
+                continue
+            n = 0
+            while n < len(lines):
+                if not TEST_ATTR.match(lines[n]):
+                    n += 1
+                    continue
+                m = n + 1
+                while m < len(lines) and lines[m].lstrip().startswith(("#[", "///", "//!")):
+                    m += 1
+                if m >= len(lines) or not TEST_MOD.match(lines[m]):
+                    n += 1
+                    continue
+                depth = 0
+                end = len(lines)
+                for k in range(m, len(lines)):
+                    code = NOT_CODE.sub("", lines[k])
+                    depth += code.count("{") - code.count("}")
+                    for tag in CITE.findall(lines[k]):
+                        out[tag].append((_rel(path), k + 1))
+                    if depth <= 0 and k > m:
+                        end = k + 1
+                        break
+                n = end
+    return out
+
+
+def guard_citations():
+    """{tag: [(file, line)]} for every citation an active guard makes: a test under GUARD_DIRS,
+    or a unit test in a `#[cfg(test)]` module of the source tree.  The ONE collector of guard
+    sites, so `coverage`, `worklist` and `pairs` read the same set."""
+    out = citations_in(GUARD_DIRS, GUARD_EXTS)
+    if not os.environ.get("GUARD_DIRS"):
+        for tag, where in unit_test_citations().items():
+            out[tag].extend(where)
+    return out
 
 
 # ---- claims: the limitation sentences of the hand-written reference docs (@PLN176) ----
@@ -1062,9 +1134,9 @@ def main():
         # never that the guard would fail without it.  Say that in the output rather than let
         # the column heading promise a property nobody measured.
         ann = {t for t in citations_in(CITE_DIRS, CITE_EXTS) if t in rules}
-        named = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+        named = {t for t in guard_citations() if t in rules}
         census = {t for t in census_rules() if t in rules}
-        grd = named | census
+        grd = guard_tags(rules)
         total = len(rules)
         pct = (lambda k: 100.0 * k / total if total else 0.0)
         print(f"{total} defined rules\n")
@@ -1173,29 +1245,85 @@ def main():
         # read from the rules, never from the author's list, so it names compositions nobody
         # thought to test.  "Names both" is the same proxy the guard tier is — a file that
         # exercises a pair without citing it reads as a gap, so read a row as a question.
-        mention = re.compile(r"\(([A-Z][A-Za-z0-9-]{1,40})\)|@FR-([A-Z][A-Za-z0-9-]{1,40})")
+        # A rule is named in parentheses, by tag, or BARE (`binding.md B-Disturb`, `the
+        # H-Copy step`): the names are the index, so every spelling of one counts — filtered
+        # against the defined rules, which keeps a hyphenated word in prose out.
+        mention = re.compile(r"\(([A-Z][A-Za-z0-9-]{1,40})\)|@FR-([A-Z][A-Za-z0-9-]{1,40})|"
+                             r"(?<![A-Za-z0-9-])([A-Z][A-Za-z]*(?:-[A-Za-z0-9]+)+)(?![A-Za-z0-9-])")
         pairs = set()
+        # A composition is STATED when the sentence that names the other rule also says
+        # WHEN — which of the two applies, under what condition, or that the order does not
+        # matter: a conditional or ordering connective beside the name.  No notation of its
+        # own (a pair spelling would grow as the square of the rules and index nothing the
+        # names do not already): the entry stays prose under the rule that governs, and the
+        # index finds it by the two names it carries.  A bare mention ("this is H-Copy",
+        # "see (X)") is a cross-reference, not a composition: it says the rules are related
+        # and not what happens where both apply — the question that reached the owner by hand
+        # more often than any reported issue did (2026-10-21).
+        stated = set()
+        sentence = re.compile(r"(?<=[.;])\s+")
         for a, text in rule_bodies(rules).items():
-            for m in mention.finditer(text):
-                b = m.group(1) or m.group(2)
-                if b in rules and b != a:
-                    pairs.add(tuple(sorted((a, b))))
+            for s_ in sentence.split(" ".join(text.split())):
+                named = {m.group(1) or m.group(2) or m.group(3) for m in mention.finditer(s_)}
+                for b in named:
+                    if b in rules and b != a:
+                        pairs.add(tuple(sorted((a, b))))
+                        if ORDERING.search(s_):
+                            stated.add(tuple(sorted((a, b))))
         files = collections.defaultdict(set)
-        for tag, where in citations_in(GUARD_DIRS, GUARD_EXTS).items():
+        for tag, where in guard_citations().items():
             if tag in rules:
                 files[tag] = {f for f, _n in where}
+        issue_born = re.compile(r"^\d{3,5}[a-z]?[-_]")
 
         def chapter(tag):
             return sorted(rules[tag])[0].removesuffix(".md")
 
+        def bitten(p):
+            """The defect-born cells citing both: the composition has failed once already."""
+            return sorted(f for f in files[p[0]] & files[p[1]]
+                          if issue_born.match(os.path.basename(f)))
+
         both = [p for p in sorted(pairs) if files[p[0]] and files[p[1]]]
         gaps = [p for p in both if not files[p[0]] & files[p[1]]]
+        unstated = [p for p in sorted(pairs) if p not in stated]
         want = sys.argv[sys.argv.index("--chapter") + 1] if "--chapter" in sys.argv else None
         if want:
             gaps = [p for p in gaps if want in (chapter(p[0]), chapter(p[1]))]
-        print(f"{len(pairs)} rule pairs the formal text names; {len(both)} with both rules "
-              f"guarded; {len(gaps)} that no guard file names together"
-              + (f" (touching {want})" if want else ""))
+            unstated = [p for p in unstated if want in (chapter(p[0]), chapter(p[1]))]
+        print(f"{len(pairs)} rule pairs the formal text names; {len(stated)} with the composition "
+              f"STATED (which applies, when); {len(both)} with both rules guarded; {len(gaps)} that "
+              f"no guard file names together" + (f" (touching {want})" if want else ""))
+        if "--unstated" in sys.argv:
+            # The ones that have ALREADY failed first: a defect-born cell cites both rules, so
+            # the composition bit and the text still does not say which rule governs there.
+            # Strongest of all: a pair such a cell cites that the text does not NAME at all —
+            # the composition came from a defect, and the rules still do not relate.
+            cited = collections.Counter()
+            for a in files:
+                for b in files:
+                    if a < b and (a, b) not in pairs and bitten((a, b)):
+                        cited[(a, b)] += len(bitten((a, b)))
+            if cited:
+                print(f"\n{len(cited)} pairs a defect-born cell cites together that no rule's entry "
+                      "names (the composition bit, and the text does not relate the two):")
+                for (a, b), n in cited.most_common(40 if "--all" not in sys.argv else None):
+                    print(f"  {n:>2}  @FR-{a:<22} @FR-{b:<22} {chapter(a)} / {chapter(b)}"
+                          f"  e.g. {os.path.basename(bitten((a, b))[0])[:50]}")
+            unstated.sort(key=lambda p: (-len(bitten(p)), p))
+            shown = unstated if "--all" in sys.argv else unstated[:40]
+            print(f"\n{len(unstated)} pairs named without saying which applies; defect-born "
+                  "cells citing both first:")
+            for a, b in shown:
+                cells = bitten((a, b))
+                print(f"  {len(cells):>2}  @FR-{a:<22} @FR-{b:<22} {chapter(a)} / {chapter(b)}"
+                      + (f"  e.g. {os.path.basename(cells[0])[:50]}" if cells else ""))
+            if len(shown) < len(unstated):
+                print(f"  … {len(unstated) - len(shown)} more (--all)")
+            print("\nState the composition under the rule that GOVERNS: one sentence naming the "
+                  "other rule\nwith a `when`/`where`/`instead`/`governs` beside it, and the cell "
+                  "that fails when the\norder is wrong cites both.")
+            return 0
         per = collections.Counter(chapter(a) for a, _b in gaps)
         print("  " + "  ".join(f"{ch} {n}" for ch, n in per.most_common()))
         shown = gaps if "--all" in sys.argv else gaps[:40]
@@ -1205,7 +1333,7 @@ def main():
             print(f"  … {len(gaps) - len(shown)} more (--all)")
         print("\nA pair NAMED by no guard, which is not the same as one no guard exercises: "
               "build the\ncomposition, hand-compute it, and cite both rules in the cell that "
-              "answers it.")
+              "answers it.\n`--unstated` lists the pairs whose composition the text does not state.")
         return 0
 
     if cmd == "sites":

@@ -84,12 +84,8 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 
 fn target() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
-    PATH.get_or_init(|| {
-        std::env::var("LOFT_STORE_CENSUS")
-            .ok()
-            .filter(|p| !p.is_empty())
-    })
-    .as_deref()
+    PATH.get_or_init(|| crate::platform::env_output("LOFT_STORE_CENSUS"))
+        .as_deref()
 }
 
 #[cfg_attr(not(feature = "op-census"), allow(dead_code))]
@@ -144,6 +140,10 @@ pub fn at_ticks(value: i64) {
         line.push_str(&c.load(Ordering::Relaxed).to_string());
     }
     line.push('\n');
+    if path == "-" {
+        eprint!("{line}");
+        return;
+    }
     let file = crate::file_access::open_with(
         path,
         std::fs::OpenOptions::new()

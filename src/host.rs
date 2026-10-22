@@ -276,6 +276,8 @@ impl Program {
     }
 
     /// The fill function of each (type, field) whose default the program must run.
+    /// Only [`Program::upgrade_file`] asks, which a build without `mmap` does not have.
+    #[cfg(feature = "mmap")]
     fn upgrade_fills(&self) -> crate::database::Fills {
         let mut fills = crate::database::Fills::new();
         for d_nr in 0..self.data.definitions() {
@@ -307,14 +309,34 @@ impl Program {
         path: &std::path::Path,
     ) -> Result<crate::database::FileUpgrade, String> {
         let fills = self.upgrade_fills();
-        let Some((job, pending)) = self.state.database.upgrade_file_begin(path, None, &fills)?
+        let routines = parser::Parser::upgrade_routines(&self.data);
+        let Some((job, pending)) = self
+            .state
+            .database
+            .upgrade_file_begin(path, None, &fills, &routines)?
         else {
             return Ok(crate::database::FileUpgrade::Current);
         };
-        for (rec, f) in pending {
-            if let Err(e) = self.call(&f, &[Value::Ref(rec)]) {
+        for p in pending {
+            let (f, args, what) = match p {
+                crate::database::Pending::Fill { rec, name } => {
+                    (name, vec![Value::Ref(rec)], "the default")
+                }
+                // The routine runs after its record's fields and defaults (@PLN196 step 9).
+                crate::database::Pending::Routine {
+                    item,
+                    old,
+                    from,
+                    name,
+                } => (
+                    name,
+                    vec![Value::Ref(from), Value::Ref(old), Value::Ref(item)],
+                    "the upgrade routine",
+                ),
+            };
+            if let Err(e) = self.call(&f, &args) {
                 self.state.database.upgrade_file_abandon(&job);
-                return Err(format!("the default `{f}` failed: {e}"));
+                return Err(format!("{what} `{f}` failed: {e}"));
             }
         }
         self.state.database.upgrade_file_finish(job)

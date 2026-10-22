@@ -1,0 +1,31 @@
+# Which composition axes (scripts/matrix_axes.py's vocabulary) a chapter's rules QUANTIFY over —
+# the one by-hand input of `scripts/rule_depth.py`.  A rule about keyed containers ranges over
+# container kind and element type, not over closure capture; the report measures a rule's
+# cells against these axes only, so an axis listed here that the rule's cells pin reads as a
+# gap, and an axis left out reads as nothing.  Edit when a chapter's rules say otherwise; a
+# chapter absent here is measured against no axis (its reach column reads `-`).
+# chapter <TAB> axes <TAB> why
+# (paths and performance are measured against no axis on purpose: a path rule ranges over
+# spellings of a name, a performance rule over a ratio — neither is a composition axis.)
+allocator	A7 A9	a block rule ranges over the element size it carves for and repetition
+binding	A3 A4 A5 A6	a bind ranges over how its value is spelled, where it stands, whether it may be absent, and the shape of a default
+calls	A2 A3 A4	a call ranges over where its arguments come from, how they are spelled, and the statement that holds it
+capabilities	A4	a capability check ranges over the statement that exercises it
+closures	A2 A4 A10	a closure ranges over what it captures and where it is built and applied
+collections	A1 A5 A7 A9	a collection rule ranges over the container kind, its element type, nullability, and repetition
+concurrency	A1 A7 A9 A10	a `par` body ranges over what it reads, shares and captures, and how often it runs
+coroutines	A4 A9 A10	a generator ranges over where it yields, how often, and what it captures
+dispatch	A3 A5 A7	an overload set ranges over the argument's spelling, nullability and type
+formatting	A3 A4 A5 A7	a rendering ranges over what is interpolated, where, and whether it may be absent
+grammar	A4	a grammar rule ranges over the statement context a form appears in
+heap	A1 A2 A5 A7 A9	a store rule ranges over container kind, where the container came from, nullability, element type and repetition
+interfaces	A3 A7	a bound ranges over the argument's spelling and type
+iteration	A1 A7 A9	a loop ranges over what it walks, its element type, and repetition
+layout	A5 A7	a layout rule ranges over the element type and its nullability
+matching	A5 A7	a match ranges over the payload's type and nullability
+operational	A4	an operational rule ranges over the statement a fault or a halt reaches
+operators	A3 A7	an operator ranges over its operands' spelling and type
+ownership	A1 A2 A3 A4 A5 A9 A10	an ownership rule ranges over everything a value can be: its container, where it came from, how it is spelled, where it stands, nullability, repetition, capture
+rewrites	A1 A2 A4 A7 A9	a rewrite ranges over the container it addresses, its provenance, the statement it fires in, the element type, and the loop
+tuples	A3 A7	a tuple ranges over how a member is spelled and its type
+types	A5 A7	a type rule ranges over nullability and the element type

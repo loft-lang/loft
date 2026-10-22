@@ -50,6 +50,13 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-25 — CLOSED 2026-10-21 (loft#2107).**  `(P-Multi)`: an arm of SLICE patterns took
+  no alternation — `[9, ..] | [1, ..] => …` was refused `Expect token =>` on both backends.  The
+  slice-pattern parse is now one call per pattern (`Parser::parse_slice_pattern`), and the
+  further patterns are linked through `parse_pattern_alternatives` as a tuple match's are: one
+  arm per pattern, the body cloned, a shared name one slot, a name some patterns bind `τ?`.
+  Cell: `loft-suite/rules/matching/P-Multi/a-slice-or-pattern-arm-links-its-bindings.loft`.
+
 - **D-match-24 — CLOSED 2026-10-18 (loft#2048).**  `(P-Opt)` held only for a group at a slice's
   START (`[(a)?, ..rest]`): after a fixed head, before a fixed tail or last, `(a)?` was a parse
   error.  The group now stands anywhere: GREEDY, as the rule reads — the first branch whose tags

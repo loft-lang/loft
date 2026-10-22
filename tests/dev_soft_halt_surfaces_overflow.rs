@@ -62,10 +62,8 @@ fn run(backend: &str, src: &str, tag: &str, soft_halt: bool) -> (i32, String, St
     )
 }
 
-/// The faults are written as STATEMENTS, not inside the interpolation.  A format hole is a
-/// guarded context — it emits the silent `*Nullable` ops so it can render `null` — so every
-/// fault written inside one is silent by (E-Report), div0 included.  A probe that spelled
-/// them `{hi + 1}` would report nothing and look like the pre-fix build.
+/// The faults are written as STATEMENTS, one to a line, and each value is printed apart, so
+/// every report is matched to the one operation that made it.
 const SRC: &str = "\
 fn main() {
   hi = 9223372036854775807;

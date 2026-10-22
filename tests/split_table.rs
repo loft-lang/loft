@@ -308,7 +308,8 @@ fn every_other_use_keeps_the_vector() {
     // A generator's table would live on the state machine; it keeps the vector.  Its
     // functions are emitted under the generator's own names, so the check is over the
     // whole file: exactly the binds counted above are tables, and `pieces` is not one.
-    let admitted = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 3 + 1 + 1 + 2 + 1 + 1 + 1 + 2 + 1;
+    // The last 1 is the stdlib's own: `compare(Release, text)` splits its text on `.`.
+    let admitted = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 3 + 1 + 1 + 2 + 1 + 1 + 1 + 2 + 1 + 1;
     assert_eq!(
         count(&rust, ").collect() /* @FR-R-SplitTable */"),
         admitted,

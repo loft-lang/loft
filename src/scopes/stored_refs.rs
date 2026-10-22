@@ -96,6 +96,11 @@ pub struct StoredRefs {
     pub hoists: Vec<Hoist>,
     pub places: Vec<Place>,
     pub evacuations: Vec<Evacuation>,
+    /// Every local whose store holds a record some stored reference names, however long
+    /// the holder lasts: the hold's home and every variable its deps reach, per function.
+    /// A rewrite that moves such a store's records elsewhere moves them out from under the
+    /// reference (`@FR-H-RefHome`, loft#2118).
+    pub named: Vec<(u32, u16)>,
 }
 
 /// How a hold whose home ends before its holder is kept: the home's store moved out to the
@@ -996,6 +1001,17 @@ impl Walk<'_> {
         line: u32,
     ) {
         let mut kept = Vec::new();
+        for hold in &holds {
+            if hold.param.is_none()
+                && let Ok(vars) = self.chain(hold.home)
+            {
+                for v in vars {
+                    if !self.out.named.contains(&(self.d_nr, v)) {
+                        self.out.named.push((self.d_nr, v));
+                    }
+                }
+            }
+        }
         for hold in holds {
             match (hold.param, lasts) {
                 (Some(home_param), Life::Caller(holder_param)) => {

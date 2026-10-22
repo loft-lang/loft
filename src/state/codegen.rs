@@ -157,6 +157,10 @@ impl State {
         let logging =
             !crate::file_access::is_stdlib_source(data.def(def_nr).position().file.as_str());
         let console = false; //logging;
+        // @PLN198 — before the table is copied into the generator: the text loop variables
+        // that borrow their element, which every emitter below and every reader of the frame
+        // asks about (`Function::holds_str`).
+        Self::mark_text_views(def_nr, data);
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
         self.fused_away.clear();
         // `@FR-R-FrameHeadroom` — this function's height starts from nothing.
@@ -533,6 +537,28 @@ impl State {
         result
     }
 
+    /// Record that the code from `start` to here was generated for a construct at `pos`.  The
+    /// table holds one span per start pc, and the spans generated INSIDE this construct are
+    /// already in it, so a nested span that starts at `start` keeps its range: this one takes
+    /// the code after it, skipping over each inner span that begins where the last one ended.
+    /// An inner span covering the whole range is the more specific construct and stays.  Before,
+    /// the outer span replaced an inner one starting at the same pc, so a fault inside it —
+    /// a body `(R-InlineLeaf)` put in place of its call, an argument moved into the body's
+    /// result — was named at the outer one (loft#2111).
+    fn record_span(&mut self, start: u32, pos: crate::lexer::Position) {
+        let end = self.code_pos;
+        let mut at = start;
+        while let Some(&(_, inner_end)) = self.source_spans.get(&at) {
+            if inner_end >= end {
+                return;
+            }
+            at = inner_end;
+        }
+        if at < end {
+            self.source_spans.insert(at, (pos, end));
+        }
+    }
+
     /// @PLN11 G2 — lower one IR node.  Dispatches entirely on `node.kind()`
     /// and reads payloads through `IrNode` accessors, so the SAME codegen runs
     /// once the backing flips from native to store-read (M5).  The remaining
@@ -750,8 +776,7 @@ impl State {
                 // The published snapshot is now behind the table it snapshots.
                 self.published_spans = None;
                 let inner = self.generate_inner(node.span_inner(), stack, top);
-                self.source_spans
-                    .insert(start, (node.span_pos(), self.code_pos));
+                self.record_span(start, node.span_pos());
                 inner
             }
             ValueType::Iter => {
@@ -1653,9 +1678,14 @@ impl State {
             let offset = (arm_start - join_pos) as u16;
             self.code_put(arm_offset_positions[i], offset);
             self.gen_drop(arm, stack);
-            // OpReturn — arm is a void "function"
+            // OpReturn — arm is a void "function".  It discards the enclosing frame the way
+            // the function's own return does (`self.arguments`), so it reads the return
+            // address from that frame's slot, which the worker has set to the stop sentinel
+            // (`State::execute_at_void_with_snapshot`).  With `arguments = 0` it read the
+            // first ARGUMENT as the address, and outside `main` the worker ran on into code
+            // that was never its own (loft#2112).
             stack.add_op("OpReturn", self);
-            self.code_add(0u16); // arguments = 0
+            self.code_add(self.arguments);
             self.code_add(0u16); // return_size = 0
             self.code_add(stack.position);
         }
@@ -1712,6 +1742,30 @@ impl State {
         self.code_add(dep_offset + step);
     }
 
+    /// @PLN198 (`@FR-R-TextBorrow`) — mark this function's text loop variables that BORROW
+    /// their element: `for p in words` whose rest reads `p` only as a text value and writes
+    /// no store.  The admission is the native generator's own
+    /// ([`crate::generation::hoist::borrowed_text_walks`]), asked without the walks only the
+    /// native generator lowers (a lazy split's pieces, a split table), so both backends
+    /// borrow the same walks of a real vector.  The element's bytes live in the vector's
+    /// store, which an admitted body never writes, so the `Str` stays valid for the
+    /// iteration.  `LOFT_NO_TEXT_BORROW=1` keeps the copy here as it does there.
+    fn mark_text_views(def_nr: u32, data: &mut Data) {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0")) {
+            return;
+        }
+        let views = crate::generation::hoist::borrowed_text_walks(
+            data,
+            def_nr,
+            &std::collections::BTreeSet::new(),
+            &std::collections::BTreeMap::new(),
+        );
+        for v in views.keys() {
+            data.def_mut(def_nr).variables.mark_text_view(*v);
+        }
+    }
+
     pub(super) fn gen_set_first_text(&mut self, stack: &mut Stack, v: u16, value: &Value) {
         // Plan-04 Phase B.2: positional init.  Emit OpReserveFrame(n) +
         // OpInitText(slot_offset) instead of the compound OpText.  This
@@ -1728,9 +1782,13 @@ impl State {
             self.code_add(advance);
             stack.grow(advance);
         }
-        let slot_offset = stack.position - pos;
-        stack.add_op("OpInitText", self);
-        self.code_add(slot_offset);
+        // A text view (@PLN198) owns no `String`: nothing to start, and `set_var` puts the
+        // element's `Str` into the slot.
+        if !stack.function.is_text_view(v) {
+            let slot_offset = stack.position - pos;
+            stack.add_op("OpInitText", self);
+            self.code_add(slot_offset);
+        }
         if let Value::Text(s) = value {
             if !s.is_empty() {
                 self.set_var(stack, v, value);
@@ -4402,6 +4460,19 @@ impl State {
             self.gen_cdylib_text_dest_call(stack, dest_var, inner_op, &inner_args, c_lib);
             return true;
         }
+        // @PLN199 A2 — and the cdylib twin: a compiled library's text function appends into
+        // `dest_var` through the bridge (`gen_cdylib_text_dest_call`, whose bridge
+        // `push_str`s).  The parser leaves `w += lib_fn()` unwrapped for this arm
+        // (`descend_skip_direct`), so without it the bufferless call had no destination.
+        if is_cdylib_text_call(stack.data.def(*inner_op)) {
+            let native_sym = stack.data.def(*inner_op).native().to_owned();
+            if let Some(&cdylib_lib) = self.library_names.get(&native_sym) {
+                let (dest_var, inner_op) = (*dest_var, *inner_op);
+                let inner_args = inner_args.clone();
+                self.gen_cdylib_text_dest_call(stack, dest_var, inner_op, &inner_args, cdylib_lib);
+                return true;
+            }
+        }
         if !is_text_dest_native(&inner_name) {
             return false;
         }
@@ -4836,6 +4907,14 @@ impl State {
             self.emit_push_null_ref(stack);
             return stack.data.def(op).returned().clone();
         }
+        // @PLN198 — a text view owns nothing to free: its `Str` points into the vector.
+        if name == "OpFreeText"
+            && let [arg] = parameters
+            && let Value::Var(v) = arg.unspan()
+            && stack.function.is_text_view(*v)
+        {
+            return stack.data.def(op).returned().clone();
+        }
         // `@FR-T-Record` — a tuple local's text MEMBER freed at scope exit
         // (`scopes::tuple_members::tuple_text_member_frees`): every owned text leaf under it.
         if name == "OpFreeText"
@@ -5114,7 +5193,7 @@ impl State {
             _ => return None,
         };
         let at = self.code_pos;
-        let arg = u8::from(stack.function.is_argument(src));
+        let arg = u8::from(stack.function.holds_str(src));
         let src_pos = stack.var_pos(src);
         let idx_pos = idx.map(|i| stack.var_pos(i));
         stack.add_op(
@@ -5225,7 +5304,7 @@ impl State {
         {
             return false;
         }
-        let arg = u8::from(f.is_argument(w.src));
+        let arg = u8::from(f.holds_str(w.src));
         stack.function.set_stack_allocated(c);
         let at = self.code_pos;
         let positions = [
@@ -5561,8 +5640,16 @@ impl State {
             Type::Boolean => stack.add_op("OpVarBool", self),
             Type::Single => stack.add_op("OpVarSingle", self),
             Type::Float => stack.add_op("OpVarFloat", self),
+            // A parameter and a text view (@PLN198) hold a `Str`; a local text a `String`.
             Type::Text(_) => {
-                stack.add_op(if argument { "OpArgText" } else { "OpVarText" }, self);
+                stack.add_op(
+                    if argument || stack.function.is_text_view(variable) {
+                        "OpArgText"
+                    } else {
+                        "OpVarText"
+                    },
+                    self,
+                );
             }
             Type::Vector(tp, _) => {
                 let typedef: &Type = tp;
@@ -6456,6 +6543,9 @@ impl State {
             // The empty literal never reaches here — it returned above, before the
             // push, so that the push and the op that consumes it stay one decision
             // (loft#908).
+            // A text view (@PLN198) takes the element's `Str` as it is; an owned text appends
+            // it into its own `String`.
+            Type::Text(_) if stack.function.is_text_view(var) => stack.add_op("OpPutText", self),
             Type::Text(_) => stack.add_op("OpAppendText", self),
             Type::Vector(_, _)
             | Type::Reference(_, _)
@@ -6584,6 +6674,14 @@ impl State {
         args: &[Value],
         cdylib_lib: u16,
     ) {
+        // @PLN199 — a compiled library's text function takes the destination with its
+        // arguments, in ONE native call (`<symbol>#dest`, `extensions::shared_dest_symbol`).
+        let dest_lib = self
+            .library_names
+            .get(&crate::extensions::shared_dest_symbol(
+                stack.data.def(op).native(),
+            ))
+            .copied();
         let set_dest_lib = *self
             .library_names
             .get("n_set_bridge_dest")
@@ -6606,6 +6704,15 @@ impl State {
         } else {
             let dep_offset = stack.var_pos(var);
             self.emit_push_create_stack(stack, dep_offset);
+        }
+        if let Some(dest_lib) = dest_lib {
+            stack.add_op("OpStaticCall", self);
+            self.code_add(dest_lib);
+            stack.position -= stack.step(size_of::<crate::keys::DbRef>() as u16);
+            for attr_type in &attr_types {
+                stack.position -= stack.step(size(attr_type, &Context::Argument));
+            }
+            return;
         }
         // n_set_bridge_dest pops the dest DbRef off the top and stashes it.
         stack.add_op("OpStaticCall", self);

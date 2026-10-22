@@ -49,9 +49,12 @@ fn run(args: &[&str], env: &[(&str, &str)], prog: &Path) -> Run {
 
 /// Run the loft binary on `prog` against an explicit (usually tmp, writable) `libdir`
 /// — for tests that own their fixtures so they never race on a shared `native-auto/`.
+/// The program interprets (`--interpret`; a bare run would compile it whole), so the
+/// libraries are what crosses into native code.
 fn run_against(libdir: &Path, prog: &Path, env: &[(&str, &str)]) -> Run {
     let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
-    cmd.arg("--lib")
+    cmd.arg("--interpret")
+        .arg("--lib")
         .arg(libdir)
         .arg(prog)
         .env("LOFT_NO_CACHE", "1");
@@ -110,8 +113,14 @@ fn write_lib(libdir: &Path, name: &str, dep: Option<&str>, body: &str) -> std::p
 ///   the real gate.)
 fn assert_three_mode_parity(prog: &Path) -> String {
     let guard = ("LOFT_STORE_GUARD", "1");
-    let interp = run(&[], &[("LOFT_NO_NATIVE_LIBS", "1"), guard], prog);
-    let mixed = run(&[], &[guard], prog);
+    // `--interpret` on both: a bare run compiles the whole program (`--native` is the
+    // default), which made these two legs a second and third native run.
+    let interp = run(
+        &["--interpret"],
+        &[("LOFT_NO_NATIVE_LIBS", "1"), guard],
+        prog,
+    );
+    let mixed = run(&["--interpret"], &[guard], prog);
     let native = run(&["--native"], &[guard], prog);
 
     for (name, r) in [("interp", &interp), ("mixed", &mixed), ("native", &native)] {
@@ -197,6 +206,108 @@ fn datalib_store_touching_types_parity() {
 
     let _ = fa::remove_dir_all(&tmp);
     let _ = fa::remove_dir_all(native_auto);
+}
+
+/// @PLN199 — every shape the native gate judges, run interpreted, mixed and `--native`,
+/// against the answers computed by hand (`tests/lib/gatefull_main.out`).  The functions a
+/// step of the plan moves from the interpreter into the compiled library keep their
+/// answers, and the stores they return are freed once: each mode runs under
+/// `LOFT_STORES=warn` (a leak in the program's thousand-call loop passes its 30-store
+/// bar) and the store guard, and the mixed mode once more under `LOFT_POISON=1`.
+#[test]
+fn gatefull_every_gate_shape_parity() {
+    assert_package_parity("gatefull");
+}
+
+/// @PLN199 C2 — a compiled library calling the script's function values back through the
+/// interpreter (`HostTable::call_ref`): a callee that allocates while the library holds a
+/// record, one that calls the library again, text / float / boolean / record arguments, a
+/// capturing lambda, a function value the library returns and is handed back, the
+/// interpreter's `par` worker calling through the library, and the library's own `par`
+/// worker reaching a function value through a record (`parallel::with_worker_state`).
+#[test]
+fn callback_function_values_parity() {
+    assert_package_parity("callback");
+}
+
+/// `tests/lib/<pkg>_main.loft` against `tests/lib/<pkg>_main.out` — the package copied to a
+/// directory of the test's own, so the cdylib it builds is this run's — interpreted, mixed
+/// and `--native` under `LOFT_STORES=warn` and the store guard, and mixed under
+/// `LOFT_POISON=1`.
+fn assert_package_parity(pkg: &str) {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable (mixed + native modes need it)");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_{pkg}_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let lib = tmp.join("lib");
+    fa::create_dir_all(lib.join(pkg).join("src")).unwrap();
+    for f in ["loft.toml".to_string(), format!("src/{pkg}.loft")] {
+        fa::copy(
+            Path::new("tests/lib").join(pkg).join(&f),
+            lib.join(pkg).join(&f),
+        )
+        .unwrap();
+    }
+    let prog = tmp.join("main.loft");
+    fa::copy(
+        Path::new("tests/lib").join(format!("{pkg}_main.loft")),
+        &prog,
+    )
+    .unwrap();
+    let expected = fa::read_to_string(format!("tests/lib/{pkg}_main.out")).unwrap();
+
+    let warn = ("LOFT_STORES", "warn");
+    let guard = ("LOFT_STORE_GUARD", "1");
+    let run_mode = |mode: &str, env: &[(&str, &str)]| {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--lib")
+            .arg(&lib)
+            .arg(mode)
+            .arg(&prog)
+            .env("LOFT_NO_CACHE", "1");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("spawn loft binary");
+        Run {
+            success: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }
+    };
+    let interp = run_mode("--interpret", &[("LOFT_NO_NATIVE_LIBS", "1"), warn, guard]);
+    let mixed = run_mode("--interpret", &[warn, guard]);
+    let poison = run_mode("--interpret", &[("LOFT_POISON", "1")]);
+    let native = run_mode("--native", &[warn, guard]);
+    let _ = fa::remove_dir_all(&tmp);
+    for (name, r) in [
+        ("interp", &interp),
+        ("mixed", &mixed),
+        ("mixed under LOFT_POISON", &poison),
+        ("native", &native),
+    ] {
+        assert!(
+            r.success,
+            "{pkg} {name} failed.\nstdout:\n{}\nstderr:\n{}",
+            r.stdout, r.stderr
+        );
+        assert_eq!(
+            r.stdout, expected,
+            "{pkg} {name}: wrong answers.\nstderr:\n{}",
+            r.stderr
+        );
+        assert!(
+            !r.stderr.contains("[store] WARNING") && !r.stderr.contains("[store-guard]"),
+            "{pkg} {name}: a store outlived its use.\nstderr:\n{}",
+            r.stderr
+        );
+    }
 }
 
 /// @PLN11 Arc N / N3 Step 2 — the build-failure fallback.
@@ -297,11 +408,11 @@ fn default_native_dispatches_unopted_library() {
     fa::write(&prog, PLAINLIB_PROG).unwrap();
     let native_auto = std::path::Path::new("tests/lib/plainlib/native-auto");
 
-    let interp = run(&[], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
+    let interp = run(&["--interpret"], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
 
     // ESCAPE: `LOFT_NO_NATIVE_LIBS` interprets and builds no cdylib.
     let _ = fa::remove_dir_all(native_auto);
-    let escaped = run(&[], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
+    let escaped = run(&["--interpret"], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
     assert!(
         escaped.success,
         "interpret-escape run failed:\n{}",
@@ -314,7 +425,7 @@ fn default_native_dispatches_unopted_library() {
 
     // DEFAULT: plainlib never opted in, yet default-native auto-builds + dispatches.
     let _ = fa::remove_dir_all(native_auto);
-    let dflt = run(&[], &[], &prog);
+    let dflt = run(&["--interpret"], &[], &prog);
     assert!(
         dflt.success,
         "default-native run failed:\nstdout:\n{}\nstderr:\n{}",

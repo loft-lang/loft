@@ -34,20 +34,18 @@ whole-module swap inherits wasm's drop-an-instance unload safety anyway.
 03's measurements stand (wasm exec ≈ 1.0× native); its per-fn residual is
 retired.  Tier 0 (02's dispatch) is unchanged and remains the substrate.
 
-**v1 bounds (deliberate):** body-only edits — the signature guard already
-enforces this for reload; the build swap adds the layout guard (identical
-type schemas between builds).  Lenient serialization later lifts the layout
-bound into live data migration — that is its named purpose.
+**Bounds:** a live RELOAD (S2, S3) takes body-only edits — the signature
+guard enforces it.  A build SWAP (S5, S6) also takes a changed layout: the
+world goes through the store converter, which either carries it or refuses
+and leaves the old build serving.
 
-**The "small" after-part (user, 2026-06-10, ironically):** converting one
-store format to another on class changes.  Schema-as-data (`Stores.types`)
-is what makes it tractable: both builds' schemas are values, so the diff is
-mechanical — added fields take defaults, dropped fields drop, widenings are
-free; only RENAMES are ambiguous and need a hint, which is exactly the
-frozen rename-migration-setter language feature (its thaw trigger is this
-phase's v2).  Until then: layout-identical swaps, and a swap-time schema
-hash comparison that refuses (gracefully — keep serving the old build)
-rather than corrupts.
+**The after-part — converting one store format to another on class
+changes** is @PLN196's converter (step 8): both builds' schemas are values,
+so the diff is mechanical — added fields take their defaults (which may read
+the record through `$`), dropped fields drop, widenings convert.  A rename
+is two swaps: add the new field with a default that reads the old one, then
+drop the old one.  A change the converter refuses keeps the old build
+serving.
 
 ---
 
@@ -210,11 +208,29 @@ Rollback if the new build fails to boot.  **SHIPPED**:
   `swap_start(artifact)` requests the cutover; `run()`'s per-turn
   `kernel_swap_step` acts at the frame boundary (0 serve / 1 frozen / 2
   retire).
-- **The snapshot is the lenient-serialization seed**: `show_json` (schema
-  walk) out, `populate_struct_from_jsonvalue` in — already lenient (missing
-  fields → null, extra → ignored), so v1's layout-identical bound relaxes
-  to "what the deserializer covers": scalars/text/vectors/inline structs;
-  reference/hash/sorted fields stay at defaults (documented).
+- **The snapshot is a store image** (@PLN196 step 8): when the world is the
+  root of its own store, the old build writes that store as it is, with its
+  layout sidecar recording the slot (`Stores::write_store_snapshot`), and the
+  new build's `swap_world` loads it through
+  the store converter (`load_path`).  Hashes, sorted collections and
+  references survive; a changed struct converts in place, every added field
+  taking its default (a computed one through the drain the parser puts after
+  `swap_world`).  **Whether the world can be carried is decided when the next
+  instance is COMPILED, never at the swap** (owner, 2026-10-21): `swap_world`
+  records the world's layout, the background rebuild hands it to the build
+  (`LOFT_CHECK_WORLD`), and the build derives the upgrade map before it
+  generates any code.  A refused change fails the build with the reason, so
+  `rebuild_status` reports failed and the swap is never offered; a build that
+  passed carries a plan already known to hold.  The new build's own refusal
+  at `swap_world` (it exits before ready, the old build keeps serving) stays
+  only as the backstop.  A world that shares its store
+  with other data goes over as JSON (`show_json` out,
+  `populate_struct_from_jsonvalue` in: scalars, texts, vectors and inline
+  structs; missing fields null, extra ignored).  `LOFT_NO_SWAP_IMAGE=1` sends every
+  world as JSON — the first bisect step for a swap that loses or misreads
+  data.  Guards: `s5_native_swap_under_running_world` (a world grown by a
+  computed field) and `tests/store_upgrade.rs`
+  `cell_swap_world_restores_and_converts_a_world_with_a_reference`.
 - **Overlap handover, rollback-by-default**: the old build NEVER stops
   serving until the new one is proven.  `SO_REUSEPORT` lets the new
   process bind while the old still listens; the READY file (touched after

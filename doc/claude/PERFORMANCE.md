@@ -688,8 +688,11 @@ times).  Two scripts read it:
   needs only the matrix, the pins, clippy and one targeted A/B on its own row):
   it measures the lanes the change touched — by default the programs whose rewrite
   admissions the census says moved, or `ARGS="--only 16,17"` / `--package DIR=NAME` — and
-  compares each routine's ratio to Rust with this machine's last committed row, listing
-  every move of 15 % or more and exiting 1 on a slowdown.  `--record` makes the run the
+  compares each routine with this machine's last committed row.  A routine moved when its
+  ratio to Rust AND loft's own time (`native_ns`, saved in every row) both moved 15 % or more
+  the same way — the ratio alone moves with a noisy twin, the time alone with the machine —
+  and a slowdown exits 1; a ratio that moved over a level native time is listed apart, as
+  the Rust lane moving.  `--record` makes the run the
   machine's baseline (the results file), which is committed with the change, so the trend
   history grows one point per landed compiler change instead of one per portal run.
 

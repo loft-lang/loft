@@ -248,6 +248,15 @@ impl Parser {
         Self::probe_loft_lib_flat(id, &mut f);
         self.probe_loft_lib_manifest(id, &mut f);
         self.probe_user_installed(id, &mut f);
+        // A flat `<id>.loft` in the script's own directory is a file the author put beside
+        // the program (PACKAGES.md § Resolution order, step 1), so it is probed before the
+        // registry: probed after it, a box that happened to cache a same-named package
+        // bound that package instead, and a fixture library beside a test asked the
+        // network about its own name on every run.
+        Self::probe_cur_dir_flat(id, cur_dir, &mut f);
+        if blocked(&f) {
+            f = format!("{id}.loft");
+        }
         // loft#968 — everything above resolves from something the project SAYS: a path it
         // declares, a `--lib` directory it was given, a sidecar lock it pinned.  What
         // follows resolves from the registry, which is a property of the BOX.  So this is
@@ -283,7 +292,6 @@ impl Parser {
         if !named_by_the_project && file_exists(&f) {
             self.undeclared_registry_dep(id, &cur_script);
         }
-        Self::probe_cur_dir_flat(id, cur_dir, &mut f);
         Self::probe_base_dir_flat(id, base_dir, &mut f);
         if blocked(&f) {
             f = format!("{id}.loft");
@@ -1559,9 +1567,15 @@ impl Parser {
         // Without it the two resolution paths diverge: a library pulled in transitively
         // (or used directly *after* it was already loaded transitively, so the direct
         // `use` dedups) is loaded here but never recorded — so it never builds its own
-        // cdylib and its direct calls interpret.  `native` (hand-written cdylib) takes
-        // precedence — don't double-compile.
-        if m.native.is_none() && !self.pending_native_compile.iter().any(|d| d == &pkg_dir) {
+        // cdylib and its direct calls interpret.  A hand-written cdylib (`native`) serves
+        // the library's `#native` calls; its LOFT functions compile too when the library
+        // also declares the `[native] crate` that cdylib is built from, which is what the
+        // generated code links its `#native` calls against (@PLN199 E2) — on the C-ABI link
+        // only: the legacy rlib link cannot put that crate into a cdylib, so there the
+        // cdylib keeps standing in for the library.
+        if (m.native.is_none() || Self::links_its_native_crate(&m))
+            && !self.pending_native_compile.iter().any(|d| d == &pkg_dir)
+        {
             self.pending_native_compile.push(pkg_dir.clone());
         }
         self.record_placement(&m, &pkg_dir);
@@ -1853,6 +1867,14 @@ impl Parser {
         }
     }
 
+    /// Whether a library with a hand-written cdylib (`[library] native`) also compiles its
+    /// loft functions: it declares the `[native] crate` that cdylib is built from, and the
+    /// build links native crates by C-ABI — the legacy rlib link (`LOFT_NATIVE_CABI=0`)
+    /// cannot take that crate into a library cdylib (@PLN199 E2).
+    fn links_its_native_crate(m: &manifest::Manifest) -> bool {
+        m.native_crate.is_some() && crate::platform::native_cabi_link()
+    }
+
     pub(super) fn register_c_libraries(&mut self, m: &manifest::Manifest, pkg_dir: &str) {
         let mut entries: Vec<String> = m.c_libs.clone();
         if !m.c_shim.is_empty() {
@@ -1913,8 +1935,9 @@ impl Parser {
         // library is a native candidate: record the package dir; the driver marks +
         // builds + loads after scope analysis (see `pending_native_compile`).  No
         // opt-in, no flag — "libraries compile, scripts interpret" is the default.
-        //   - `native` (a hand-written cdylib via `[library] native = ...`) takes
-        //     precedence — don't double-compile.
+        //   - `native` (a hand-written cdylib via `[library] native = ...`) serves the
+        //     library's `#native` calls; its loft functions compile as well when the
+        //     library declares the `[native] crate` that cdylib is built from (@PLN199 E2).
         //   - `LOFT_NO_NATIVE_LIBS=1` is the interpret escape (handled in the driver:
         //     it clears `pending_native_compile`), used by the dev/edit loop + the
         //     parity reference until Step 4 (dev-interpret-on-edit) lands.
@@ -1922,8 +1945,23 @@ impl Parser {
         //     that can't compile native is harmless.
         // The legacy `[library] compile = "native"` opt-in is now redundant but still
         // accepted (a no-op): default-native already records it.
-        if m.native.is_none() && !self.pending_native_compile.iter().any(|d| d == pkg_dir) {
+        if (m.native.is_none() || Self::links_its_native_crate(m))
+            && !self.pending_native_compile.iter().any(|d| d == pkg_dir)
+        {
             self.pending_native_compile.push(pkg_dir.to_string());
+        }
+        // `LOFT_TRACE_NATIVE_GATE=1` — the one library the partition trace never reaches: a
+        // hand-written native cdylib with no `[native] crate` to link against, so its LOFT
+        // functions (the wrappers around its natives) all run interpreted.
+        if let Some(stem) = &m.native
+            && !Self::links_its_native_crate(m)
+            && std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some()
+        {
+            let pkg = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| pkg_dir.to_string());
+            eprintln!(
+                "[native-gate] {pkg}: its loft functions are interpreted — the library ships a \
+                 native crate (`{stem}`), which takes the place of compiling it"
+            );
         }
         self.record_placement(m, pkg_dir);
         // PKG.4: register native function symbols and package crate info.

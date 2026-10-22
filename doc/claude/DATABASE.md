@@ -135,28 +135,63 @@ recorded layout differs from the loading program's collection type is REFUSED
 sidecar (a legacy store) falls back to the `store_verify` backstop. Set
 `LOFT_LOADER_STATS=1` to observe `bytes_fetched` vs file size.
 
-The WHOLE-IMAGE loader `store_load` takes the same gate (loft#700). It keeps the
-target slot's type and reinterprets the file's bytes through it, and records are
-fixed-stride — so **changing a stored struct at all, including adding a field at the
-end, changes the layout and makes older stores unreadable**. That is the rule to plan
-around: a store is readable only by a program whose structs lay out identically to the
-one that wrote it. Before the gate the mismatch was silent, and `len()` on an added
-collection returned wild values (`510277628`) that a consumer then iterated. Now
-`store_load` returns `false` and names what differs. Rebuild the store with the new
-program, or read it with the version that wrote it.
+The WHOLE-IMAGE loaders read the file through the program's types, and records are
+fixed-stride, so a store whose structs changed — even by one field added at the end — must
+never be read raw (`@FR-L-Sound`).  They CONVERT it instead (@PLN196): the
+`.dschema` names the layout that wrote the file, the store upgrade map pairs it with the
+program's, and the converter builds a new store in which every stored value arrives under its
+own name and every added field takes its default (a default may read the record through `$`).
+A change the map cannot carry — one that looks like a rename, a narrowed number, a changed
+kind, a changed key with duplicates under it — is refused: the call returns `false` and names
+the reason.  `loft layout check <program> <store>` prints what an upgrade would do.
 
-Every path that reads an EXISTING image through the program's types takes this gate
-(`@FR-L-Sound`): `store_load`, `store_load_untrusted`, `store_persist_bind` on an
-existing file, the whole-image URL loaders `store_load_url` / `store_load_url_trusted`
-(the sidecar is `<url>.dschema`, over the same transport, and a missing one is not
-checked), and the working-set loaders above. Each refusal names its own builtin. A
-refused bind leaves the file, its `.dschema` and the collection as they were. That
-matters because the bind WRITES the sidecar with the binding program's layout when it
-succeeds — so a bind that accepted a mismatched file would also relabel it, and every
-later load would then read the misread store as matching (loft#1562). The whole-image
-paths share one verdict, `Stores::layout_verdict_ok`, and a new whole-image loader asks
-it rather than growing its own; the working-set loaders refuse through `refuse_paged`,
-so the program can read their refusal back.
+| path | an older layout |
+|---|---|
+| `store_load`, `store_load_untrusted` | converted in memory; the file is left as it is |
+| `store_load_url`, `store_load_url_trusted` | converted in memory, after the pin is checked; the sidecar is `<url>.dschema` over the same transport |
+| `store_persist_bind` on an existing file | the FILE is upgraded in place: written beside, swapped in, the original kept as `<path>.old` (a later upgrade replaces it) |
+| `swap_world` on a live build swap | the running world converts into the new build's types |
+| the working-set loaders above | refused (`refuse_paged`, so the program can read the refusal back) |
+| `loft layout upgrade <program> <store>…` | the file is upgraded in place, as the bind does |
+
+A missing sidecar is not checked.  A refusal leaves the file, its `.dschema` and the
+collection as they were — a bind that took a mismatched file would also relabel it with the
+binding program's layout, and every later load would then read it as matching.
+The raw paths share one verdict, `Stores::layout_verdict_ok`, and the converting paths one
+entry, `Stores::layout_changed` with `load_upgraded` / `bind_upgraded`; a new whole-image
+loader uses both rather than growing its own.
+
+**A store that skipped releases** (`@FR-L-Release`, `@FR-L-Upgrade-Routine`).  The `.dschema`
+also records the release that wrote the store: the `version` of the writing program's
+`loft.toml`.  A conversion sees only the store's layout and the program's, so a value an
+intermediate release moved and a later one dropped would be lost — the drop and the add in one
+record are refused as a rename.  The programmer writes the steps in between as a routine, one
+per record type, in the program or in a separate upgrade module run with
+`loft layout upgrade up.loft <store>`:
+
+```loft
+struct Item { id: integer, count: integer }       // release 3.0; 2.0 moved label into count
+struct ItemBefore2 { label: text }                // the stored fields the routine reads
+fn upgrade(from: Release, old: ItemBefore2, item: Item) {
+  if from < "2.0" { item.count = len(old.label) }
+}
+```
+
+It runs on every record of `Item` converted from a store older than the program, after the
+fields carried by name and the added fields' defaults; `old` is filled by name from the stored
+record, and a field the stored record lacks takes its default, as an omitted field does in a constructor.  `[package] data_compatible_with = "2.0"`
+refuses stores written before 2.0 (retiring the routine's older branches), and
+`data_bridge = "2.3"` names the release the refusal sends the user to: *this store was written
+by 1.4, and this program reads stores from 2.0 on; open it once with 2.3, then with this one*.
+A store that records no release passes the floor.
+
+`loft layout check` catches the move at the edit that loses it (`@FR-L-Upgrade-Source`):
+`loft layout accept` — and `loft package`, the release step of a library and of an application
+alike — records in the baseline
+(`layout.lock` beside `loft.toml`, committed with the release) which stored fields each computed field reads
+(`Item.count <- inner.label since 2.0`), and a later build that drops one of them is refused —
+*Inner.label is dropped, and 2.0 computes Item.count from it* — until the build has an
+`upgrade` routine for `Item` or `data_compatible_with` is `"2.0"` or later.
 
 #### What the file's SIZE and BYTES mean (loft#710)
 

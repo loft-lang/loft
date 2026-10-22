@@ -507,11 +507,22 @@ fn s5_native_swap_under_running_world() {
         fa::set_permissions(&bad_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let bad_bin = bad_bin.to_string_lossy().into_owned();
+    // v2 also GROWS the world (@PLN196 step 8): `bonus` is added with a default computed
+    // from the record, so the swap must carry the world through the converter — the old
+    // JSON snapshot left a field it did not have at null.
     let fixture = |ver: &str| {
+        let (bonus_field, bonus_reply) = if ver == "v2" {
+            (
+                ", bonus: integer = $.events * 10",
+                "if ev.payload == \"bonus\" { engine_host::send(ev.cid, \"bonus:{w.bonus}\"); return; }",
+            )
+        } else {
+            ("", "")
+        };
         format!(
             r#"
 use engine_host;
-struct W {{ events: integer not null, ticks: integer not null }}
+struct W {{ events: integer not null, ticks: integer not null{bonus_field} }}
 fn bump_events(w: W) -> integer {{
   w.events = w.events + 1;
   w.events
@@ -543,6 +554,7 @@ fn main() {{
         engine_host::send(ev.cid, "badswap:{{engine_host::swap_start("{bad_bin}")}}");
         return;
       }}
+      {bonus_reply}
       engine_host::send(ev.cid, "{ver}:{{ev.payload}}#{{n}}t{{w.ticks}}");
     }},
     fn() {{ w.ticks = w.ticks + 1; }});
@@ -640,6 +652,8 @@ fn main() {{
     assert!(r.starts_with(&format!("v1:c#{count}t")), "pre-swap: {r}");
     let t_pre: i64 = r.rsplit_once('t').unwrap().1.parse().unwrap();
     assert_eq!(ask(&ws, "swap", &mut count), "swap:true");
+    // The world is frozen after the swap event: its counter is `count` from here.
+    let frozen = count;
 
     // Wait for the handover: the old process closes this connection.
     ws.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
@@ -699,6 +713,13 @@ fn main() {{
         "the new build must serve the new meaning over the OLD world: {r}"
     );
     let t_post: i64 = r.rsplit_once('t').unwrap().1.parse().unwrap();
+    // The added field took its default from the converted record: the counter at the freeze.
+    assert_eq!(
+        ask(&new_ws, "bonus", &mut count),
+        format!("bonus:{}", frozen * 10),
+        "the grown world's added field holds its computed default:\n{}",
+        stderr_now()
+    );
     assert!(
         t_post >= t_pre,
         "tick stamp must cross the swap monotonically ({t_pre} -> {t_post})"

@@ -24,6 +24,8 @@ pub fn of_scoped(stores: &Stores, roots: &[u16], data: &crate::data::Data) -> La
         root,
         facts,
         slot: None,
+        version: String::new(),
+        sources: String::new(),
     }
 }
 
@@ -91,4 +93,120 @@ pub fn program_roots(data: &crate::data::Data) -> Vec<u16> {
         })
         .map(|def| def.known_type)
         .collect()
+}
+
+// ── @PLN196 step 9: where a computed field's value comes from ──────────────────────────────
+
+/// `@FR-L-Upgrade-Source` — the sources section of a project baseline: per field of a user
+/// struct whose default reads the record, the stored fields it reads and the release that first
+/// recorded the line.  `previous` is the baseline being replaced: a line it already had keeps
+/// its release, so the section says when a value started being computed from its sources, not
+/// when the baseline was last accepted.  `version` is this release (empty: none recorded).
+#[must_use]
+pub fn render_sources(data: &crate::data::Data, previous: &str, version: &str) -> String {
+    let recorded: std::collections::BTreeMap<&str, &str> = previous
+        .lines()
+        .filter_map(|l| l.split_once(" since "))
+        .collect();
+    let mut out = String::new();
+    for ((tp, field), paths) in &data.default_sources {
+        let d_nr = data.def_nr(tp);
+        if d_nr == u32::MAX
+            || crate::file_access::is_stdlib_source(data.def(d_nr).position.file.as_str())
+        {
+            continue;
+        }
+        let head = format!("{tp}.{field} <- {}", paths.join(", "));
+        let since = recorded.get(head.as_str()).copied().unwrap_or(version);
+        out.push_str(&head);
+        if !since.is_empty() {
+            out.push_str(" since ");
+            out.push_str(since);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// `@FR-L-Upgrade-Source` — what a build would lose of the values its baseline's computed
+/// fields were made from: for each sources line whose struct and field still exist but one of
+/// whose sources this build no longer declares, a sentence naming the dropped field, the
+/// computed one, and the two cures — an `upgrade` routine for the struct, or a floor
+/// (`data_compatible_with`) at or above the release that started computing it.  Empty when
+/// nothing is lost.
+#[must_use]
+///
+/// `routines` names the structs the build has an `upgrade` routine for
+/// (`Parser::upgrade_routine_defs`, which the caller asks: this layer names no parser).
+pub fn lost_sources(
+    data: &crate::data::Data,
+    sources: &str,
+    release: &crate::database::Release,
+    routines: &[String],
+) -> Vec<String> {
+    use crate::data::{DefType, Type};
+    let floor = crate::database::version_triple(&release.oldest);
+    // The struct field a path stops resolving at (`Inner.label`), or `None` when it resolves.
+    let broken = |mut d_nr: u32, path: &str| -> Option<String> {
+        let segs: Vec<&str> = path.split('.').collect();
+        for (i, seg) in segs.iter().enumerate() {
+            let a = data.attr(d_nr, seg);
+            if a == usize::MAX {
+                return Some(format!("{}.{seg}", data.def(d_nr).name()));
+            }
+            if i + 1 < segs.len() {
+                match data.attr_type(d_nr, a).base() {
+                    Type::Reference(next, _) if data.def_type(*next) == DefType::Struct => {
+                        d_nr = *next;
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        None
+    };
+    let mut out = Vec::new();
+    for line in sources.lines() {
+        let (head, since) = line.split_once(" since ").unwrap_or((line, ""));
+        let Some((target, paths)) = head.split_once(" <- ") else {
+            continue;
+        };
+        let Some((tp, field)) = target.split_once('.') else {
+            continue;
+        };
+        let d_nr = data.def_nr(tp);
+        if d_nr == u32::MAX
+            || data.def_type(d_nr) != DefType::Struct
+            || data.attr(d_nr, field) == usize::MAX
+            || routines.iter().any(|r| r == tp)
+        {
+            continue; // gone with its value, or carried by the type's routine
+        }
+        if let (Some(f), Some(s)) = (floor, crate::database::version_triple(since))
+            && f >= s
+        {
+            continue; // every store this build reads already holds the computed value
+        }
+        for path in paths.split(", ") {
+            let Some(dropped) = broken(d_nr, path) else {
+                continue;
+            };
+            let from = if since.is_empty() {
+                "the baseline".to_string()
+            } else {
+                since.to_string()
+            };
+            let floor_cure = if since.is_empty() {
+                "record releases in loft.toml".to_string()
+            } else {
+                format!("raise `data_compatible_with` to \"{since}\"")
+            };
+            out.push(format!(
+                "{dropped} is dropped, and {from} computes {target} from it: a store older than \
+                 that holds no {target} and would lose the value — write \
+                 `fn upgrade(from: Release, old: <the old fields>, item: {tp})`, or {floor_cure}"
+            ));
+        }
+    }
+    out
 }

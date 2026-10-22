@@ -655,7 +655,7 @@ elif [ $falsified_any -eq 1 ]; then
     new="$pdir/.$pbase.patch.new"
     kept=no
     if [ -s "$pdir/$pbase.patch" ]; then kept=yes; fi
-    git -C "$ROOT" diff -R "$SHA" -- src/ default/ ":(exclude)$GENERATED_STDLIB" \
+    git -C "$ROOT" diff -R "$SHA" -- src/ default/ lib/ ":(exclude)$GENERATED_STDLIB" \
       > "$new" 2>/dev/null || true
     plines=$(wc -l < "$new" 2>/dev/null || echo 0)
     # A patch receipt is only a receipt while it isolates ONE defect.  Run against the commit
@@ -667,7 +667,7 @@ elif [ $falsified_any -eq 1 ]; then
     if [ "${plines:-0}" -eq 0 ]; then
       rm -f "$new"
       echo
-      echo "note: no durable patch written — the fix touches nothing under src/ or default/,"
+      echo "note: no durable patch written — the fix touches nothing under src/, default/ or lib/,"
       echo "      so the control cannot be reconstructed from a source diff alone."
       if [ "$kept" = yes ]; then
         echo "      The EXISTING tests/falsified/$pbase.patch is untouched."

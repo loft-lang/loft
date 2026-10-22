@@ -353,9 +353,12 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
     // 3. Run it BOUNDED. `timeout` exits 124 when it has to kill the child, which is what
     //    the unconditional `thread::spawn` produced — and is why the assertion below names
     //    a stall specifically rather than reporting a generic non-zero exit.
-    let run = loft::platform::process::harness_command("timeout")
-        .arg("180")
-        .arg("node")
+    //    Through `sh`, the shell `which` asked: on Windows a bare `timeout` resolves to
+    //    `TIMEOUT.EXE`, which takes no command and refused the call.
+    let run = loft::platform::process::harness_command("sh")
+        .arg("-c")
+        .arg("exec timeout 180 node \"$@\"")
+        .arg("sh")
         .arg(repo_root().join("tools/paged_range_host.mjs"))
         .arg(&wasm)
         .env("LOFT_PAGED_FILE", &store)
@@ -506,11 +509,11 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
          anything would still satisfy the match case above\n  stdout:\n{stdout}"
     );
 
-    // loft#1562 — a program whose `Rec` grew a field is refused by BOTH whole-image loaders,
-    // even with the image's own digest: the pin says the bytes are the ones published, and
-    // the `.dschema` beside them says they were written with a layout this program does not
-    // read.  The match half above now runs through that sidecar too, so the refusal here
-    // is the layout and not a gate that refuses everything.
+    // loft#1562, then @PLN196 step 8 — a program whose `Rec` grew a field gets the image
+    // CONVERTED by both whole-image loaders, in the browser as on native: the pin says the bytes
+    // are the ones published, the `.dschema` beside them says which layout wrote them, and the
+    // converter carries each record across with the added field at its default.  Never read
+    // raw: `extra` sits between `id` and `val`, so a raw read would put 700 in `extra`.
     let stdout = run_url_program(
         &tmp,
         "changed",
@@ -519,23 +522,45 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
              fn main() {{\n\
              \x20 a: hash<Rec[id]> = [];\n\
              \x20 x = store_load_url(a, \"http://127.0.0.1:1/v.store\", \"{good}\");\n\
-             \x20 println(\"changed pinned ok={{x}} len={{len(a)}}\");\n\
+             \x20 println(\"changed pinned ok={{x}} len={{len(a)}} {{a[7].val}} {{a[7].extra}} {{a[13].val}}\");\n\
              \x20 b: hash<Rec[id]> = [];\n\
              \x20 y = store_load_url_trusted(b, \"http://127.0.0.1:1/v.store\");\n\
-             \x20 println(\"changed trusted ok={{y}} len={{len(b)}}\");\n\
+             \x20 println(\"changed trusted ok={{y}} len={{len(b)}} {{b[7].val}} {{b[7].extra}} {{b[13].val}}\");\n\
              }}\n"
         ),
         &store,
     );
     assert!(
-        stdout.contains("changed pinned ok=false len=0"),
-        "a changed layout must be REFUSED in the browser even with a matching digest\n  \
-         stdout:\n{stdout}"
+        stdout.contains("changed pinned ok=true len=2 700 0 1300"),
+        "a grown layout must be CONVERTED in the browser, values by name\n  stdout:\n{stdout}"
     );
     assert!(
-        stdout.contains("changed trusted ok=false len=0"),
-        "a changed layout must be REFUSED by the trusted loader in the browser\n  \
-         stdout:\n{stdout}"
+        stdout.contains("changed trusted ok=true len=2 700 0 1300"),
+        "the trusted loader converts a grown layout too\n  stdout:\n{stdout}"
+    );
+
+    // A change the converter cannot carry — `val` becomes a text — is still REFUSED by both
+    // loaders, with nothing adopted.
+    let stdout = run_url_program(
+        &tmp,
+        "refused",
+        &format!(
+            "struct Rec {{ id: integer not null, val: text }}\n\
+             fn main() {{\n\
+             \x20 a: hash<Rec[id]> = [];\n\
+             \x20 x = store_load_url(a, \"http://127.0.0.1:1/v.store\", \"{good}\");\n\
+             \x20 println(\"refused pinned ok={{x}} len={{len(a)}}\");\n\
+             \x20 b: hash<Rec[id]> = [];\n\
+             \x20 y = store_load_url_trusted(b, \"http://127.0.0.1:1/v.store\");\n\
+             \x20 println(\"refused trusted ok={{y}} len={{len(b)}}\");\n\
+             }}\n"
+        ),
+        &store,
+    );
+    assert!(
+        stdout.contains("refused pinned ok=false len=0")
+            && stdout.contains("refused trusted ok=false len=0"),
+        "a change the converter refuses is refused in the browser\n  stdout:\n{stdout}"
     );
 }
 

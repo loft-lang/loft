@@ -301,14 +301,15 @@ pub fn label_shared_bridges(labels: impl Iterator<Item = (u16, String)>) {
 
 /// A shared-library bridge call on slot `lib_idx` starts on this thread.  One `Cell` write.
 #[inline]
-pub fn enter_shared_bridge(lib_idx: u16) {
-    IN_SHARED_BRIDGE.with(|c| c.set(lib_idx.wrapping_add(1)));
+pub fn enter_shared_bridge(lib_idx: u16) -> u16 {
+    IN_SHARED_BRIDGE.with(|c| c.replace(lib_idx.wrapping_add(1)))
 }
 
-/// The bridge call on this thread has returned.
+/// The bridge call on this thread has returned; `outer` is what [`enter_shared_bridge`]
+/// answered, the bridge a call back into the interpreter was made from (@PLN199 C2), or 0.
 #[inline]
-pub fn leave_shared_bridge() {
-    IN_SHARED_BRIDGE.with(|c| c.set(0));
+pub fn leave_shared_bridge(outer: u16) {
+    IN_SHARED_BRIDGE.with(|c| c.set(outer));
 }
 
 /// loft#715 — the bridge symbol currently being dispatched on this thread, if any.

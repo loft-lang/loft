@@ -1,8 +1,8 @@
-// @PLN11 Arc N / N3 (B3) — a mixed library: `triple` is shared-store-dispatchable
-// (compiles native) while `apply_inc` calls through a function reference (a
-// lambda), which the gate conservatively excludes from native compilation
-// (CallRef), so it stays interpreted.  The gate splits the library silently — no
-// user-facing "can't compile this" error; the script calls both alike.
+// @PLN11 Arc N / N3 (B3) — a mixed library: `triple` compiles, and so does `apply_inc`,
+// which calls through a function value (@PLN199 C2), while `label` calls through one whose
+// `single` result the compiled library cannot be called back with, so it stays interpreted.
+// The gate splits the library silently — no user-facing "can't compile this" error; the
+// script calls all three alike.
 
 pub fn triple(x: integer) -> integer {
     x * 3
@@ -11,4 +11,9 @@ pub fn triple(x: integer) -> integer {
 pub fn apply_inc(x: integer) -> integer {
     f = fn(a: integer) -> integer { a + 1 };
     f(x)
+}
+
+pub fn label(x: integer) -> integer {
+    f = fn(a: integer) -> single { (a * 10) as single };
+    f(x) as integer
 }

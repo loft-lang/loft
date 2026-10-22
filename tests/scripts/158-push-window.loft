@@ -372,6 +372,81 @@ fn s4() {
   assert(len(r) == 4 && totb(r) == 304 && tot(m) == 1072, "s4");
 }
 
+// f1-f4 — a File PARAMETER beside the return buffer (the crawler's `read_i16_vec`).  A body
+// that names the File only as the file of a scalar read (`@FR-R-InPlace`'s read clause)
+// cannot view a vector of scalars: the read writes the File record's own cursor fields in
+// place and claims nothing, and a record is never an element of such a vector.  f1 takes the
+// window on a build that inlines its one-line reader (`(R-InlineLeaf)`'s reader clause, the
+// release tier); elsewhere the reader is a call handed `bf` and the header stays.  f4 spells
+// the read in the loop and takes the window on every build.  f2 also reads `bf#next` beside
+// the read, a mention that is not a read, and keeps the header.  f3 pushes RECORDS, which the
+// clause does not reach.  The file holds N = 64 values `3 * i - 50` as little-endian i16:
+// sum 2848, [0] = -50, [63] = 139; `#next` after read i is 2 * (i + 1), summing to
+// 2 * 2080 = 4160 over the 64 reads.
+fn f_path(tag: text) -> text { "{temp_dir() ?? "/tmp"}/loft_158_push_window_{tag}.bin" }
+fn f_write(p: text) {
+  w = file(p);
+  w.set_file_size(0);
+  w#format = LittleEndian;
+  for i in 0..64 { w += ((3 * i - 50) as i16?) ?? (0 as i16); }
+}
+fn f_open(tag: text) -> File {
+  p = f_path(tag);
+  f_write(p);
+  f = file(p);
+  f#format = LittleEndian;
+  f
+}
+fn f_read(bf: File) -> integer { bf#read(2) as i16 as integer }
+fn f1_mk(bf: File, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  i = 0;
+  while i < n { out += [f_read(bf)]; i = i + 1; }
+  out
+}
+fn f1() {
+  v = f1_mk(f_open("f1"), 64);
+  println("f1 {len(v)} {tot(v)} {v[0]?} {v[63]?}");
+  assert(len(v) == 64 && tot(v) == 2848 && v[0]? == -50 && v[63]? == 139, "f1");
+}
+fn f2_mk(bf: File, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  i = 0;
+  while i < n { x = f_read(bf); out += [x * 1000 + bf#next]; i = i + 1; }
+  out
+}
+fn f2() {
+  // 1000 * 2848 + 4160; [0] = -50 * 1000 + 2
+  v = f2_mk(f_open("f2"), 64);
+  println("f2 {len(v)} {tot(v)} {v[0]?}");
+  assert(len(v) == 64 && tot(v) == 2852160 && v[0]? == -49998, "f2");
+}
+fn f4_mk(bf: File, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for _i in 0..n { out += [bf#read(2) as i16 as integer]; }
+  out
+}
+fn f4() {
+  v = f4_mk(f_open("f4"), 64);
+  println("f4 {len(v)} {tot(v)} {v[63]?}");
+  assert(len(v) == 64 && tot(v) == 2848 && v[63]? == 139, "f4");
+}
+struct FPt { fx: integer, fk: integer }
+fn f3_mk(bf: File, n: integer) -> vector<FPt> {
+  out: vector<FPt> = [];
+  i = 0;
+  while i < n { out += [FPt { fx: f_read(bf), fk: i }]; i = i + 1; }
+  out
+}
+fn f3() {
+  // fx sums 2848, fk sums 0 + ... + 63 = 2016
+  v = f3_mk(f_open("f3"), 64);
+  sx = 0; sk = 0;
+  for p in v { sx += p.fx; sk += p.fk; }
+  println("f3 {len(v)} {sx} {sk}");
+  assert(len(v) == 64 && sx == 2848 && sk == 2016, "f3");
+}
+
 // r1 — `(R-Base)`'s growth condition, found on the way: a loop that appends a VECTOR
 // element (no struct, so its mint keeps the runtime's append and earns no push header)
 // beside a read of a SIBLING field of the same record.  The append grows the record's
@@ -394,6 +469,6 @@ fn r1() {
 fn main() {
   w1(); w2(); w3(); w4(); w5(); w6(); w7(); w8(); w9(); w10(); w11(); w12();
   d1(); d2(); d3(); d4(); d5(); d6(); d7(); d8();
-  a1(); b1(); s1(); s2(); s3(); s4(); r1();
+  a1(); b1(); s1(); s2(); s3(); s4(); f1(); f2(); f3(); f4(); r1();
   println("push window ok");
 }

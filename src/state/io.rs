@@ -424,6 +424,7 @@ impl State {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "one read, both file backends")]
     pub fn read_file(&mut self) {
         let bytes = self.get_stack::<i64>() as i32;
         let val = self.get_stack::<DbRef>();
@@ -447,6 +448,10 @@ impl State {
             .store_mut(&file)
             .set_long(file.rec, file.pos + 8, next_pos);
         let n = bytes as usize;
+        // STDLIB_FILES § `f#read(n) as T`: a count below T's storage width answers null and
+        // the position does not move — it reads as a short read, which takes no byte
+        // (loft#2119).  Text has no width.
+        let narrow = !self.database.is_text_type(db_tp) && n < self.database.binary_size(db_tp);
         #[cfg(host_fs)]
         {
             // FS-D: seek JS cursor to position then read n bytes.
@@ -457,13 +462,22 @@ impl State {
                     .to_owned()
             };
             crate::wasm::host_fs_seek(&file_path, next_pos);
-            if let Some(data) = crate::wasm::host_fs_read_bytes(&file_path, n) {
+            let read = if narrow {
+                Some(Vec::new())
+            } else {
+                crate::wasm::host_fs_read_bytes(&file_path, n)
+            };
+            if let Some(data) = read {
                 let actual = data.len();
-                self.database.store_mut(&file).set_long(
-                    file.rec,
-                    file.pos + 16,
-                    next_pos + actual as i64,
-                );
+                // A SHORT binary read answers null and `#next` stays where it was, as the
+                // non-host read below does (loft#2119); text takes what arrived.
+                if self.database.is_text_type(db_tp) || actual >= n {
+                    self.database.store_mut(&file).set_long(
+                        file.rec,
+                        file.pos + 16,
+                        next_pos + actual as i64,
+                    );
+                }
                 self.dispatch_read_data(val, db_tp, little_endian, data, n);
             }
         }
@@ -511,7 +525,9 @@ impl State {
             }
             let is_text = self.database.is_text_type(db_tp);
             let mut data = vec![0u8; n];
-            let actual = if let Some(Some(f)) = self.database.files.get_mut(file_ref as usize) {
+            let actual = if narrow {
+                0
+            } else if let Some(Some(f)) = self.database.files.get_mut(file_ref as usize) {
                 if is_text {
                     f.read(&mut data).unwrap_or_else(|e| {
                         eprintln!("file read error: {e}");
@@ -766,6 +782,12 @@ impl State {
         // when a `for` loop exits early (before the generator exhausts).
         if db.store_nr == super::COROUTINE_STORE {
             self.free_coroutine(&db);
+            return;
+        }
+        // @PLN199 D1 — a compiled library's generator lives in the host's native table.
+        if db.store_nr == crate::database::NATIVE_COROUTINE_STORE {
+            super::release_native_text_yield(db);
+            crate::codegen_runtime::free_native_coroutine(db, &mut self.database);
             return;
         }
         // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).

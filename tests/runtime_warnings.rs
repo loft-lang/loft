@@ -485,6 +485,89 @@ fn main() {
     );
 }
 
+/// `@FR-E-Report` × `@FR-R-InlineLeaf` — `--dev-soft-halt` names each fault at its own line:
+/// a division in an assignment, in a callee's `return`, a `%`, an index read, a division inside
+/// a one-line leaf the IR inlines into its caller, and one in the argument of an inlined leaf
+/// (its temporary moves into the body's result).  Soft-halt printed `at ?` for the divisions
+/// that carry no span of their own, and the inlined leaf's fault took its CALLER's line: the
+/// pass drops the body's line markers, and the span table let the call's span replace the
+/// body's (@C120: a rewrite does not change what a fault shows).  The same lines with the pass
+/// off (loft#2111).
+#[test]
+fn soft_halt_names_each_fault_at_its_own_line() {
+    let source = "\
+fn leaf(z: integer) -> integer {
+  return 7 / z;
+}
+
+fn inc(a: integer) -> integer {
+  a + 1
+}
+
+fn callee(z: integer) -> integer {
+  w = z * 2;
+  println(\"w={w}\");
+  return 5 / w;
+}
+
+fn main() {
+  z = 0;
+  v = [1, 2];
+  a = 10 / z;
+  b = leaf(z);
+  k = inc(30 / z);
+  c = callee(z);
+  e = v[5];
+  h = 9 % z;
+  println(\"{a ?? -1} {b ?? -1} {k ?? -1} {c ?? -1} {e ?? -1} {h ?? -1}\");
+}
+";
+    let script_path =
+        std::env::temp_dir().join(format!("loft_soft_lines_{}.loft", std::process::id()));
+    fa::write(&script_path, source).expect("write");
+    for inline_off in [false, true] {
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.arg("--interpret")
+            .arg("--dev-soft-halt")
+            .arg(&script_path)
+            .current_dir(workspace_root());
+        if inline_off {
+            cmd.env("LOFT_NO_INLINE_LEAF", "1");
+        } else {
+            cmd.env_remove("LOFT_NO_INLINE_LEAF");
+        }
+        let out = cmd.output().expect("invoke loft");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let lines: Vec<String> = stderr
+            .lines()
+            .filter(|l| l.starts_with("soft-halt: "))
+            .map(|l| {
+                let (what, at) = l.rsplit_once(" at ").unwrap_or((l, "?"));
+                let line = at.rsplit(':').nth(1).unwrap_or("?");
+                format!("{}@{line}", what.trim_start_matches("soft-halt: "))
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "divide by zero@18",
+                "divide by zero@2",
+                "divide by zero@20",
+                "divide by zero@12",
+                "index 5 out of bounds for length 2@22",
+                "divide by zero@23",
+            ],
+            "inline off: {inline_off}; stderr: {stderr}"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("-1 -1 -1 -1 -1 -1"),
+            "every fault answers null: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+    let _ = fa::remove_file(&script_path);
+}
+
 /// C80 — an IMPLICIT calculation fault (div0) no longer halts; only an EXPLICIT
 /// signal (`panic` / `assert`) halts the run in dev.  This checks the explicit
 /// signal still stops at the first one (the post-signal `print` is unreached).

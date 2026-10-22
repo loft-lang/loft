@@ -297,6 +297,22 @@ pub(crate) fn try_dlsym(name: &str) -> Option<(*const (), bool)> {
     None
 }
 
+/// `name` as every loaded cdylib that exports it resolves it — one entry per library, where
+/// [`try_dlsym`] answers only the first.  For a symbol each generated library carries under
+/// the same name (`loft_shared_init`, @PLN199 C0).
+#[cfg(feature = "native-extensions")]
+pub(crate) fn dlsym_in_each(name: &str) -> Vec<*const ()> {
+    let libs = LOADED_LIBS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut sym_name = name.to_string();
+    sym_name.push('\0');
+    libs.iter()
+        .filter_map(|(lib, _)| unsafe { lib.get::<*const ()>(sym_name.as_bytes()) }.ok())
+        .map(|sym| *sym)
+        .collect()
+}
+
 /// `dlopen` a C library a package declared with `[c] libs`, and
 /// KEEP it loaded so its symbols resolve.
 ///

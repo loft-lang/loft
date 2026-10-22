@@ -2526,11 +2526,18 @@ use #count instead"
                     None
                 };
                 if let Some(place) = place {
+                    // Foreign data has no `const` to remove (`@FR-Const-Foreign`, loft#2089).
+                    let cure =
+                        if coll != u16::MAX && self.foreign_bound.contains(&(self.context, coll)) {
+                            "build a filtered copy"
+                        } else {
+                            "remove 'const' there, or build a filtered copy"
+                        };
                     diagnostic!(
                         self.lexer,
                         Level::Error,
                         "Cannot remove with '{name}#remove': the loop walks {place}, whose \
-                         value is read-only; remove 'const' there, or build a filtered copy"
+                         value is read-only; {cure}"
                     );
                     *t = Type::Void;
                     return;

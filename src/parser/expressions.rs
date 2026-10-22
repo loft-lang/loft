@@ -624,6 +624,36 @@ impl Parser {
             .is_some_and(|a| a.hidden)
     }
 
+    /// Does a call to `d_nr` return its text through the shared-store bridge — a cdylib text
+    /// function, or one that WILL be one?  Such a call writes its result into a destination
+    /// the caller hands over, so in value position it needs a temporary to write into.
+    ///
+    /// @PLN199 A2 — a `use`d library's functions are marked for the bridge after the whole
+    /// program is parsed (`native_lib::probe_and_mark_exports`), and so are the standard
+    /// library's compiled bodies (`compiled_stdlib::mark`, named in [`Self::compiled_bridges`]),
+    /// so `def.native` is still empty
+    /// when the calls to them are parsed: [`text_calls::is_cdylib_text_call`] alone answered
+    /// no, the call went unwrapped, and a function whose text it does not own (a field read,
+    /// a literal, `"/a/b".basename()`) answered `""` in every value position (loft#773).  A
+    /// BUFFERLESS text function that is to be compiled is wrapped too
+    /// (`Definition::returns_bufferless_text`); a buffered one already writes into the call's
+    /// own work buffer.  When it ends up interpreted, the temporary costs one copy.
+    ///
+    /// [`text_calls::is_cdylib_text_call`]: crate::text_calls::is_cdylib_text_call
+    pub(crate) fn crosses_text_bridge(&self, d_nr: u32) -> bool {
+        let def = self.data.def(d_nr);
+        crate::text_calls::is_cdylib_text_call(def)
+            || (def.returns_bufferless_text()
+                && def.native().is_empty()
+                && def.c_sig.is_empty()
+                && (self.compiled_bridges.contains(def.name())
+                    || (self.library_bridges
+                        && def.pub_visible
+                        && self.pending_native_compile.iter().any(|dir| {
+                            crate::file_access::is_under(def.position().file.as_str(), dir)
+                        }))))
+    }
+
     /// @PLN10 — wrap every text-dest native called in *value position* in a
     /// scope-bound work-text temp, so its result lives in a freed local instead
     /// of the never-cleared `stores.scratch` buffer.  Replaces
@@ -639,7 +669,7 @@ impl Parser {
         let wrap_here = matches!(
             &*v,
             Value::Call(op, _) if crate::text_calls::is_text_dest_native(self.data.def(*op).name())
-                || crate::text_calls::is_cdylib_text_call(self.data.def(*op))
+                || self.crosses_text_bridge(*op)
                 // @PLN24 arc D — a `#c` binding returning text is a value-position
                 // producer like the other two, and needs the same work-text temp.
                 || crate::text_calls::is_c_text_call(self.data.def(*op))
@@ -715,7 +745,7 @@ impl Parser {
     fn descend_skip_direct(&mut self, v: &mut Value) {
         if let Value::Call(op, args) = v.unspan_mut() {
             let is_dest = crate::text_calls::is_text_dest_native(self.data.def(*op).name())
-                || crate::text_calls::is_cdylib_text_call(self.data.def(*op));
+                || self.crosses_text_bridge(*op);
             if is_dest {
                 for a in args.iter_mut() {
                     self.wrap_value_text_dest(a);
@@ -11726,12 +11756,23 @@ use a separate collection or add after the loop"
             return;
         };
         self.vars.set_value_const(view);
+        // A view of foreign data holds foreign data: its refusal is `@FR-Const-Foreign`'s, which
+        // names no `const` the author never wrote (loft#2089).
+        if let (_, Some(root)) = self.const_view_root(source, bare_var_views)
+            && self.foreign_bound.contains(&(self.context, root))
+        {
+            self.foreign_bound.insert((self.context, view));
+        }
         self.const_views.insert((self.context, view), place);
     }
 
-    /// The value-const place `source` reads out of, described for a refusal, or `None` when it
-    /// reads none — see [`Self::mark_const_view`] for which shapes count.
-    pub(crate) fn const_view_place(&self, source: &Value, bare_var_views: bool) -> Option<String> {
+    /// The node `source` arrives as, unwrapped, and the variable it reads out of, when it
+    /// reads one — the root [`Self::const_view_place`] describes.
+    fn const_view_root<'v>(
+        &self,
+        source: &'v Value,
+        bare_var_views: bool,
+    ) -> (&'v Value, Option<u16>) {
         let mut node = source.unspan();
         // The wrappers a right-hand side arrives in, and nothing else.
         loop {
@@ -11753,6 +11794,22 @@ use a separate collection or add after the loop"
             }
             other => crate::use_analysis::view_source_place(&self.data, other).map(|(v, _)| v),
         };
+        (node, root)
+    }
+
+    /// The value-const place `source` reads out of, described for a refusal, or `None` when it
+    /// reads none — see [`Self::mark_const_view`] for which shapes count.
+    pub(crate) fn const_view_place(&self, source: &Value, bare_var_views: bool) -> Option<String> {
+        let (node, root) = self.const_view_root(source, bare_var_views);
+        // `@FR-Const-Foreign` — data the program does not own: the author wrote no `const`.
+        if let Some(root) = root
+            && self.foreign_bound.contains(&(self.context, root))
+        {
+            return Some(format!(
+                "'{}', data the program does not own",
+                self.vars.written_name(root)
+            ));
+        }
         if let Some(root) = root
             && self.vars.exists(root)
             && self.vars.is_value_const(root)

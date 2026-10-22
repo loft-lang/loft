@@ -2018,7 +2018,13 @@ impl Output<'_> {
         // range), and the call answers the return type's null, as the interpreter's guard in
         // `generate_call_ref` does; the program continues (@C80).
         write!(w, " _ => ")?;
-        if let Some(fields) = &value_fields {
+        if self.library_unit && crate::fnref::upcall_carries(&fn_type) {
+            // @PLN199 C2 — in a library cdylib the set of functions is not closed: a value the
+            // script handed in names a callee this cdylib does not carry, and the interpreter
+            // that loaded it runs that callee (`HostTable::call_ref`).  An absent fn-ref
+            // reaches the interpreter's own `@FR-L-FnAbsent` guard there.
+            Self::write_upcall_arm(w, &param_types, &ret_type, &place, &closure_expr)?;
+        } else if let Some(fields) = &value_fields {
             write!(
                 w,
                 "{}",
@@ -2044,6 +2050,53 @@ impl Output<'_> {
             write!(w, " }}")?;
         }
         Ok(())
+    }
+
+    /// The upcall arm of a fn-ref dispatch in a library cdylib (@PLN199 C2): the bound
+    /// arguments `_farg_<i>` into `LibArg`s, the call through the host table, and the
+    /// result read back at the return type — the marshalling `State::call_back` reverses.
+    fn write_upcall_arm(
+        w: &mut dyn Write,
+        param_types: &[Type],
+        ret_type: &Type,
+        place: &str,
+        closure_expr: &str,
+    ) -> std::io::Result<()> {
+        let n = param_types.len();
+        write!(w, "{{ let __ua: [loft::native_lib::LibArg; {n}] = [")?;
+        for (i, p) in param_types.iter().enumerate() {
+            let field = match p.base() {
+                Type::Float => format!("scalar: _farg_{i}.to_bits() as i64"),
+                Type::Boolean => format!("scalar: i64::from(_farg_{i})"),
+                Type::Text(_) => format!("text_ptr: _farg_{i}.as_ptr(), text_len: _farg_{i}.len()"),
+                t if crate::data::is_dbref(t) => format!("dbref: _farg_{i}"),
+                _ => format!("scalar: _farg_{i}"),
+            };
+            write!(
+                w,
+                "loft::native_lib::LibArg {{ {field}, ..loft::native_lib::LibArg::ZERO }}, "
+            )?;
+        }
+        write!(
+            w,
+            "]; let __uc = loft::native_lib::LibArg {{ dbref: {closure_expr}, \
+             ..loft::native_lib::LibArg::ZERO }}; \
+             let mut __ur = loft::native_lib::LibArg::ZERO; \
+             unsafe {{ (__host().call_ref)(cell.get(), {place}.0, &raw const __uc, __ua.as_ptr(), \
+             {n}, &raw mut __ur) }}; "
+        )?;
+        let read = match ret_type.base() {
+            Type::Void | Type::Null => "()",
+            Type::Text(_) => {
+                "unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(__ur.text_ptr, \
+                 __ur.text_len)) }.to_string()"
+            }
+            Type::Float => "f64::from_bits(__ur.scalar as u64)",
+            Type::Boolean => "(__ur.scalar as u8)",
+            t if crate::data::is_dbref(t) => "__ur.dbref",
+            _ => "__ur.scalar",
+        };
+        write!(w, "{read} }}")
     }
 
     /// Use this to emit an `if/else` expression. Handles whether branches are bare
@@ -3099,9 +3152,83 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
-    /// `@FR-R-PushFill`'s run clause ([`super::hoist::push_run`]): reserve the run's bytes
-    /// once and write them through one push window, closed after the last.  A vector with
-    /// no record takes the statements as they stand — the runtime's own refusal.
+    /// `@FR-R-HandOver`'s rotate clause: when the vector is full (`Stores::rotate_into`
+    /// admits it), the copy goes into the oldest element and the slots rotate, S runs, and the
+    /// suffix-keep callee's `__nk` twin runs the rest of its body; otherwise every statement of
+    /// the range as written.
+    fn output_rotate_site(
+        &mut self,
+        w: &mut dyn Write,
+        site: &super::hand_over::Site<'_>,
+    ) -> std::io::Result<()> {
+        let (k, g) = (site.k, site.g);
+        let vec = self.expr_string(&site.vector)?;
+        let etp = site.elem_tp;
+        // `@FR-R-Apart` instance 4 — an apart source rotates in from its parts.
+        let rotate = match site.src.unspan() {
+            Value::Var(p) if self.apr_parts(*p).is_some() => format!(
+                "stores.rotate_from_parts(&({vec}), {}, {etp}_u16, {k}_i64)",
+                self.apr_parts(*p).unwrap_or_default()
+            ),
+            _ => {
+                let src = self.expr_string(site.src)?;
+                format!("stores.rotate_into(&({vec}), &({src}), {etp}_u16, {k}_i64)")
+            }
+        };
+        self.indent(w)?;
+        writeln!(w, "if {rotate} {{ //@FR-R-HandOver rotate")?;
+        self.indent += 1;
+        for s in &site.between {
+            self.indent(w)?;
+            self.output_code_inner(w, s)?;
+            writeln!(w, ";")?;
+        }
+        let owner = site.owner.clone();
+        let call = Value::Call(g, vec![owner, Value::Int(1)]);
+        if let Value::Call(_, a) = &call {
+            self.nk_site_next = Some((g, a.as_ptr() as usize));
+        }
+        self.indent(w)?;
+        self.output_code_inner(w, &call)?;
+        writeln!(w, "; //@FR-R-HandOver the drop without its keep")?;
+        assert!(
+            self.nk_site_next.take().is_none(),
+            "@FR-R-HandOver: the rotate's call of {} was emitted without its twin's name — the \
+             plain callee would drop an element the rotate kept",
+            self.data.def(g).name()
+        );
+        self.indent -= 1;
+        self.indent(w)?;
+        writeln!(w, "}} else {{")?;
+        self.indent += 1;
+        for s in &site.range {
+            if matches!(s.unspan(), Value::Line(_)) {
+                continue;
+            }
+            self.indent(w)?;
+            self.output_code_inner(w, s)?;
+            writeln!(w, ";")?;
+        }
+        self.indent -= 1;
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        if crate::keys::trace_hand_over() {
+            eprintln!(
+                "hand-over: {} rotate (K {k}) admitted",
+                self.data.def(self.def_nr).name()
+            );
+        }
+        crate::rewrite_census::fired("R-HandOver", 1);
+        Ok(())
+    }
+
+    /// `@FR-R-PushFill`'s run clause ([`super::hoist::push_run`]): the run's bytes built in
+    /// a stack array and appended by ONE `vector::append_bytes`, which resolves the vector's
+    /// header once — where the window form resolved it in the pre-allocation, the
+    /// reservation, two headers and the close (cbor `encode_bytes` −10.1 %, priced on the
+    /// emitted Rust, hash unchanged).  A vector `append_bytes` refuses (no record, or a
+    /// reference at position 0) or a locked store (`@FR-H-WriteLocked`, which `append_bytes`
+    /// does not ask) takes the statements as they stand — the runtime's own refusal.
     fn output_push_run(
         &mut self,
         w: &mut dyn Write,
@@ -3117,37 +3244,21 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "if !({vec}).is_null() && ({vec}).rec != 0 {{ //@FR-R-PushFill run of {k}"
+            "if !({vec}).is_null() && ({vec}).rec != 0 && ({vec}).pos != 0 && !vector::rec_locked(&({vec}), &stores.allocations) {{ //@FR-R-PushFill run of {k}"
         )?;
-        self.indent(w)?;
-        writeln!(
-            w,
-            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations);"
-        )?;
-        // One binding a line, each with its tag: the emission audit binds a holder by the
-        // line that declares it.
-        self.indent(w)?;
-        writeln!(
-            w,
-            "  let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); //@FR-R-PushFill run header"
-        )?;
-        self.indent(w)?;
-        writeln!(
-            w,
-            "  let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations); //@FR-R-PushFill push window, run of {k}"
-        )?;
+        let mut bytes = Vec::with_capacity(k);
         for val in &run.vals {
             let e = self.expr_string(val)?;
-            self.indent(w)?;
-            writeln!(
-                w,
-                "  {{ let __pv = loft::store::Store::byte_raw(({min}) as i32, ({e}) as i32); unsafe {{ stores.push_windowed::<u8, false>(&mut __ph_{n}, &mut __pw_{n}, &({vec}), 1, __pv) }} }};"
-            )?;
+            bytes.push(format!(
+                "loft::store::Store::byte_raw(({min}) as i32, ({e}) as i32)"
+            ));
         }
+        self.indent(w)?;
+        writeln!(w, "  let __run_{n}: [u8; {k}] = [{}];", bytes.join(", "))?;
         self.indent(w)?;
         writeln!(
             w,
-            "  stores.push_window_close::<false>(&mut __ph_{n}, __pw_{n}.len, &({vec}));"
+            "  vector::append_bytes(&({vec}), &__run_{n}, &mut stores.allocations); //@FR-R-PushFill one append of the run"
         )?;
         self.indent(w)?;
         writeln!(w, "}} else {{")?;
@@ -4088,6 +4199,10 @@ impl Output<'_> {
             if repeat_skip.is_some_and(|last| vnr <= last) {
                 continue;
             }
+            // `@FR-R-HandOver`'s rotate clause — the `__nk` twin drops its keep statement.
+            if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
+                continue;
+            }
             // `@FR-R-DecodeView`'s structure clause — a statement the positional twin drops,
             // before pre-evaluation can lift anything out of it.
             if self.ps_mode.is_some() && self.ps_skip(v) {
@@ -4123,6 +4238,15 @@ impl Output<'_> {
                     "if var_{name}.store_nr == u16::MAX {{ var_{name} = OpDatabase(cell, var_{name}, {tp}_i32); }}"
                 )?;
                 self.refill_text_pending = Some((b, tp, block_serial));
+                continue;
+            }
+            // `@FR-R-HandOver`'s rotate clause — an append to a full vector beside the drop of
+            // its oldest element, as one step on the elements already there.
+            if !self.in_coroutine_body
+                && let Some(site) = super::hand_over::site(operators, vnr, self.data, self.stores)
+            {
+                self.output_rotate_site(w, &site)?;
+                repeat_skip = Some(site.last);
                 continue;
             }
             // `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are

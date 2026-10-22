@@ -216,8 +216,9 @@ to a plain local that is only read (`len(parts)`, `parts[i]`, `for p in parts`) 
 binding block is a TABLE of slices over the text, never a vector — and is the first bisect
 step for a wrong length, piece or walk out of a split bound to a name.
 `LOFT_TRACE_SPLIT_TABLE=1` names each bind admitted and each declined with its reason.
-**`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time, `--native`
-only) makes the loop variable of `for p in vector<text>` — and of a lazily split text —
+**`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time; `--native`,
+and since @PLN198 the interpreter for a walk of a real vector — its slot holds the element's
+`Str`, bound by `OpPutText` and read by `OpArgText`, from the same admission) makes the loop variable of `for p in vector<text>` — and of a lazily split text —
 copy its element into a `String` again — with it off, `p` is bound as the `&str` the
 element read answers and read bare, where the body reads it only as a text VALUE (an
 operand at a `text` position, the source of a bind into another slot), never writes,
@@ -473,7 +474,8 @@ a local length, and writes the record's length once when the loop ends (`push` 4
 loop or a comprehension on native.  A view of a plain NO-HEAP record named in the body (a
 `pts[i]?` element of another vector) is no viewer of the length and does not decline the
 window, nor does a vector of plain scalars stored apart from the pushed one (a `vector<u8>`
-parameter read into a returned `vector<integer>`); a builder's tuple copied into the fresh
+parameter read into a returned `vector<integer>`), nor a `File` parameter named only as the
+file of a scalar read (`bf#read(2) as i16`, the crawler's `binary_read` −29.4 %); a builder's tuple copied into the fresh
 element is the slot's own write; the
 window's other-statement test is asked as the header hoist asks it (in-place tier, variable
 table).  `LOFT_TRACE_PUSH_FILL=1` names the clause that declined a window.  ⚠ `LOFT_HOIST_VERIFY=1` checks the window's base and its frozen header at every
@@ -500,9 +502,23 @@ and each call site refused with its reason.
 
 **`LOFT_NO_PUSH_RUN=1`** (`@FR-R-PushFill`'s run clause, default-ON, generation time,
 `--native` only) pushes a straight-line run of byte appends (`v += [a]; v += [b]; …`) one by
-one through the runtime again — with it off, the run reserves once and writes through one
-push window (cbor's `head`, the encode_bytes probe −13 %).  The first bisect step for a wrong
-byte or length after such a run.
+one through the runtime again — with it on, the run's bytes are built in a stack array and
+appended by one `vector::append_bytes` (cbor's `head`: `encode_bytes` −10 % over the earlier
+one-window form).  The first bisect step for a wrong byte or length after such a run; cells
+`tests/scripts/158-push-run.loft`.
+
+**`LOFT_NO_HAND_OVER=1`** (`@FR-R-HandOver`'s rotate clause, default-ON, generation and run
+time, `--native` only) runs an append to a full vector beside the drop of its oldest element as
+written — with it on, the copy goes into the oldest element's blocks and the slots rotate, and
+the dropping callee runs as its `__nk` twin (dryopea `truncate_to` −17 %).  The first bisect
+step for a wrong element, order, length or cursor after such a push;
+`LOFT_TRACE_HAND_OVER=1` names each site admitted; cells `tests/scripts/158-rotate.loft`.
+
+**`LOFT_NO_APART_RECORDS=1`** (`@FR-R-Apart` instance 4, default-ON, generation time,
+`--native-release` only) keeps a record of record vectors built in a frame in the store —
+with it on, the frame holds its elements as bytes and its callees run as `__apr` twins that
+copy them into the collection (dryopea `truncate_to` −42 %).  The first bisect step for a
+wrong element after a frame-built record is appended; cells `tests/scripts/158-apart-records.loft`.
 
 **`LOFT_NO_TYPED_READ=1`** (`@FR-R-TypedRead`, default-ON, generation time, `--native` only)
 sends every `f#read` through the generic `OpReadFile` again — with it off, a read that lands a

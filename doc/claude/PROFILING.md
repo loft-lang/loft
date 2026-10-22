@@ -29,12 +29,20 @@ compiles its own bytecode, so positions cannot be merged, only labels.
 `LOFT_ALLOC_SITES` is program-only and says so under a suite instead of going quiet.
 **A NATIVE run is not sampled** — and the default backend IS native, so a bare
 `LOFT_PROFILE=1 loft p.loft` announces that rather than exiting empty (loft#865).
+**An op that runs long is timed, not sampled**: a native call, a `use`d library's compiled
+code, a sort or a read that takes 50 µs or more is credited to its own line, where the op
+clock alone would land it on whatever op the next sample fell on — a later line, often
+another function (@PLN179 finding 022; the banner counts them).
 **A `use`d library is a cdylib the sampler cannot enter**: its functions cannot appear
 and their time lands on the CALLING line, so a library doing the work reads as a hot
-caller — one probe inverted from `100 % app_bit` to `99.5 % lib_grind` under
-`LOFT_NO_NATIVE_LIBS=1`. The report says so whenever a library was called.
-Prefer `make profile`, which picks the instrument. Off costs nothing (the
-sampler rides the existing per-op debug branch); armed costs +7–11 %. PERFORMANCE.md § Profiling.
+caller — `main`'s call line, where `LOFT_NO_NATIVE_LIBS=1` reads `99 % lib_grind`. The
+report says so whenever a library was called.
+Prefer `make profile`, which picks the instrument. Off costs nothing. **Armed costs
++9–18 %** on `bench/01`–`05`: a run only the CPU profiler watches keeps the lean dispatch
+loop, with the profiler's per-op state in the loop's own locals (a tick read and a count);
+allocation paths, the op census or a breakpoint take the full loop, which costs +46–116 % on
+its own. A frame-driven program (a game loop, `yield_frame()`) is sampled over every frame:
+the run continues through the same dispatch after each yield. PERFORMANCE.md § Profiling.
 
 ## `LOFT_NATIVE_CHECKPOINTS` (native, wasm)
 
@@ -59,7 +67,8 @@ route: `scripts/profile.sh` is, and it perturbs nothing. PERFORMANCE.md §
 
 ## What the interpreter executes, per routine (`LOFT_OP_CENSUS`)
 
-**`LOFT_OP_CENSUS=<file>`** (`--interpret`) counts every operator exactly. There is no
+**`LOFT_OP_CENSUS=<file>`** (`--interpret`) counts every operator exactly. (`=1` prints it to
+stderr; a relative name is the directory loft was launched in — as for every census switch.) There is no
 sampling. Each op is keyed by the line of the entry function it ran under (its call site
 from `main`, or its own line in `main`), by the function it belongs to, and by the operator.
 Beside each count go the bytes the op moved through the store's block routes: `copy`

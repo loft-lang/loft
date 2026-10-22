@@ -192,6 +192,11 @@ pub struct Manifest {
     ///
     /// `None` means the package declares no floor (grandfathered — no gate).
     pub data_compatible_with: Option<String>,
+    /// @PLN196 step 9 — the last release of THIS package that still read stores older than
+    /// [`Manifest::data_compatible_with`], from `[package] data_bridge = "2.3"`.  Recorded
+    /// when the floor is raised, so a refused store names the release that carries it
+    /// forward.  `None` when the floor was never raised past a release that wrote stores.
+    pub data_bridge: Option<String>,
     /// GitHub repository that publishes this package's releases, from
     /// `[package] repository = "..."`.  Either a bare repo name under the
     /// `loft-lang` org (`"loft-libs-core"`) or a full `"owner/repo"`.  When
@@ -392,6 +397,28 @@ impl Manifest {
         self.build_targets
             .last_mut()
             .expect("just pushed a build target")
+    }
+}
+
+/// @PLN196 step 9 — the release of the program whose source is in `source_dir`, from the
+/// nearest `loft.toml` above it: its `version`, `data_compatible_with` and `data_bridge`.
+/// Empty when there is none.  The parser hands it to the stores (`Stores::release`), which
+/// record it beside every store they write.
+#[must_use]
+pub fn release_of(source_dir: &str) -> crate::database::Release {
+    let none = crate::database::Release::default();
+    // An empty directory is the current one, as `project_root` reads it: a program run by a
+    // relative name (`loft b.loft`) has no directory of its own in the path.
+    let Some(root) = crate::resolution_scope::project_root(source_dir) else {
+        return none;
+    };
+    let Some(m) = read_manifest(&root.join("loft.toml").to_string_lossy()) else {
+        return none;
+    };
+    crate::database::Release {
+        version: m.version.unwrap_or_default(),
+        oldest: m.data_compatible_with.unwrap_or_default(),
+        bridge: m.data_bridge.unwrap_or_default(),
     }
 }
 
@@ -766,6 +793,7 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("package", "contract") => m.contract = Some(value.scalar()),
         ("package", "api_compatible_with") => m.api_compatible_with = Some(value.scalar()),
         ("package", "data_compatible_with") => m.data_compatible_with = Some(value.scalar()),
+        ("package", "data_bridge") => m.data_bridge = Some(value.scalar()),
         ("package", "repository") => m.repository = Some(value.scalar()),
         ("package", "description") => m.description = Some(value.scalar()),
         ("library", "entry") => m.entry = Some(value.scalar()),

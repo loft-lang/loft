@@ -152,12 +152,11 @@ fn use_compile_native_library_dispatches_on_real_binary() {
     let _ = fa::remove_dir_all(native_auto);
 }
 
-/// @PLN11 Arc N / N3 (B3) — silent per-function fallback: a library where one
-/// public function is shared-store-dispatchable (`triple`) and another is not
-/// (`apply_inc` calls through a function reference — a `CallRef` the gate
-/// conservatively excludes).  The gate splits the library silently — `triple`
-/// compiles into the cdylib + dispatches native; `apply_inc` stays interpreted —
-/// with no user-facing error and the script calling both alike.
+/// @PLN11 Arc N / N3 (B3) — silent per-function fallback: a library where two
+/// public functions compile (`triple`, and `apply_inc`, which calls through a function
+/// value, @PLN199 C2) and one does not (`label`, whose function value returns a `single` the
+/// compiled library cannot be called back with).  The gate splits the library silently —
+/// `label` stays interpreted — with no user-facing error and the script calling all alike.
 ///
 /// Also verifies the synthetic-exclusion invariant: `apply_inc`'s nested lambda
 /// (`__lambda_N`, made `pub_visible` by the enclosing `pub fn`) is NOT a dispatch
@@ -186,6 +185,7 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
          fn main() {\n\
          \x20   println(\"{triple(7)}\");\n\
          \x20   println(\"{apply_inc(10)}\");\n\
+         \x20   println(\"{label(4)}\");\n\
          }\n",
     )
     .unwrap();
@@ -206,11 +206,12 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
         out.status.success(),
         "loft exited non-zero.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    // triple(7)=21 (native), apply_inc(10)=11 (interpreted) — identical to all-interp.
-    assert_eq!(stdout, "21\n11\n", "mixed-library output");
+    // triple(7)=21, apply_inc(10)=11 (both native), label(4)=40 (interpreted) — identical
+    // to all-interp.
+    assert_eq!(stdout, "21\n11\n40\n", "mixed-library output");
 
-    // The gate split the library: the cdylib exports the dispatchable `triple` but
-    // NOT `apply_inc` (CallRef → interpreted), and NOT its synthetic lambda.
+    // The gate split the library: the cdylib exports `triple` and `apply_inc` but NOT
+    // `label`, and NOT the synthetic lambdas.
     // loft#715 — the generated source is named for the caller's type-layout
     // fingerprint, like the cdylib beside it, so find it by prefix.
     let rs_path = fa::read_dir(native_auto)
@@ -228,16 +229,96 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
         "triple should have a native bridge"
     );
     assert!(
-        !lib_rs.contains("loft_shared_n_apply_inc"),
-        "apply_inc (CallRef) must NOT be dispatched native — it stays interpreted"
+        lib_rs.contains("loft_shared_n_apply_inc"),
+        "apply_inc calls a function value the cdylib carries — it compiles (@PLN199 C2)"
     );
     assert!(
-        !lib_rs.contains("__lambda"),
+        !lib_rs.contains("loft_shared_n_label"),
+        "label (a `single`-returning function value) must NOT be dispatched native — it stays interpreted"
+    );
+    assert!(
+        !lib_rs.contains("loft_shared_n___lambda"),
         "a synthetic lambda must NOT be a native dispatch target"
     );
 
     let _ = fa::remove_dir_all(&tmp);
     let _ = fa::remove_dir_all(native_auto);
+}
+
+/// `LOFT_TRACE_NATIVE_GATE=1` names, per `use`d library, how many of the functions a script
+/// can call run compiled and, for each that stays interpreted, the rule that kept it there —
+/// before it, a function left out of the compiled library ran slower and nothing said so.
+///
+/// @PLN199 — `gatefull` holds one function per shape the gate judges, and
+/// [`GATEFULL_INTERPRETED`] is what still runs interpreted, with the reason.  The list is
+/// exact: a step of the plan that compiles one more shape deletes its line here, and a
+/// function that silently drops back to the interpreter adds one and fails.
+const GATEFULL_INTERPRETED: &[(&str, &str)] = &[];
+
+/// The callable functions the trace counts for `gatefull`: its thirty-three non-generic `pub fn`s,
+/// `generic` as its one instantiation (`i_7integer_n_generic`), and the four operator stubs
+/// the `Numeric` bound declares (`t_6T_6_g1_OpMin`, …).
+const GATEFULL_CALLABLE: usize = 38;
+
+#[test]
+fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_gate_trace_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
+    let lib = private_lib(&tmp, &["gatefull"]);
+    let prog = tmp.join("main.loft");
+    fa::copy(std::path::Path::new("tests/lib/gatefull_main.loft"), &prog).unwrap();
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&lib)
+        .arg(&prog)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TRACE_NATIVE_GATE", "1")
+        .output()
+        .expect("run the loft binary");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = fa::remove_dir_all(&tmp);
+    // The answers computed by hand beside each call in the program.
+    let expected = fa::read_to_string("tests/lib/gatefull_main.out").unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{stderr}");
+    let gate: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("[native-gate]"))
+        .collect();
+    let compiled = GATEFULL_CALLABLE - GATEFULL_INTERPRETED.len();
+    let summary =
+        format!("gatefull: {compiled} of {GATEFULL_CALLABLE} callable functions compiled");
+    assert!(
+        gate.iter().any(|l| l.contains(&summary)),
+        "the summary line `{summary}`:\n{stderr}"
+    );
+    let listed: Vec<&str> = gate
+        .iter()
+        .copied()
+        .filter(|l| l.contains(" interpreted"))
+        .collect();
+    for (name, why) in GATEFULL_INTERPRETED {
+        assert!(
+            listed
+                .iter()
+                .any(|l| l.contains(&format!("`{name}` interpreted")) && l.contains(why)),
+            "`{name}` named with its reason ({why}):\n{stderr}"
+        );
+    }
+    assert_eq!(
+        listed.len(),
+        GATEFULL_INTERPRETED.len(),
+        "exactly the listed functions run interpreted:\n{stderr}"
+    );
 }
 
 /// A native build failure with a `rustc` toolchain present is a HARD ERROR — loft

@@ -108,6 +108,17 @@ graphics/
 
 ---
 
+## Releasing — libraries and applications alike
+
+`loft package` is the release step of every project with a `[package]` version, a library or
+an application.  Before it builds the tarball it records `layout.lock` beside `loft.toml`: the
+layout of the types the entry program reaches, the release, and which stored fields each
+computed field's default reads (DATABASE.md § A store that skipped releases).  Commit it with
+the release; the next release's `loft layout check` reads it.  The registry steps that follow
+(`loft publish`) are a library's only; `--tarball-only` builds the archive and records nothing.
+
+---
+
 ## Manifest: `loft.toml`
 
 ```toml
@@ -124,6 +135,10 @@ repository = "loft-libs-graphics"  # publishing repo — drives `loft package`'s
                                    # packages share the repo) → `<name>-v<version>`
                                    # tags; a value with "/" is a full owner/repo;
                                    # omit → legacy loft-<name> repo + bare v<version>.
+data_compatible_with = "2.0"       # the oldest release whose STORES this one reads;
+data_bridge = "2.3"                # the last release that read older ones — named
+                                   # when an older store is refused (DATABASE.md §
+                                   # A store that skipped releases).
 
 [library]
 entry = "src/graphics.loft"
@@ -271,7 +286,9 @@ When the compiler encounters `use math;` it searches:
    `[package] name` binds its own entry, whatever its directory is called — a package is
    identified by its manifest, not its path (`tests/own_package_resolution.rs`).  Every
    spelling of a test run (`loft test`, `--tests <dir>`, one file) puts the package's
-   source directory on the import path
+   source directory on the import path.  For a script outside any package, a flat
+   `<name>.loft` in the script's own directory is this step, so it outranks a
+   same-named registry package
 2. **`[dependencies]` paths** — `path = "..."` entries from `loft.toml`: the importing
    package's, then the **root project's**, so a path the root declares answers a `use`
    anywhere in the program, however deep (`tests/transitive_binding.rs`)

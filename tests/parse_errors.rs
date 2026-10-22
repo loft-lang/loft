@@ -771,7 +771,7 @@ fn a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous() {
         "enum En {\n    Fi { n: integer },\n    Cr { n: integer }\n}\nfn kd(self: Fi?) -> integer { 1 }\nfn kd(self: En) -> integer { self.n }\nfn test() { f: En = Fi { n: 1 }; f.kd(); }"
     )
     .warning("Parameter self is never read at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:5:30")
-    .error("`kd(En)` is ambiguous at (Fi) — that pair is taken by kd(Fi?) and kd(En) and nothing ranks them; give the call the arguments that pick one, or drop one definition at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:7:41");
+    .error("`kd(En)` is ambiguous at (Fi) — that variant is taken by kd(Fi?) and kd(En) and nothing ranks them; give the call the arguments that pick one, or drop one definition at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:7:41");
 }
 
 #[test]
@@ -4812,7 +4812,7 @@ fn enum_variant_limit_refuses_the_255th() {
     let src = format!("enum Wide {{\n{}\n}}\n", variants.join("\n"));
     code!(&src).error(
         "Too many enum variants — an enum holds at most 254, because a variant is one byte \
-         and 0 and 255 are reserved at enum_variant_limit_refuses_the_255th:255:8",
+         and 0 and 255 are reserved at enum_variant_limit_refuses_the_255th:256:3",
     );
 }
 
@@ -5231,6 +5231,25 @@ fn sort_refuses_an_element_that_is_not_ordered() {
 fn sort_in_a_generic_needs_the_bound() {
     code!("fn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")
         .error("'T' does not satisfy interface 'Ordered': missing `operator compare(self: T, other: T) -> Ordering` at sort_in_a_generic_needs_the_bound:1:33");
+}
+
+/// `@FR-Op-Bound` — a bound is met by the receiver's OWN operator.  A struct declaring `compare`
+/// against two right-hand types makes `compare` an overload set holding every type's members,
+/// and a bare `T` fits any member's parameters; it met `Ordered` through `D`'s `compare(D, D)`,
+/// so `sort` in an unbounded generic compiled in any program holding such a struct — every
+/// program, once the stdlib's `Release` compared against a text.
+#[test]
+fn another_types_compare_set_does_not_meet_a_bare_variables_bound() {
+    code!("struct D { ms: integer }\npub operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }\npub operator compare(self: D, other: integer) -> Ordering { self.ms.compare(other) }\nfn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")
+        .error("'T' does not satisfy interface 'Ordered': missing `operator compare(self: T, other: T) -> Ordering` at another_types_compare_set_does_not_meet_a_bare_variables_bound:4:33");
+}
+
+/// The control: the struct's own `compare(D, D)` still meets `Ordered` for `D`.
+#[test]
+fn a_types_own_compare_in_a_set_meets_its_bound() {
+    code!(
+        "struct D { ms: integer }\npub operator compare(self: D, other: D) -> Ordering { self.ms.compare(other.ms) }\npub operator compare(self: D, other: integer) -> Ordering { self.ms.compare(other) }\nfn g<T: Ordered>(v: vector<T>) -> vector<T> { sort(v); v }\nfn test() { s = g([D { ms: 3 }, D { ms: 1 }, D { ms: 2 }]); assert(\"{s[0].ms}{s[1].ms}{s[2].ms}\" == \"123\", \"sorted by its own compare\"); }"
+    );
 }
 
 /// @PLN165 E5 — a `#builtin` method's callback is typed by the special form's hint, in both
@@ -5816,7 +5835,7 @@ fn test() {
 #[test]
 fn operator_with_a_name_that_backs_nothing() {
     code!("struct P { v: integer }\npub operator frob(self: P, other: P) -> Ordering { self.v.compare(other.v) }\nfn test() { }")
-        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a unary `-`, `next` for `for e in x`, `to_text` for `\"{x}\"`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
+        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`, `plus` for `+`, `minus` for `-`, `times` for `*`, `divided_by` for `/`, `remainder` for `%`, `negate` for a unary `-`, `next` for `for e in x`, `to_text` for `\"{x}\"`, `to_<type>` for `x as <type>`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
 }
 
 #[test]

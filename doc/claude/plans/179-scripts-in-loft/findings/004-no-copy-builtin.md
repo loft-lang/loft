@@ -6,7 +6,7 @@ fix: `path.copy_to(dst) -> FileResult` in the on-demand `script` library (README
 ref: `src.copy_to(dst) -> boolean` in `script` 0.1.1 (registry, 2026-10-13); fuzz/seed_program_source re-twinned over it 2026-10-14 (SCOREBOARD.md) — the two calls and the null discharge are one call
 probe: 004.probe.loft
 expect: refused
-checked: 4b1553fc
+checked: 9c2c9306d
 holds: no
 
 no `copy(from, to)`: a file is copied as `write_bytes(dst, read_bytes(src) ?? [])`, two calls and a null discharge for what `cp` says in one word

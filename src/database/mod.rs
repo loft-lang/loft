@@ -10,6 +10,8 @@ mod descriptor;
 mod equality;
 mod field_groups;
 mod layout_parse;
+mod release;
+pub use release::{Release, version_triple};
 mod upgrade;
 mod upgrade_map;
 pub use field_groups::{LinkedFieldGroup, LinkedFieldKind};
@@ -38,7 +40,10 @@ pub use allocation::{CLEAR_KEYED_VIEW, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};
 pub use journal::Journal;
 pub use types::Type;
-pub use upgrade::{FileUpgrade, FileUpgradeJob, Fills, PendingFills};
+pub use upgrade::{
+    FileUpgrade, FileUpgradeJob, Fills, Pending, PendingFills, Routine, Routines, WorldPlan,
+    owed_key, routine_key,
+};
 pub use upgrade_map::{FieldFrom, How, Pair, Refusal, UpgradeMap};
 
 /// Store index reserved for compile-time constant data (vectors, long strings).
@@ -441,6 +446,14 @@ pub struct Stores {
     /// in one store that named one record name one copy.  Forgotten when the copied record's
     /// store is freed, right after its evacuations.  Runtime-only: `clone` starts it empty.
     pub(crate) evacuated: Vec<((DbRef, u16), DbRef)>,
+    /// @PLN196 — what the last converting `store_load` / `store_persist_bind` still owes:
+    /// the records whose added field has a computed default, which the program's drain fills
+    /// right after the call, and a bind that is finished once they are.  Runtime-only:
+    /// `clone` starts it empty.
+    pub(crate) owed: upgrade::Owed,
+    /// @PLN196 step 9 — the `upgrade` routine of each record type, registered by the drain's
+    /// wrapper before a converting load ([`Stores::upgrade_routine`]).
+    pub(crate) upgrade_routines: upgrade::Routines,
     /// `@FR-G-Arg-Rebind` — the stores a live generator frame names as an ARGUMENT:
     /// `(store_nr, frames holding it, orphaned)`.  The caller and the frame share the value
     /// (`@FR-G-Arg-Share`), and it is released when BOTH are done with it: a free while a
@@ -602,6 +615,11 @@ pub struct Stores {
     /// (where the error is logged instead of aborting).  `main.rs` checks this after
     /// execution and exits with code 1 so shell scripts can detect failure.
     pub had_fatal: bool,
+    /// The source line of the native fault being raised (`@FR-E-Report`): set by an
+    /// `*_at_runtime` entry on its cold path only, read and cleared by
+    /// [`Stores::raise_recoverable_runtime`], so the log names the statement and each site
+    /// keeps its own rate-limit budget.  0 = the running frame's line.
+    pub fault_line: u32,
     /// Plan-07 phase 4 — typed runtime error captured by the most recent
     /// fault-site opcode or native fn.  Set by callers via
     /// [`crate::runtime_error::RuntimeError`] constructors plus
@@ -616,6 +634,10 @@ pub struct Stores {
     /// Directory of the main source file being executed.
     /// Set by `main.rs` after parsing; used by `source_dir()` built-in.
     pub source_dir: String,
+    /// @PLN196 step 9 — the release this program's stores record ([`Release`]): set by a
+    /// native build from the manifest it was compiled against, else read once from the
+    /// `loft.toml` above `source_dir` ([`Stores::release`]).
+    pub release: std::sync::OnceLock<Release>,
     /// #255 / @PLN9: when true, a *relative* program-supplied file path
     /// re-homes against `source_dir` (the program's own directory) instead of
     /// the process cwd.  Absolute paths are never touched.  Parse-time config:
@@ -761,6 +783,8 @@ impl Clone for Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            owed: upgrade::Owed::default(),
+            upgrade_routines: self.upgrade_routines.clone(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -783,6 +807,7 @@ impl Clone for Stores {
             par_fn_native_buffer_stack: Vec::new(),
             logger: self.logger.clone(),
             had_fatal: false,
+            fault_line: 0,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
@@ -794,6 +819,7 @@ impl Clone for Stores {
             // empty here left source-relative asset resolution broken in those
             // contexts.
             source_dir: self.source_dir.clone(),
+            release: self.release.clone(),
             // #255: parse-time config like source_dir — preserve across clone so
             // the path mode survives the per-test-function State rebuild.
             program_relative: self.program_relative,
@@ -1537,6 +1563,8 @@ impl Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            owed: upgrade::Owed::default(),
+            upgrade_routines: upgrade::Routines::new(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -1559,11 +1587,13 @@ impl Stores {
             par_fn_native_buffer_stack: Vec::new(),
             logger: None,
             had_fatal: false,
+            fault_line: 0,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
             spare_store: None,
             source_dir: String::new(),
+            release: std::sync::OnceLock::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
             // re-homes against the program's own directory, so "program + assets"
             // is a portable bundle.  CLI tools opt back into cwd with `#cwd`.
@@ -1821,6 +1851,7 @@ impl Stores {
     /// with the null sentinel — identical to the interpreter.
     /// `LOFT_DEV_SOFT_HALT` opts into fail-fast (delegates to `raise_runtime`).
     pub fn raise_recoverable_runtime(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
+        let line = std::mem::take(&mut self.fault_line);
         let dev_soft_halt =
             std::env::var("LOFT_DEV_SOFT_HALT").is_ok_and(|v| v == "1" || v == "true");
         if dev_soft_halt {
@@ -1830,8 +1861,69 @@ impl Stores {
         if let Some(logger) = &self.logger
             && let Ok(mut lg) = logger.lock()
         {
-            lg.log_runtime_kind(&kind, crate::call_frames::running_frame_position().as_ref());
+            let position = crate::call_frames::running_frame_position().map(|mut p| {
+                if line != 0 {
+                    p.line = line;
+                }
+                p
+            });
+            lg.log_runtime_kind(&kind, position.as_ref());
         }
+    }
+
+    /// [`Self::raise_recoverable_runtime`] for a fault at source line `line` — what a `#rust`
+    /// template's `s.raise_recoverable(` becomes on `--native`.
+    pub fn raise_recoverable_at_runtime(
+        &mut self,
+        line: u32,
+        kind: crate::runtime_error::RuntimeErrorKind,
+    ) {
+        self.fault_line = line;
+        self.raise_recoverable_runtime(kind);
+    }
+
+    /// [`Self::vec_get_or_raise_runtime`] for an index at source line `line`: the in-range
+    /// path is the same inlined arithmetic, and only the raise learns the line.
+    #[must_use]
+    #[inline]
+    pub fn vec_get_or_raise_at_runtime(
+        &mut self,
+        line: u32,
+        db: &crate::keys::DbRef,
+        size: u32,
+        index: i64,
+    ) -> crate::keys::DbRef {
+        let (v_rec, len) = crate::vector::rec_and_len(db, &self.allocations);
+        if let Some(f) = crate::vector::elem_index(index, len) {
+            return crate::keys::DbRef {
+                store_nr: db.store_nr,
+                rec: v_rec,
+                pos: crate::vector::checked_vec_pos(f, size),
+            };
+        }
+        self.fault_line = line;
+        self.vec_get_raise_cold(index, len)
+    }
+
+    /// [`Self::vec_ref_or_raise_runtime`] for an index at source line `line`.
+    #[must_use]
+    pub fn vec_ref_or_raise_at_runtime(
+        &mut self,
+        line: u32,
+        db: &crate::keys::DbRef,
+        index: i64,
+    ) -> crate::keys::DbRef {
+        let inner = self.vec_get_or_raise_at_runtime(line, db, 4, index);
+        self.get_ref(&inner, 0)
+    }
+
+    /// [`Self::text_char_or_raise_runtime`] for an index at source line `line`.
+    #[must_use]
+    pub fn text_char_or_raise_at_runtime(&mut self, line: u32, val: &str, index: i64) -> char {
+        self.fault_line = line;
+        let c = self.text_char_or_raise_runtime(val, index);
+        self.fault_line = 0;
+        c
     }
 
     /// Nullable narrow-FIELD store with a dev-only sentinel-collision warning.

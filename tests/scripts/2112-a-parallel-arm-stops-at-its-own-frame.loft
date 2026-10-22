@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A PARALLEL ARM STOPS AT ITS OWN FRAME (loft#2112): a `parallel { … }` arm runs on a worker
+// over a copy of the enclosing frame, and ends with a return that must stop the worker.  The
+// return read its address from the enclosing frame's slot — the sentinel in `main`, so every
+// block written there worked, and in any other function the address that function returns
+// to: the worker ran on into its caller's code against the copied stack and the interpreter
+// crashed (SIGBUS / SIGSEGV) after the arm had done its work.  `--native` lowers the arms to
+// closures and was right throughout.
+//
+// Axes this file MOVES:  the frame the block is in (a test body, a void function with a parameter,
+//                        a function returning a value, one with no parameters, one two calls
+//                        deep, a method, a lambda, a loop body that joins several times);
+//                        the parameter kind (integer, text, a record); the arm count (1, 2).
+// Axes it HOLDS FIXED:   the arms read enclosing locals and write nothing back (the language
+//                        refuses a write); no `par` worker inside an arm.
+//
+// Each arm asserts what it read, so an arm that ran against the wrong frame fails by value;
+// each cell then allocates and returns, which is where the stray worker used to crash.
+// Values hand-computed beside each call.
+//
+// @falsified-at: a09729eb1 — interpret exit 139 -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/2112-a-parallel-arm-stops-at-its-own-frame.patch
+// CHANNEL: the exit status (the crash), then the asserts.
+// WITNESS: `=== loft crash (loft) SIGBUS caught ===` after the arm's work.
+// HOLDS: nothing here — a test function is itself a called frame, so even the first cell
+//   crashed; the block written in a program's `main` was the shape that always worked.
+
+struct Pt { x: integer, y: integer }
+
+fn check(got: integer, want: integer) { assert(got == want, "arm read {got}, want {want}"); }
+
+fn check_text(got: text, want: text) { assert(got == want, "arm read {got}, want {want}"); }
+
+fn void_with_param(x: integer) {
+  n = x * 2;
+  parallel { check(n, 14); }
+}
+
+fn returns_value(x: integer) -> integer {
+  n = x * 2;
+  parallel { check(n, 18); check(n + 1, 19); }
+  n + 1
+}
+
+fn no_params() -> integer {
+  n = 5;
+  parallel { check(n, 5); }
+  n * 3
+}
+
+fn inner_block(a: integer, b: integer) -> integer {
+  s = a + b;
+  parallel { check(s, 11); }
+  s
+}
+
+fn outer_call(k: integer) -> integer { inner_block(k, k + 1) * 10 }
+
+fn with_text(name: text) -> text {
+  t = "<{name}>";
+  parallel { check_text(t, "<ab>"); }
+  t + "!"
+}
+
+fn span(self: Pt) -> integer {
+  d = self.y - self.x;
+  parallel { check(d, 4); }
+  d * 2
+}
+
+fn test_a_block_in_a_test_body() {
+  n = 3;
+  parallel { check(n, 3); }
+  v: vector<integer> = [];
+  for i in 0..3 { v += [i]; }
+  assert(len(v) == 3, "len {len(v)}");
+}
+
+fn test_a_void_function_with_a_parameter() {
+  void_with_param(7);
+  v: vector<integer> = [];
+  for i in 0..3 { v += [i * i]; }
+  assert(v[2] == 4, "v[2] = {v[2]}");
+}
+
+fn test_a_function_returning_a_value_with_two_arms() {
+  assert(returns_value(9) == 19, "returns_value(9) = {returns_value(9)}");
+}
+
+fn test_a_function_without_parameters() {
+  assert(no_params() == 15, "no_params() = {no_params()}");
+}
+
+fn test_two_calls_deep() {
+  // inner_block(5, 6) = 11, times 10
+  assert(outer_call(5) == 110, "outer_call(5) = {outer_call(5)}");
+}
+
+fn test_a_text_parameter() {
+  r = with_text("ab");
+  assert(r == "<ab>!", "with_text = {r}");
+}
+
+fn test_a_method() {
+  p = Pt { x: 3, y: 7 };
+  assert(p.span() == 8, "span = {p.span()}");
+}
+
+fn test_a_lambda() {
+  f = fn(x: integer) -> integer {
+    m = x + 1;
+    parallel { check(m, 6); }
+    m * 2
+  };
+  assert(f(5) == 12, "f(5) = {f(5)}");
+}
+
+fn test_a_loop_that_joins_several_times() {
+  // four calls of no_params(), each 15 after its own join
+  total = 0;
+  for _ in 0..4 { total += no_params(); }
+  assert(total == 60, "total = {total}");
+}

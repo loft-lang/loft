@@ -850,6 +850,16 @@ entry file has been loaded and pulled it in, so the `use` order is load-bearing:
 `use <pkg>;` first, then `use <pkg>::raster;`.  Run the CI command itself before tagging
 (§ 3).
 
+**A library function is slower from a script than its `--native` run suggests** — a script
+that `use`s a library runs the library's functions compiled, except those the native gate
+leaves to the interpreter.  `LOFT_NO_CACHE=1 LOFT_TRACE_NATIVE_GATE=1 loft script.loft` names
+both: per library, how many of its callable functions compiled, and for each one left
+interpreted the rule that kept it there (`it calls `walk_from`, which uses a generator`, `it
+returns `sorted<…>`, which the bridge cannot carry`, or that the library ships a native crate,
+whose functions then all interpret).  The cache flag is needed because a warm load replays the
+earlier decision instead of making it.  Guard:
+`tests/n3_use_native.rs::the_native_gate_trace_names_what_stays_interpreted_and_why`.
+
 **`native symbol 'loft_x' was not registered via loft_register!`** — a native crate registers
 each C-ABI entry point in FOUR hand-maintained places in `native/src/lib.rs`: `pub use
 m::{…}` at the crate root (what `--native` codegen calls — `pub`, because `--native-wasm`

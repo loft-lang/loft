@@ -80,6 +80,13 @@ fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
             cmd.push_arg("--lib").push_arg(d);
         }
     }
+    // @PLN196 step 8 — the build of the next instance is checked against the running world:
+    // a world it cannot take over fails the build here, never the swap.
+    if let Some(layout) = crate::engine_host::world_layout() {
+        let world = crate::file_access::with_extension(&base, "world.dschema");
+        crate::file_access::write(&world, layout).map_err(|e| e.to_string())?;
+        cmd = cmd.env("LOFT_CHECK_WORLD", &world);
+    }
     // A build legitimately takes minutes — never under the run watchdog.
     let child = cmd
         .arg(src)

@@ -1,0 +1,79 @@
+// `@FR-R-PushFill`'s run clause — a straight-line run of byte appends, `v += [a]; v += [b];
+// …`, is ONE `vector::append_bytes` of the run's bytes built in a stack array: the vector's
+// header resolved once, where the window form resolved it in the pre-allocation, the
+// reservation, two headers and the close (cbor `encode_bytes` −10.1 %, priced first).  A
+// vector the append refuses — no record, a reference at position 0, a locked store — takes
+// the appends as they stand.
+//
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them, each expectation computed in its comment.  `LOFT_NO_PUSH_RUN=1` must answer
+// the same.  Pinned by tests/push_window.rs: r1, r2, r3 and r5 one append each.  r4 is NOT
+// a run: an append to a record's vector field lowers through `(R-FieldAppend)`, which the run
+// recogniser does not read (predicted a run; measured none).  r7's pushes stand in a loop
+// that holds the vector's push header, which keeps them.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-21) — the run's `append_bytes` appending
+// one byte short failed r1 on --native (recorded with the rewrite, 99f77b41f).
+
+fn tot(v: const vector<u8>) -> integer { t = 0; for x in v { t += x; } t }
+
+// r1 — a local vector: 1 + 2 + 250 = 253.
+fn r1() {
+  v: vector<u8> = [];
+  v += [1]; v += [2]; v += [250];
+  println("r1 {len(v)} {tot(v)} {v[2]?}");
+  assert(len(v) == 3 && tot(v) == 253 && v[2]? == 250, "r1");
+}
+
+// r2 — the return buffer, cbor's `head` shape: 1000 = 3 * 256 + 232, then 7: [3, 232, 7].
+fn r2_mk(a: integer) -> vector<u8> {
+  b: vector<u8> = [];
+  b += [(a / 256) & 255]; b += [a & 255]; b += [7];
+  b
+}
+fn r2() {
+  v = r2_mk(1000);
+  println("r2 {len(v)} {tot(v)} {v[0]?} {v[1]?}");
+  assert(len(v) == 3 && tot(v) == 242 && v[0]? == 3 && v[1]? == 232, "r2");
+}
+
+// r3 — a run that grows the vector: 10 elements 0..9 (sum 45), then 100..104 (sum 510).
+fn r3() {
+  v: vector<u8> = [for i in 0..10 { i }];
+  v += [100]; v += [101]; v += [102]; v += [103]; v += [104];
+  println("r3 {len(v)} {tot(v)} {v[14]?}");
+  assert(len(v) == 15 && tot(v) == 555 && v[14]? == 104, "r3");
+}
+
+// r4 — a vector field of a record: 9 + 8 + 7 = 24, the sibling field untouched.
+struct RB { tag: integer, bytes: vector<u8> }
+fn r4() {
+  r = RB { tag: 5, bytes: [] };
+  r.bytes += [9]; r.bytes += [8]; r.bytes += [7];
+  println("r4 {r.tag} {len(r.bytes)} {tot(r.bytes)}");
+  assert(r.tag == 5 && len(r.bytes) == 3 && tot(r.bytes) == 24, "r4");
+}
+
+// r5 — signed bytes, stored biased: -1 - 128 + 127 = -2.
+fn r5() {
+  v: vector<i8> = [];
+  v += [-1]; v += [-128]; v += [127];
+  t = 0;
+  for x in v { t += x; }
+  println("r5 {len(v)} {t} {v[1]?}");
+  assert(len(v) == 3 && t == -2 && v[1]? == -128, "r5");
+}
+
+// r7 — two pushes in a loop body that holds the vector's push header: not a run.  i sums 4950;
+// (3i) & 255 sums 3 * 3655 = 10965 for i in 0..=85 and 3 * 1295 - 14 * 256 = 301 above: 16216.
+fn r7() {
+  v: vector<u8> = [];
+  for i in 0..100 { v += [i & 255]; v += [(i * 3) & 255]; }
+  println("r7 {len(v)} {tot(v)}");
+  assert(len(v) == 200 && tot(v) == 16216, "r7");
+}
+
+fn main() {
+  r1(); r2(); r3(); r4(); r5(); r7();
+  println("push run ok");
+}

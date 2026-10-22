@@ -273,8 +273,9 @@ also the canonical pattern for any single-collection on-disk state.
 
 | Function | Description |
 |----------|-------------|
-| `store_persist_bind(h: hash, path: text) -> boolean` | Re-roots the Store backing `h` at a file at `path`.  Fresh-path branch: snapshots the current bytes (padded to ≥1024 words with a valid tail-free block), writes them, and mmaps the file.  Existing-path branch: opens the file via mmap and adopts its contents (discarding the in-memory state at that slot) — unless the `.dschema` beside it records a different layout than `h`'s type, which is refused as `store_load` refuses it.  Returns `false` on any I/O / format / layout error — no panic; callers fall back to JSON or rebuild. |
+| `store_persist_bind(h: hash, path: text) -> boolean` | Re-roots the Store backing `h` at a file at `path`.  Fresh-path branch: snapshots the current bytes (padded to ≥1024 words with a valid tail-free block), writes them, and mmaps the file.  Existing-path branch: opens the file via mmap and adopts its contents (discarding the in-memory state at that slot).  A file whose `.dschema` records an older layout than `h`'s type is upgraded in place first: converted, every added field filled by its default, written beside the old file and swapped in, with the original kept as `<path>.old` (a later upgrade replaces that `.old`).  A change the upgrade cannot carry is refused, as `store_load` refuses it.  Returns `false` on any I/O / format / layout error — no panic; callers fall back to JSON or rebuild. |
 | `store_persist_copy(r: reference, path: text) -> boolean` | Writes an image of `r` laid out for PAGING and leaves the live collection where it is — nothing moves, so every reference stays valid, and the file is NOT bound.  The image is REBUILT, so each record sits in its collection's own order (key order for a `trie`), which is what makes a paged prefix query cheap: measured 4.9 requests / 0.32 MB against a bound image's 19.9 / 1.28 MB on a 74,692-word vocabulary.  Sized to its content, with none of the growth slack a bound file keeps.  Use it for a file another program or a browser will READ; use `store_persist_bind` for a store you go on writing to. @PLN134 |
+| `Release` | A release number, `major.minor.patch`, ordered by number (`10.0` after `9.0`); `Release { major: 2, minor: 1 }` builds one, and `v < "2.0"` compares against the release a text spells.  What an `upgrade(from: Release, old: O, item: T)` routine is told the stored data came from — DATABASE.md § A store that skipped releases. |
 
 Usage pattern:
 
@@ -301,9 +302,16 @@ h += Entry { key: 7, value: 700 };
   shape `(store_nr, rec, pos)` stays valid, only the underlying
   buffer moves from anonymous heap to mmap.
 - When `path` exists, the call first compares the layout recorded
-  in `<path>.dschema` with `h`'s type.  A different layout — a
-  struct that gained, lost or changed a field — is refused: the
-  call returns `false`, prints what differs on stderr, and leaves
+  in `<path>.dschema` with `h`'s type.  An older layout — a struct
+  that gained, lost or widened a field — is upgraded in place: the
+  store is converted, every added field takes its default (which may
+  read the record through `$`), the new image and its `.dschema` are
+  written beside the old pair and swapped in, and the old pair is
+  kept as `<path>.old` / `<path>.old.dschema`, replacing an earlier
+  `.old`.  The file is replaced only after every field holds its
+  value.  A change the upgrade cannot carry (one that looks like a
+  rename, a narrowed number, a changed key with duplicates) is
+  refused: the call returns `false`, says why on stderr, and leaves
   the file, its `.dschema` and `h` untouched.  A file without a
   `.dschema` is not checked.  Otherwise the call invokes
   `Store::open(path)`, which validates the loft Store signature and

@@ -441,7 +441,9 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  candidate under — a scalar or a text, a local that owns its own
                  store, a parameter while the root is no return buffer, a view of a
                  plain NO-HEAP record (it reads fields and never a length, and the
-                 window's slots lie past every element it can name); a vector view
+                 window's slots lie past every element it can name), a `File` named
+                 only as the file of a scalar read (R-InPlace) beside roots that are
+                 vectors of scalars; a vector view
                  taken before the loop fails it — and every other statement, and
                  every pushed value, GROWS no store (the header hoist's own
                  allowances: an in-place scalar set, a discharge buffer's mint and
@@ -495,13 +497,15 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  record's length once after every copy of the loop.  THE RUN
                  CLAUSE: a STRAIGHT-LINE run of k >= 2 byte appends to one vector
                  path, `v += [a]; v += [b]; …` with only line markers between them,
-                 is one reservation of k and one window, closed after the last —
-                 the loop's window over a count known statically.  No pushed value
+                 is ONE append of the k bytes, built in a stack array — the vector's
+                 header resolved once, not once per pre-allocation, reservation,
+                 header and close.  No pushed value
                  may read v's root or any non-scalar local (a view could reach v's
                  store and read the length the window has not written back), nor
                  call anything but an operator; a path a loop already holds a push
-                 header or window for keeps its pushes, and a vector with no record
-                 runs the appends as they stand.
+                 header or window for keeps its pushes, and a vector with no record,
+                 a reference at position 0 or a locked store (the append does not ask
+                 the lock, @FR-H-WriteLocked) runs the appends as they stand.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop
@@ -681,7 +685,12 @@ A parameter can name the return buffer the caller offered, so beside a pushed re
 parameter read declines — except a vector of plain scalars whose element storage differs from
 the pushed vector's (`Type::same_element_storage`, `hoist::scalar_vector_apart`): `(C-Refl)`
 decides on storage, so the two are never one vector, and neither names a store through its
-elements (cells s1–s4).
+elements (cells s1–s4).  So does a `File` parameter the body names only as the file of a
+scalar read (`(R-InPlace)`'s read clause, `hoist::names_beside_file_reads`), while every root
+is a vector of scalars: the read writes the File record's own cursor fields in place, never a
+vector's length, and claims nothing, and a record is never an element of such a vector.  Any
+other mention — `bf#next`, `bf` handed to a call — keeps the header (cells f1–f4; the
+crawler's `binary_read` −29.4 %).
 Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 `hoist::push_window_ok`, `Output::push_reserve` / `push_window_close` /
 `active_push_window`, the `Value::Loop` emission in `emit.rs` (the order), the registry's
@@ -2686,8 +2695,8 @@ exactly as the append copies them.  No guard is needed: the conditions are all s
                  a byte or short type 1 or 2 with the sign its range gives, a 4-byte type
                  signed — reads through the same format test, `#next` and handle as the
                  generic read, decoding W = n bytes at sign S fixed at the site, the bytes
-                 taken by value.  A short read leaves t unchanged and advances `#next` by
-                 what arrived, as the generic read does.  `boolean`, `character`, text, a
+                 taken by value.  A short read leaves t unchanged and `#next` where it
+                 was, as the generic read does.  `boolean`, `character`, text, a
                  float, a collection, an n that is not τ's width and a slot that is not an
                  `i64` local keep the generic read.  Native only; the interpreter's read is
                  the reference the guard compares against.
@@ -2776,7 +2785,21 @@ the IR rewrites.  Guard `tests/scripts/a-file-read-loop-holds-its-cursor.loft`, 
                  `clear` or a free, and each variable serving it — the store a local is minted
                  into, the save of a work buffer's incoming value — has no other mention.
                  Nothing of it crosses into the store, so this instance needs no plan of the
-                 whole program and is made in every native build.
+                 whole program and is made in every native build.  Instance 4, a RECORD OF
+                 RECORD VECTORS: a struct whose every field is a vector of a struct of
+                 scalar fields (`integer`, `float`, `boolean`) is one byte buffer per field
+                 in the element's own layout, kept across a loop's iterations, when it is a
+                 local of a body (the OWNER) whose every mention is its null init, its mint,
+                 a field emptied, a PUSH GROUP — the element minted on a field, every field
+                 of the element written once, the element finished, the element named by
+                 nothing else — a field's length, an argument of a TWIN, or its free, and it
+                 reaches at least one twin.  A twin `n_<f>__apr` takes the parameter as a
+                 reference to the value; it exists when every mention of that parameter is a
+                 field's length, an argument of a twin (greatest fixpoint over the calls),
+                 or the copy of an APPEND GROUP — the BOUNDARY, where the bytes are written
+                 into fresh blocks of the appended element, or under `(R-HandOver)`'s
+                 rotate clause into the oldest element's blocks.  Nothing writes the
+                 parameter and nothing returns it.
 ```
 
 **In words.**  The store protocol is for data that lasts.  A matrix built, multiplied and
@@ -2796,6 +2819,16 @@ tier has no plan, since a twin's call would run the native body of a function fl
 interpreter.  A twin and a body holding a region are emitted with the vector hoists off, so no
 loop in them plans a header, a base or an address on a variable the apart value replaced.
 
+Instance 4 is the frame-local half of `(R-HandOver)`'s division: a value BUILT each iteration,
+read by one callee and copied into a collection that keeps it, never needs a record of its own.
+Its element bytes are the bytes the store would hold — each field written by the op the store
+path runs, in the element's layout — so the boundary is a byte copy into the blocks it claims
+(or reuses), and no field is left to a default: a push group that does not write every field
+of the element declines, because the store path would have prefilled it.  The buffers are
+cleared, not freed, at the mint of each iteration, so after the first iterations the build
+allocates nothing.  Priced on dryopea `truncate_to` (the driver's `e` and `history_push`
+edited by hand): 44.2 → 16.6 µs, −62.5 %, ≈ 1.2× the Rust twin.
+
 An inline vector answers what the store's vector answers — empty at its init, an index from
 the end, an index out of range reported or, for `v[i]?`, null — and its loops plan no header,
 push header or base on it: the loop verdict (`Output::compute_loop_hoist`) drops every path
@@ -2804,8 +2837,16 @@ rooted at it, and a loop whose only growth was such a vector grows no store.
 **BUILT** (`generation::apart_value::plan` the gate, `generation::apart_emit` the twins, the
 regions and the boundary, runtime `codegen_runtime::ap_get_f64` / `ap_get_f64_or_null` /
 `ap_set_f64` / `ap_store_f64`; instance 3: `generation::apart_vector::roles` the gate, runtime
-`codegen_runtime::ApVec`; `LOFT_NO_APART=1` both, `LOFT_NO_APART_VECTOR=1` instance 3,
-`LOFT_TRACE_APART=1`).  Not admitted yet: an
+`codegen_runtime::ApVec`; instance 4: `generation::apart_records::plan` the gate,
+`generation::apart_records_emit` the owners, the `__apr` twins and the boundary, runtime
+`codegen_runtime::AprVec`, `Stores::apart_write_fresh` and `Stores::rotate_from_parts`;
+`LOFT_NO_APART=1` all, `LOFT_NO_APART_VECTOR=1` instance 3, `LOFT_NO_APART_RECORDS=1`
+instance 4, `LOFT_TRACE_APART=1`).  Instance 4 measured on dryopea `truncate_to`: 43.8 →
+25.6 µs (−41.7 %, ≈ 1.9× the Rust twin); `reload_and_record` −3.0 %.  The hand price's 16.6
+µs inlined the boundary with the layout's constants; the built form asks the element type's
+plan at run time.  Instance 4's guard `tests/scripts/158-apart-records.loft`, its pins
+`tests/apart_records.rs`; like instance 2 it is made only where no live tier ships
+(`--native-release`).  Not admitted yet: an
 element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
 text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
 Guards `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:
@@ -4171,6 +4212,10 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  witnessed free or copying with the source freed, so a callee whose other exit
                  writes the buffer is fine — the witness settles which store came back per
                  execution.
+                 A hand-over of a NULL root is null: the copy a `return` makes of `o.inner`
+                 tests its source, and the rewrite reads that test where it admits the exit, so
+                 the field of a record that is not there is not there on either road (N-Road,
+                 loft#2006).
   (R-InPlaceLiteral) an assignment of a record LITERAL to an existing place — an
                  element `v[i] = R { … }` or a field `o.f = R { … }` — writes the
                  literal's fields into that place instead of building the literal in
@@ -5923,7 +5968,7 @@ between binding and P (declines); x formatted once besides the compare (declines
 on two branches (declines); s non-ASCII with the P in a loop (the written form, built
 once — `LOFT_ALLOC_SITES` counts one build).
 
-### A text local built in its work buffer is a view of it
+### A text local built in its work buffer is a view of it — PROPOSED
 
 ```
   (R-WorkView)   a text LOCAL x whose every binding is the value of a text BUILD
@@ -6360,6 +6405,157 @@ Its planted defect hands every part of an entry at the key's position; the pin
 `tests/decode_structure.rs` holds the roots, the twins and the switch.  The side-by-side run
 of both forms under `LOFT_HOIST_VERIFY=1` the clause names is not built: the switch A/B and
 the interpreter are its falsifiers.
+
+### A dying value's blocks are handed to the value built after it
+
+```
+  (R-HandOver)   in one function, a VECTOR v that DIES at a statement D — a local rebound
+                 or leaving scope, the field of a record that is dropped by a keep, a
+                 remove or a truncation — and a vector w of the same element type BUILT at
+                 a statement B in v's store, from empty: when D precedes B on every path,
+                 nothing between them reads v, and v's owner is its only holder, w TAKES
+                 v's block — the reference moves to w's slot, the owner's slot is set to 0
+                 so its release frees nothing there, and w's length is set to 0 — and w's
+                 elements are appended as written, growing the block where its capacity
+                 does not hold them.  A record of vectors hands each vector field on in
+                 turn.  THE ROTATE CLAUSE: in `v += [n]; S; drop the first k of v`, S
+                 reading no element of v and k answered by `len(v)` alone, the pair is
+                 decided at run time before the append: where k would be exactly the count
+                 appended, v[0]'s vectors are handed to n's slot, n's elements are appended
+                 into them, and v's slots rotate left by that count; otherwise the
+                 statements run as written.
+```
+
+**In words.**  A vector released and a vector of the same element type claimed, back to back,
+is the store handing a block to itself through its free lists — about 290 instructions a pair
+where the hand-over is three writes: the reference moved, the old slot zeroed, the length
+reset.  Nothing about the block's contents is assumed: the length is 0, so the old elements
+are past it and are no part of the new value (`@FR-H-Claim`), and every element w holds is one
+the append writes.  The capacity is the only thing carried over; a w longer than it grows as
+any append grows.  Rust gets it from ownership (a `Vec` moved out of a dropped slot and
+`clear()`ed, or `clone_from`); here the compiler proves it, because the death and the birth sit
+in one function and the dying vector has one holder.  The ROTATE clause covers the
+bounded-history shape — append the newest, drop the oldest — where the death comes AFTER the
+birth in the source: when the drop takes exactly what the append added, both orders leave the
+same vector, so the oldest entry's vectors take the newest one's elements and the slots rotate
+instead of shifting.
+
+**The rotate clause, as built** (`src/generation/hand_over.rs`, `Stores::rotate_into`).  The
+site is the append group (`OpNewRecord` · a FRESH `OpCopyRecord` · `OpFinishRecord`), S, and
+`if K < len(h.F) { g(h, len(h.F) - K) }` where `g`'s body is null inits, early returns
+PROVED false at `n = 1, len = K >= 1`, ONE `(R-Compact)` keep `[n, len)` of its first
+parameter's field, and statements that touch neither the field nor a call.  The emission is
+
+```
+if stores.rotate_into(&h.F, &src, elem_tp, K) { S; g__nk(h, 1) } else { <the range as written> }
+```
+
+`rotate_into` admits when the vector holds exactly K elements of a type whose owners are plain
+vectors and nothing else, no block element 0 owns is in the referenced set, and `src` is a
+record outside the vector; it copies `src`'s bytes into element 0, its vectors into element 0's
+blocks (grown by `resize` where too small, freed where `src`'s is empty, claimed where element
+0's is), and rotates the slots left by one.  `g__nk` is `g`'s body without its keep statement —
+the rest of `g` (`h.cursor -= n`) runs.  A source INSIDE the vector cannot arrive here:
+`history_push(t, t.es[1])` is refused at compile time (`push` grows `h` while `e` references
+into it), and `rotate_into` declines it as a defence.
+
+**Measured** (dryopea `truncate_to`, interleaved on one core, same runtime): 52.1 → 43.2 µs,
+**−17.1 %**, hash unchanged; the routine looped alone 1.01 → 0.85 s.  The hand price, −34 %,
+also removed the `truncate_to` call (a no-op on a steady push) and the build of `e`, which the
+clause leaves.  The truncating take that preceded it measured a loss and is not built
+(`rewrites-history.md` § 2026-10-21).
+
+**What it may not do — the limitations** (written for the general rule; the rotate clause
+meets each by the run-time test above).
+
+- **One function, one store.**  v and w meet in one function body, and w is built in v's
+  store.  A value that dies in one CALL and a value of its type built in the NEXT one
+  (`truncate_to`'s oldest entry, dropped by push N, against push N+1's append) is out of
+  reach: handing the blocks across the calls needs something to hold them between, a second
+  kind of object `@C125` rules out.  The rotate clause exists because inside one call the
+  same pair is reachable.
+- **Death before birth, or a reorder the clause proves.**  Outside the rotate clause, D must
+  precede B on every path.  The rotate clause proves its reorder from the shape alone (no
+  element read between, the count from the length) and still decides at run time.
+- **The only holder.**  v may have no outstanding view (`(R-View)`, a borrowed element) and
+  no stored reference: a record a stored reference named keeps its position
+  (`@FR-H-Removed`, the store's tombstones), so a block in the store's referenced set is
+  released and w claims, as written.  The run-time test is that set's membership.
+- **Vectors, of scalars or plain records.**  A vector whose elements own no heap is handed on
+  whole; one whose elements own vectors or texts would hand on a block holding references the
+  length reset abandons, so it declines until the elements are released first (their own
+  hand-over is the next step).  Keyed collections are out: their tables are read through
+  hashes and links a length does not reset.
+- **No holder outlives the pair.**  The hand-over happens inside the one runtime call that
+  makes it; a reused block is never free and never unowned, so no store walk, leak count or
+  image sees a new state.
+
+**The work to admit it into routines.**
+
+1. **The death and birth sites, named in the IR.**  Deaths: `OpFreeRef` of a local, a
+   rebind's release, `(R-Compact)`'s keep and its dropped range, a remove, a truncation.
+   Births: `OpCopyRecord` into a `COPY_FRESH_DEST` slot, a literal mint, a
+   `(R-RefillBuffer)` refill.  One pass in the scope phase pairs them by element type and
+   root store, with dominance (D before B on every path) and a use scan (no read of v
+   between).
+2. **Callee effects at the caller.**  `history_push`'s death is inside `drop_oldest` and
+   `truncate_to`, calls whose bodies are one `(R-Compact)` keep each.  The pass needs the
+   keep visible at the call: the callee inlined (`(R-InlineLeaf)` declines it today: "a
+   non-scalar variable"), or a summary of the callee as `keep range [k, len) of
+   h.entries`.
+3. **The runtime half.**  None new for the hand-over itself: the reference move, the zeroed
+   slot and `len = 0` are three writes, and the append is today's.  The rotate needs
+   `keep_vector_range`'s rotate form, which moves the dropped slot's bytes to the tail
+   instead of releasing what they own, and the referenced-set test (`@FR-H-Removed`) on the
+   handed block.
+4. **The rotate recogniser.**  `v += [n]; S; if len(v) > K { drop_first(v, len(v) - K) }`
+   with S scalar-only on v: the guard `len(v) == K` (and, here, the cursor test that the
+   truncation drops nothing) computed before the append, the hand-over form in its arm, the
+   statements as written in the other.
+5. **Guards.**  Cells: a view into the dying entry held past D (declines); a stored
+   reference to it (tombstone, declines); a w longer than the handed capacity (the append
+   grows it); a vector whose elements own heap (declines);
+   a drop count that is not the appended count (rotate declines); the interpreter as
+   oracle, `LOFT_POISON=1` and `LOFT_POISON_CLAIM=1`, the leak check, and the census showing
+   the claims gone.  Switch `LOFT_NO_HAND_OVER=1`; trace `LOFT_TRACE_HAND_OVER=1` naming
+   each pair admitted or declined.
+
+**The division (an owner ruling).**  The vector hand-over is this rule's canonical case:
+storage whose size is only known at run time, kept across statements, where the block and its
+capacity are worth carrying from the dying value to the new one.  It may serve more shapes,
+but a separate FIXED-SIZE object — a record whose fields are scalars, or a value whose size the
+type fixes — is not one of them: it lives on the stack (`(R-Apart)`), where it needs no block
+to hand over at all.
+
+**Beside `(R-Apart)` — the store against the stack.**  The limits above are a stack slot's:
+one function, the only holder, the old value dead before the new one is built.  They describe
+the hand-over PAIR, not the value whose blocks change hands, and the two rules split on that.
+A value that lives and dies inside one frame — built, read, handed down, never kept — needs no
+store at all: `(R-Apart)` holds it in the frame (no claim, no release, no DbRef, no bounds test
+per access) and converts it at its first boundary.  A value that outlives the frame — an entry
+a collection keeps across calls — must be in a store, and only there can its blocks be handed
+on.  In `truncate_to` both occur: the driver's `e` is frame-local (built each iteration, read by
+`history_push`, copied into the timeline, refilled) and is a stack candidate, while the
+timeline's entries live fifty pushes and are this rule's.  `e` claims nothing today
+(`(R-RefillBuffer)`) but its build through the store still costs ~530 instructions a push
+(~15 %: headers resolved per push, the refill's clears, the copy's reads of `e`'s blocks); held
+apart it is a few writes, and the conversion is the copy into the timeline the rule already
+makes (*est.* −12–15 % beside the hand-over's −34 %, ≈ 2.2–2.3×).  `(R-Apart)` does not reach `e`
+because its instances are `float` vectors built by fixed-length literals; a record of vectors
+of RECORDS, built by pushes, needs the instance-3 form (an inline buffer with a heap spill) for
+record elements and a twin of `history_push` taking the apart value.  `panel_build` is the
+purer case: its whole panel is frame-local (built, hit-tested, read, rebound each frame), so
+the ~19 claims and ~19 deletes a frame vanish with `(R-Apart)` alone — once it holds texts and
+vectors of texts, which it does not yet.
+
+**Status: the rotate clause BUILT** (switch `LOFT_NO_HAND_OVER=1`, trace
+`LOFT_TRACE_HAND_OVER=1`; guard `tests/scripts/158-rotate.loft` — every cell hand-computed, the
+interpreter as oracle, both switch states under `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STRICT_STORES` and the leak check, falsified by sabotage; pin `tests/hand_over_rotate.rs`).
+The general hand-over (a death before a birth, paired by the scope phase) stays PROPOSED, and
+for the reason the truncating take measured: on the exact-size free lists a release followed by
+a claim of the same plan already reuses the block, so a hand-over pays only where it also
+removes bookkeeping — the slot claim, the record finish, the shift — as the rotate does.
 
 ### Proposed clauses on existing rules
 

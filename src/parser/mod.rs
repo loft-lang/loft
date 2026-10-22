@@ -280,6 +280,12 @@ pub struct Parser {
     ///
     /// One retry, never two: the flag both requests the second parse and stops it asking again.
     pub(crate) inplace_hint_declined: bool,
+    /// loft#2117 — the literal about to be parsed again is built apart and copied into its
+    /// PROJECTION place (`o.f = S { … }`) rather than written into it: a field of it built
+    /// inside a collection field read the place, whose collection headers the in-place road
+    /// zeroes before any field value runs.  Taken (and cleared) by the literal it is meant
+    /// for, so a literal nested inside keeps its own road.
+    pub(crate) inplace_place_declined: bool,
     /// The local a literal is being rebuilt into, while one of its COLLECTION members is
     /// parsed, or `u16::MAX`.  Such a member is written through its field after the record is
     /// re-initialised, so a read of the local inside it would read the cleared record
@@ -649,6 +655,15 @@ pub struct Parser {
     /// `byte_code`) and builds + loads the cdylib (after `byte_code`).  A library's
     /// functions are identified by `def.position().file.starts_with(pkg_dir)`.
     pub pending_native_compile: Vec<String>,
+    /// @PLN199 A2 — the standard library functions whose compiled bodies the driver points
+    /// their calls at after parsing (`compiled_stdlib::mark`), named here by the driver
+    /// before the program is read, so a call to one gets what a bridged call needs
+    /// ([`Parser::crosses_text_bridge`]).  Empty for a run that compiles the program.
+    pub compiled_bridges: std::collections::HashSet<String>,
+    /// @PLN199 — will a `use`d library's calls cross the shared-store bridge?  False when the
+    /// driver compiles the whole program, or runs every library interpreted
+    /// (`LOFT_NO_NATIVE_LIBS`): no call then needs [`Parser::crosses_text_bridge`]'s temporary.
+    pub library_bridges: bool,
     /// @PLN119 arc A — libraries that declared `[library] placement = "process"`,
     /// as (library name, package dir).  Recorded during `use` processing; the
     /// driver (`main.rs`) starts one worker per entry after `scopes::check` and
@@ -1340,6 +1355,11 @@ pub struct Parser {
     pub(crate) init_field_tracking: bool,
     /// #91: field names accessed via $ during the current init(expr) parse.
     pub(crate) init_field_deps: Vec<String>,
+    /// @PLN196 step 9 — the paths of the stored fields the field default being parsed reads
+    /// through `$` (`label`, `inner.label`), and each read already built with its path, so a
+    /// read of a read extends it.
+    pub(crate) default_paths: Vec<String>,
+    pub(crate) default_path_reads: Vec<(Value, String, u32)>,
     /// Whether the init(expr) being parsed mentions `$` at all.
     ///
     /// Separate from [`Self::init_field_deps`], which records the RESOLVED field a `$.x`
@@ -1689,6 +1709,7 @@ pub(super) mod builtins;
 pub(super) mod collections;
 pub(super) mod control;
 pub(super) mod definitions;
+pub use definitions::UpgradeRoutineDef;
 pub(super) mod dispatch;
 pub(super) mod expressions;
 pub(super) mod fields;
@@ -1830,6 +1851,7 @@ impl Parser {
             in_format_expr: false,
             prefix_operand: false,
             inplace_hint_declined: false,
+            inplace_place_declined: false,
             rebuild_watch: u16::MAX,
             rebuild_watch_hit: false,
             in_tuple_lhs: false,
@@ -1950,6 +1972,8 @@ impl Parser {
             pending_native_libs: Vec::new(),
             native_lib_regs: Vec::new(),
             pending_native_compile: Vec::new(),
+            compiled_bridges: std::collections::HashSet::new(),
+            library_bridges: true,
             pending_placed_libs: Vec::new(),
             pending_pkg_deps: Vec::new(),
             auto_use_scan_cache: std::collections::HashMap::new(),
@@ -2036,6 +2060,8 @@ impl Parser {
             referenced_assigned: crate::fxhash::FxHashSet::default(),
             init_field_tracking: false,
             init_field_deps: Vec::new(),
+            default_paths: Vec::new(),
+            default_path_reads: Vec::new(),
             init_reads_record: false,
             dollar_record: None,
             upgrade_fills: false,

@@ -33,6 +33,7 @@
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
+use crate::keys::DbRef;
 pub(crate) use crate::native_gate::is_text_work_buffer;
 use crate::platform::process::{Program, Spawn};
 use std::collections::{BTreeSet, HashSet};
@@ -517,19 +518,63 @@ pub fn probe_and_mark_exports(
 /// [`mark_exports`] only on success.
 #[must_use]
 pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
-    let candidates: HashSet<u32> = (0..data.definitions())
+    let candidates = library_candidates(data, pkg_dir);
+    crate::native_gate::shared_store_dispatchable(data)
+        .intersection(&candidates)
+        .copied()
+        .collect()
+}
+
+/// The functions of the library at `pkg_dir` a script can name and call — the candidates
+/// [`library_export_set`] narrows to those that compile.
+///
+/// @PLN199 E1 — a function already bound to a native symbol is not one: a body-less
+/// `#native` declaration walks clean through the gate (its body is `Null`), and exporting a
+/// `loft_shared_` bridge for it would replace the binding with a bridge to a function that
+/// has no loft body — the @PLN24 hazard, for `#native` instead of `#c`.  A symbol that IS
+/// a `loft_shared_` bridge was set by an earlier marking of this same set.  A `#c`
+/// binding is left out for the same reason: its C symbol is its implementation, so it is
+/// neither compiled nor interpreted, and the trace does not list it as either.
+fn library_candidates(data: &Data, pkg_dir: &str) -> HashSet<u32> {
+    (0..data.definitions())
         .filter(|&d| {
             let def = data.def(d);
             matches!(def.def_type(), DefType::Function)
                 && def.pub_visible
                 && !is_synthetic_name(def.name())
+                && (def.native().is_empty() || def.native().starts_with("loft_shared_"))
+                && def.c_sig.is_empty()
                 && crate::file_access::is_under(def.position().file.as_str(), pkg_dir)
         })
-        .collect();
-    crate::native_gate::shared_store_dispatchable(data)
-        .intersection(&candidates)
-        .copied()
         .collect()
+}
+
+/// `LOFT_TRACE_NATIVE_GATE=1` — how the library at `pkg_dir` splits: how many of the
+/// functions a script can call run compiled, and for each that stays interpreted, the rule
+/// that kept it there (`native_gate::explain_interpreted`).  A library's build reports only
+/// failure, so without this a function left out ran slower in silence.
+pub fn trace_partition(data: &Data, pkg_dir: &str) {
+    let mut names: Vec<(String, Option<String>)> = library_candidates(data, pkg_dir)
+        .into_iter()
+        .map(|d| {
+            (
+                data.def(d).name().to_string(),
+                crate::native_gate::explain_interpreted(data, d),
+            )
+        })
+        .collect();
+    names.sort();
+    let compiled = names.iter().filter(|(_, why)| why.is_none()).count();
+    let pkg = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| pkg_dir.to_string());
+    eprintln!(
+        "[native-gate] {pkg}: {compiled} of {} callable functions compiled",
+        names.len()
+    );
+    for (name, why) in names {
+        if let Some(why) = why {
+            eprintln!("[native-gate]   `{name}` interpreted — {why}");
+        }
+    }
 }
 
 /// @PLN11 Arc N / N3 — mark a `use`d library's **public API** functions native.
@@ -681,6 +726,240 @@ impl LibArg {
     };
 }
 
+/// @PLN199 C0 — the one channel from the interpreter into a library cdylib it loaded.
+///
+/// The cdylib links its OWN copy of libloft: `Stores`, `DbRef` and [`LibArg`] have the same
+/// layout on both sides (the same rlib builds both), but every `static` and `thread_local!` in
+/// libloft exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
+/// sides must agree on therefore crosses as a function of the HOST, reached through this
+/// table, which the host hands every generated cdylib once, at load (`c_libs::load_one`
+/// calls its `loft_shared_init`).
+#[repr(C)]
+pub struct HostTable {
+    /// [`HOST_ABI`] of the host that filled the table.
+    pub abi: u32,
+    /// Register a generator the cdylib built in the HOST's coroutine table and write its
+    /// handle into `ret.dbref`.  `coro` is a `Box<Box<dyn LoftCoroutine>>`, thinned.
+    pub coroutine_adopt:
+        unsafe extern "C" fn(stores: *mut Stores, coro: *mut std::ffi::c_void, ret: *mut LibArg),
+    /// @PLN199 C2 — call the function value `(d_nr, closure.dbref)` with the `n` visible
+    /// arguments at `args`, in the interpreter running this bridge call, writing its result
+    /// into `ret` (`State::call_back`).
+    /// @PLN199 D2 — the host's coroutine table, which a library cdylib's own copy of
+    /// `codegen_runtime` forwards to once installed, so a generator handle means the same
+    /// frame on both sides.
+    pub coroutines: crate::codegen_runtime::CoroutineHost,
+    pub call_ref: unsafe extern "C" fn(
+        stores: *mut Stores,
+        d_nr: u32,
+        closure: *const LibArg,
+        args: *const LibArg,
+        n: usize,
+        ret: *mut LibArg,
+    ),
+}
+
+/// The [`HostTable`] layout version; a cdylib refuses a table of another.
+pub const HOST_ABI: u32 = 4;
+
+/// The table this process hands to every library cdylib it loads.
+pub static HOST_TABLE: HostTable = HostTable {
+    abi: HOST_ABI,
+    coroutine_adopt: host_coroutine_adopt,
+    coroutines: HOST_COROUTINES,
+    call_ref: host_call_ref,
+};
+
+/// @PLN199 D2 / D3 — the host's coroutine table as a library cdylib sees it: the runtime's
+/// own (`CoroutineHost::HERE`) for a compiled generator, and the interpreter running this
+/// thread's bridge call for one of the interpreter's (`COROUTINE_STORE`), which a library is
+/// handed only through such a call.
+const HOST_COROUTINES: crate::codegen_runtime::CoroutineHost =
+    crate::codegen_runtime::CoroutineHost {
+        alloc_held: crate::codegen_runtime::CoroutineHost::HERE.alloc_held,
+        alloc: crate::codegen_runtime::CoroutineHost::HERE.alloc,
+        retain: host_coroutine_retain,
+        free: host_coroutine_free,
+        next_i64: host_coroutine_next_i64,
+        next_into: crate::codegen_runtime::CoroutineHost::HERE.next_into,
+        next_dbref: host_coroutine_next_dbref,
+        next_text: host_coroutine_next_text,
+        exhausted: host_coroutine_exhausted,
+    };
+
+/// The interpreter an interpreted generator handle belongs to, or `None` for a compiled one.
+fn interpreter_for(gen_ref: DbRef) -> Option<&'static mut crate::state::State> {
+    if gen_ref.store_nr != crate::database::COROUTINE_STORE {
+        return None;
+    }
+    let state = crate::extensions::host_state();
+    assert!(
+        !state.is_null(),
+        "an interpreted generator was advanced from compiled code outside a call from the \
+         interpreter"
+    );
+    Some(unsafe { &mut *state })
+}
+
+fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
+    let Some(st) = interpreter_for(gen_ref) else {
+        return (crate::codegen_runtime::CoroutineHost::HERE.next_i64)(gen_ref, stores);
+    };
+    // A one-byte yield is a boolean's storage byte; anything else an `i64` image.
+    let yielded = st.advance_for_native(gen_ref);
+    let v = yielded.as_slice();
+    match v.len() {
+        0 => crate::codegen_runtime::COROUTINE_EXHAUSTED,
+        1 => i64::from(v[0]),
+        _ => i64::from_ne_bytes(v[..8].try_into().unwrap_or_default()),
+    }
+}
+
+fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
+    let Some(st) = interpreter_for(gen_ref) else {
+        return (crate::codegen_runtime::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
+    };
+    let yielded = st.advance_for_native(gen_ref);
+    let v = yielded.as_slice();
+    if v.len() < std::mem::size_of::<DbRef>() {
+        DbRef::NULL
+    } else {
+        unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<DbRef>()) }
+    }
+}
+
+fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
+    let Some(st) = interpreter_for(gen_ref) else {
+        return (crate::codegen_runtime::CoroutineHost::HERE.next_text)(gen_ref, stores);
+    };
+    // The interpreter yields a `Str` into its own memory; the compiled consumer owns a copy.
+    let yielded = st.advance_for_native(gen_ref);
+    let v = yielded.as_slice();
+    if v.len() < std::mem::size_of::<crate::keys::Str>() {
+        return crate::store::STRING_NULL.to_string();
+    }
+    let s = unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<crate::keys::Str>()) };
+    s.str().to_string()
+}
+
+fn host_coroutine_exhausted(gen_ref: DbRef) -> bool {
+    match interpreter_for(gen_ref) {
+        Some(st) => st.coroutine_exhausted(&gen_ref),
+        None => (crate::codegen_runtime::CoroutineHost::HERE.exhausted)(gen_ref),
+    }
+}
+
+fn host_coroutine_retain(gen_ref: DbRef) -> DbRef {
+    match interpreter_for(gen_ref) {
+        Some(st) => st.coroutine_retain(gen_ref),
+        None => (crate::codegen_runtime::CoroutineHost::HERE.retain)(gen_ref),
+    }
+}
+
+fn host_coroutine_free(gen_ref: DbRef, stores: &mut Stores) {
+    match interpreter_for(gen_ref) {
+        Some(st) => st.free_coroutine(&gen_ref),
+        None => (crate::codegen_runtime::CoroutineHost::HERE.free)(gen_ref, stores),
+    }
+}
+
+/// [`HostTable::call_ref`] — the interpreter is the one `State::invoke_native` recorded for
+/// this thread's bridge call, or, on a compiled library's own worker thread, one made over
+/// that worker's stores (`parallel::with_worker_state`).
+unsafe extern "C" fn host_call_ref(
+    stores: *mut Stores,
+    d_nr: u32,
+    closure: *const LibArg,
+    args: *const LibArg,
+    n: usize,
+    ret: *mut LibArg,
+) {
+    let args = unsafe { std::slice::from_raw_parts(args, n) };
+    let closure = unsafe { (*closure).dbref };
+    let state = crate::extensions::host_state();
+    let result = if state.is_null() {
+        // A compiled library's own `par` worker: no interpreter runs on this thread, so one
+        // is made over the worker's stores for the call.
+        crate::parallel::with_worker_state(unsafe { &mut *stores }, |st| {
+            st.call_back(d_nr, closure, args)
+        })
+    } else {
+        unsafe { (*state).call_back(d_nr, closure, args) }
+    };
+    unsafe { *ret = result };
+}
+
+/// [`HostTable::coroutine_adopt`] — the generator's frame takes holds on its argument stores
+/// in the host's table (`@FR-G-Arg-Rebind`), exactly as a `--native` caller's
+/// `alloc_coroutine_held` does in its own.  The box was allocated in the cdylib by the same
+/// system allocator this process frees with.
+unsafe extern "C" fn host_coroutine_adopt(
+    stores: *mut Stores,
+    coro: *mut std::ffi::c_void,
+    ret: *mut LibArg,
+) {
+    let coro: Box<Box<dyn crate::codegen_runtime::LoftCoroutine>> =
+        unsafe { Box::from_raw(coro.cast()) };
+    let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
+    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, *coro);
+    unsafe { (*ret).dbref = handle };
+}
+
+/// The part of every library cdylib that receives the [`HostTable`]: `loft_shared_init`
+/// stores it, and `__host()` reads it.  Appended by [`generate_shared_cdylib_lib_rs`]; the
+/// compiled standard library, which is built INTO the host, swaps it for
+/// [`IN_HOST_TABLE_SRC`].
+pub(crate) const HOST_INIT_SRC: &str = "
+static __HOST: std::sync::OnceLock<&'static loft::native_lib::HostTable> = std::sync::OnceLock::new();
+
+#[unsafe(no_mangle)]
+pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable) -> u32 {
+    let table: &'static loft::native_lib::HostTable = unsafe { &*table };
+    if table.abi != loft::native_lib::HOST_ABI {
+        return 0;
+    }
+    let _ = __HOST.set(table);
+    loft::codegen_runtime::forward_coroutines(table.coroutines);
+    1
+}
+
+#[allow(dead_code)]
+fn __host() -> &'static loft::native_lib::HostTable {
+    __HOST.get().expect(\"a library cdylib is called only after its host ran loft_shared_init\")
+}
+
+/// The host's coroutine table, under the runtime's names: what the generator calls in a
+/// library cdylib, so a generator handle means one table on both sides.
+#[allow(dead_code)]
+mod __coro {
+    use loft::database::Stores;
+    use loft::keys::DbRef;
+    pub fn alloc_coroutine_held(cell: &std::cell::UnsafeCell<Stores>, coro: Box<dyn loft::codegen_runtime::LoftCoroutine>) -> DbRef { (super::__host().coroutines.alloc_held)(cell, coro) }
+    pub fn coroutine_retain(g: DbRef) -> DbRef { (super::__host().coroutines.retain)(g) }
+    pub fn coroutine_next_i64(g: DbRef, s: &mut Stores) -> i64 { (super::__host().coroutines.next_i64)(g, s) }
+    pub fn coroutine_next_into(g: DbRef, s: &mut Stores, d: &mut [i64]) -> bool { (super::__host().coroutines.next_into)(g, s, d) }
+    pub fn coroutine_next_dbref(g: DbRef, s: &mut Stores) -> DbRef { (super::__host().coroutines.next_dbref)(g, s) }
+    pub fn coroutine_next_text(g: DbRef, s: &mut Stores) -> String { (super::__host().coroutines.next_text)(g, s) }
+    pub fn coroutine_is_exhausted(g: DbRef) -> bool { (super::__host().coroutines.exhausted)(g) }
+}
+";
+
+/// [`HOST_INIT_SRC`] for code linked into the host itself: its table is the host's own.
+pub(crate) const IN_HOST_TABLE_SRC: &str = "
+#[allow(dead_code)]
+fn __host() -> &'static loft::native_lib::HostTable {
+    &loft::native_lib::HOST_TABLE
+}
+
+#[allow(dead_code, unused_imports)]
+mod __coro {
+    pub use crate::codegen_runtime::{
+        alloc_coroutine_held, coroutine_is_exhausted, coroutine_next_dbref, coroutine_next_i64,
+        coroutine_next_into, coroutine_next_text, coroutine_retain,
+    };
+}
+";
+
 /// Build the shared `--native` program (header + `init` + only the functions
 /// reachable from `entry` + their deps) for `data`.  Both cdylib generators
 /// append their export wrappers to this.
@@ -696,6 +975,7 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
         // gate drives the matching link flags in `build_shared_cdylib`, so codegen
         // and link never disagree.  No-op when the library uses no native package.
         out.native_cabi = native_cabi_link_enabled();
+        out.library_unit = true;
         // @PLN157 — a library cdylib is a SHIPPED binary: the lean tier, exactly as a
         // `--native-release` program.  Its functions run under the consumer's every
         // call, and the named per-call frame push was that lane's largest cost.
@@ -752,6 +1032,7 @@ pub fn generate_shared_cdylib_lib_rs(
     let mut entry: Vec<u32> = export_set.iter().copied().collect();
     entry.sort_unstable();
     let mut src = emit_program(data, stores, &entry);
+    src.push_str(HOST_INIT_SRC);
     let dups = crate::generation::duplicate_fn_names(data);
     for &d in &entry {
         src.push('\n');
@@ -969,9 +1250,9 @@ fn shared_bridge_wrapper(
             }
             crate::native_gate::BridgeAttrKind::Marshal => {
                 let ty = rust_type(&a.typedef, &Context::Argument);
-                let read = bridge_read(&a.typedef, &format!("a[{slot}]"));
+                // @PLN199 A3 — a tuple reads one slot per leaf (`extensions::tuple_leaves`).
+                let read = bridge_read_value(&a.typedef, &mut slot);
                 let _ = writeln!(body, "    let {var}: {ty} = {read};");
-                slot += 1;
                 // `(R-ValueLocal)` — a TUPLE PARAMETER: the C boundary hands a record, the
                 // inner fn takes its fields (`hoist::layout_reads`, the live arm's spelling)
                 // and, for a nullable layout, whether the record is there.
@@ -993,6 +1274,15 @@ fn shared_bridge_wrapper(
     }
 
     let call = format!("{inner}(cell{fwd})");
+    // @PLN199 C2 — a text return's destination is taken at ENTRY, before the inner fn runs:
+    // the inner fn may call back into the interpreter, whose own bridge calls set and take
+    // the same `Stores::bridge_text_dest`, and taken afterwards it would read theirs.
+    if ret_text {
+        let _ = writeln!(
+            body,
+            "    let __text_dest = unsafe {{ (&mut *cell.get()).bridge_text_dest.take() }};"
+        );
+    }
     let ret_stmt = if let (Some(fields), Some(dest)) = (&value_fields, &value_dest) {
         let mut w = format!("    let __vt = {call};\n    let __vd = {dest};\n");
         let present = value_presence.map_or_else(|| "true".to_string(), |at| format!("__vt.{at}"));
@@ -1100,6 +1390,24 @@ pub(crate) fn hidden_dest_type_name(data: &Data, stores: &Stores, t: &Type) -> O
     }
 }
 
+/// Rust expression reading an argument of loft type `t` starting at `LibArg` slot `*slot`,
+/// advancing it past the slots read: one for a plain value, one per leaf for a tuple, which
+/// is rebuilt as the Rust tuple the inner fn takes (`(i64, (f64, u8))`).
+fn bridge_read_value(t: &Type, slot: &mut usize) -> String {
+    if let Type::Tuple(elems) = t.base() {
+        let parts: Vec<String> = elems.iter().map(|e| bridge_read_value(e, slot)).collect();
+        // A one-element Rust tuple needs its trailing comma.
+        return if parts.len() == 1 {
+            format!("({},)", parts[0])
+        } else {
+            format!("({})", parts.join(", "))
+        };
+    }
+    let read = bridge_read(t, &format!("a[{slot}]"));
+    *slot += 1;
+    read
+}
+
 /// Rust expression reading an argument of loft type `t` out of `LibArg` slot
 /// `slot` (e.g. `"a[0]"`), at the inner fn's argument-context type.
 fn bridge_read(t: &Type, slot: &str) -> String {
@@ -1129,6 +1437,23 @@ fn bridge_read(t: &Type, slot: &str) -> String {
         | Type::Hash(_, _, _)
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _) => format!("{slot}.dbref"),
+        // @PLN199 D3 — a generator handle in the host's table, or the interpreter's.
+        Type::Iterator(_, _) => format!("{slot}.dbref"),
+        // @PLN199 C1 — a function value: the `(d_nr, closure)` pair `--native` passes.
+        Type::Function(..) => format!("({slot}.scalar as u32, {slot}.dbref)"),
+        // @PLN199 A4 — `&T` to a scalar: a pointer into the slot the caller's `DbRef` names,
+        // null for a null reference, as `--native`'s `*mut T` parameter takes it.
+        Type::RefVar(inner) if crate::native_gate::is_ref_scalar(inner) => {
+            let rt = match inner.base() {
+                Type::Float => "f64",
+                Type::Boolean => "u8",
+                _ => "i64",
+            };
+            format!(
+                "{{ let __d = {slot}.dbref; if __d.rec == 0 {{ std::ptr::null_mut() }} else {{ \
+                 std::ptr::from_mut(unsafe {{ (&mut *cell.get()).store_mut(&__d).addr_mut::<{rt}>(__d.rec, __d.pos) }}) }} }}"
+            )
+        }
         // Not bridge-able — the gate excludes these, so this is unreachable for a
         // shared-store-dispatchable function; emit a clearly-wrong token so a gate
         // bug surfaces as a compile error rather than silent corruption.
@@ -1159,6 +1484,17 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
         | Type::Hash(_, _, _)
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _) => format!("unsafe {{ (*ret).dbref = ({expr}); }}"),
+        // @PLN199 C1 — a function value, as the `(d_nr, closure)` pair.
+        Type::Function(..) => format!(
+            "let __f = ({expr});\n    unsafe {{ (*ret).scalar = i64::from(__f.0); (*ret).dbref = __f.1; }}"
+        ),
+        // @PLN199 D1 — a generator: the inner fn answers its state machine, which the host
+        // registers in ITS coroutine table (the cdylib's is a copy of its own), writing the
+        // handle into `ret`.
+        Type::Iterator(_, _) => format!(
+            "let __b: Box<Box<dyn loft::codegen_runtime::LoftCoroutine>> = Box::new({expr});\n    \
+             unsafe {{ (__host().coroutine_adopt)(stores, Box::into_raw(__b).cast(), ret) }};"
+        ),
         // Text return: the inner fn returns a `Str` pointing into a local work
         // `String` (about to drop).  @PLN10 — destination-passing, not `scratch`:
         // the interpreter caller routes this call through `gen_cdylib_text_dest_call`
@@ -1179,7 +1515,7 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
                 "let __r = ({expr});\n    \
                  {borrow}\n    \
                  let __st: &mut Stores = unsafe {{ &mut *cell.get() }};\n    \
-                 if let Some(__d) = __st.bridge_text_dest.take() {{\n    \
+                 if let Some(__d) = __text_dest {{\n    \
                      if !__t.is_empty() {{\n    \
                          __st.store_mut(&__d).addr_mut::<String>(__d.rec, __d.pos).push_str(__t);\n    \
                      }}\n    \
@@ -1434,7 +1770,7 @@ pub fn platform_cdylib_name(stem: &str) -> String {
 /// the executable's on a given host.  `LOFT_NATIVE_CABI=0` forces the legacy rlib
 /// link (the escape hatch); the C-ABI path is the default on every host.
 fn native_cabi_link_enabled() -> bool {
-    !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
+    crate::platform::native_cabi_link()
 }
 
 /// @PLN26 phase 2 — the rustc link flags for ONE native package's resolved cdylib
@@ -1560,18 +1896,15 @@ pub fn build_shared_cdylib(
         "--edition=2024".to_string(),
         "-C".to_string(),
         "debuginfo=0".to_string(),
-        // Full optimisation, as `--native-release` compiles a program (see its
-        // rustc arguments in `main.rs`): a library cdylib is a shipped binary.
-        "-C".to_string(),
-        "opt-level=3".to_string(),
-        "-C".to_string(),
-        "codegen-units=1".to_string(),
         "--crate-type".to_string(),
         "cdylib".to_string(),
         "-o".to_string(),
         tmp_so.display().to_string(),
         rs.display().to_string(),
     ];
+    // Full optimisation, as `--native-release` compiles a program: a library cdylib is a
+    // shipped binary (`src/native_release_args.txt`).
+    args.extend(crate::cache::release_rustc_args());
     args.extend(crate::native_lib::loft_extern_args(&rlib));
     args.extend(["-L".to_string(), deps.display().to_string()]);
     // macOS records the `-o` path inside the Mach-O as its INSTALL NAME, and the
@@ -2208,7 +2541,13 @@ pub fn cached_or_build_shared_cdylib(
             ),
             layout_fp,
         ),
-        contributing_fingerprint(contributing),
+        mix_fp(
+            contributing_fingerprint(contributing),
+            mix_fp(
+                crate::cache::native_release_flags_fingerprint(),
+                fn_numbering_fingerprint(data, export_set),
+            ),
+        ),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
     // never name the same file.  The fingerprint alone was not enough: the fast
@@ -2304,6 +2643,27 @@ pub fn cached_or_build_shared_cdylib(
     } else {
         Ok(None) // still being edited → interpret this run, no rustc
     }
+}
+
+/// @PLN199 C1 — the numbers the artifact's code gives the functions it can reach.  Generated
+/// code writes a function value's `d_nr` as a literal (a fn-ref dispatch arm, a `FnRef` it
+/// makes), and the interpreter hands it values of ITS numbering, so an artifact serves only
+/// a program that numbers those functions the same way.  A library's functions are numbered
+/// before the script's, so editing the script does not change this.  Names alone would not
+/// do: a lambda's name is its position in the parse (`__lambda_N`).
+fn fn_numbering_fingerprint(data: &Data, export_set: &HashSet<u32>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let roots: Vec<u32> = export_set.iter().copied().collect();
+    let mut reach: Vec<u32> = crate::generation::reachable_functions(data, &roots)
+        .into_iter()
+        .collect();
+    reach.sort_unstable();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for d in reach {
+        d.hash(&mut h);
+        data.def(d).name().hash(&mut h);
+    }
+    h.finish()
 }
 
 /// @PLN11 Arc N / N3 (Step 4) — a content hash of every `.loft` / `loft.toml` source

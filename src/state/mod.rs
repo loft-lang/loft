@@ -212,6 +212,14 @@ impl Operands {
     }
 }
 
+/// How [`State::dispatch`] ended: the entry function returned, or the run was suspended (a
+/// frame yield, a debugger pause, a halt handed back) and is still live.
+#[derive(PartialEq, Eq)]
+enum Dispatch {
+    Ended,
+    Suspended,
+}
+
 /// What the lean dispatch loop does once its one exit test fired (`@FR-R-DispatchStop`).
 enum LeanStop {
     /// Nothing ends the loop: carry on with the next op.
@@ -255,6 +263,75 @@ fn fast_stack_allowed() -> bool {
 }
 
 pub use crate::database::COROUTINE_STORE;
+
+/// The widest yield [`State::advance_for_native`] hands to compiled code: a text's `Str`.
+const YIELD_BYTES: usize = 16;
+
+/// The bytes an interpreted generator yielded to compiled code, held on the stack — an
+/// advance is a hot path, so it allocates nothing.  Empty when the generator is exhausted.
+pub(crate) struct Yielded {
+    len: usize,
+    bytes: [u8; YIELD_BYTES],
+}
+
+impl Yielded {
+    const EXHAUSTED: Yielded = Yielded {
+        len: 0,
+        bytes: [0; YIELD_BYTES],
+    };
+
+    /// The yielded bytes.
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+std::thread_local! {
+    /// @PLN199 C2 — the text result of this thread's last call back into the interpreter
+    /// (`State::call_back`), which the compiled caller copies before it calls back again.
+    static CALL_BACK_TEXT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+std::thread_local! {
+    /// @PLN199 D1 — the text each compiled generator handle last yielded to the interpreter:
+    /// it arrives as an owned `String`, and the interpreter's yield is a `Str` over it, so the
+    /// bytes live here until the handle's next advance replaces them or its free drops them.
+    /// Per thread, as the generator table it shadows.
+    static NATIVE_TEXT_YIELDS: std::cell::RefCell<Vec<(DbRef, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
+/// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
+pub(crate) fn hold_native_text_yield(gen_ref: DbRef, text: String) -> Str {
+    if text == STRING_NULL {
+        release_native_text_yield(gen_ref);
+        return Str::new(STRING_NULL);
+    }
+    NATIVE_TEXT_YIELDS.with(|y| {
+        let mut y = y.borrow_mut();
+        let at = if let Some(i) = y
+            .iter()
+            .position(|(g, _)| g.rec == gen_ref.rec && g.pos == gen_ref.pos)
+        {
+            y[i].1 = text;
+            i
+        } else {
+            y.push((gen_ref, text));
+            y.len() - 1
+        };
+        // The `String`'s buffer stays put while the vector moves its header.
+        Str::new(y[at].1.as_str())
+    })
+}
+
+/// Drop the text compiled generator `gen_ref` last yielded — at its free.
+pub(crate) fn release_native_text_yield(gen_ref: DbRef) {
+    NATIVE_TEXT_YIELDS.with(|y| {
+        y.borrow_mut()
+            .retain(|(g, _)| !(g.rec == gen_ref.rec && g.pos == gen_ref.pos));
+    });
+}
 
 /// Lifecycle state of a coroutine frame (CO1.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -523,6 +600,10 @@ pub struct State {
     /// pc alone and a *read* at the same pc as an assignment's start overwrites the
     /// assignment's entry, which is why it is read-dominated.
     pub(crate) store_spans: Vec<(u32, u32, u16)>,
+    /// loft#2121 — the lowest call-stack depth a halt ABANDONS.  Frames below it belong to
+    /// a caller that continues after the fault is contained ([`State::run_until_return`]),
+    /// so a halt releases only the text buffers of frames at or above it.
+    pub(crate) halt_floor: usize,
     /// Plan-07 phase 1 step 1.20 / phase 3 — pc → (source position, end pc) table
     /// populated by codegen on every `Value::Span` it walks.  Runtime
     /// fault printers (div-by-zero, OOB, null deref, panic call) look up
@@ -924,6 +1005,7 @@ impl State {
             line_numbers: BTreeMap::new(),
             scope_spans: Vec::new(),
             store_spans: Vec::new(),
+            halt_floor: 0,
             source_spans: BTreeMap::new(),
             published_spans: None,
             entered_fns: None,
@@ -1108,7 +1190,6 @@ impl State {
 
     /// `fn_call_ref`, calling `target` in place of the function the slot holds when given —
     /// the slot's closure and everything else about the frame are the slot's.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn fn_call_ref_to(&mut self, fn_var: u16, arg_size: u16, target: Option<usize>) {
         // fn-ref slot is 20B ([d_nr:i64][closure:DbRef]); fn_var must be ≥ 20.
         assert!(
@@ -1215,37 +1296,8 @@ impl State {
                 if !attr.hidden {
                     continue;
                 }
-                let buf = match &attr.typedef {
-                    crate::data::Type::Reference(_, _) | crate::data::Type::Enum(_, true, _) => {
-                        // For struct returns, the body's `cv = Type{...}`
-                        // OpDatabase reuses the slot (clear + claim).
-                        // `null()` provides a real slot with rec=0 — the
-                        // claim succeeds and sets rec=1.
-                        self.database.null()
-                    }
-                    crate::data::Type::Vector(elm_tp, _) => {
-                        // Vector body's `v = []` does NOT OpDatabase var_v;
-                        // it expects rec != 0 (else pre_alloc_vector is a
-                        // no-op, leaving the vector empty — probe 59 INT
-                        // would read seq[0] as null).  Allocate a fresh
-                        // store with a properly-claimed vector record.
-                        let elm_name = elm_tp.name(data);
-                        let tp_name = format!("main_vector<{elm_name}>");
-                        let tp_id = self.database.name(&tp_name);
-                        if tp_id == u16::MAX {
-                            self.database.null()
-                        } else {
-                            let sz = u32::from(self.database.size(tp_id));
-                            let r = self.database.database(sz);
-                            self.database.allocations[r.store_nr as usize].set_known_type(tp_id);
-                            self.database
-                                .store_mut(&r)
-                                .set_u32_raw(r.rec, 4, u32::from(tp_id));
-                            self.database.set_default_value(tp_id, &r);
-                            r
-                        }
-                    }
-                    _ => continue,
+                let Some(buf) = self.hidden_return_buffer(data, &attr.typedef) else {
+                    continue;
                 };
                 // loft#717 — accumulate the stack movement the push ACTUALLY made
                 // rather than the 12 bytes a `DbRef` measures.  `put_stack` steps a
@@ -1316,6 +1368,46 @@ impl State {
         self.fnref_calls
             .push((frame_depth, self.database.stores_allocated));
         self.fn_call(d_nr as u32, total, code_pos);
+    }
+
+    /// The store a fn-ref call site hands a callee for its hidden return buffer of type
+    /// `typedef`, or `None` for an attribute that is no such buffer — shared by
+    /// [`Self::fn_call_ref_to`] and [`Self::call_back`], which set up the same frame.
+    fn hidden_return_buffer(
+        &mut self,
+        data: &crate::data::Data,
+        typedef: &crate::data::Type,
+    ) -> Option<DbRef> {
+        // Through `base()`, though a hidden buffer is spelled bare even for a nullable return
+        // (`__retbuf: P` for `-> P?`, measured): the `?` is the value's, not the storage's.
+        match typedef.base() {
+            // For struct returns, the body's `cv = Type{...}` OpDatabase reuses the slot
+            // (clear + claim).  `null()` provides a real slot with rec=0 — the claim succeeds
+            // and sets rec=1.
+            crate::data::Type::Reference(_, _) | crate::data::Type::Enum(_, true, _) => {
+                Some(self.database.null())
+            }
+            // Vector body's `v = []` does NOT OpDatabase var_v; it expects rec != 0 (else
+            // pre_alloc_vector is a no-op, leaving the vector empty — probe 59 INT would read
+            // seq[0] as null).  Allocate a fresh store with a properly-claimed vector record.
+            crate::data::Type::Vector(elm_tp, _) => {
+                let elm_name = elm_tp.name(data);
+                let tp_name = format!("main_vector<{elm_name}>");
+                let tp_id = self.database.name(&tp_name);
+                if tp_id == u16::MAX {
+                    return Some(self.database.null());
+                }
+                let sz = u32::from(self.database.size(tp_id));
+                let r = self.database.database(sz);
+                self.database.allocations[r.store_nr as usize].set_known_type(tp_id);
+                self.database
+                    .store_mut(&r)
+                    .set_u32_raw(r.rec, 4, u32::from(tp_id));
+                self.database.set_default_value(tp_id, &r);
+                Some(r)
+            }
+            _ => None,
+        }
     }
 
     /// `OpDropFnRef(fn_var)` — run the drop cascade of the closure record the fn-ref at
@@ -1563,7 +1655,19 @@ impl State {
         stack.pos = 8 + self.stack_pos;
         // PKG.5: set library index for auto-marshal dispatch.
         crate::extensions::set_current_lib_idx(call);
-        self.library[call as usize](&mut self.database, &mut stack);
+        let f = self.library[call as usize];
+        if let Some(raw) = crate::extensions::shared_dispatch_raw(f) {
+            // @PLN199 C2 — a compiled library may call back into this interpreter (a function
+            // value it cannot run itself), so the bridge call reaches the stores through a
+            // pointer derived from the same `State` the call-back uses, never through a
+            // `&mut Stores` held across it.
+            let state: *mut State = self;
+            let outer = crate::extensions::enter_host_state(state);
+            raw(unsafe { &raw mut (*state).database }, &mut stack);
+            crate::extensions::leave_host_state(outer);
+        } else {
+            f(&mut self.database, &mut stack);
+        }
         self.stack_pos = stack.pos - 8;
         // `@FR-R-DispatchStop` — the events only a native starts: a frame yield, a runtime
         // error it raised, a `par` worker's fatal noticed after the join this native waited on.
@@ -1921,6 +2025,7 @@ impl State {
                 // reference in the slot; skip anything whose store is no longer allocated
                 // rather than free it twice.
                 if db.store_nr != COROUTINE_STORE
+                    && db.store_nr != crate::database::NATIVE_COROUTINE_STORE
                     && ((db.store_nr as usize) >= self.database.allocations.len()
                         || self.database.allocations[db.store_nr as usize].free)
                 {
@@ -2312,6 +2417,10 @@ impl State {
         // generator answers reads it; a live advance moves what the generator yields.
         let gen_ref = self.get_stack::<DbRef>();
 
+        if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
+            self.native_coroutine_next(gen_ref, packed_size);
+            return;
+        }
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             // CO1.6c: push typed null sentinel.
             self.push_null_value(packed_size);
@@ -2485,9 +2594,51 @@ impl State {
         }
     }
 
+    /// @PLN199 D1 — advance a generator a compiled library made: its handle names a slot of
+    /// the host's native coroutine table (`HostTable::coroutine_adopt`), and the advance runs
+    /// the generator's compiled body.  The yield is read on the channel `--native`'s consumer
+    /// reads for the same operand (`generation/ops/coroutine.rs`) and pushed as the
+    /// interpreter's own advance pushes it; exhaustion answers the same typed null.  The
+    /// gate admits only the yields read here (`native_gate::generator_crosses`).
+    fn native_coroutine_next(&mut self, gen_ref: DbRef, packed_size: u32) {
+        use crate::codegen_runtime as cr;
+        let size = packed_size & 0xFF;
+        let tag = packed_size >> 8;
+        match (tag, size) {
+            (3, _) => {
+                let bits = cr::coroutine_next_i64(gen_ref, &mut self.database);
+                self.put_stack(f64::from_bits(bits as u64));
+            }
+            (0, 8) => {
+                let v = cr::coroutine_next_i64(gen_ref, &mut self.database);
+                self.put_stack(v);
+            }
+            // The transport carries the boolean's storage byte; exhaustion's `i64::MIN`
+            // truncates to 0, the interpreter's false.
+            (0, 1) => {
+                let v = cr::coroutine_next_i64(gen_ref, &mut self.database);
+                self.put_stack(v as u8 == 1);
+            }
+            (0, n) if n == size_ref() => {
+                let v = cr::coroutine_next_dbref(gen_ref, &mut self.database);
+                self.put_stack(v);
+            }
+            // A text arrives OWNED; the interpreter's yield is a `Str` over it, kept for the
+            // handle until its next advance or its free (`hold_native_text_yield`).
+            (0, n) if n == std::mem::size_of::<Str>() as u32 => {
+                let v = cr::coroutine_next_text(gen_ref, &mut self.database);
+                self.put_stack(hold_native_text_yield(gen_ref, v));
+            }
+            _ => self.push_null_value(packed_size),
+        }
+    }
+
     // CO1.6: check if a coroutine is exhausted.
     #[must_use]
     pub fn coroutine_exhausted(&self, gen_ref: &DbRef) -> bool {
+        if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
+            return crate::codegen_runtime::coroutine_is_exhausted(*gen_ref);
+        }
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             return true; // null iterator is exhausted
         }
@@ -2510,6 +2661,9 @@ impl State {
     /// loft#1708).  A handle naming no live frame — null, or exhausted and its slot freed —
     /// takes nothing, and its holders' releases are no-ops for the same reason.
     pub fn coroutine_retain(&mut self, gen_ref: DbRef) -> DbRef {
+        if gen_ref.store_nr == crate::database::NATIVE_COROUTINE_STORE {
+            return crate::codegen_runtime::coroutine_retain(gen_ref);
+        }
         if self.coroutine_slot_matches(&gen_ref)
             && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()
         {
@@ -3513,7 +3667,19 @@ impl State {
             frame_headroom: Arc::clone(&self.frame_headroom),
             line_numbers: Arc::new(self.line_numbers.clone()),
         };
-        crate::parallel::run_parallel_block(&self.database, program, &positions, &parent_snapshot);
+        // loft#2112 — where an arm's closing `OpReturn` reads its return address: the
+        // running frame's slot, just above its arguments (`fn_call`).  The worker stops there.
+        let ret_slot = self
+            .call_stack
+            .last()
+            .map_or(4, |f| f.args_base + u32::from(f.args_size));
+        crate::parallel::run_parallel_block(
+            &self.database,
+            program,
+            &positions,
+            &parent_snapshot,
+            ret_slot,
+        );
         // `@FR-R-DispatchStop` — a worker's fatal is noticed after the join.
         if crate::parallel::worker_fatal_pending() {
             self.database
@@ -4230,9 +4396,10 @@ impl State {
     /// is_argument)` in the current suspension's frame — the shared slot lookup
     /// behind both the frame-value reads and writes.  The address is the variable's
     /// fixed slot (`stack_cur.pos + args_base + vars.stack(i)`), the same one
-    /// [`render_frame_local`](Self::render_frame_local) reads.  `is_argument`
-    /// distinguishes a text **arg** (a 16-byte `Str` borrow) from a text **local**
-    /// (a 24-byte owned `String`), which the edit path writes differently.  `None`
+    /// [`render_frame_local`](Self::render_frame_local) reads.  The flag
+    /// distinguishes a slot holding a 16-byte `Str` borrow — a text **arg**, or a text view
+    /// (@PLN198, `Function::holds_str`) — from a text **local** (a 24-byte owned `String`),
+    /// which the edit path writes differently.  `None`
     /// if there is no current frame or no local of that name.
     fn frame_slot(
         &self,
@@ -4250,7 +4417,7 @@ impl State {
             self.stack_cur.rec,
             at,
             vars.tp(i).clone(),
-            vars.is_argument(i),
+            vars.holds_str(i),
         ))
     }
 
@@ -5818,20 +5985,113 @@ impl State {
     /// point credit the interval since the previous sample to this position and this
     /// call path.
     fn profile_tick(&mut self, pc: u32) {
-        // The frames are read BEFORE the profiler is borrowed mutably, so the two
-        // never overlap and the sampler needs no access to the rest of `State`.
-        let due = self
+        if self.debug.as_deref().is_some_and(|d| {
+            d.prof
+                .as_deref()
+                .is_some_and(crate::profiler::Profiler::cpu_armed)
+        }) {
+            self.profile_op(pc);
+        }
+    }
+
+    /// The profiler's per-op state, for the lean loop to keep in locals.
+    fn profile_cursor(&self) -> crate::profiler::Cursor {
+        self.debug
+            .as_deref()
+            .and_then(|d| d.prof.as_deref())
+            .map_or_else(
+                crate::profiler::Cursor::default,
+                crate::profiler::Profiler::cursor,
+            )
+    }
+
+    /// Hand the lean loop's per-op state back, so the full loop or a later lean entry
+    /// continues where this one stopped.
+    fn profile_restore(&mut self, cur: &crate::profiler::Cursor) {
+        if let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) {
+            p.restore(cur);
+        }
+    }
+
+    /// The lean loop saw the op at `cur.op_pc` run `ran` ticks: settle it (@PLN179 finding
+    /// 022) when it was long enough once measured exactly.
+    #[cold]
+    #[inline(never)]
+    fn profile_long(&mut self, cur: &crate::profiler::Cursor, ran: u64) {
+        let long = self
             .debug
+            .as_deref()
+            .and_then(|d| d.prof.as_deref())
+            .and_then(|p| p.long_op(cur.op_pc, ran));
+        if long.is_some() {
+            self.profile_credit(cur.op_pc, long, false);
+        }
+    }
+
+    /// A sample is due at `pc` in the lean loop: record it, make the flush check the full
+    /// loop makes per op (a signal or a periodic report is answered within one interval),
+    /// and answer the length of the next interval.
+    #[cold]
+    #[inline(never)]
+    fn profile_lean_sample(&mut self, pc: u32) -> u32 {
+        self.profile_credit(pc, None, true);
+        let data = self.data_ptr.clone();
+        if let Some(data) = data.get() {
+            self.profile_flush_check(data);
+        }
+        self.debug
             .as_deref_mut()
             .and_then(|d| d.prof.as_mut())
-            .is_some_and(|p| p.cpu_armed() && p.tick());
-        if !due {
-            return;
+            .map_or(u32::MAX, |p| p.next_interval())
+    }
+
+    /// Count one op at `pc` against an armed CPU profiler: settle the op that just ended if
+    /// it ran long (@PLN179 finding 022 — a native, a sort, a read; its time goes to ITS
+    /// position, not to wherever the next sample lands), and record a sample when one is
+    /// due.  Answers whether it was.  The frames are read only on those rare paths, out of
+    /// line, so an ordinary op pays a tick read and a count.
+    #[inline]
+    fn profile_op(&mut self, pc: u32) -> bool {
+        let Some(p) = self
+            .debug
+            .as_deref_mut()
+            .and_then(|d| d.prof.as_deref_mut())
+        else {
+            return false;
+        };
+        let long = p.op_boundary(pc);
+        let due = p.tick();
+        if long.is_some() || due {
+            self.profile_credit(pc, long, due);
         }
+        due
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn profile_credit(&mut self, pc: u32, long: Option<crate::profiler::LongOp>, due: bool) {
+        // A native adds no loft frame, so the frames a long op ran under are still these.
         let frames = self.profile_frames();
         if let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) {
-            p.record(pc, &frames);
+            if let Some(long) = long {
+                p.settle_op(long, &frames);
+            }
+            if due {
+                p.record(pc, &frames);
+            }
         }
+    }
+
+    /// Whether the run needs the full dispatch loop: a debugger that does more than the CPU
+    /// profiler ([`crate::debugger::Debugger::only_cpu_profiling`]), or the op census, which
+    /// keys every op.  One home for the question, which the lean loop's entry and its stop
+    /// path both ask.
+    fn needs_full_loop(&self) -> bool {
+        crate::op_census::armed()
+            || self
+                .debug
+                .as_deref()
+                .is_some_and(|d| !d.only_cpu_profiling())
     }
 
     /// `LOFT_OP_CENSUS` — the op at `pc` is about to run: key it by the line of the entry
@@ -5992,7 +6252,7 @@ impl State {
         }
         let byte_range = |i: u16| -> (u32, u32) {
             let at = u32::from(vars.stack(i));
-            let ctx = if vars.is_argument(i) {
+            let ctx = if vars.holds_str(i) {
                 crate::data::Context::Argument
             } else {
                 crate::data::Context::Variable
@@ -6123,7 +6383,9 @@ impl State {
                 // `FrameEntry` carries the variable number precisely so a reader can ask
                 // this; nothing else in the frame view can.
                 let narrow = data.def(d_nr).variables.linked_narrow_slot(e.var_nr);
-                self.render_frame_local(frame_base, e.slot, &e.tp, e.is_argument, data, narrow)
+                // The slot's LAYOUT: a text view (@PLN198) holds a `Str` as an argument does.
+                let str_slot = data.def(d_nr).variables.holds_str(e.var_nr);
+                self.render_frame_local(frame_base, e.slot, &e.tp, str_slot, data, narrow)
             };
             locals.push((e.name, rendered));
         }
@@ -6444,9 +6706,9 @@ impl State {
         // `code_pos == u32::MAX` the loop condition reads.
         if self.worker_lean_ok() {
             if Self::no_hot() {
-                self.lean_register_loop::<false, true>(bytecode_len);
+                self.lean_register_loop::<false, true, false>(bytecode_len);
             } else {
-                self.lean_register_loop::<true, true>(bytecode_len);
+                self.lean_register_loop::<true, true, false>(bytecode_len);
             }
             return;
         }
@@ -6538,14 +6800,37 @@ impl State {
     /// published fault of a SIBLING worker to the parent that collects it, where the main
     /// loop raises it.
     #[inline(never)]
-    fn lean_register_loop<const HOT: bool, const WORKER: bool>(
+    fn lean_register_loop<const HOT: bool, const WORKER: bool, const PROF: bool>(
         &mut self,
         bytecode_len: u32,
     ) -> bool {
         let reg_ops = crate::fill::OPERATORS_REG;
         let mut r = self.regs_out();
+        // The profiler's per-op state lives in locals while the loop runs — a call through
+        // `debug` → `prof` per op cost a profiled run +46–60 % on its own — and goes back to
+        // the `Profiler` at every exit below.
+        let mut cur = if PROF {
+            self.profile_cursor()
+        } else {
+            crate::profiler::Cursor::default()
+        };
         while r.pc < bytecode_len {
             self.database.alloc_pc = r.pc;
+            if PROF {
+                // The profiler reads `call_stack` only, which the call and return operators
+                // keep in `State` whatever the registers hold.
+                let t = crate::platform::ticks();
+                let ran = t.wrapping_sub(cur.op_ticks);
+                if ran >= cur.settle_ticks && cur.op_pc != u32::MAX {
+                    self.profile_long(&cur, ran);
+                }
+                cur.op_ticks = t;
+                cur.op_pc = r.pc;
+                cur.left -= 1;
+                if cur.left == 0 {
+                    cur.left = self.profile_lean_sample(r.pc);
+                }
+            }
             if r.pc + 1 > self.code_len {
                 code_out_of_range(r.pc, 1, self.code_len as usize);
             }
@@ -6576,12 +6861,25 @@ impl State {
                 self.regs_in(r);
                 match self.lean_stop(WORKER) {
                     LeanStop::Continue => r = self.regs_out(),
-                    LeanStop::Return => return true,
-                    LeanStop::Leave => return false,
+                    LeanStop::Return => {
+                        if PROF {
+                            self.profile_restore(&cur);
+                        }
+                        return true;
+                    }
+                    LeanStop::Leave => {
+                        if PROF {
+                            self.profile_restore(&cur);
+                        }
+                        return false;
+                    }
                 }
             }
         }
         self.regs_in(r);
+        if PROF {
+            self.profile_restore(&cur);
+        }
         false
     }
 
@@ -6699,13 +6997,12 @@ impl State {
             self.database.had_fatal = true;
         }
         self.note_runtime_error_halt();
+        let full = self.needs_full_loop();
         self.database.dispatch_stop.store(
-            self.database.runtime_error.is_some()
-                || self.debug.is_some()
-                || Self::headroom_verify(),
+            self.database.runtime_error.is_some() || full || Self::headroom_verify(),
             std::sync::atomic::Ordering::Relaxed,
         );
-        if self.debug.is_some() {
+        if full {
             LeanStop::Leave
         } else {
             LeanStop::Continue
@@ -6753,7 +7050,102 @@ impl State {
                 err.crossed_placement = false;
             }
         }
+        // `u32::MAX` means an inner dispatch loop already halted and released.
+        if self.code_pos != u32::MAX {
+            self.release_halted_texts();
+        }
         self.code_pos = u32::MAX;
+    }
+
+    /// loft#2121 — a halt skips the scope-exit `FreeText`s, so the frames it abandons
+    /// release their text buffers here instead: otherwise every `String` a halted frame
+    /// held (a failing assert's formatted message, a callee's returned text) is lost.
+    ///
+    /// Only a slot that certainly holds a `String` is touched, because the frame is not
+    /// zeroed and a stale slot from an earlier frame would be a double free.  So a slot is
+    /// released only when [`frame_view`](Self::frame_view) answers `Held` from the exact
+    /// scope and store spans (never its reference-range fallback), it is an owned `text`
+    /// local rather than an argument, and no local of another type shares its bytes.  The
+    /// release is `FreeText`'s own (clear and shrink), which leaves an empty `String`, so
+    /// a slot two halted loops both reach is released twice harmlessly.
+    #[cold]
+    #[inline(never)]
+    fn release_halted_texts(&mut self) {
+        let n = self.call_stack.len();
+        let mut slots = Vec::new();
+        {
+            let handle = &self.data_ptr;
+            let Some(data) = handle.get() else {
+                return;
+            };
+            // A deep recursion halts with thousands of frames at one call site, and each
+            // selection scans the program's spans: answer each (function, pc) once.
+            let mut seen: FxHashMap<(u32, u32), Vec<u16>> = FxHashMap::default();
+            for i in self.halt_floor.min(n)..n {
+                let frame = &self.call_stack[i];
+                if frame.d_nr == u32::MAX {
+                    continue;
+                }
+                let pc = if i + 1 == n {
+                    self.code_pos
+                } else {
+                    self.call_stack[i + 1].call_pos
+                };
+                let offs = seen
+                    .entry((frame.d_nr, pc))
+                    .or_insert_with(|| self.halted_text_slots(frame.d_nr, pc, data));
+                slots.extend(offs.iter().map(|&off| frame.args_base + u32::from(off)));
+            }
+        }
+        for at in slots {
+            self.free_text_at(at);
+        }
+    }
+
+    /// The frame offsets of the owned `text` locals of `d_nr` that certainly hold a
+    /// `String` at `pc` — the selection [`Self::release_halted_texts`] documents.
+    fn halted_text_slots(&self, d_nr: u32, pc: u32, data: &crate::data::Data) -> Vec<u16> {
+        let def = data.def(d_nr);
+        let vars = &def.variables;
+        let (start, end) = (def.code_position, def.code_position + def.code_length);
+        if !self
+            .scope_spans
+            .iter()
+            .any(|&(s, e, _)| s >= start && s < end && pc >= s && pc < e)
+        {
+            return Vec::new();
+        }
+        let bytes = |i: u16| {
+            let ctx = if vars.is_argument(i) {
+                crate::data::Context::Argument
+            } else {
+                crate::data::Context::Variable
+            };
+            let at = u32::from(vars.stack(i));
+            (at, at + u32::from(crate::variables::size(vars.tp(i), &ctx)))
+        };
+        // A `text?` local holds the same `String` (@FR-N-Shape); a `&text` is not owned.
+        let owned_text =
+            |i: u16| !vars.is_argument(i) && matches!(vars.tp(i).base(), Type::Text(_));
+        let n = vars.count();
+        self.frame_view(d_nr, pc, data)
+            .into_iter()
+            .filter(|e| {
+                e.state == LocalState::Held
+                    && owned_text(e.var_nr)
+                    && vars.scope(e.var_nr) != u16::MAX
+            })
+            .filter(|e| {
+                let (lo, hi) = bytes(e.var_nr);
+                (0..n).all(|j| {
+                    j == e.var_nr || vars.stack(j) == u16::MAX || owned_text(j) || {
+                        let (jlo, jhi) = bytes(j);
+                        !(jlo < hi && lo < jhi)
+                    }
+                })
+            })
+            .map(|e| e.slot)
+            .collect()
     }
 
     pub fn raise(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
@@ -6892,11 +7284,14 @@ impl State {
     /// undefended-`v[i]` warning already nudges toward `??`; this is the
     /// runtime mirror.
     pub fn raise_recoverable(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
+        // `@FR-E-Report`: the position is the recoverable fault's in both surfaces — the span
+        // lookup alone (`raise`) names nothing for an op with no span of its own, and
+        // `--dev-soft-halt` then printed `at ?` for a division in an assignment or a `return`.
+        let position = self.recoverable_position();
         if dev_soft_halt_enabled() {
-            self.raise(kind);
+            self.raise_at(kind, position);
             return;
         }
-        let position = self.recoverable_position();
         if let Some(logger) = &self.database.logger
             && let Ok(mut lg) = logger.lock()
         {
@@ -7258,6 +7653,36 @@ impl State {
             }
         }
         self.put_stack(u32::MAX);
+        if self.dispatch(data) == Dispatch::Suspended {
+            return;
+        }
+
+        // Fix #88: pop the synthetic entry-function frame.
+        if !self.database.frame_yield {
+            self.free_entry_return(&heap_ret_slots, &text_bufs);
+            // The argv vector dies with the frame that was handed it.  Guarded by
+            // `frame_yield` like the rest of this block: a yielded frame is still live and
+            // will read its arguments again when it resumes.
+            if let Some(args_vec) = argv_store {
+                self.database.free(&args_vec);
+            }
+            self.call_stack.pop();
+            self.database.parallel_ctx = None;
+        }
+    }
+
+    /// Run the bytecode from `code_pos` until the entry function returns or the run is
+    /// suspended — a frame yield, a debugger pause, a halt the lean loop hands back — on the
+    /// loop the run needs: the lean register loop, the lean loop with the CPU profiler's hook
+    /// (`PROF`), or the full loop for a debugger or an op-watching instrument.  One home for
+    /// that choice, which a fresh run ([`Self::execute_argv`]) and a resumed one
+    /// ([`Self::resume`]) both make: `resume` had a bare loop of its own, so a frame-driven
+    /// program was profiled, and could be paused, during its first frame only.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the dispatch loops, moved as they were"
+    )]
+    fn dispatch(&mut self, data: &Data) -> Dispatch {
         #[cfg(debug_assertions)]
         let mut step: u64 = 0;
         // loft#919 — read the ceiling once, outside the loop: the guard runs on every
@@ -7321,7 +7746,13 @@ impl State {
         // event that ends or diverts it sets where it happens; the cold path below does what
         // the per-op tests did.  The end of the run needs no test of its own: a halt and the
         // entry function's return set `code_pos` to `u32::MAX`, which the loop condition ends.
-        if lean_loop && self.debug.is_none() {
+        // A run that only the CPU profiler watches stays lean, on the register table, with the
+        // profiler's per-op hook (`PROF`); anything more needs the full loop.
+        let prof = self.debug.is_some();
+        if lean_loop
+            && !self.needs_full_loop()
+            && (!prof || (self.fast_stack && !Self::no_register_table()))
+        {
             // `@FR-R-DispatchPublish` — the crash context is derived from the position the
             // loop stores for the allocator and the bytecode, registered once, instead of being
             // written per op.
@@ -7338,13 +7769,14 @@ impl State {
                 std::ptr::addr_of!(self.code_len),
             );
             if self.fast_stack && !Self::no_register_table() {
-                let yielded = if Self::no_hot() {
-                    self.lean_register_loop::<false, false>(bytecode_len)
-                } else {
-                    self.lean_register_loop::<true, false>(bytecode_len)
+                let yielded = match (Self::no_hot(), prof) {
+                    (true, false) => self.lean_register_loop::<false, false, false>(bytecode_len),
+                    (false, false) => self.lean_register_loop::<true, false, false>(bytecode_len),
+                    (true, true) => self.lean_register_loop::<false, false, true>(bytecode_len),
+                    (false, true) => self.lean_register_loop::<true, false, true>(bytecode_len),
                 };
                 if yielded {
-                    return;
+                    return Dispatch::Suspended;
                 }
             } else {
                 while self.code_pos < bytecode_len {
@@ -7364,7 +7796,7 @@ impl State {
                     {
                         match self.lean_stop(false) {
                             LeanStop::Continue => {}
-                            LeanStop::Return => return,
+                            LeanStop::Return => return Dispatch::Suspended,
                             LeanStop::Leave => break,
                         }
                     }
@@ -7398,7 +7830,7 @@ impl State {
             // `debug.paused`, to be resumed via `resume`).  Inert (one branch) when
             // not debugging.
             if self.debug.is_some() && self.debug_check(op_pos_rt, data) {
-                return;
+                return Dispatch::Suspended;
             }
             #[cfg(debug_assertions)]
             let op_pos = self.code_pos;
@@ -7521,7 +7953,7 @@ impl State {
             }
             // FY.1: frame yield — return to caller (JS requestAnimationFrame).
             if self.database.frame_yield {
-                return;
+                return Dispatch::Suspended;
             }
             #[cfg(debug_assertions)]
             {
@@ -7586,19 +8018,7 @@ impl State {
                 break;
             }
         }
-
-        // Fix #88: pop the synthetic entry-function frame.
-        if !self.database.frame_yield {
-            self.free_entry_return(&heap_ret_slots, &text_bufs);
-            // The argv vector dies with the frame that was handed it.  Guarded by
-            // `frame_yield` like the rest of this block: a yielded frame is still live and
-            // will read its arguments again when it resumes.
-            if let Some(args_vec) = argv_store {
-                self.database.free(&args_vec);
-            }
-            self.call_stack.pop();
-            self.database.parallel_ctx = None;
-        }
+        Dispatch::Ended
     }
 
     /// #629 follow-up — free the entry fn's hidden return buffer(s) as the entry
@@ -8073,6 +8493,213 @@ impl State {
             .collect()
     }
 
+    /// @PLN199 D3 — advance the interpreted generator `gen_ref` for compiled code, and answer
+    /// the bytes it yielded, or nothing when it is exhausted.  The resume entry beside
+    /// [`Self::reenter_ret`], which asserts its callee does not yield: the advance runs above
+    /// every live frame with the stop sentinel as the address the generator yields back to,
+    /// then restores the PC and the stack.  The yield's size is the generator's own
+    /// (`coroutine_layout::next_operands` of its element type).
+    pub(crate) fn advance_for_native(&mut self, gen_ref: DbRef) -> Yielded {
+        if !self.coroutine_slot_matches(&gen_ref) || self.coroutine_exhausted(&gen_ref) {
+            return Yielded::EXHAUSTED;
+        }
+        let d_nr = self.coroutines[gen_ref.rec as usize]
+            .as_ref()
+            .map_or(u32::MAX, |f| f.d_nr);
+        let Some(packed) =
+            self.data_ptr
+                .get()
+                .and_then(|data| match data.def(d_nr).returned().base() {
+                    crate::data::Type::Iterator(elem, _) => {
+                        Some(crate::coroutine_layout::next_operands(elem).0)
+                    }
+                    _ => None,
+                })
+        else {
+            return Yielded::EXHAUSTED;
+        };
+        let size = ((packed & 0xFF) as usize).min(YIELD_BYTES);
+        let saved_pos = self.code_pos;
+        let saved_sp = self.stack_pos;
+        let base = self.stack_high.next_multiple_of(8);
+        self.stack_pos = base;
+        self.put_stack(gen_ref);
+        self.push_frame(CallFrame {
+            d_nr,
+            call_pos: 0,
+            args_base: base,
+            args_size: 0,
+        });
+        self.code_pos = u32::MAX;
+        self.coroutine_next(packed as u32);
+        if self.code_pos == u32::MAX {
+            self.call_stack.pop();
+        } else {
+            let yielded = self.resume();
+            assert!(
+                !yielded,
+                "advance_for_native: the generator suspended the frame"
+            );
+        }
+        let exhausted = self.coroutine_exhausted(&gen_ref);
+        let mut out = Yielded::EXHAUSTED;
+        if !exhausted {
+            let store = self.database.store(&self.stack_cur);
+            let src = store.addr::<u8>(self.stack_cur.rec, self.stack_cur.pos + base);
+            unsafe { std::ptr::copy_nonoverlapping(src, out.bytes.as_mut_ptr(), size) };
+            out.len = size;
+        }
+        self.code_pos = saved_pos;
+        self.stack_pos = saved_sp;
+        out
+    }
+
+    /// @PLN199 C2 — a compiled library's call through a function value whose callee it does
+    /// not carry: a function of the script, or of a library compiled apart.  Runs `d_nr` with
+    /// `args` (its visible parameters, in order) and `closure`, through [`Self::reenter_ret`]
+    /// — above every live frame, restoring the PC and the stack after — and answers the
+    /// result in a [`LibArg`].  The gate admits only the signatures marshalled here
+    /// (`generation::fnref::upcall_carries`): scalar, text and reference parameters, and a
+    /// scalar or void return, so the callee has no hidden buffer.
+    ///
+    /// [`LibArg`]: crate::native_lib::LibArg
+    /// `n` empty `String` slots above every live frame, for a call back's text result: below
+    /// the frame `reenter_ret` builds, each named by the `DbRef` `OpCreateStack` makes for a
+    /// local, which is the form a callee's hidden `&text` work buffer takes.
+    fn call_back_text_buffers(&mut self, n: usize) -> Vec<DbRef> {
+        let mut bufs = Vec::with_capacity(n);
+        if n == 0 {
+            return bufs;
+        }
+        let saved_sp = self.stack_pos;
+        self.stack_pos = self.stack_high.next_multiple_of(8);
+        for _ in 0..n {
+            bufs.push(DbRef {
+                store_nr: self.stack_cur.store_nr,
+                rec: self.stack_cur.rec,
+                pos: self.stack_cur.pos + self.stack_pos,
+            });
+            self.put_stack(String::new());
+        }
+        self.stack_high = self.stack_high.max(self.stack_pos);
+        self.stack_pos = saved_sp;
+        bufs
+    }
+
+    pub(crate) fn call_back(
+        &mut self,
+        d_nr: u32,
+        closure: DbRef,
+        args: &[crate::native_lib::LibArg],
+    ) -> crate::native_lib::LibArg {
+        use crate::data::Type;
+        let handle = self.data_ptr.clone();
+        let data = handle
+            .get()
+            .expect("a call back into the interpreter needs the program's definitions");
+        let def = data.def(d_nr);
+        let pos = self.fn_positions[d_nr as usize];
+        let saved_high = self.stack_high;
+        let bufs = self.call_back_text_buffers(def.text_work_buffers());
+        // A heap result is delivered through the callee's hidden return buffer, set up and
+        // recorded as `fn_call_ref_to` does for an interpreted fn-ref call — so the callee's
+        // own release (`release_fnref_bufs`) frees a buffer it did not hand back — at the
+        // depth the callee's frame will occupy.
+        let depth = u32::try_from(self.call_stack.len()).unwrap_or(u32::MAX);
+        let fnref_bufs_before = self.fnref_bufs.len();
+        let mut heap_bufs: Vec<DbRef> = Vec::new();
+        for a in def.attributes() {
+            if a.hidden
+                && !a.work_buffer
+                && let Some(b) = self.hidden_return_buffer(data, &a.typedef)
+            {
+                self.fnref_bufs.push((depth, b));
+                heap_bufs.push(b);
+            }
+        }
+        if !heap_bufs.is_empty() {
+            self.fnref_calls
+                .push((depth, self.database.stores_allocated));
+        }
+        let push = |st: &mut Self| {
+            let mut at = 0;
+            let mut buf = 0;
+            let mut heap = 0;
+            for a in def.attributes() {
+                if a.name == "__closure" {
+                    st.put_stack(closure);
+                    continue;
+                }
+                if a.hidden && crate::native_gate::is_text_work_buffer(&a.typedef) {
+                    st.put_stack(bufs[buf]);
+                    buf += 1;
+                    continue;
+                }
+                if a.hidden && !a.work_buffer && heap < heap_bufs.len() {
+                    st.put_stack(heap_bufs[heap]);
+                    heap += 1;
+                    continue;
+                }
+                let arg = args[at];
+                at += 1;
+                match a.typedef.base() {
+                    Type::Float => st.put_stack(f64::from_bits(arg.scalar as u64)),
+                    Type::Boolean => st.put_stack(arg.scalar != 0),
+                    Type::Text(_) => st.put_stack(Str {
+                        ptr: arg.text_ptr,
+                        len: arg.text_len as u32,
+                    }),
+                    t if crate::data::is_dbref(t) => st.put_stack(arg.dbref),
+                    _ => st.put_stack(arg.scalar),
+                }
+            }
+        };
+        let mut ret = crate::native_lib::LibArg::ZERO;
+        match def.returned().base() {
+            Type::Void | Type::Null => self.reenter(d_nr, pos, push),
+            Type::Text(_) => {
+                let s = self.reenter_ret::<Str>(d_nr, pos, push);
+                // Copied out before the buffers it points into are dropped; the compiled
+                // caller copies it again before its next call back.
+                CALL_BACK_TEXT.with(|t| {
+                    let mut t = t.borrow_mut();
+                    t.clear();
+                    t.push_str(s.str());
+                    ret.text_ptr = t.as_ptr();
+                    ret.text_len = t.len();
+                });
+            }
+            Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,
+            Type::Boolean => ret.scalar = i64::from(self.reenter_ret::<u8>(d_nr, pos, push)),
+            t if crate::data::is_dbref(t) => {
+                let r = self.reenter_ret::<DbRef>(d_nr, pos, push);
+                // The callee's release handed the store it returned one frame up, to the
+                // interpreter frame that called the library — but the compiled caller holds
+                // it now, and claims it when it was minted in the call (`cr_fnref_minted`).
+                // Left there too, both would free it.  A capture is claimed by neither.
+                let mut at = fnref_bufs_before.min(self.fnref_bufs.len());
+                while at < self.fnref_bufs.len() {
+                    if self.fnref_bufs[at].1.store_nr == r.store_nr {
+                        self.fnref_bufs.remove(at);
+                    } else {
+                        at += 1;
+                    }
+                }
+                // The borrowed-return marker is for the interpreter's next bind; this value
+                // binds in compiled code, which keeps its own (`FNREF_BORROWED`).
+                self.fnref_borrowed_return = None;
+                ret.dbref = r;
+            }
+            _ => ret.scalar = self.reenter_ret::<i64>(d_nr, pos, push),
+        }
+        for b in bufs {
+            let slot = self.database.store_mut(&b).addr_mut::<String>(b.rec, b.pos);
+            drop(std::mem::take(slot));
+        }
+        self.stack_high = saved_high;
+        ret
+    }
+
     /// FY.2: Resume execution after a frame yield.  Returns `true` while the
     /// program is still running, `false` when it finishes.
     /// @PLN18 02 (the heart's aorta) — the compiled→interp RE-ENTRY thunk:
@@ -8253,6 +8880,16 @@ impl State {
 
     pub fn resume(&mut self) -> bool {
         self.database.frame_yield = false;
+        // The loop a fresh run takes — lean, profiled, or full for a debugger — so a
+        // frame-driven program is sampled, and can be paused, after its first frame too.
+        let data = self.data_ptr.clone();
+        if let Some(data) = data.get() {
+            if self.dispatch(data) == Dispatch::Suspended {
+                return true; // yielded again, or paused — still running
+            }
+            self.call_stack.pop();
+            return false;
+        }
         let bytecode_len = self.bytecode.len() as u32;
         while self.code_pos < bytecode_len {
             let op = self.code::<u8>();
@@ -8525,6 +9162,7 @@ impl State {
             line_numbers: BTreeMap::new(),
             scope_spans: Vec::new(),
             store_spans: Vec::new(),
+            halt_floor: 0,
             source_spans: BTreeMap::new(),
             published_spans: None,
             entered_fns: None,
@@ -8592,6 +9230,9 @@ impl State {
         // already carrying, which is the opposite of what it is for.
         let outer_error = self.database.runtime_error.take();
         let outer_fatal = self.database.had_fatal;
+        // A fault in the callee is contained and the caller continues, so a halt in
+        // there may release only the callee's frames (loft#2121).
+        let outer_floor = std::mem::replace(&mut self.halt_floor, depth);
 
         let args_base = self.stack_pos;
         for a in args {
@@ -8613,6 +9254,7 @@ impl State {
             // cannot be entered is unreachable, not absent.
             self.database.runtime_error = outer_error;
             self.database.had_fatal = outer_fatal;
+            self.halt_floor = outer_floor;
             self.stack_pos = saved_stack_pos;
             self.code_pos = saved_code_pos;
             return Err("the call stack is too deep to run a fetch here".to_string());
@@ -8635,20 +9277,22 @@ impl State {
         let inner_error = self.database.runtime_error.take();
         self.database.runtime_error = outer_error;
         self.database.had_fatal = outer_fatal;
+        // The callee's frames are abandoned here, and this loop halts without the
+        // dispatch loops' `attach_halt_frames`, so their texts are released at this
+        // point, while the floor still spares the caller (loft#2121).
+        if inner_error.is_some() && self.code_pos != u32::MAX {
+            self.release_halted_texts();
+        }
+        self.halt_floor = outer_floor;
         if let Some(err) = inner_error {
             // Contained. The frames the callee left behind are dropped and the
             // caller's position restored, so the outer program continues with
             // every local intact.
             //
-            // **What it does NOT do is release what those frames held.** A
-            // frame's locals are freed by the scope-exit bytecode the fault
-            // skipped, so there is no runtime teardown to run here, and
-            // truncating abandons whatever the aborted callee had allocated
-            // (@PLN133 P4 measured exactly one store per contained fault). A
-            // traversal over an unreachable source therefore leaks once per
-            // failed fetch — which is the long-running case arc C's sticky
-            // counter exists for, so it is a real debt rather than a cosmetic
-            // one, and it is recorded as such rather than papered over.
+            // The scope-exit bytecode the fault skipped is replaced in two halves:
+            // the abandoned frames' texts were released above, and the stores the
+            // callee created are released by the caller that watched for them
+            // (`lazy_fetch_through_loft`'s `lazy_watch_end`).
             self.call_stack.truncate(depth);
             self.stack_pos = saved_stack_pos;
             self.code_pos = saved_code_pos;
@@ -9334,7 +9978,7 @@ impl State {
     /// Execute a void function at `fn_pos` with no arguments.
     /// Used by `parallel {}` arms.
     pub fn execute_at_void(&mut self, fn_pos: u32) {
-        self.execute_at_void_with_snapshot(fn_pos, &[]);
+        self.execute_at_void_with_snapshot(fn_pos, &[], 4);
     }
 
     /// Execute a void function at `fn_pos` after seeding the worker's
@@ -9350,13 +9994,19 @@ impl State {
     /// downstream SIGSEGV).
     ///
     /// The snapshot is overlaid on the worker's stack starting at
-    /// offset 4 (replacing the worker's freshly-pushed return
-    /// sentinel — the parent's bytes at that offset already encode
-    /// whatever return PC the parent function was using, which is
-    /// the right value for `fn_return` to read at the end of the
-    /// arm body).  An empty snapshot keeps the worker's own
-    /// `u32::MAX` sentinel and runs as before.
-    pub fn execute_at_void_with_snapshot(&mut self, fn_pos: u32, parent_snapshot: &[u8]) {
+    /// offset 4, and then `ret_slot` — the return-address slot of the
+    /// frame the arm runs in, where its closing `OpReturn` reads — is set
+    /// to the `u32::MAX` sentinel that ends the run.  The parent's bytes
+    /// there are the address the parent itself returns to, which for any
+    /// frame but `main`'s is real code in the caller: the worker ran on
+    /// into it against a copy of the parent's stack (loft#2112).  An
+    /// empty snapshot keeps the worker's own sentinel at offset 4.
+    pub fn execute_at_void_with_snapshot(
+        &mut self,
+        fn_pos: u32,
+        parent_snapshot: &[u8],
+        ret_slot: u32,
+    ) {
         self.stack_pos = 4;
         self.put_stack(u32::MAX); // return sentinel — possibly overwritten below
         if !parent_snapshot.is_empty() {
@@ -9377,6 +10027,8 @@ impl State {
             // stack_pos so variable reads resolve at the right
             // offsets.  Snapshot length = parent_stack_pos - 4.
             self.stack_pos = 4 + parent_snapshot.len() as u32;
+            let store = self.database.store_mut(&self.stack_cur);
+            *store.addr_mut::<u32>(self.stack_cur.rec, self.stack_cur.pos + ret_slot) = u32::MAX;
         }
         self.code_pos = fn_pos;
         self.run_to_return(0);

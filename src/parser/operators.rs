@@ -141,17 +141,8 @@ impl Parser {
     /// the author wrote `const` on that, not on the view, and "const variable 'f'" would point at
     /// a declaration that does not exist.
     pub(crate) fn report_const_write(&mut self, nr: u16) {
-        if let Some(place) = self.const_views.get(&(self.context, nr)).cloned() {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "Cannot modify '{}': it is a view of {place}, whose value is read-only; remove \
-                 'const' there, or copy what you change into a local",
-                self.vars.written_name(nr)
-            );
-            return;
-        }
-        // `@FR-Const-Foreign` — a binding of foreign data: the author wrote no `const`.
+        // `@FR-Const-Foreign` — a binding of foreign data, or a view of one: the author wrote no
+        // `const`, so this is asked before the view wording below.
         if self.foreign_bound.contains(&(self.context, nr)) {
             let name = self.vars.name(nr).to_string();
             diagnostic!(
@@ -160,6 +151,16 @@ impl Parser {
                 "Cannot modify '{name}': it holds read-only data the program does not own (a \
                  mapped file or a library's buffer) — copy it first (`w = {name}`, a bind copies) \
                  and write the copy"
+            );
+            return;
+        }
+        if let Some(place) = self.const_views.get(&(self.context, nr)).cloned() {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot modify '{}': it is a view of {place}, whose value is read-only; remove \
+                 'const' there, or copy what you change into a local",
+                self.vars.written_name(nr)
             );
             return;
         }
@@ -1415,7 +1416,13 @@ impl Parser {
         from: &Type,
         to: &Type,
     ) -> Option<bool> {
-        if self.default || !self.data.user_operator_conversions {
+        // A program without a `to_<t>` of its own pays nothing at a cast to a scalar.  A cast
+        // INTO a struct is always asked: the stdlib declares conversions (`operator
+        // to_version`) without setting the flag, and the flag is not in a warm stdlib cache,
+        // so a cast must not depend on whether the stdlib was parsed or loaded.
+        if self.default
+            || (!self.data.user_operator_conversions && !matches!(to.base(), Type::Reference(..)))
+        {
             return None;
         }
         let from = &from.unrewritten();
@@ -3364,98 +3371,6 @@ impl Parser {
             && let Value::Call(inner_nr, _) = gv.unspan_mut()
         {
             try_swap(inner_nr, data);
-        }
-    }
-
-    /// Plan-07 phase 4e.1 — recursive variant of
-    /// [`Self::rewrite_outer_arith_to_nullable`].  Walks the whole
-    /// `Value` tree and swaps every fault-prone call to its Nullable
-    /// peer.  Used in format-string contexts (`"{expr}"` interpolation)
-    /// where the interpolated expression may contain arbitrarily nested
-    /// fault-prone ops (`"{a + v[i] / b}"`).  Per @C66: format strings
-    /// are the user's observability surface and must NEVER halt, log,
-    /// or warn — so every interpolated fault site routes through its
-    /// silent peer, and the hole renders the null it yields as a plain
-    /// `null` (`@FR-F-FaultSafe`, @C142).
-    pub(crate) fn rewrite_subtree_to_nullable(code: &mut Value, data: &crate::data::Data) {
-        // Helper mirrors the swap table in
-        // `rewrite_outer_arith_to_nullable`; kept inline (no shared
-        // helper) so the dispatch table stays grep-discoverable from
-        // both swap sites.
-        fn try_swap(def_nr: &mut u32, data: &crate::data::Data) -> bool {
-            let name = data.def(*def_nr).original_name();
-            let nullable_name = match name.as_str() {
-                "AddInt" => "OpAddIntNullable",
-                "MinInt" => "OpMinIntNullable",
-                "MulInt" => "OpMulIntNullable",
-                "DivInt" => "OpDivIntNullable",
-                "RemInt" => "OpRemIntNullable",
-                "GetVector" => "OpGetVectorNullable",
-                "VectorRef" => "OpVectorRefNullable",
-                "TextCharacter" => "OpTextCharacterNullable",
-                // Plan-07 phase 4f.5 — float / single div / mod peers.
-                "DivFloat" => "OpDivFloatNullable",
-                "RemFloat" => "OpRemFloatNullable",
-                "DivSingle" => "OpDivSingleNullable",
-                "RemSingle" => "OpRemSingleNullable",
-                _ => return false,
-            };
-            let new_nr = data.def_nr(nullable_name);
-            if new_nr == u32::MAX {
-                false
-            } else {
-                *def_nr = new_nr;
-                true
-            }
-        }
-        match code.unspan_mut() {
-            Value::Call(def_nr, args) => {
-                try_swap(def_nr, data);
-                for arg in args {
-                    Self::rewrite_subtree_to_nullable(arg, data);
-                }
-            }
-            Value::CallRef(_, args) => {
-                for arg in args {
-                    Self::rewrite_subtree_to_nullable(arg, data);
-                }
-            }
-            Value::Block(b) => {
-                for child in &mut b.operators {
-                    Self::rewrite_subtree_to_nullable(child, data);
-                }
-            }
-            Value::Loop(b) => {
-                for child in &mut b.operators {
-                    Self::rewrite_subtree_to_nullable(child, data);
-                }
-            }
-            Value::If(cond, then_b, else_b) => {
-                Self::rewrite_subtree_to_nullable(cond, data);
-                Self::rewrite_subtree_to_nullable(then_b, data);
-                Self::rewrite_subtree_to_nullable(else_b, data);
-            }
-            Value::Set(_, src)
-            | Value::Return(src)
-            | Value::Drop(src)
-            | Value::Yield(src)
-            | Value::TuplePut(_, _, src) => {
-                Self::rewrite_subtree_to_nullable(src, data);
-            }
-            Value::Iter(_, init, step, body) => {
-                Self::rewrite_subtree_to_nullable(init, data);
-                Self::rewrite_subtree_to_nullable(step, data);
-                Self::rewrite_subtree_to_nullable(body, data);
-            }
-            Value::Tuple(items) | Value::Insert(items) | Value::Parallel(items) => {
-                for child in items {
-                    Self::rewrite_subtree_to_nullable(child, data);
-                }
-            }
-            // Other Value variants (Int / Text / Var / FnRef / Keys / etc.)
-            // carry no nested fault-prone calls to rewrite.  Spans are
-            // stripped by `unspan_mut` above.
-            _ => {}
         }
     }
 

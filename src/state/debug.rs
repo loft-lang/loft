@@ -638,10 +638,12 @@ impl State {
             let v_nr = entry.var_nr;
             let slot = entry.slot;
             let typedef = entry.tp.clone();
-            // Argument text variables are 16-byte Str on the stack; local text
-            // variables are 24-byte String.  Match the runtime layout.
+            // Argument text variables — and text views (@PLN198) — are 16-byte Str on the
+            // stack; local text variables are 24-byte String.  Match the runtime layout; the
+            // ROLE reported below stays the argument flag.
             let is_arg = vars.is_argument(v_nr);
-            let ctx = if is_arg {
+            let str_slot = vars.holds_str(v_nr);
+            let ctx = if str_slot {
                 &Context::Argument
             } else {
                 &Context::Variable
@@ -662,7 +664,7 @@ impl State {
                     &typedef,
                     abs_pos,
                     size_bytes,
-                    is_arg,
+                    str_slot,
                     vars.linked_narrow_slot(v_nr),
                 )
             };

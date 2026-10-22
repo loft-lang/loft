@@ -13,6 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
 pub mod apart;
 mod apart_emit;
+pub mod apart_records;
+mod apart_records_emit;
 pub mod apart_value;
 pub mod apart_vector;
 pub mod append_twin;
@@ -28,6 +30,7 @@ mod dispatch;
 mod emit;
 pub mod file_hold;
 pub use crate::fnref;
+pub mod hand_over;
 pub mod hoist;
 pub mod keyed_entry;
 pub mod keyed_place;
@@ -727,6 +730,10 @@ enum PackageLink {
     CAbi,
     /// @PLN195 — slots the program fills itself at start (`loft::native_bind`).
     Bound,
+    /// @PLN199 B2 — `CAbi` inside a library cdylib: the host that loads it has bound the C
+    /// libraries already, and the cdylib is linked against none of them, so each `#c`
+    /// symbol resolves at its first call (`loft::c_call::resolve_native`).
+    Library,
     /// @PLN197 — `Crate` for the packages (a static link), while the program still binds,
     /// at start, the C libraries packages ship that have no archive to link into it.
     StaticBound,
@@ -953,6 +960,14 @@ pub struct Output<'a> {
     /// `__inv`/`__rg` twin.  Still armed after that statement is an emission fault.
     /// The third member is the serial of the block that armed it.
     pub refill_text_pending: Option<(u16, u16, usize)>,
+    /// `@FR-R-HandOver`'s rotate clause — the suffix-keep callees whose `__nk` twin (the body
+    /// without its keep) a rotate site calls, the ones emitted, the keep statement the twin
+    /// being emitted skips, and the rotate site's call waiting for its name.
+    pub nk_requests: Vec<u32>,
+    pub nk_emitted: HashSet<u32>,
+    pub nk_skip: Option<usize>,
+    pub nk_twin: bool,
+    pub nk_site_next: Option<(u32, usize)>,
     /// The refill twins calls have asked for, and the ones already emitted.
     pub rt_requests: Vec<u32>,
     pub rt_emitted: HashSet<u32>,
@@ -1238,6 +1253,10 @@ pub struct Output<'a> {
     /// and whether the value structs are written.
     pub apart_ctx: Option<apart_emit::ApartCtx>,
     pub apart_twin: bool,
+    /// `@FR-R-Apart` instance 4 — the records of record vectors held apart, their twins and
+    /// owners ([`apart_records::plan`]), and whether the body being emitted is a `__apr` twin.
+    pub apr: apart_records::RecPlan,
+    pub apr_twin: bool,
     /// `@FR-R-DecodeView` — the program's plan, and whether the function being emitted is
     /// its `__dv` twin.
     pub dv: decode_view::DvPlan,
@@ -1642,6 +1661,10 @@ pub struct Output<'a> {
     /// `main`.  Off for a library unit (its host loads the libraries) and for every other
     /// target; [`Self::binds_libraries`] adds the rest of the condition.
     pub native_bind: bool,
+    /// @PLN199 B2 — this unit is a `use`d library's cdylib, loaded by a host
+    /// (`native_lib::emit_program`): its `#c` symbols resolve at first call
+    /// ([`PackageLink::Library`]).
+    pub library_unit: bool,
     /// @PLN26 phase 1 — `#native` symbols exported by 2+ packages.  A *reachable*
     /// call to one is rejected at native codegen (the flat C-ABI namespace can't
     /// disambiguate); two packages sharing an UNUSED symbol still build.  Computed
@@ -2013,22 +2036,7 @@ fn native_returns_owned_string(name: &str) -> bool {
 /// instability.  Disjoint from `native_returns_owned_string` (that gates `#native`
 /// / `codegen_runtime` stubs; this gates `Block` bodies).
 pub(crate) fn def_returns_owned_text(def: &crate::data::Definition) -> bool {
-    // nwb = a real loft **Block** body that returns text WITHOUT a `RefVar(Text)`
-    // work buffer.  The discriminator is the Block body itself, NOT
-    // `rust()/native()` emptiness: an auto-native library fn inlined into a
-    // consumer build (main's @C71) has a Block body AND `native()` set, yet is
-    // still an ordinary user text fn whose buffered-vs-bufferless shape is
-    // decided solely by the presence of the work-buffer attribute.  emit.rs only
-    // ever runs this on Block bodies, so a non-Block (FFI-direct / `#rust` / Null)
-    // body is correctly excluded here and handled by the other owned-String signals.
-    // @PLN25 slice (b): peel `Optional` — a `text?` return uses the same owned-text ABI.
-    matches!(def.returned().base(), Type::Text(_))
-        && matches!(def.code(), Value::Block(_))
-        && !def.name().starts_with("Op")
-        // A user `&text` parameter is not a work buffer: the buffered-vs-bufferless
-        // shape reads the HIDDEN buffers only (`text_work_buffers`), else a function
-        // with such a parameter is emitted buffered and returns THROUGH it (loft#1338).
-        && def.text_work_buffers() == 0
+    def.returns_bufferless_text()
 }
 
 /// @PLN10 — does this function's generated `--native` wrapper return an owned
@@ -2430,6 +2438,11 @@ impl<'a> Output<'a> {
             refill_elements_disabled: std::env::var("LOFT_NO_REFILL_ELEMENTS")
                 .is_ok_and(|v| v != "0"),
             refill_text_pending: None,
+            nk_requests: Vec::new(),
+            nk_emitted: HashSet::new(),
+            nk_skip: None,
+            nk_twin: false,
+            nk_site_next: None,
             rt_requests: Vec::new(),
             rt_emitted: HashSet::new(),
             append_twin_buf: None,
@@ -2516,6 +2529,8 @@ impl<'a> Output<'a> {
             apart: apart_value::ApartPlan::default(),
             apart_ctx: None,
             apart_twin: false,
+            apr: apart_records::RecPlan::default(),
+            apr_twin: false,
             dv: decode_view::DvPlan::default(),
             ps: decode_structure::PsPlan::default(),
             sw: stream_walk::SwPlan::default(),
@@ -2616,6 +2631,7 @@ impl<'a> Output<'a> {
             wasm_wasi: false,
             native_cabi: false,
             native_bind: false,
+            library_unit: false,
             native_collisions: data
                 .native_symbol_collisions()
                 .into_iter()
@@ -2871,6 +2887,10 @@ impl Output<'_> {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
+        // The position stream restarts with each body: before its first `// loft:` marker a
+        // site takes the definition's line (`ckpt_site`) or the frame's (a fault), never the
+        // previous function's last line.
+        self.ckpt_cur_line = 0;
         self.linked_members = crate::tuple_links::linked_narrow_members(self.data, def_nr);
         self.header_dbrefs.clear();
         self.param_rec_ptrs.clear();
@@ -3109,6 +3129,10 @@ impl Output<'_> {
         if !self.loop_record_disabled {
             let lr = hoist::loop_records(self.data, self.stores, def_nr);
             self.loop_records = lr.recs;
+            // `@FR-R-Apart` instance 4 — an apart record is no store record to keep.
+            if let Some(ctx) = &self.apart_ctx {
+                self.loop_records.retain(|v, _| !ctx.recs.holds(*v));
+            }
             // The refill clause's vector-field zeros are `@FR-R-RefillBuffer`'s empties.
             self.refill.field_zeros.extend(lr.field_zeros);
         }
@@ -4865,14 +4889,15 @@ impl Output<'_> {
         // `@FR-R-Apart` instance 3 — an apart vector is no store vector: no path rooted at it
         // or at a companion takes a header, and a loop whose only growth was such a vector
         // grows no store.
-        if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs)
-            && !vecs.is_empty()
+        if let Some(ctx) = self.apart_ctx.as_ref()
+            && (!ctx.vecs.is_empty() || !ctx.recs.is_empty())
         {
-            verdict.vectors.retain(|(p, _)| !vecs.holds(p.0));
-            verdict.pushes.retain(|(p, _)| !vecs.holds(p.0));
-            verdict.mint_pushes.retain(|(p, _)| !vecs.holds(p.0));
+            let held = |v: u16| ctx.vecs.holds(v) || ctx.recs.holds(v);
+            verdict.vectors.retain(|(p, _)| !held(p.0));
+            verdict.pushes.retain(|(p, _)| !held(p.0));
+            verdict.mint_pushes.retain(|(p, _)| !held(p.0));
             let movers = verdict.movers.len();
-            verdict.movers.retain(|m| !vecs.holds(*m));
+            verdict.movers.retain(|m| !held(*m));
             if movers > 0 && verdict.movers.is_empty() {
                 verdict.growth_free = true;
             }
@@ -4902,8 +4927,8 @@ impl Output<'_> {
             HashSet::new()
         } else {
             let mut paths = hoist::nest_read_paths(lp, self.data);
-            if let Some(vecs) = self.apart_ctx.as_ref().map(|c| &c.vecs) {
-                paths.retain(|p| !vecs.holds(p.0));
+            if let Some(ctx) = self.apart_ctx.as_ref() {
+                paths.retain(|p| !ctx.vecs.holds(p.0) && !ctx.recs.holds(p.0));
             }
             paths
         };
@@ -8137,6 +8162,17 @@ fn loft_ckpt_report() {{
         write!(w, "}})")
     }
     /// How the header reaches the native packages' functions ([`PackageLink`]).
+    /// Where the generated code reaches the native coroutine table's entry point `name`: the
+    /// runtime's own in a program, the host's through `__coro` in a library cdylib
+    /// (@PLN199 D2, `native_lib::HOST_INIT_SRC`).
+    pub(crate) fn coro_fn(&self, name: &str) -> String {
+        if self.library_unit {
+            format!("__coro::{name}")
+        } else {
+            format!("loft::codegen_runtime::{name}")
+        }
+    }
+
     fn package_link(&self) -> PackageLink {
         if self.binds_libraries() {
             if self.native_cabi {
@@ -8144,6 +8180,8 @@ fn loft_ckpt_report() {{
             } else {
                 PackageLink::StaticBound
             }
+        } else if self.native_cabi && self.library_unit {
+            PackageLink::Library
         } else if self.native_cabi {
             PackageLink::CAbi
         } else {
@@ -8426,7 +8464,10 @@ fn loft_ckpt_report() {{
         reachable: &HashSet<u32>,
         checkpoints: CkptMode,
     ) -> std::io::Result<()> {
-        let native_cabi = matches!(package_link, PackageLink::CAbi | PackageLink::Bound);
+        let native_cabi = matches!(
+            package_link,
+            PackageLink::CAbi | PackageLink::Bound | PackageLink::Library
+        );
         // `native_bind`: the packages' functions are slots; `c_bind`: the C libraries packages
         // ship are bound at start too (always when the packages are, and under a static link
         // for the ones with no archive to link in).
@@ -8893,7 +8934,9 @@ extern crate loft;"
                     linked_pkgs.iter().any(|l| l == p)
                         && shipped_exports.defines(data, p, &sig.symbol)
                 });
-                if data.c_symbol_is_lazy(file) && !archived {
+                if (data.c_symbol_is_lazy(file) || package_link == PackageLink::Library)
+                    && !archived
+                {
                     let fn_ty = format!(
                         "unsafe extern \"C\" fn({}){ret}",
                         sig.params
@@ -9608,6 +9651,20 @@ extern crate loft;"
         } else {
             ""
         };
+        // @PLN196 step 9 — the release the program's stores record, from the manifest it is
+        // compiled against: a shipped binary need not sit beside its `loft.toml`.  Empty (and
+        // so byte-identical) for a program whose project records none.  It REPLACES what the
+        // stores hold: a live-dispatch boot parses the program first, and that parse has
+        // already set a release from wherever the binary runs.
+        let rel = self.stores.release();
+        let release = if rel.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " stores.release = std::sync::OnceLock::from(loft::database::Release {{ version: {:?}.to_string(), oldest: {:?}.to_string(), bridge: {:?}.to_string() }});",
+                rel.version, rel.oldest, rel.bridge
+            )
+        };
         // #255 / @PLN9: bake the parse-time `#cwd` path-mode default.
         writeln!(
             w,
@@ -9647,7 +9704,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -9688,7 +9745,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
@@ -10821,6 +10878,7 @@ extern crate loft;"
             // interpreter, so that build has no plan.
             if !self.emit_live {
                 self.apart = apart_value::plan(self.data, self.stores, &value_fns);
+                self.apr = apart_records::plan(self.data, self.stores);
                 self.dv = decode_view::plan(self.data, self.stores);
                 // A function both plans re-emit would need a twin of a twin.
                 if self
@@ -10871,13 +10929,7 @@ extern crate loft;"
             let r = self.output_function(w, dnr, program_store.as_ref());
             self.ps_mode = None;
             r?;
-            // `@FR-R-Apart` — the function's apart twin beside it: the same body over values.
-            if self.apart.twins.contains_key(&dnr) {
-                self.apart_twin = true;
-                let r = self.output_function(w, dnr, program_store.as_ref());
-                self.apart_twin = false;
-                r?;
-            }
+            self.output_apart_twins(w, dnr, program_store.as_ref())?;
             // @PLN157 § V-p — the callee's TWIN beside it (`@FR-R-Inputs`): the same body,
             // with its invariant inputs as extra parameters.
             if let Some(inputs) = self.callee_inputs_of(dnr) {
@@ -10889,14 +10941,22 @@ extern crate loft;"
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
-        // A twin's body asks for twins of either kind; until neither kind is left.
-        loop {
-            self.output_append_twins(w, program_store.as_ref())?;
-            let dest = self.output_dest_twins(w, program_store.as_ref())?;
-            if !self.output_vr_twins(w, program_store.as_ref())? && !dest {
-                return Ok(());
-            }
-        }
+        // A twin's body asks for twins of any kind; until no kind is left.
+        while self.output_twin_pass(w, program_store.as_ref())? {}
+        Ok(())
+    }
+
+    /// One pass over the twin kinds a twin's body may ask for, each kind run every pass:
+    /// `true` while a pass emitted a destination, `__nk` or view-return twin.
+    fn output_twin_pass(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<bool> {
+        self.output_append_twins(w, program_store)?;
+        let dest = self.output_dest_twins(w, program_store)?;
+        let nokeep = self.output_nokeep_twins(w, program_store)?;
+        Ok(self.output_vr_twins(w, program_store)? || dest || nokeep)
     }
     /// The twins the view plans ask for beside `dnr`: the decode view's, the structure
     /// clause's, and the stream walks' (`@FR-R-StreamWalk`).
@@ -11026,6 +11086,55 @@ extern crate loft;"
             self.output_refill_twins(w, program_store)?;
         }
         Ok(())
+    }
+
+    /// `@FR-R-Apart` — the function's apart twins beside it, the same body over values: an
+    /// instance-2 twin (`__apv`) and an instance-4 twin (`__apr`).
+    fn output_apart_twins(
+        &mut self,
+        w: &mut dyn Write,
+        dnr: u32,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        if self.apart.twins.contains_key(&dnr) {
+            self.apart_twin = true;
+            let r = self.output_function(w, dnr, program_store);
+            self.apart_twin = false;
+            r?;
+        }
+        if self.apr.twins.contains_key(&dnr) {
+            self.apr_twin = true;
+            let r = self.output_function(w, dnr, program_store);
+            self.apr_twin = false;
+            r?;
+        }
+        Ok(())
+    }
+
+    /// `@FR-R-HandOver`'s rotate clause — the `__nk` twins rotate sites asked for: each
+    /// suffix-keep callee's body without its keep statement, which the rotate has done.
+    fn output_nokeep_twins(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<bool> {
+        let mut any = false;
+        while let Some(at) = self
+            .nk_requests
+            .iter()
+            .position(|r| !self.nk_emitted.contains(r))
+        {
+            let d = self.nk_requests[at];
+            self.nk_emitted.insert(d);
+            self.nk_skip = hand_over::keep_statement(self.data, d);
+            self.nk_twin = true;
+            let r = self.output_function(w, d, program_store);
+            self.nk_twin = false;
+            self.nk_skip = None;
+            r?;
+            any = true;
+        }
+        Ok(any)
     }
 
     /// `@FR-R-RangedCall` — the ranged variants the calls asked for, each emitted under its
@@ -11874,6 +11983,10 @@ extern crate loft;"
                 "__vr"
             } else if self.apart_twin {
                 "__apv"
+            } else if self.apr_twin {
+                "__apr"
+            } else if self.nk_twin {
+                "__nk"
             } else {
                 ""
             },

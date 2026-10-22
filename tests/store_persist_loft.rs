@@ -520,6 +520,10 @@ fn gate_changed_script() -> PathBuf {
     workspace_root().join("tests/scripts/store_load_layout_gate_changed.loft")
 }
 
+fn gate_refused_script() -> PathBuf {
+    workspace_root().join("tests/scripts/store_load_layout_gate_refused.loft")
+}
+
 fn vectext_refuse_script() -> PathBuf {
     workspace_root().join("tests/scripts/store_load_vectext_refuse.loft")
 }
@@ -1285,19 +1289,20 @@ fn layout_gate_rejects_changed_struct_both_backends() {
     }
 }
 
-/// loft#700 — the layout gate on the WHOLE-IMAGE loader, `store_load`.
+/// loft#700 — the layout gate on the WHOLE-IMAGE loader, `store_load` (`@FR-L-Sound`:
+/// reject or convert, never read raw).
 ///
-/// It kept the target slot's type and reinterpreted the file's bytes through it, so a
-/// struct that had GROWN a field read every older record at the new, larger stride:
-/// `len()` on the added collection returned wild values and iterating one read arbitrary
-/// memory, silently, on both backends. The `.dschema` sidecar already recorded the
-/// layout the file was written with and the paged loaders already gated on it — this
-/// pins the same gate on the whole-image path.
+/// A raw read through the slot's type took a struct that had GROWN a field at the new,
+/// larger stride: `len()` returned wild values and iterating read arbitrary memory. The
+/// grown Tile now CONVERTS (@PLN196): both records arrive with the added field at its
+/// default.  A change the converter cannot carry (`name` from text to integer) is
+/// refused and leaves the collection empty.
 ///
-/// The matching half is what keeps the check honest: a gate that refused everything
-/// would pass the mismatch assertion on its own.
+/// The matching half keeps the check honest: a gate that refused everything would pass
+/// the refusal assertion on its own, and the converted VALUES are what a raw read at the
+/// wrong stride cannot produce.
 #[test]
-fn store_load_refuses_a_changed_layout_both_backends() {
+fn store_load_converts_or_refuses_a_changed_layout_both_backends() {
     let dir = scratch("layout_gate_whole");
     let path = dir.join("tiles.store");
 
@@ -1318,51 +1323,56 @@ fn store_load_refuses_a_changed_layout_both_backends() {
             "{backend}: {out:?}"
         );
 
-        // CHANGED layout (extra field) — refused, rather than read at the wrong stride.
+        // GROWN layout (extra field, default 7) — converted, never read at the wrong stride.
         let (out, code) = run_mode_backend(backend, &gate_changed_script(), &path, "whole");
         assert_eq!(code, 0, "{backend} mismatch exit: {out:?}");
         assert!(
-            out.contains("changed whole ok=false"),
-            "{backend}: a changed layout MUST be refused, not read raw: {out:?}"
+            out.contains("changed whole ok=true")
+                && out.contains("changed whole len=2")
+                && out.contains("changed whole tile=42/forty-two/7"),
+            "{backend}: a grown layout converts, every record with its default: {out:?}"
         );
+
+        // A change the converter cannot carry — refused, the collection empty.
+        let (out, code) = run_mode_backend(backend, &gate_refused_script(), &path, "whole");
+        assert_eq!(code, 0, "{backend} refused exit: {out:?}");
         assert!(
-            out.contains("changed whole len=0"),
-            "{backend}: a refused load leaves the collection empty: {out:?}"
+            out.contains("refused whole ok=false") && out.contains("refused whole len=0"),
+            "{backend}: an unconvertible layout MUST be refused, not read raw: {out:?}"
         );
     }
 }
 
 /// `store_persist_bind` on an EXISTING file reads it through the slot's type, so it
-/// passes the same layout gate as `store_load` (`@FR-L-Sound`, loft#1562): a Tile that
-/// grew a field is refused rather than bound and read at the wider stride.  A refused
-/// bind leaves the store, its `.dschema` and the collection as they were — so
-/// `store_load` still refuses the file afterwards, and the program that wrote it still
-/// binds it.
+/// passes the same layout gate as `store_load` (`@FR-L-Sound`, loft#1562).  A change the
+/// converter cannot carry is refused: the store, its `.dschema` and the collection are
+/// left as they were, so the program that wrote it still binds it.  A Tile that grew a
+/// field UPGRADES the file in place (@PLN196): the bind answers the converted records,
+/// the original pair is kept as `.old`, and the file then reads raw under the new layout.
 #[test]
-fn store_persist_bind_refuses_a_changed_layout_both_backends() {
+fn store_persist_bind_converts_or_refuses_a_changed_layout_both_backends() {
     let dir = scratch("layout_gate_bind");
     let path = dir.join("tiles.store");
     let sidecar = PathBuf::from(format!("{}.dschema", path.display()));
-
-    let (out_w, code_w) = run_mode(&gate_script(), &path, "write");
-    assert_eq!(code_w, 0, "write: {out_w:?}");
+    let old = PathBuf::from(format!("{}.old", path.display()));
 
     for backend in ["--interpret", "--native"] {
+        // Each backend starts from the writer's file: the grown bind below upgrades it.
+        let _ = fa::remove_file(&path);
+        let _ = fa::remove_file(&sidecar);
+        let (out_w, code_w) = run_mode(&gate_script(), &path, "write");
+        assert_eq!(code_w, 0, "write: {out_w:?}");
         let before = (fa::read(&path).unwrap(), fa::read(&sidecar).unwrap());
 
-        // CHANGED layout (extra field) — refused, and the collection stays usable.
-        let (out, code) = run_mode_backend(backend, &gate_changed_script(), &path, "bind");
-        assert_eq!(code, 0, "{backend} mismatch exit: {out:?}");
+        // An unconvertible change — refused, and the collection stays usable.
+        let (out, code) = run_mode_backend(backend, &gate_refused_script(), &path, "bind");
+        assert_eq!(code, 0, "{backend} refused exit: {out:?}");
         assert!(
-            out.contains("changed bind ok=false"),
-            "{backend}: a changed layout MUST be refused, not bound and read raw: {out:?}"
+            out.contains("refused bind ok=false") && out.contains("refused bind len=0"),
+            "{backend}: an unconvertible layout MUST be refused, not bound and read raw: {out:?}"
         );
         assert!(
-            out.contains("changed bind len=0"),
-            "{backend}: a refused bind leaves the collection empty: {out:?}"
-        );
-        assert!(
-            out.contains("changed bind after-insert len=1 name=five"),
+            out.contains("refused bind after-insert len=1 name=55"),
             "{backend}: a refused bind leaves the collection usable: {out:?}"
         );
         assert!(
@@ -1370,39 +1380,56 @@ fn store_persist_bind_refuses_a_changed_layout_both_backends() {
             "{backend}: a refused bind must not write the store or relabel its sidecar"
         );
 
-        // The sidecar still names the layout that wrote the file, so the whole-image
-        // loader goes on refusing it.
-        let (out, code) = run_mode_backend(backend, &gate_changed_script(), &path, "whole");
-        assert_eq!(code, 0, "{backend} whole exit: {out:?}");
-        assert!(
-            out.contains("changed whole ok=false"),
-            "{backend}: a refused bind must not disarm store_load's gate: {out:?}"
-        );
-
         // MATCHING layout — the writer's program still binds its own data.
         let (out, code) = run_mode_backend(backend, &gate_script(), &path, "bind");
         assert_eq!(code, 0, "{backend} match exit: {out:?}");
         assert!(
-            out.contains("gate bind ok=true"),
+            out.contains("gate bind ok=true")
+                && out.contains("gate bind len=2")
+                && out.contains("gate bind name=forty-two"),
             "{backend}: an unchanged layout must still bind: {out:?}"
         );
-        assert!(out.contains("gate bind len=2"), "{backend}: {out:?}");
+        let before = (fa::read(&path).unwrap(), fa::read(&sidecar).unwrap());
+
+        // GROWN layout — the file is upgraded in place, the original kept as `.old`.
+        let (out, code) = run_mode_backend(backend, &gate_changed_script(), &path, "bind");
+        assert_eq!(code, 0, "{backend} grown exit: {out:?}");
         assert!(
-            out.contains("gate bind name=forty-two"),
-            "{backend}: {out:?}"
+            out.contains("changed bind ok=true")
+                && out.contains("changed bind len=2")
+                && out.contains("changed bind tile=42/forty-two/7")
+                && out.contains("changed bind after-insert len=3 name=five"),
+            "{backend}: a grown layout upgrades the file and binds it: {out:?}"
+        );
+        assert!(
+            before
+                == (
+                    fa::read(&old).unwrap(),
+                    fa::read(format!("{}.dschema", old.display())).unwrap()
+                ),
+            "{backend}: the original store and sidecar are kept as .old"
+        );
+        // The upgraded file has the grown layout: it now reads raw, with the record the
+        // bind added.
+        let (out, code) = run_mode_backend(backend, &gate_changed_script(), &path, "whole");
+        assert_eq!(code, 0, "{backend} whole exit: {out:?}");
+        assert!(
+            out.contains("changed whole ok=true") && out.contains("changed whole len=3"),
+            "{backend}: the upgraded file reads under the new layout: {out:?}"
         );
     }
 }
 
 /// `store_load_url` and `store_load_url_trusted` adopt a fetched image through the slot's
-/// type, so they pass the layout gate too (`@FR-L-Sound`, loft#1562).  The sidecar is
+/// type, so they pass the layout gate too (`@FR-L-Sound`, loft#1562): a grown layout
+/// converts (@PLN196), an unconvertible one is refused.  The sidecar is
 /// `<url>.dschema`, read over the same transport as the image: beside the file for
 /// `file://`, and from the server over HTTP.  Both loaders, both transports and both
 /// backends are covered, each with its matching half, so the gate cannot pass by
 /// refusing everything.
 #[cfg(feature = "registry")]
 #[test]
-fn store_load_url_refuses_a_changed_layout_both_backends() {
+fn store_load_url_converts_or_refuses_a_changed_layout_both_backends() {
     let dir = scratch("layout_gate_url");
     let path = dir.join("tiles.store");
 
@@ -1445,8 +1472,15 @@ fn store_load_url_refuses_a_changed_layout_both_backends() {
                 );
                 let out = run(backend, &gate_changed_script(), url, pin);
                 assert!(
-                    out.contains("changed url ok=false") && out.contains("changed url len=0"),
-                    "{backend} {url} pin={pin}: a changed layout MUST be refused: {out:?}"
+                    out.contains("changed url ok=true")
+                        && out.contains("changed url len=2")
+                        && out.contains("changed url tile=42/forty-two/7"),
+                    "{backend} {url} pin={pin}: a grown layout converts: {out:?}"
+                );
+                let out = run(backend, &gate_refused_script(), url, pin);
+                assert!(
+                    out.contains("refused url ok=false") && out.contains("refused url len=0"),
+                    "{backend} {url} pin={pin}: an unconvertible layout MUST be refused: {out:?}"
                 );
             }
         }
@@ -1910,6 +1944,33 @@ fn persist_size_at(path: &Path, n: u32, per: u32, mode: &str, seed: Option<&str>
     (bytes, stdout.trim().to_string())
 }
 
+/// [`persist_size`], answering the live digest of the image it wrote (`live_digest_line`).
+fn persist_live_digest(test: &str, n: u32, per: u32, mode: &str, seed: Option<&str>) -> String {
+    let path = scratch(test).join("size.store");
+    let script = workspace_root().join("tests/scripts/store_persist_size_710.loft");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
+    cmd.arg("--interpret")
+        .arg(&script)
+        .env("LOFT_PERSIST_TEST_PATH", &path)
+        .env("LOFT_PERSIST_TEST_N", n.to_string())
+        .env("LOFT_PERSIST_TEST_PER", per.to_string())
+        .env("LOFT_PERSIST_TEST_MODE", mode)
+        .env("LOFT_STORE_LIVE_DIGEST", "1")
+        .current_dir(workspace_root());
+    match seed {
+        Some(s) => cmd.env("LOFT_HASH_SEED", s),
+        None => cmd.env_remove("LOFT_HASH_SEED"),
+    };
+    let out = cmd.output().expect("failed to invoke loft binary");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("persist true"),
+        "{mode} failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    live_digest_line(&String::from_utf8_lossy(&out.stderr))
+}
+
 /// loft#710 — a persisted store's size must follow what it HOLDS.
 ///
 /// It did not: the image was the arena's whole capacity, so the file carried
@@ -2225,12 +2286,40 @@ fn b0_run(
     tag: &str,
     seed: Option<&str>,
 ) -> B0 {
+    b0_run_full(backend, path, order, damage, mode, tag, seed).0
+}
+
+/// The digest of the bytes a persisted store holds IN ACTIVE USE, from the
+/// `LOFT_STORE_LIVE_DIGEST=1` line its write prints (`Stores::live_digest`) — what two images
+/// are compared by.  A saved image is the store's buffer, which also carries bytes no reader
+/// reads (a vector's capacity past its length, a text's tail): a claim promises no value, so
+/// those differ between runs that store the same data.
+fn live_digest_line(stderr: &str) -> String {
+    stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("loft: live-digest "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no live-digest line:\n{stderr}"))
+        .to_string()
+}
+
+/// [`b0_run`], and the live digest of the image the run wrote (empty when it wrote none).
+fn b0_run_full(
+    backend: &str,
+    path: &Path,
+    order: &str,
+    damage: &str,
+    mode: &str,
+    tag: &str,
+    seed: Option<&str>,
+) -> (B0, String) {
     let script = workspace_root().join("tests/scripts/store_digest_b0.loft");
     let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .env("LOFT_PERSIST_TEST_PATH", path)
         .env("LOFT_PERSIST_TEST_MODE", mode)
+        .env("LOFT_STORE_LIVE_DIGEST", "1")
         .env("B0_ORDER", order)
         .env("B0_DAMAGE", damage)
         .env("B0_N", "200")
@@ -2261,12 +2350,19 @@ fn b0_run(
         }
         panic!("no `{key}` in `{line}`");
     };
-    B0 {
+    let b0 = B0 {
         count: num("count"),
         sum: num("sum"),
         xor: num("xor"),
         sound: line.ends_with("sound true"),
-    }
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let live = if stderr.contains("loft: live-digest ") {
+        live_digest_line(&stderr)
+    } else {
+        String::new()
+    };
+    (b0, live)
 }
 
 /// @PLN123 B0 — the oracle arc B will be built against, calibrated BEFORE any
@@ -2313,6 +2409,17 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
         let run = |file: &str, order: &str, damage: &str, mode: &str, want: &str, seed| {
             b0_run(backend, &dir.join(file), order, damage, mode, want, seed)
         };
+        let run_live = |file: &str, order: &str, seed| {
+            b0_run_full(
+                backend,
+                &dir.join(file),
+                order,
+                "none",
+                "",
+                "persisted",
+                seed,
+            )
+        };
 
         // Same 200 records, five representations.  Every run pins the bucket
         // seed, because an unseeded hash draws a RANDOM one per process (the
@@ -2332,10 +2439,12 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
             ("inter.store", "interleaved", "7", "evens then odds"),
             ("seed1.store", "forward", "1", "a different bucket seed"),
         ];
-        let mut images: Vec<Vec<u8>> = Vec::new();
+        // Each image by the bytes it holds in active use (`live_digest_line`): the gaps a
+        // claim leaves unwritten differ from run to run and are no part of the data.
+        let mut images: Vec<String> = Vec::new();
         let mut base: Option<B0> = None;
         for (file, order, seed, what) in reps {
-            let got = run(file, order, "none", "", "persisted", Some(seed));
+            let (got, live) = run_live(file, order, Some(seed));
             assert!(got.sound, "{backend}: {what} must verify");
             assert!(
                 got.count == 200 && got.sum != 0 && got.xor != 0,
@@ -2349,16 +2458,20 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
                      moved with the layout would report arc B's rebuild as data loss"
                 ),
             }
-            images.push(fa::read(dir.join(file)).expect("store file"));
+            images.push(live);
         }
         let base = base.expect("five representations");
 
         // The controls for the claim above.  Negative: same order, same seed,
-        // byte-identical — so the harness is deterministic and the differences
+        // the same live bytes — so the harness is deterministic and the differences
         // below are attributable rather than noise.
+        assert!(
+            !images[0].is_empty(),
+            "{backend}: the persist printed no live digest"
+        );
         assert_eq!(
             images[0], images[1],
-            "{backend}: two identical runs must produce identical bytes, or \
+            "{backend}: two identical runs must store identical live bytes, or \
              nothing measured here can be attributed to anything"
         );
         // Positive: each lever really does reach the stored bytes, so the
@@ -2371,7 +2484,7 @@ fn store_digest_b0_oracle_sees_loss_not_layout() {
         ] {
             assert_ne!(
                 images[0], images[i],
-                "{backend}: {lever} did not reach the stored bytes, so the \
+                "{backend}: {lever} did not reach the stored live bytes, so the \
                  digest's invariance across it proves nothing"
             );
         }
@@ -3136,23 +3249,29 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
 /// control: without it, two identical files would prove nothing about the seed.
 #[test]
 fn fixed_hash_seed_makes_a_persisted_store_reproducible() {
+    // An image is compared by the bytes it holds in ACTIVE USE (`live_digest_line`): the gaps
+    // a claim leaves unwritten (a vector's capacity past its length) are no part of the data
+    // and differ between runs.  The file's LENGTH is layout, and stays compared.
     let read = |dir: &str, seed: Option<&str>| {
-        persist_size(dir, 120, 30, "interleaved", seed);
-        fa::read(scratch_existing(dir).join("size.store")).expect("store file")
+        let digest = persist_live_digest(dir, 120, 30, "interleaved", seed);
+        let len = fa::metadata(scratch_existing(dir).join("size.store"))
+            .expect("store file")
+            .len();
+        (len, digest)
     };
     let a = read("seed710_a", Some("12345"));
     let b = read("seed710_b", Some("12345"));
-    assert_eq!(a.len(), b.len(), "same seed, same data: same length");
+    assert_eq!(a.0, b.0, "same seed, same data: same length");
     assert!(
         a == b,
-        "same seed, same data must give byte-identical bytes"
+        "same seed, same data must give the same live bytes: {a:?} vs {b:?}"
     );
 
     let c = read("seed710_c", None);
     let d = read("seed710_d", None);
     assert!(
         c != d,
-        "without LOFT_HASH_SEED the bytes must still vary — otherwise this test proves nothing"
+        "without LOFT_HASH_SEED the live bytes must still vary — otherwise this test proves nothing"
     );
 
     // loft#856 — the SPELLING is part of the contract, and only the decimal one was covered.
@@ -3169,9 +3288,7 @@ fn fixed_hash_seed_makes_a_persisted_store_reproducible() {
     let dec = read("seed710_dec", Some("81985529216486895"));
     assert!(
         hex == dec,
-        "`0x0123456789abcdef` and its decimal spelling must be the same seed: {} vs {} bytes",
-        hex.len(),
-        dec.len()
+        "`0x0123456789abcdef` and its decimal spelling must be the same seed: {hex:?} vs {dec:?}"
     );
     assert!(
         hex != c,

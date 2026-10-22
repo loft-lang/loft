@@ -3102,6 +3102,8 @@ impl Stores {
             paged_refusal: None,
             live_scratches: Vec::new(),
             evacuated: Vec::new(),
+            owed: super::upgrade::Owed::default(),
+            upgrade_routines: self.upgrade_routines.clone(),
             frame_held: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -3129,6 +3131,7 @@ impl Stores {
             par_fn_native_buffer_stack: Vec::new(),
             logger: self.logger.clone(),
             had_fatal: false,
+            fault_line: 0,
             runtime_error: None,
             dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             swap_safe_types: Vec::new(),
@@ -3136,6 +3139,7 @@ impl Stores {
             // #255 / @PLN9: a parallel worker's file ops must resolve paths the
             // same way as the main thread — carry the anchor + mode.
             source_dir: self.source_dir.clone(),
+            release: self.release.clone(),
             program_relative: self.program_relative,
             frame_yield: false,
             poison_free: self.poison_free,
@@ -3572,6 +3576,286 @@ impl Stores {
                 },
                 length * size + 4,
             );
+        }
+        true
+    }
+
+    /// `@FR-R-HandOver`'s rotate clause — the append of a copy of `src` to the full vector
+    /// `vec` (`k` elements of type `elem_tp`) followed by the drop of its oldest element, as
+    /// one step: `src` is copied into element 0 — its scalar bytes, and its vectors into the
+    /// blocks element 0 owns, grown where too small — and the slots rotate left by one, so
+    /// the copy ends last and every other element one place nearer the front.  The state is
+    /// the one the append and the keep of `[1, k + 1)` leave; no slot is claimed and no
+    /// record freed.  `false`, with nothing changed, unless the vector holds exactly `k >= 1`
+    /// elements of a type that owns plain vectors and nothing else, no block element 0 owns
+    /// is named by a stored reference (`@FR-H-Removed` keeps such a block in place), both
+    /// stores are this process's, the vector's is writable and unshadowed, `src` is a record
+    /// outside the vector, and no copy trace or check is armed.
+    pub fn rotate_into(&mut self, vec: &DbRef, src: &DbRef, elem_tp: u16, k: i64) -> bool {
+        if !crate::keys::hand_over_enabled()
+            || k < 1
+            || vec.is_null()
+            || vec.rec == 0
+            || src.store_nr == u16::MAX
+            || src.rec == 0
+            || (vec.store_nr as usize) >= self.allocations.len()
+            || (src.store_nr as usize) >= self.allocations.len()
+        {
+            return false;
+        }
+        let vstore = &self.allocations[vec.store_nr as usize];
+        if vstore.read_only
+            || vstore.is_foreign()
+            || vstore.shadow_armed()
+            || self.allocations[src.store_nr as usize].is_foreign()
+        {
+            return false;
+        }
+        let vec_rec = vstore.collection_rec(vec.rec, vec.pos);
+        if vec_rec == 0 || i64::from(vstore.get_u32_raw(vec_rec, 4)) != k {
+            return false;
+        }
+        if src.store_nr == vec.store_nr && src.rec == vec_rec {
+            return false;
+        }
+        let Some((plan, count)) = self.plain_vectors_of(elem_tp) else {
+            return false;
+        };
+        let size = u32::from(self.size(elem_tp));
+        const ROT_MAX: usize = 64;
+        if size as usize > ROT_MAX || crate::keys::trace_copy() || self.copy_check_enabled() {
+            return false;
+        }
+        let vstore = &self.allocations[vec.store_nr as usize];
+        let cap = vstore.capacity_words();
+        let mut held = [0u32; PLAIN_MAX];
+        for (i, &(off, _)) in plan[..count].iter().enumerate() {
+            let cur = vstore.get_u32_raw(vec_rec, 8 + off);
+            if cur == 0 || Self::owned_edge_absent(cur) {
+                continue;
+            }
+            if cur >= cap || vstore.is_referenced(cur) {
+                return false;
+            }
+            held[i] = cur;
+        }
+        let first = DbRef {
+            store_nr: vec.store_nr,
+            rec: vec_rec,
+            pos: 8,
+        };
+        // Both stores were checked above, and every range below lies inside a record read
+        // from them, so the bytes move without `copy_block`'s per-call checks.
+        self.move_bytes(src, &first, size);
+        for (i, &(off, esize)) in plan[..count].iter().enumerate() {
+            let s = self.store(src).get_u32_raw(src.rec, src.pos + off);
+            let mut b = held[i];
+            if s == 0 || Self::owned_edge_absent(s) {
+                if b != 0 {
+                    self.store_mut(&first).delete(b);
+                }
+                self.store_mut(&first).set_u32_raw(vec_rec, 8 + off, s);
+                continue;
+            }
+            let length = self.store(src).get_u32_raw(s, 4);
+            let words = 1 + (esize * length).div_ceil(8);
+            let store = self.store_mut(&first);
+            b = if b == 0 {
+                store.claim(words)
+            } else if store.record_words(b) < words {
+                store.resize(b, words)
+            } else {
+                b
+            };
+            store.set_u32_raw(vec_rec, 8 + off, b);
+            self.move_bytes(
+                &DbRef {
+                    store_nr: src.store_nr,
+                    rec: s,
+                    pos: 4,
+                },
+                &DbRef {
+                    store_nr: vec.store_nr,
+                    rec: b,
+                    pos: 4,
+                },
+                length * esize + 4,
+            );
+        }
+        // The rotate: element 0 to the end, the rest one place forward.  A claim or a resize
+        // above may have moved the store, so the base is read after them.
+        let store = self.store_mut(&first);
+        let n = usize::try_from(k).unwrap_or(0);
+        let sz = size as usize;
+        unsafe {
+            let base = store.base_ptr().add(vec_rec as usize * 8 + 8);
+            let mut tmp = [0u8; ROT_MAX];
+            std::ptr::copy_nonoverlapping(base, tmp.as_mut_ptr(), sz);
+            std::ptr::copy(base.add(sz), base, (n - 1) * sz);
+            std::ptr::copy_nonoverlapping(tmp.as_ptr(), base.add((n - 1) * sz), sz);
+        }
+        true
+    }
+
+    /// `@FR-R-Apart` instance 4's boundary — an apart record written into the FRESH element
+    /// `dst`: per part `(slot, bytes, n)`, a block of exactly `n` elements claimed in `dst`'s
+    /// store with the bytes copied in, its reference written at the slot; an empty part writes
+    /// the empty vector (0).  Nothing is done for a null or read-only destination, which the
+    /// store path's copy also leaves untouched.
+    pub fn apart_write_fresh(&mut self, dst: &DbRef, parts: &[(u32, &[u8], u32)]) {
+        if dst.store_nr == u16::MAX
+            || dst.rec == 0
+            || (dst.store_nr as usize) >= self.allocations.len()
+            || !self.store(dst).write_allowed(dst.rec, dst.pos)
+        {
+            return;
+        }
+        for &(slot, bytes, n) in parts {
+            if n == 0 {
+                self.store_mut(dst).set_u32_raw(dst.rec, dst.pos + slot, 0);
+                continue;
+            }
+            let b = self.apart_block(dst, 0, bytes, n);
+            self.store_mut(dst).set_u32_raw(dst.rec, dst.pos + slot, b);
+        }
+    }
+
+    /// A block of `dst`'s store holding `n` elements whose bytes are `bytes`: `reuse` when it
+    /// is a block large enough (0 claims one), grown when too small.  Answers the block.
+    fn apart_block(&mut self, dst: &DbRef, reuse: u32, bytes: &[u8], n: u32) -> u32 {
+        let words = 1 + (bytes.len() as u32).div_ceil(8);
+        let store = self.store_mut(dst);
+        let b = if reuse == 0 {
+            store.claim(words)
+        } else if store.record_words(reuse) < words {
+            store.resize(reuse, words)
+        } else {
+            reuse
+        };
+        store.set_u32_raw(b, 4, n);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                store.base_ptr().add(b as usize * 8 + 8),
+                bytes.len(),
+            );
+        }
+        b
+    }
+
+    /// `@FR-R-HandOver`'s rotate clause from an apart record (`@FR-R-Apart` instance 4): as
+    /// [`Self::rotate_into`], with the new element's vectors given as parts `(slot, bytes, n)`
+    /// rather than read from a record.  `false`, with nothing changed, on the tests
+    /// `rotate_into` makes of the vector and of element 0, or when the parts are not the
+    /// element type's vectors.
+    pub fn rotate_from_parts(
+        &mut self,
+        vec: &DbRef,
+        parts: &[(u32, &[u8], u32)],
+        elem_tp: u16,
+        k: i64,
+    ) -> bool {
+        if !crate::keys::hand_over_enabled()
+            || k < 1
+            || vec.is_null()
+            || vec.rec == 0
+            || (vec.store_nr as usize) >= self.allocations.len()
+        {
+            return false;
+        }
+        let vstore = &self.allocations[vec.store_nr as usize];
+        if vstore.read_only || vstore.is_foreign() || vstore.shadow_armed() {
+            return false;
+        }
+        let vec_rec = vstore.collection_rec(vec.rec, vec.pos);
+        if vec_rec == 0 || i64::from(vstore.get_u32_raw(vec_rec, 4)) != k {
+            return false;
+        }
+        let Some((plan, count)) = self.plain_vectors_of(elem_tp) else {
+            return false;
+        };
+        let size = u32::from(self.size(elem_tp));
+        const ROT_MAX: usize = 64;
+        if count != parts.len()
+            || size as usize > ROT_MAX
+            || plan[..count]
+                .iter()
+                .zip(parts)
+                .any(|(&(off, esize), &(slot, bytes, n))| {
+                    off != slot || bytes.len() != (esize * n) as usize
+                })
+        {
+            return false;
+        }
+        let vstore = &self.allocations[vec.store_nr as usize];
+        let cap = vstore.capacity_words();
+        let mut held = [0u32; PLAIN_MAX];
+        for (i, &(off, _)) in plan[..count].iter().enumerate() {
+            let cur = vstore.get_u32_raw(vec_rec, 8 + off);
+            if cur == 0 || Self::owned_edge_absent(cur) {
+                continue;
+            }
+            if cur >= cap || vstore.is_referenced(cur) {
+                return false;
+            }
+            held[i] = cur;
+        }
+        let first = DbRef {
+            store_nr: vec.store_nr,
+            rec: vec_rec,
+            pos: 8,
+        };
+        for (i, &(slot, bytes, n)) in parts.iter().enumerate() {
+            if n == 0 {
+                if held[i] != 0 {
+                    self.store_mut(&first).delete(held[i]);
+                }
+                self.store_mut(&first).set_u32_raw(vec_rec, 8 + slot, 0);
+                continue;
+            }
+            let b = self.apart_block(&first, held[i], bytes, n);
+            self.store_mut(&first).set_u32_raw(vec_rec, 8 + slot, b);
+        }
+        let store = self.store_mut(&first);
+        let n = usize::try_from(k).unwrap_or(0);
+        let sz = size as usize;
+        unsafe {
+            let base = store.base_ptr().add(vec_rec as usize * 8 + 8);
+            let mut tmp = [0u8; ROT_MAX];
+            std::ptr::copy_nonoverlapping(base, tmp.as_mut_ptr(), sz);
+            std::ptr::copy(base.add(sz), base, (n - 1) * sz);
+            std::ptr::copy_nonoverlapping(tmp.as_ptr(), base.add((n - 1) * sz), sz);
+        }
+        true
+    }
+
+    /// `len` bytes from `from` to `to`, in one store or two, for a caller that has checked
+    /// both writable and both ranges inside their records.
+    fn move_bytes(&mut self, from: &DbRef, to: &DbRef, len: u32) {
+        let src = self.allocations[from.store_nr as usize].base_ptr();
+        let dst = self.allocations[to.store_nr as usize].base_ptr();
+        unsafe {
+            std::ptr::copy(
+                src.add(from.rec as usize * 8 + from.pos as usize),
+                dst.add(to.rec as usize * 8 + to.pos as usize),
+                len as usize,
+            );
+        }
+    }
+
+    /// The deep copy of a record whose owners are plain vectors into a FRESH slot of another
+    /// store: the record's bytes, then each vector's block claimed and copied by the type's
+    /// plan ([`Self::copy_plain_vectors`]) — what `OpCopyRecord` reaches for such a record
+    /// after its general dispatch, without it.  A fresh slot holds nothing to release.
+    /// `false`, with nothing done, for any other type and for a copy within one store.
+    pub(crate) fn copy_fresh_plain(&mut self, rec: &DbRef, to: &DbRef, tp: u16) -> bool {
+        if rec.store_nr == to.store_nr || !self.owns_plain_vectors(tp) {
+            return false;
+        }
+        let size = u32::from(self.size(tp));
+        self.copy_block(rec, to, size);
+        if !self.copy_plain_vectors(rec, to, tp) {
+            self.copy_claims(rec, to, tp);
         }
         true
     }
@@ -4797,6 +5081,12 @@ impl Stores {
         } else {
             None
         };
+        // A file written under an older layout is converted and upgraded in place (@PLN196,
+        // open question 3); the drain after this call finishes the bind.
+        if exists && self.layout_changed(slot, path) {
+            let done = self.bind_upgraded(slot, path);
+            return Self::conversion_took(done, &path.display().to_string(), "store_persist_bind");
+        }
         if exists && !self.schema_gate_ok(slot, path, "store_persist_bind") {
             return false;
         }
@@ -4864,6 +5154,13 @@ impl Stores {
                 Some(b) => b,
                 None => return false,
             };
+            if crate::keys::env_set("LOFT_STORE_LIVE_DIGEST") {
+                let (digest, n) = self.live_digest(slot);
+                crate::loft_eprintln!(
+                    "loft: live-digest {digest:016x} bytes {n} {}",
+                    path.display()
+                );
+            }
             if std::fs::write(path, &padded).is_err() {
                 return false;
             }
@@ -5046,6 +5343,12 @@ impl Stores {
         let slot_idx = slot as usize;
         if slot_idx >= self.allocations.len() {
             return false;
+        }
+        // A file written under an older layout is converted in memory (@PLN196, open
+        // question 3); the file is left as it is.
+        if self.layout_changed(slot, path) {
+            let done = self.load_upgraded(slot, path);
+            return Self::conversion_took(done, &path.display().to_string(), "store_load");
         }
         if !self.schema_gate_ok(slot, path, "store_load") {
             return false;
@@ -5568,6 +5871,125 @@ impl Stores {
             }
         }
         true
+    }
+
+    /// A digest of the bytes of store `slot` its value holds IN ACTIVE USE, and how many bytes
+    /// that is — a test instrument (`LOFT_STORE_LIVE_DIGEST=1`), not a format.  A saved image
+    /// is the store's buffer, and the buffer also holds bytes no reader ever reads: a vector's
+    /// capacity past its length, a text's tail past its length, the free space.  A claim
+    /// promises no value (`@FR-H-Claim`), so those bytes differ from run to run while every
+    /// value is the same; two images hold the same data exactly when their live bytes agree.
+    /// Live: each block's header word, a record's fields, a vector's header and its `length`
+    /// elements, a text's header and its bytes, and the whole of a keyed collection's table
+    /// and entry arena (built to read 0 as empty, so they hold no stale bytes).
+    pub fn live_digest(&self, slot: u16) -> (u64, u64) {
+        let Some(store) = self.allocations.get(slot as usize) else {
+            return (0, 0);
+        };
+        let bytes = store.capacity_words() as usize * 8;
+        let mut live = vec![false; bytes];
+        let root = DbRef {
+            store_nr: slot,
+            rec: 1,
+            pos: 8,
+        };
+        Self::mark_bytes(&mut live, 8, 4);
+        self.mark_live(&root, store.known_type, &mut live, 0);
+        // SAFETY: `capacity_words() * 8` is the buffer the store owns.
+        let raw = unsafe { std::slice::from_raw_parts(store.base_ptr(), bytes) };
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut n = 0u64;
+        for (i, (&b, &l)) in raw.iter().zip(&live).enumerate() {
+            if l {
+                n += 1;
+                for x in (i as u64).to_le_bytes().into_iter().chain([b]) {
+                    h ^= u64::from(x);
+                    h = h.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+        }
+        (h, n)
+    }
+
+    fn mark_bytes(live: &mut [bool], from: usize, len: usize) {
+        let end = from.saturating_add(len).min(live.len());
+        if from < end {
+            live[from..end].iter_mut().for_each(|b| *b = true);
+        }
+    }
+
+    /// [`Self::live_digest`]'s walk: mark the live bytes of the value of type `tp` at `db`.
+    fn mark_live(&self, db: &DbRef, tp: u16, live: &mut [bool], depth: u32) {
+        if depth > 64 || tp as usize >= self.types.len() || db.rec == 0 {
+            return;
+        }
+        let store = self.store(db);
+        let cap = store.capacity_words();
+        let at = db.rec as usize * 8 + db.pos as usize;
+        // The id a field holds, when it names a block inside the store.
+        let block_at = |db: &DbRef| -> Option<u32> {
+            let r = store.get_u32_raw(db.rec, db.pos);
+            (r != 0 && !Self::owned_edge_absent(r) && r < cap).then_some(r)
+        };
+        match &self.types[tp as usize].parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                Self::mark_bytes(live, at, usize::from(self.size(tp)));
+                for f in fields {
+                    let child = DbRef {
+                        store_nr: db.store_nr,
+                        rec: db.rec,
+                        pos: db.pos + u32::from(f.position),
+                    };
+                    self.mark_live(&child, f.content, live, depth + 1);
+                }
+            }
+            Parts::Base if tp == super::TEXT_TP => {
+                if let Some(r) = block_at(db) {
+                    let len = store.get_u32_raw(r, 4) as usize;
+                    Self::mark_bytes(live, r as usize * 8, 8 + len);
+                }
+            }
+            Parts::Vector(v) | Parts::Sorted(v, _) => {
+                let v = *v;
+                if let Some(r) = block_at(db) {
+                    let len = store.get_u32_raw(r, 4);
+                    let size = u32::from(self.size(v));
+                    Self::mark_bytes(live, r as usize * 8, 8 + (len as usize) * size as usize);
+                    for i in 0..len {
+                        let elem = DbRef {
+                            store_nr: db.store_nr,
+                            rec: r,
+                            pos: 8 + size * i,
+                        };
+                        self.mark_live(&elem, v, live, depth + 1);
+                    }
+                }
+            }
+            Parts::Base
+            | Parts::Enum(_)
+            | Parts::Byte(..)
+            | Parts::Short(..)
+            | Parts::Int(..)
+            | Parts::IntRaw(..)
+            | Parts::ShortRaw(..) => {}
+            _ => {
+                let walk = self.owned_walk(db, tp, false);
+                for r in walk
+                    .container_rec
+                    .into_iter()
+                    .chain(walk.extra_recs.iter().copied())
+                {
+                    if r < cap {
+                        let words = store.read::<i32>(r, 0).unsigned_abs() as usize;
+                        Self::mark_bytes(live, r as usize * 8, words * 8);
+                    }
+                }
+                for c in &walk.children {
+                    Self::mark_bytes(live, c.child.rec as usize * 8, 4);
+                    self.mark_live(&c.child, c.child_tp, live, depth + 1);
+                }
+            }
+        }
     }
 
     /// The release plan of `tp` ([`RelSlot`]), derived on the first ask and cached on its row.
@@ -6508,9 +6930,9 @@ impl Stores {
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
     pub fn load_url_verified(&mut self, slot: u16, url: &str, sha256_hex: &str) -> bool {
-        if !self.url_schema_gate_ok(slot, url, "store_load_url") {
+        let Ok(older) = self.url_layout_gate(slot, url, "store_load_url") else {
             return false;
-        }
+        };
         let bytes = match crate::net::fetch_bytes(url) {
             Ok(b) => b,
             Err(e) => {
@@ -6521,6 +6943,11 @@ impl Stores {
         if let Err(e) = crate::integrity::verify_sha256(&bytes, sha256_hex) {
             crate::loft_eprintln!("store loader: refusing {url} — {e}");
             return false;
+        }
+        // An older layout converts in memory, once the pin has passed (@PLN196).
+        if let Some(sidecar) = older {
+            let done = self.load_upgraded_from(slot, &sidecar, &bytes, url);
+            return Self::conversion_took(done, url, "store_load_url");
         }
         let recorded = self.url_recorded_slot(slot, url);
         self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url")
@@ -6544,9 +6971,9 @@ impl Stores {
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
     pub fn load_url(&mut self, slot: u16, url: &str) -> bool {
-        if !self.url_schema_gate_ok(slot, url, "store_load_url_trusted") {
+        let Ok(older) = self.url_layout_gate(slot, url, "store_load_url_trusted") else {
             return false;
-        }
+        };
         let bytes = match crate::net::fetch_bytes(url) {
             Ok(b) => b,
             Err(e) => {
@@ -6554,6 +6981,10 @@ impl Stores {
                 return false;
             }
         };
+        if let Some(sidecar) = older {
+            let done = self.load_upgraded_from(slot, &sidecar, &bytes, url);
+            return Self::conversion_took(done, url, "store_load_url_trusted");
+        }
         let recorded = self.url_recorded_slot(slot, url);
         self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url_trusted")
     }
@@ -6567,6 +6998,16 @@ impl Stores {
     /// `load_path` (the trusted path) validates only in debug and is faster;
     /// use this for a file whose provenance you don't control.
     pub fn load_path_untrusted(&mut self, slot: u16, path: &std::path::Path) -> bool {
+        // An older layout converts in memory, as `store_load` does (@PLN196); the converter
+        // validates the image's structure before it reads a record.
+        if self.layout_changed(slot, path) {
+            let done = self.load_upgraded(slot, path);
+            return Self::conversion_took(
+                done,
+                &path.display().to_string(),
+                "store_load_untrusted",
+            );
+        }
         if !self.schema_gate_ok(slot, path, "store_load_untrusted") {
             return false;
         }
@@ -6611,13 +7052,40 @@ impl Stores {
         // An unreadable sidecar (an I/O failure, not a layout answer) tells us nothing
         // about the layout, so it neither passes nor fails the store: keep the previous
         // behaviour rather than refuse a load on a filesystem hiccup.
-        let Ok(verdict) = crate::schema_sidecar::check_beside(path, &current) else {
+        let Ok(verdict) = crate::schema_sidecar::check_beside(path, &current, self.release())
+        else {
             return true;
         };
         Self::layout_verdict_ok(&verdict, &path.display().to_string(), builtin)
     }
 
-    /// [`schema_gate_ok`](Self::schema_gate_ok) for a store image fetched from `url`: the
+    /// Does the sidecar beside `path` record a layout other than the one `slot` is read
+    /// through — a store an upgrade can carry across (`@FR-L-Sound`)?
+    fn layout_changed(&self, slot: u16, path: &std::path::Path) -> bool {
+        self.slot_layout_identity(slot).is_some_and(|current| {
+            matches!(
+                crate::schema_sidecar::check_beside(path, &current, self.release()),
+                Ok(crate::schema_sidecar::SchemaVerdict::Changed(_))
+            )
+        })
+    }
+
+    /// Did the conversion of a whole-image load of `what`, written under an older layout,
+    /// take?  A refusal says why on stderr, as a layout refusal does.
+    fn conversion_took(done: Result<(), String>, what: &str, builtin: &str) -> bool {
+        match done {
+            Ok(()) => true,
+            Err(why) => {
+                crate::loft_eprintln!(
+                    "{builtin}: refusing {what} — it was written with a different layout, and \
+                     it cannot be converted to this program's: {why}."
+                );
+                false
+            }
+        }
+    }
+
+    /// The layout gate ([`schema_gate_ok`](Self::schema_gate_ok)) for a store image fetched from `url`: the
     /// sidecar is `<url>.dschema`, read over the same transport as the image.  A fetch
     /// that fails is an absent sidecar — a server answers 404 for one it does not have,
     /// and a missing `file://` sidecar is the same answer — so it passes, as a local
@@ -6628,18 +7096,36 @@ impl Stores {
         feature = "registry",
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
-    fn url_schema_gate_ok(&self, slot: u16, url: &str, builtin: &str) -> bool {
+    ///
+    /// `Ok(None)` reads the image raw; `Ok(Some(sidecar))` converts it from the older layout
+    /// that sidecar records (@PLN196), once the caller has the bytes; `Err(())` refuses it,
+    /// with the reason on stderr.
+    fn url_layout_gate(&self, slot: u16, url: &str, builtin: &str) -> Result<Option<String>, ()> {
         let Some(current) = self.slot_layout_identity(slot) else {
-            return true; // untyped store — no identity to compare against
+            return Ok(None); // untyped store — no identity to compare against
         };
-        let verdict = match crate::net::fetch_bytes(&format!("{url}.dschema")) {
-            Ok(bytes) => match std::str::from_utf8(&bytes) {
-                Ok(text) => crate::schema_sidecar::verdict_for_sidecar_text(text, &current),
-                Err(_) => crate::schema_sidecar::SchemaVerdict::Unreadable,
+        let (verdict, text) = match crate::net::fetch_bytes(&format!("{url}.dschema")) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => (
+                    crate::schema_sidecar::verdict_for_sidecar_text(
+                        &text,
+                        &current,
+                        self.release(),
+                    ),
+                    Some(text),
+                ),
+                Err(_) => (crate::schema_sidecar::SchemaVerdict::Unreadable, None),
             },
-            Err(_) => crate::schema_sidecar::SchemaVerdict::Fresh,
+            Err(_) => (crate::schema_sidecar::SchemaVerdict::Fresh, None),
         };
-        Self::layout_verdict_ok(&verdict, url, builtin)
+        if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
+            return Ok(text);
+        }
+        if Self::layout_verdict_ok(&verdict, url, builtin) {
+            Ok(None)
+        } else {
+            Err(())
+        }
     }
 
     /// The layout identity of the type `slot` is read through, or `None` for an untyped
@@ -6661,6 +7147,10 @@ impl Stores {
     ) -> bool {
         if verdict.is_raw_safe() {
             return true;
+        }
+        if let crate::schema_sidecar::SchemaVerdict::Refused(why) = verdict {
+            crate::loft_eprintln!("{builtin}: refusing {what} — {why}.");
+            return false;
         }
         let detail = match verdict {
             crate::schema_sidecar::SchemaVerdict::Changed(diff) => {
@@ -6703,7 +7193,7 @@ impl Stores {
             return true; // untyped store — no identity to compare against
         }
         let current = crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]);
-        let verdict = crate::paged_reader::check_sidecar(path, &current);
+        let verdict = crate::paged_reader::check_sidecar(path, &current, self.release());
         if verdict.is_raw_safe() {
             return true;
         }

@@ -272,6 +272,12 @@ pub struct Variable {
     /// releases only the callee's per-execution minted store, by identity at scope exit.
     /// Set by `scopes::scan_set`, read by both backends' copy arms (`is_view_elided`).
     view_elided: bool,
+    /// @PLN198 (`@FR-R-TextBorrow`) — a text loop variable that BORROWS its element: its
+    /// slot holds a 16-byte `Str` view, as a `text` parameter's does, not an owned `String`.
+    /// Set when the function is compiled to bytecode, from the native generator's own
+    /// predicate, so it is never stored with the IR.  A reader of the slot's layout asks
+    /// [`Function::holds_str`].
+    text_view: bool,
     /// A hidden return buffer whose store is minted at its first use on the path that runs
     /// (`@FR-O-LazyBuffer`), always behind `OpRefIsNull(v)`.  For a VECTOR buffer the entry
     /// null-init writes the null sentinel and the later `Set(v, Null)` is the mint (both
@@ -521,6 +527,11 @@ pub struct Function {
     /// from `scopes::stored_reference_homes`; read by `scopes::insert_evacuations` after the
     /// scope pass has placed the frees.
     ref_evacuations: Vec<[u16; 4]>,
+    /// `@FR-H-RefHome` — the locals whose store holds a record a stored reference names,
+    /// however long the holder lasts (`scopes::StoredRefs::named`).  Set by
+    /// `Parser::check_reshape_under_reference`; read by the rewrites that would move such a
+    /// store's records into another value (`literal_host`, loft#2118).
+    ref_named: Vec<u16>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -869,6 +880,7 @@ impl Function {
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
             ref_evacuations: Vec::new(),
+            ref_named: Vec::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -1030,6 +1042,7 @@ impl Function {
                 captured: r.captured,
                 caller_hidden_buf: r.caller_hidden_buf,
                 view_elided: r.view_elided,
+                text_view: false,
                 lazy_buffer: r.lazy_buffer,
                 deferred_first_bind: r.deferred_first_bind,
                 linked_narrow: r.linked_narrow,
@@ -1101,6 +1114,7 @@ impl Function {
         self.join_owners.clear();
         self.join_owners.clone_from(&other.join_owners);
         self.ref_evacuations.clone_from(&other.ref_evacuations);
+        self.ref_named.clone_from(&other.ref_named);
         // CARRIED: pass 1 promotes a `text?` local to a hidden work buffer and pass 2 reads
         // the mark at that local's own declaration (loft#1616).
         self.nullable_text_buffers.clear();
@@ -1184,6 +1198,7 @@ impl Function {
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),
             ref_evacuations: other.ref_evacuations.clone(),
+            ref_named: other.ref_named.clone(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -2984,6 +2999,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            text_view: false,
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
@@ -3047,6 +3063,7 @@ impl Function {
             const_binding: self.variables[var as usize].const_binding,
             value_const: self.variables[var as usize].value_const,
             view_elided: false,
+            text_view: false,
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: self.variables[var as usize].amp_link,
@@ -3096,6 +3113,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            text_view: false,
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
@@ -3146,6 +3164,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            text_view: false,
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
@@ -4181,6 +4200,20 @@ impl Function {
     }
 
     /// `@FR-H-RefHome` — see the field's own doc.
+    pub fn mark_ref_named(&mut self, var_nr: u16) {
+        if !self.ref_named.contains(&var_nr) {
+            self.ref_named.push(var_nr);
+        }
+    }
+
+    /// Does a stored reference name a record of `var_nr`'s store (`ref_named`), or has
+    /// its store moved out as a home (`ref_home`)?
+    #[must_use]
+    pub fn is_ref_named(&self, var_nr: u16) -> bool {
+        self.ref_named.contains(&var_nr) || self.is_ref_home(var_nr)
+    }
+
+    /// `@FR-H-RefHome` — see the field's own doc.
     pub fn mark_place_buffer(&mut self, var_nr: u16) {
         self.variables[var_nr as usize].place_buffer = true;
     }
@@ -4215,6 +4248,26 @@ impl Function {
     #[must_use]
     pub fn is_lazy_buffer(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].lazy_buffer
+    }
+
+    /// @PLN198 — mark text loop variable `var_nr` as a view of its element
+    /// ([`Self::is_text_view`]).
+    pub fn mark_text_view(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].text_view = true;
+    }
+
+    /// Whether `var_nr` is a text loop variable that borrows its element (@PLN198).
+    #[must_use]
+    pub fn is_text_view(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].text_view
+    }
+
+    /// Does `var_nr`'s frame slot hold a 16-byte `Str` — a `text` parameter, or a text view
+    /// (@PLN198) — rather than a 24-byte `String`?  The one question every reader of a text
+    /// slot's LAYOUT asks; `is_argument` alone answered it until a local could be a view.
+    #[must_use]
+    pub fn holds_str(&self, var_nr: u16) -> bool {
+        self.is_argument(var_nr) || self.is_text_view(var_nr)
     }
 
     /// Whether `var_nr`'s copy from its borrowing call is elided — see
@@ -5495,8 +5548,7 @@ impl Function {
         // exists — the conjunction was written out at six of them and each had to be taught
         // the veto separately, so a second spelling of the ownership half would drift the same
         // way.
-        (self.tp(v).depend().is_empty() || self.deps_are_guarded_backings(v))
-            && !self.is_skip_free(v)
+        (self.tp(v).has_no_deps() || self.deps_are_guarded_backings(v)) && !self.is_skip_free(v)
     }
 
     /// Is `v` a text temp that STAGES a value across the statement or the return that reads

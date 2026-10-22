@@ -53,6 +53,7 @@
 //! `LOFT_TRACE_INLINE_LEAF=1` names every inlined call and every reduction.
 use crate::data::{Block, Data, DefType, Type, Value};
 use crate::generation::range::{Range, range, range_vars};
+use crate::lexer::Position;
 use std::collections::{HashMap, HashSet};
 
 /// A body larger than this many nodes stays a call: it is copied into every call site.
@@ -480,22 +481,37 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
         .iter()
         .filter(|o| !matches!(o, Value::Line(_)))
         .collect();
-    let Some((last, init)) = body.split_last() else {
+    if body.is_empty() {
         return Err("an empty body");
-    };
+    }
     let mut assigned = HashSet::new();
     let mut nodes = 0usize;
     if appender {
         return admit_appender(data, def, params, vars, records, unused, &body);
     }
+    // The line markers go with the call, so each value the body computes carries its own
+    // line as a `Span`: a fault inside it reports the leaf's line, not the call's.
+    let located = located(&b.operators, def.position.file, def.position.line);
+    let body: Vec<&Value> = located
+        .iter()
+        .filter(|o| !matches!(o, Value::Line(_)))
+        .collect();
+    let Some((last, init)) = body.split_last() else {
+        return Err("an empty body");
+    };
     for s in init {
         if !statement(data, s, &mut assigned, &mut nodes) {
             return Err("a statement other than an assignment");
         }
     }
-    let tail = match last.unspan() {
+    // A `return` is read as its value, which keeps the span of the statement around it.
+    let tail = match last {
         Value::Return(e) => (**e).clone(),
-        e => e.clone(),
+        Value::Span(s) => match &s.1 {
+            Value::Return(e) => spanned((**e).clone(), s.0),
+            _ => (*last).clone(),
+        },
+        e => (*e).clone(),
     };
     if !pure(data, &tail, &mut assigned, &mut nodes) {
         return Err("a result other than operators over variables and literals");
@@ -523,9 +539,65 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
     })
 }
 
+/// A leaf body's statements with each computed value wrapped in a `Span` at the line of the
+/// marker before it, inside nested blocks and `if` arms too; a value that already has a span
+/// keeps it.  `@FR-R-InlineLeaf`: the markers are dropped at the call so the CALLER's lines
+/// stay its own, and a fault's position comes from these spans — exact, as `(R-Leaf)` settled,
+/// and the same with the pass off (`LOFT_NO_INLINE_LEAF`), which @C120 asks of every rewrite.
+fn located(ops: &[Value], file: crate::lexer::FileName, line: u32) -> Vec<Value> {
+    let mut at = line;
+    ops.iter()
+        .map(|o| {
+            if let Value::Line(n) = o {
+                at = *n;
+                return o.clone();
+            }
+            let pos = Position {
+                file,
+                line: at,
+                pos: 1,
+            };
+            match o {
+                // Already located: the blocks inside it take ITS line.
+                Value::Span(sp) => Value::Span(Box::new((sp.0, locate(&sp.1, file, sp.0.line)))),
+                Value::Set(x, e) => Value::Set(*x, Box::new(spanned(locate(e, file, at), pos))),
+                Value::Return(e) => Value::Return(Box::new(spanned(locate(e, file, at), pos))),
+                other => spanned(locate(other, file, at), pos),
+            }
+        })
+        .collect()
+}
+
+/// `v` with the blocks inside it located (see [`located`]).
+fn locate(v: &Value, file: crate::lexer::FileName, line: u32) -> Value {
+    match v {
+        // A spanned value keeps its span; the blocks inside it take its line.
+        Value::Span(sp) => Value::Span(Box::new((sp.0, locate(&sp.1, file, sp.0.line)))),
+        Value::Block(b) => Value::Block(Box::new(Block {
+            operators: located(&b.operators, file, line),
+            ..(**b).clone()
+        })),
+        Value::If(c, t, e) => Value::If(
+            c.clone(),
+            Box::new(locate(t, file, line)),
+            Box::new(locate(e, file, line)),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// `v` at `pos`, unless it already carries a span or no line is known.
+fn spanned(v: Value, pos: Position) -> Value {
+    if pos.line == 0 || matches!(v, Value::Span(_)) {
+        v
+    } else {
+        Value::Span(Box::new((pos, v)))
+    }
+}
+
 /// A copy of a leaf's node over the caller's names: a variable becomes its fresh local or its
-/// literal argument, a nested block takes the call site's scope, a line marker goes (a fault
-/// inside the inlined body is reported at the call's line).
+/// literal argument, a nested block takes the call site's scope, a line marker goes (the
+/// body's values carry their own lines as spans, [`located`]).
 fn remap(v: &Value, map: &HashMap<u16, Value>, scope: u16) -> Value {
     match v {
         Value::Var(n) => map[n].clone(),

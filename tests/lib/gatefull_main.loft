@@ -1,0 +1,91 @@
+// @PLN199 — calls every `gatefull` function, each on its own line with the value
+// computed by hand beside it (collected in `gatefull_main.out`).  The guards run it
+// interpreted, mixed and `--native`.
+use gatefull::*;
+
+fn twice(a: integer) -> integer { a * 2 }
+
+fn script_gen(n: integer) -> iterator<integer> { for i in 0..n { yield i + 1; } }
+
+fn script_words(n: integer) -> iterator<text> { for i in 0..n { yield "s{i}"; } }
+
+fn main() {
+    println("plain {plain(7)}"); // 21
+    s = ret_sorted(3);
+    println("ret_sorted {len(s)} {s[2].v}"); // 3 22
+    i = ret_index(3);
+    println("ret_index {len(i)} {i[1].v}"); // 3 11
+    h = ret_hash(3);
+    println("ret_hash {len(h)} {h[2].v}"); // 3 22
+    // A returned store is the caller's, freed once: a thousand calls keep the live-store
+    // count flat (`LOFT_STORES=warn` reports past 30).
+    kept = 0;
+    for _ in 0..1000 {
+        k = ret_sorted(2);
+        kept += len(k) + k[1].v;
+    }
+    println("ret_sorted_loop {kept}"); // 1000 * (2 + 11) = 13000
+    c = Named { nm: "hello", n: 3 };
+    kept_text = ret_field_text(c);
+    println("ret_field_text {kept_text} [{ret_field_text(c)}] {len(ret_field_text(c))}"); // hello [hello] 5
+    w = "<";
+    w += ret_lit();
+    w += ret_field_text(c);
+    println("ret_lit [{ret_lit()}] {len(ret_lit())} {w}"); // [fixed] 5 <fixedhello
+    // The standard library's compiled `basename` / `dir` return a slice of their argument:
+    // the same shape, reached through `compiled_stdlib::mark` rather than a library.
+    path = "/usr/local/bin/tool";
+    tail = "<";
+    tail += path.basename();
+    println("stdlib [{path.basename()}] [{path.dir()}] {len(path.dir())} {tail}"); // [tool] [/usr/local/bin] 14 <tool
+    t = ret_tuple(4);
+    println("ret_tuple {t.0} {t.1}"); // 8 t4
+    println("arg_tuple {arg_tuple((3, 4))}"); // 304
+    q = (7, 9);
+    println("arg_tuple_var {arg_tuple(q)} {arg_tuple_text((5, "x"), 2)}"); // 709 x7
+    println("arg_tuple_nested {arg_tuple_nested((1, (2.5, true)))} {arg_tuple_nested((1, (2.5, false)))}"); // 6 0
+    println("arg_tuple_ref {arg_tuple_ref((Ck { k: 1, v: 11 }, 3))}"); // 33
+    n = 1;
+    arg_ref(n);
+    println("arg_ref {n}"); // 6
+    fl = 1.5;
+    arg_ref_float(fl);
+    bo = false;
+    arg_ref_bool(bo);
+    am = 3;
+    rx = arg_ref_two(am, 4);
+    println("arg_ref_more {fl} {bo} {am} {rx}"); // 3 true 12 13
+    rec = Ck { k: 1, v: 2 };
+    arg_ref(rec.v);
+    acc = 0;
+    for _ in 0..1000 { arg_ref(acc); }
+    println("arg_ref_field {rec.v} {acc}"); // 7 5000
+    println("arg_fn {arg_fn(twice, 5)}"); // 11
+    f = ret_fn();
+    println("ret_fn {f(3)}"); // 21
+    println("local_lambda {local_lambda(10)} {local_lambda_text(4)} {local_lambda_rec(5)}"); // 11 n4 15
+    g = 0;
+    for v in gen(4) { g += v; }
+    println("gen {g}"); // 0 + 10 + 20 + 30 = 60
+    tx = "";
+    for word in gen_text(3) { tx += word; }
+    println("gen_text {tx} {joined(script_words(3))} {joined(gen_text(2))}"); // t0t7t14 <s0><s1><s2> <t0><t7>
+    gfl = 0.0;
+    for v in gen_float(4) { gfl += v; }
+    gbo = 0;
+    for v in gen_bool(5) { if v { gbo += 1; } }
+    println("gen_float {gfl} gen_bool {gbo}"); // 0 + 0.5 + 1 + 1.5 = 3, three evens of 0..5
+    gr = 0;
+    for cr in gen_rec(4) { gr += cr.k * 100 + cr.v; }
+    // An abandoned generator releases its buffer: yields 1, 5, 9, then 13 breaks; 15 a run.
+    gb = 0;
+    for _ in 0..200 { for v in gen_buf(50) { if v > 10 { break; } gb += v; } }
+    println("gen_rec {gr} gen_buf {gb}"); // 0+101+204+309 = 614, 200 * 15 = 3000
+    println("sum_gen {sum_gen(4)}"); // 60
+    // 1 + 2 + 3 + 4 = 10 and the library's own 60; the first over 5 of 1.. is 6, of 0, 10, … over
+    // 25 is 30, the generator abandoned mid-way.
+    println("total_gen {total_gen(script_gen(4))} {total_gen(gen(4))} {first_over(script_gen(100), 5)} {first_over(gen(100), 25)}");
+    println("par_sum {par_sum([1, 2, 3])}"); // 3 + 6 + 9 = 18
+    println("par_block {par_block(7)}"); // the arm prints "arm 14" first; 7 * 2 + 1 = 15
+    println("uses_generic {uses_generic(5)}"); // 20
+}

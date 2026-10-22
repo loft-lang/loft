@@ -89,6 +89,11 @@ impl Parser {
                     self.data.select_fn(source, name, types)
                 }
             };
+            // @FR-F-Surface (loft#2115) — `lib::m(x)` reaches a METHOD by its receiver's key,
+            // which `Data::qualified_refusal`, asking by name, cannot see.
+            if source != u16::MAX && source != self.data.source {
+                self.refuse_unpublished_method(d, true);
+            }
             // loft#788 — a bare CALL is ambiguous the same way a bare type is,
             // and worse: both import orders compile and RUN, answering
             // differently. The key is the mangled one, since that is what a
@@ -529,7 +534,7 @@ impl Parser {
                 );
                 if none_applicable && method_types.is_empty() {
                     let sel = crate::parser::dispatch::Selection::NoneApplicable;
-                    self.report_selection(name, &routed, &sel, Some(name_pos));
+                    self.report_selection_with(name, &routed, &sel, Some(name_pos), list);
                 } else if method_types.is_empty() {
                     // @PLN13 phase 6 (diagnostics slice): the name may simply be
                     // unimported rather than wrong.  An EXACT hit in a published

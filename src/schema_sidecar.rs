@@ -53,7 +53,21 @@ pub struct LayoutIdentity {
     /// store in another slot rewrites the references naming this one, and can tell them from
     /// references into other stores.  `None` in a version-1 sidecar and in a baseline.
     pub slot: Option<u16>,
+    /// @PLN196 step 9 — the release of the program that wrote the store (its `loft.toml`
+    /// `version`), which says which conversion steps the store still needs.  Empty when that
+    /// program recorded none, in a version-1 sidecar and in a baseline.  Never part of the
+    /// identity: two releases with one layout read each other's stores raw.
+    pub version: String,
+    /// @PLN196 step 9 (`@FR-L-Upgrade-Source`) — in a project BASELINE only: per computed
+    /// field, the stored fields its default reads and the release that first recorded it,
+    /// one line each (`Item.count <- inner.label since 2.0`).  `loft layout check` refuses a
+    /// later release that drops one of them while older stores still need the value.  Empty
+    /// in a store's sidecar.
+    pub sources: String,
 }
+
+/// Where the default sources start, after the facts (a baseline only).
+const SOURCES_FENCE: &str = "--sources--\n";
 
 const SIDECAR_MAGIC: &str = "LOFT-DSCHEMA";
 /// Version 2 adds the `root=` header and the facts section after the dump; a version-1
@@ -78,6 +92,8 @@ impl LayoutIdentity {
             root,
             facts,
             slot: None,
+            version: String::new(),
+            sources: String::new(),
         }
     }
 
@@ -87,6 +103,7 @@ impl LayoutIdentity {
     pub fn of_store(stores: &Stores, slot: u16, tp: u16) -> LayoutIdentity {
         let mut id = Self::of(stores, &[tp]);
         id.slot = Some(slot);
+        id.version.clone_from(&stores.release().version);
         id
     }
 
@@ -110,7 +127,12 @@ impl LayoutIdentity {
         } else {
             format!("schema={}\n", self.schema)
         };
-        if self.root.is_empty() && self.facts.is_empty() && self.slot.is_none() {
+        if self.root.is_empty()
+            && self.facts.is_empty()
+            && self.slot.is_none()
+            && self.version.is_empty()
+            && self.sources.is_empty()
+        {
             // Nothing version 2 adds: the version-1 text, byte for byte.
             return format!(
                 "{SIDECAR_MAGIC} v1\nhash={}\n{schema_line}--\n{}",
@@ -126,8 +148,17 @@ impl LayoutIdentity {
             use std::fmt::Write as _;
             let _ = writeln!(root_line, "slot={slot}");
         }
+        if !self.version.is_empty() {
+            use std::fmt::Write as _;
+            let _ = writeln!(root_line, "version={}", self.version);
+        }
+        let sources = if self.sources.is_empty() {
+            String::new()
+        } else {
+            format!("{SOURCES_FENCE}{}", self.sources)
+        };
         format!(
-            "{SIDECAR_MAGIC} v{SIDECAR_VERSION}\nhash={}\n{schema_line}{root_line}--\n{}{FACTS_FENCE}{}",
+            "{SIDECAR_MAGIC} v{SIDECAR_VERSION}\nhash={}\n{schema_line}{root_line}--\n{}{FACTS_FENCE}{}{sources}",
             self.layout_hash, self.dump, self.facts
         )
     }
@@ -151,12 +182,14 @@ impl LayoutIdentity {
         let mut schema = String::new();
         let mut root = String::new();
         let mut slot = None;
+        let mut version = String::new();
         for line in lines {
             match line.split_once('=') {
                 Some(("hash", v)) => layout_hash = Some(v.parse::<u64>().ok()?),
                 Some(("schema", v)) => schema = v.to_string(),
                 Some(("root", v)) if ver >= 2 => root = v.to_string(),
                 Some(("slot", v)) if ver >= 2 => slot = Some(v.parse::<u16>().ok()?),
+                Some(("version", v)) if ver >= 2 => version = v.to_string(),
                 _ => return None, // an unknown header line — malformed
             }
         }
@@ -166,6 +199,10 @@ impl LayoutIdentity {
         } else {
             (rest.to_string(), String::new())
         };
+        let (facts, sources) = match facts.split_once(SOURCES_FENCE) {
+            Some((f, s)) => (f.to_string(), s.to_string()),
+            None => (facts, String::new()),
+        };
         Some(LayoutIdentity {
             layout_hash: layout_hash?,
             dump,
@@ -173,6 +210,8 @@ impl LayoutIdentity {
             root,
             facts,
             slot,
+            version,
+            sources,
         })
     }
 }
@@ -306,6 +345,9 @@ pub enum SchemaVerdict {
     /// The `.dschema` is present but unreadable (bad magic / version / format) —
     /// the store's layout is UNKNOWN, so it must not be read raw. Reject.
     Unreadable,
+    /// @PLN196 step 9 — the store was written by a release older than the oldest this
+    /// program reads (`Release::admits`); carries the sentence the refusal prints.
+    Refused(String),
 }
 
 impl SchemaVerdict {
@@ -322,7 +364,7 @@ impl SchemaVerdict {
     pub fn as_corrupt_reason(&self) -> Option<crate::store::CorruptReason> {
         match self {
             SchemaVerdict::Fresh | SchemaVerdict::Match => None,
-            SchemaVerdict::Changed(_) | SchemaVerdict::Unreadable => {
+            SchemaVerdict::Changed(_) | SchemaVerdict::Unreadable | SchemaVerdict::Refused(_) => {
                 Some(crate::store::CorruptReason::SchemaMismatch)
             }
         }
@@ -334,11 +376,21 @@ impl SchemaVerdict {
 /// where there is no local path to hand [`check_file`]. `Unreadable` when `text`
 /// is not a valid sidecar; the ABSENT case (no sidecar at all) is the caller's
 /// to map to [`SchemaVerdict::Fresh`].
+///
+/// `release` is the reading program's: a store written by a release older than the oldest
+/// it reads is [`SchemaVerdict::Refused`] whatever its layout (@PLN196 step 9).
 #[must_use]
-pub fn verdict_for_sidecar_text(text: &str, current: &LayoutIdentity) -> SchemaVerdict {
+pub fn verdict_for_sidecar_text(
+    text: &str,
+    current: &LayoutIdentity,
+    release: &crate::database::Release,
+) -> SchemaVerdict {
     let Some(stored) = LayoutIdentity::from_sidecar(text) else {
         return SchemaVerdict::Unreadable;
     };
+    if let Err(why) = release.admits(&stored.version) {
+        return SchemaVerdict::Refused(why);
+    }
     match classify(&stored, current) {
         Handoff::Identical => SchemaVerdict::Match,
         Handoff::Changed(diff) => SchemaVerdict::Changed(diff),
@@ -351,7 +403,11 @@ pub fn verdict_for_sidecar_text(text: &str, current: &LayoutIdentity) -> SchemaV
 ///
 /// # Errors
 /// Propagates an `io::Error` reading the file (other than not-found → `Fresh`).
-pub fn check_file(path: &Path, current: &LayoutIdentity) -> std::io::Result<SchemaVerdict> {
+pub fn check_file(
+    path: &Path,
+    current: &LayoutIdentity,
+    release: &crate::database::Release,
+) -> std::io::Result<SchemaVerdict> {
     let text = match crate::file_access::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SchemaVerdict::Fresh),
@@ -365,7 +421,7 @@ pub fn check_file(path: &Path, current: &LayoutIdentity) -> std::io::Result<Sche
             None => return Err(e),
         },
     };
-    Ok(verdict_for_sidecar_text(&text, current))
+    Ok(verdict_for_sidecar_text(&text, current, release))
 }
 
 /// The sidecar's text from the page's own filesystem, where this build has one.
@@ -390,8 +446,12 @@ fn host_sidecar_text(_path: &Path) -> Option<String> {
 /// # Errors
 /// Propagates an `io::Error` reading the sidecar (other than not-found, which
 /// yields [`SchemaVerdict::Fresh`]).
-pub fn check_beside(store_path: &Path, current: &LayoutIdentity) -> std::io::Result<SchemaVerdict> {
-    check_file(&dschema_path(store_path), current)
+pub fn check_beside(
+    store_path: &Path,
+    current: &LayoutIdentity,
+    release: &crate::database::Release,
+) -> std::io::Result<SchemaVerdict> {
+    check_file(&dschema_path(store_path), current, release)
 }
 
 // ── Phase F — the committed layout baseline (developer surface) ─────────────
@@ -400,12 +460,24 @@ pub fn check_beside(store_path: &Path, current: &LayoutIdentity) -> std::io::Res
 // against a committed BASELINE and reports what an upgrade of a store written under it
 // would do, from the upgrade map (@PLN196, `crate::database::UpgradeMap`).
 
-/// The project's committed layout baseline — `.loft/layout.lock` beside
-/// `loft.toml`. The compiler diffs the current type table against it to detect a
-/// schema change; `accept` (a filled migration) rewrites it.
+/// The project's committed layout baseline — `layout.lock` beside `loft.toml`, as
+/// `loft.lock` is.  The compiler diffs the current type table against it to detect a schema
+/// change; `accept` rewrites it.  It was `.loft/layout.lock`, inside the directory every loft
+/// command fills with caches and every project ignores, so a baseline could never be
+/// committed; [`read_baseline`] still reads one there when the new file is absent.
 #[must_use]
 pub fn baseline_path(project_dir: &Path) -> PathBuf {
-    project_dir.join(".loft").join("layout.lock")
+    project_dir.join("layout.lock")
+}
+
+/// The baseline's text: [`baseline_path`], else the earlier `.loft/layout.lock`.
+#[must_use]
+pub fn read_baseline(project_dir: &Path) -> Option<String> {
+    crate::file_access::read_to_string(baseline_path(project_dir))
+        .or_else(|_| {
+            crate::file_access::read_to_string(project_dir.join(".loft").join("layout.lock"))
+        })
+        .ok()
 }
 
 impl LayoutIdentity {
@@ -428,7 +500,14 @@ pub fn check_against_baseline(
     project_dir: &Path,
     current: &LayoutIdentity,
 ) -> std::io::Result<SchemaVerdict> {
-    check_file(&baseline_path(project_dir), current)
+    let path = baseline_path(project_dir);
+    let legacy = project_dir.join(".loft").join("layout.lock");
+    let read = if !crate::file_access::exists(&path) && crate::file_access::exists(&legacy) {
+        legacy
+    } else {
+        path
+    };
+    check_file(&read, current, &crate::database::Release::default())
 }
 
 /// Leads every computed `layout_schema::nullability_schema` so "computed, no nullable
@@ -448,6 +527,8 @@ mod tests {
             root: String::new(),
             facts: String::new(),
             slot: None,
+            version: String::new(),
+            sources: String::new(),
         }
     }
 
@@ -460,6 +541,8 @@ mod tests {
             root: String::new(),
             facts: String::new(),
             slot: None,
+            version: String::new(),
+            sources: String::new(),
         }
     }
 
@@ -611,7 +694,10 @@ mod tests {
 
         let a = id(111, "W\tsize=4\tstruct{x@0:integer}\n");
         // No sidecar yet → Fresh (a brand-new / legacy store).
-        assert_eq!(check_beside(&store, &a).unwrap(), SchemaVerdict::Fresh);
+        assert_eq!(
+            check_beside(&store, &a, &crate::database::Release::default()).unwrap(),
+            SchemaVerdict::Fresh
+        );
 
         // Persist the identity beside the store.
         a.write_beside(&store).unwrap();
@@ -621,19 +707,19 @@ mod tests {
         );
 
         // Same identity → raw-safe handoff.
-        let v = check_beside(&store, &a).unwrap();
+        let v = check_beside(&store, &a, &crate::database::Release::default()).unwrap();
         assert_eq!(v, SchemaVerdict::Match);
         assert!(v.is_raw_safe() && v.as_corrupt_reason().is_none());
 
         // A changed layout (a field grew) → detected, NOT read raw.
         let b = id(222, "W\tsize=8\tstruct{x@0:long}\n");
-        let v = check_beside(&store, &b).unwrap();
+        let v = check_beside(&store, &b, &crate::database::Release::default()).unwrap();
         assert!(matches!(v, SchemaVerdict::Changed(_)) && !v.is_raw_safe());
         assert_eq!(v.as_corrupt_reason(), Some(CorruptReason::SchemaMismatch));
 
         // A garbage sidecar → Unreadable → reject (layout unknown).
         crate::file_access::write(&side, "corrupt").unwrap();
-        let v = check_beside(&store, &a).unwrap();
+        let v = check_beside(&store, &a, &crate::database::Release::default()).unwrap();
         assert_eq!(v, SchemaVerdict::Unreadable);
         assert_eq!(v.as_corrupt_reason(), Some(CorruptReason::SchemaMismatch));
 

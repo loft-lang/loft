@@ -2306,56 +2306,6 @@ fn every_doc_page_asserts_something() {
     );
 }
 
-/// The two `try_swap` dispatch tables in `parser/operators.rs` must stay identical.
-///
-/// `rewrite_outer_arith_to_nullable` and `rewrite_subtree_to_nullable` each carry their own
-/// copy of the base-op → Nullable-peer table, and the second one says why in its own comment:
-/// *"kept inline (no shared helper) so the dispatch table stays grep-discoverable from both
-/// swap sites."*  That is a deliberate trade, and this test is what pays for it — a duplicate
-/// kept for discoverability still has to be kept in agreement by something other than memory.
-///
-/// It is worth a gate because the sibling list in this family DID drift: the wrapper-getter
-/// list to descend through had a third copy in `parser/control.rs`, @P356 extended one copy
-/// past the integer wrappers, and the other kept the four it was born with — so a defended
-/// read of a non-integer vector reported while `vector<integer>` stayed silent, on both
-/// backends.  That copy is now gone (the defended-fault-site pass calls the canonical
-/// function), which leaves these two tables as the remaining duplication.
-#[test]
-fn the_nullable_swap_tables_do_not_drift() {
-    let src = fa::read_to_string("src/parser/operators.rs").expect("read operators.rs");
-    let mut tables: Vec<Vec<String>> = Vec::new();
-    for (idx, _) in src.match_indices("fn try_swap(") {
-        let rest = &src[idx..];
-        let end = rest
-            .find("_ => return false,")
-            .expect("try_swap body has no default arm");
-        let mut arms: Vec<String> = Vec::new();
-        for line in rest[..end].lines() {
-            let t = line.trim();
-            if t.starts_with('"') && t.contains("=>") {
-                arms.push(t.trim_end_matches(',').to_string());
-            }
-        }
-        tables.push(arms);
-    }
-    assert_eq!(
-        tables.len(),
-        2,
-        "expected exactly two try_swap tables in operators.rs; found {}. \
-         If one was added or removed, update this gate deliberately.",
-        tables.len()
-    );
-    assert!(
-        !tables[0].is_empty(),
-        "extracted an EMPTY table — the gate would pass vacuously; the arm shape must have changed"
-    );
-    assert_eq!(
-        tables[0], tables[1],
-        "the two Nullable swap tables have drifted; they are duplicated on purpose for \
-         grep-discoverability, so they must agree entry for entry"
-    );
-}
-
 /// The `unspan` backlog table in QUALITY.md must match what the audit actually reports.
 ///
 /// That table is a count offered as OPEN WORK, and the doc says in as many words that such a

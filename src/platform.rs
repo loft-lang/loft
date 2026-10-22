@@ -764,6 +764,15 @@ pub fn native_strip_symbols() -> bool {
     std::env::var_os("LOFT_NATIVE_KEEP_SYMBOLS").is_none()
 }
 
+/// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:
+/// the default on every host, `LOFT_NATIVE_CABI=0` forcing the legacy rlib link.  Read by the
+/// library cdylib's codegen and link (`native_lib`) and by the parser, which compiles a
+/// library's loft functions beside its native crate only on the C-ABI link.
+#[must_use]
+pub fn native_cabi_link() -> bool {
+    !matches!(std::env::var("LOFT_NATIVE_CABI").ok().as_deref(), Some("0"))
+}
+
 /// Worker-thread count for a parallel native run of `job_count` jobs in
 /// `scratch`: the CPU parallelism, capped by the job count and by how many
 /// concurrent compiles the temp filesystem can hold.  `reserve_per_worker` is
@@ -1640,6 +1649,89 @@ pub fn shim_cc_runtime_args() -> &'static [&'static str] {
     } else {
         &[]
     }
+}
+
+/// The output a diagnostic switch names — `LOFT_OP_CENSUS=<file>` and its siblings (the op
+/// n-grams, the rewrite, decline and store censuses) — read once by each: `None` when unset
+/// or empty; `-`, standard error, for `1`, `true` or `-`, which is how every other `LOFT_*`
+/// switch is armed; otherwise the path, made absolute against the directory loft was
+/// launched in (`file_access::launch_dir` — a program run changes into its own).  A relative path used to be resolved as a PROGRAM's file is, against the
+/// program's own directory, so `LOFT_OP_CENSUS=1` left a file named `1` beside the program,
+/// inside the user's tree.
+#[must_use]
+pub fn env_output(name: &str) -> Option<String> {
+    let v = std::env::var(name).ok().filter(|v| !v.is_empty())?;
+    if matches!(v.as_str(), "1" | "true" | "-") {
+        return Some("-".to_string());
+    }
+    if crate::file_access::is_absolute(v.as_str()) {
+        return Some(v);
+    }
+    Some(
+        crate::file_access::launch_dir()
+            .map_or_else(|| v.clone(), |d| d.join(&v).to_string_lossy().into_owned()),
+    )
+}
+
+/// Write `contents` to a [`env_output`] target — standard error for `-` — saying `what` could
+/// not be written when the file cannot be.
+pub fn write_env_output(target: &str, contents: &str, what: &str) {
+    if target == "-" {
+        eprint!("{contents}");
+    } else if let Err(e) = crate::file_access::write(target, contents) {
+        // The error names the file.
+        eprintln!("loft: cannot write {what}: {e}");
+    }
+}
+
+/// A raw tick count from the CPU's own counter, for a test that runs on every op and must
+/// cost next to nothing: the profiler's "did the op that just ended run long?"
+/// ([`crate::profiler::Profiler::op_boundary`]).  Monotonic on one thread, in units only
+/// [`ticks_per_milli`] can turn into time — never a wall clock, never compared across
+/// threads.  `Instant::now()` is a library call of ~20 ns here, which on every op tripled a
+/// profiled run and skewed its shares toward op-dense code.  [`ticks_per_milli`] converts.
+#[inline]
+#[must_use]
+pub fn ticks() -> u64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let t: u64;
+        // SAFETY: CNTVCT_EL0 is the virtual counter, readable from user space on every OS
+        // loft runs on for this architecture; the read has no side effect.
+        unsafe {
+            std::arch::asm!("mrs {}, cntvct_el0", out(reg) t, options(nomem, nostack, preserves_flags));
+        }
+        t
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: RDTSC has no side effect and is available on every x86-64 CPU.
+        unsafe { std::arch::x86_64::_rdtsc() }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        static START: OnceLock<std::time::Instant> = OnceLock::new();
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_nanos() as u64
+    }
+}
+
+/// How many [`ticks`] make a millisecond on this machine, measured once against the clock
+/// (24 000 for Apple silicon's counter, millions for an x86 TSC).
+#[must_use]
+pub fn ticks_per_milli() -> u64 {
+    static RATE: OnceLock<u64> = OnceLock::new();
+    *RATE.get_or_init(|| {
+        let (t0, i0) = (ticks(), std::time::Instant::now());
+        while i0.elapsed() < std::time::Duration::from_micros(500) {}
+        let dt = u128::from(ticks().wrapping_sub(t0));
+        let ns = i0.elapsed().as_nanos().max(1);
+        u64::try_from(dt * 1_000_000 / ns)
+            .unwrap_or(u64::MAX)
+            .max(1)
+    })
 }
 
 /// @PLN197 C — the tools that turn a `[c] shim` into the STATIC archive a static native link

@@ -1,0 +1,61 @@
+// @PLN199 C2 — every cell calls a library function with a function value of the script;
+// the values computed by hand are in `callback_main.out`.
+use callback::*;
+struct Big { s: text, n: integer }
+fn churn(x: integer) -> integer {
+  vs: vector<Big> = [];
+  for i in 0..200 { vs += [Big { s: "b{i}", n: i }]; }
+  x + len(vs)
+}
+fn nested(x: integer) -> integer { apply(twice_lib, x) + 1 }
+fn tlen(s: text, k: integer) -> integer { len(s) * k }
+fn fl(x: float, b: boolean) -> float { if b { x * 4.0 } else { 0.0 } }
+fn rec(b: Box2) -> integer { b.a * 10 + b.b }
+fn work(x: integer) -> integer { apply(churn, x) }
+fn tag(n: integer) -> text { "t{n * 2}" }
+fn fresh(n: integer) -> Box2 { Box2 { a: n, b: n * 10 } }
+fn nums(n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [i]; }
+  out
+}
+fn other(n: integer) -> vector<integer> { nums(n + 1) }
+// The store `fresh` returns is the compiled caller's, freed when `rec_sum` ends; the closure
+// record minted next may take its slot, and must survive `close_over`'s return.
+fn close_over(n: integer) -> fn(integer) -> integer {
+  x = rec_sum(fresh, n);
+  base = x;
+  fn(k: integer) -> integer { k + base }
+}
+fn via_lib(n: integer) -> text { shout("v{n}") }
+fn main() {
+  println("hold {hold_and_call(churn, 5)}");
+  println("nested {apply(nested, 7)}");
+  println("text {apply_text(tlen, "abcd")} float {apply_float(fl, 1.5)} rec {apply_rec(rec)}");
+  base = 100;
+  cap = fn(x: integer) -> integer { x + base };
+  println("capture {apply(cap, 1)}");
+  g = adder(10);
+  println("returned {g(5)} back {apply(g, 6)}");
+  println("loop {sum_par(nested, [1, 2, 3])}");
+  ws = [1, 2, 3];
+  t = 0;
+  for w in ws par(r = work(w), 2) { t += r; }
+  println("par {t}");
+  pre = "p";
+  tcap = fn(n: integer) -> text { "{pre}{n}" };
+  tl = 0;
+  for i in 0..1000 { tl += len(label_with(tag, i)); }
+  println("text {label_with(tag, 4)} {label_with(tcap, 9)} {label_with(via_lib, 3)} {tl}");
+  held = Box2 { a: 7, b: 8 };
+  hcap = fn(n: integer) -> Box2 { held };
+  hl = 0;
+  for i in 0..1000 { hl += rec_sum(fresh, i) + vec_sum(nums, 3); }
+  cg = close_over(3);
+  ch = close_over(4);
+  println("closure {cg(1)} {ch(2)}");
+  println("heap {rec_sum(fresh, 3)} {rec_sum(hcap, 1)} {held.a} {vec_sum(nums, 4)} {vec_sum(other, 4)} {keep_all(fresh, 4)} {hl}");
+  hs = [Holder { f: sq, v: 2 }, Holder { f: twice_lib, v: 5 }];
+  println("holders {par_holders(hs)}");
+}
+fn sq(x: integer) -> integer { x * x }

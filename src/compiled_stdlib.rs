@@ -80,7 +80,12 @@ fn prefix_fingerprint(stores: &Stores, n: usize) -> Option<u64> {
 #[must_use]
 pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> String {
     let export = export_set(data);
-    let library = crate::native_lib::generate_shared_cdylib_lib_rs(data, stores, &export);
+    let library = crate::native_lib::generate_shared_cdylib_lib_rs(data, stores, &export)
+        // Built into the host: its bridges reach the host's own table, not one handed over.
+        .replace(
+            crate::native_lib::HOST_INIT_SRC,
+            crate::native_lib::IN_HOST_TABLE_SRC,
+        );
     let mut out = String::from(
         "// @generated — DO NOT EDIT BY HAND.\n\
          //\n\
@@ -188,6 +193,17 @@ pub fn mark(data: &mut Data, stores: &Stores, default_dir: &str) -> usize {
         }
     }
     marked
+}
+
+/// The functions the standard library carries a compiled body for, by stored name.
+/// [`mark`] points their calls at those bodies after the program is parsed, so the driver
+/// hands this set to the parser first (`Parser::compiled_bridges`).
+#[must_use]
+pub fn names() -> std::collections::HashSet<String> {
+    generated::BRIDGES
+        .iter()
+        .map(|(n, _, _)| (*n).to_string())
+        .collect()
 }
 
 /// The compiled bridge for a `loft_shared_…` symbol, when the standard library carries it.

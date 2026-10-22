@@ -160,6 +160,37 @@ impl Output<'_> {
         crate::generation::ops::emit_op(&mut ctx, &name, vals)
     }
 
+    /// The suffix of a call with a twin of its own, which no other twin form applies to: a
+    /// destination's (`__d`), an apart record's (`__apr`, `@FR-R-Apart`), or the rotate's
+    /// `__nk` (`@FR-R-HandOver`).
+    fn own_twin(&mut self, dest: bool, vals: &[Value]) -> Option<&'static str> {
+        if dest {
+            Some("__d")
+        } else if self.apr_call(self.current_call_def, vals) {
+            Some("__apr")
+        } else {
+            self.nokeep_call(vals).then_some("__nk")
+        }
+    }
+
+    /// `@FR-R-HandOver`'s rotate clause — is this the rotate site's call of the suffix-keep
+    /// callee (matched by callee and argument slice)?  It calls the `__nk` twin, the body
+    /// without its keep, and records the request for it.
+    fn nokeep_call(&mut self, vals: &[Value]) -> bool {
+        let d = self.current_call_def;
+        if !self
+            .nk_site_next
+            .is_some_and(|(c, at)| c == d && at == vals.as_ptr() as usize)
+        {
+            return false;
+        }
+        self.nk_site_next = None;
+        if !self.nk_requests.contains(&d) {
+            self.nk_requests.push(d);
+        }
+        true
+    }
+
     /// `@FR-R-AppendTwin` — does this call of `d` go to its append twin?  The caller-side
     /// rewrite's own call (matched by callee and argument slice), or — inside a twin — a call
     /// handed the twin's buffer, or a view of it, as the callee's buffer.  Either records the
@@ -255,7 +286,7 @@ impl Output<'_> {
         // N8b.2: generator function calls produce a DbRef via the coroutine table.
         let is_generator = matches!(def_fn.returned(), Type::Iterator(_, _));
         if is_generator {
-            write!(w, "loft::codegen_runtime::alloc_coroutine_held(cell, ")?;
+            write!(w, "{}(cell, ", self.coro_fn("alloc_coroutine_held"))?;
         }
         // P199 — user-defined functions, generated stubs, AND Op stubs in
         // `src/codegen_runtime.rs` all take `&UnsafeCell<Stores>` (Track 1).
@@ -279,12 +310,13 @@ impl Output<'_> {
         if !dest && self.vr_call(w, def_fn, vals)? {
             return Ok(());
         }
-        let append = !dest
+        let own = self.own_twin(dest, vals);
+        let append = own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.append_call(self.current_call_def, vals);
         let twin_args = if !append
-            && !dest
+            && own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
         {
@@ -309,7 +341,7 @@ impl Output<'_> {
         // within its bound.  Not for a forward site, which spells its own call shape.
         let ranged = forward.is_none()
             && !append
-            && !dest
+            && own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
@@ -317,7 +349,7 @@ impl Output<'_> {
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some() || append || dest,
+            twin_args.is_some() || ranged || forward.is_some() || append || own.is_some(),
         )?;
         write!(
             w,
@@ -327,7 +359,7 @@ impl Output<'_> {
             if ranged { "__rg" } else { "" },
             if refill_twin { "__rt" } else { "" },
             if append { "__ap" } else { "" },
-            if dest { "__d" } else { "" }
+            own.unwrap_or("")
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::runtime_abi::Abi::Cell) {
@@ -418,6 +450,13 @@ impl Output<'_> {
                     w,
                     "DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {off} }}"
                 )?;
+                continue;
+            }
+            // `@FR-R-Apart` instance 4 — an apart record goes to its twin as its value.
+            if let Value::Var(x) = v.unspan()
+                && let Some(arg) = self.apr_arg(*x)
+            {
+                write!(w, "{arg}")?;
                 continue;
             }
             self.emit_call_arg(w, def_fn, idx, v)?;
@@ -1322,12 +1361,25 @@ impl Output<'_> {
         // match inside `s.raise_recoverable(` (an `_` follows `s.raise`, not
         // `(`), so this is an independent substitution; the `_runtime` suffix
         // again breaks the self-re-match (see `Stores::raise_recoverable_runtime`).
-        res = res.replace("s.raise_recoverable(", "stores.raise_recoverable_runtime(");
-        res = res.replace("s.vec_get_or_raise(", "stores.vec_get_or_raise_runtime(");
-        res = res.replace("s.vec_ref_or_raise(", "stores.vec_ref_or_raise_runtime(");
+        // `@FR-E-Report`: a fault names the statement it sits in, as on the interpreter, so
+        // the log line is the statement's and each site keeps its own rate-limit budget.  The
+        // line reaches only the raise: the in-range paths are unchanged.
+        let at = self.ckpt_cur_line;
+        res = res.replace(
+            "s.raise_recoverable(",
+            &format!("stores.raise_recoverable_at_runtime({at}, "),
+        );
+        res = res.replace(
+            "s.vec_get_or_raise(",
+            &format!("stores.vec_get_or_raise_at_runtime({at}, "),
+        );
+        res = res.replace(
+            "s.vec_ref_or_raise(",
+            &format!("stores.vec_ref_or_raise_at_runtime({at}, "),
+        );
         res = res.replace(
             "s.text_char_or_raise(",
-            "stores.text_char_or_raise_runtime(",
+            &format!("stores.text_char_or_raise_at_runtime({at}, "),
         );
         // loft represents `character` as `i32`; template functions that return `char`
         // (like `ops::text_character`) need an explicit cast at the call site.

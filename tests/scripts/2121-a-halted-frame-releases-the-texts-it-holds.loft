@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A HALTED FRAME RELEASES THE TEXTS IT HOLDS (loft#2121): a failed `assert` or a `panic` halts
+// the run before the scope-exit frees, and every text buffer the abandoned frames held — a
+// formatted message, a callee's returned text, a nullable local, a loop body's local, a
+// branch's local — used to stay allocated.  Each expected-fail function below halts holding
+// texts in a different place: the frame's top (with a `text?` local), a loop body and a branch, a callee's own frame beneath its caller's,
+// a generic instance, and a `panic`.  The function after them must still compute its texts,
+// so a release that reached the wrong slots shows as a wrong value there.
+//
+// The leak half is scored by `tests/text_buffer_ledger.rs` on `LOFT_TEXT_TIMELINE=1`; the
+// messages here pin that the values the halted frames held were right when they halted.
+//
+// @falsified-at: d35e3f6ee — interpret: the text ledger counted 29 leaked buffers (329 bytes)
+//   over these six functions — the `text?` local's alone on the build that did not peel its
+//   type; every message and the passing function's value were unchanged.
+// ARMED: `LOFT_TEXT_TIMELINE=1` (the ledger), set by the Rust test that runs this file.
+// CHANNEL: the text ledger, the expected failures' messages and the passing function's assert.
+// WITNESS: `NO text leak` in the ledger summary.
+// HOLDS: the expected-fail messages, and the last function's `second t2!`.
+
+fn tail(n: integer) -> text {
+  "t{n}"
+}
+
+fn deep(k: integer) -> text {
+  own = "deep {k}";
+  assert(k < 0, "deep says {own}");
+  own
+}
+
+fn wrap<T: Printable>(x: T) -> text {
+  s = "<{x}>";
+  assert(len(s) < 0, "wrapped {s}");
+  s
+}
+
+// @EXPECT_FAIL: outer t1 is below zero
+fn test_a_halt_at_the_frame_top() {
+  a = "outer {tail(1)}";
+  m: text? = "maybe {tail(3)}";
+  assert(len(a) + len(m ?? "") < 0, "{a} is below zero");
+}
+
+// @EXPECT_FAIL: outer t1 in loop 2 branch t2
+fn test_a_halt_in_a_loop_body_and_a_branch() {
+  a = "outer {tail(1)}";
+  for k in 0..3 {
+    b = "in loop {k}";
+    if k == 2 {
+      c = "branch {tail(k)}";
+      assert(k < 2, "{a} {b} {c}");
+    }
+  }
+}
+
+// @EXPECT_FAIL: deep says deep 1
+fn test_a_halt_in_a_callee_beneath_its_caller() {
+  mine = "caller {deep(1)}";
+  assert(len(mine) > 0, "{mine}");
+}
+
+// @EXPECT_FAIL: wrapped <42>
+fn test_a_halt_in_a_generic_instance() {
+  r = "r {wrap(42)}";
+  assert(len(r) > 0, r);
+}
+
+// @EXPECT_FAIL: stop built 3 more
+fn test_a_panic_holding_texts() {
+  t = "built {1 + 2}";
+  u = "{t} more";
+  panic("stop {u}");
+}
+
+fn test_the_next_function_computes_its_texts() {
+  b = "second {tail(2)}";
+  c = "{b}!";
+  assert(c == "second t2!", "got {c}");
+}

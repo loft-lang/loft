@@ -146,8 +146,9 @@ fn var_bind_copies(function: &Function, data: &Data, v: u16, value: &Value) -> b
     };
     // @FR-O-Proxy asks free — the answer licenses the rebind's release of the displaced copy,
     // so it is `proxy_says_owned`, which carries the @FR-O-Override veto beside the proxy.
-    function.proxy_says_owned(v)
-        && function.tp(v).base().heap_def_nr().is_some()
+    // Asked of every `v = w` the scope pass meets: the tests that allocate nothing go first.
+    function.tp(v).base().heap_def_nr().is_some()
+        && function.proxy_says_owned(v)
         && function.record_copy_source(data, v, *src).is_some()
         && !crate::lease::copy_reach(data, function.tp(v)).refused
 }

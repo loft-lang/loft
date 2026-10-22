@@ -10,3 +10,9 @@
 pub fn shim_scale(bits: integer, by_bits: integer) -> integer; #c "lcs_shim_scale" "int64_t(int64_t, int64_t)"
 pub fn shim_mod(a: integer, b: integer) -> integer;            #c "lcs_shim_mod" "int64_t(int64_t, int64_t)"
 pub fn shim_owned(n: integer) -> text;                         #c "lcs_shim_owned" "const char*(int64_t)"
+
+// @PLN199 B2 — loft functions over the bindings.  They compile into the library's cdylib,
+// which reaches each C symbol at its first call (`tests/native.rs`
+// `a_loft_wrapper_over_a_c_binding_compiles`).
+pub fn wrapped_mod(a: integer, b: integer) -> integer { shim_mod(a, b) + 100 }
+pub fn wrapped_owned(n: integer) -> text { "<{shim_owned(n)}>" }
