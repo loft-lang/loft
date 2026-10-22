@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: the keys a library artifact names its types and functions by
 
 //! @PLN199 G0b-2 — the names a library artifact gives the types and functions its code refers
 //! to, so the code does not depend on the numbers one program happened to give them.
