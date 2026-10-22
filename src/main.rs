@@ -6702,7 +6702,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .to_path_buf()
         });
-    let release = loft::database::Release::of_source_dir(&project.to_string_lossy());
+    let release = loft::manifest::release_of(&project.to_string_lossy());
 
     match sub {
         // @PLN196 step 9 — the baseline records the release it was accepted as and where each
@@ -6902,7 +6902,13 @@ fn layout_upgrade_report(
         }
     }
     // @PLN196 step 9 — a dropped field a computed field was made from (`@FR-L-Upgrade-Source`).
-    refused.extend(loft::layout_schema::lost_sources(data, &sources, release));
+    let routines: Vec<String> = loft::parser::Parser::upgrade_routine_defs(data)
+        .iter()
+        .map(|r| data.def(r.item).name().to_string())
+        .collect();
+    refused.extend(loft::layout_schema::lost_sources(
+        data, &sources, release, &routines,
+    ));
     changes.sort();
     changes.dedup();
     refused.sort();

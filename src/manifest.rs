@@ -400,6 +400,29 @@ impl Manifest {
     }
 }
 
+/// @PLN196 step 9 — the release of the program whose source is in `source_dir`, from the
+/// nearest `loft.toml` above it: its `version`, `data_compatible_with` and `data_bridge`.
+/// Empty when there is none.  The parser hands it to the stores (`Stores::release`), which
+/// record it beside every store they write.
+#[must_use]
+pub fn release_of(source_dir: &str) -> crate::database::Release {
+    let none = crate::database::Release::default();
+    if source_dir.is_empty() {
+        return none;
+    }
+    let Some(root) = crate::resolution_scope::project_root(source_dir) else {
+        return none;
+    };
+    let Some(m) = read_manifest(&root.join("loft.toml").to_string_lossy()) else {
+        return none;
+    };
+    crate::database::Release {
+        version: m.version.unwrap_or_default(),
+        oldest: m.data_compatible_with.unwrap_or_default(),
+        bridge: m.data_bridge.unwrap_or_default(),
+    }
+}
+
 /// Read and parse a `loft.toml` file at `path`.
 /// Returns `None` when the file does not exist or cannot be read.
 #[must_use]
@@ -982,7 +1005,7 @@ pub fn check_floor(declared: Option<&str>, own_version: Option<&str>) -> FloorCh
 /// Parse `X` / `X.Y` / `X.Y.Z` into a numeric triple (missing parts default to
 /// 0).  Returns `None` for any non-numeric component or a fourth component —
 /// the malformed signal the old `unwrap_or(0)` swallowed.
-pub(crate) fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
+fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     let s = s.trim();
     if s.is_empty() {
         return None;

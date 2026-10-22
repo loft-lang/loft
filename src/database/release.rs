@@ -23,27 +23,6 @@ pub struct Release {
 }
 
 impl Release {
-    /// The release of the program whose source is in `source_dir`: the nearest `loft.toml`
-    /// above it.  Empty when there is none.
-    #[must_use]
-    pub fn of_source_dir(source_dir: &str) -> Release {
-        if source_dir.is_empty() {
-            return Release::default();
-        }
-        let Some(root) = crate::resolution_scope::project_root(source_dir) else {
-            return Release::default();
-        };
-        let toml = root.join("loft.toml");
-        let Some(m) = crate::manifest::read_manifest(&toml.to_string_lossy()) else {
-            return Release::default();
-        };
-        Release {
-            version: m.version.unwrap_or_default(),
-            oldest: m.data_compatible_with.unwrap_or_default(),
-            bridge: m.data_bridge.unwrap_or_default(),
-        }
-    }
-
     /// Does this release record nothing?
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -95,19 +74,33 @@ impl Release {
 }
 
 impl crate::database::Stores {
-    /// This program's release: what a native build set from the manifest it was compiled
-    /// against, else the `loft.toml` above the program's source, read once.
+    /// This program's release: set by the parser from the `loft.toml` above the program
+    /// (`manifest::release_of`), or by a native build from the manifest it was compiled
+    /// against; empty when neither did.
     #[must_use]
     pub fn release(&self) -> &Release {
-        self.release
-            .get_or_init(|| Release::of_source_dir(&self.source_dir))
+        self.release.get_or_init(Release::default)
     }
 }
 
 /// `X`, `X.Y` or `X.Y.Z` as a numeric triple, missing parts 0; `None` when it is not one.
+///
+/// The runtime's own reader (the runtime names no manifest code); `manifest::parse_version`
+/// answers the same for a `loft.toml`.
 #[must_use]
 pub fn version_triple(s: &str) -> Option<(u32, u32, u32)> {
-    crate::manifest::parse_version(s)
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let mut parts = s.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().map_or(Some(0), |x| x.parse().ok())?;
+    let patch = parts.next().map_or(Some(0), |x| x.parse().ok())?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
 }
 
 #[cfg(test)]

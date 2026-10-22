@@ -135,16 +135,16 @@ pub fn render_sources(data: &crate::data::Data, previous: &str, version: &str) -
 /// (`data_compatible_with`) at or above the release that started computing it.  Empty when
 /// nothing is lost.
 #[must_use]
+///
+/// `routines` names the structs the build has an `upgrade` routine for
+/// (`Parser::upgrade_routine_defs`, which the caller asks: this layer names no parser).
 pub fn lost_sources(
     data: &crate::data::Data,
     sources: &str,
     release: &crate::database::Release,
+    routines: &[String],
 ) -> Vec<String> {
     use crate::data::{DefType, Type};
-    let routines: Vec<String> = crate::parser::Parser::upgrade_routine_defs(data)
-        .iter()
-        .map(|r| data.def(r.item).name().to_string())
-        .collect();
     let floor = crate::database::version_triple(&release.oldest);
     // The struct field a path stops resolving at (`Inner.label`), or `None` when it resolves.
     let broken = |mut d_nr: u32, path: &str| -> Option<String> {

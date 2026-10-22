@@ -118,6 +118,11 @@ impl Parser {
                 .parent()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            // @PLN196 step 9 — the release every store this program writes records.
+            let _ = self
+                .database
+                .release
+                .set(crate::manifest::release_of(&self.database.source_dir));
         }
         if !default && self.own_lib.is_none() {
             // The manifest's `[package] name` when there is one, else the file
@@ -1378,6 +1383,11 @@ impl Parser {
                 .parent()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            // @PLN196 step 9 — the release every store this program writes records.
+            let _ = self
+                .database
+                .release
+                .set(crate::manifest::release_of(&self.database.source_dir));
         }
         if !default && self.own_lib.is_none() {
             // The manifest's `[package] name` when there is one, else the file
