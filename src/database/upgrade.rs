@@ -846,8 +846,17 @@ impl Stores {
                         };
                     }
                 };
-                for (d, _) in &mut run.pending[pending_from..] {
-                    moved(d);
+                for p in &mut run.pending[pending_from..] {
+                    match p {
+                        Pending::Fill { rec: d, .. } => moved(d),
+                        Pending::Routine {
+                            item, old, from, ..
+                        } => {
+                            moved(item);
+                            moved(old);
+                            moved(from);
+                        }
+                    }
                 }
                 if src.pos == 8
                     && let Some(d) = run.rec_map.get_mut(&src.rec)
