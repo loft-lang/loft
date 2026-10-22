@@ -172,6 +172,8 @@ fn serve_http_shell_has_game_debug_strip() {
         "id=\"gswap\"",
         "D!:bp ",
         "D!:swap auto",
+        "D!:apply",
+        "e.shiftKey && e.key === \"Enter\"",
         "D!:quit",
         "listening on ws:",
     ] {
@@ -868,4 +870,268 @@ fn serve_ws_game_launch_streams_and_stops() {
     );
     let _ = fa::remove_file(&path);
     let _ = fa::remove_file(&loop_path);
+}
+
+/// The game a `--serve` Apply test runs: a world with a keyed collection, a counter the
+/// handler bumps, and `score`, the function an edit changes.  `extra` is the rest of `W`'s
+/// fields, `pre` the handler's statements before it replies, `reply` what it sends back.
+fn apply_game(port: u16, score: &str, extra: &str, pre: &str, reply: &str) -> String {
+    format!(
+        "use engine_host;\n\
+         struct Item {{ id: integer, name: text }}\n\
+         struct W {{ events: integer not null, items: hash<Item[id]>{extra} }}\n\
+         fn score(w: W) -> integer {{\n  {score}\n}}\n\
+         fn main() {{\n  w = W {{ events: 0 }};\n  resumed = engine_host::swap_world(w);\n  \
+         engine_host::run({port}, 10000,\n    fn(ev: engine_host::Event) {{\n      \
+         if ev.kind != 1 {{ return; }}\n      w.events = w.events + 1;\n      \
+         w.items += [Item {{ id: w.events, name: \"i{{w.events}}\" }}];\n      {pre}\n      \
+         engine_host::send(ev.cid, \"{reply}\");\n    }},\n    fn() {{}});\n}}\n"
+    )
+}
+
+/// Dial the game port until it answers: across a swap the new build binds as the old one
+/// retires.
+fn ws_connect_retry(port: u16, deadline: Instant) -> BufReader<TcpStream> {
+    loop {
+        if let Ok(s) = TcpStream::connect(("127.0.0.1", port)) {
+            drop(s);
+            return ws_connect(port);
+        }
+        assert!(Instant::now() < deadline, "nothing serves on {port}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// One game round trip: send `msg`, return the game's reply.
+fn game_says(game: &mut BufReader<TcpStream>, msg: &str) -> String {
+    ws_send(game.get_ref(), msg);
+    ws_recv(game)
+}
+
+/// Write `src` through the editor's save and compile it, as the page's Save does; the
+/// compile's diagnostics event.
+fn save_and_compile(ws: &mut BufReader<TcpStream>, id: &mut u32, jfile: &str, src: &str) -> String {
+    let content = src
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    *id += 1;
+    ws_send(
+        ws.get_ref(),
+        &format!(
+            "{{\"id\":{id},\"req\":\"writeFile\",\"path\":\"{jfile}\",\"content\":\"{content}\"}}"
+        ),
+    );
+    assert!(
+        recv_until(ws, 20, |m| m.contains(&format!("\"id\":{id}")))
+            .last()
+            .is_some_and(|m| m.contains("\"ok\":true")),
+        "the save is written"
+    );
+    *id += 1;
+    ws_send(
+        ws.get_ref(),
+        &format!("{{\"id\":{id},\"req\":\"compile\",\"file\":\"{jfile}\"}}"),
+    );
+    recv_until(ws, 40, |m| m.contains("\"event\":\"diagnostics\""))
+        .pop()
+        .unwrap_or_default()
+}
+
+/// Rebuild the game on the control channel until the build settles; the final
+/// `D:rebuild <status> …` line.
+fn rebuild(ctl: &mut BufReader<TcpStream>) -> String {
+    ws_send(ctl.get_ref(), "D!:rebuild");
+    let started = ws_recv(ctl);
+    assert_eq!(started, "D:rebuild started", "the rebuild starts");
+    let deadline = vm_deadline(240);
+    loop {
+        std::thread::sleep(Duration::from_millis(200));
+        ws_send(ctl.get_ref(), "D!:rebuild?");
+        let st = ws_recv(ctl);
+        if !st.starts_with("D:rebuild 1") {
+            return st;
+        }
+        assert!(Instant::now() < deadline, "the rebuild never settled");
+    }
+}
+
+/// @PLN196 — the IDE claim, in the server-backed editor (`loft --serve`): a save never changes
+/// the running game; Apply does (owner, 2026-10-22: code is reviewed before it runs, and a
+/// warning does not stop a program).  A held function edit lands only at Apply; a struct grown
+/// by a field crosses into the rebuilt game with its world — keyed collection and counter
+/// intact, the new field filled from the old values; a change the world cannot cross is a
+/// `layout-upgrade-refused` warning at the world's type on save, the rebuild fails naming the
+/// field, and the old build keeps serving.
+#[test]
+fn serve_apply_holds_saved_edits_and_carries_the_world() {
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    if !fa::exists(&loft_bin) {
+        eprintln!("skipping: {} not built", loft_bin.display());
+        return;
+    }
+    // SAFETY: process-global env write; the value is constant for the whole test process.
+    unsafe { std::env::set_var("LOFT_BIN", &loft_bin) };
+    let game_port = 18118u16;
+    let v1 = apply_game(
+        game_port,
+        "w.events",
+        "",
+        "",
+        "got {score(w)} {len(w.items)} {w.items[1].name}",
+    );
+    let path = tmp_program("apply", &v1);
+    let file = path.to_string_lossy().into_owned();
+    let jfile = json_path(&path);
+    let lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("lib")
+        .to_string_lossy()
+        .into_owned();
+    start_server_libs(18797, file, vec![lib]);
+    let mut ws = ws_connect(18797);
+    let mut id = 1;
+    ws_send(
+        ws.get_ref(),
+        &format!("{{\"id\":{id},\"req\":\"launchGame\",\"file\":\"{jfile}\"}}"),
+    );
+    assert!(ws_recv(&mut ws).contains("\"ok\":true"), "launch ok");
+    let deadline = vm_deadline(120);
+    let mut output = String::new();
+    while !output.contains(&format!("listening on ws://0.0.0.0:{game_port}/")) {
+        assert!(
+            Instant::now() < deadline,
+            "the game never announced its port: {output}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        id += 1;
+        ws_send(
+            ws.get_ref(),
+            &format!("{{\"id\":{id},\"req\":\"gameStatus\"}}"),
+        );
+        output.push_str(&ws_recv(&mut ws));
+    }
+    let mut ctl = ws_connect(game_port);
+    let mut game = ws_connect(game_port);
+    assert_eq!(game_says(&mut game, "a"), "got 1 1 i1");
+
+    // A held function edit: `score` runs through the interpreter (the flip), the save
+    // changes it, and the game keeps the old body until Apply.
+    ws_send(ctl.get_ref(), "D!:flip score 1");
+    assert_eq!(ws_recv(&mut ctl), "D:flip true");
+    let v1b = apply_game(
+        game_port,
+        "w.events * 100",
+        "",
+        "",
+        "got {score(w)} {len(w.items)} {w.items[1].name}",
+    );
+    let diags = save_and_compile(&mut ws, &mut id, &jfile, &v1b);
+    assert!(
+        !diags.contains("layout-upgrade-refused"),
+        "a body edit carries the world: {diags}"
+    );
+    // Past the reload watcher's own throttle (200 ms), so a reload that ignored the hold
+    // would have landed by now.
+    std::thread::sleep(Duration::from_millis(800));
+    assert_eq!(
+        game_says(&mut game, "b"),
+        "got 2 2 i1",
+        "a save alone changes nothing"
+    );
+    ws_send(ctl.get_ref(), "D!:apply");
+    assert_eq!(ws_recv(&mut ctl), "D:apply queued");
+    assert_eq!(
+        game_says(&mut game, "c"),
+        "got 300 3 i1",
+        "Apply makes the edit active"
+    );
+
+    // A grown world: the save is checked against the running world (silent: it converts),
+    // the rebuild is ready, and nothing changes until Apply swaps.
+    // The owner's case: a field and an index added to the struct the world holds.  `by_name`
+    // is built from the records already stored and an insert after the swap reaches it.
+    let v2 = apply_game(
+        game_port,
+        "w.events * 100",
+        ", by_name: index<Item[name]>, bonus: integer = $.events * 10",
+        "idx = \"\"; for t in w.by_name { idx += t.name; }",
+        "got {score(w)} {len(w.items)} {w.items[1].name} {w.bonus} {idx}",
+    );
+    let diags = save_and_compile(&mut ws, &mut id, &jfile, &v2);
+    assert!(
+        !diags.contains("layout-upgrade-refused"),
+        "an added field converts: {diags}"
+    );
+    let st = rebuild(&mut ctl);
+    assert_eq!(st, "D:rebuild 2", "the grown build is ready");
+    assert_eq!(
+        game_says(&mut game, "d"),
+        "got 400 4 i1",
+        "a ready build is not active"
+    );
+    ws_send(ctl.get_ref(), "D!:swap auto");
+    assert_eq!(ws_recv(&mut ctl), "D:swap true");
+    drop(game);
+    drop(ctl);
+    // The launched process retires once the new build serves: wait for it, so every message
+    // after this reaches the new build (one sent into the old build's freeze is never answered).
+    let swapped = vm_deadline(60);
+    loop {
+        assert!(Instant::now() < swapped, "the old build never retired");
+        std::thread::sleep(Duration::from_millis(100));
+        id += 1;
+        ws_send(
+            ws.get_ref(),
+            &format!("{{\"id\":{id},\"req\":\"gameStatus\"}}"),
+        );
+        if ws_recv(&mut ws).contains("\"running\":false") {
+            break;
+        }
+    }
+    // The world at the swap held four events: `bonus` is filled from them, and the items and
+    // the counter go on from where the old build left them.
+    let mut game = ws_connect_retry(game_port, swapped);
+    assert_eq!(
+        game_says(&mut game, "e"),
+        "got 500 5 i1 40 i1i2i3i4i5",
+        "the world crossed: counter, keyed items, the new index and the converted field"
+    );
+
+    // A change the world cannot cross: `events` becomes text.  The save warns at `W`, the
+    // rebuild fails naming the field, and the grown build keeps serving.
+    let v3 = "use engine_host;\nstruct Item { id: integer, name: text }\n\
+              struct W { events: text, items: hash<Item[id]>, by_name: index<Item[name]>, bonus: integer = 0 }\n\
+              fn main() {\n  w = W { events: \"\" };\n  resumed = engine_host::swap_world(w);\n  \
+              engine_host::run(PORT, 10000,\n    fn(ev: engine_host::Event) {\n      \
+              if ev.kind != 1 { return; }\n      w.events = \"{w.events}x\";\n      \
+              engine_host::send(ev.cid, \"v3 {w.events}\");\n    },\n    fn() {});\n}\n"
+        .replace("PORT", &game_port.to_string());
+    let diags = save_and_compile(&mut ws, &mut id, &jfile, &v3);
+    assert!(
+        diags.contains("\"code\":\"layout-upgrade-refused\"")
+            && diags.contains("the running world cannot be carried into this build: W.events")
+            && diags.contains("\"line\":3,"),
+        "the save warns at the world's type: {diags}"
+    );
+    let mut ctl = ws_connect_retry(game_port, vm_deadline(20));
+    let st = rebuild(&mut ctl);
+    assert!(
+        st.starts_with("D:rebuild 3 ") && st.contains("events"),
+        "the rebuild fails naming the field: {st}"
+    );
+    assert_eq!(
+        game_says(&mut game, "f"),
+        "got 600 6 i1 40 i1i2i3i4i5i6",
+        "the grown build keeps serving"
+    );
+    ws_send(ctl.get_ref(), "D!:swap auto");
+    assert_eq!(
+        ws_recv(&mut ctl),
+        "D:swap false",
+        "a failed build is never swapped to"
+    );
+
+    ws_send(ctl.get_ref(), "D!:quit");
+    assert_eq!(ws_recv(&mut ctl), "D:quitting");
+    let _ = fa::remove_file(&path);
 }

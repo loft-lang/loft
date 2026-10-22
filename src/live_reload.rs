@@ -72,6 +72,12 @@ thread_local! {
     static HOST: RefCell<Option<ReloadHost>> = const { RefCell::new(None) };
 }
 
+/// Does a saved edit wait for the editor's Apply (`LOFT_LIVE_RELOAD=hold`)?
+fn held() -> bool {
+    static HELD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HELD.get_or_init(|| std::env::var("LOFT_LIVE_RELOAD").is_ok_and(|v| v == "hold"))
+}
+
 /// Is live reload active on this thread?  One cheap check for the execute
 /// loop's counter-gated slow path.
 pub fn active() -> bool {
@@ -203,7 +209,13 @@ pub fn poll(state: &mut State) -> bool {
         let Some(host) = h.as_mut() else {
             return false;
         };
-        if host.last_check.elapsed() < CHECK_EVERY {
+        // HELD (`LOFT_LIVE_RELOAD=hold`, what an editor launches): a saved edit waits for the
+        // editor's Apply, and then lands at once, whatever the throttle says.
+        if held() {
+            if !crate::live_control::take_apply() {
+                return false;
+            }
+        } else if host.last_check.elapsed() < CHECK_EVERY {
             return false;
         }
         host.last_check = Instant::now();

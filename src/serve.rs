@@ -333,7 +333,7 @@ const SHELL_TEMPLATE: &str = r##"<!doctype html><html lang="en"><head><meta char
   #gstat { font-size:12px; opacity:.7; max-width:26em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style></head><body>
 <div id="bar"><button id="run">▶ Run</button><button id="test" title="Run this file's tests">✓ Test</button><button id="suite" title="Run the package suite (tests/*.loft beside the nearest loft.toml)">✓✓ Suite</button><button id="game" title="Launch as a game: a real loft process of its own (native window once the graphics lib lands)">🎮 Game</button><button id="save" disabled>Save</button><span id="dirty"></span>
-  <span id="gdbg" hidden><input id="gbpin" spellcheck="false" placeholder="fn name" size="12"><button id="gbp" title="Break at the fn's entry in the RUNNING game (flips it to the interpreter)">⛳</button><button id="gresume" disabled title="Resume the paused game">⏵</button><button id="grebuild" title="Rebuild the game binary in the background (the old build keeps serving)">⟳</button><button id="gswap" disabled title="Swap to the rebuilt binary under the running world">⇄</button><span id="gstat"></span></span>
+  <span id="gdbg" hidden><input id="gbpin" spellcheck="false" placeholder="fn name" size="12"><button id="gbp" title="Break at the fn's entry in the RUNNING game (flips it to the interpreter)">⛳</button><button id="gresume" disabled title="Resume the paused game">⏵</button><button id="grebuild" title="Rebuild the game binary in the background (the old build keeps serving)">⟳</button><button id="gswap" disabled title="Make what you saved active in the running game: the rebuilt build takes the world over, or the saved function edits land (Ctrl+Shift+Enter)">⇄ Apply</button><span id="gstat"></span></span>
   <span id="steps"><button id="cont" disabled title="Continue (to next breakpoint)">⏵</button><button id="over" disabled title="Step over">↷</button><button id="into" disabled title="Step into">↓</button><button id="out" disabled title="Step out">↑</button></span>
   <span id="status">connecting…</span></div>
 <div id="main">
@@ -401,10 +401,10 @@ function showDiags(items) {
 function persist() { const snap = $("src").value; pendSnap = snap; saveId = send("writeFile", {path: FILE, content: snap}); }
 function doSave() {
   if (!ws || ws.readyState !== 1 || !isDirty()) return; persist(); send("compile", {file: FILE});
-  // A PAUSED game's reload is dispatch-driven (the S3 finding) — poll it now
-  // through the pause so the edit acks immediately.  (The 200 ms reload
-  // throttle wants the save settled first.)
-  if (gws && gamePaused) setTimeout(() => { if (gws && gamePaused) gws.send("D!:reload"); }, 400);
+  // A save never changes the running game: the edit and its warnings are read first, and
+  // ⇄ Apply makes it active (a warning does not stop a program).  The rebuild starts once
+  // the write has landed (the saveId reply), and stays inactive until Apply.
+  if (gws) { pendingApply = true; buildState = "building"; applyWhenReady = false; updateApply(); }
 }
 // ── debugger — gutter breakpoints, step controls, variables + watch panels ──
 let bps = new Set(), paused = false, curLine = 0, watches = [], lastLocals = [], reqcb = {};
@@ -548,7 +548,29 @@ function finishTests(m) {
 // Breakpoints are FN-ENTRY, name-keyed — they survive live reloads, and the
 // page re-arms them after a build swap (the S7 loop, in the UI).
 let gws = null, gport = 0, gameBps = new Set(), gamePaused = false, gameSwapped = false, reattach = 0;
+// Apply (owner, 2026-10-22): what a save wrote waits — `pendingApply` — until ⇄ Apply or
+// Ctrl+Shift+Enter.  The rebuild a save starts is `buildState` ("" none, building, ready,
+// failed); an Apply while it builds waits for it (`applyWhenReady`).
+let pendingApply = false, buildState = "", buildWhy = "", applyWhenReady = false, worldRefused = false;
 function gstat(t) { $("gstat").textContent = t; }
+function updateApply() {
+  $("gswap").disabled = !gws || !pendingApply;
+  if (!gws || !pendingApply) return;
+  if (worldRefused) gstat("saved — not active · the world cannot cross to this build (see the warnings)");
+  else if (buildState === "building") gstat(applyWhenReady ? "saved — applies when the build is ready…" : "saved — not active · building…");
+  else if (buildState === "ready") gstat("saved — not active · ready: ⇄ Apply (Ctrl+Shift+Enter)");
+  else if (buildState === "failed") gstat("saved — not active · the new build failed: " + buildWhy);
+  else gstat("saved — not active: ⇄ Apply (Ctrl+Shift+Enter)");
+}
+function doApply() {
+  if (!gws || !pendingApply) return;
+  if (isDirty()) { gstat("save first — Apply makes what you saved active"); return; }
+  if (gamePaused) { gws.send("D!:apply"); return; }             // the function edits land through the pause
+  if (buildState === "ready") { gws.send("D!:swap auto"); return; }
+  if (buildState === "building") { applyWhenReady = true; updateApply(); return; }
+  if (buildState === "failed") { updateApply(); return; }       // nothing changes: the old build keeps running
+  gws.send("D!:apply");                                         // no rebuild here: the function edits land
+}
 function setGamePauseUi() { $("gresume").disabled = !gamePaused; }
 function gameVarsOff() { if (!paused) { $("dbg").hidden = true; $("dbgfn").textContent = ""; renderVars([]); } }
 function gdial() {
@@ -592,14 +614,26 @@ function onGameCtl(msg) {
   }
   else if (msg === "D:resumed") { gamePaused = false; setGamePauseUi(); gstat("running"); gameVarsOff(); }
   else if (msg.startsWith("D:reload ")) $("out").textContent += "[game] live-reload " + msg.slice(9) + (gamePaused ? " (applied through the pause)" : "") + "\n";
+  else if (msg === "D:apply queued") {
+    pendingApply = false; applyWhenReady = false; updateApply(); gstat("applied — the saved function edits are active");
+    $("out").textContent += "[game] applied the saved function edits\n";
+  }
   else if (msg.startsWith("D:rebuild ")) {
-    const st = msg.slice(10);
-    if (st === "started" || st === "1") { gstat("rebuilding…"); setTimeout(() => { if (gws) gws.send("D!:rebuild?"); }, 400); }
-    else if (st === "2") { gstat("rebuild ready — ⇄ to swap"); $("gswap").disabled = false; }
-    else gstat("rebuild " + st);
+    const st = msg.slice(10), code = st.split(" ")[0];
+    if (code === "started" || code === "1") { buildState = "building"; setTimeout(() => { if (gws) gws.send("D!:rebuild?"); }, 400); }
+    else if (code === "2") { buildState = "ready"; if (applyWhenReady) { applyWhenReady = false; doApply(); } }
+    else if (code === "3") {
+      buildState = "failed"; applyWhenReady = false; buildWhy = st.slice(2);
+      $("out").textContent += "[game] the new build failed; the game keeps running the old one: " + buildWhy + "\n";
+    }
+    else buildState = "";                                       // refused (no live driver) / idle: function edits only
+    if (pendingApply) updateApply(); else if (code === "2") gstat("rebuild ready");
   }
   else if (msg.startsWith("D:swap ")) {
-    if (msg.endsWith("true")) { gstat("swapping…"); reattach = 20; gameSwapped = true; $("gswap").disabled = true; }
+    if (msg.endsWith("true")) {
+      gstat("swapping…"); reattach = 20; gameSwapped = true;
+      pendingApply = false; buildState = ""; applyWhenReady = false; $("gswap").disabled = true;
+    }
     else gstat("swap refused (rebuild first)");
   }
   else if (msg.startsWith("D:ok bp ")) gstat("⛳ " + msg.slice(8) + " (fn entry)");
@@ -612,10 +646,11 @@ $("gbp").onclick = () => {
 $("gbpin").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("gbp").onclick(); } });
 $("gresume").onclick = () => { if (gws) gws.send("D!:resume"); };
 $("grebuild").onclick = () => { if (gws) gws.send("D!:rebuild"); };
-$("gswap").onclick = () => { if (gws) gws.send("D!:swap auto"); };
+$("gswap").onclick = doApply;
 function gameDebugReset() {
   if (gws) { try { gws.close(); } catch {} }
   gws = null; gport = 0; gameBps.clear(); gamePaused = false; gameSwapped = false; reattach = 0;
+  pendingApply = false; buildState = ""; buildWhy = ""; applyWhenReady = false; worldRefused = false;
   $("gdbg").hidden = true; $("gswap").disabled = true; setGamePauseUi(); gameVarsOff();
 }
 // ── game launcher (slice 6) — a real loft child process; output arrives via polls ──
@@ -679,14 +714,19 @@ function connect() {
   ws.onmessage = ev => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.ok !== undefined && m.event === undefined && m.context === undefined) {   // a bare response
-      if (m.id === saveId) { saveId = 0; if (m.ok) { saved = pendSnap; updateDirty(); } return; }
+      if (m.id === saveId) { saveId = 0; if (m.ok) { saved = pendSnap; updateDirty(); if (gws && pendingApply) gws.send("D!:rebuild"); } return; }
       if (m.id === runAfterLaunch) { runAfterLaunch = 0;
         if (m.ok) { sendBreakpoints(); send("run", {}); } else $("out").textContent += "\n[not run — fix the errors above]\n"; return; }
       if (reqcb[m.id]) { const cb = reqcb[m.id]; delete reqcb[m.id]; cb(m); return; }   // setValue / watch eval
     }
     if (m.event === "diagnostics") {
       if (m.file === "<repl>") { for (const it of (m.items || [])) replLine("err", it.line + ":" + it.col + "  " + it.message); }
-      else showDiags(m.items || []);
+      else {
+        showDiags(m.items || []);
+        // The running world against this save: the build would refuse to carry it.
+        worldRefused = (m.items || []).some(it => it.code === "layout-upgrade-refused" && it.message.startsWith("the running world"));
+        updateApply();
+      }
     }
     else if (m.event === "output") $("out").textContent += m.text;
     else if (m.event === "stopped") {
@@ -740,7 +780,10 @@ src.addEventListener("keydown", e => {
   }
 });
 $("save").onclick = doSave;
-document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); doSave(); } });
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); doSave(); }
+  else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "Enter") { e.preventDefault(); doApply(); }
+});
 // ── debugger wiring ──
 $("gutter").addEventListener("click", e => {                 // toggle a breakpoint on the clicked line
   const g = e.target.closest(".gnum"); if (!g) return;

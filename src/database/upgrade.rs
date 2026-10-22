@@ -997,6 +997,19 @@ pub enum WorldPlan {
     Converts(Vec<String>),
 }
 
+/// The running world against this program, every refusal kept ([`Stores::world_upgrade`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldUpgrade {
+    /// The release of the build that runs the world.
+    pub version: String,
+    /// The layout is this program's: nothing converts.
+    pub same: bool,
+    /// What converts, one line per change.
+    pub changes: Vec<String>,
+    /// What stops the world from crossing, each with its path from the world's type.
+    pub refusals: Vec<crate::database::Refusal>,
+}
+
 /// The layout a `.dschema` text records, read back into its description, with the id of the
 /// store's root in it.  `what` names the store in an error.
 fn recorded_layout(
@@ -1178,6 +1191,29 @@ impl Stores {
         sidecar: &str,
         routines: &Routines,
     ) -> Result<WorldPlan, String> {
+        let up = self.world_upgrade(sidecar, routines)?;
+        if let Some(r) = up.refusals.first() {
+            return Err(self.refusal_for(&up.version, format!("{}: {}", r.path, r.reason)));
+        }
+        Ok(if up.same {
+            WorldPlan::Same
+        } else {
+            WorldPlan::Converts(up.changes)
+        })
+    }
+
+    /// [`Self::world_upgrade_plan`] with every refusal kept, each with its field path from the
+    /// world's type: what an editor shows at the type while the old build keeps running
+    /// (`layout-upgrade-refused`, the parser's `check_running_world`).
+    ///
+    /// # Errors
+    /// Why the world cannot even be compared: a layout this build cannot read, a release this
+    /// build does not admit, or a world type this program does not define.
+    pub fn world_upgrade(
+        &self,
+        sidecar: &str,
+        routines: &Routines,
+    ) -> Result<WorldUpgrade, String> {
         let (id, old, old_root) = recorded_layout(sidecar, "the running world")?;
         self.release().admits(&id.version)?;
         let name = old.names[&old_root].clone();
@@ -1186,16 +1222,23 @@ impl Stores {
         })?;
         let current = crate::schema_sidecar::LayoutIdentity::of(self, &[new_root]);
         if current.layout_hash == id.layout_hash && current.dump == id.dump {
-            return Ok(WorldPlan::Same);
+            return Ok(WorldUpgrade {
+                version: id.version,
+                same: true,
+                changes: Vec::new(),
+                refusals: Vec::new(),
+            });
         }
         // The world records the release of the instance that runs it: the same decision as a
         // load of a store that release wrote (@FR-L-Upgrade-Routine).
         let routines = self.routines_for(&id.version, routines);
         let map = self.upgrade_map(&old, old_root, new_root, true, &routines);
-        if let Some(r) = map.refusals.first() {
-            return Err(self.refusal_for(&id.version, format!("{}: {}", r.path, r.reason)));
-        }
-        Ok(WorldPlan::Converts(map.changes))
+        Ok(WorldUpgrade {
+            version: id.version,
+            same: false,
+            changes: map.changes,
+            refusals: map.refusals,
+        })
     }
 
     /// What a store written with the project's baseline layout `old` (accepted as release

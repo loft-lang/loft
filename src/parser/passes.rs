@@ -245,6 +245,7 @@ impl Parser {
             self.check_reshape_under_reference();
             self.synth_drop_cascades();
             self.check_layout_baseline();
+            self.check_running_world();
         }
         self.diagnostics.fill(self.lexer.diagnostics());
         self.diagnostics.is_empty()
@@ -1776,7 +1777,6 @@ impl Parser {
             self.database.release(),
             &routines,
         );
-        let at_entry = *self.lexer.pos();
         let refused = match report {
             Ok(Some(r)) => r.refused,
             Ok(None) => return,
@@ -1792,35 +1792,84 @@ impl Parser {
             }
         };
         for r in refused {
-            // The stored type the path starts at; a field path names no source line of its own.
-            let ty = r.at.split(['.', '[']).next().unwrap_or_default();
-            let d_nr = self.data.def_nr(ty);
-            let pos = if d_nr == u32::MAX {
-                at_entry
-            } else {
-                *self.data.def(d_nr).position()
-            };
-            self.lexer.pos_diagnostic_coded(
-                Level::Warning,
-                &pos,
-                "layout-upgrade-refused",
+            let ty =
+                r.at.split(['.', '['])
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+            self.warn_upgrade_refused(
+                &r.at,
                 &format!(
                     "a store written by the last release cannot be upgraded to this build: {}",
                     r.text
                 ),
-            );
-            self.lexer.fix_last(crate::diagnostics::Fix {
-                kind: crate::diagnostics::FixKind::Conditional,
-                title: format!(
+                format!(
                     "write `fn upgrade(from: Release, old: <the old fields>, item: {ty})`, or \
                      raise `data_compatible_with` in loft.toml past the releases it cannot read"
                 ),
-                condition: Some("stores the earlier releases wrote must still open".to_string()),
-                edit: None,
-                concept: "packages",
-                concept_ref: "@F55",
-            });
+                "stores the earlier releases wrote must still open",
+            );
         }
+    }
+
+    /// The running game's world against this program (`running_world`, set by `loft --serve`
+    /// while it runs one): a change the next build could not carry the world across is a
+    /// `layout-upgrade-refused` warning at the world's type, shown on save, before any rebuild
+    /// and while the old build keeps running.  The same decision the live rebuild takes
+    /// (`Stores::world_upgrade`), so the editor and the rebuild cannot disagree.
+    fn check_running_world(&mut self) {
+        let Some(world) = self.running_world.take() else {
+            return;
+        };
+        let routines = Self::upgrade_routines(&self.data);
+        match self.database.world_upgrade(&world, &routines) {
+            Ok(up) => {
+                for r in up.refusals {
+                    self.warn_upgrade_refused(
+                        &r.path,
+                        &format!(
+                            "the running world cannot be carried into this build: {} — {}",
+                            r.path, r.reason
+                        ),
+                        "keep the old definition until the game has moved to this build, or \
+                         stop the game and start it again: a new game starts a new world"
+                            .to_string(),
+                        "the running game keeps its world",
+                    );
+                }
+            }
+            Err(e) => {
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "layout-upgrade-refused",
+                    "the running world cannot be carried into this build: {e}"
+                );
+            }
+        }
+        self.running_world = Some(world);
+    }
+
+    /// One `layout-upgrade-refused` warning, at the definition of the type the field path `at`
+    /// starts from (a field path names no source line of its own), with its cure.
+    fn warn_upgrade_refused(&mut self, at: &str, message: &str, cure: String, condition: &str) {
+        let ty = at.split(['.', '[']).next().unwrap_or_default();
+        let d_nr = self.data.def_nr(ty);
+        let pos = if d_nr == u32::MAX {
+            *self.lexer.pos()
+        } else {
+            *self.data.def(d_nr).position()
+        };
+        self.lexer
+            .pos_diagnostic_coded(Level::Warning, &pos, "layout-upgrade-refused", message);
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: cure,
+            condition: Some(condition.to_string()),
+            edit: None,
+            concept: "packages",
+            concept_ref: "@F55",
+        });
     }
 
     /// Only parse a specific string, only useful for parser tests.
@@ -1894,6 +1943,8 @@ impl Parser {
         // @PLN130 F9 (loft#779) — see `parse`.
         self.check_reshape_under_reference();
         self.synth_drop_cascades();
+        // An editor's compile of a save (`loft --serve`) against the game it runs.
+        self.check_running_world();
         self.diagnostics.fill(self.lexer.diagnostics());
     }
 

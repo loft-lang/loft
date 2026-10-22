@@ -216,6 +216,10 @@ pub struct Parser {
     /// @PLN196 — the argument type of every `store_load*` / `store_persist*` / `swap_world`
     /// call pass 2 met: the seeds of `Data::surviving`.
     pub(crate) store_handoffs: Vec<Type>,
+    /// @PLN196 — the layout of the world a running game holds (`.dschema` text), set by an
+    /// editor that runs one (`loft --serve`): a compile then warns, at the world's type, about
+    /// a change the next build could not carry the world across (`check_running_world`).
+    pub running_world: Option<String>,
     /// All definitions
     pub data: Data,
     pub database: Stores,
@@ -1838,6 +1842,7 @@ impl Parser {
             track_sources: false,
             parsed_sources: Vec::new(),
             store_handoffs: Vec::new(),
+            running_world: None,
             pass_started: None,
             speculative_type_refs: std::collections::HashSet::new(),
             qualified_stubs: std::collections::HashMap::new(),

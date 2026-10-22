@@ -403,6 +403,17 @@ first, and the serverless one ([@PLN62](https://github.com/loft-lang/plans/issue
 runs a full game or a long simulation, which is its goal.  The converter builds for `wasm32`
 (step 8), so it serves both.
 
+**In the server-backed IDE (`loft --serve`).**  A save never changes the running game (owner,
+2026-10-22: code is reviewed before it runs, and a warning does not stop a program).  Save writes
+the file, compiles it against the running game's world — a change the next build could not carry
+the world across is a `layout-upgrade-refused` warning at the world's type — and starts the
+rebuild in the background.  **⇄ Apply** (or Ctrl+Shift+Enter) makes it active: the ready build
+takes the world over through the converter; a failed build applies nothing and says why, and the
+old build keeps serving.  Held function edits land at the same Apply.  Guard: `tests/serve.rs`
+`serve_apply_holds_saved_edits_and_carries_the_world` — a held edit that changes nothing until
+Apply, a world grown by a field and an index crossing with its counter, keyed items and new index
+intact, and a refused change warned on save and failing the rebuild while the game keeps serving.
+
 ## Open questions (owner)
 
 1. ~~The rename source syntax~~ — answered (owner, 2026-10-20): no new syntax; an added

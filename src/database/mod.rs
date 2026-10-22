@@ -42,7 +42,7 @@ pub use journal::Journal;
 pub use types::Type;
 pub use upgrade::{
     FileUpgrade, FileUpgradeJob, Fills, Pending, PendingFills, Routine, Routines, WorldPlan,
-    owed_key, routine_key,
+    WorldUpgrade, owed_key, routine_key,
 };
 pub use upgrade_map::{FieldFrom, How, Pair, Refusal, UpgradeMap};
 

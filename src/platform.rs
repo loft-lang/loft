@@ -539,7 +539,7 @@ fn runtime_scratch_pid(name: &str) -> Option<u32> {
 // `Option` is the cross-platform contract, not a unix one: the unix arm can always
 // decide, and the non-unix arm never can.  Clippy sees only the arm it compiles.
 #[cfg_attr(unix, allow(clippy::unnecessary_wraps))]
-fn pid_alive(pid: u32) -> Option<bool> {
+pub(crate) fn pid_alive(pid: u32) -> Option<bool> {
     #[cfg(unix)]
     {
         // A value that does not fit a POSITIVE `pid_t` names no process, and must never

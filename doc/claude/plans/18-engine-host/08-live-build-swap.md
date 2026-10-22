@@ -365,8 +365,10 @@ mixed → background rebuild → swap → still debuggable.  **SHIPPED**:
 - **The control channel** rides the game port: `D!:`-prefixed frames are
   kernel-handled (the script never sees them), gated on
   `LOFT_DEBUG_CONTROL=1` AND a loopback peer.  Commands: `bp <fn>`,
-  `flip <fn> <0|1>`, `eval <var>`, `resume`, `reload`, `rebuild`,
-  `rebuild?`, `swap auto|<path>`.  Transport lives in engine_host;
+  `flip <fn> <0|1>`, `eval <var>`, `resume`, `reload`, `apply` (the
+  editor's Apply: a held edit under `LOFT_LIVE_RELOAD=hold` lands at the
+  next poll, through a pause too), `rebuild`, `rebuild?` (a failed build
+  answers `3 <why>`), `swap auto|<path>`.  Transport lives in engine_host;
   SEMANTICS in live_dispatch — split by a MAILBOX, because a paused
   dispatch holds the `LIVE` borrow and the control handler runs inside
   the pause's own mini-pump (`try_borrow` direct path when free; posted

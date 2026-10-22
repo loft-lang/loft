@@ -1970,6 +1970,12 @@ fn debug_cmd_dispatch(cid: i64, cmd: &str) -> Option<String> {
             crate::live_control::debug_mailbox_push(crate::live_control::DebugCmd::Reload(cid));
             None
         }
+        ("apply", _) => {
+            // The editor's Apply: the saved edits land at the live tier's next poll (held
+            // under `LOFT_LIVE_RELOAD=hold`, so nothing a save wrote ran before this).
+            crate::live_control::request_apply();
+            Some("D:apply queued".to_string())
+        }
         ("rebuild", _) => {
             let ok = crate::live_rebuild::n_rebuild_start_ctl();
             Some(format!(
@@ -1977,10 +1983,15 @@ fn debug_cmd_dispatch(cid: i64, cmd: &str) -> Option<String> {
                 if ok { "started" } else { "refused" }
             ))
         }
-        ("rebuild?", _) => Some(format!(
-            "D:rebuild {}",
-            crate::live_rebuild::rebuild_status_ctl()
-        )),
+        ("rebuild?", _) => {
+            let status = crate::live_rebuild::rebuild_status_ctl();
+            // A failed build says why, so the editor shows it beside the build it refused.
+            Some(if status == 3 {
+                format!("D:rebuild 3 {}", crate::live_rebuild::rebuild_failure_ctl())
+            } else {
+                format!("D:rebuild {status}")
+            })
+        }
         ("swap", artifact) => {
             let target = if artifact == "auto" || artifact.is_empty() {
                 crate::live_rebuild::rebuild_artifact_ctl()
@@ -2135,6 +2146,17 @@ fn swap_world_impl(stores: &mut Stores, w: DbRef) -> bool {
     let layout = (stores.allocations[w.store_nr as usize].known_type == kt).then(|| {
         crate::schema_sidecar::LayoutIdentity::of_store(stores, w.store_nr, kt).to_sidecar()
     });
+    // An editor that runs this game (`loft --serve`) reads the layout to warn, on save, about
+    // a change the next build could not carry the world across.  The first line names this
+    // process, so a layout left behind by a game that has ended is never read.
+    if let Ok(out) = std::env::var("LOFT_WORLD_LAYOUT_OUT")
+        && let Some(text) = &layout
+    {
+        let _ = crate::file_access::write(
+            &out,
+            format!("loft-world pid={}\n{text}", std::process::id()),
+        );
+    }
     WORLD_LAYOUT.with(|l| *l.borrow_mut() = layout);
     let Ok(snap_path) = std::env::var("LOFT_RESUME") else {
         return false;
