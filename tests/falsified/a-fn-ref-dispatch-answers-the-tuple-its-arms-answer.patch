@@ -1,11 +1,11 @@
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index 97c97122..643fabb8 100644
+index cef439d54..12409973a 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -1926,11 +1926,15 @@ impl Output<'_> {
-         // `generate_call_ref` does; the program continues (@C80).
-         write!(w, " _ => ")?;
-         if let Some(fields) = &value_fields {
+@@ -2025,11 +2025,15 @@ impl Output<'_> {
+             // reaches the interpreter's own `@FR-L-FnAbsent` guard there.
+             Self::write_upcall_arm(w, &param_types, &ret_type, &place, &closure_expr)?;
+         } else if let Some(fields) = &value_fields {
 -            write!(
 -                w,
 -                "{}",
