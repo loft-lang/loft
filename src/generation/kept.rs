@@ -705,12 +705,11 @@ impl super::Output<'_> {
         kept_paths(d_nr, self.data, self.stores, &mut self.kept_cache)
     }
 
-    /// Is the body being emitted the plain function or its `__kh` twin — the two forms whose
-    /// parameters are the declared ones?  Every other twin kind may take a record parameter
-    /// as values or drop one, so it holds nothing.
+    /// Is the body being emitted the plain function, its ranged variant (`__rg`) or its `__kh`
+    /// twin — the forms whose parameters are the declared ones?  Every other twin kind may
+    /// take a record parameter as values or drop one, so it holds nothing.
     fn kept_form(&self) -> bool {
         self.twin.is_none()
-            && !self.emitting_ranged
             && self.refill_twin_buf.is_none()
             && self.append_twin_buf.is_none()
             && self.dest_twin.is_none()
