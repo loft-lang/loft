@@ -661,13 +661,19 @@ impl OpCopyRecordEmitter {
                 // `@FR-R-RecPtr`'s element clause: the element derived in place, its
                 // reference and its address both from the record and the index.
                 if let Some((vector, index, size)) = ctx.output.element_copy_dest(args) {
+                    // The nested clause: the record and length of a view's vector field
+                    // through the view's address, when its block holds one.
+                    let rec_len = match ctx.output.field_header_expr(vector) {
+                        Some(h) => format!("{{ let __h = {h}; (__h.rec, __h.len) }}"),
+                        None => "vector::rec_and_len(&__vr, &stores.allocations)".to_string(),
+                    };
                     write!(ctx.w, "{{ let __vr: DbRef = ")?;
                     ctx.emit(vector)?;
                     write!(ctx.w, "; let __vi: i64 = ")?;
                     ctx.emit(index)?;
                     write!(
                         ctx.w,
-                        "; let (__er, __el) = vector::rec_and_len(&__vr, &stores.allocations); \
+                        "; let (__er, __el) = {rec_len}; \
                          let (__cd, __cp): (DbRef, *const u8) = match vector::elem_index(__vi, __el) {{ \
                          Some(__f) => (DbRef {{ store_nr: __vr.store_nr, rec: __er, pos: 8 + __f * {size} }}, \
                          unsafe {{ stores.allocations[__vr.store_nr as usize].elem_base(__er).add(__f as usize * {size}) }}), \

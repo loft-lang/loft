@@ -3077,6 +3077,7 @@ pub fn record_view_ptr(
     twin_params: &HashSet<(u32, u16)>,
     facts: Option<&StoreFacts>,
     owned: Option<&HoistOwned>,
+    extra_use: bool,
 ) -> Result<u16, &'static str> {
     let Some(Value::Set(r, rhs)) = stmts.get(at).map(Value::unspan) else {
         return Err("not a binding");
@@ -3113,6 +3114,7 @@ pub fn record_view_ptr(
         facts,
         owned,
         None,
+        extra_use,
     )?;
     Ok(*r)
 }
@@ -3165,6 +3167,7 @@ pub fn param_view_ptr(
         facts,
         owned,
         None,
+        false,
     )?;
     Ok(p)
 }
@@ -3269,6 +3272,7 @@ pub fn mint_window(
         None,
         owned,
         Some(*e),
+        false,
     )?;
     Ok((*e, finish))
 }
@@ -3490,6 +3494,7 @@ fn view_extent_verdict(
     facts: Option<&StoreFacts>,
     owned: Option<&HoistOwned>,
     fresh_e: Option<u16>,
+    extra_use: bool,
 ) -> Result<(), &'static str> {
     let verdict = view_extent_verdict_inner(
         rest,
@@ -3503,6 +3508,7 @@ fn view_extent_verdict(
         facts,
         owned,
         fresh_e,
+        extra_use,
     );
     if let Err(why) = verdict {
         let def = data.def(def_nr);
@@ -3532,6 +3538,7 @@ fn view_extent_verdict_inner(
     facts: Option<&StoreFacts>,
     owned: Option<&HoistOwned>,
     fresh_e: Option<u16>,
+    extra_use: bool,
 ) -> Result<(), &'static str> {
     let vars = data.def(def_nr).variables();
     let r = &r;
@@ -3594,8 +3601,11 @@ fn view_extent_verdict_inner(
     }
     // Asked before the growth walk: a view the remainder never reads through its address
     // gains nothing from one, so its verdict names that and not a growth that would have
-    // cost nothing (the decline census counts the reasons that cost).
-    if !touched {
+    // cost nothing (the decline census counts the reasons that cost).  `extra_use` is the
+    // emitter's own count of the uses this walk does not see — a text field read under a
+    // held span, a vector field read (`@FR-R-RecPtr`'s text and nested clauses) — so such a
+    // view still meets every condition below.
+    if !touched && !extra_use {
         return Err(NO_FUSABLE_USE);
     }
     // `@FR-R-RecPtr`'s remainder clause — a push or mint into a store proven apart from the
@@ -3763,10 +3773,10 @@ fn copy_serves_view(
         || ((is_r(&args[1]) || is_r(&args[0])) && flat_copy(stores, name, args).is_some())
 }
 
-/// [`record_view_ptr`]'s LAST decline — every other condition held, and no statement of the
-/// remainder reads or writes a field the address serves.  The emitter's text clause admits
-/// such a view when its address comes from a held base with a text span beside it and the
-/// remainder reads a TEXT field of it (`Output::bind_record_ptr`).
+/// [`record_view_ptr`]'s FIRST decline after the walk, asked before the growth, free and
+/// rebind conditions: no statement of the remainder reads or writes a field the address
+/// serves, and the emitter counted no use of its own (`extra_use` — the text and nested
+/// clauses, `Output::extra_view_use`).
 pub const NO_FUSABLE_USE: &str = "no fusable field read or write of the view";
 
 /// Does `rest` read a text field of view `r` directly — `OpGetText(r, fld)` with a literal
@@ -3782,6 +3792,34 @@ pub fn reads_text_field(rest: &[Value], r: u16, data: &Data) -> bool {
                     && matches!(a.get(1).map(Value::unspan), Some(Value::Int(_))))
         })
     })
+}
+
+/// How many reads in `rest` take a VECTOR field of view `r` as their vector — a length or an
+/// element read (`OpLengthVector` or `len`'s `t_6vector_len`, whose body it is,
+/// `OpGetVector`, `OpGetVectorNullable`) whose operand is an
+/// `OpGetField` path rooted at `r`: the reads `@FR-R-RecPtr`'s nested clause serves
+/// (`Output::field_header_expr`).  Counted by site, not by execution.
+#[must_use]
+pub fn vector_field_reads(rest: &[Value], r: u16, data: &Data) -> usize {
+    let mut n = 0;
+    for op in rest {
+        op.any_node(&mut |node| {
+            if let Value::Call(g, a) = node
+                && (*g as usize) < data.definitions.len()
+                && matches!(
+                    data.def(*g).name(),
+                    "OpLengthVector" | "t_6vector_len" | "OpGetVector" | "OpGetVectorNullable"
+                )
+                && a.first()
+                    .and_then(|v| vector_path(data, v))
+                    .is_some_and(|(root, offs)| root == r && !offs.is_empty())
+            {
+                n += 1;
+            }
+            false
+        });
+    }
+    n
 }
 
 /// `@FR-R-RecPtr`'s path clause is on — `LOFT_NO_NESTED_FIELD=1` keeps a field reached
