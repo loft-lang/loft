@@ -2368,6 +2368,12 @@ pub fn is_scratch_header(store: &Store, scratch: &DbRef) -> bool {
 ///   sits at the header's offset 8 (`data.pos + 4`).  Yielding in that store lets the
 ///   scratch live in a different (writable) store than a read-only/exposed source — see
 ///   expose-iteration-scratch.md.
+///
+/// Inlined ALWAYS: out of line it answers `(DbRef, u32)` through memory, written a field at
+/// a time and read back eight bytes at a time — a store the processor cannot forward, and
+/// the stall was a tenth of a `for e in hash` walk (`bench/portal/analysis/keyed.md`).
+#[allow(clippy::inline_always)]
+#[inline(always)]
 pub fn step_ordered(
     data: &DbRef,
     cur: u32,

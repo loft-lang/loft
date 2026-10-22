@@ -2144,7 +2144,19 @@ pub fn arena_records(hash_ref: &DbRef, stores: &[Store]) -> Vec<u32> {
 /// not reachable from valid loft source.
 #[must_use]
 pub fn records_sorted(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<DbRef> {
-    let mut recs = records(hash_ref, stores);
+    if keys::fast_order_enabled() {
+        let sorted = match keys {
+            [_] => inline_sorted::<1>(hash_ref, stores, keys),
+            [_, _] => inline_sorted::<2>(hash_ref, stores, keys),
+            [_, _, _] => inline_sorted::<3>(hash_ref, stores, keys),
+            [_, _, _, _] => inline_sorted::<4>(hash_ref, stores, keys),
+            _ => None,
+        };
+        if let Some(sorted) = sorted {
+            return sorted;
+        }
+    }
+    let mut recs = records_unordered(hash_ref, stores);
     keys::sort_records(&mut recs, stores, keys);
     recs
 }
@@ -2490,25 +2502,146 @@ fn inline_remove(hash_ref: &DbRef, claim: u32, rec: &DbRef, stores: &mut [Store]
     seq
 }
 
+/// [`records_sorted`] for an INLINE table whose key is one to four integer parts: one sweep of
+/// the slots reads each live entry's key parts ([`keys::int_key_part`], the read the decorated
+/// sort makes) into `([i64; N], position)`, and the pairs are sorted — no list of records
+/// first, no index to gather back through (`hash_walk` 355 → 2xx µs,
+/// `bench/portal/analysis/keyed.md`).  The position is the tie-break, which a hash never
+/// needs (its keys are unique) and which keeps the order a function of the table alone.
+/// `None` — the general path answers — for an arena table, a text or float part, or a table
+/// whose record does not hold what its header names.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when the order disagrees with [`keys::compare`].
+fn inline_sorted<const N: usize>(
+    hash_ref: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+) -> Option<Vec<DbRef>> {
+    if !keys
+        .iter()
+        .all(|k| matches!(k.type_nr.abs(), 1 | 2 | 8 | 9 | 10 | 11 | 12))
+    {
+        return None;
+    }
+    let store = keys::store(hash_ref, stores);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
+    if claim == 0 {
+        return None;
+    }
+    let (base, count, stride) = inline_span(store, claim)?;
+    let e0 = ent0(count);
+    let at = |pos| DbRef {
+        store_nr: hash_ref.store_nr,
+        rec: claim,
+        pos,
+    };
+    // A part of 4 or 8 bytes is read raw through the checked base once its field is shown to
+    // lie inside the entry — the bytes `int_key_part` reads, widened the same way; a narrow
+    // part (a `start`-offset short or byte) and a descending one take that checked read.
+    let raw: [Option<(u32, u8)>; N] = std::array::from_fn(|i| {
+        let k = &keys[i];
+        let (width, form) = match k.type_nr {
+            1 | 2 => (8, 0),
+            8 => (4, 1),
+            12 => (4, 2),
+            _ => return None,
+        };
+        let off = u32::from(k.position);
+        (off + width <= stride).then_some((off, form))
+    });
+    // Branch-free: every slot's pair is written at the next free place and only a live slot
+    // moves that place on — whether a slot is live follows the key's hash, so a branch on it
+    // mispredicted on most slots.  A dead slot's entry bytes lie inside the checked record.
+    let mut pairs: Vec<([i64; N], u32)> = Vec::with_capacity(count as usize);
+    let spare = pairs.spare_capacity_mut();
+    let mut n = 0;
+    for slot in 0..count {
+        let seq = raw_u32(base, BUCKET0 + slot * 8);
+        let pos = e0 + slot * stride;
+        let mut key = [0_i64; N];
+        for ((part, k), r) in key.iter_mut().zip(keys).zip(&raw) {
+            *part = match *r {
+                Some((off, 0)) => raw_i64(base, pos + off),
+                Some((off, 1)) => i64::from(raw_u32(base, pos + off).cast_signed()),
+                Some((off, _)) => i64::from(raw_u32(base, pos + off)),
+                None => keys::int_key_part(store, &at(pos), k)?,
+            };
+        }
+        spare[n].write((key, pos));
+        n += usize::from(seq != 0 && seq != TOMB);
+    }
+    // SAFETY: the first `n` places were each written above (`n` never passes `slot`).
+    unsafe { pairs.set_len(n) };
+    // The key alone: a hash's keys are unique, so the pairs never tie, and the comparison of
+    // the key without the position was a third cheaper on a 5,000-entry sort.
+    if N == 1 {
+        pairs.sort_unstable_by_key(|p| p.0[0]);
+    } else {
+        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    }
+    let sorted: Vec<DbRef> = pairs.into_iter().map(|(_, pos)| at(pos)).collect();
+    if keys::keyed_verify() {
+        for w in sorted.windows(2) {
+            assert_ne!(
+                keys::compare(&w[0], &w[1], stores, keys),
+                std::cmp::Ordering::Greater,
+                "LOFT_KEYED_VERIFY: the inline key-order walk put {:?} before {:?}, which keys::compare orders after it",
+                w[0],
+                w[1]
+            );
+        }
+    }
+    Some(sorted)
+}
+
+/// Every live record in no promised order: the input of a sort that imposes its own.  An inline
+/// table answers its slots as they lie, where [`records`] first sorts them into insertion
+/// order — a second O(n log n) sort a key-order walk throws away, since a hash's keys are
+/// unique (18 % of `hash_walk`, `bench/portal/analysis/keyed.md`).
+fn records_unordered(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
+    let store = keys::store(hash_ref, stores);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
+    if claim != 0 && is_inline(store, claim) {
+        return inline_slots(store, hash_ref.store_nr, claim)
+            .into_iter()
+            .map(|(_, at)| at)
+            .collect();
+    }
+    records(hash_ref, stores)
+}
+
+/// The live entries of inline table `claim` in slot order, each with its insertion number.
+/// The buckets are read through the base [`inline_span`] checked once — a checked read per
+/// bucket was a third of a key-order walk — into a vector sized by the live count.
+fn inline_slots(store: &Store, store_nr: u16, claim: u32) -> Vec<(u32, DbRef)> {
+    let Some((base, count, stride)) = inline_span(store, claim) else {
+        return Vec::new();
+    };
+    let e0 = ent0(count);
+    let mut out = Vec::with_capacity(live_len(store, claim) as usize);
+    for at in 0..count {
+        let seq = raw_u32(base, BUCKET0 + at * 8);
+        if seq != 0 && seq != TOMB {
+            out.push((
+                seq,
+                DbRef {
+                    store_nr,
+                    rec: claim,
+                    pos: e0 + at * stride,
+                },
+            ));
+        }
+    }
+    out
+}
+
 /// The live entries of inline table `claim`, in insertion order (the order an unordered walk
 /// promises, `@FR-Col-Unordered`).
 fn inline_entries(store: &Store, store_nr: u16, claim: u32) -> Vec<DbRef> {
-    let h = hdr(store, claim);
-    let base = ent0(h.count);
-    let mut live: Vec<(u32, u32)> = (0..h.count)
-        .filter_map(|at| {
-            let seq = store.get_u32_raw(claim, BUCKET0 + at * 8);
-            (seq != 0 && seq != TOMB).then_some((seq, at))
-        })
-        .collect();
-    live.sort_unstable();
-    live.into_iter()
-        .map(|(_, at)| DbRef {
-            store_nr,
-            rec: claim,
-            pos: base + at * h.stride,
-        })
-        .collect()
+    let mut live = inline_slots(store, store_nr, claim);
+    live.sort_unstable_by_key(|&(seq, _)| seq);
+    live.into_iter().map(|(_, at)| at).collect()
 }
 
 // ---- `(Col-Inline)` — the one-integer-key paths over a table checked once ----
@@ -2531,6 +2664,18 @@ fn raw_i64(base: *const u8, off: u32) -> i64 {
 #[inline(always)]
 #[allow(clippy::inline_always)]
 fn inline_checked(store: &Store, claim: u32, kp: u32) -> Option<(*const u8, u32, u32)> {
+    let (base, count, stride) = inline_span(store, claim)?;
+    if kp + 8 > stride {
+        return None;
+    }
+    Some((base, count, stride))
+}
+
+/// [`inline_checked`] without a key: the base, bucket count and stride of an inline table whose
+/// record holds every bucket and entry its header names.
+#[inline(always)]
+#[allow(clippy::inline_always)]
+fn inline_span(store: &Store, claim: u32) -> Option<(*const u8, u32, u32)> {
     let words = store.record_words(claim);
     if words <= RESERVED_WORDS
         || u64::from(claim) + u64::from(words) > u64::from(store.capacity_words())
@@ -2543,7 +2688,7 @@ fn inline_checked(store: &Store, claim: u32, kp: u32) -> Option<(*const u8, u32,
         return None;
     }
     let (stride, count) = (stride_of(flags), inline_count_of(flags));
-    if stride == 0 || kp + 8 > stride || inline_words(count, stride) > words {
+    if stride == 0 || inline_words(count, stride) > words {
         return None;
     }
     Some((base, count, stride))

@@ -3645,7 +3645,7 @@ pub fn sort_records(recs: &mut Vec<DbRef>, stores: &[Store], keys: &[Key]) {
 /// part — the same read, widened — with a descending part as `!v`, which reverses the order
 /// of every `i64` without overflow (the null sentinel `i64::MIN` lands last, where the
 /// reversed comparison puts it).  `None` for a kind not read as an integer.
-fn int_key_part(s: &Store, rec: &DbRef, k: &Key) -> Option<i64> {
+pub fn int_key_part(s: &Store, rec: &DbRef, k: &Key) -> Option<i64> {
     let at = rec.pos + u32::from(k.position);
     let v = match k.type_nr.abs() {
         1 => s.get_int(rec.rec, at),
