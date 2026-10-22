@@ -7,6 +7,10 @@
 // checked read, a text key through the general sort; a removed key's tombstone is never walked.
 // Each cell inserts in a scrambled order, removes a share, and walks: the keys must rise
 // strictly, and the count, sum, first and last key are hand-computed.  Both backends.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-22) — the sweep counting every slot answered
+// `w1 out of order at 0` on both backends; counting a tombstone as live answered
+// `w1 256 32640 0 255` (the removed keys walked again).
 
 struct A { v: integer, k: u8 }
 struct B { k: u16, v: integer }
