@@ -2574,6 +2574,13 @@ impl Output<'_> {
             write!(w, "DbRef::NULL")?;
             return Ok(());
         }
+        // `@FR-R-ValueRecord` (§ V-ah) — a DEAD BUFFER's mints and frees are emitted as
+        // nothing, so its declaration mints nothing either: a store minted here would have
+        // no free left to release it (loft#2123).
+        if self.dead_buffers.contains(&var) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
         // `@FR-O-LazyBuffer` — a lazy buffer's entry null-init is the sentinel; its store is
         // minted by the later, null-guarded `Set(v, Null)`, which takes the reassignment arm
         // below (`OpDatabase` allocates fresh from the sentinel).
