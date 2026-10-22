@@ -45,6 +45,12 @@ pub struct KeptPath {
     pub off: i64,
     pub path: Value,
     pub uses: usize,
+    /// The reads of the field in the body itself (a walk, an element, a length), loop-weighted.
+    pub own: usize,
+    /// The calls that hand the field on: `(callee, its parameter, weight, inside a loop)` —
+    /// what the emitter weighs, knowing which twin each call will take
+    /// (`Output::kept_effective_uses`).
+    pub via: Vec<(u32, u16, usize, bool)>,
 }
 
 /// The memo of [`kept_paths`] and of the questions it asks along the way.
@@ -156,6 +162,8 @@ fn kept_inner(
             elm,
             why: None,
             uses: 0,
+            own: 0,
+            via: Vec::new(),
             strict: false,
             cache,
         };
@@ -170,7 +178,7 @@ fn kept_inner(
             );
         }
         if walk.why.is_none() && walk.uses > 0 {
-            let uses = walk.uses;
+            let (uses, own, via) = (walk.uses, walk.own, std::mem::take(&mut walk.via));
             out.push(KeptPath {
                 param: p,
                 off,
@@ -183,6 +191,8 @@ fn kept_inner(
                     ],
                 ),
                 uses,
+                own,
+                via,
             });
         }
     }
@@ -314,6 +324,8 @@ struct KeptWalk<'a> {
     elm: Option<u16>,
     why: Option<&'static str>,
     uses: usize,
+    own: usize,
+    via: Vec<(u32, u16, usize, bool)>,
     /// [`untouched_field`]'s question: nothing may change the field at all — no append to
     /// it, no call that may — rather than every change being one a holder follows.
     strict: bool,
@@ -387,6 +399,7 @@ impl KeptWalk<'_> {
                 }
                 if self.is_key(rhs) {
                     self.uses += Self::weight(depth);
+                    self.own += Self::weight(depth);
                 }
                 match rhs.unspan() {
                     Value::Call(d, args) if stmt => self.call(*d, args, true, depth),
@@ -418,6 +431,7 @@ impl KeptWalk<'_> {
                 }
                 if self.is_key(rhs) {
                     self.uses += Self::weight(depth);
+                    self.own += Self::weight(depth);
                 }
                 self.expr(rhs, depth);
             }
@@ -463,6 +477,7 @@ impl KeptWalk<'_> {
         ) && args.first().is_some_and(|a| self.is_key(a))
         {
             self.uses += Self::weight(depth);
+            self.own += Self::weight(depth);
         }
         if walkable(self.data, d).is_some() {
             let reaching: Vec<usize> = (0..args.len())
@@ -475,6 +490,7 @@ impl KeptWalk<'_> {
                         && matches!(args.get(usize::from(k.param)).map(Value::unspan), Some(Value::Var(x)) if *x == self.p)
                     {
                         self.uses += k.uses * Self::weight(depth);
+                        self.via.push((d, k.param, Self::weight(depth), depth > 0));
                     }
                 }
             }
@@ -617,6 +633,8 @@ pub fn refreshes(
         elm,
         why: None,
         uses: 0,
+        own: 0,
+        via: Vec::new(),
         strict: false,
         cache: &mut cache,
     };
@@ -676,6 +694,8 @@ fn untouched_field(
         elm,
         why: None,
         uses: 0,
+        own: 0,
+        via: Vec::new(),
         strict: true,
         cache,
     };
@@ -812,7 +832,13 @@ impl super::Output<'_> {
         };
         let mut frame: HashMap<super::hoist::PathKey, String> = HashMap::new();
         for (k, kp) in paths.iter().enumerate() {
-            if !twin && kp.uses < 2 {
+            // The plain body binds a holder it hands down: its own reads alone are what a
+            // loop's or the function clause's header already serves, lazily, where the read
+            // is — a holder bound at entry is paid on every call, early exits included.
+            if !twin
+                && (self.kept_handed_down(self.def_nr, kp) == 0
+                    || self.kept_effective_uses(self.def_nr, kp, &mut Vec::new()) < 2)
+            {
                 continue;
             }
             let key: super::hoist::PathKey = (kp.param, vec![kp.off]);
@@ -876,6 +902,57 @@ impl super::Output<'_> {
         Ok(check
             .replace(" return __lr;", &format!("{refresh} return __lr;"))
             .replace(" return __t;", &format!("{refresh} return __t;")))
+    }
+
+    /// The reads a holder of `kp` in `d_nr`'s body would serve, as emitted: its own reads, and
+    /// the reads of each callee it is handed to that will take the `__kh` twin — one
+    /// [`Self::kept_of`] admits, and not one a loop calls with an `__inv` twin, which the
+    /// loop's own holders serve instead.  The analysis count ([`KeptPath::uses`]) counts
+    /// every keeping callee, and a holder bound for reads no call makes is a derivation for
+    /// nothing (hex_body's `bone_shape_has`: three per call, +7.7 %).  A recursion counts
+    /// nothing through itself.
+    pub(super) fn kept_effective_uses(
+        &mut self,
+        d_nr: u32,
+        kp: &KeptPath,
+        active: &mut Vec<u32>,
+    ) -> usize {
+        if active.contains(&d_nr) {
+            return 0;
+        }
+        active.push(d_nr);
+        let mut n = kp.own;
+        for &(g, gp, w, in_loop) in &kp.via {
+            if in_loop && self.callee_inputs_of(g).is_some() {
+                continue;
+            }
+            let Some(gk) = self.kept_of(g) else {
+                continue;
+            };
+            if let Some(gkp) = gk.iter().find(|x| x.param == gp && x.off == kp.off) {
+                let gkp = gkp.clone();
+                n += w * self.kept_effective_uses(g, &gkp, active);
+            }
+        }
+        active.pop();
+        n
+    }
+
+    /// The reads of `kp` a plain body's holder would serve through the callees it hands it to
+    /// ([`Self::kept_effective_uses`] without the body's own reads).
+    fn kept_handed_down(&mut self, d_nr: u32, kp: &KeptPath) -> usize {
+        let own = kp.own;
+        self.kept_effective_uses(d_nr, kp, &mut Vec::new()) - own
+    }
+
+    /// Is the header an enclosing frame holds for `path` this body's kept holder — no loop's
+    /// and no view's?
+    pub(super) fn kept_holds_only(&self, path: &super::hoist::PathKey) -> bool {
+        self.active_vec_header(path).is_some_and(|held| {
+            self.kept_holders
+                .iter()
+                .any(|h| h.key == *path && h.read == held)
+        })
     }
 
     pub(super) fn end_kept_headers(&mut self, opened: bool) {

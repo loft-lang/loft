@@ -4742,10 +4742,14 @@ impl Output<'_> {
         // `polygon_crossings`, +8 % on `fill_polygon`).
         // A path's root counts through its dep chain: `for e in v` walks a hidden local bound
         // to the parameter `v`, whose header the copy holds once `v` is tested apart.
+        // A body's KEPT holder (`(R-Header)`'s kept clause) is no such frame: the copy also
+        // gains what the apart test licenses beyond a base — a push window on the buffer it
+        // grows (crawler's `build_vis_texture`: 1.14× → 2.94× of its twin when the holder
+        // withheld the copy) — so the decision is the one it was before the holder existed.
         let mut gained: Vec<u16> = Vec::new();
         for (p, _) in &versioned.vectors {
             if !plain.vectors.iter().any(|(q, _)| q == p)
-                && self.active_vec_header(p).is_none()
+                && (self.active_vec_header(p).is_none() || self.kept_holds_only(p))
                 && let Some(r) = self.param_root(p.0, &params)
                 && !gained.contains(&r)
             {

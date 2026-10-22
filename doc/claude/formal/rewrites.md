@@ -677,7 +677,12 @@ also grows; falsifiers `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1`.  Sites: `hoist
                  (b) the holder is derived again, except a call to the callee's
                  kept twin, which hands the holder down and so keeps it current
                  itself.  No base is kept: a claim anywhere may move the store's
-                 memory, never a record number or a length.
+                 memory, never a record number or a length.  A body some rewrite
+                 emits a RUN of statements in — the hand-over's rotate, an
+                 element-first build, `(R-Apart)`, a stream walk — keeps nothing:
+                 the run is emitted outside the statements a holder is refreshed
+                 after.  A kept call takes the ranged form of the kept twin
+                 (`__rg__kh`) where `(R-RangedCall)` admits it.
 ```
 
 **The kept clause, in words.**  L7 (`bench/portal/analysis/worklist.md`): lane 17's
@@ -697,7 +702,13 @@ walk's hidden vector served from the holder), `Output::kept_twin_call` (the hand
 `Output::kh_live_check` (a twin the live tier flips into the interpreter refreshes before it
 returns).  Guard `tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft`
 (falsified twice: no refresh after the append group, no refresh after a plain call that may
-append); pin `tests/kept_header.rs`.  Lane 17 A/B, 7 rounds, every hash equal:
+append); pin `tests/kept_header.rs`.  `Output::kept_check_taken` stops the generation when a
+statement that changes a held field was taken by another rewrite — the net under the run-emitting
+list, which caught the element-first build.  A holder is an enclosing frame to `(R-Alias)`'s
+versioned copy, so that copy is no longer emitted for a kept path (its measured rule: a base
+alone does not pay for the duplicated loop); `(R-Header)`'s loop count falls where a body's
+holder serves the loop.  A held read reports no index fault yet (loft#2134), as for every
+held header.  Lane 17 A/B, 7 rounds, every hash equal:
 `slope_path_with_undo` −10.8 %, `resolve_move` −2.4 %.
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
