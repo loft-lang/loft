@@ -1065,7 +1065,7 @@ pub fn plan(data: &Data, stores: &Stores, value_fns: &HashSet<u32>) -> ApartPlan
 }
 
 /// `s` as part of a Rust identifier: a source label can be a module path (`mesh3d::math`).
-fn ident_part(s: &str) -> String {
+pub(super) fn ident_part(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect()
