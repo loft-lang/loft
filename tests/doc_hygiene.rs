@@ -1882,6 +1882,40 @@ fn the_release_records_the_c_toolchain_the_verifier_compares() {
     );
 }
 
+/// @PLN199 G2c — a release bundle's binary is named by what it was built from, so the copy a
+/// user unpacks runs the library artifacts the release built with it.  The mark spans three
+/// files: `repro-flags.sh` exports it (sourced by the release and by its verifier, which must
+/// bake the same bytes), `build.rs` bakes it in, and `cache::release_bundle` reads it.  An
+/// edit that drops one end leaves every release artifact unadoptable, and nothing fails: the
+/// libraries interpret.
+#[test]
+fn the_release_bundle_mark_reaches_the_binary() {
+    let rf = fa::read_to_string("scripts/repro-flags.sh").expect("read repro-flags.sh");
+    let build = fa::read_to_string("build.rs").expect("read build.rs");
+    let cache = fa::read_to_string("src/cache.rs").expect("read src/cache.rs");
+    assert!(
+        rf.lines()
+            .any(|l| l.trim() == "export LOFT_RELEASE_BUNDLE=1"),
+        "scripts/repro-flags.sh must export LOFT_RELEASE_BUNDLE=1"
+    );
+    for name in ["make-release.sh", "repro-verify.sh"] {
+        let src = fa::read_to_string(format!("scripts/{name}")).expect("read the script");
+        assert!(
+            src.contains("repro-flags.sh"),
+            "{name} must source scripts/repro-flags.sh"
+        );
+    }
+    assert!(
+        build.contains("cargo:rustc-env=LOFT_RELEASE_BUNDLE={}")
+            && build.contains("rerun-if-env-changed=LOFT_RELEASE_BUNDLE"),
+        "build.rs must bake LOFT_RELEASE_BUNDLE into the binary"
+    );
+    assert!(
+        cache.contains("env!(\"LOFT_RELEASE_BUNDLE\")"),
+        "cache::release_bundle must read the baked mark"
+    );
+}
+
 /// @PLN78 step 7 — a Windows link is not deterministic unless told twice.
 ///
 /// `rust-lld` stamps the COFF header, the debug directory and the CodeView PDB GUID with the
