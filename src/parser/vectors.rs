@@ -2437,6 +2437,14 @@ or build a local and use that."
                 {
                     continue;
                 }
+                // loft#2131 — an OWNER slot (`add_capture_owner_slots`) is written by the scope
+                // pass, from the capture's owner witness, and by nothing here.
+                if slot_name
+                    .strip_suffix("__own")
+                    .is_some_and(|base| self.data.attr(closure_rec_d, base) != usize::MAX)
+                {
+                    continue;
+                }
                 // loft#1869 — a fn-ref's closure half fills from the record local behind it.
                 let fn_ref_half = slot_name
                     .strip_suffix("__clos")
@@ -3160,6 +3168,78 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 if is_cell {
                     self.data.retype_capture_attr(rec, a_nr, inline_tp.clone());
                 }
+            }
+        }
+    }
+
+    /// `@FR-L-CapOwn`, `@FR-O-Witness` (loft#2131, loft#2132) — give each record-typed capture
+    /// of a LOCAL an OWNER slot beside it, `<name>__own`, hidden.
+    ///
+    /// The capture slot holds what the closure READS, and `@FR-L-CapHeap` makes that the store
+    /// the local names at the build — shared, never copied.  Whether the record also OWNS that
+    /// store is a fact about the run, not the binding: a local bound from a value branch
+    /// (`r = if p { mk(5) } else { base.inner }`) or rebound before the build
+    /// (`x = mk(1); x = base.inner`) holds a store of its own on one run and a view of the
+    /// caller's on another.  The frame already answers that per run with the local's owner
+    /// witness, and the scope pass hands the witness to this slot at the build, so the record's
+    /// cascade releases exactly the store the frame owned there, or nothing.
+    ///
+    /// Added for every such capture, at the parent's pass-1 body end, because only the scope
+    /// pass knows which locals carry a witness and the record is laid out before it runs.  A
+    /// slot whose local has no witness is never written, and the scope pass marks it borrowed,
+    /// so it leaves the record's cascade.  A fn field's UNION record (loft#1874) is left alone:
+    /// its captures keep the record's static adoption.
+    pub(crate) fn add_capture_owner_slots(&mut self, parent_d: u32) {
+        if !self.first_pass
+            || parent_d == u32::MAX
+            || (parent_d as usize) >= self.data.definitions.len()
+        {
+            return;
+        }
+        let Some(lambdas) = self.fn_lambdas.get(&parent_d).cloned() else {
+            return;
+        };
+        for lam in lambdas {
+            let rec = self.data.def(lam).closure_record();
+            if rec == u32::MAX || self.data.def(rec).name.starts_with("__closure_u_") {
+                continue;
+            }
+            let mut slots: Vec<(String, u32)> = Vec::new();
+            for a in 0..self.data.attributes(rec) {
+                if self.data.def(rec).attributes[a].hidden {
+                    continue;
+                }
+                let name = self.data.attr_name(rec, a);
+                let Type::Reference(d, _) = self.data.attr_type(rec, a).base().clone() else {
+                    continue;
+                };
+                if name.starts_with("__")
+                    || self.data.def(d).def_type != DefType::Struct
+                    || self.data.def(d).name.starts_with("__")
+                {
+                    continue;
+                }
+                let v = self.vars.var(&name);
+                if v == u16::MAX
+                    || self.vars.is_argument(v)
+                    || !matches!(self.vars.tp(v).base(), Type::Reference(_, _))
+                {
+                    continue;
+                }
+                slots.push((name, d));
+            }
+            for (name, d) in slots {
+                let own = format!("{name}__own");
+                if self.data.attr(rec, &own) != usize::MAX {
+                    continue;
+                }
+                let o = self.data.add_attribute(
+                    &mut self.lexer,
+                    rec,
+                    &own,
+                    Type::Reference(d, Deps::share_sentinel()),
+                );
+                self.data.definitions[rec as usize].attributes[o].hidden = true;
             }
         }
     }

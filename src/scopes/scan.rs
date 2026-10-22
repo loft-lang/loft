@@ -62,7 +62,99 @@ fn loop_body_refills(lp: &Block) -> HashSet<u16> {
     out
 }
 
+/// loft#2131 — the frame side of an owner-slot hand-off: the local's owner witness, and the
+/// compiler temps that may hold the store instead — a join's arm temps, the construction
+/// buffer a literal was built in (`CaptureBuilds::buffer_adopted`).  On any one run at most one
+/// of them names the store the capture holds.
+pub(super) struct OwnerHolders {
+    pub(super) witness: Option<u16>,
+    pub(super) temps: Vec<u16>,
+}
+
+impl OwnerHolders {
+    /// The holder a rebuild gives the owner slot BACK to while the capture still names it.
+    pub(super) fn back(&self) -> u16 {
+        self.witness.unwrap_or_else(|| self.temps[0])
+    }
+}
+
 impl Scopes<'_> {
+    /// loft#2131 — where the build of closure record local `rec` hands capture `c` to its
+    /// OWNER slot (`super::capture_adoption::owner_slot_takes`): the slot's byte position and
+    /// the frame's holder(s) of the store.
+    pub(super) fn owner_slot_handoff(
+        &self,
+        function: &Function,
+        data: &Data,
+        rec: u16,
+        c: u16,
+    ) -> Option<(u16, OwnerHolders)> {
+        let rec_v = *self.var_mapping.get(&rec).unwrap_or(&rec);
+        let c = *self.var_mapping.get(&c).unwrap_or(&c);
+        if !function.name(rec_v).starts_with("___clos_") {
+            return None;
+        }
+        let Type::Reference(record, _) = function.tp(rec_v).base() else {
+            return None;
+        };
+        if !super::capture_adoption::owner_slot_takes(
+            data,
+            function,
+            &self.capture_build_backing,
+            *record,
+            c,
+        ) {
+            return None;
+        }
+        let own =
+            self.record_field_pos(function, data, rec, &format!("{}__own", function.name(c)))?;
+        let mut temps =
+            super::capture_adoption::join_arm_holders(function, &self.capture_build_backing, c);
+        let map = |v: u16| *self.var_mapping.get(&v).unwrap_or(&v);
+        let mut buffers: Vec<u16> = self
+            .capture_build_backing
+            .buffer_adopted
+            .iter()
+            .filter(|(_, pairs)| pairs.iter().any(|&(r, cc)| map(r) == rec_v && map(cc) == c))
+            .map(|(&b, _)| map(b))
+            .filter(|b| !temps.contains(b))
+            .collect();
+        buffers.sort_unstable();
+        temps.extend(buffers);
+        let witness = self.owner_witness.get(&c).copied();
+        if witness.is_none() && temps.is_empty() {
+            return None;
+        }
+        Some((own, OwnerHolders { witness, temps }))
+    }
+
+    /// The byte position of capture `c`'s own slot in the closure record local `rec` builds.
+    fn capture_slot_pos(&self, function: &Function, data: &Data, rec: u16, c: u16) -> Option<i32> {
+        let c = *self.var_mapping.get(&c).unwrap_or(&c);
+        self.record_field_pos(function, data, rec, function.name(c))
+            .map(i32::from)
+    }
+
+    fn record_field_pos(
+        &self,
+        function: &Function,
+        data: &Data,
+        rec: u16,
+        field: &str,
+    ) -> Option<u16> {
+        let rec = *self.var_mapping.get(&rec).unwrap_or(&rec);
+        let Type::Reference(record, _) = function.tp(rec).base() else {
+            return None;
+        };
+        if data.attr(*record, field) == usize::MAX {
+            return None;
+        }
+        let pos = self
+            .database
+            .position(data.def(*record).known_type(), field);
+        (pos != u16::MAX).then_some(pos)
+    }
+
     /// The per-path flag of the store behind collection `args[0]` when this call GROWS it — an
     /// append or a new element — and a whole-collection copy may have moved its elements out
     /// (`collection_handoffs`); `None` otherwise.
@@ -517,6 +609,47 @@ impl Scopes<'_> {
                         return Value::Insert(ops);
                     }
                 }
+                // loft#2131, loft#2132, `@FR-L-CapOwn` — a capture whose record has an OWNER
+                // slot taking it (`owner_slot_takes`): the capture slot only reads, and the
+                // frame's holder of the store — the local's owner witness, or a join's arm temp
+                // — gives it to the owner slot and is reset.  Per run: the store the frame owned
+                // at the build, or nothing where the capture holds a view.
+                if *d_nr == data.def_nr("OpSetDbRef")
+                    && let (Some(Value::Var(rec)), Some(Value::Var(c))) = (
+                        args.first().map(Value::unspan),
+                        args.get(2).map(Value::unspan),
+                    )
+                    && let Some((own, holders)) = self.owner_slot_handoff(function, data, *rec, *c)
+                {
+                    let (mut ops, ls, postamble) = self.scan_args(args, function, data, *d_nr);
+                    let rec_arg = ls.first().cloned().unwrap_or(Value::Null);
+                    let c_v = *self.var_mapping.get(c).unwrap_or(c);
+                    ops.push(Value::Call(*d_nr, ls));
+                    ops.extend(postamble);
+                    let set_own = |v: Value| {
+                        Value::Call(*d_nr, vec![rec_arg.clone(), Value::Int(i32::from(own)), v])
+                    };
+                    let sentinel = || Value::Call(data.def_nr("OpNullRefSentinel"), vec![]);
+                    // The witness names the capture's store or nothing, so it is handed over
+                    // whole; a temp only where it names that store.
+                    if let Some(w) = holders.witness {
+                        ops.push(set_own(Value::Var(w)));
+                        ops.push(v_set(w, sentinel()));
+                    } else {
+                        ops.push(set_own(sentinel()));
+                    }
+                    for h in holders.temps {
+                        ops.push(crate::data::v_if(
+                            Value::Call(
+                                data.def_nr("OpDistinctStore"),
+                                vec![Value::Var(h), Value::Var(c_v)],
+                            ),
+                            Value::Null,
+                            Value::Insert(vec![set_own(Value::Var(h)), v_set(h, sentinel())]),
+                        ));
+                    }
+                    return Value::Insert(ops);
+                }
                 // `@FR-L-CapOwn`, `@FR-O-Witness` — a capture written into a closure record hands
                 // the local's store to the record: the witness stops naming it, so a later
                 // reassignment of the local does not free what the record holds.  Here, at the
@@ -540,6 +673,44 @@ impl Scopes<'_> {
                         Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
                     ));
                     return Value::Insert(ops);
+                }
+                // loft#2131 — a REBUILD releases what the record held before (the parse-time
+                // `OpFreeRefIfDistinct(OpGetDbRef(record, pos), capture)`).  Where the owner slot
+                // takes the capture, the record held its OWNER slot's store and the capture slot
+                // is a read that may be a view, so the release reads the owner slot: freed when
+                // the capture has moved on to another store, and handed BACK to the frame's
+                // holder when it still names it, so this build hands it to the new record again.
+                if *d_nr == data.def_nr("OpFreeRefIfDistinct")
+                    && let (Some(Value::Call(get, get_args)), Some(Value::Var(c))) = (
+                        args.first().map(Value::unspan),
+                        args.get(1).map(Value::unspan),
+                    )
+                    && *get == data.def_nr("OpGetDbRef")
+                    && let (Some(Value::Var(rec)), Some(Value::Int(at))) = (
+                        get_args.first().map(Value::unspan),
+                        get_args.get(1).map(Value::unspan),
+                    )
+                    && self.capture_slot_pos(function, data, *rec, *c) == Some(*at)
+                    && let Some((own, holders)) = self.owner_slot_handoff(function, data, *rec, *c)
+                {
+                    let rec_v = *self.var_mapping.get(rec).unwrap_or(rec);
+                    // The statement's rebuild PREFIX already released this record, after
+                    // giving the owner slot back (`scan_set`, loft#1388): nothing is left to read.
+                    if self.prefix_released.contains(&rec_v) {
+                        return Value::Null;
+                    }
+                    let c_v = *self.var_mapping.get(c).unwrap_or(c);
+                    let back = holders.back();
+                    let held =
+                        Value::Call(*get, vec![Value::Var(rec_v), Value::Int(i32::from(own))]);
+                    return crate::data::v_if(
+                        Value::Call(
+                            data.def_nr("OpDistinctStore"),
+                            vec![held.clone(), Value::Var(c_v)],
+                        ),
+                        Value::Call(data.def_nr("OpFreeRef"), vec![held.clone()]),
+                        v_set(back, held),
+                    );
                 }
                 let (preamble, ls, postamble) = self.scan_args(args, function, data, *d_nr);
                 let call = Value::Call(*d_nr, ls);

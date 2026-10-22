@@ -406,7 +406,12 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 releases it.  A store the witness adopts has no other owner (O-Owner): the
                 temp a call is lifted into hands it over when the local reads a field of
                 the call's result, and a call whose result a witnessed local adopts never
-                takes a pooled return buffer.
+                takes a pooled return buffer.  A CAPTURED such local — and one assigned
+                more than once before a closure takes it — hands its witness to the
+                closure record at the build: a hidden owner slot beside the capture takes
+                the store the frame owned there, or the sentinel where the local held a
+                view, and the capture slot only reads (closures.md L-CapHeap, L-CapOwn).
+                A value-branch join's arm temps hand over the same way.
 ```
 
 **In words.** There is a real oracle, and it is not the dep list. `deps` is a cheap

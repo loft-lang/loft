@@ -1061,6 +1061,28 @@ pub(crate) fn capture_name(data: &Data, record: u32, a: usize) -> String {
     }
 }
 
+/// loft#2131 — the capture whose OWNER slot attribute `a` of `record` is
+/// (`Parser::add_capture_owner_slots`): `<name>__own` beside a capture `<name>`.
+pub(crate) fn owner_slot_capture(data: &Data, record: u32, a: usize) -> Option<String> {
+    let name = data.attr_name(record, a);
+    name.strip_suffix("__own")
+        .filter(|base| data.attr(record, base) != usize::MAX)
+        .map(str::to_string)
+}
+
+/// loft#2131 — does a closure record this frame BUILDS carry an owner slot for local `v`?
+/// Then `v`'s ownership at the build is handed to that slot by STORE IDENTITY, through `v`'s
+/// owner witness, and the capture slot beside it only borrows (`@FR-L-CapOwn`).
+pub(crate) fn has_owner_slot(data: &Data, function: &Function, v: u16) -> bool {
+    let own = format!("{}__own", function.name(v));
+    (0..function.next_var()).any(|w| {
+        is_record_local(function, w)
+            && matches!(function.tp(w).base(), Type::Reference(rec, _)
+                if data.def(*rec).name.starts_with("__closure_")
+                    && data.attr(*rec, &own) != usize::MAX)
+    })
+}
+
 /// The local a build's `OpSetDbRef(record, pos, fill)` captures: a bare `Var`, or the
 /// closure half of a fn-ref local (`OpFnRefClosure(Var)`, loft#1869) — `true` for the latter,
 /// whose store is the fn-ref's closure record and never a view of the local's backing.

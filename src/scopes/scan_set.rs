@@ -1923,7 +1923,44 @@ impl Scopes<'_> {
                 .iter()
                 .all(|(_, c)| self.owner_witness.contains_key(c))
         {
-            for (rec, _) in &built_here {
+            for (rec, c) in &built_here {
+                // loft#2131 — an OWNER slot still naming the store its capture holds goes back
+                // to the frame's holder first, and leaves the record: the local is not done
+                // with it, and this build hands it to the new record again.  Released with the
+                // record, the next pass read a freed store wherever the local was not
+                // reassigned between the builds.
+                if let Some((own, holders)) = self.owner_slot_handoff(function, data, *rec, *c) {
+                    let back = holders.back();
+                    let c_v = *self.var_mapping.get(c).unwrap_or(c);
+                    let held = Value::Call(
+                        data.def_nr("OpGetDbRef"),
+                        vec![Value::Var(*rec), Value::Int(i32::from(own))],
+                    );
+                    let live = v_if(
+                        Value::Call(data.def_nr("OpRefIsNull"), vec![Value::Var(*rec)]),
+                        Value::Boolean(false),
+                        Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(*rec)]),
+                    );
+                    let give_back = v_if(
+                        Value::Call(
+                            data.def_nr("OpDistinctStore"),
+                            vec![held.clone(), Value::Var(c_v)],
+                        ),
+                        Value::Null,
+                        Value::Insert(vec![
+                            v_set(back, held),
+                            Value::Call(
+                                data.def_nr("OpSetDbRef"),
+                                vec![
+                                    Value::Var(*rec),
+                                    Value::Int(i32::from(own)),
+                                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                                ],
+                            ),
+                        ]),
+                    );
+                    prefix.push(v_if(live, give_back, Value::Null));
+                }
                 // `@FR-L-CapOwn` — the record gives up what it adopted through its own
                 // cascade, emitted here; the store free releases only the record.
                 if let Some(hook) = super::drops::drop_hook(function, *rec, data) {

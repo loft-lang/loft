@@ -652,6 +652,17 @@ pub(super) fn capture_store_adopters(
             {
                 continue;
             }
+            // loft#2131, `@FR-L-CapOwn` — an OWNER slot is the record's when its capture is
+            // witnessed: the build hands it the witness's store, so each store reaches one
+            // record by IDENTITY and the slot never enters the one-store grouping below.  With
+            // no witness nothing writes it, and it leaves the cascade.
+            if let Some(cap) = super::capture_builds::owner_slot_capture(data, record, a) {
+                let c = function.var(&cap);
+                if c == u16::MAX || !owner_slot_takes(data, function, builds, record, c) {
+                    never_adopted.push((record, a));
+                }
+                continue;
+            }
             if record_adopts_capture(data, function, builds, record, a) {
                 adopters
                     .entry(adopted_store_key(data, function, builds, v, record, a))
@@ -1234,6 +1245,53 @@ pub(super) fn capture_attr_is_cascade_relevant(data: &Data, record: u32, a: usiz
     matches!(data.attr_type(record, a).base(), Type::Reference(_, deps) if !deps.is_empty())
 }
 
+/// loft#2131, loft#2132, `@FR-L-CapOwn` — does the build of `record` hand capture `c`'s
+/// ownership to the record's OWNER slot (`Parser::add_capture_owner_slots`), per run?
+///
+/// Where the record would otherwise BORROW the capture slot and the frame has a holder that
+/// names the store on the runs where `c` owns it: `c`'s owner witness (a local rebound before
+/// the build), or the compiler's arm temps of the join `c` was bound from
+/// ([`join_arm_holders`]).  At the build the holder that names the capture's store gives it to
+/// the owner slot and is reset, so the frame and the record release it once between them,
+/// whichever outlives the other, and a view the capture holds is released by neither.
+pub(super) fn owner_slot_takes(
+    data: &Data,
+    function: &Function,
+    builds: &CaptureBuilds,
+    record: u32,
+    c: u16,
+) -> bool {
+    let name = function.name(c);
+    let a = data.attr(record, name);
+    a != usize::MAX
+        && data.attr(record, &format!("{name}__own")) != usize::MAX
+        && (function.owner_witness(c).is_some()
+            || !join_arm_holders(function, builds, c).is_empty())
+        && !record_adopts_capture(data, function, builds, record, a)
+}
+
+/// loft#2131 — the frame-owned compiler temps among the stores join-bound capture `c` may be
+/// AT THE BUILD (`CaptureBuilds::join_arms_at_build`): a call's or a literal's arm owner.  A
+/// local the author named is never one — the frame cannot reset it at the build.
+pub(super) fn join_arm_holders(function: &Function, builds: &CaptureBuilds, c: u16) -> Vec<u16> {
+    builds
+        .join_arms_at_build
+        .get(&c)
+        .map_or_else(Vec::new, |arms| {
+            arms.iter()
+                .copied()
+                .filter(|&h| {
+                    h < function.count()
+                        && h != c
+                        && function.name(h).starts_with("__")
+                        && !function.is_argument(h)
+                        && function.tp(h).base().heap_def_nr().is_some()
+                        && frame_owns_capture_store(function, h)
+                })
+                .collect()
+        })
+}
+
 /// Does the closure record own the store behind capture `a` of `record`, as seen
 /// from the defining frame `function`?  See [`mark_borrowed_captures`].
 pub(super) fn record_adopts_capture(
@@ -1273,6 +1331,19 @@ pub(super) fn record_adopts_capture(
     // "never return function arguments"), so it has no free to hand over.
     if v == u16::MAX || function.is_argument(v) {
         return false;
+    }
+    // loft#2131 — a WITNESSED capture with an owner slot.  Its empty dep list says nothing: the
+    // witness is there because what the local holds changes from run to run.  The capture slot
+    // is the record's only where the build named a FRAME-OWNED backing (`x = b.inner`, `b` a
+    // local here), which the frame hands over as it does for any capture; everything else the
+    // record owns arrives through the owner slot (`owner_slot_takes`).
+    if function.owner_witness(v).is_some()
+        && data.attr(record, &format!("{}__own", data.attr_name(record, a))) != usize::MAX
+    {
+        return builds
+            .backing
+            .get(&v)
+            .is_some_and(|&b| !function.is_argument(b) && frame_owns_capture_store(function, b));
     }
     // The same test as `get_free_vars`' `owns`, so the two cannot drift: empty
     // deps means owned, and a keyed collection's self-dep is an ownership marker

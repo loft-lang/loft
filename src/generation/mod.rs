@@ -2767,14 +2767,14 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
     if !crate::keys::join_own_enabled() {
         return HashSet::new();
     }
-    // (owned_count, borrow_count) per candidate var.
-    let mut counts: HashMap<u16, (u32, u32)> = HashMap::new();
+    // (owned_count, borrow_count, detached) per candidate var.
+    let mut counts: HashMap<u16, (u32, u32, bool)> = HashMap::new();
     fn classify_set(
         data: &crate::data::Data,
         def_nr: u32,
         v: u16,
         to: &Value,
-        counts: &mut HashMap<u16, (u32, u32)>,
+        counts: &mut HashMap<u16, (u32, u32, bool)>,
     ) {
         let vars = data.def(def_nr).variables();
         // @FR-O-Proxy asks oracle — this counts owned-vs-borrow assignments to pick the
@@ -2787,6 +2787,18 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
             // witness is left to the IR: two trackers of one store would free it twice.
             && vars.owner_witness(v).is_none();
         if !is_candidate {
+            return;
+        }
+        // A DETACH (`is_null_sentinel_detach`) says the scope pass hands this work-ref's store
+        // on BY IDENTITY — to a closure record's owner slot (loft#2131), to a binding that
+        // adopted a construction (loft#1513) — and takes it back the same way.  The IR then
+        // tracks the store, and a second tracker here frees it twice: as a runtime-Join local,
+        // the detach and the hand-back both read as a "borrow reassign" that released the
+        // tracked store the record had just taken — on this backend alone, since the
+        // interpreter's displacement free reads the same predicate and declines.  Such a
+        // work-ref is left to the IR, as an owner-witnessed local is above.
+        if crate::data::is_null_sentinel_detach(v, to, data, vars) {
+            counts.entry(v).or_insert((0, 0, false)).2 = true;
             return;
         }
         let owned = match to.unspan() {
@@ -2803,7 +2815,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
             // Not a heap-store-producing assign (scalar, null, …).
             _ => return,
         };
-        let e = counts.entry(v).or_insert((0, 0));
+        let e = counts.entry(v).or_insert((0, 0, false));
         if owned {
             e.0 += 1;
         } else {
@@ -2814,7 +2826,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
         data: &crate::data::Data,
         def_nr: u32,
         node: &Value,
-        counts: &mut HashMap<u16, (u32, u32)>,
+        counts: &mut HashMap<u16, (u32, u32, bool)>,
     ) {
         match node {
             Value::Set(v, to) => {
@@ -2856,7 +2868,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
     walk(data, def_nr, data.def(def_nr).code(), &mut counts);
     counts
         .into_iter()
-        .filter(|(_, (owned, borrow))| *owned >= 1 && *borrow >= 1)
+        .filter(|(_, (owned, borrow, detached))| *owned >= 1 && *borrow >= 1 && !*detached)
         .map(|(v, _)| v)
         .collect()
 }
