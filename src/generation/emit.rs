@@ -5213,10 +5213,11 @@ impl Output<'_> {
             }
             self.kept_check_taken(operators, kept_next, vnr);
             kept_next = vnr + 1;
-            view_frames += self.kept_after_statement(w, operators, vnr)?;
+            self.kept_after_statement(w, operators, vnr)?;
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
+            view_frames += self.kept_alias(operators, vnr);
             if self.bind_record_ptr(w, operators, vnr, Some(block_serial))? {
                 ptr_frames += 1;
             }

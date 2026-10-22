@@ -60,7 +60,8 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     fa::read_to_string(out).expect("read the emitted Rust")
 }
 
-/// Per emitted function: how many `__vs_` scalars and `__vh_` headers its preludes bind.
+/// Per emitted function: how many `__vs_` scalars and `__vh_` headers its preludes bind — a
+/// body's kept holder (`let mut __kh_`, `(R-Header)`'s kept clause) is a header it holds too.
 fn counts(rust: &str) -> HashMap<String, (usize, usize)> {
     let mut map: HashMap<String, (usize, usize)> = HashMap::new();
     let mut current = String::new();
@@ -74,7 +75,7 @@ fn counts(rust: &str) -> HashMap<String, (usize, usize)> {
         if line.contains("let __vs_") {
             map.entry(current.clone()).or_default().0 += 1;
         }
-        if line.contains("let __vh_") {
+        if line.contains("let __vh_") || line.contains("let mut __kh_") {
             map.entry(current.clone()).or_default().1 += 1;
         }
     }

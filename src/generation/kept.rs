@@ -708,7 +708,8 @@ impl super::Output<'_> {
 
     /// No rewrite that emits a RUN of statements itself runs in `d_nr`'s body: the
     /// hand-over's rotate (an append and the drop beside it), `(R-Apart)`'s construction
-    /// runs, a stream walk's consumer or producer.  Each emits the statements it takes
+    /// runs, a stream walk's consumer or producer, an element-first build (`(R-ElemFirst)`,
+    /// whose append moves ahead of the call that fills the element).  Each emits the statements it takes
     /// outside the statement loop where a holder is refreshed, and reads inside the run
     /// would see the holder from before its own append.  A callee declined here is called
     /// plainly, and the holder is derived again after the call.
@@ -721,6 +722,15 @@ impl super::Output<'_> {
             && !self.apart.regions.get(&d_nr).is_some_and(|r| r.profitable)
             && super::apart_vector::roles(self.data, d_nr).is_none_or(|v| v.is_empty())
             && super::apart_records::roles(self.data, &self.apr, d_nr, false).is_empty()
+            && (self.element_first_disabled || {
+                let ef = super::hoist::element_first(
+                    self.data,
+                    self.stores,
+                    d_nr,
+                    self.value_records.views.get(&d_nr),
+                );
+                ef.pairs.is_empty() && ef.buf_place.is_empty()
+            })
             && (d_nr as usize) < self.data.definitions.len()
             && !self.data.def(d_nr).code().any_node(&mut |n| {
                 matches!(n, Value::Block(b) if (0..b.operators.len()).any(|i| {
@@ -873,17 +883,15 @@ impl super::Output<'_> {
     }
 
     /// After statement `at` of a block: derive each holder again that the statement may have
-    /// changed (`(R-Refresh)`), and, where it bound a local to a kept path — a `for` walk's
-    /// hidden vector — let the local's reads serve from the holder.  Answers the frames
-    /// pushed, which the block pops at its end.
+    /// changed (`(R-Refresh)`).
     pub(super) fn kept_after_statement(
         &mut self,
         w: &mut dyn std::io::Write,
         stmts: &[Value],
         at: usize,
-    ) -> std::io::Result<usize> {
+    ) -> std::io::Result<()> {
         if self.kept_holders.is_empty() {
-            return Ok(0);
+            return Ok(());
         }
         let op = &stmts[at];
         let holders = self.kept_holders.clone();
@@ -906,20 +914,33 @@ impl super::Output<'_> {
                 )?;
             }
         }
-        if let Value::Set(d, rhs) = op.unspan()
+        Ok(())
+    }
+
+    /// After statement `at`, and after a view header it may have bound
+    /// (`Output::bind_view_header`): where the statement bound a local to a kept path that no
+    /// frame holds yet — a `for` walk's hidden vector — the local's reads serve from the
+    /// holder itself, which stays current through every refresh.  Answers the frames pushed,
+    /// which the block pops at its end.
+    pub(super) fn kept_alias(&mut self, stmts: &[Value], at: usize) -> usize {
+        if let Value::Set(d, rhs) = stmts[at].unspan()
             && let Some(path) = vector_path(self.data, rhs)
-            && let Some(h) = holders.iter().find(|h| h.key == path)
+            && let Some(read) = self
+                .kept_holders
+                .iter()
+                .find(|h| h.key == path)
+                .map(|h| h.read.clone())
             && !self
                 .vec_headers
                 .iter()
                 .any(|f| f.contains_key(&(*d, Vec::new())))
         {
             self.vec_headers
-                .push(HashMap::from([((*d, Vec::new()), h.read.clone())]));
+                .push(HashMap::from([((*d, Vec::new()), read)]));
             self.vec_bases.push(HashMap::new());
-            return Ok(1);
+            return 1;
         }
-        Ok(0)
+        0
     }
 
     /// The holders a call to `d_nr` hands its `__kh` twin, when this body holds every field
