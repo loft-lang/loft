@@ -485,6 +485,8 @@ mod tests {
                     url: format!("https://example/loft-{semver}-{t}.zip"),
                     sha256: format!("hash-{semver}-{t}"),
                     loft_ffi_fp: None,
+                    loft_exe_id: None,
+                    stem: None,
                 },
             );
         }

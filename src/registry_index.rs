@@ -144,6 +144,13 @@ pub struct BinaryEntry {
     /// load-bearing: it means "not anchored", which `verify-self` reports rather than
     /// treating as a pass.
     pub manifest_sha256: Option<String>,
+    /// @PLN199 G2a — for a library's AUTO-compiled artifact: the `cache::loft_exe_identity` of
+    /// the loft that built it (a string in the index, as `loft_ffi_fp`), and its full stem
+    /// (`native_lib::cached_or_build_shared_cdylib`'s name for it).  Such an artifact runs only
+    /// in that same loft, which then adopts it under that name with no `rustc`.  `None` for
+    /// a hand-written native crate's binary, which `loft_ffi_fp` gates.
+    pub loft_exe_id: Option<u64>,
+    pub stem: Option<String>,
 }
 
 /// One function-level API entry: a `pub` item's signature plus a one-line doc
@@ -392,6 +399,8 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
                         let mut bsha: Option<String> = None;
                         let mut bfp: Option<u64> = None;
                         let mut bmanifest: Option<String> = None;
+                        let mut bexe: Option<u64> = None;
+                        let mut bstem: Option<String> = None;
                         for (bk, _, bv) in bfields {
                             match (bk.as_str(), bv) {
                                 ("url", Parsed::Str(s)) => burl = Some(s.clone()),
@@ -401,6 +410,8 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
                                 ("manifest_sha256", Parsed::Str(s)) => {
                                     bmanifest = Some(s.clone());
                                 }
+                                ("loft_exe_id", Parsed::Str(s)) => bexe = s.parse().ok(),
+                                ("stem", Parsed::Str(s)) => bstem = Some(s.clone()),
                                 _ => {}
                             }
                         }
@@ -412,6 +423,8 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
                                     sha256: s,
                                     loft_ffi_fp: bfp,
                                     manifest_sha256: bmanifest,
+                                    loft_exe_id: bexe,
+                                    stem: bstem,
                                 },
                             );
                         }
@@ -2132,6 +2145,37 @@ mod tests {
             "the report must name the package and the missing field: {:?}",
             idx.skipped[0]
         );
+    }
+
+    /// @PLN199 G2a — a binary entry carries the loft that built an auto-compiled library
+    /// artifact and its stem; an entry published before these fields reads them as absent.
+    #[test]
+    fn a_binary_entry_names_the_loft_and_stem_of_an_auto_artifact() {
+        let doc = r#"{
+          "schema_version": 1, "updated": "2026-10-22T00:00:00Z",
+          "packages": {
+            "calc": { "versions": { "0.2.0": {
+                "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                "published": "2026-10-22T00:00:00Z",
+                "binaries": {
+                  "x86_64-unknown-linux-gnu": { "url": "b", "sha256": "h",
+                    "loft_exe_id": "12345678901234567890",
+                    "stem": "loft_auto_calc_0_2_0_00ff00ff00ff00ff" },
+                  "aarch64-apple-darwin": { "url": "c", "sha256": "i", "loft_ffi_fp": "7" }
+                } } } }
+          }
+        }"#;
+        let idx = parse_index(doc).expect("index parses");
+        let v = &idx.packages["calc"].versions["0.2.0"];
+        let auto = &v.binaries["x86_64-unknown-linux-gnu"];
+        assert_eq!(auto.loft_exe_id, Some(12_345_678_901_234_567_890));
+        assert_eq!(
+            auto.stem.as_deref(),
+            Some("loft_auto_calc_0_2_0_00ff00ff00ff00ff")
+        );
+        let old = &v.binaries["aarch64-apple-darwin"];
+        assert_eq!((old.loft_exe_id, old.stem.as_deref()), (None, None));
+        assert_eq!(old.loft_ffi_fp, Some(7));
     }
 
     /// The control: a clean index reports nothing skipped.  Without it, a parser

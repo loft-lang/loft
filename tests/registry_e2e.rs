@@ -1361,3 +1361,167 @@ fn a_refused_advisory_feed_is_not_left_in_the_cache() {
         cached_feed.display()
     );
 }
+
+/// @PLN199 G3 — a pure-loft library published with its compiled artifact runs compiled where
+/// there is no `rustc`, and an artifact another loft built is never fetched.
+///
+/// The producer is `loft build-native` on the package's source checkout (the release job's
+/// step); its `stem` and `loft_exe_id` go into the index entry beside the binary's hash.  The
+/// consumer installs into its own home and runs a program with `rustc` hidden from `PATH`:
+/// the gate's trace must say the library ran compiled, and `tri(10)` = 0+1+…+9 = 45.
+#[test]
+fn a_published_library_artifact_runs_compiled_without_rustc() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: no rustc to build the producer's artifact with");
+        return;
+    }
+    let loft_bin = env!("CARGO_BIN_EXE_loft");
+    let tmp = tmpdir("g3_artifact");
+    // A checkout named after its package, as `build-native` resolves it (`use calc`).
+    let src = tmp.join("checkout").join("calc");
+    write_file(
+        &src.join("loft.toml"),
+        "[package]\nname = \"calc\"\nversion = \"0.2.0\"\nloft = \">=0.8\"\n\n\
+         [library]\nentry = \"src/calc.loft\"\n",
+    );
+    write_file(
+        &src.join("src/calc.loft"),
+        "pub fn tri(n: integer) -> integer {\n  t = 0;\n  for i in 0..n { t += i; }\n  t\n}\n",
+    );
+    let tarball = loft::package::package_create(&src, Some(&tmp)).expect("package_create");
+
+    // The producer.
+    let built = loft::platform::process::harness_command(loft_bin)
+        .arg("build-native")
+        .arg(&src)
+        .output()
+        .expect("run loft build-native");
+    let report = String::from_utf8_lossy(&built.stdout).into_owned();
+    assert!(
+        built.status.success(),
+        "build-native failed:\n{report}\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let field = |k: &str| -> String {
+        report
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("{k}: ")))
+            .unwrap_or_else(|| panic!("build-native reported no `{k}`:\n{report}"))
+            .trim()
+            .to_string()
+    };
+    let (cdylib, stem, exe) = (field("cdylib"), field("stem"), field("loft_exe_id"));
+    let bytes = fa::read(&cdylib).expect("the built artifact");
+    let sha = loft::integrity::sha256_hex(&bytes);
+    let triple = loft::cache::host_triple();
+    let index_with = |exe_id: &str| -> String {
+        format!(
+            r#"{{"schema_version":1,"packages":{{"calc":{{"description":"probe","versions":{{
+                "0.2.0":{{"url":"{}","sha256":"{}","size":{},"loft":">=0.8",
+                "published":"2026-10-22T00:00:00Z",
+                "binaries":{{"{triple}":{{"url":"{}","sha256":"{sha}",
+                    "loft_exe_id":"{exe_id}","stem":"{stem}"}}}}}}}}}}}}}}"#,
+            common::file_url(&tarball.tarball),
+            tarball.sha256,
+            tarball.size,
+            common::file_url(std::path::Path::new(&cdylib)),
+        )
+    };
+    // The install runs in the `loft` binary, as a user's does: the artifact is fetched only
+    // for the loft that built it, and the identity compared is the running executable's.
+    let install = |home: &Path, index: &str| -> PathBuf {
+        let index_path = home.join("index.json");
+        write_file(&index_path, index);
+        let cwd = home.join("project");
+        fa::create_dir_all(&cwd).unwrap();
+        let out = loft::platform::process::harness_command(loft_bin)
+            .args(["install", "calc", "--refresh", "--allow-unsigned"])
+            .current_dir(&cwd)
+            .env("HOME", home)
+            .env("LOFT_HOME", home)
+            .env("LOFT_REGISTRY_URL", common::file_url(&index_path))
+            .output()
+            .expect("run loft install");
+        assert!(
+            out.status.success(),
+            "loft install calc:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        home.join(".loft/registry/calc-0.2.0")
+    };
+    let artifact_in = |pkg: &Path| {
+        pkg.join("native-auto")
+            .join(loft::platform::cdylib_file_name(&stem))
+    };
+
+    // Another loft's artifact is never fetched.
+    let other_home = tmpdir("g3_artifact_other_home");
+    let other_exe = exe
+        .parse::<u64>()
+        .map_or_else(|_| "1".to_string(), |e| (e ^ 1).to_string());
+    let other = install(&other_home, &index_with(&other_exe));
+    assert!(
+        !fa::exists(artifact_in(&other)),
+        "an artifact built by another loft was fetched"
+    );
+
+    // This loft's is, and runs with no rustc on PATH.
+    let home = tmpdir("g3_artifact_home");
+    let pkg = install(&home, &index_with(&exe));
+    assert!(
+        fa::exists(artifact_in(&pkg)),
+        "the artifact was not fetched"
+    );
+    let prog = tmp.join("use_calc.loft");
+    write_file(
+        &prog,
+        "use calc;\nfn main() { println(\"{calc::tri(10)}\"); }\n",
+    );
+    let run_in = |home: &Path| -> (bool, String, String) {
+        let run = loft::platform::process::harness_command(loft_bin)
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(home.join(".loft/registry"))
+            .arg(&prog)
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", home)
+            .env("LOFT_HOME", home)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TRACE_NATIVE_GATE", "1")
+            .output()
+            .expect("run the program");
+        (
+            run.status.success(),
+            String::from_utf8_lossy(&run.stdout).trim().to_string(),
+            String::from_utf8_lossy(&run.stderr).into_owned(),
+        )
+    };
+    let (ok, out, err) = run_in(&home);
+    assert!(
+        ok && out == "45",
+        "tri(10) = 45 with no rustc:\n{out}\n{err}"
+    );
+    assert!(
+        !err.contains("no Rust toolchain"),
+        "the run fell back for want of rustc instead of adopting the fetched artifact:\n{err}"
+    );
+    // The control: where nothing was fetched, the same run has no compiled library and says
+    // so — the line the run above must not print.
+    let (ok, out, err) = run_in(&other_home);
+    assert!(
+        ok && out == "45",
+        "interpreted, the answer is the same:\n{out}\n{err}"
+    );
+    assert!(
+        err.contains("no Rust toolchain") && err.contains("no compiled artifact for this loft"),
+        "CONTROL FAILED: without the artifact the run did not report interpreting:\n{err}"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&other_home);
+}

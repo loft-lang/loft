@@ -346,26 +346,31 @@ same stem and byte-identical source.
   type lying in a library's file (`main_vector<T>`) does not make that library a source.
 - Guard: `n3_use_native::the_same_library_at_two_places_generates_the_same_artifact`.
 
-**G2 — the producer.**
-- G2a: `BinaryEntry` (`registry_index.rs:123`, parsed at ~400 beside `loft_ffi_fp`) gains
-  `loft_exe_id: Option<u64>` and `stem: Option<String>` (the G1 name).  A unit test reads an
-  index line with and without them.
-- G2b: `loft build-native` (`main.rs:8845`) builds the AUTO cdylib for a package with no
-  `[library] native`, and prints the G1 stem and `loft_exe_identity`.
-- G2c: the release pipeline (RELEASE_PUBLISH.md) runs G2b over every registry library's latest
-  version per released triple and adds the entries; trust is the existing signed index (the
-  entry's `sha256`).  A library published between releases is built by the registry's CI.
+**G2 — the producer (G2a, G2b done).**
+- G2a: `BinaryEntry` carries `loft_exe_id` (a string in the index, as `loft_ffi_fp`) and
+  `stem` for a library's auto-compiled artifact; an older entry reads both as absent
+  (`registry_index::tests::a_binary_entry_names_the_loft_and_stem_of_an_auto_artifact`).
+- G2b: `loft build-native <checkout>` builds a pure-loft library's artifact, keyed on the
+  libraries a program using it compiles with it, and reports `cdylib:`, the full `stem:`,
+  `loft_exe_id:` and `triple:` — the fields of the entry.  The family stem is the package's
+  name and version (`auto_cdylib_stem`), so a checkout and a registry install name it alike;
+  the checkout must lie in a directory named after the package (`use <name>` resolves it).
+- G2c — open: the release pipeline (RELEASE_PUBLISH.md) runs G2b over every registry
+  library's latest version per released triple and adds the entries; trust is the signed
+  index (the entry's `sha256`).  A library published between releases is built by the
+  registry's CI.  Last, because it publishes.
 
-**G3 — the consumer.**  `fetch_prebuilt` (`install.rs:87`) returns false for a package without
-`m.native`.
-- G3a: a second branch: no stem in the manifest, a binary entry whose `loft_exe_id` equals
-  `cache::loft_exe_identity()` → write it to `native-auto/<stem>` with the dylib's platform
-  name.  `cached_or_build_shared_cdylib` then adopts it on its first branch (present, current,
-  layout probe passes), with or without `rustc` (`native_lib::rustc_available`, ~2046).
-- G3b: the trace names a library that interprets because no prebuilt matches this loft and
-  `rustc` is absent.
-- Check: a registry fixture with `rustc` hidden from `PATH` runs compiled (the trace's `n of n`);
-  the same binary under another `loft_exe_id` is never fetched.
+**G3 — the consumer (done).**
+- G3a: `install::fetch_prebuilt` takes an entry with a `loft_exe_id` and `stem` as an
+  auto-compiled artifact: fetched only when the id is the running loft's, checked against the
+  index's hash, written to `<package>/native-auto/<stem>`, where the run's first branch adopts
+  it with or without `rustc`.
+- G3b: `LOFT_TRACE_NATIVE_GATE=1` names a library that interprets because no artifact of
+  this loft is there and there is no `rustc`.
+- Guard: `registry_e2e::a_published_library_artifact_runs_compiled_without_rustc` — build
+  with `build-native`, publish in a fixture index, install with `loft install`, run with
+  `rustc` off `PATH`: compiled, and `tri(10)` = 45; the same entry under another loft's id is
+  never fetched, and that home's run reports interpreting (the test's control).
 
 ## Phase F — the gate is the rule
 
@@ -412,9 +417,9 @@ The procedure, the one every step above followed:
 
 ## Order
 
-Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c, G1.  D4 is dropped.
-The open steps, each one commit:
+Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c, G1, G2a, G2b, G3.  D4
+is dropped.  The open steps, each one commit:
 
-G2a → G2b → G3a → G3b → G2c, and,
+G2c (the release job — the owner's), and,
 independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G2c, the release job,
 is last because it publishes.

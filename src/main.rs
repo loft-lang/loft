@@ -9008,12 +9008,19 @@ fn main() {
                         );
                         std::process::exit(1);
                     }
+                    // @PLN199 G2b — the libraries a program that `use`s this one compiles
+                    // with it (its dependencies), so the artifact takes the name that
+                    // program's run computes for it.
+                    let mut pending = std::mem::take(&mut p.pending_native_compile);
+                    if !pending.iter().any(|d| d == &pkg_str) {
+                        pending.push(pkg_str.clone());
+                    }
                     match loft::native_lib::cached_or_build_shared_cdylib(
                         &p.data,
                         &p.database,
                         &export,
                         &pkg_str,
-                        std::slice::from_ref(&pkg_str),
+                        &pending,
                     ) {
                         Ok(Some(so)) => {
                             // This cdylib `extern crate loft`s — it statically embeds
@@ -9024,10 +9031,17 @@ fn main() {
                             // `loft_ffi_fp` here would mislabel it as widely portable —
                             // a corruption-shaped trap for any consumer that gated on
                             // it.  rustc is named too, for human/diagnostic clarity.
+                            // @PLN199 G2b — the artifact's full name (the stem a consumer's
+                            // run computes) and the loft it runs in, the two fields of its
+                            // registry binary entry.
+                            let full_stem = file_access::file_stem(&so)
+                                .map(|s| s.strip_prefix("lib").unwrap_or(&s).to_string())
+                                .unwrap_or_default();
                             report(
                                 so.to_string_lossy().to_string(),
-                                loft::native_lib::auto_cdylib_stem(&pkg_str),
+                                full_stem,
                                 &[
+                                    format!("loft_exe_id: {}", loft::cache::loft_exe_identity()),
                                     format!(
                                         "loft_build_fp: {}",
                                         loft::cache::loft_build_fingerprint()
@@ -10055,6 +10069,15 @@ fn main() {
                          for your program, while a library still builds its cdylib)."
                     );
                     std::process::exit(1);
+                }
+                if std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some() {
+                    // @PLN199 G3b — the partition trace names why the whole library is
+                    // interpreted: no artifact built by this loft, and no `rustc` to build one.
+                    eprintln!(
+                        "[native-gate] {}: interpreted — no compiled artifact for this loft and \
+                         no rustc",
+                        loft::file_access::file_name(pkg_dir).unwrap_or_default()
+                    );
                 }
                 eprintln!(
                     "loft: library '{pkg_dir}' has no native build and no Rust toolchain to \

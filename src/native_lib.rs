@@ -2464,9 +2464,23 @@ pub fn toolchain_failure_hint(stderr: &str) -> Option<String> {
 /// **every** non-`[A-Za-z0-9_]` char to `_` — enforcing the full invalid-character
 /// class, not just `-`/`.`.  The constant `loft_auto_` prefix guarantees the leading
 /// character is alphabetic (a crate name may not start with a digit).  (#294)
+///
+/// @PLN199 G2b — the package's NAME and VERSION from its `loft.toml` (`glb` 0.1.0 →
+/// `loft_auto_glb_0_1_0`), the directory's name only without one: a registry install and the
+/// checkout CI builds a prebuilt from lie in differently named directories, and both must
+/// name the artifact alike.
 #[must_use]
 pub fn auto_cdylib_stem(pkg_dir: &str) -> String {
-    let raw = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| "lib".to_string());
+    let raw = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+        .and_then(|m| {
+            let name = m.name?;
+            Some(match m.version {
+                Some(v) => format!("{name}_{v}"),
+                None => name,
+            })
+        })
+        .or_else(|| crate::file_access::file_name(pkg_dir))
+        .unwrap_or_else(|| "lib".to_string());
     format!(
         "loft_auto_{}",
         raw.replace(|c: char| !(c.is_ascii_alphanumeric() || c == '_'), "_")

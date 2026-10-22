@@ -92,11 +92,20 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
     let Some(bin) = r.version.binaries.get(&triple) else {
         return false;
     };
+    let pkg_dir = registry_index::extract_dir(&r.name, &r.version.semver);
+    // @PLN199 G3a — a library's AUTO-compiled artifact: built by one loft, it runs in that
+    // loft alone, which adopts it under its stem from `native-auto/` with no `rustc`.
+    if let (Some(exe), Some(stem)) = (bin.loft_exe_id, &bin.stem) {
+        return exe == crate::cache::loft_exe_identity()
+            // A filename, off the network: the stem's own alphabet and nothing else.
+            && stem.starts_with("loft_auto_")
+            && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && fetch_auto_artifact(&pkg_dir.join("native-auto"), stem, bin);
+    }
     // Only a binary built against THIS loft's loft-ffi ABI is compatible.
     if bin.loft_ffi_fp != Some(crate::cache::loft_ffi_fingerprint()) {
         return false;
     }
-    let pkg_dir = registry_index::extract_dir(&r.name, &r.version.semver);
     // The cdylib stem is the package manifest's `[library] native` field.
     let Some(stem) = crate::manifest::read_manifest(&pkg_dir.join("loft.toml").to_string_lossy())
         .and_then(|m| m.native)
@@ -121,6 +130,27 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
     }
     // Stamp the sidecar so Phase 1's fp-gated resolve accepts the binary.
     crate::cache::write_native_artifact_fingerprint(&dir, crate::cache::loft_ffi_fingerprint());
+    true
+}
+
+/// @PLN199 G3a — download an auto-compiled library artifact to `dir/<stem>`'s platform name,
+/// checked against the signed index's hash.
+fn fetch_auto_artifact(
+    dir: &std::path::Path,
+    stem: &str,
+    bin: &registry_index::BinaryEntry,
+) -> bool {
+    if crate::file_access::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let dest = dir.join(crate::platform::cdylib_file_name(stem));
+    let Ok(bytes) = registry_index::download_tarball(&bin.url, &dest) else {
+        return false;
+    };
+    if crate::integrity::verify_sha256(&bytes, &bin.sha256).is_err() {
+        let _ = crate::file_access::remove_file(&dest);
+        return false;
+    }
     true
 }
 
