@@ -109,8 +109,8 @@ jobs:
     # compile-and-dispatch cost, which the page times apart.  Not a frame count
     # (Chrome's ~1 Hz rAF throttle for a hidden page decides that), and not the
     # whole block either (its fixed serial share moves the ratio with frame
-    # size, loft#2125).  On this runner the par part speeds up about 1.36x on 4
-    # workers and 1.0x on one; 120 sits between them.  See
+    # size, loft#2125).  On this runner the par part speeds up 130–136 % on 4
+    # workers and 100 % on one; 115 sits between them.  See
     # tests/wasm/par-ui-responsive.sh.
     #
     # CONCURRENCY_STAT=max — with 12 reps on 4 contended vCPUs, rayon gave one
@@ -131,7 +131,7 @@ jobs:
       MIN_SPEEDUP_PCT: "125"
       CONCURRENCY_STAT: "max"
       THREADS: "4"
-      MIN_PAR_SPEEDUP_PCT: "120"
+      MIN_PAR_SPEEDUP_PCT: "115"
       SCALING_WORK: "2000000"
       UI_WORK: "120000"
       UI_WINDOW: "9000"

@@ -27,7 +27,9 @@
      Every block also carries a SERIAL part that par cannot shorten: compiling
      the program, building its data and dispatching the par.  `serial_ms` times
      that part directly — the same program with no work in `heavy`, the fastest
-     of five runs after a discarded warm-up — and `par_block_ms` is the steady
+     of five runs after the window, when the code runs as tiered-up as in the
+     steady frames (timed before the window, it read 66 and 97 ms against a
+     usual 44 on one runner) — and `par_block_ms` is the steady
      frames' average block less it: the part of the block par decides.  The
      gate compares that, because the raw block ratio blends a fixed serial cost
      into the answer and so moves with the frame size and the runner's speed
@@ -59,11 +61,6 @@ const runMs = src => { const t0 = performance.now(); compile_and_run(JSON.string
     const wasm = await init();
     if (!self.crossOriginIsolated) return report('FAIL coi=false');
     if (P > 0) await startLoftWorkers(wasm, P, { memory: wasm.memory, mainJS: new URL('./pkg-mt/loft.js', import.meta.url).href });
-    // The serial part of a frame: the same program with nothing for `heavy` to do.
-    const EMPTY = program(0);
-    runMs(EMPTY);
-    let serial = Infinity;
-    for (let i = 0; i < 5; i++) serial = Math.min(serial, runMs(EMPTY));
     let frames = 0, last = performance.now(), maxGap = 0, value = '?';
     let workMs = 0, firstBlock = -1;
     const blocks = [];  // every frame after the first, for max and p90
@@ -88,6 +85,10 @@ const runMs = src => { const t0 = performance.now(); compile_and_run(JSON.string
         const maxBlock = sorted.length ? sorted[sorted.length - 1] : firstBlock;
         // Nearest-rank 90th percentile of the steady frames.
         const p90 = sorted.length ? sorted[Math.max(0, Math.ceil(0.9 * sorted.length) - 1)] : firstBlock;
+        // The serial part of a frame: the same program with nothing for `heavy` to do.
+        const EMPTY = program(0);
+        let serial = Infinity;
+        for (let i = 0; i < 5; i++) serial = Math.min(serial, runMs(EMPTY));
         const steady = sorted.length ? sorted.reduce((a, b) => a + b, 0) / sorted.length : firstBlock;
         const parBlock = Math.max(0.1, steady - serial);
         report(`E1 threads=${P} window=${WINDOW} frames=${frames} fps=${(frames/(WINDOW/1000)).toFixed(1)}`

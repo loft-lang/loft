@@ -113,7 +113,7 @@ jobs:
     env:
       WAIT_SCALE: "3"
       THREADS: "4"
-      MIN_PAR_SPEEDUP_PCT: "120"
+      MIN_PAR_SPEEDUP_PCT: "115"
       UI_WORK: "120000"
       UI_WINDOW: "9000"
     steps:

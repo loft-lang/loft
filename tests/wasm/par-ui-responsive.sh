@@ -15,9 +15,9 @@
 # program with no work) and subtracts.  A ratio of whole blocks blends that cost
 # in, so it read 1.07 on ~100 ms frames and 1.28 on ~360 ms frames of the same
 # build on the same runner, and a fixed bar on it sat on the runner's own value
-# (loft#2125).  The par part's speed-up is the same at both sizes, about 1.36 on
-# the 4-vCPU runner against 1.0 with one worker: a bar between those two holds
-# on any frame size.
+# (loft#2125).  The par part's speed-up does not move with the frame size: 130–136 %
+# on the 4-vCPU runner against 100 % with one worker, and a bar between those two
+# holds on any frame size.
 #
 # The long-block half compares p90_block_ms, not the worst block.  The worst block
 # was ALWAYS frame 1 in both legs, a one-time cold start: a warm-up compile of an
