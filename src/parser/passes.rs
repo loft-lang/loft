@@ -1744,24 +1744,25 @@ impl Parser {
     /// half done, a library's CI denies warnings, and `loft package` refuses to release over
     /// one.  The baseline is a source of this compile, so editing it is a program-cache miss.
     fn check_layout_baseline(&mut self) {
-        use crate::schema_sidecar::baseline_path;
-        let Some(project) = self
-            .diagnostics
-            .lint_project()
-            .map(std::path::Path::to_path_buf)
-        else {
+        // Every compile asks, and almost none has a lock: one path buffer serves both
+        // candidates (`schema_sidecar::baseline_path`, then the earlier `.loft/layout.lock`),
+        // sized up front so the ask costs one allocation (`tests/frontend_counts.rs`).
+        let Some(dir) = self.diagnostics.lint_project() else {
             return;
         };
+        let mut lock = std::path::PathBuf::with_capacity(dir.as_os_str().len() + 24);
+        lock.push(dir);
+        lock.push("layout.lock");
+        if !crate::file_access::is_file(&lock) {
+            lock.pop();
+            lock.push(".loft");
+            lock.push("layout.lock");
+            if !crate::file_access::is_file(&lock) {
+                return;
+            }
+        }
+        let project = dir.to_path_buf();
         let project = project.as_path();
-        let lock = [
-            baseline_path(project),
-            project.join(".loft").join("layout.lock"),
-        ]
-        .into_iter()
-        .find(|p| crate::file_access::is_file(p));
-        let Some(lock) = lock else {
-            return;
-        };
         if self.track_sources {
             self.parsed_sources
                 .push(lock.to_string_lossy().into_owned());
