@@ -685,6 +685,23 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
              (stale cdylib type index resolved against the host table)"
         );
     }
+    // @PLN199 G0c — and it is ONE artifact: the code names its types by key, so the shifted
+    // context adopts what the bare one built instead of building its own.
+    let artifacts = fa::read_dir(native_auto)
+        .map(|rd| {
+            rd.into_iter()
+                .filter(|e| {
+                    let n = e.file_name().unwrap_or_default();
+                    n.contains("loft_auto_binwriter")
+                        && (n.ends_with(".so") || n.ends_with(".dylib") || n.ends_with(".dll"))
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(
+        artifacts, 1,
+        "two programs using binwriter share one artifact"
+    );
 
     let _ = fa::remove_dir_all(&tmp);
     let _ = fa::remove_dir_all(native_auto);
@@ -747,7 +764,8 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
         );
     }
     // The interpreted run built the library's shared cdylib; its bridge must ask for the
-    // library's row.
+    // library's row — by key since @PLN199 G0b-2 (`sharedname::Holder` in its id table), and
+    // never by the bare name the program's own `Holder` can hold.
     let generated: Vec<String> = fa::read_dir(lib.join("sharedname/native-auto"))
         .expect("the interpreted run built the library's cdylib")
         .into_iter()
@@ -757,7 +775,7 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     assert!(!generated.is_empty(), "no generated bridge source");
     for src in &generated {
         assert!(
-            src.contains(".name(\"sharedname::Holder\")") && !src.contains(".name(\"Holder\")"),
+            src.contains("\"sharedname::Holder\"") && !src.contains(".name(\"Holder\")"),
             "the bridge must mint the library's `sharedname::Holder`, not the program's `Holder`"
         );
     }
@@ -776,9 +794,11 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
 /// against a foreign table and reads at the wrong offsets. That is silent memory
 /// corruption, whose crash lands arbitrarily far from its cause.
 ///
-/// So the artifact now names its own layout (`loft_type_layout_fp_v1`) and the
+/// So the artifact now names the key it was built for (`loft_type_layout_fp_v1`) and the
 /// adopter asks. This plants one context's artifact at the other's exact filename
-/// — the aliasing #715 argues is unreachable — and requires that it be rejected.
+/// — the aliasing #715 argues is unreachable — and requires that it be rejected.  Since
+/// @PLN199 G0c an artifact that names its ids by key serves every context, so the foreign
+/// one is a literal build (`LOFT_NO_LIB_IDS=1`), which is keyed on its program.
 ///
 /// The test carries its own control, because "it rebuilt" has a boring competing
 /// explanation: copying a file changes its mtime, and a rebuild triggered by mtime
@@ -822,15 +842,18 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     )
     .unwrap();
 
-    let run = |prog: &std::path::Path| {
-        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .arg("--lib")
+    let run_with = |prog: &std::path::Path, literal: bool| {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--lib")
             .arg(&lib)
             .arg(prog)
-            .env("LOFT_NO_CACHE", "1")
-            .output()
-            .expect("run the loft binary")
+            .env("LOFT_NO_CACHE", "1");
+        if literal {
+            cmd.env("LOFT_NO_LIB_IDS", "1");
+        }
+        cmd.output().expect("run the loft binary")
     };
+    let run = |prog: &std::path::Path| run_with(prog, false);
     let sos = || -> Vec<std::path::PathBuf> {
         let mut v: Vec<_> = fa::read_dir(native_auto)
             .map(|rd| {
@@ -859,7 +882,12 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     assert_eq!(after_bare.len(), 1, "the bare context built one artifact");
     let bare_so = after_bare[0].clone();
 
-    assert!(run(&shifted).status.success(), "shifted context runs");
+    // @PLN199 G0c — an artifact that names its ids by key serves both contexts, so the
+    // foreign one is made by a LITERAL build, which is still built for its program alone.
+    assert!(
+        run_with(&shifted, true).status.success(),
+        "shifted context runs"
+    );
     let two = sos();
     if two.len() < 2 {
         // Both contexts fingerprinted the same, so there is no foreign artifact to

@@ -991,7 +991,7 @@ mod impl_symbol_tests {
 /// be called.  Idempotent: the cdylib keeps the first table it is handed.
 /// @PLN199 G0b-2 — and the numbers this program gives the types and functions its code names,
 /// by key.  A library that names one this program lacks refuses, and leaves the search: its
-/// functions are not wired, and say so.
+/// functions are not wired (the probe before marking said so, and left them interpreted).
 #[cfg(feature = "native-extensions")]
 fn init_library_cdylibs(state: &crate::state::State, data: &crate::data::Data) {
     type InitFn =
@@ -1006,17 +1006,10 @@ fn init_library_cdylibs(state: &crate::state::State, data: &crate::data::Data) {
                 (&raw const ids).cast::<std::ffi::c_void>(),
             )
         };
+        // Said already: `native_lib::probe_and_mark_exports` asked the same question of a
+        // library before marking its functions, and those interpret.
         if accepted != 1 {
             refused.push(lib);
-            match ids.take_missing() {
-                Some(key) => eprintln!(
-                    "loft: a compiled library names `{key}`, which this program does not \
-                     have; it is not used"
-                ),
-                None => eprintln!(
-                    "loft: a compiled library was built for a different loft; it is not used"
-                ),
-            }
         }
     }
     if !refused.is_empty() {

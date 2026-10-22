@@ -311,28 +311,39 @@ key tables (`id_tables_src`) that `loft_shared_init(table, ids)` fills from the 
   alone and behind a prefix that renumbers it, and requires the same code outside `init`;
   `n2_cdylib::a_library_artifact_runs_in_a_program_that_numbers_it_differently` runs an
   artifact in a program that numbers it differently (a crash with `LOFT_NO_LIB_IDS=1`).
-- Left to G1: `init()` is still the whole program's type table, and block comments print
-  loft types with their ids, so the source is not yet the same text in two programs.
+- Left to G1: `init()` is still the whole program's type table, block comments print loft
+  types with their ids, and the collision check (`Output::native_collisions`) reads the whole
+  program, so the source is not yet the same text in two programs.
 
-**G0c — key the artifact on what it references.**  Replace `type_layout_fingerprint(stores)` and
-`fn_numbering_fingerprint` in `cached_or_build_shared_cdylib`'s key (`native_lib.rs` ~2509) with
-one fingerprint over the recorded `(package, name)` of every type — with its size and field
-offsets — and every function — with its signature.  `artifact_matches_layout` probes the same
-value.
-- A generic instantiated with a type from OUTSIDE the library (`i_<T>_n_…` with a script's `T`)
-  is program-specific; it leaves the shared artifact's export set and keeps today's
-  per-program artifact, keyed as now.  `library_candidates` (`native_lib.rs` ~529) is where the
-  split is made.
-- Check: two scripts with different structs using one library build it once (the second run
-  creates no file in `native-auto/`); the per-program artifact appears only when the script
-  instantiates a library generic with its own type.
+**G0c — key the artifact on what it is (done).**  An artifact that names its ids by key
+depends on the loft that built it and the sources it carries, nothing of the program:
+`cached_or_build_shared_cdylib` keys it on the loft build and executable and on
+`artifact_sources` — the library, what it imports, transitively, and the home of every
+function its exports reach (a qualified `use dep;` binds no import) — not on every library
+the program compiles.  The artifact declares that key (`LAYOUT_FP_SYMBOL`) and the adoption
+probe asks for it.  A literal build (`LOFT_NO_LIB_IDS=1`) keeps the program's layout and
+numbering in its key.
+- `probe_and_mark_exports` hands a loaded artifact the program's keys before marking its
+  functions: one that names a key the program lacks is refused, said once, and its
+  functions interpret.
+- A bridge that allocates a destination takes its type from the id table, not from a
+  registered name (which the program's own same-named type can hold).
+- A type variable's placeholder is keyed `typevar` (its `#n` counts the generics before it).
+- A library generic instantiated with a program's type is no export (it interprets); the
+  shared artifact carries only the library's own instances.
+- Guards: `n3_use_native::cdylib_type_indices_stay_valid_across_consumer_contexts` — two
+  programs that number `binwriter`'s types differently share ONE artifact and both write the
+  right bytes; `a_foreign_context_artifact_is_rejected_not_adopted` plants a literal build's
+  artifact at the shared name and requires it rebuilt; `tests/lib_ids.rs`'s prefix carries
+  generics.
 
 **G1 — a reproducible name.**
 - G1a: generated source carries no machine path.  `cr_call_push` / `cr_call_push_lean`
   (`generation/mod.rs` ~12590) print the absolute file; print it relative to the package root
   (`<pkg>/src/x.loft`), which is what a stack trace should show anyway.
-- G1b: the stem hashes `contributing_fingerprint` (the library's sources), `loft_exe_identity`,
-  `cache::host_triple` and the G0c fingerprint — nothing from the program.
+- G1b: the stem hashes the CONTENT of `artifact_sources` (`contributing_fingerprint` hashes
+  their directory paths today, which differ between machines), `loft_exe_identity` and
+  `cache::host_triple` — nothing from the program or the machine.
 - Check: the same library, checked out at two paths, built by the same `loft`, produces the
   same stem and byte-identical `.rs`.
 
@@ -402,9 +413,9 @@ The procedure, the one every step above followed:
 
 ## Order
 
-Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2.  D4 is dropped.  The open
-steps, each one commit:
+Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c.  D4 is dropped.  The
+open steps, each one commit:
 
-G0c → G1a → G1b → G2a → G2b → G3a → G3b → G2c, and,
-independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G0c is the step that
-lets one artifact serve two programs, and G2c, the release job, is last because it publishes.
+G1a → G1b → G2a → G2b → G3a → G3b → G2c, and,
+independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G2c, the release job,
+is last because it publishes.

@@ -18316,24 +18316,24 @@ fn issue_682_closure_capture_ownership_marker() {
     };
 
     assert!(
-        marker("__closure_0", "w"),
+        marker("__closure_p682_param_0", "w"),
         "#682: a captured PARAMETER must be marked BORROWED — its caller owns the store \
          and outlives this frame, so the record's cascade freeing it destroys the \
          caller's value (that is the whole bug)"
     );
     assert!(
-        marker("__closure_1", "c"),
+        marker("__closure_p682_proj_0", "c"),
         "#682: a PROJECTION local (`c = w.cells[0]`) views into someone else's store, so \
          it must be marked BORROWED too — a parameter-only fix leaves this half broken"
     );
     assert!(
-        !marker("__closure_2", "o"),
+        !marker("__closure_p682_owned_0", "o"),
         "#682: a local the frame OWNS must stay ADOPTED — `get_free_vars` suppresses its \
          scope-exit free, so the record's cascade is the only free there is and marking \
          it borrowed leaks the store instead"
     );
     assert!(
-        !marker("__closure_3", "acc"),
+        !marker("__closure_p682_cell_0", "acc"),
         "#682: a mutated scalar boxed into a `__cell_<T>` is minted FOR this closure, so \
          the record owns it however the original binding was reached (plan-22 / C74)"
     );
@@ -18373,7 +18373,10 @@ fn issue_685_mutated_scalar_param_is_boxed_like_a_local() {
 
     // Both functions must lower to the SAME shape — the argument case is the local
     // case, which is the whole point of the promotion.
-    for (fname, record) in [("n_p685_arg", "__closure_0"), ("n_p685_loc", "__closure_1")] {
+    for (fname, record) in [
+        ("n_p685_arg", "__closure_p685_arg_0"),
+        ("n_p685_loc", "__closure_p685_loc_0"),
+    ] {
         let rec = p.data.def_nr(record);
         assert_ne!(rec, u32::MAX, "#685: {record} must exist");
         let a = p.data.attr(rec, "n");
@@ -18481,7 +18484,7 @@ fn issue_687_mutated_text_capture_storage_is_per_binding() {
     // `&text` out-parameter.  Boxing it too is the mismatch that segfaulted: the record
     // would hold a cell DbRef while the binding stayed a `&text` stack pointer.
     assert!(
-        !is_cell("__closure_0", "keep"),
+        !is_cell("__closure_ret687_0", "keep"),
         "#687: a text local that is the function's RETURN SOURCE must stay INLINE in the \
          record — it already has a hidden `&text` out-parameter, and two indirections for \
          one binding is the crash"
@@ -18489,13 +18492,13 @@ fn issue_687_mutated_text_capture_storage_is_per_binding() {
     // `side` is not returned, so nothing else claims it and the shared cell is right.
     // The retired proxy skipped this one purely as collateral — the "too wide" half.
     assert!(
-        is_cell("__closure_1", "side"),
+        is_cell("__closure_side687_0", "side"),
         "#687: a mutated text local the function does NOT return must take a shared cell"
     );
     // A parameter has no indirection of its own to reuse, so #685's shadow local takes
     // the cell like every other type.  This is the combination that used to be refused.
     assert!(
-        is_cell("__closure_2", "n"),
+        is_cell("__closure_par687_0", "n"),
         "#687: a mutated text PARAMETER's shadow local must take a shared cell"
     );
 }
@@ -18566,7 +18569,7 @@ fn issue_686_forward_declared_capture_is_typed_and_positioned() {
         p.diagnostics.lines()
     );
 
-    let rec = p.data.def_nr("__closure_0");
+    let rec = p.data.def_nr("__closure_q686_0");
     assert_ne!(rec, u32::MAX, "#686: the closure record must exist");
     let a = p.data.attr(rec, "ch");
     assert_ne!(
@@ -18636,7 +18639,7 @@ fn issue_686_nameless_unknown_is_not_resolved_against_def_zero() {
     // Definition #0's return type is what the old resolution handed the field.  Whatever
     // it is, no capture may end up with it by accident.
     let def_zero_ret = p.data.def(0).returned().clone();
-    let rec = p.data.def_nr("__closure_0");
+    let rec = p.data.def_nr("__closure_s686_0");
     assert_ne!(rec, u32::MAX, "#686: the closure record must exist");
     let a = p.data.attr(rec, "p");
     assert_ne!(a, usize::MAX, "#686: the record must carry the `p` capture");

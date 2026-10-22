@@ -44,8 +44,10 @@ impl<'a> TypeNames<'a> {
                 )
                 // A type spelled from other types (`__tuple<…>`, `main_vector<…>`,
                 // `__nullable<…>`, a generic instance) is minted by whichever source named it
-                // first, so its definition's source is the program's; its parts name it.
+                // first, so its definition's source is the program's; its parts name it.  A
+                // type variable's placeholder (`T#4`) is numbered by the generics before it.
                 || def.name().contains('<')
+                || def.name().contains('#')
             {
                 continue;
             }
@@ -124,6 +126,9 @@ impl<'a> TypeNames<'a> {
             Parts::Hash(c, k) => sub(out, path, "hash", *c, &format!("{k:?}")),
             Parts::Radix(c, k) => sub(out, path, "radix", *c, &format!("{k:?}")),
             Parts::Trie(c, k) => sub(out, path, "trie", *c, &format!("[{k}]")),
+            // A type variable's placeholder is numbered by the generics parsed before it
+            // (`__typevar_T#4`); every placeholder is the same empty record.
+            Parts::Struct(_) if row.name.starts_with("__typevar_") => out.push_str("typevar"),
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 // The stem names the kind (`main_vector`, `__tuple`, a type variable); the
                 // element names inside its `<…>` are the program's spelling, so the fields

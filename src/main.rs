@@ -9949,7 +9949,12 @@ fn main() {
                 // BEFORE marking, so a symbol that will not resolve leaves its
                 // function interpreting instead of compiling into an
                 // `OpStaticCall` that panics at the first call.
-                let probe = loft::native_lib::probe_and_mark_exports(&mut p.data, &export, &so);
+                let probe = loft::native_lib::probe_and_mark_exports(
+                    &mut p.data,
+                    &p.database,
+                    &export,
+                    &so,
+                );
                 if probe.marked > 0 {
                     auto_native_libs.push(so.to_string_lossy().into_owned());
                 }
@@ -9962,9 +9967,11 @@ fn main() {
                              function(s) would run interpreted. Rebuild it with \
                              `make rebuild-native-cdylibs`, or unset LOFT_REQUIRE_NATIVE.",
                             if probe.not_loaded {
-                                "it does not load"
+                                "it does not load".to_string()
+                            } else if let Some(key) = &probe.refused {
+                                format!("it names `{key}`, which this program does not have")
                             } else {
-                                "some bridge symbols are missing"
+                                "some bridge symbols are missing".to_string()
                             },
                             probe.unresolved.len(),
                         );
@@ -9991,9 +9998,11 @@ fn main() {
                         shown.join(", "),
                         n = probe.unresolved.len(),
                         why = if probe.not_loaded {
-                            "does not load"
+                            "does not load".to_string()
+                        } else if let Some(key) = &probe.refused {
+                            format!("names `{key}`, which this program does not have")
                         } else {
-                            "does not export their bridge symbols"
+                            "does not export their bridge symbols".to_string()
                         },
                     );
                 }

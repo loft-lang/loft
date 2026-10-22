@@ -985,8 +985,8 @@ pub fn plan(data: &Data, stores: &Stores, value_fns: &HashSet<u32>) -> ApartPlan
                         // around a library does not change, where its number does.
                         rust: format!(
                             "Apart_{}_{}",
-                            super::sanitize(&data.source_label(data.def(d).source)),
-                            super::sanitize(data.def(d).name())
+                            ident_part(&data.source_label(data.def(d).source)),
+                            ident_part(data.def(d).name())
                         ),
                         rec_tp: *kt,
                         vec_tps: fields.iter().map(|f| f.1).collect(),
@@ -1062,4 +1062,11 @@ pub fn plan(data: &Data, stores: &Stores, value_fns: &HashSet<u32>) -> ApartPlan
         plan.regions = regions;
         return plan;
     }
+}
+
+/// `s` as part of a Rust identifier: a source label can be a module path (`mesh3d::math`).
+fn ident_part(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }

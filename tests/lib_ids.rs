@@ -3,8 +3,9 @@
 
 //! @PLN199 G0b-2 — the code a library artifact carries does not depend on how the program
 //! around it numbers types and functions.  Every program of the corpus is generated as a
-//! library artifact twice: alone, and behind a prefix that declares structs, an enum and
-//! functions first, so each of its types and functions takes another number.  The two texts
+//! library artifact twice: alone, and behind a prefix that declares structs, an enum,
+//! functions and generics first, so each of its types, functions and type variables takes
+//! another number.  The two texts
 //! must be the same outside `init` (the program's own type table): a literal id left in the
 //! code shows up as the first line that differs.
 
@@ -14,9 +15,12 @@ use loft::file_access as fa;
 
 const SHIFT: &str = "struct ShiftA { a: text, b: float, c: boolean }\n\
                      struct ShiftB { d: vector<ShiftA>, e: integer }\n\
+                     struct ShiftG<T> { g: T }\n\
                      enum ShiftE { One, Two }\n\
                      fn shift_a(x: integer) -> integer { x + 1 }\n\
-                     fn shift_b(x: integer) -> integer { x * 2 }\n";
+                     fn shift_b(x: integer) -> integer { x * 2 }\n\
+                     fn shift_t<T>(x: T) -> vector<T> { [x] }\n\
+                     fn shift_u<U>(x: U) -> U { x }\n";
 
 /// The library code of `src`, parsed after `prefix`, with `init` cut out.
 fn code_of(prefix: &str, src: &str, name: &str) -> Option<String> {
@@ -104,8 +108,8 @@ fn first_difference(a: &str, b: &str) -> String {
     format!("{}⟨{} | {}⟩", &x[from..at], tail(x), tail(y))
 }
 
-#[test]
-fn library_code_does_not_name_the_programs_numbers() {
+/// The corpus, then the suite, sorted: the same list in every shard's process.
+fn corpus() -> Vec<String> {
     let mut files: Vec<String> = fa::read_dir("tests/scripts")
         .expect("tests/scripts")
         .into_iter()
@@ -118,39 +122,33 @@ fn library_code_does_not_name_the_programs_numbers() {
             .into_iter()
             .map(|p| p.to_string_lossy().into_owned()),
     );
-    let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
-    let chunk = files.len().div_ceil(threads).max(1);
-    let results: Vec<(usize, Vec<String>)> = std::thread::scope(|s| {
-        let handles: Vec<_> = files
-            .chunks(chunk)
-            .map(|part| {
-                s.spawn(move || {
-                    let (mut compared, mut differ) = (0, Vec::new());
-                    for f in part {
-                        let Ok(src) = fa::read_to_string(f) else {
-                            continue;
-                        };
-                        let alone = std::panic::catch_unwind(|| code_of("", &src, "lib"));
-                        let shifted = std::panic::catch_unwind(|| code_of(SHIFT, &src, "lib"));
-                        let (Ok(Some(a)), Ok(Some(b))) = (alone, shifted) else {
-                            continue;
-                        };
-                        compared += 1;
-                        if a != b {
-                            differ.push(format!("{f}: {}", first_difference(&a, &b)));
-                        }
-                    }
-                    (compared, differ)
-                })
-            })
-            .collect();
-        handles.into_iter().filter_map(|h| h.join().ok()).collect()
-    });
-    let compared: usize = results.iter().map(|r| r.0).sum();
-    let differ: Vec<String> = results.into_iter().flat_map(|r| r.1).collect();
+    files
+}
+
+const SHARDS: usize = 8;
+
+/// Every `SHARDS`-th program from `shard` on.  A shard runs in its own process (nextest):
+/// the parser keeps process-wide state, so two parses on two threads of one process are not
+/// the same parse twice.
+fn check_shard(shard: usize) {
+    let (mut compared, mut differ) = (0, Vec::new());
+    for f in corpus().iter().skip(shard).step_by(SHARDS) {
+        let Ok(src) = fa::read_to_string(f) else {
+            continue;
+        };
+        let alone = std::panic::catch_unwind(|| code_of("", &src, "lib"));
+        let shifted = std::panic::catch_unwind(|| code_of(SHIFT, &src, "lib"));
+        let (Ok(Some(a)), Ok(Some(b))) = (alone, shifted) else {
+            continue;
+        };
+        compared += 1;
+        if a != b {
+            differ.push(format!("{f}: {}", first_difference(&a, &b)));
+        }
+    }
     assert!(
-        compared > 100,
-        "only {compared} corpus programs generated — the guard reads nothing"
+        compared > 20,
+        "only {compared} programs generated — the guard reads nothing"
     );
     assert!(
         differ.is_empty(),
@@ -159,3 +157,25 @@ fn library_code_does_not_name_the_programs_numbers() {
         differ.join("\n")
     );
 }
+
+macro_rules! shards {
+    ($($name:ident = $k:expr),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                check_shard($k);
+            }
+        )*
+    };
+}
+
+shards!(
+    library_code_does_not_name_the_programs_numbers_0 = 0,
+    library_code_does_not_name_the_programs_numbers_1 = 1,
+    library_code_does_not_name_the_programs_numbers_2 = 2,
+    library_code_does_not_name_the_programs_numbers_3 = 3,
+    library_code_does_not_name_the_programs_numbers_4 = 4,
+    library_code_does_not_name_the_programs_numbers_5 = 5,
+    library_code_does_not_name_the_programs_numbers_6 = 6,
+    library_code_does_not_name_the_programs_numbers_7 = 7,
+);
