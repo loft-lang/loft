@@ -357,18 +357,22 @@ arm escapes it): LLVM keeps the whole temporary in memory and the hot copy stall
 the routine at the `xs` append.  A runtime entry that takes `DbRef` BY VALUE, its cold arm
 out of line, is the general cure; not built.
 
-**The layout slowed the key-order walk: `hash_walk` 3.12× → 4.14×.**  `for e in h` builds
-its order per pass (`records_sorted`), and over an inline table `records` answers INSERTION
-order — a sort by sequence number (18 % of the row's cycles) — before the key sort (22 %)
-reorders everything; five intermediate vectors carry it between.  The arena layout answered
-bucket order, unsorted.  A key-order walk needs no insertion order: the keys are unique.  The
-single-pass form — one sweep of the slots reading each entry's key through the held base into
-`(key, position)` pairs, sorted by key — was priced by runtime swap on the lean runtime:
-**355 → 219 µs/op, −38 %, ≈ 2.4×**, hash unchanged.  `reload_and_record` (3.2× → 3.53×)
-walks two compound-keyed hashes and pays the same sort; its form is the compound clause's
-`([i64; N], position)`.  What is left after it: the per-element step (`OpStep` →
-`step_ordered` → `vector_next`, 20 % of the cycles) and the scratch record the order is
-copied into.
+**The layout slowed the key-order walk: `hash_walk` 3.12× → 4.14×; BUILT, now 1.62×.**
+`for e in h` builds its order per pass (`records_sorted`), and over an inline table `records`
+answered INSERTION order — a sort by sequence number (18 % of the row's cycles) — before the
+key sort reordered everything, through five intermediate vectors.  A key-order walk needs no
+insertion order: a hash's keys are unique.  Built (`hash::inline_sorted`), each step timed on
+the walk alone (µs/op): the slots swept in place of the insertion-ordered list 355 → 315; the
+sweep through the base checked once, into a vector sized by the live count, → 264; the key
+read straight into `([i64; N], position)` and sorted by key alone (the pair comparison was a
+third dearer on 5 000 entries) → 228; `vector::step_ordered` inlined into `OpStep` → 196 — it
+answered `(DbRef, u32)` through memory, the store-forwarding stall below, 60 % of `OpStep`'s
+samples; the sweep BRANCH-FREE → 147: every slot's pair is written and only a live slot
+advances the count, where the occupancy test mispredicted on most slots.  `stats.py`:
+`hash_walk` **1.62×**, `reload_and_record` (two compound-keyed walks a pass) 3.53× → **2.62×**,
+every hash unchanged.  A text, float or narrow-only key keeps the general sort; the guard is
+`a-hash-walk-is-in-key-order-across-widths-and-removals` (falsified: a dead slot walked, a
+tombstone walked).
 
 Read cycles before instructions: `perf record -e cycles` and `perf annotate` put the samples
 on the instruction AFTER a stalled load, so a hot `mov %rax,0x20(%rsp)` straight after an
