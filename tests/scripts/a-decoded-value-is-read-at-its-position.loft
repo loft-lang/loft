@@ -33,6 +33,12 @@
 // F12 a root that calls another root (`checked`: `status`, then its own decode): F1 op →
 //    "apply", F7 → "bad".  A root is emitted under its own name, so the call of one stays a plain call; the
 //    consumer-twin name it was given did not exist and the release build did not compile.
+// F13 a match on a looked-up value whose every arm returns (`flag`): F1 ok → true, op → false
+//    (a text), F7 → false (bad).  The emitter patches a block that ends in `return null`; one it
+//    leaves as it was keeps its own nodes, which the twin's dropped statements are keyed by —
+//    a copy left the buffer code of the twin's positions in, and it did not compile (loft#2130).
+// F14 the same with a match inside an arm, over a second decode (`flag_num`): F1 → 7 (ok,
+//    n 7), F13 { "ok": false, "n": 3 } → -1, F11 (no "ok") → -99, F7 → -1000.
 //
 // @falsify-tier: native-release
 // @falsified-by: tests/falsified/a-decoded-value-is-read-at-its-position.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
@@ -259,6 +265,28 @@ fn checked(frame: vector<u8>, key: text) -> text {
   text_of(get(d.value, key))
 }
 
+/// A match on the looked-up value as the whole answer, every arm returning.
+fn flag(frame: vector<u8>, key: text) -> boolean {
+  d = dec(frame);
+  if !d.ok { return false; }
+  match get(d.value, key) { VBool { value } => { return value; }, _ => { return false; } }
+}
+
+/// A match inside a match arm, over a second decode of the frame.
+fn flag_num(frame: vector<u8>) -> integer {
+  d = dec(frame);
+  if !d.ok { return -1000; }
+  match get(d.value, "ok") {
+    VBool { value } => {
+      if value {
+        match get(dec(frame).value, "n") { VInt { value } => { return value; }, _ => { return 0; } }
+      }
+      return -1;
+    },
+    _ => { return -99; }
+  }
+}
+
 fn f1() -> vector<u8> {
   [4, 5,
    2, 2, 111, 112,  2, 5, 97, 112, 112, 108, 121,
@@ -329,6 +357,12 @@ fn main() {
   assert(two(f11) == "x+y", "F11 two: {two(f11)}");
   assert(each(f11, "b", "a", "c") == "yx-", "F11 each: {each(f11, \"b\", \"a\", \"c\")}");
   assert(checked(f, "op") == "apply" && checked(f7, "op") == "bad", "F12 checked: {checked(f, \"op\")} {checked(f7, \"op\")}");
+  assert(flag(f, "ok") && !flag(f, "op") && !flag(f7, "ok"), "F13 flag: {flag(f, \"ok\")} {flag(f, \"op\")} {flag(f7, \"ok\")}");
+  f13: vector<u8> = [4, 2, 2, 2, 111, 107, 6, 0, 2, 1, 110, 1, 103];
+  assert(flag_num(f) == 7, "F14 F1: {flag_num(f)}");
+  assert(flag_num(f13) == -1, "F14 F13: {flag_num(f13)}");
+  assert(flag_num(f11) == -99, "F14 F11: {flag_num(f11)}");
+  assert(flag_num(f7) == -1000, "F14 F7: {flag_num(f7)}");
   k = keep(f);
   assert(text_of(get(k, "op")) == "apply", "F11 keep: {text_of(get(k, \"op\"))}");
   println("done");

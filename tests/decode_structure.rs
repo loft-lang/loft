@@ -17,6 +17,8 @@ const ROOTS: &[&str] = &[
     "n_checked",
     "n_deep",
     "n_find",
+    "n_flag",
+    "n_flag_num",
     "n_lookup",
     "n_num",
     "n_status",
