@@ -135,6 +135,23 @@ prefill on both sides of the call: `panel_build` 3.67× → 3.44×.
 4.66×.  Store creation is ~950 instructions (12 % of `encode`) spread over slot bookkeeping,
 `Store::init` and a fresh store's first claim through the tree path; no single fold moves it
 more than ~2 %.
+#### The two rows over 4× at `889e5d05c`, toward 2.5× (2026-10-22, local tip)
+
+`field_add_cell` 2.31×, `binary_read` 2.31×, `truncate_to` 1.77× have left the list; two rows
+remain.  **`hash_walk` 4.14×** is the inline hash layout's regression (3.12× on the tagged
+layout): the walk sorts by insertion order before sorting by key.  One sweep into
+`(key, position)` pairs, priced by runtime swap: −38 %, **≈ 2.4×** (`keyed.md`, What the tagged
+and inline tables bought).  **`slope_path_with_undo` 4.21×**, callgrind at the tip: 2 128
+instructions a step; `map_get_hex` 337 and `map_set_hex` 401 a call, two each a step.  Inside
+them the null-checked `%`, `/` and `-` of the chunk and hex index (12.7 % of the instructions,
+−12.3 % priced, the null-integer focus), the `Hex` written into its element (~128 a write,
+`rec_and_len` out of line 76 of them), the undo push (`vector_append` + `vector_finish` +
+`clear_vector` ~185 a step).  The levers inside the focus — `rec_and_len` inline at the element
+write, a push with room left written in place, `s.us_redo = []` on an empty vector skipped —
+are *est.* −12 % together (≈ 3.7×); with the arithmetic ≈ 3.3×.  2.5× needs L7 as well (the
+chunk vector's and each `ck_hexes` header held by the caller across the four walks a step,
+re-derived after `map_ensure_chunk` appends; *est.* −25–30 %, never priced): ≈ 2.4×.
+
 #### The rows still near or over 4×, toward WELL below 3× (2026-10-21, at `8308712f1`)
 
 Re-measured at the tip (`stats.py --routine`, loop alignment on): `field_add_cell` 4.29×,

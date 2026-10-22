@@ -357,6 +357,19 @@ arm escapes it): LLVM keeps the whole temporary in memory and the hot copy stall
 the routine at the `xs` append.  A runtime entry that takes `DbRef` BY VALUE, its cold arm
 out of line, is the general cure; not built.
 
+**The layout slowed the key-order walk: `hash_walk` 3.12× → 4.14×.**  `for e in h` builds
+its order per pass (`records_sorted`), and over an inline table `records` answers INSERTION
+order — a sort by sequence number (18 % of the row's cycles) — before the key sort (22 %)
+reorders everything; five intermediate vectors carry it between.  The arena layout answered
+bucket order, unsorted.  A key-order walk needs no insertion order: the keys are unique.  The
+single-pass form — one sweep of the slots reading each entry's key through the held base into
+`(key, position)` pairs, sorted by key — was priced by runtime swap on the lean runtime:
+**355 → 219 µs/op, −38 %, ≈ 2.4×**, hash unchanged.  `reload_and_record` (3.2× → 3.53×)
+walks two compound-keyed hashes and pays the same sort; its form is the compound clause's
+`([i64; N], position)`.  What is left after it: the per-element step (`OpStep` →
+`step_ordered` → `vector_next`, 20 % of the cycles) and the scratch record the order is
+copied into.
+
 Read cycles before instructions: `perf record -e cycles` and `perf annotate` put the samples
 on the instruction AFTER a stalled load, so a hot `mov %rax,0x20(%rsp)` straight after an
 eight-byte read of a just-written stack slot is this stall, not the move.
