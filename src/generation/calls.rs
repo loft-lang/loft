@@ -358,12 +358,16 @@ impl Output<'_> {
             None
         };
         let ranged = forward.is_none()
-            && kh_args.is_none()
             && !append
             && own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
-            && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
+            && self.ranged_call(
+                self.current_call_def,
+                vals,
+                twin_args.is_some(),
+                kh_args.is_some(),
+            );
         let (released_first, refill_twin) = self.refill_text_call(
             w,
             def_fn,
@@ -380,11 +384,11 @@ impl Output<'_> {
             "{}{}{}{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
-            if kh_args.is_some() { "__kh" } else { "" },
             if ranged { "__rg" } else { "" },
             if refill_twin { "__rt" } else { "" },
             if append { "__ap" } else { "" },
-            own.unwrap_or("")
+            own.unwrap_or(""),
+            if kh_args.is_some() { "__kh" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::runtime_abi::Abi::Cell) {

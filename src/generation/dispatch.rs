@@ -1500,7 +1500,7 @@ impl Output<'_> {
                 // the call itself, so it asks the same question `user_fn_call_body` does.
                 let twin_args = self.twin_call_inputs(fn_nr, args);
                 crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
-                let ranged = self.ranged_call(fn_nr, args, twin_args.is_some());
+                let ranged = self.ranged_call(fn_nr, args, twin_args.is_some(), false);
                 write!(
                     w,
                     "{}{}{}(cell",

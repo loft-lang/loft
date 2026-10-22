@@ -11220,7 +11220,7 @@ extern crate loft;"
         {
             let (key, twin) = self.rg_requests[at];
             self.rg_emitted.insert((key, twin));
-            let dnr = key & !decode_view::DV_BIT;
+            let dnr = key & !decode_view::DV_BIT & !kept::KH_BIT;
             if std::env::var("LOFT_TRACE_RANGED_CALL").is_ok() {
                 eprintln!(
                     "ranged-call: emits {}{}__rg",
@@ -11237,6 +11237,16 @@ extern crate loft;"
             if twin && self.twin.is_none() {
                 continue;
             }
+            // `(R-Header)`'s kept clause — a ranged `__kh` twin, handed the caller's holders.
+            self.kh_twin = if key & kept::KH_BIT != 0 {
+                self.kept_of(dnr)
+            } else {
+                None
+            };
+            if key & kept::KH_BIT != 0 && self.kh_twin.is_none() {
+                self.twin = None;
+                continue;
+            }
             self.range_override.push(std::rc::Rc::new(facts));
             self.emitting_ranged = true;
             self.dv_active = key & decode_view::DV_BIT != 0;
@@ -11245,6 +11255,7 @@ extern crate loft;"
             self.emitting_ranged = false;
             self.range_override.pop();
             self.twin = None;
+            self.kh_twin = None;
             r?;
         }
         Ok(())
