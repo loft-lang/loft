@@ -107,7 +107,11 @@ pub fn inline_count_of(flags: u32) -> u32 {
 /// The field a table keeps its live count in, from its `STRIDE_FLD` word.
 #[inline]
 fn len_fld_of(flags: u32) -> u32 {
-    if flags & INLINE != 0 { INLINE_LEN_FLD } else { LEN_FLD }
+    if flags & INLINE != 0 {
+        INLINE_LEN_FLD
+    } else {
+        LEN_FLD
+    }
 }
 
 /// `LOFT_NO_HASH_INLINE=1` — `(Col-Inline)` off: tables that own their entries keep them in
@@ -135,7 +139,7 @@ struct Hdr {
 #[must_use]
 pub fn inline_count(words: u32, stride: u32) -> u32 {
     let n = (u64::from(words) * 8 / u64::from(8 + stride)) as u32;
-    if n == 0 { 0 } else { 1 << (31 - n.leading_zeros()) }
+    if n == 0 { 0 } else { 1 << n.ilog2() }
 }
 
 /// The words an inline table of `count` buckets of `stride`-byte entries takes.
@@ -160,10 +164,20 @@ fn hdr(store: &Store, claim: u32) -> Hdr {
     if flags & INLINE != 0 {
         // The count is recorded when the table is made (`inline_create`, `inline_rebuild`):
         // deriving it from the words is a division per access.
-        Hdr { count: inline_count_of(flags), sb: 8, stride, inline: true }
+        Hdr {
+            count: inline_count_of(flags),
+            sb: 8,
+            stride,
+            inline: true,
+        }
     } else {
         let sb = if flags & TAGGED != 0 { 8 } else { SLOT_BYTES };
-        Hdr { count: slots_in(words, sb), sb, stride, inline: false }
+        Hdr {
+            count: slots_in(words, sb),
+            sb,
+            stride,
+            inline: false,
+        }
     }
 }
 
@@ -193,12 +207,11 @@ pub fn slot_bytes(store: &Store, claim: u32) -> u32 {
 #[must_use]
 pub fn slots_in(words: u32, sb: u32) -> u32 {
     if sb == 8 {
-        if words == 0 { 0 } else { 1 << (31 - words.leading_zeros()) }
+        if words == 0 { 0 } else { 1 << words.ilog2() }
     } else {
         words * 2
     }
 }
-
 
 /// The tag a key's digest leaves in a tagged slot: its low 32 bits, which hold the home
 /// bucket of every power-of-two table up to 2^32 buckets (`home_bucket` masks them).
@@ -758,7 +771,7 @@ pub fn entry_one_int(
             bucket = Some(at);
             break;
         }
-        if !(h.inline && slot == TOMB) && !tag_differs(store, claim, sb, at, tag) {
+        if (!h.inline || slot != TOMB) && !tag_differs(store, claim, sb, at, tag) {
             let (rec, pos) = entries.at_bucket(store, slot, at);
             if store.get_int(rec, pos + kp) == value {
                 return Some(DbRef {
@@ -778,13 +791,30 @@ pub fn entry_one_int(
         if store.read_only {
             return None;
         }
-        let used = store.get_u32_raw(claim, INLINE_LEN_FLD) + store.get_u32_raw(claim, arena::FREE_FLD);
+        let used =
+            store.get_u32_raw(claim, INLINE_LEN_FLD) + store.get_u32_raw(claim, arena::FREE_FLD);
         let entry = if is_full(used, count) {
             let (claim, at) = inline_slot_for(hash, claim, tag, stores);
-            inline_file(keys::mut_store(hash, stores), hash.store_nr, claim, at, tag, true)
+            inline_file(
+                keys::mut_store(hash, stores),
+                hash.store_nr,
+                claim,
+                at,
+                tag,
+                true,
+            )
         } else {
             // The walk above ended at this empty bucket: it is the one the entry takes.
-            inline_file_at(keys::mut_store(hash, stores), hash.store_nr, claim, count, width, at, tag, true)
+            inline_file_at(
+                keys::mut_store(hash, stores),
+                hash.store_nr,
+                claim,
+                count,
+                width,
+                at,
+                tag,
+                true,
+            )
         };
         keys::mut_store(hash, stores).set_int(entry.rec, entry.pos + kp, value);
         return Some(entry);
@@ -1191,15 +1221,17 @@ pub fn reserve(hash: &DbRef, count: i64, stride: u32, stores: &mut [Store], keys
     if is_inline(keys::store(hash, stores), claim) {
         // `(Col-Inline)` — rebuilt in place at the bucket count the fill needs.
         let target = need.max(2).next_power_of_two();
-        if u64::from(elms(keys::store(hash, stores), claim)) < target {
-            if let Ok(target) = u32::try_from(target) {
-                inline_rebuild(hash, claim, target, stores);
-            }
+        if u64::from(elms(keys::store(hash, stores), claim)) < target
+            && let Ok(target) = u32::try_from(target)
+        {
+            inline_rebuild(hash, claim, target, stores);
         }
         return;
     }
     let have = u64::from(elms(keys::store(hash, stores), claim));
-    if have >= need.max(2).next_power_of_two() || (!pow2_buckets() && keys::store(hash, stores).record_words(claim) >= want) {
+    if have >= need.max(2).next_power_of_two()
+        || (!pow2_buckets() && keys::store(hash, stores).record_words(claim) >= want)
+    {
         return;
     }
     let new_claim = keys::mut_store(hash, stores).claim(want);
@@ -1268,12 +1300,18 @@ fn rehash_into(hash: &DbRef, from: u32, into: u32, stores: &mut [Store], keys: &
         // the walk reads and writes their slots directly: per slot, the accessor's bounds
         // test was most of a rebuild's instructions.
         let base = store.base_ptr();
+        // Every access through these is `read_unaligned` / `write_unaligned`.
+        #[allow(clippy::cast_ptr_alignment)]
         let src = |i: u32| unsafe {
-            let p = base.add(from as usize * 8 + (BUCKET0 + 8 * i) as usize).cast::<u32>();
+            let p = base
+                .add(from as usize * 8 + (BUCKET0 + 8 * i) as usize)
+                .cast::<u32>();
             (p.read_unaligned(), p.add(1).read_unaligned())
         };
+        #[allow(clippy::cast_ptr_alignment)]
         let dst = |at: u32| unsafe {
-            base.add(into as usize * 8 + (BUCKET0 + at * into_sb) as usize).cast::<u32>()
+            base.add(into as usize * 8 + (BUCKET0 + at * into_sb) as usize)
+                .cast::<u32>()
         };
         for i in 0..count {
             let (index, tag) = src(i);
@@ -1534,7 +1572,13 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
         return Some(found);
     }
     if matches!(kind, 1 | 2)
-        && let Some(entry) = inline_find_int(store, hash_ref.store_nr, claim, u32::from(key.position), value)
+        && let Some(entry) = inline_find_int(
+            store,
+            hash_ref.store_nr,
+            claim,
+            u32::from(key.position),
+            value,
+        )
     {
         return Some(entry);
     }
@@ -1609,11 +1653,20 @@ pub fn find_ints(
     let digest = keys::ints_hash(values, read_seed(store, claim));
     let home = home_bucket(digest, count);
     let entries = Entries::from_hdr(store, claim, hash_ref.store_nr, &h);
-    (found.rec, found.pos) = probe(store, claim, count, sb, home, tag_of(digest), &entries, |r, b| {
-        keys.iter()
-            .zip(values)
-            .all(|(k, v)| store.get_int(r, b + u32::from(k.position)) == *v)
-    });
+    (found.rec, found.pos) = probe(
+        store,
+        claim,
+        count,
+        sb,
+        home,
+        tag_of(digest),
+        &entries,
+        |r, b| {
+            keys.iter()
+                .zip(values)
+                .all(|(k, v)| store.get_int(r, b + u32::from(k.position)) == *v)
+        },
+    );
     Some(found)
 }
 
@@ -1643,9 +1696,16 @@ pub fn find_str(hash_ref: &DbRef, stores: &[Store], key: &Key, value: &str) -> O
     let home = home_bucket(digest, count);
     let entries = Entries::from_hdr(store, claim, hash_ref.store_nr, &h);
     let k = keys::FastKey::Str(u32::from(key.position), value);
-    (found.rec, found.pos) = probe(store, claim, count, sb, home, tag_of(digest), &entries, |r, b| {
-        k.matches(store, r, b)
-    });
+    (found.rec, found.pos) = probe(
+        store,
+        claim,
+        count,
+        sb,
+        home,
+        tag_of(digest),
+        &entries,
+        |r, b| k.matches(store, r, b),
+    );
     Some(found)
 }
 
@@ -1850,7 +1910,11 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
 /// borrowing table owns nothing, so both release nothing, as [`free_entry`] decides too.
 pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
     let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
-    if claim == 0 || slot == 0 || slot & SLOT_RECORD != 0 || is_inline(keys::store(hash_ref, stores), claim) {
+    if claim == 0
+        || slot == 0
+        || slot & SLOT_RECORD != 0
+        || is_inline(keys::store(hash_ref, stores), claim)
+    {
         return;
     }
     let width = stride(keys::store(hash_ref, stores), claim);
@@ -2165,7 +2229,13 @@ fn inline_rebuild(hash: &DbRef, claim: u32, want: u32, stores: &mut [Store]) -> 
     }
     let h = hdr(store, claim);
     let new_claim = store.claim(inline_words(want, h.stride));
-    for fld in [arena::OWNER_FLD, SEED_FLD, SEED_FLD + 4, INLINE_LEN_FLD, arena::NEXT_FLD] {
+    for fld in [
+        arena::OWNER_FLD,
+        SEED_FLD,
+        SEED_FLD + 4,
+        INLINE_LEN_FLD,
+        arena::NEXT_FLD,
+    ] {
         let v = store.get_u32_raw(claim, fld);
         store.set_u32_raw(new_claim, fld, v);
     }
@@ -2178,6 +2248,8 @@ fn inline_rebuild(hash: &DbRef, claim: u32, want: u32, stores: &mut [Store]) -> 
     let (old0, new0) = (ent0(h.count), ent0(nh.count));
     let stride = h.stride as usize;
     let base = store.base_ptr();
+    // Every access through it is `read_unaligned` / `write_unaligned`.
+    #[allow(clippy::cast_ptr_alignment)]
     let slot = |rec: u32, at: u32| unsafe {
         base.add(rec as usize * 8 + (BUCKET0 + at * 8) as usize)
             .cast::<u32>()
@@ -2230,7 +2302,14 @@ fn inline_slot_for(hash: &DbRef, claim: u32, tag: u32, stores: &mut [Store]) -> 
 /// File a new entry at empty bucket `at` of inline table `claim`: its insertion number and
 /// tag, the length, and — with `zero` — its bytes zeroed, as a fresh arena slot is.  Answers
 /// the entry.
-fn inline_file(store: &mut Store, store_nr: u16, claim: u32, at: u32, tag: u32, zero: bool) -> DbRef {
+fn inline_file(
+    store: &mut Store,
+    store_nr: u16,
+    claim: u32,
+    at: u32,
+    tag: u32,
+    zero: bool,
+) -> DbRef {
     let h = hdr(store, claim);
     inline_file_at(store, store_nr, claim, h.count, h.stride, at, tag, zero)
 }
@@ -2248,7 +2327,12 @@ fn inline_file_at(
     tag: u32,
     zero: bool,
 ) -> DbRef {
-    let h = Hdr { count, sb: 8, stride, inline: true };
+    let h = Hdr {
+        count,
+        sb: 8,
+        stride,
+        inline: true,
+    };
     let seq = store.get_u32_raw(claim, arena::NEXT_FLD).max(1);
     store.set_u32_raw(claim, arena::NEXT_FLD, seq + 1);
     put_slot(store, claim, 8, at, seq, tag);
@@ -2263,7 +2347,11 @@ fn inline_file_at(
                 .write_bytes(0, h.stride as usize);
         }
     }
-    DbRef { store_nr, rec: claim, pos }
+    DbRef {
+        store_nr,
+        rec: claim,
+        pos,
+    }
 }
 
 /// [`add`] on an inline table: `rec`'s bytes — a record staged by [`alloc_entry`] — copied
@@ -2289,7 +2377,14 @@ fn inline_add(hash: &DbRef, claim: u32, rec: &DbRef, stores: &mut [Store], keys:
     let seed = read_seed(keys::store(hash, stores), claim);
     let tag = tag_of(keys::hash(rec, stores, keys, seed));
     let (claim, at) = inline_slot_for(hash, claim, tag, stores);
-    let placed = inline_file(keys::mut_store(hash, stores), hash.store_nr, claim, at, tag, false);
+    let placed = inline_file(
+        keys::mut_store(hash, stores),
+        hash.store_nr,
+        claim,
+        at,
+        tag,
+        false,
+    );
     let stride = hdr(keys::store(hash, stores), claim).stride;
     if rec.store_nr == hash.store_nr {
         let store = keys::mut_store(hash, stores);
@@ -2324,7 +2419,10 @@ fn inline_add(hash: &DbRef, claim: u32, rec: &DbRef, stores: &mut [Store], keys:
 fn inline_demote(hash: &DbRef, claim: u32, stores: &mut [Store], keys: &[Key]) {
     let store = keys::mut_store(hash, stores);
     let h = hdr(store, claim);
-    let (owner, seed) = (store.get_u32_raw(claim, arena::OWNER_FLD), read_seed(store, claim));
+    let (owner, seed) = (
+        store.get_u32_raw(claim, arena::OWNER_FLD),
+        read_seed(store, claim),
+    );
     let table = arena_table(store, new_slot_bytes(), h.stride);
     write_seed(store, table, seed);
     store.set_u32_raw(hash.rec, hash.pos, table);
@@ -2337,12 +2435,29 @@ fn inline_demote(hash: &DbRef, claim: u32, stores: &mut [Store], keys: &[Key]) {
             continue;
         }
         let from = claim as usize * 8 + (e0 + at * h.stride) as usize;
-        unsafe { std::ptr::copy_nonoverlapping(store.base_ptr().add(from), bytes.as_mut_ptr(), bytes.len()) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                store.base_ptr().add(from),
+                bytes.as_mut_ptr(),
+                bytes.len(),
+            )
+        };
         let table = store.get_u32_raw(hash.rec, hash.pos);
         let (_, rec, pos) = arena::alloc_at(store, table, h.stride, owner);
         let to = rec as usize * 8 + pos as usize;
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), store.base_ptr().add(to), bytes.len()) };
-        add(hash, &DbRef { store_nr: hash.store_nr, rec, pos }, stores, keys);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), store.base_ptr().add(to), bytes.len())
+        };
+        add(
+            hash,
+            &DbRef {
+                store_nr: hash.store_nr,
+                rec,
+                pos,
+            },
+            stores,
+            keys,
+        );
     }
     keys::mut_store(hash, stores).delete(claim);
 }
@@ -2388,7 +2503,11 @@ fn inline_entries(store: &Store, store_nr: u16, claim: u32) -> Vec<DbRef> {
         .collect();
     live.sort_unstable();
     live.into_iter()
-        .map(|(_, at)| DbRef { store_nr, rec: claim, pos: base + at * h.stride })
+        .map(|(_, at)| DbRef {
+            store_nr,
+            rec: claim,
+            pos: base + at * h.stride,
+        })
         .collect()
 }
 
@@ -2413,7 +2532,9 @@ fn raw_i64(base: *const u8, off: u32) -> i64 {
 #[allow(clippy::inline_always)]
 fn inline_checked(store: &Store, claim: u32, kp: u32) -> Option<(*const u8, u32, u32)> {
     let words = store.record_words(claim);
-    if words <= RESERVED_WORDS || u64::from(claim) + u64::from(words) > u64::from(store.capacity_words()) {
+    if words <= RESERVED_WORDS
+        || u64::from(claim) + u64::from(words) > u64::from(store.capacity_words())
+    {
         return None;
     }
     let base = unsafe { store.base_ptr().add(claim as usize * 8) }.cast_const();
@@ -2438,7 +2559,13 @@ fn inline_checked(store: &Store, claim: u32, kp: u32) -> Option<(*const u8, u32,
 /// `field_add_cell`'s cycles.  Inlined, the reference never leaves the registers.
 #[inline(always)]
 #[allow(clippy::inline_always)]
-pub fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &mut [Store]) -> Option<DbRef> {
+pub fn inline_entry_int(
+    hash: &DbRef,
+    claim: u32,
+    kp: u32,
+    value: i64,
+    stores: &mut [Store],
+) -> Option<DbRef> {
     let store = keys::store(hash, stores);
     let (base, count, stride) = inline_checked(store, claim, kp)?;
     let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);
@@ -2455,12 +2582,20 @@ pub fn inline_entry_int(hash: &DbRef, claim: u32, kp: u32, value: i64, stores: &
             && raw_u32(base, BUCKET0 + at * 8 + 4) == tag
             && raw_i64(base, e0 + at * stride + kp) == value
         {
-            return Some(DbRef { store_nr: hash.store_nr, rec: claim, pos: e0 + at * stride });
+            return Some(DbRef {
+                store_nr: hash.store_nr,
+                rec: claim,
+                pos: e0 + at * stride,
+            });
         }
         at = (at + 1) & mask;
     }
     let pos = inline_insert_int(hash, claim, count, stride, at, tag, kp, value, stores);
-    (pos != 0).then_some(DbRef { store_nr: hash.store_nr, rec: claim, pos })
+    (pos != 0).then_some(DbRef {
+        store_nr: hash.store_nr,
+        rec: claim,
+        pos,
+    })
 }
 
 /// File `value` at bucket `at`, the empty bucket [`inline_entry_int`]'s walk ended on, and
@@ -2486,7 +2621,8 @@ fn inline_insert_int(
     let base = unsafe { keys::store(hash, stores).base_ptr().add(claim as usize * 8) }.cast_const();
     let e0 = ent0(count);
     let len = raw_u32(base, INLINE_LEN_FLD);
-    if raw_u32(base, BUCKET0 + at * 8) != 0 || is_full(len + raw_u32(base, arena::FREE_FLD), count) {
+    if raw_u32(base, BUCKET0 + at * 8) != 0 || is_full(len + raw_u32(base, arena::FREE_FLD), count)
+    {
         return 0;
     }
     let store = keys::mut_store(hash, stores);
@@ -2494,12 +2630,22 @@ fn inline_insert_int(
     let seq = raw_u32(base, arena::NEXT_FLD).max(1);
     let pos = e0 + at * stride;
     unsafe {
-        base.add(arena::NEXT_FLD as usize).cast::<u32>().write_unaligned(seq + 1);
-        base.add((BUCKET0 + at * 8) as usize).cast::<u32>().write_unaligned(seq);
-        base.add((BUCKET0 + at * 8 + 4) as usize).cast::<u32>().write_unaligned(tag);
-        base.add(INLINE_LEN_FLD as usize).cast::<u32>().write_unaligned(len + 1);
+        base.add(arena::NEXT_FLD as usize)
+            .cast::<u32>()
+            .write_unaligned(seq + 1);
+        base.add((BUCKET0 + at * 8) as usize)
+            .cast::<u32>()
+            .write_unaligned(seq);
+        base.add((BUCKET0 + at * 8 + 4) as usize)
+            .cast::<u32>()
+            .write_unaligned(tag);
+        base.add(INLINE_LEN_FLD as usize)
+            .cast::<u32>()
+            .write_unaligned(len + 1);
         base.add(pos as usize).write_bytes(0, stride as usize);
-        base.add((pos + kp) as usize).cast::<i64>().write_unaligned(value);
+        base.add((pos + kp) as usize)
+            .cast::<i64>()
+            .write_unaligned(value);
     }
     pos
 }
@@ -2508,7 +2654,13 @@ fn inline_insert_int(
 /// must answer, else the entry (record 0 for a miss).  Inlined always, as [`inline_entry_int`].
 #[inline(always)]
 #[allow(clippy::inline_always)]
-pub fn inline_find_int(store: &Store, store_nr: u16, claim: u32, kp: u32, value: i64) -> Option<DbRef> {
+pub fn inline_find_int(
+    store: &Store,
+    store_nr: u16,
+    claim: u32,
+    kp: u32,
+    value: i64,
+) -> Option<DbRef> {
     let (base, count, stride) = inline_checked(store, claim, kp)?;
     let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);
     let tag = tag_of(keys::long_hash(value, seed));
@@ -2523,11 +2675,19 @@ pub fn inline_find_int(store: &Store, store_nr: u16, claim: u32, kp: u32, value:
             && raw_u32(base, BUCKET0 + at * 8 + 4) == tag
             && raw_i64(base, e0 + at * stride + kp) == value
         {
-            return Some(DbRef { store_nr, rec: claim, pos: e0 + at * stride });
+            return Some(DbRef {
+                store_nr,
+                rec: claim,
+                pos: e0 + at * stride,
+            });
         }
         at = (at + 1) & mask;
     }
-    Some(DbRef { store_nr, rec: 0, pos: 0 })
+    Some(DbRef {
+        store_nr,
+        rec: 0,
+        pos: 0,
+    })
 }
 
 /// `(Col-Inline)` — the byte spans of inline table `claim` that hold data, as `(offset, len)`
@@ -2563,5 +2723,7 @@ pub fn inline_slack(store: &Store, claim: u32) -> u32 {
     while is_full(live, need) {
         need *= GROWTH;
     }
-    store.record_words(claim).saturating_sub(inline_words(need, h.stride))
+    store
+        .record_words(claim)
+        .saturating_sub(inline_words(need, h.stride))
 }

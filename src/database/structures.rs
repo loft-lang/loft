@@ -507,7 +507,15 @@ impl Stores {
     #[must_use]
     pub fn keyed_field_consts(&self, parent_tp: u16, field: u16) -> (u32, u16) {
         let tp = self.sub_record_type(parent_tp, field);
-        let d = self.field_ref(&DbRef { store_nr: 0, rec: 0, pos: 0 }, parent_tp, field);
+        let d = self.field_ref(
+            &DbRef {
+                store_nr: 0,
+                rec: 0,
+                pos: 0,
+            },
+            parent_tp,
+            field,
+        );
         (d.pos, tp)
     }
 
@@ -538,7 +546,13 @@ impl Stores {
             if let Some(store) = self.allocations.get(d.store_nr as usize) {
                 let claim = store.collection_rec(d.rec, d.pos);
                 if claim != 0
-                    && let Some(rec) = crate::hash::inline_entry_int(&d, claim, key_pos, key, &mut self.allocations)
+                    && let Some(rec) = crate::hash::inline_entry_int(
+                        &d,
+                        claim,
+                        key_pos,
+                        key,
+                        &mut self.allocations,
+                    )
                 {
                     return rec;
                 }

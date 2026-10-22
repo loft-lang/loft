@@ -1039,7 +1039,11 @@ pub fn find_hash_entry<P: PageProvider>(
     }
     // `(Col-Tag)` — the table's slot width is in its header.
     let flags = reader.u32_at(claim, crate::hash::STRIDE_FLD);
-    let sb = if flags & crate::hash::TAGGED != 0 { 8 } else { crate::hash::SLOT_BYTES };
+    let sb = if flags & crate::hash::TAGGED != 0 {
+        8
+    } else {
+        crate::hash::SLOT_BYTES
+    };
     let stride = crate::hash::stride_of(flags);
     // `(Col-Inline)` — an inline table's entry is in the table record, at its bucket.
     let inline = flags & crate::hash::INLINE != 0;
@@ -1125,7 +1129,11 @@ pub fn hash_bucket_addrs<P: PageProvider>(
         return Vec::new();
     }
     let flags = reader.u32_at(claim, crate::hash::STRIDE_FLD);
-    let sb = if flags & crate::hash::TAGGED != 0 { 8 } else { crate::hash::SLOT_BYTES };
+    let sb = if flags & crate::hash::TAGGED != 0 {
+        8
+    } else {
+        crate::hash::SLOT_BYTES
+    };
     let elms = if flags & crate::hash::INLINE != 0 {
         crate::hash::inline_count_of(flags)
     } else {

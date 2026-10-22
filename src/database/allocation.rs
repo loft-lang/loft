@@ -4768,6 +4768,36 @@ impl Stores {
         );
     }
 
+    /// A hash that owns its entries, of a type that owns no heap: the walk would list every
+    /// entry only for each to release nothing, and its chunks free them whole — so the release
+    /// is the chunks and the table.  Here and not in the walk, whose list is also what a copy
+    /// re-files and an equality compares.  `false` when `tp` is not such a hash or its field
+    /// names no table this store owns: the walk releases it.
+    fn release_plain_hash(&mut self, rec: &DbRef, tp: u16) -> bool {
+        let Parts::Hash(v, _) = &self.types[tp as usize].parts else {
+            return false;
+        };
+        if self.owns_heap(*v) {
+            return false;
+        }
+        let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
+        if cur == 0
+            || Self::owned_edge_absent(cur)
+            || !self.owned_edge_in_store(rec, cur)
+            || !hash::owns_entries(self.store(rec), cur)
+        {
+            return false;
+        }
+        for extra in hash::arena_records(rec, &self.allocations) {
+            self.store_mut(rec).delete(extra);
+        }
+        self.store_mut(rec).delete(cur);
+        // The field named the table: emptied, as the walk's `zero_field` empties every
+        // collection's.
+        self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
+        true
+    }
+
     fn remove_claims_mode(&mut self, rec: &DbRef, tp: u16, borrowed: bool) {
         // loft#796 — the record itself must be inside its store before anything reads
         // its fields.  The per-edge guards in `for_each_owned_child` catch a rotten
@@ -4884,29 +4914,8 @@ impl Stores {
                     self.remove_struct_claims(rec, tp);
                     return;
                 }
-                // A hash that owns its entries, of a type that owns no heap: the walk would
-                // list every entry only for each to release nothing, and its chunks free them
-                // whole — so the release is the chunks and the table.  Here and not in the
-                // walk, whose list is also what a copy re-files and an equality compares.
-                if !borrowed
-                    && let Parts::Hash(v, _) = &self.types[tp as usize].parts
-                    && !self.owns_heap(*v)
-                {
-                    let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
-                    if cur != 0
-                        && !Self::owned_edge_absent(cur)
-                        && self.owned_edge_in_store(rec, cur)
-                        && hash::owns_entries(self.store(rec), cur)
-                    {
-                        for extra in hash::arena_records(rec, &self.allocations) {
-                            self.store_mut(rec).delete(extra);
-                        }
-                        self.store_mut(rec).delete(cur);
-                        // The field named the table: emptied, as the walk's `zero_field`
-                        // empties every collection's.
-                        self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
-                        return;
-                    }
+                if !borrowed && self.release_plain_hash(rec, tp) {
+                    return;
                 }
                 let walk = self.owned_walk(rec, tp, borrowed);
                 for c in walk.children {
