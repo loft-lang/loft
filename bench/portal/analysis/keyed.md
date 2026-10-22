@@ -329,8 +329,21 @@ record-backed element read, § What is left's territory, not the sort.
 `field_add_cell`, `stats.py` on x86-64: 4.21× → 3.19× (the tag: a probe compares the digest's
 low word before it reads an entry; the count read from the header) → 2.62× (entries in the
 bucket table, the one-integer-key paths checked once and walked in place, the key position a
-constant the emitter hands in) → **2.28×**.  `build_index` 1.63× → 1.31×,
-`collect_dirty_inputs` 2.82× → 2.66×; every hash matches its twin.
+constant the emitter hands in) → **2.28×**, and 2.30× once the layout's own defects were
+fixed (below).  `build_index` 1.63× → 1.36×, `collect_dirty_inputs` 2.82× → 2.75×; every hash
+matches its twin.
+
+**What the suite found in the layout, all fixed on the branch.**  An inline table broke four
+facts the arena layout kept: the record holding an entry names the collection's owner at
+field 4 (`Stores::path` read garbage — the owner now sits there, the live count at 16, the
+bucket count's exponent in the flags); a record handed in from elsewhere was copied and then
+FREED (a stage mark tells the table's own stage apart, and a foreign record turns the table
+back into an arena table); the raw entry writes bypassed a locked store's refusal; and an
+upgrade kept references to an entry's stage after the entry moved.  Two store measures were
+layout-blind too: the live digest read empty buckets' bytes, and the compaction gate compared
+a rebuild's arena capacity, not its content.  A growing inline table also leaves the tables
+it outgrew as free space between records — the memory a speed-first layout trades, as
+hashbrown does; `reserve` avoids it.
 
 **The last step was not instructions.**  Moving the walks into the caller took 4.5 % of the
 instructions and none of the cycles.  A cycle profile showed why: the walk answered an
