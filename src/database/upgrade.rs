@@ -752,7 +752,11 @@ impl Stores {
                     .into_iter()
                     .map(|(d, _)| d)
                     .collect();
-                e.sort_by_key(|d| (d.rec, d.pos));
+                // An inline table lists its entries in insertion order already; its positions
+                // are its buckets, which a seed orders (`(Col-Inline)`).
+                if !crate::hash::is_inline(st, cur) {
+                    e.sort_by_key(|d| (d.rec, d.pos));
+                }
                 e
             }
             Parts::Index(..) => crate::btree::records(from, &self.allocations)
@@ -810,6 +814,13 @@ impl Stores {
             );
             return Ok(());
         };
+        // `(Col-Inline)` — an inline table files an entry by copying it out of its stage, and
+        // moves every entry when it grows.  Sized for the whole collection first it never
+        // grows here, so an entry stays where it was filed and the references taken to it
+        // below — a pending fill, a mapped record — stay true once moved off the stage.
+        if matches!(self.types[coll_tp as usize].parts, Parts::Hash(..)) {
+            self.reserve_hash(&slot, elements.len() as i64, coll_tp);
+        }
         for src in elements {
             let before = self.collection_count(&slot, coll_tp);
             let rec = self.record_new(&parent, parent_tp, field);
@@ -818,9 +829,28 @@ impl Stores {
                 run.rec_map.insert(src.rec, rec);
             }
             let elem_tp = run.map.pairs[elem].new;
+            let pending_from = run.pending.len();
             self.convert(run, elem, &src, &rec, Container::At(rec, elem_tp))?;
             self.record_finish(&parent, &rec, parent_tp, field);
+            let stage = rec;
             let rec = self.filed(&rec);
+            if rec != stage {
+                // The element was built in a stage and copied into its table: what was taken
+                // to the stage now names the entry, at the same offset into it.
+                let moved = |d: &mut DbRef| {
+                    if d.store_nr == stage.store_nr && d.rec == stage.rec && d.pos >= stage.pos {
+                        *d = DbRef { store_nr: rec.store_nr, rec: rec.rec, pos: rec.pos + (d.pos - stage.pos) };
+                    }
+                };
+                for (d, _) in &mut run.pending[pending_from..] {
+                    moved(d);
+                }
+                if src.pos == 8
+                    && let Some(d) = run.rec_map.get_mut(&src.rec)
+                {
+                    moved(d);
+                }
+            }
             if self.collection_count(&slot, coll_tp) == before {
                 let key = crate::keys::get_key(
                     &rec,
