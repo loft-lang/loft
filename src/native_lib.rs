@@ -36,7 +36,7 @@ use crate::generation::{Output, returns_owned_string, rust_type};
 use crate::keys::DbRef;
 pub(crate) use crate::native_gate::is_text_work_buffer;
 use crate::platform::process::{Program, Spawn};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// @PLN11 Arc N / N2 (lean interface) — generate the loft-source **interface** a
 /// script adopts to call a native library: the public type definitions the
@@ -1031,6 +1031,11 @@ fn emit_program(
         // and link never disagree.  No-op when the library uses no native package.
         out.native_cabi = native_cabi_link_enabled();
         out.library_unit = true;
+        if own_ids {
+            // @PLN199 G1 — only the packages this artifact links can collide in its link.
+            let set: HashSet<u32> = entry.iter().copied().collect();
+            out.native_collisions = linked_collisions(data, &linked_packages(data, &set));
+        }
         // @PLN157 — a library cdylib is a SHIPPED binary: the lean tier, exactly as a
         // `--native-release` program.  Its functions run under the consumer's every
         // call, and the named per-call frame push was that lane's largest cost.
@@ -1047,6 +1052,50 @@ fn emit_program(
         out.shared_ids.take().map(std::cell::RefCell::into_inner)
     };
     (String::from_utf8(buf).unwrap_or_default(), ids)
+}
+
+/// @PLN199 G1 — the `[native]` packages a library artifact links: those that declare a
+/// `#native` definition its exports reach.  The program around it may load others; linked
+/// too, their symbols shared the artifact's flat C-ABI namespace, and one exported by two of
+/// them refused a library that calls only its own.
+fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(String, String)> {
+    let roots: Vec<u32> = export_set.iter().copied().collect();
+    let reach = crate::generation::reachable_functions(data, &roots);
+    data.native_packages
+        .iter()
+        .filter(|(_, dir)| {
+            reach.iter().any(|&d| {
+                let def = data.def(d);
+                !def.native().is_empty()
+                    && *def.code() == crate::data::Value::Null
+                    && crate::file_access::is_under(def.position().file.as_str(), dir)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+/// The `#native` symbols two of `linked` packages declare: what [`linked_packages`]' link
+/// cannot tell apart.
+fn linked_collisions(data: &Data, linked: &[(String, String)]) -> HashSet<String> {
+    let mut by_sym: HashMap<&str, HashSet<usize>> = HashMap::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.native().is_empty() || *def.code() != crate::data::Value::Null {
+            continue;
+        }
+        if let Some(at) = linked
+            .iter()
+            .position(|(_, dir)| crate::file_access::is_under(def.position().file.as_str(), dir))
+        {
+            by_sym.entry(def.native()).or_default().insert(at);
+        }
+    }
+    by_sym
+        .into_iter()
+        .filter(|(_, pkgs)| pkgs.len() > 1)
+        .map(|(s, _)| s.to_string())
+        .collect()
 }
 
 /// @PLN199 G0b-2 — the code a library artifact carries for `entry` and what it reaches, with
@@ -2240,7 +2289,7 @@ fn build_keyed_cdylib(
         // Link each native package's resolved cdylib `.so` (the same `-L native`
         // / `-l dylib` / RPATH the executable path emits) so the cdylib's
         // `extern "C"` calls resolve at link time and the `.so` loads at run time.
-        for (crate_name, pkg_dir) in &data.native_packages {
+        for (crate_name, pkg_dir) in &linked_packages(data, export_set) {
             args.extend(native_pkg_cabi_link_args(crate_name, pkg_dir));
         }
     }
@@ -2747,6 +2796,9 @@ fn artifact_sources(
                 .into_iter()
                 .map(|d| data.def(d).source),
         )
+        // The program's source is no library's: an instance the program made of one of the
+        // library's generics lies in the library's file, and the program imports everything.
+        .filter(|&s| s != crate::data::MAIN_SOURCE)
         .collect();
     loop {
         let before = sources.len();
@@ -2765,7 +2817,11 @@ fn artifact_sources(
             dir.as_str() == pkg_dir
                 || (0..data.definitions()).any(|d| {
                     let def = data.def(d);
-                    sources.contains(&def.source) && under(def.position().file.as_str(), dir)
+                    // A stdlib definition can lie in a library's file — the wrapper type
+                    // `main_vector<T>` the library's `vector<T>` minted — and is no code of it.
+                    def.source != crate::data::STD_SOURCE
+                        && sources.contains(&def.source)
+                        && under(def.position().file.as_str(), dir)
                 })
         })
         .cloned()
@@ -2776,13 +2832,29 @@ fn artifact_sources(
     out
 }
 
+/// @PLN199 G1b — which packages, by name and version (`loft.toml`), not by where they lie:
+/// the same library at two places is the same artifact.  A registry version is immutable; an
+/// edited local package is caught by the staleness check beside this key.  A directory with
+/// no manifest is named by its last component.
 fn contributing_fingerprint(contributing: &[String]) -> u64 {
     use std::hash::{Hash, Hasher};
-    let mut dirs: Vec<&String> = contributing.iter().collect();
-    dirs.sort_unstable();
-    dirs.dedup();
+    let mut ids: Vec<(String, String)> = contributing
+        .iter()
+        .map(|dir| {
+            let m = crate::manifest::read_manifest(&format!("{dir}/loft.toml"));
+            let name = m
+                .as_ref()
+                .and_then(|m| m.name.clone())
+                .or_else(|| crate::file_access::file_name(dir))
+                .unwrap_or_default();
+            (name, m.and_then(|m| m.version).unwrap_or_default())
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    dirs.hash(&mut h);
+    ids.hash(&mut h);
+    crate::cache::host_triple().hash(&mut h);
     h.finish()
 }
 

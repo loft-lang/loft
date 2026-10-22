@@ -322,6 +322,72 @@ fn a_librarys_lambda_names_do_not_depend_on_what_was_parsed_before_it() {
     let _ = fa::remove_dir_all(&tmp);
 }
 
+/// @PLN199 G1 — an artifact is a function of the library alone: the same library at two
+/// places, used by two different programs, generates the same stem and the same source —
+/// no machine path (`<package>/src/…` in its frames and line comments) and nothing of the
+/// program's type table.
+#[test]
+fn the_same_library_at_two_places_generates_the_same_artifact() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_g1_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let one = private_lib(&tmp.join("one"), &["mathmixed", "typeshift"]);
+    let two = private_lib(&tmp.join("elsewhere/two"), &["mathmixed"]);
+    let alone = tmp.join("alone.loft");
+    fa::write(
+        &alone,
+        "use mathmixed::*;\nfn main() { println(\"{apply_inc(10)}\"); }\n",
+    )
+    .unwrap();
+    let shifted = tmp.join("shifted.loft");
+    fa::write(
+        &shifted,
+        "use typeshift::*;\nuse mathmixed::*;\n\
+         fn main() { _ = ts_touch(); println(\"{apply_inc(10)}\"); }\n",
+    )
+    .unwrap();
+    let source = |lib: &std::path::Path, prog: &std::path::Path| -> (String, String) {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(lib)
+            .arg(prog)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run the loft binary");
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "11",
+            "apply_inc(10) = 11:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let rs = fa::read_dir(lib.join("mathmixed/native-auto"))
+            .expect("the run built mathmixed")
+            .into_iter()
+            .find(|e| fa::has_extension(e, "rs"))
+            .expect("a generated source");
+        let name = fa::file_name(rs.os_spelling()).unwrap_or_default();
+        (name, fa::read_to_string(&rs).unwrap_or_default())
+    };
+    let (stem_one, src_one) = source(&one, &shifted);
+    let (stem_two, src_two) = source(&two, &alone);
+    assert_eq!(
+        stem_one, stem_two,
+        "the same library at two places takes one name"
+    );
+    assert!(
+        src_one == src_two,
+        "the same library generates the same source wherever it lies and whoever uses it"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}
+
 /// `LOFT_TRACE_NATIVE_GATE=1` names, per `use`d library, how many of the functions a script
 /// can call run compiled and, for each that stays interpreted, the rule that kept it there —
 /// before it, a function left out of the compiled library ran slower and nothing said so.

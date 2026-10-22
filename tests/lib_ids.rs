@@ -6,8 +6,7 @@
 //! library artifact twice: alone, and behind a prefix that declares structs, an enum,
 //! functions and generics first, so each of its types, functions and type variables takes
 //! another number.  The two texts
-//! must be the same outside `init` (the program's own type table): a literal id left in the
-//! code shows up as the first line that differs.
+//! must be the same: a literal id left in the code shows up as the first line that differs.
 
 mod common;
 use common::cached_default;
@@ -22,7 +21,7 @@ const SHIFT: &str = "struct ShiftA { a: text, b: float, c: boolean }\n\
                      fn shift_t<T>(x: T) -> vector<T> { [x] }\n\
                      fn shift_u<U>(x: U) -> U { x }\n";
 
-/// The library code of `src`, parsed after `prefix`, with `init` cut out.
+/// The library code of `src`, parsed after `prefix`.
 fn code_of(prefix: &str, src: &str, name: &str) -> Option<String> {
     let (data, db) = cached_default();
     let mut p = loft::parser::Parser::new();
@@ -52,13 +51,7 @@ fn code_of(prefix: &str, src: &str, name: &str) -> Option<String> {
         return None;
     }
     let src = loft::native_lib::library_code_rs(&p.data, &state.database, &entry);
-    let start = src.find("\nfn init(")?;
-    let end = start + src[start..].find("\n}\n")? + 3;
-    Some(without_comments(&format!(
-        "{}{}",
-        &src[..start],
-        &src[end..]
-    )))
+    Some(without_comments(&src))
 }
 
 /// `src` without its `/* … */` and `// …` comments: the generator annotates blocks with

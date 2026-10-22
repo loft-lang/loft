@@ -9372,23 +9372,28 @@ extern crate loft;"
             &reachable,
             self.checkpoints,
         )?;
-        writeln!(w, "fn init(cell: &std::cell::UnsafeCell<Stores>) {{")?;
-        writeln!(
-            w,
-            "    let db: &mut Stores = unsafe {{ &mut *cell.get() }};"
-        )?;
-        // Register ALL types (0..till) so runtime type IDs match compile-time IDs.
-        self.output_init(w, 0, till)?;
-        // The targets first: `finish` links a type a stored `reference<T>` names (`@C145`),
-        // so it lays the type out by reference — as the interpreter's `finish` does.
-        self.emit_reference_targets(w)?;
-        writeln!(w, "    db.finish();")?;
-        // Initiative 03 Phase 3b: emit code to build CONST_STORE
-        // vectors and populate `db.const_refs` — mirrors the
-        // interpreter path in `compile::build_const_vectors`.
-        self.emit_const_vectors(w, till)?;
-        self.emit_lazy_fetch_registration(w, till)?;
-        writeln!(w, "}}\n")?;
+        // @PLN199 G1 — a library artifact runs in its host's stores, whose types and constants
+        // the host made, and names them by key: the program's type table is no part of it.
+        if self.shared_ids.is_none() {
+            writeln!(w, "fn init(cell: &std::cell::UnsafeCell<Stores>) {{")?;
+            writeln!(
+                w,
+                "    let db: &mut Stores = unsafe {{ &mut *cell.get() }};"
+            )?;
+            // Register ALL types (0..till) so runtime type IDs match compile-time IDs.
+            self.output_init(w, 0, till)?;
+            // The targets first: `finish` links a type a stored `reference<T>` names
+            // (`@C145`), so it lays the type out by reference — as the interpreter's
+            // `finish` does.
+            self.emit_reference_targets(w)?;
+            writeln!(w, "    db.finish();")?;
+            // Initiative 03 Phase 3b: emit code to build CONST_STORE
+            // vectors and populate `db.const_refs` — mirrors the
+            // interpreter path in `compile::build_const_vectors`.
+            self.emit_const_vectors(w, till)?;
+            self.emit_lazy_fetch_registration(w, till)?;
+            writeln!(w, "}}\n")?;
+        }
         // Emit only reachable functions across the full definition range.
         self.output_functions(w, 0, till, Some(&reachable))?;
         self.emit_ckpt_table(w)
@@ -12009,7 +12014,7 @@ extern crate loft;"
             writeln!(
                 w,
                 "// loft:{}:{}",
-                crate::file_access::portable_str(def.position().file.as_str()),
+                self.source_path(def.position().file.as_str()),
                 def.position().line
             )?;
         }
@@ -12647,7 +12652,13 @@ extern crate loft;"
                 // P199 — prepend the `&mut Stores` derivation from the
                 // `&UnsafeCell<Stores>` parameter so templates and inner
                 // emissions see `stores` as a regular `&mut Stores` binding.
-                let escaped_file = loft_file.replace('\\', "\\\\");
+                // @PLN199 G1a — a library artifact names the file inside its package.
+                let escaped_file = if self.shared_ids.is_some() {
+                    self.source_path(loft_file)
+                } else {
+                    loft_file.to_string()
+                }
+                .replace('\\', "\\\\");
                 // A key may carry any spelling a type has (an instance's bound types).
                 let loft_name = loft_name.replace('\\', "\\\\").replace('"', "\\\"");
                 // @PLN18 08-S2 — the live-dispatch entry check precedes even

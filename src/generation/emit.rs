@@ -246,9 +246,8 @@ impl Output<'_> {
                 // rustc errors trace back to the loft source line.
                 // One spelling on every host: the comment is part of generated source that is
                 // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
-                let file = crate::file_access::portable_str(
-                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
-                );
+                let file =
+                    self.source_path(&self.data.def(self.def_nr).position().file.replace('\n', ""));
                 // @PLN157 — remember where we are, so an operator checkpoint can name the
                 // loft line it came from.  This stream is the emitter's only notion of
                 // position.
@@ -2224,6 +2223,33 @@ impl Output<'_> {
             }
             _ => None,
         }
+    }
+
+    /// @PLN199 G1a — how generated code names a loft source file: as it is spelled, except in
+    /// a library artifact, which names it inside its package (`<package>/src/x.loft`) — no
+    /// machine path, so the same library at two places generates the same source, and a
+    /// stack trace through it reads the way the package does.
+    pub(super) fn source_path(&self, file: &str) -> String {
+        let plain = crate::file_access::portable_str(file);
+        if self.shared_ids.is_none() {
+            return plain;
+        }
+        let mut dir = crate::file_access::parent(file);
+        while let Some(d) = dir {
+            let manifest = d.join("loft.toml");
+            if crate::file_access::exists(&manifest) {
+                let name = crate::manifest::read_manifest(&manifest.to_string_lossy())
+                    .and_then(|m| m.name)
+                    .unwrap_or_default();
+                let rel = std::path::Path::new(file)
+                    .strip_prefix(&d)
+                    .map(|r| crate::file_access::portable_str(&r.to_string_lossy()))
+                    .unwrap_or(plain);
+                return format!("{name}/{rel}");
+            }
+            dir = crate::file_access::parent(&d);
+        }
+        plain
     }
 
     /// @PLN199 G0a — the literal a type id is written as in generated code, where the
@@ -4388,9 +4414,8 @@ impl Output<'_> {
             if let Value::Line(line) = v {
                 // One spelling on every host: the comment is part of generated source that is
                 // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
-                let file = crate::file_access::portable_str(
-                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
-                );
+                let file =
+                    self.source_path(&self.data.def(self.def_nr).position().file.replace('\n', ""));
                 // @PLN157 — see the sibling in `output_code_node`: the statement-level
                 // half of the same position stream.
                 self.ckpt_cur_line = *line;

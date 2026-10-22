@@ -311,9 +311,6 @@ key tables (`id_tables_src`) that `loft_shared_init(table, ids)` fills from the 
   alone and behind a prefix that renumbers it, and requires the same code outside `init`;
   `n2_cdylib::a_library_artifact_runs_in_a_program_that_numbers_it_differently` runs an
   artifact in a program that numbers it differently (a crash with `LOFT_NO_LIB_IDS=1`).
-- Left to G1: `init()` is still the whole program's type table, block comments print loft
-  types with their ids, and the collision check (`Output::native_collisions`) reads the whole
-  program, so the source is not yet the same text in two programs.
 
 **G0c — key the artifact on what it is (done).**  An artifact that names its ids by key
 depends on the loft that built it and the sources it carries, nothing of the program:
@@ -337,15 +334,17 @@ numbering in its key.
   artifact at the shared name and requires it rebuilt; `tests/lib_ids.rs`'s prefix carries
   generics.
 
-**G1 — a reproducible name.**
-- G1a: generated source carries no machine path.  `cr_call_push` / `cr_call_push_lean`
-  (`generation/mod.rs` ~12590) print the absolute file; print it relative to the package root
-  (`<pkg>/src/x.loft`), which is what a stack trace should show anyway.
-- G1b: the stem hashes the CONTENT of `artifact_sources` (`contributing_fingerprint` hashes
-  their directory paths today, which differ between machines), `loft_exe_identity` and
-  `cache::host_triple` — nothing from the program or the machine.
-- Check: the same library, checked out at two paths, built by the same `loft`, produces the
-  same stem and byte-identical `.rs`.
+**G1 — a reproducible artifact (done).**  A library artifact is a function of the library and
+the loft that builds it: the same library at two places, used by two programs, generates the
+same stem and byte-identical source.
+- No program in it: no `init()` (the host's stores hold the types and constants), and the
+  C-ABI link and its collision check cover only the `[native]` packages whose `#native`
+  definitions the exports reach (`linked_packages`), not every package the program loads.
+- No machine in it: a source file is named inside its package (`Output::source_path`,
+  `<package>/src/x.loft`) in frames and line comments, and the stem identifies each of
+  `artifact_sources` by package name and version, plus the host triple.  A stdlib wrapper
+  type lying in a library's file (`main_vector<T>`) does not make that library a source.
+- Guard: `n3_use_native::the_same_library_at_two_places_generates_the_same_artifact`.
 
 **G2 — the producer.**
 - G2a: `BinaryEntry` (`registry_index.rs:123`, parsed at ~400 beside `loft_ffi_fp`) gains
@@ -413,9 +412,9 @@ The procedure, the one every step above followed:
 
 ## Order
 
-Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c.  D4 is dropped.  The
-open steps, each one commit:
+Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c, G1.  D4 is dropped.
+The open steps, each one commit:
 
-G1a → G1b → G2a → G2b → G3a → G3b → G2c, and,
+G2a → G2b → G3a → G3b → G2c, and,
 independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G2c, the release job,
 is last because it publishes.
