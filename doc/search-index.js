@@ -229,7 +229,6 @@ const SEARCH_INDEX=[
 {name:"operator",kind:"const",url:"stdlib-persistent-stores.html"},
 {name:"operator",kind:"const",url:"stdlib-persistent-stores.html"},
 {name:"operator",kind:"const",url:"stdlib-persistent-stores.html"},
-{name:"operator",kind:"const",url:"stdlib-persistent-stores.html"},
 {name:"store_load_url",kind:"fn",url:"stdlib-persistent-stores.html"},
 {name:"store_load_url_trusted",kind:"fn",url:"stdlib-persistent-stores.html"},
 {name:"store_load_untrusted",kind:"fn",url:"stdlib-persistent-stores.html"},

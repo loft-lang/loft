@@ -4901,16 +4901,12 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>A release number, <code>major.minor.patch</code>: what a store records as the release of the program that wrote it, and what an <code>upgrade</code> routine is told its stored data came from. Releases are ordered by number, so <code>10.0</code> comes after <code>9.0</code>, and a text compares as the release it spells: fn upgrade(from: Release, old: ItemBefore2, item: Item) { if from &lt; &quot;2.0&quot; { item.count = len(old.label) } }</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_release</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-persistent-stores.html">Release</a></span></code></pre>
-<p>The release a text spells: <code>&quot;2&quot;</code>, <code>&quot;2.1&quot;</code>, <code>&quot;2.1.3&quot;</code>; a part that is missing or not a number counts as 0. v = &quot;2.1&quot; as Release   // v.major == 2, v.minor == 1, v.patch == 0</p>
-</div>
-<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="en"><a href="stdlib-persistent-stores.html">Release</a></span>, other: <span class="en"><a href="stdlib-persistent-stores.html">Release</a></span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
 <p>Releases in the order they were made: by major, then minor, then patch.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">compare</span>(self: <span class="en"><a href="stdlib-persistent-stores.html">Release</a></span>, other: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en"><a href="stdlib-types.html">Ordering</a></span></code></pre>
-<p>A release against the release a text spells: <code>from &lt; &quot;2.0&quot;</code>.</p>
+<p>A release against the release a text spells (<code>&quot;2&quot;</code>, <code>&quot;2.1&quot;</code>, <code>&quot;2.1.3&quot;</code>; a part that is missing or not a number counts as 0): <code>from &lt; &quot;2.0&quot;</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw"><a href="stdlib-min-max-clamp.html">operator</a></span> <span class="fn-call">to_text</span>(self: <span class="en"><a href="stdlib-persistent-stores.html">Release</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span></code></pre>

@@ -9107,12 +9107,6 @@ pub struct Release { pub major: integer, pub minor: integer, pub patch: integer 
 A release number, `major.minor.patch`: what a store records as the release of the program that wrote it, and what an `upgrade` routine is told its stored data came from. Releases are ordered by number, so `10.0` comes after `9.0`, and a text compares as the release it spells: fn upgrade(from: Release, old: ItemBefore2, item: Item) { if from \< "2.0" { item.count = len(old.label) } }
 
 ```rust
-pub operator to_release(self: text) -> Release
-```
-
-The release a text spells: `"2"`, `"2.1"`, `"2.1.3"`; a part that is missing or not a number counts as 0. v = "2.1" as Release   // v.major == 2, v.minor == 1, v.patch == 0
-
-```rust
 pub operator compare(self: Release, other: Release) -> Ordering
 ```
 
@@ -9122,7 +9116,7 @@ Releases in the order they were made: by major, then minor, then patch.
 pub operator compare(self: Release, other: text) -> Ordering
 ```
 
-A release against the release a text spells: `from \< "2.0"`.
+A release against the release a text spells (`"2"`, `"2.1"`, `"2.1.3"`; a part that is missing or not a number counts as 0): `from \< "2.0"`.
 
 ```rust
 pub operator to_text(self: Release) -> text
