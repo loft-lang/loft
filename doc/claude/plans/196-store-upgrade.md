@@ -106,7 +106,12 @@ load" for a change every loader in fact refuses.
   before the tarball (owner, 2026-10-21: written at release time), and an APPLICATION
   releases through the same command (owner, 2026-10-22): its manifest is the same `[package]`
   shape, so `loft package` records the baseline of the types its entry program reaches.  A
-  stored type only a side program declares is not recorded.
+  stored type only a side program declares is not recorded.  Every compile of the project compares its types with that
+  baseline and warns at a stored type a store of the baseline's release could not be upgraded
+  to (`layout-upgrade-refused`, `Parser::check_layout_baseline`; owner, 2026-10-22: a warning,
+  not an error), the one answer `loft layout check` prints (`layout_schema::baseline_report`,
+  which asks `Stores::baseline_upgrade`, routines included); `loft package` refuses to
+  release while one stands.
 
 ## Goal
 
@@ -398,8 +403,12 @@ runs a full game or a long simulation, which is its goal.  The converter builds 
 
 1. ~~The rename source syntax~~ — answered (owner, 2026-10-20): no new syntax; an added
    field's default, which may be an expression over `$`, fills it on upgrade.
-2. **Does `loft layout check` exit non-zero** on a refused upgrade, so a project's CI gates on
-   it?
+2. ~~Does `loft layout check` exit non-zero~~ — answered (owner, 2026-10-22): a refused
+   upgrade is a compiler WARNING (`layout-upgrade-refused`) at the stored type, on every
+   compile of the project, so it shows in the IDE while the program still runs; `loft layout
+   check` exits 1 on it, a library's CI denies it, and `loft package` refuses to release over
+   it.  Not an error: legality stays a matter of the source, and a refactor that drops the
+   field before writing the routine still runs its tests.
 3. ~~Upgrade on load~~ — answered (owner, 2026-10-21): `store_load` converts an older layout
    IN MEMORY.  The call answers true with every added field filled by its default, the file
    on disk keeps its old layout until the program writes it, and a change the upgrade map

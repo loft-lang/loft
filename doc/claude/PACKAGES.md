@@ -114,7 +114,9 @@ graphics/
 an application.  Before it builds the tarball it records `layout.lock` beside `loft.toml`: the
 layout of the types the entry program reaches, the release, and which stored fields each
 computed field's default reads (DATABASE.md § A store that skipped releases).  Commit it with
-the release; the next release's `loft layout check` reads it.  The registry steps that follow
+the release: from then on every compile of the project warns (`layout-upgrade-refused`) at a
+stored type a store of that release could not be upgraded to, and `loft package` refuses to
+release while one stands, keeping the baseline it was measured against.  The registry steps that follow
 (`loft publish`) are a library's only; `--tarball-only` builds the archive and records nothing.
 
 ---

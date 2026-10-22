@@ -1198,6 +1198,35 @@ impl Stores {
         Ok(WorldPlan::Converts(map.changes))
     }
 
+    /// What a store written with the project's baseline layout `old` (accepted as release
+    /// `version`) does on its way into this program's `roots`: the changes it goes through and
+    /// the refusals that stop it, each refusal's path starting at its root type's name.  The
+    /// same decision a load takes, routines included, so `loft layout check` and the parser's
+    /// `layout-upgrade-refused` warning cannot disagree with the converter.  A root the
+    /// baseline does not hold has no stored data to carry, and is skipped.
+    #[must_use]
+    pub fn baseline_upgrade(
+        &self,
+        old: &LayoutDesc,
+        version: &str,
+        roots: &[u16],
+        routines: &Routines,
+    ) -> (Vec<String>, Vec<crate::database::Refusal>) {
+        let routines = self.routines_for(version, routines);
+        let mut changes = Vec::new();
+        let mut refusals = Vec::new();
+        for &root in roots {
+            let name = &self.types[root as usize].name;
+            let Some((&old_root, _)) = old.names.iter().find(|(_, n)| *n == name) else {
+                continue;
+            };
+            let map = self.upgrade_map(old, old_root, root, true, &routines);
+            changes.extend(map.changes);
+            refusals.extend(map.refusals);
+        }
+        (changes, refusals)
+    }
+
     /// `@FR-L-Upgrade-Routine` — the routines that run on a store whose recorded release is
     /// `written`: every one for a store older than this program (or one that records no
     /// release), none for a store this release or a later one wrote.  The ONE home of that

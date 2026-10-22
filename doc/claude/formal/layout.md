@@ -463,11 +463,14 @@ build is refused by this rule or converted by the upgrade map
   (L-Upgrade-Source)  a project baseline records, per computed field (a default that reads
                       the record), the stored fields it reads — through nested structs too —
                       and the release that first recorded that line, carried across later
-                      accepts.  `loft layout check` refuses a build that drops one of them
-                      while the computed field remains, unless the build has an upgrade
-                      routine for that struct or data_compatible_with is at or above that
-                      release: an older store would otherwise lose the value with no record
-                      that it existed.
+                      accepts.  A build that drops one of them while the computed field
+                      remains is refused, unless the build has an upgrade routine for that
+                      struct or data_compatible_with is at or above that release: an older
+                      store would otherwise lose the value with no record that it existed.
+                      The refusal, and every other change the baseline's stores cannot be
+                      upgraded across, is the compiler's `layout-upgrade-refused` warning at
+                      the stored type, `loft layout check`'s exit 1, and `loft package`'s
+                      refusal to release; the three ask one function.
 ```
 
 **In words.** A user who skips releases opens a store two layouts back.  The one-step
@@ -511,7 +514,10 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   refused naming the bridge, byte for byte untouched, with and without a layout change.
 - **`L-Upgrade-Source`** — `tests/store_upgrade.rs` `layout_check_*`: the sources recorded
   (nested and in-record), a dropped source refused naming it, each cure (routine, floor)
-  clearing it, the first release carried across a re-accept, and an unrelated drop allowed.
+  clearing it, the first release carried across a re-accept, and an unrelated drop allowed;
+  `parser_warns_on_an_upgrade_the_baseline_refuses` (the warning at the type, a changed kind,
+  the silent cures, a warm program cache, a removed baseline) and
+  `loft_package_refuses_an_upgrade_the_baseline_refuses` (the 2.0 baseline kept).
 - **`L-Align`** — `tests/layout_alignment.rs` asks `Stores::alignment_violations` of every
   finished type (the standard library and a corpus of the spellings that reach the layout
   differently), compares the restated tuple storage view with the `__tuple<…>` record's own

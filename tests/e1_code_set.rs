@@ -408,6 +408,10 @@ const CODES: &[(&str, &str)] = &[
         "fn main() { print(\"needs a cwd lib/ and a --lib directory that both provide one name\"); }",
     ),
     (
+        "layout-upgrade-refused",
+        "fn main() { print(\"needs a project with a release baseline in layout.lock\"); }",
+    ),
+    (
         "persist-bind-through-field",
         "struct Inner { k: integer }\n\
          struct Outer { items: hash<Inner[k]> }\n\
@@ -446,6 +450,13 @@ const CODES: &[(&str, &str)] = &[
 /// that fires it, so tooth 1 cannot cover it. Listed rather than silently skipped, because
 /// "no trigger" and "no code" look identical in a green run.
 const NO_MINIMAL_TRIGGER: &[(&str, &str)] = &[
+    (
+        // Needs a project: a `loft.toml`, a `layout.lock` recorded by an earlier release, and
+        // a program whose stored types changed since.  Covered instead by
+        // `tests/store_upgrade.rs` (`parser_warns_on_an_upgrade_the_baseline_refuses`).
+        "layout-upgrade-refused",
+        "requires a project manifest plus the baseline an earlier release recorded",
+    ),
     (
         // Needs a package whose manifest records an older tested contract — not expressible
         // as a single source file.

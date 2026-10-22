@@ -243,6 +243,7 @@ impl Parser {
             // be asked whether it removes from a `&` parameter.
             self.check_reshape_under_reference();
             self.synth_drop_cascades();
+            self.check_layout_baseline(filename);
         }
         self.diagnostics.fill(self.lexer.diagnostics());
         self.diagnostics.is_empty()
@@ -1672,6 +1673,87 @@ impl Parser {
                 .database
                 .release
                 .set(crate::manifest::release_of(&self.database.source_dir));
+        }
+    }
+
+    /// `layout-upgrade-refused` — a change to a stored type that a store written by the
+    /// project's last release could not be upgraded across: the baseline `layout.lock` beside
+    /// `loft.toml` (recorded by `loft package`) against this program's types, the same answer
+    /// `loft layout check` gives (`@FR-L-Upgrade-Source`, `@FR-L-Upgrade-Routine`).  A
+    /// warning, at the stored type's declaration: the program still runs while a refactor is
+    /// half done, a library's CI denies warnings, and `loft package` refuses to release over
+    /// one.  The baseline is a source of this compile, so editing it is a program-cache miss.
+    fn check_layout_baseline(&mut self, filename: &str) {
+        use crate::schema_sidecar::baseline_path;
+        let entry = std::path::Path::new(filename);
+        let project = crate::resolution_scope::project_root(filename)
+            .or_else(|| entry.parent().map(std::path::Path::to_path_buf))
+            .unwrap_or_default();
+        let lock = [
+            baseline_path(&project),
+            project.join(".loft").join("layout.lock"),
+        ]
+        .into_iter()
+        .find(|p| crate::file_access::is_file(p));
+        let Some(lock) = lock else {
+            return;
+        };
+        if self.track_sources {
+            self.parsed_sources
+                .push(lock.to_string_lossy().into_owned());
+        }
+        let routines = Self::upgrade_routines(&self.data);
+        let report = crate::layout_schema::baseline_report(
+            &project,
+            &self.database,
+            &self.data,
+            self.database.release(),
+            &routines,
+        );
+        let at_entry = *self.lexer.pos();
+        let refused = match report {
+            Ok(Some(r)) => r.refused,
+            Ok(None) => return,
+            Err(e) => {
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "layout-upgrade-refused",
+                    "{}: {e}",
+                    lock.display()
+                );
+                return;
+            }
+        };
+        for r in refused {
+            // The stored type the path starts at; a field path names no source line of its own.
+            let ty = r.at.split(['.', '[']).next().unwrap_or_default();
+            let d_nr = self.data.def_nr(ty);
+            let pos = if d_nr == u32::MAX {
+                at_entry
+            } else {
+                *self.data.def(d_nr).position()
+            };
+            self.lexer.pos_diagnostic_coded(
+                Level::Warning,
+                &pos,
+                "layout-upgrade-refused",
+                &format!(
+                    "a store written by the last release cannot be upgraded to this build: {}",
+                    r.text
+                ),
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!(
+                    "write `fn upgrade(from: Release, old: <the old fields>, item: {ty})`, or \
+                     raise `data_compatible_with` in loft.toml past the releases it cannot read"
+                ),
+                condition: Some("stores the earlier releases wrote must still open".to_string()),
+                edit: None,
+                concept: "packages",
+                concept_ref: "@F55",
+            });
         }
     }
 

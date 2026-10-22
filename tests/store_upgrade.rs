@@ -1859,6 +1859,98 @@ fn layout_check_source_release_carries_forward() {
     let _ = loft::file_access::remove_dir_all(&dir);
 }
 
+/// The same check, at compile time: an ordinary run of the program warns at the stored type's
+/// declaration (`layout-upgrade-refused`) and still runs.  The cells: a dropped source and a
+/// changed field type each warn, a routine or an unchanged layout is silent, and the warning
+/// survives a warm program cache and goes when the baseline does.
+#[test]
+fn parser_warns_on_an_upgrade_the_baseline_refuses() {
+    let dir = cell_dir("parse_warn");
+    assert_eq!(layout_as(&dir, "accept", "2.0", "", SRC_V2).0, 0);
+    let run = |src: &str| {
+        loft::file_access::write(dir.join("prog.loft"), src).unwrap();
+        let (code, out, err) = run_loft(&dir, &["prog.loft"]);
+        (code, format!("{out}{err}"))
+    };
+    manifest(&dir, "3.0", "");
+    let lost = "Inner.label is dropped, and 2.0 computes Item.count from it";
+    let (code, out) = run(SRC_V3);
+    assert!(
+        code == 0
+            && out.contains("warning[layout-upgrade-refused]")
+            && out.contains(lost)
+            && out.contains("prog.loft:2:"),
+        "a dropped source warns at `struct Item` and the program runs ({code})\n{out}"
+    );
+    let (code, again) = run(SRC_V3);
+    assert!(
+        code == 0 && again.contains(lost),
+        "a warm program cache replays it ({code})\n{again}"
+    );
+    let changed = SRC_V2.replace("size: integer", "size: text");
+    let (code, out) = run(&changed);
+    assert!(
+        code == 0 && out.contains("warning[layout-upgrade-refused]") && out.contains("Inner.size"),
+        "a changed field type warns ({code})\n{out}"
+    );
+    let (code, out) = run(SRC_V2);
+    assert!(
+        code == 0 && !out.contains("layout-upgrade-refused"),
+        "an unchanged layout is silent ({code})\n{out}"
+    );
+    let routine = "struct ItemOld { note: text }\nfn upgrade(from: Release, old: ItemOld, item: Item) { if from < \"2.0\" { item.count = len(old.note) } }\n";
+    let (code, out) = run(&format!("{SRC_V3}{routine}"));
+    assert!(
+        code == 0 && !out.contains(lost),
+        "a routine for the struct cures the dropped source ({code})\n{out}"
+    );
+    loft::file_access::remove_file(dir.join("layout.lock")).unwrap();
+    let (code, out) = run(SRC_V3);
+    assert!(
+        code == 0 && !out.contains("layout-upgrade-refused"),
+        "without a baseline nothing warns, warm cache or not ({code})\n{out}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// `loft package` does not release over the warning: it stops before recording a new
+/// baseline, so the one the refusal is measured against stays.
+#[test]
+fn loft_package_refuses_an_upgrade_the_baseline_refuses() {
+    let dir = cell_dir("pkg_refuse");
+    let write = |version: &str, src: &str| {
+        loft::file_access::write(
+            dir.join("loft.toml"),
+            format!("[package]\nname = \"cellpkg\"\nversion = \"{version}\"\nloft = \">=0.8\"\n"),
+        )
+        .unwrap();
+        loft::file_access::create_dir_all(dir.join("src")).unwrap();
+        loft::file_access::write(dir.join("src/cellpkg.loft"), src).unwrap();
+    };
+    write(
+        "2.0",
+        "pub struct Item { pub id: integer, pub label: text, pub count: integer = len($.label) }\n",
+    );
+    let (code, out, err) = run_loft(&dir, &["package", "."]);
+    assert!(
+        loft::file_access::exists(dir.join("layout.lock")),
+        "2.0 records its baseline ({code})\n{out}\n{err}"
+    );
+    write(
+        "3.0",
+        "pub struct Item { pub id: integer, pub count: integer }\n",
+    );
+    let (code, out, err) = run_loft(&dir, &["package", "."]);
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock")).unwrap();
+    assert!(
+        code != 0
+            && err.contains("Item.label is dropped, and 2.0 computes Item.count from it")
+            && lock.contains("\nversion=2.0\n"),
+        "3.0 is refused and the 2.0 baseline stays ({code})\n{out}\n{err}\n{lock}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
 /// A library release records its baseline: `loft package` writes `layout.lock` beside
 /// `loft.toml` — where it is committed, unlike the cache directory `.loft/` — with the
 /// release and the sources, before the tarball; `--tarball-only`, a byte comparison, writes
