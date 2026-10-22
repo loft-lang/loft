@@ -61,4 +61,10 @@ case "$(uname -s 2>/dev/null)" in
 esac
 export RUSTFLAGS
 
+# A release bundle's binary: `build.rs` bakes this in, and `cache::loft_exe_identity` then
+# names the binary by what it was built from instead of by its file's modification time, so
+# the copy a user unpacks is the binary the release built library artifacts with (@PLN199
+# G2c).  Here, beside the paths, because a verifier's rebuild must bake the same bytes.
+export LOFT_RELEASE_BUNDLE=1
+
 unset _repro_sysroot _repro_cargo_home _repro_src
