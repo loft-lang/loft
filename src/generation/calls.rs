@@ -277,6 +277,10 @@ impl Output<'_> {
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
     /// pre-phase-09 `output_call_user_fn`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one call's twin forms are one decision"
+    )]
     pub(super) fn user_fn_call_body(
         &mut self,
         w: &mut dyn Write,
@@ -339,7 +343,22 @@ impl Output<'_> {
         }
         // `@FR-R-RangedCall` — the ranged variant, when every integer argument is proven
         // within its bound.  Not for a forward site, which spells its own call shape.
+        // `(R-Header)`'s KEPT clause — the callee's `__kh` twin, handed the holders this body
+        // keeps for the fields the callee keeps; only where no other twin form applies.
+        let kh_args = if twin_args.is_none()
+            && forward.is_none()
+            && !append
+            && !dest
+            && own.is_none()
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+        {
+            self.kept_twin_call(self.current_call_def, vals)
+        } else {
+            None
+        };
         let ranged = forward.is_none()
+            && kh_args.is_none()
             && !append
             && own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
@@ -349,13 +368,19 @@ impl Output<'_> {
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some() || append || own.is_some(),
+            twin_args.is_some()
+                || kh_args.is_some()
+                || ranged
+                || forward.is_some()
+                || append
+                || own.is_some(),
         )?;
         write!(
             w,
-            "{}{}{}{}{}{}(",
+            "{}{}{}{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
+            if kh_args.is_some() { "__kh" } else { "" },
             if ranged { "__rg" } else { "" },
             if refill_twin { "__rt" } else { "" },
             if append { "__ap" } else { "" },
@@ -369,6 +394,11 @@ impl Output<'_> {
         let callee_nr = self.current_call_def;
         self.emit_user_call_args(w, def_fn, vals, first_arg)?;
         if let Some(extra) = &twin_args {
+            for e in extra {
+                write!(w, ", {e}")?;
+            }
+        }
+        if let Some(extra) = &kh_args {
             for e in extra {
                 write!(w, ", {e}")?;
             }
