@@ -1,3 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A vector FIELD of a record parameter — `m.cs` — that a chain of calls walks and appends to
+// answers what the store holds at every read (`@FR-R-Header`'s kept clause: the field's
+// header is held across the calls, handed down by `&mut` to the callees that keep it, and
+// derived again after each append to it and each call that may change it).  The cells: the
+// lane-17 chain (walks in four callees, one append), an append read back in the same body,
+// a callee that empties the field, an append through a local VIEW of the field, the same
+// record as two parameters, appends inside a loop, the length read inside the appended
+// element, the map and the undo stack inline in one record (one store), a recursion, and an
+// appending call nested beside a length read.  Every value is hand-computed (g1 and g8 by a
+// mirror in Python).  Both backends.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-22) — no refresh after the append group:
+// `--native` answered `g1 23 1858 23 0`; no refresh after a plain call that may append:
+// `g3 30033 0`.  The interpreter has no such clause and answered right under both.
+
 struct Hx { h: integer, k: integer }
 struct Ck { cx: integer, hs: vector<Hx> }
 struct Mp { name: text, cs: vector<Ck> }
