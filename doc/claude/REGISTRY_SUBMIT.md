@@ -423,6 +423,7 @@ index.json                        ← the ONE signature (Ed25519, 4 trust roots)
  ├ binaries[triple].sha256          → loft-<v>-<triple>.zip   checked once, at download
  │  └ manifest_sha256              → SHA256SUMS             checked any time, on what is INSTALLED
  │     └ bin/loft, default/*.loft, and every other file the bundle shipped
+ ├ artifacts[pkg@ver][triple].sha256 → loft_auto_*           a library compiled by this release
  └ version.sha256                   → loft-<v>-src.zip        the source the release was built from
 ```
 
@@ -433,7 +434,7 @@ generated from the artifacts of the run that built them.  Splice it in and open 
 # Download EVERY asset, then let the tool merge -- `--splice-into` regenerates the
 # entry from the artifacts it hashes, so the directory must hold all of them:
 gh release download v<version> -R loft-lang/loft -D <assets>
-scripts/gen-toolchain-entry.py --version <version> --dir <assets> \
+scripts/gen-toolchain-entry.py --version <version> --dir <assets> --artifacts <assets> \
     --splice-into <registry-checkout>/index.json
 ```
 
@@ -459,8 +460,9 @@ and `installer_and_self_update_agree_on_the_published_triples`.
 **Registry-side gates.**  `tools/validate.py` exempts the toolchain from gate 3
 (reproducible build): there is no `loft.toml` at loft's repo root to re-package, and
 the version artifact is a `git archive` zip, not a `loft package` tarball.  Gate 2b
-verifies every `binaries` hash by download, so the exemption does not leave the
-binaries — the things users actually run — unchecked.
+verifies every `binaries` and `artifacts` hash by download, so the exemption does not
+leave the binaries — the things users actually run — unchecked.  The registry's copy of
+the validator takes the `artifacts` half from `doc/claude/registry_ci_template/validate.py`.
 
 > **Both landed in [loft-lang/registry#22](https://github.com/loft-lang/registry/pull/22),
 > merged 2026-08-31** — before which `loft` was in no index at all, and had never been.

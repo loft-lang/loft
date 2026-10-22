@@ -53,6 +53,7 @@ scripts/registry-sign.sh	--help
 scripts/registry_retention_check.py	--help
 scripts/release-checklist.py	--help
 scripts/release-gate.sh	--help
+scripts/release-lib-artifacts.sh	--help
 scripts/release-liveness.py	--help
 scripts/repeat-test.sh	--help
 scripts/repro-verify.sh	--help

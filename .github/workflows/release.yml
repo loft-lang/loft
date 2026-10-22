@@ -299,20 +299,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The bundles, and the library artifacts with each leg's `lib-artifacts-<triple>.json`
+      # (@PLN199 G2c): all of them are the release's assets, the listings included, so the
+      # entry regenerated from a download of the release names the artifacts too.
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: loft-*
           merge-multiple: true
-
-      # One directory per leg: each holds its own `artifacts.json`.  The files are attached
-      # beside the bundles; the listings become the registry entry's `artifacts`.
-      - name: Download the library artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: lib-artifacts
-          pattern: lib-artifacts-*
 
       # The artifact the registry entry names for the version ITSELF.  Built here
       # rather than in the build matrix because all four legs would otherwise emit the
@@ -332,10 +326,8 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          mkdir -p lib-artifacts
-          find lib-artifacts -name '*loft_auto_*' -exec cp {} artifacts/ \;
           python3 scripts/gen-toolchain-entry.py \
-            --version "$version" --dir artifacts --artifacts lib-artifacts \
+            --version "$version" --dir artifacts --artifacts artifacts \
             --published "$(git log -1 --format=%cI HEAD)" \
             --out "artifacts/loft-$version-registry-entry.json"
 

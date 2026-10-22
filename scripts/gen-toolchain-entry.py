@@ -19,8 +19,9 @@ sidecars.  A sidecar is a claim about a file; recording a claim we did not check
 make the signature attest to something nobody verified.
 
 @PLN199 G2c.  `--artifacts DIR` adds the library artifacts the release built
-(`scripts/release-lib-artifacts.sh`, one `DIR/<leg>/artifacts.json` per build leg) as the
-version's `artifacts`: by `<package>@<version>`, then by triple, each the asset's URL, its
+(`scripts/release-lib-artifacts.sh`: one `lib-artifacts-<triple>.json` per build leg, beside
+the files it lists — the release's assets, so `--dir` and `--artifacts` can be one directory)
+as the version's `artifacts`: by `<package>@<version>`, then by triple, each the asset's URL, its
 hash, the loft that built it and its stem.  An auto-compiled artifact runs only in the loft
 that built it, so it belongs to that loft's release row, and each release carries its own.
 
@@ -128,7 +129,7 @@ def main() -> None:
     ap.add_argument(
         "--artifacts",
         metavar="DIR",
-        help="the library artifacts the release built: DIR/<leg>/artifacts.json beside the files",
+        help="the library artifacts the release built: DIR/lib-artifacts-<triple>.json beside the files",
     )
     ap.add_argument(
         "--splice-into",
@@ -216,7 +217,7 @@ def library_artifacts(root: pathlib.Path, base: str) -> dict:
     `sha256` is a claim, and one that disagrees with its file stops the entry.
     """
     out: dict = {}
-    for listing in sorted(root.glob("*/artifacts.json")):
+    for listing in sorted(root.glob("lib-artifacts-*.json")):
         for row in json.loads(listing.read_text()):
             f = listing.parent / row["file"]
             if not f.is_file():

@@ -125,10 +125,10 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
 }
 
 /// @PLN199 G3a — the artifacts the running loft's release built for the packages of `graph`,
-/// fetched into each package's `native-auto/`, where a run adopts them with no `rustc`.  After
-/// every package of the graph is in place, so no source is newer than an artifact, and for a
-/// package installed before too: it may have been installed by the previous loft.  The
-/// release's row names them (`Version::artifacts`); one built by another loft is never fetched.
+/// fetched into each package's `native-auto/`, where a run adopts them with no `rustc`.  For
+/// every package of the graph, the ones already installed included: the loft before this one
+/// may have installed them, and its artifacts do not run in this one.  The release's row
+/// names them (`Version::artifacts`); one built by another loft is never fetched.
 fn fetch_release_artifacts(
     index: &RegistryIndex,
     graph: &[ResolvedPackage],
@@ -353,7 +353,6 @@ pub fn install_one(
     }
 
     fetch_release_artifacts(&index, &graph, opts);
-
     // A cache-internal resolution installs but records nothing — there is no
     // consumer project here, only the cached dependency whose source triggered
     // this (see `InstallOptions::skip_lockfile`).

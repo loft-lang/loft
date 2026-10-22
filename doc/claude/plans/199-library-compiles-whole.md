@@ -346,7 +346,7 @@ same stem and byte-identical source.
   type lying in a library's file (`main_vector<T>`) does not make that library a source.
 - Guard: `n3_use_native::the_same_library_at_two_places_generates_the_same_artifact`.
 
-**G2 — the producer (G2a, G2b done).**
+**G2 — the producer (done).**
 - G2a: `BinaryEntry` carries `loft_exe_id` (a string in the index, as `loft_ffi_fp`) and
   `stem` for a library's auto-compiled artifact; an older entry reads both as absent
   (`registry_index::tests::a_binary_entry_names_the_loft_and_stem_of_an_auto_artifact`).
@@ -355,22 +355,33 @@ same stem and byte-identical source.
   `loft_exe_id:` and `triple:` — the fields of the entry.  The family stem is the package's
   name and version (`auto_cdylib_stem`), so a checkout and a registry install name it alike;
   the checkout must lie in a directory named after the package (`use <name>` resolves it).
-- G2c — open: the release pipeline (RELEASE_PUBLISH.md) runs G2b over every registry
-  library's latest version per released triple and adds the entries; trust is the signed
-  index (the entry's `sha256`).  A library published between releases is built by the
-  registry's CI.  Last, because it publishes.
+- G2c: each release leg that can run its binary (`artifacts: true` in `release.yml`: macOS
+  arm64, Windows) runs `scripts/release-lib-artifacts.sh`, which installs every published
+  library in a scratch home and `use`s it, so the ordinary run builds its artifact and its
+  dependencies' under a user's names; the artifacts and one `lib-artifacts-<triple>.json`
+  per leg are release assets, and `gen-toolchain-entry.py --artifacts` lists them in the
+  release's row as `artifacts[<package>@<version>][<triple>]`.  An auto-compiled artifact
+  belongs to the loft release that built it — a library's `binaries` holds one per triple,
+  and every release carries its own — so the consumer reads its own loft's row.
+  - A release bundle's binary (`LOFT_RELEASE_BUNDLE`) is named by its build, not by its
+    file's modification time, and its artifact key hashes no rlib: the user's copy has none.
+  - Linux builds none: the static-pie musl binary cannot load a library (loft#2127).
+  - The registry validator template's gate 2b re-checks every artifact's hash.
 
 **G3 — the consumer (done).**
-- G3a: `install::fetch_prebuilt` takes an entry with a `loft_exe_id` and `stem` as an
-  auto-compiled artifact: fetched only when the id is the running loft's, checked against the
-  index's hash, written to `<package>/native-auto/<stem>`, where the run's first branch adopts
-  it with or without `rustc`.
+- G3a: `install::fetch_release_artifacts` reads the running loft's release row after every
+  package of the graph is in place, installed before included: an artifact is fetched only
+  when its id is the running loft's, checked against the index's hash, and written to
+  `<package>/native-auto/<stem>`, where the run's first branch adopts it with or without
+  `rustc`.
 - G3b: `LOFT_TRACE_NATIVE_GATE=1` names a library that interprets because no artifact of
   this loft is there and there is no `rustc`.
-- Guard: `registry_e2e::a_published_library_artifact_runs_compiled_without_rustc` — build
-  with `build-native`, publish in a fixture index, install with `loft install`, run with
-  `rustc` off `PATH`: compiled, and `tri(10)` = 45; the same entry under another loft's id is
-  never fetched, and that home's run reports interpreting (the test's control).
+- Guard: `registry_e2e::a_released_library_artifact_runs_compiled_without_rustc` — the
+  release script and the entry generator over a fixture registry of `calc` and the `base` it
+  uses; installed under another loft's row nothing is fetched and the run interprets (the
+  control); under the real row, already installed and in a fresh home, both artifacts arrive
+  and the run is compiled with `rustc` off `PATH`.  Falsified by dropping the identity check
+  and by fetching only for freshly placed packages.
 
 ## Phase F — the gate is the rule
 
@@ -429,9 +440,8 @@ The procedure, the one every step above followed:
 
 ## Order
 
-Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c, G1, G2a, G2b, G3, F1.
+Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c, G1, G2a, G2b, G2c, G3, F1, F3, F4.
 D4 is dropped.  The open steps, each one commit:
 
-G2c (the release job — the owner's), and,
-independent of G: F2 → the standing shapes in F1's order → F-last.  G2c, the release job,
-is last because it publishes.
+F2 → the standing shapes in F1's order → F-last.  G2c's job runs at the next tag; its
+first run is checked on the draft's assets and summary before the owner publishes.

@@ -9,9 +9,9 @@
 # into a scratch home and run a program
 # that only `use`s it, the way a user's first run does: that run compiles the library and
 # its dependencies into each package's `native-auto/`, under the names a user's run of this
-# loft computes for them.  Every artifact found there is copied to OUT, and OUT/artifacts.json
-# lists them — package, version, triple, stem, file, sha256, loft_exe_id — for
-# `gen-toolchain-entry.py --artifacts` to put in the release's registry row.
+# loft computes for them.  Every artifact found there is copied to OUT, and
+# OUT/lib-artifacts-<triple>.json lists them — package, version, triple, stem, file, sha256,
+# loft_exe_id — for `gen-toolchain-entry.py --artifacts OUT` to put in the release's row.
 #
 # LOFT must be the binary the release ships, still beside the `libloft.rlib` it was built
 # with (`scripts/lean_build.sh --lib --bin loft`): a bundle carries no rlib, and an artifact
@@ -134,7 +134,7 @@ for (p, v), n in sorted(count.items()):
 rows = [r for r in rows if count[(r["package"], r["version"])] == 1]
 for r in rows:
     shutil.copyfile(r.pop("src"), out / r["file"])
-(out / "artifacts.json").write_text(json.dumps(rows, indent=2) + "\n")
+(out / f"lib-artifacts-{triple}.json").write_text(json.dumps(rows, indent=2) + "\n")
 for r in rows:
     print(f"  ok  {r['package']} {r['version']}: {r['file']}")
 print(f"{len(rows)} artifact(s) for {triple}")

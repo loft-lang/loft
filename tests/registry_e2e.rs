@@ -1446,8 +1446,7 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
 
     // The producer: the release job's step, then its entry.
     let lib_index = index_of("libraries", &libraries);
-    let dist = tmp.join("dist-lib");
-    let leg = dist.join(loft::cache::host_triple());
+    let leg = tmp.join("dist-lib");
     let produced = loft::platform::process::harness_command("bash")
         .arg(root.join("scripts/release-lib-artifacts.sh"))
         .arg("--loft")
@@ -1496,7 +1495,7 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
         .arg("--dir")
         .arg(&zips)
         .arg("--artifacts")
-        .arg(&dist)
+        .arg(&leg)
         .current_dir(&root)
         .output()
         .expect("run gen-toolchain-entry.py");
@@ -1625,6 +1624,55 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
         !err.contains("no Rust toolchain"),
         "the run fell back for want of rustc instead of adopting the fetched artifacts:\n{err}"
     );
+
+    // A fresh install under the real row: every artifact is newer than every source it was
+    // built from, a dependency's included, so the first run is compiled.
+    let fresh_home = tmpdir("g2c_artifact_fresh");
+    let fresh = |run_home: &Path| {
+        let project = run_home.join("project");
+        fa::create_dir_all(project.join("src")).unwrap();
+        fa::copy(home.join("project/loft.toml"), project.join("loft.toml")).unwrap();
+        fa::copy(
+            home.join("project/src/main.loft"),
+            project.join("src/main.loft"),
+        )
+        .unwrap();
+        let installed = loft::platform::process::harness_command(loft_bin)
+            .args(["install", "--refresh", "--allow-unsigned"])
+            .current_dir(&project)
+            .env("HOME", run_home)
+            .env("LOFT_HOME", run_home)
+            .env(
+                "LOFT_REGISTRY_URL",
+                common::file_url(&tmp.join("released.json")),
+            )
+            .output()
+            .expect("run loft install");
+        assert!(
+            installed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&installed.stderr)
+        );
+        loft::platform::process::harness_command(loft_bin)
+            .args(["--interpret", "src/main.loft"])
+            .current_dir(&project)
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", run_home)
+            .env("LOFT_HOME", run_home)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TRACE_NATIVE_GATE", "1")
+            .output()
+            .expect("run the program")
+    };
+    let out = fresh(&fresh_home);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success()
+            && String::from_utf8_lossy(&out.stdout).trim() == "46"
+            && !err.contains("no Rust toolchain"),
+        "a fresh install did not run compiled:\n{err}"
+    );
+    let _ = fa::remove_dir_all(&fresh_home);
     let _ = fa::remove_dir_all(&tmp);
     let _ = fa::remove_dir_all(&home);
 }
