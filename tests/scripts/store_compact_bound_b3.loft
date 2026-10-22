@@ -65,6 +65,10 @@ fn main() {
 
   if mode != "reload" {
     h: hash<Rec[id]> = [];
+    // The dense store is sized before it is filled: a table that GROWS leaves the tables it
+    // outgrew behind as free space between records, and an inline table (`(Col-Inline)`)
+    // carries its entries with it, so its growth alone leaves a third of the store free.
+    if mode == "dense" { reserve(h, 2000) }
     for g in 0..2000 { h += [make(g)] }
     if mode != "dense" { for d in 200..2000 { h[d] = null } }
     store_reclaim(h);      // arc A first: the tail is already gone

@@ -2547,3 +2547,21 @@ pub fn inline_live_spans(store: &Store, claim: u32, mut span: impl FnMut(usize, 
         }
     }
 }
+
+/// `(Col-Inline)` — the words inline table `claim` holds past what a table built fresh for its
+/// live entries takes: the buckets it grew to at its peak and the tombstones of what left.  A
+/// rebuild returns them, as it returns a vector's capacity past its length, so the compaction
+/// gate counts them as slack (`Stores::intra_record_slack`).  0 for a table that is not inline.
+#[must_use]
+pub fn inline_slack(store: &Store, claim: u32) -> u32 {
+    if claim == 0 || !is_inline(store, claim) {
+        return 0;
+    }
+    let h = hdr(store, claim);
+    let live = store.get_u32_raw(claim, INLINE_LEN_FLD);
+    let mut need = 16;
+    while is_full(live, need) {
+        need *= GROWTH;
+    }
+    store.record_words(claim).saturating_sub(inline_words(need, h.stride))
+}
