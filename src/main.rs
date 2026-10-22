@@ -12842,8 +12842,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // The table is not freed on the way out: the process is ending, and freeing it was a
     // third of a warm `hello`'s exit (@PLN179 finding 001).  Plain memory with no `Drop`
     // effect, unlike the run's stores, which `state` still drops — a durable store writes its
-    // clean-close sidecar there.
-    std::mem::forget(data);
+    // clean-close sidecar there.  It is parked in a static rather than forgotten, so it stays
+    // reachable: a leak checker reads forgotten memory as a leak of every run.
+    static KEPT_DATA: std::sync::atomic::AtomicPtr<()> =
+        std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+    KEPT_DATA.store(
+        Box::into_raw(Box::new(data)).cast(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 /// Where `loft test` looks for a package's tests, and the prefix it prints.
