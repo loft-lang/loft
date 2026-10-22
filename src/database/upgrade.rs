@@ -830,6 +830,7 @@ impl Stores {
             }
             let elem_tp = run.map.pairs[elem].new;
             let pending_from = run.pending.len();
+            let owed_from = self.owed.fills.len();
             self.convert(run, elem, &src, &rec, Container::At(rec, elem_tp))?;
             self.record_finish(&parent, &rec, parent_tp, field);
             let stage = rec;
@@ -857,6 +858,11 @@ impl Stores {
                             moved(from);
                         }
                     }
+                }
+                // The fills a load OWES its program (`run.owe`) name their records the same way.
+                for (d, _, old) in &mut self.owed.fills[owed_from..] {
+                    moved(d);
+                    moved(old);
                 }
                 if src.pos == 8
                     && let Some(d) = run.rec_map.get_mut(&src.rec)
