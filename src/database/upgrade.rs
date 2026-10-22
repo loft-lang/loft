@@ -839,7 +839,11 @@ impl Stores {
                 // to the stage now names the entry, at the same offset into it.
                 let moved = |d: &mut DbRef| {
                     if d.store_nr == stage.store_nr && d.rec == stage.rec && d.pos >= stage.pos {
-                        *d = DbRef { store_nr: rec.store_nr, rec: rec.rec, pos: rec.pos + (d.pos - stage.pos) };
+                        *d = DbRef {
+                            store_nr: rec.store_nr,
+                            rec: rec.rec,
+                            pos: rec.pos + (d.pos - stage.pos),
+                        };
                     }
                 };
                 for (d, _) in &mut run.pending[pending_from..] {
