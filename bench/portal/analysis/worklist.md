@@ -141,7 +141,7 @@ more than ~2 %.
 remain.  **`hash_walk` 4.14×** was the inline hash layout's regression (3.12× on the tagged
 layout): the walk sorted by insertion order before sorting by key.  BUILT: one branch-free
 sweep into `(key, position)` pairs and the ordered step inlined, **1.62×**;
-`reload_and_record` 2.62× (`keyed.md`, What the tagged and inline tables bought).  **`slope_path_with_undo` 4.21×**, callgrind at the tip: 2 128
+`reload_and_record` 2.62× (`keyed.md`, What the tagged and inline tables bought).  **`slope_path_with_undo` 4.21×, 3.86× with the nested read BUILT** (below); callgrind before it: 2 128
 instructions a step; `map_get_hex` 337 and `map_set_hex` 401 a call, two each a step.  Inside
 them the null-checked `%`, `/` and `-` of the chunk and hex index (12.7 % of the instructions,
 −12.3 % priced, the null-integer focus), the `Hex` written into its element (~128 a write,
