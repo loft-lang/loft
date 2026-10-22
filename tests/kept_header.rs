@@ -63,6 +63,12 @@ fn body<'a>(rust: &'a str, name: &str) -> &'a str {
     &rest[..end]
 }
 
+/// Does `body` call `f`'s kept twin — plain, or its ranged form (`__rg__kh`) where the
+/// arguments are proven in range?
+fn calls_kept(body: &str, f: &str) -> bool {
+    body.contains(&format!("{f}__kh(cell,")) || body.contains(&format!("{f}__rg__kh(cell,"))
+}
+
 fn run_ok(args: &[&str], env: &[(&str, &str)]) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let mut a: Vec<&str> = args.to_vec();
@@ -103,13 +109,13 @@ fn a_kept_field_is_held_once_and_handed_down_the_chain() {
     // `run` walks through `step` four times a pass: it binds the holder and hands it down.
     let run = body(&rust, "n_run");
     assert!(
-        run.contains("//@FR-R-Header kept clause\n") && run.contains("n_step__kh(cell,"),
+        run.contains("//@FR-R-Header kept clause\n") && calls_kept(run, "n_step"),
         "run binds the holder and calls step's kept twin:\n{run}"
     );
     // The twins hand the holder on, never deriving it.
     let step = body(&rust, "n_step__kh");
     assert!(
-        step.contains("n_log__kh(cell,") && step.contains("n_bump__kh(cell,"),
+        calls_kept(step, "n_log") && calls_kept(step, "n_bump"),
         "step's twin hands the holder to log's and bump's twins:\n{step}"
     );
     assert!(

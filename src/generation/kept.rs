@@ -32,6 +32,10 @@ use crate::database::{Parts, Stores};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+/// The bit a ranged-variant request carries for the `__kh` twin's ranged form (beside
+/// `decode_view::DV_BIT`): definition numbers stay far below it.
+pub const KH_BIT: u32 = 1 << 30;
+
 /// One kept field: the parameter, the field's offset, the path the holder is derived from
 /// (`OpGetField(Var(param), off, vector_tp)`) and how many header reads it serves — a read
 /// inside a loop counts twice, the bar for binding at entry being two.
