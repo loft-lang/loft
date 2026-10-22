@@ -67,9 +67,13 @@ load" for a change every loader in fact refuses.
   read by `store_load` on the OLD file), `tests/store_persist_loft.rs`
   `*_converts_or_refuses_a_changed_layout_both_backends`, and
   `tests/engine_host_kernel.rs` `s5_native_swap_under_running_world` (a world grown by a
-  computed field), `cell_a_rebuild_checks_the_running_world_before_it_compiles`.  Open: the
-  browser swap (S6) — the page compiles B, checks it against A's world and keeps the plan
-  before it touches A; the wasm build compiles the converter.
+  computed field), `cell_a_rebuild_checks_the_running_world_before_it_compiles`.  The
+  browser swap (S6) does the same in the page: `swap_check(files)` compiles B against the
+  parked A's world before anything is disposed (a refused build leaves A serving),
+  `swap_export` hands a world that owns its store over as image + sidecar, and B's
+  `swap_world` reads it through the converter (`Stores::load_world_image`); guard
+  `tests/engine_host_connector.rs` `s6_browser_swap_under_living_page` (a grown world with a
+  computed field, a refused build naming the field).
 - **Step 9 — skipped versions.**  The sidecar records the writing release (`version=`, from
   the entry program's `loft.toml`; a native build carries it as a constant).  The floor is
   the manifest's existing `data_compatible_with`, and `data_bridge` names the release a

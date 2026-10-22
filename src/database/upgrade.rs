@@ -1607,9 +1607,12 @@ impl Stores {
             .write_beside(path)
             .map_err(|e| e.to_string())
     }
+}
 
+#[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
+impl Stores {
     /// The byte image of the store in `slot`, ending at its last live record.
-    fn store_image(&self, slot: u16) -> Option<Vec<u8>> {
+    pub(crate) fn store_image(&self, slot: u16) -> Option<Vec<u8>> {
         let s = &self.allocations[slot as usize];
         let words = s.capacity_words();
         let raw = unsafe { std::slice::from_raw_parts(s.base_ptr(), (words as usize) * 8) };
@@ -1619,6 +1622,20 @@ impl Stores {
             words,
             live_end.max(crate::store::MIN_BOUND_WORDS),
         )
+    }
+
+    /// @PLN18 08-S6 — the world record `w` of type `tp` as the browser swap hands it over: its
+    /// store's layout sidecar and image, when `w` is the root of a store of its own; `None`
+    /// for a world that shares its store, which goes over as JSON.
+    pub(crate) fn world_image(&self, w: &DbRef, tp: u16) -> Option<(String, Vec<u8>)> {
+        let store = &self.allocations[w.store_nr as usize];
+        if store.known_type != tp || w.rec != crate::store::PRIMARY {
+            return None;
+        }
+        let image = self.store_image(w.store_nr)?;
+        let sidecar =
+            crate::schema_sidecar::LayoutIdentity::of_store(self, w.store_nr, tp).to_sidecar();
+        Some((sidecar, image))
     }
 }
 

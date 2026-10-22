@@ -611,11 +611,12 @@ fn main() {{
         .expect("http server");
 
     // Build B's script — THE SAME template as the page's (kept in step by
-    // the comment on both sides), marker v2.
+    // the comment on both sides), marker v2, and the world GROWN by a computed field
+    // (@PLN196): the page converts A's world, and `bonus` arrives as ten times its count.
     let v2_script = format!(
         r#"
 use engine_host::*;
-struct C {{ count: integer not null }}
+struct C {{ count: integer not null, bonus: integer = $.count * 10 }}
 fn main() {{
   engine_host::sync_class(2);
   c = C {{ count: 0 }};
@@ -626,11 +627,30 @@ fn main() {{
         c.count = c.count + 1;
       }}
     }},
-    fn() {{ engine_host::client_send("c:v2:{{c.count}}"); }});
+    fn() {{ engine_host::client_send("c:v2:{{c.count}}:{{c.bonus}}"); }});
 }}
 "#
     );
     let good_blob = format!("B!:{}:{v2_script}", s6_fnv64(&v2_script));
+    // A build whose change the converter refuses (`count` becomes a text): the page asks
+    // `swap_check` before it disposes A, so A keeps serving and the reason names `count`.
+    let v3_script = format!(
+        r#"
+use engine_host::*;
+struct C {{ count: text }}
+fn main() {{
+  engine_host::sync_class(2);
+  c = C {{ count: "" }};
+  engine_host::swap_world(c);
+  engine_host::run_client(engine_host::default_host(), {port}, 50000,
+    fn(ev: engine_host::Event) {{
+      if ev.kind == 1 {{ c.count = "{{c.count}}x"; }}
+    }},
+    fn() {{ engine_host::client_send("c:v3:{{len(c.count)}}"); }});
+}}
+"#
+    );
+    let refused_blob = format!("B!:{}:{v3_script}", s6_fnv64(&v3_script));
     let bad_blob = format!("B!:{}:{v2_script}", s6_fnv64("not the script"));
 
     // The push driver, CONDITION-driven (the fixed 4s/2s/12s sleeps it
@@ -699,6 +719,13 @@ fn main() {{
                 await_frame(&v1_counting, overall),
                 "pusher never saw a counting post-rejection heartbeat"
             );
+            log("push a build the converter refuses");
+            s6_ws_send(&ws, &format!("pushblob:{refused_blob}"));
+            // A SURVIVES the refusal: it was checked before anything was disposed.
+            assert!(
+                await_frame(&v1_counting, overall),
+                "build A stopped after a refused build was pushed"
+            );
             log("push good blob");
             s6_ws_send(&ws, &format!("pushblob:{good_blob}"));
             // A bounded per-round wait: if the swap doesn't confirm (the
@@ -722,6 +749,9 @@ fn main() {{
         // we now KNOW is alive, and prove B keeps pumping after it.
         log("push corrupt blob at the surviving instance");
         s6_ws_send(&ws, &format!("pushblob:{bad_blob}"));
+        // Likewise the refused build: B's world refuses it as A's did.
+        log("push refused blob at the surviving instance");
+        s6_ws_send(&ws, &format!("pushblob:{refused_blob}"));
         assert!(
             await_frame(&v2_any, overall),
             "build B stopped after the post-swap corrupt push"

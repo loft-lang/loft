@@ -6997,6 +6997,35 @@ impl Stores {
     /// (0-size block) or drive a heap over-read; it is rejected (`false`).
     /// `load_path` (the trusted path) validates only in debug and is faster;
     /// use this for a file whose provenance you don't control.
+    /// @PLN196 / @PLN18 08-S6 — load a store image handed over in memory with the text of its
+    /// `.dschema` (`sidecar`): the browser swap's world.  The same layout reads raw, an older
+    /// one converts (`@FR-L-Sound`), anything else is refused with the reason on stderr;
+    /// `builtin` names the call in that reason.
+    pub fn load_world_image(
+        &mut self,
+        slot: u16,
+        sidecar: &str,
+        bytes: &[u8],
+        what: &str,
+        builtin: &str,
+    ) -> bool {
+        let Some(current) = self.slot_layout_identity(slot) else {
+            return false;
+        };
+        let verdict =
+            crate::schema_sidecar::verdict_for_sidecar_text(sidecar, &current, self.release());
+        if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
+            let done = self.load_upgraded_from(slot, sidecar, bytes, what);
+            return Self::conversion_took(done, what, builtin);
+        }
+        if !Self::layout_verdict_ok(&verdict, what, builtin) {
+            return false;
+        }
+        let recorded =
+            crate::schema_sidecar::LayoutIdentity::from_sidecar(sidecar).and_then(|id| id.slot);
+        self.load_bytes_from(slot, bytes, recorded, what, builtin)
+    }
+
     pub fn load_path_untrusted(&mut self, slot: u16, path: &std::path::Path) -> bool {
         // An older layout converts in memory, as `store_load` does (@PLN196); the converter
         // validates the image's structure before it reads a record.
@@ -8857,7 +8886,7 @@ impl Stores {
 /// track the data.  Interior free blocks still remain: reclaiming those means
 /// relocating records and rewriting every `DbRef`, which is compaction, not
 /// this.
-#[cfg(feature = "mmap")]
+#[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
     // PRIMARY = 1 is the first record's word position.
     let mut rec: u32 = 1;
@@ -8899,7 +8928,7 @@ pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
 ///
 /// Returns `None` if the source bytes don't describe a walkable record chain,
 /// or if `target_words` would cut into live data.
-#[cfg(feature = "mmap")]
+#[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 pub(super) fn build_padded_store_image(
     src: &[u8],
     src_words: u32,

@@ -62,13 +62,15 @@ impl Release {
     }
 
     /// Is a store written by `written` older than this release?  A store that records no
-    /// release predates the recording, so it is older than any; so is every store of a
-    /// program that records none.
+    /// release predates the recording, so it is older than any recorded one.  A program that
+    /// records none is newer than nothing: its stores — a browser page's swap world among
+    /// them — come from the same unrecorded release.
     #[must_use]
     pub fn is_newer_than(&self, written: &str) -> bool {
         match (version_triple(&self.version), version_triple(written)) {
             (Some(me), Some(w)) => w < me,
-            _ => true,
+            (Some(_), None) => true,
+            (None, _) => false,
         }
     }
 }
@@ -135,6 +137,13 @@ mod tests {
         assert!(!r("9.0", "", "").is_newer_than("10.0"));
         assert!(!r("2.0", "", "").is_newer_than("2.0"));
         assert!(r("2.0", "", "").is_newer_than(""));
-        assert!(r("", "", "").is_newer_than("2.0"));
+        assert!(
+            !r("", "", "").is_newer_than("2.0"),
+            "a program with no release"
+        );
+        assert!(
+            !r("", "", "").is_newer_than(""),
+            "both unrecorded: the same release"
+        );
     }
 }

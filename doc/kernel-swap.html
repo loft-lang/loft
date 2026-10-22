@@ -12,7 +12,7 @@
      (tests/engine_host_connector.rs) — keep them in step. -->
 <html><head><meta charset="utf-8"><title>kernel swap</title></head>
 <body><script type="module">
-import init, { compile_and_start, resume_frame, swap_export, swap_stage } from './pkg/loft.js';
+import init, { compile_and_start, resume_frame, swap_check, swap_export, swap_stage } from './pkg/loft.js';
 import { createHost } from './loft-rt.js';
 
 const { host } = createHost();
@@ -53,11 +53,19 @@ const fnv64 = (s) => {
 
 // ── Page-side observability + verdict state ──
 const sends = { v1: [], v2: [] };
+// Build B grows the world with `bonus = $.count * 10` (@PLN196): the converter in the page
+// fills it from the count the world had at the swap.
+const bonuses = [];
 host.onSend = (msg) => {
-  const m = msg.match(/^c:(v[12]):(-?\d+)$/);
-  if (m) sends[m[1]].push(parseInt(m[2], 10));
+  const m = msg.match(/^c:(v[12]):(-?\d+)(?::(-?\d+))?$/);
+  if (!m) return;
+  sends[m[1]].push(parseInt(m[2], 10));
+  if (m[3] !== undefined) bonuses.push(parseInt(m[3], 10));
 };
 let rejected = false;
+// A build whose layout change the converter refuses: checked BEFORE the running instance is
+// disposed (`swap_check`), so the running build keeps serving.
+let refusedLayout = '';
 let swapped = false;
 let lastAtSwap = -1;
 // Forensics for the timeout throw: every push the page actually saw, and
@@ -75,6 +83,12 @@ host.onBuildPush = (blob) => {
     rejected = true; // corrupt push: refuse, keep serving build A
     return;
   }
+  const files = JSON.stringify([{ name: 'main.loft', content: m[2] }]);
+  const check = JSON.parse(swap_check(files));
+  if (!check.ok) {
+    refusedLayout = check.error; // keep serving the running build
+    return;
+  }
   if (swapped) return;
   // THE SWAP: export the world out of the parked A, stage it, adopt the
   // living socket, boot B (as received over the wire).
@@ -83,7 +97,7 @@ host.onBuildPush = (blob) => {
   lastAtSwap = sends.v1.length ? sends.v1[sends.v1.length - 1] : -1;
   swap_stage(snap);
   host.ws_adopt_next(0);
-  const r = JSON.parse(compile_and_start(JSON.stringify([{ name: 'main.loft', content: m[2] }])));
+  const r = JSON.parse(compile_and_start(files));
   if (!r.ok || !r.running) throw new Error('SWAP-FAIL build B did not start: ' + JSON.stringify(r));
   swapped = true;
 };
@@ -103,7 +117,10 @@ for (;;) {
   if (fr.error) throw new Error('SWAP-CRASH ' + fr.error);
   if (!fr.running) throw new Error('SWAP-FAIL the client run ended: ' + JSON.stringify(fr));
   // The verdict: every clause met.
-  if (rejected && swapped && sends.v2.length >= 3) {
+  if (rejected && refusedLayout && swapped && sends.v2.length >= 3) {
+    if (!/count/.test(refusedLayout)) {
+      throw new Error(`SWAP-FAIL the refused build's reason does not name the field: ${refusedLayout}`);
+    }
     if (host.ws_opens !== 1) {
       throw new Error(`SWAP-FAIL socket identity: ${host.ws_opens} opens (want 1 — B must adopt A's socket)`);
     }
@@ -115,11 +132,17 @@ for (;;) {
     if (lastB <= firstB) {
       throw new Error('SWAP-FAIL build B is not advancing');
     }
-    console.log(`SWAP-OK a_last=${lastAtSwap} b_first=${firstB} b_last=${lastB} opens=${host.ws_opens}`);
+    // The world converted: `bonus` is ten times the count at the swap, which lies between A's
+    // last heartbeat and B's first.
+    const b = bonuses[0];
+    if (b === undefined || b % 10 !== 0 || b / 10 < lastAtSwap || b / 10 > firstB) {
+      throw new Error(`SWAP-FAIL world conversion: bonus ${b} for A's ${lastAtSwap} -> B's ${firstB}`);
+    }
+    console.log(`SWAP-OK a_last=${lastAtSwap} b_first=${firstB} b_last=${lastB} bonus=${b} opens=${host.ws_opens}`);
     break;
   }
   if (Date.now() > deadline) {
-    throw new Error(`SWAP-FAIL timeout: rejected=${rejected} swapped=${swapped} v1=${sends.v1.length} v2=${sends.v2.length} pushes=${JSON.stringify(pushLog)} boot=${bootNo}`);
+    throw new Error(`SWAP-FAIL timeout: rejected=${rejected} refused=${JSON.stringify(refusedLayout)} swapped=${swapped} v1=${sends.v1.length} v2=${sends.v2.length} pushes=${JSON.stringify(pushLog)} boot=${bootNo}`);
   }
 }
 </script></body></html>

@@ -834,6 +834,10 @@ pub(crate) fn swap_root() -> Option<(crate::keys::DbRef, u16)> {
     SWAP_ROOT.with(std::cell::Cell::get)
 }
 
+/// The first line of a world snapshot handed over as a store image: then the base64 of its
+/// layout sidecar and the base64 of the image, one line each (@PLN196 step 8 in the browser).
+pub(crate) const SWAP_IMAGE_MARKER: &str = "LOFT-IMAGE";
+
 /// Stage a snapshot for the next run's `swap_world` (the browser analog of
 /// the native LOFT_RESUME env).
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]

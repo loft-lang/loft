@@ -543,8 +543,14 @@ pub fn set_par_trace_workers(on: bool) {
 // not two half-built ones.  See `set_par_trace_workers` / `init_thread_pool`
 // above and `doc/claude/plans/117-browser-multithreading/`.
 
-/// Export the registered world of the PARKED (frame-yielded) run as the
-/// snapshot JSON; "" when no run is parked or no world was registered.
+/// Export the registered world of the PARKED (frame-yielded) run; "" when no run is parked
+/// or no world was registered.
+///
+/// @PLN196 step 8 in the browser — a world that is the root of its own store goes over as
+/// that store's image with its layout sidecar (`crate::wasm::SWAP_IMAGE_MARKER`), which the
+/// next run's `swap_world` reads through the converter: keyed collections and references
+/// survive, and a changed struct converts.  A world sharing its store goes over as JSON, as
+/// before.
 #[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
 pub fn swap_export() -> String {
     let Some((root, kt)) = swap_root() else {
@@ -552,12 +558,98 @@ pub fn swap_export() -> String {
     };
     GAME_SESSION.with(|gs| {
         gs.borrow().as_ref().map_or_else(String::new, |session| {
+            let db = &session.state.database;
+            if let Some((sidecar, image)) = db.world_image(&root, kt) {
+                return format!(
+                    "{SWAP_IMAGE_MARKER}\n{}\n{}",
+                    crate::base64::encode(sidecar.as_bytes()),
+                    crate::base64::encode(&image)
+                );
+            }
             let mut json = String::new();
-            session
-                .state
-                .database
-                .show_json(&mut json, &root, kt, false);
+            db.show_json(&mut json, &root, kt, false);
             json
         })
     })
+}
+
+/// @PLN196 step 8 — may the program in `files_json` take over the PARKED run's world?  The
+/// browser's form of a live rebuild's compile-time check (`LOFT_CHECK_WORLD`): the page asks
+/// it BEFORE `compile_and_start`, which disposes the running instance, so a refused change
+/// leaves the running build serving.  The program is parsed and scope-checked, not run, and
+/// the parked run is not touched.
+///
+/// Answers JSON: `{"ok":true,"changes":[…]}` (the conversion the swap will do, empty when
+/// the layout is the same or no world is registered), `{"ok":false,"error":"…"}` for a
+/// program that does not compile or a world it cannot take over.
+#[cfg_attr(feature = "wasm", wasm_bindgen::prelude::wasm_bindgen)]
+pub fn swap_check(files_json: &str) -> String {
+    let world = swap_root().and_then(|(root, kt)| {
+        GAME_SESSION.with(|gs| {
+            gs.borrow().as_ref().and_then(|session| {
+                session
+                    .state
+                    .database
+                    .world_image(&root, kt)
+                    .map(|(sidecar, _)| sidecar)
+            })
+        })
+    });
+    let files = match parse_files_json(files_json) {
+        Ok(f) => f,
+        Err(e) => return format!("{{\"ok\":false,\"error\":{}}}", json_str(&e)),
+    };
+    let mut all_files: Vec<(String, String)> = DEFAULT_FILES
+        .iter()
+        .chain(BUNDLED_LIB_FILES.iter())
+        .map(|(n, c)| (n.to_string(), (*c).to_string()))
+        .collect();
+    for (name, content) in &files {
+        let desugared = crate::script::script_desugar(content);
+        all_files.push((name.clone(), desugared.unwrap_or_else(|| content.clone())));
+    }
+    virt_fs_populate(&all_files);
+    let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        use crate::diagnostics::Level;
+        let mut p = crate::parser::Parser::new();
+        for (name, _) in DEFAULT_FILES {
+            p.parse(name, true);
+        }
+        let lib_set: std::collections::HashSet<&str> =
+            BUNDLED_LIB_FILES.iter().map(|(n, _)| *n).collect();
+        let main_name = VIRT_FS.with(|fs| {
+            fs.borrow()
+                .keys()
+                .filter(|k| !k.starts_with("default/") && !lib_set.contains(k.as_str()))
+                .min()
+                .cloned()
+        });
+        let Some(main_name) = main_name else {
+            return Err("no user file found".to_string());
+        };
+        p.parse(&main_name, false);
+        if p.diagnostics.level() < Level::Error {
+            crate::scopes::check(&mut p.data, &mut p.database);
+        }
+        if p.diagnostics.level() >= Level::Error {
+            return Err(p.diagnostics.to_string());
+        }
+        let Some(sidecar) = world else {
+            return Ok(Vec::new());
+        };
+        let routines = crate::parser::Parser::upgrade_routines(&p.data);
+        match p.database.world_upgrade_plan(&sidecar, &routines)? {
+            crate::database::WorldPlan::Same => Ok(Vec::new()),
+            crate::database::WorldPlan::Converts(changes) => Ok(changes),
+        }
+    }));
+    virt_fs_clear();
+    match verdict {
+        Ok(Ok(changes)) => {
+            let list: Vec<String> = changes.iter().map(|c| json_str(c)).collect();
+            format!("{{\"ok\":true,\"changes\":[{}]}}", list.join(","))
+        }
+        Ok(Err(why)) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&why)),
+        Err(_) => "{\"ok\":false,\"error\":\"internal panic\"}".to_string(),
+    }
 }

@@ -451,8 +451,9 @@ build is refused by this rule or converted by the upgrade map
   (L-Upgrade-Routine) a program may write, per record type T, one
                       fn upgrade(from: Release, old: O, item: T) with O a struct.  Each record
                       of T converted from a store whose release is older than the program's
-                      (or unrecorded) is passed to it once, after its carried fields and its
-                      added fields' defaults, with from = the store's release.  For such a
+                      (or unrecorded, when the program records one) is passed to it once,
+                      after its carried fields and its added fields' defaults, with from =
+                      the store's release.  For such a
                       store T may lose and gain fields in one upgrade: the routine is what
                       carries a moved value.  For any other store the rename refusal stands.
   (L-Upgrade-Old)     old is filled from the stored record by field name, through the same

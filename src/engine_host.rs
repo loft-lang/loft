@@ -2414,12 +2414,30 @@ pub mod browser {
             return;
         }
         crate::wasm::swap_root_set(w, kt);
-        let resumed = if let Some(json) = crate::wasm::swap_stage_take() {
-            let jv = crate::native::json_parse_into_stores(stores, &json);
-            crate::native::populate_struct_from_jsonvalue(stores, &w, kt, &jv);
-            true
-        } else {
-            false
+        let resumed = match crate::wasm::swap_stage_take() {
+            // @PLN196 step 8 — a world handed over as a store image loads through the
+            // converter, as the native swap's does.  The page checked this build against the
+            // world before it disposed the old one (`swap_check`), so a refusal here is
+            // unexpected; it is reported and the run starts fresh.
+            Some(snap) if snap.starts_with(crate::wasm::SWAP_IMAGE_MARKER) => {
+                let mut lines = snap.lines().skip(1);
+                let sidecar = String::from_utf8(crate::base64::decode(lines.next().unwrap_or("")))
+                    .unwrap_or_default();
+                let image = crate::base64::decode(lines.next().unwrap_or(""));
+                stores.load_world_image(
+                    w.store_nr,
+                    &sidecar,
+                    &image,
+                    "the running world",
+                    "swap_world",
+                )
+            }
+            Some(json) => {
+                let jv = crate::native::json_parse_into_stores(stores, &json);
+                crate::native::populate_struct_from_jsonvalue(stores, &w, kt, &jv);
+                true
+            }
+            None => false,
         };
         stores.put(stack, resumed);
     }
