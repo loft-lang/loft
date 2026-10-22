@@ -30,3 +30,14 @@
 - **Null-discharge buffers (`LOFT_NO_NULL_BUFFER_HOIST`).**  The buffer's allocation declined every header in the loop around
   it — the drawing bench's polygon crossing loop hoisted nothing; since 2026-09-18 it does not
   block the loop's BASES either.
+
+## `LOFT_NO_FN_HEADER` — the function clause's first measurement
+
+Measured on cbor's `read_value` (the byte reads of a decoder's head): the runtime vector
+lookup fell from 7 % of the check profile to 2 %, decode 2.65 → 2.53 s per 60 driver rounds.
+
+## `LOFT_NO_ELEM_FUSE` — what the middle rung showed
+
+The unfused rung showed stage 2 (the fused element read) is worth ~3.2× on top of stage 1, the
+header hoist (projected ~1.4×) — more than the hoist itself, because the second store
+resolution it removes costs more than the arithmetic it saves.

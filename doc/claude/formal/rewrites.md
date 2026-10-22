@@ -689,9 +689,16 @@ only where something names its record: the apart clause's mention argument, appl
 whole body, with the appends that DO name it refreshing the holder at their own site
 (`(R-Refresh)`).  Hand price −13.5 %.  Switch `LOFT_NO_KEPT_HEADER=1`; falsifier
 `LOFT_HOIST_VERIFY=1` (every read of a holder asserts it against a fresh derivation);
-`LOFT_TRACE_KEPT=1` names each declined key and why.  Sites: `hoist::kept_paths` (the verdict),
-`Output::begin_kept_headers` (the holders), `Output::refresh_kept` (the refresh),
-`Output::kept_twin_call` (the hand-down).
+`LOFT_TRACE_KEPT=1` names each candidate key and its verdict.  Sites: `kept::kept_paths` (the
+verdict; `kept::untouched_field` asks a plain callee, and sees a local VIEW of the field, which
+`param_untouched` does not), `Output::begin_kept_headers` (the holders, in the plain body, its
+ranged variant and the `__kh` twin), `Output::kept_after_statement` (the refresh, and a `for`
+walk's hidden vector served from the holder), `Output::kept_twin_call` (the hand-down),
+`Output::kh_live_check` (a twin the live tier flips into the interpreter refreshes before it
+returns).  Guard `tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft`
+(falsified twice: no refresh after the append group, no refresh after a plain call that may
+append); pin `tests/kept_header.rs`.  Lane 17 A/B, 7 rounds, every hash equal:
+`slope_path_with_undo` −10.8 %, `resolve_move` −2.4 %.
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
 it), with @PLN157 P4d's path key (`lay.px` is `(lay, [32])`) and the hoisted loop
