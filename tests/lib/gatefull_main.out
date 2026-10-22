@@ -24,6 +24,8 @@ arg_ref_rec_rebind 0 77
 arg_ref_vec 3 [1,3,6]
 arg_ref_hash 10 93
 arg_fn 11
+measure_gpt 6 0
+style_gpt 4.5
 ret_fn 21
 local_lambda 11 n4 15
 gen 60

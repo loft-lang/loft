@@ -14240,8 +14240,11 @@ fn nullable_presence_layout(
 /// local it binds — never storing it, passing it on, returning it or binding it into a
 /// collection.  A single non-reading site declines the whole function, so no site has to
 /// materialise a record out of a tuple and no site can be made slower.
+///
+/// `library` is a library artifact's generation: its dispatches can end in the call back to
+/// the interpreter, whose callee takes and answers records (loft#2129).
 #[expect(clippy::too_many_lines, reason = "inherited")]
-pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
+pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecords {
     let mut out = ValueRecords::default();
     if value_record_disabled() {
         return out;
@@ -14368,7 +14371,12 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                             super::fnref::dispatch_arms(data, &every, vars.tp(*v), args.len())
                     {
                         let ds: Vec<u32> = found.iter().map(|a| a.d_nr).collect();
-                        if fnref_site_listed(data, vars.tp(*v), args, &found) {
+                        // A group changes its arms' signatures together, which holds only
+                        // while they are every callee (`@FR-R-FnRefValue`): in a library
+                        // artifact a dispatch the call back carries ends in an interpreted one
+                        // (`output_call_ref`'s own condition), so its arms keep their records.
+                        let open = library && crate::fnref::upcall_carries(vars.tp(*v));
+                        if !open && fnref_site_listed(data, vars.tp(*v), args, &found) {
                             // The record the dispatch may answer as a tuple, when it answers one.
                             let rec = match vars.tp(*v).base() {
                                 Type::Function(_, ret, ..) => plain_record_type(data, ret),

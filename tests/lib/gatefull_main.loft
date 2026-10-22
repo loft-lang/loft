@@ -90,6 +90,8 @@ fn main() {
     for hk in 0..100 { arg_ref_hash(hh, hk % 10, hk); }
     println("arg_ref_hash {len(hh)} {hh[3].v}"); // 10 93 (key 3 last written at 93)
     println("arg_fn {arg_fn(twice, 5)}"); // 11
+    println("measure_gpt {measure_gpt_own("abc", 4)} {measure_gpt_own("abc", 0)}"); // 3 * 2.0 = 6, off: 0
+    println("style_gpt {style_gpt_own(3)}"); // 1.5 + 3 = 4.5
     f = ret_fn();
     println("ret_fn {f(3)}"); // 21
     println("local_lambda {local_lambda(10)} {local_lambda_text(4)} {local_lambda_rec(5)}"); // 11 n4 15

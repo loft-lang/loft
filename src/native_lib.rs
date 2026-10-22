@@ -1419,7 +1419,7 @@ fn shared_bridge_wrapper(
     // when it supplied one, a fresh store when it did not, and `(*ret).dbref` names it
     // either way — so the C boundary keeps its record contract while the loft-to-loft
     // call inside the cdylib takes the value path.
-    let value_rec = crate::generation::hoist::value_records(data, stores);
+    let value_rec = crate::generation::hoist::value_records(data, stores, true);
     let value_fields = value_rec
         .fn_fields(d_nr)
         .map(<[(i64, &'static str)]>::to_vec);

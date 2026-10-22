@@ -17,6 +17,7 @@
 # with (`scripts/lean_build.sh --lib --bin loft`): a bundle carries no rlib, and an artifact
 # runs only in the loft that built it.  A library that does not build is reported and left
 # out — it runs interpreted — and the script exits 0; 2 when it cannot run at all.
+# `KEEP_WORK=1` keeps the scratch home and each package's install and run output, and says where.
 #
 # Usage:  scripts/release-lib-artifacts.sh --loft <bin> --out <dir> [--index <index.json>]
 #                                          [--registry <url> --allow-unsigned] [package ...]
@@ -51,7 +52,7 @@ done
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/loft-lib-artifacts.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
+trap '[ -n "${KEEP_WORK:-}" ] && echo "kept $work" >&2 || rm -rf "$work"' EXIT
 home="$work/home"
 mkdir -p "$home"
 if [ -z "$index" ]; then
@@ -134,7 +135,7 @@ for (p, v), n in sorted(count.items()):
 rows = [r for r in rows if count[(r["package"], r["version"])] == 1]
 for r in rows:
     shutil.copyfile(r.pop("src"), out / r["file"])
-(out / f"lib-artifacts-{triple}.json").write_text(json.dumps(rows, indent=2) + "\n")
+(out / f"lib-artifacts-{triple}.json").write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
 for r in rows:
     print(f"  ok  {r['package']} {r['version']}: {r['file']}")
 print(f"{len(rows)} artifact(s) for {triple}")

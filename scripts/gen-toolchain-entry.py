@@ -218,7 +218,7 @@ def library_artifacts(root: pathlib.Path, base: str) -> dict:
     """
     out: dict = {}
     for listing in sorted(root.glob("lib-artifacts-*.json")):
-        for row in json.loads(listing.read_text()):
+        for row in json.loads(listing.read_text(encoding="utf-8")):
             f = listing.parent / row["file"]
             if not f.is_file():
                 sys.exit(f"{listing}: names {row['file']}, which is not beside it")

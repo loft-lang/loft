@@ -6154,8 +6154,10 @@ Native only; the interpreter moves as before and is the reference.
                  consumed as a record at a fn-ref call site (an argument the callee
                  keeps as a record, a field it is not read through) declines it as a
                  direct call's would.  A capturing arm, an optional result, a `par`
-                 worker, a `&text` argument that picks a store instance, and a fn-ref
-                 target no listed dispatch reaches keep the record outright.  An arm
+                 worker, a `&text` argument that picks a store instance, a fn-ref
+                 target no listed dispatch reaches, and — in a library artifact — a
+                 dispatch whose `_ =>` arm calls back into the interpreter keep the
+                 record outright.  An arm
                  is a function whose RECORD matches the signature's, not only its
                  Rust ABI: the type checker refuses any other in that slot.  The
                  interpreter is untouched: the tuple is native's representation of
@@ -6166,7 +6168,10 @@ Native only; the interpreter moves as before and is the reference.
 call, to hand back a record `default_style` had already answered in registers (the fn-ref
 result ABI stops at the buffer road, `@FR-O-Unknown`).  The target set of a fn-ref is complete
 in the emitted binary (`src/generation/emit.rs` writes the `match`), so the admission
-`(R-ValueRecord)` proves per function lifts to the signature.  Sound where every arm is
+`(R-ValueRecord)` proves per function lifts to the signature.  A library artifact is the
+exception: a value the script hands in names a callee the artifact does not carry, and the
+`_ =>` arm calls it back in the interpreter (`HostTable::call_ref`), which takes and answers
+records — so there the group is open, and its arms keep their records (loft#2129).  Sound where every arm is
 admitted; a null fn-ref answers the null tuple exactly as the buffer road answers a null
 record.  The parameter half is what makes the result half reach `flow_layout_full`: its
 `measure(r.str, resolve(r.style))` hands the resolved record straight to a second dispatch,

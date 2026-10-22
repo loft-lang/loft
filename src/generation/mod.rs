@@ -10899,7 +10899,7 @@ extern crate loft;"
         // site, so it cannot be a per-function analysis.
         if !self.value_records_done {
             self.value_records_done = true;
-            self.value_records = hoist::value_records(self.data, self.stores);
+            self.value_records = hoist::value_records(self.data, self.stores, self.library_unit);
             crate::rewrite_census::fired("R-ValueRecord", self.value_records.fns.len());
             // Every function's DEAD buffers, once: a loop judging a call reads the callee's
             // body with its own dead buffers exempt (`HoistOwned::for_callee`).
