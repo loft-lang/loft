@@ -506,16 +506,18 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
                 slot width in its header: a table written before, with untagged slots, is read as
                 it was written and rebuilt tagged when it next grows.
   (Col-Inline)  PROPOSED (reopens @C105) — a hash whose element type T is ADMITTED keeps its entries
-                IN the bucket table, beside their tags: a probe and the entry it answers share the
-                table, a growth and a removal's back-shift MOVE entries.  T is admitted when (1) no
-                `reference<T>` field exists in the program (heap.md H-LongRef: nothing stored names
-                an entry), (2) no other collection shares T's records (Col-Group), and (3) no view
-                into an entry is live across an insert into or a removal from the same table — the
-                disturbance rule vectors obey (binding.md B-Disturb), asked of every table of T.  A T
-                that fails any of the three keeps (Col-Tag)'s layout: the condition costs the
-                rewrite, never a value.  Decided per type when the program's types are finished; a
-                store loaded by a program that does not admit a type it holds inline converts the
-                table on load, the one place records may move.
+                IN the bucket table, one per bucket beside its tag: a probe and the entry it answers
+                share the table.  An entry MOVES only when the table grows (a keyed add, which ends
+                every view already — binding.md B-Disturb) and when a store is loaded or compacted;
+                a removal leaves a tombstone, so a walk that removes as it goes sees no entry move.
+                T is admitted when its entries are the table's own: no `reference<T>` field in the
+                program (heap.md H-LongRef: nothing stored names an entry) and no other collection
+                sharing T's records (Col-Group) — the type's `linked` fact, decided when the
+                program's types are finished.  A record handed to the table that it did not stage
+                (a sibling view's, as Col-Group's other routes hand them) turns the table back
+                into (Col-Tag)'s layout first and is filed borrowed: the condition costs the
+                layout, never a value.  The record holding an entry names the collection's owner
+                at field 4, in either layout.
 ```
 *Anchors:* DATABASE.md:693,:704; VERIFICATION.md heap.md "H-Copy (keyed)" (oracle `16`).
 
