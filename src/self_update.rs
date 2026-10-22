@@ -506,6 +506,7 @@ mod tests {
             provides: Vec::new(),
             triggers: Vec::new(),
             binaries,
+            artifacts: BTreeMap::new(),
             api: Vec::new(),
             prerelease: false,
             published: "2026-07-21T00:00:00Z".to_string(),

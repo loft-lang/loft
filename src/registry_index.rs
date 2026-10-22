@@ -60,6 +60,26 @@ pub struct RegistryIndex {
     pub skipped: Vec<String>,
 }
 
+impl RegistryIndex {
+    /// @PLN199 G2c — the artifact the running loft's release built for `package` at
+    /// `version` on `triple`, from that release's row of the `loft` package.
+    #[must_use]
+    pub fn release_artifact(
+        &self,
+        package: &str,
+        version: &str,
+        triple: &str,
+    ) -> Option<&BinaryEntry> {
+        self.packages
+            .get("loft")?
+            .versions
+            .get(crate::manifest::LOFT_RUNNING_VERSION)?
+            .artifacts
+            .get(&format!("{package}@{version}"))?
+            .get(triple)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Package {
     pub name: String,
@@ -106,6 +126,11 @@ pub struct Version {
     pub triggers: Vec<String>,
     /// Schema slot — pre-built distribution deferred.
     pub binaries: BTreeMap<String, BinaryEntry>,
+    /// @PLN199 G2c — on a `loft` release's row only: the library artifacts that release
+    /// built, by `<package>@<version>` and then by triple.  An auto-compiled artifact is a
+    /// function of the loft that built it, so it lives with that loft's release, and every
+    /// release carries its own (a library's `binaries` holds one per triple).
+    pub artifacts: BTreeMap<String, BTreeMap<String, BinaryEntry>>,
     /// Function-level API surface — one `ApiItem` (signature + one-line doc) per
     /// `pub` item, derived from THIS version's source at publish time (the same
     /// `parse_pkg_api` extractor `loft api` uses) so `loft search` can answer a
@@ -144,11 +169,12 @@ pub struct BinaryEntry {
     /// load-bearing: it means "not anchored", which `verify-self` reports rather than
     /// treating as a pass.
     pub manifest_sha256: Option<String>,
-    /// @PLN199 G2a — for a library's AUTO-compiled artifact: the `cache::loft_exe_identity` of
-    /// the loft that built it (a string in the index, as `loft_ffi_fp`), and its full stem
-    /// (`native_lib::cached_or_build_shared_cdylib`'s name for it).  Such an artifact runs only
-    /// in that same loft, which then adopts it under that name with no `rustc`.  `None` for
-    /// a hand-written native crate's binary, which `loft_ffi_fp` gates.
+    /// @PLN199 G2a — for a library's AUTO-compiled artifact (a release's `artifacts`): the
+    /// `cache::loft_exe_identity` of the loft that built it (a string in the index, as
+    /// `loft_ffi_fp`), and its full stem (`native_lib::cached_or_build_shared_cdylib`'s name
+    /// for it).  Such an artifact runs only in that same loft, which then adopts it under that
+    /// name with no `rustc`.  `None` for a hand-written native crate's binary, which
+    /// `loft_ffi_fp` gates.
     pub loft_exe_id: Option<u64>,
     pub stem: Option<String>,
 }
@@ -329,6 +355,7 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
     let mut provides: Vec<String> = Vec::new();
     let mut triggers: Vec<String> = Vec::new();
     let mut binaries: BTreeMap<String, BinaryEntry> = BTreeMap::new();
+    let mut artifacts: BTreeMap<String, BTreeMap<String, BinaryEntry>> = BTreeMap::new();
     let mut api: Vec<ApiItem> = Vec::new();
     let mut prerelease = false;
     let mut published: Option<String> = None;
@@ -392,42 +419,11 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
                     })
                     .collect();
             }
-            ("binaries", Parsed::Object(bmap)) => {
-                for (triple, _, bval) in bmap {
-                    if let Parsed::Object(bfields) = bval {
-                        let mut burl: Option<String> = None;
-                        let mut bsha: Option<String> = None;
-                        let mut bfp: Option<u64> = None;
-                        let mut bmanifest: Option<String> = None;
-                        let mut bexe: Option<u64> = None;
-                        let mut bstem: Option<String> = None;
-                        for (bk, _, bv) in bfields {
-                            match (bk.as_str(), bv) {
-                                ("url", Parsed::Str(s)) => burl = Some(s.clone()),
-                                ("sha256", Parsed::Str(s)) => bsha = Some(s.clone()),
-                                // @PLN21 — fp stored as a string (u64 precision).
-                                ("loft_ffi_fp", Parsed::Str(s)) => bfp = s.parse().ok(),
-                                ("manifest_sha256", Parsed::Str(s)) => {
-                                    bmanifest = Some(s.clone());
-                                }
-                                ("loft_exe_id", Parsed::Str(s)) => bexe = s.parse().ok(),
-                                ("stem", Parsed::Str(s)) => bstem = Some(s.clone()),
-                                _ => {}
-                            }
-                        }
-                        if let (Some(u), Some(s)) = (burl, bsha) {
-                            binaries.insert(
-                                triple.clone(),
-                                BinaryEntry {
-                                    url: u,
-                                    sha256: s,
-                                    loft_ffi_fp: bfp,
-                                    manifest_sha256: bmanifest,
-                                    loft_exe_id: bexe,
-                                    stem: bstem,
-                                },
-                            );
-                        }
+            ("binaries", Parsed::Object(bmap)) => binaries = parse_binaries(bmap),
+            ("artifacts", Parsed::Object(amap)) => {
+                for (key, _, aval) in amap {
+                    if let Parsed::Object(bmap) = aval {
+                        artifacts.insert(key.clone(), parse_binaries(bmap));
                     }
                 }
             }
@@ -478,10 +474,52 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
         provides,
         triggers,
         binaries,
+        artifacts,
         api,
         prerelease,
         published,
     })
+}
+
+/// A `binaries` object: one entry per triple, each with a `url` and a `sha256`.
+fn parse_binaries(bmap: &[(String, usize, Parsed)]) -> BTreeMap<String, BinaryEntry> {
+    let mut binaries = BTreeMap::new();
+    for (triple, _, bval) in bmap {
+        if let Parsed::Object(bfields) = bval {
+            let mut burl: Option<String> = None;
+            let mut bsha: Option<String> = None;
+            let mut bfp: Option<u64> = None;
+            let mut bmanifest: Option<String> = None;
+            let mut bexe: Option<u64> = None;
+            let mut bstem: Option<String> = None;
+            for (bk, _, bv) in bfields {
+                match (bk.as_str(), bv) {
+                    ("url", Parsed::Str(s)) => burl = Some(s.clone()),
+                    ("sha256", Parsed::Str(s)) => bsha = Some(s.clone()),
+                    // @PLN21 — fp stored as a string (u64 precision).
+                    ("loft_ffi_fp", Parsed::Str(s)) => bfp = s.parse().ok(),
+                    ("manifest_sha256", Parsed::Str(s)) => bmanifest = Some(s.clone()),
+                    ("loft_exe_id", Parsed::Str(s)) => bexe = s.parse().ok(),
+                    ("stem", Parsed::Str(s)) => bstem = Some(s.clone()),
+                    _ => {}
+                }
+            }
+            if let (Some(u), Some(s)) = (burl, bsha) {
+                binaries.insert(
+                    triple.clone(),
+                    BinaryEntry {
+                        url: u,
+                        sha256: s,
+                        loft_ffi_fp: bfp,
+                        manifest_sha256: bmanifest,
+                        loft_exe_id: bexe,
+                        stem: bstem,
+                    },
+                );
+            }
+        }
+    }
+    binaries
 }
 
 // ── Version resolution ────────────────────────────────────────────
@@ -2147,33 +2185,51 @@ mod tests {
         );
     }
 
-    /// @PLN199 G2a — a binary entry carries the loft that built an auto-compiled library
-    /// artifact and its stem; an entry published before these fields reads them as absent.
+    /// @PLN199 G2c — a `loft` release's row names the library artifacts it built, by
+    /// `<package>@<version>` and triple, each with the loft that built it and its stem; the
+    /// running loft finds its own release's, and an entry without these fields reads them as
+    /// absent.
     #[test]
-    fn a_binary_entry_names_the_loft_and_stem_of_an_auto_artifact() {
-        let doc = r#"{
+    fn a_release_row_names_the_library_artifacts_it_built() {
+        let running = crate::manifest::LOFT_RUNNING_VERSION;
+        let doc = format!(
+            r#"{{
           "schema_version": 1, "updated": "2026-10-22T00:00:00Z",
-          "packages": {
-            "calc": { "versions": { "0.2.0": {
+          "packages": {{
+            "loft": {{ "versions": {{ "{running}": {{
+                "url": "u", "sha256": "s", "size": 1, "loft": ">=0",
+                "published": "2026-10-22T00:00:00Z",
+                "artifacts": {{ "calc@0.2.0": {{
+                  "x86_64-unknown-linux-gnu": {{ "url": "b", "sha256": "h",
+                    "loft_exe_id": "12345678901234567890",
+                    "stem": "loft_auto_calc_0_2_0_00ff00ff00ff00ff" }} }} }} }} }} }},
+            "calc": {{ "versions": {{ "0.2.0": {{
                 "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
                 "published": "2026-10-22T00:00:00Z",
-                "binaries": {
-                  "x86_64-unknown-linux-gnu": { "url": "b", "sha256": "h",
-                    "loft_exe_id": "12345678901234567890",
-                    "stem": "loft_auto_calc_0_2_0_00ff00ff00ff00ff" },
-                  "aarch64-apple-darwin": { "url": "c", "sha256": "i", "loft_ffi_fp": "7" }
-                } } } }
-          }
-        }"#;
-        let idx = parse_index(doc).expect("index parses");
-        let v = &idx.packages["calc"].versions["0.2.0"];
-        let auto = &v.binaries["x86_64-unknown-linux-gnu"];
+                "binaries": {{
+                  "aarch64-apple-darwin": {{ "url": "c", "sha256": "i", "loft_ffi_fp": "7" }}
+                }} }} }} }}
+          }}
+        }}"#
+        );
+        let idx = parse_index(&doc).expect("index parses");
+        let auto = idx
+            .release_artifact("calc", "0.2.0", "x86_64-unknown-linux-gnu")
+            .expect("the running loft's release names calc's artifact");
         assert_eq!(auto.loft_exe_id, Some(12_345_678_901_234_567_890));
         assert_eq!(
             auto.stem.as_deref(),
             Some("loft_auto_calc_0_2_0_00ff00ff00ff00ff")
         );
-        let old = &v.binaries["aarch64-apple-darwin"];
+        assert!(
+            idx.release_artifact("calc", "0.2.1", "x86_64-unknown-linux-gnu")
+                .is_none()
+        );
+        assert!(
+            idx.release_artifact("calc", "0.2.0", "aarch64-apple-darwin")
+                .is_none()
+        );
+        let old = &idx.packages["calc"].versions["0.2.0"].binaries["aarch64-apple-darwin"];
         assert_eq!((old.loft_exe_id, old.stem.as_deref()), (None, None));
         assert_eq!(old.loft_ffi_fp, Some(7));
     }
@@ -3150,6 +3206,7 @@ mod tests {
             provides: vec![],
             triggers: vec![],
             binaries: BTreeMap::new(),
+            artifacts: BTreeMap::new(),
             api,
             prerelease: false,
             published: "p".to_string(),

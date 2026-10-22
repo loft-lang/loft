@@ -18,8 +18,14 @@ Hashes are computed from the zips themselves, never read from the `.zip.sha256`
 sidecars.  A sidecar is a claim about a file; recording a claim we did not check would
 make the signature attest to something nobody verified.
 
+@PLN199 G2c.  `--artifacts DIR` adds the library artifacts the release built
+(`scripts/release-lib-artifacts.sh`, one `DIR/<leg>/artifacts.json` per build leg) as the
+version's `artifacts`: by `<package>@<version>`, then by triple, each the asset's URL, its
+hash, the loft that built it and its stem.  An auto-compiled artifact runs only in the loft
+that built it, so it belongs to that loft's release row, and each release carries its own.
+
 Usage:
-    gen-toolchain-entry.py --version 2026.7.2 --dir artifacts [--out entry.json]
+    gen-toolchain-entry.py --version 2026.7.2 --dir artifacts [--artifacts DIR] [--out entry.json]
 """
 
 import argparse
@@ -120,6 +126,11 @@ def main() -> None:
     ap.add_argument("--out", help="write here instead of stdout")
     ap.add_argument("--published", help="RFC3339 timestamp (default: the tag's date)")
     ap.add_argument(
+        "--artifacts",
+        metavar="DIR",
+        help="the library artifacts the release built: DIR/<leg>/artifacts.json beside the files",
+    )
+    ap.add_argument(
         "--splice-into",
         metavar="INDEX_JSON",
         help="merge the entry into a registry index in place, instead of writing the "
@@ -159,6 +170,8 @@ def main() -> None:
             "manifest_sha256": manifest_digest(zp),
         }
 
+    artifacts = library_artifacts(pathlib.Path(args.artifacts), base) if args.artifacts else {}
+
     entry = {
         # The package name is the key this object is stored under, as for every other
         # package in the index -- not a `name` field inside it.
@@ -182,6 +195,8 @@ def main() -> None:
             }
         },
     }
+    if artifacts:
+        entry["versions"][ver]["artifacts"] = artifacts
 
     if args.splice_into:
         splice(pathlib.Path(args.splice_into), entry, ver)
@@ -192,6 +207,34 @@ def main() -> None:
         pathlib.Path(args.out).write_text(out)
     else:
         sys.stdout.write(out)
+
+
+def library_artifacts(root: pathlib.Path, base: str) -> dict:
+    """`artifacts` for the release row: `{ "<package>@<version>": { "<triple>": {...} } }`.
+
+    The hash is the file's, computed here like every other hash in the entry; the list's own
+    `sha256` is a claim, and one that disagrees with its file stops the entry.
+    """
+    out: dict = {}
+    for listing in sorted(root.glob("*/artifacts.json")):
+        for row in json.loads(listing.read_text()):
+            f = listing.parent / row["file"]
+            if not f.is_file():
+                sys.exit(f"{listing}: names {row['file']}, which is not beside it")
+            sha = sha256_of(f)
+            if sha != row["sha256"]:
+                sys.exit(f"{f}: hashes to {sha}, its listing says {row['sha256']}")
+            key = f"{row['package']}@{row['version']}"
+            slot = out.setdefault(key, {})
+            if row["triple"] in slot:
+                sys.exit(f"{key}: two artifacts for {row['triple']}")
+            slot[row["triple"]] = {
+                "url": f"{base}/{row['file']}",
+                "sha256": sha,
+                "loft_exe_id": str(row["loft_exe_id"]),
+                "stem": row["stem"],
+            }
+    return dict(sorted(out.items()))
 
 
 def splice(index_path: pathlib.Path, entry: dict, ver: str) -> None:

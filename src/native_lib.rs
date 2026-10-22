@@ -3003,15 +3003,18 @@ pub fn cached_or_build_shared_cdylib(
     // …and WHICH loft executable: the artifact is this binary's generated code, called through
     // this binary's store layout, so a different binary must rebuild rather than adopt it —
     // the rlib's hash alone stays the same when an installed `loft` is upgraded without it
-    // (loft#1776).
-    let fp = mix_fp(
+    // (loft#1776).  A release bundle's binary names its build by itself: the release builds
+    // its artifacts beside an rlib that ships nowhere, and a user's copy has none to hash.
+    let loft_fp = if crate::cache::release_bundle() {
+        crate::cache::loft_exe_identity()
+    } else {
         mix_fp(
-            mix_fp(
-                crate::cache::loft_build_fingerprint(),
-                crate::cache::loft_exe_identity(),
-            ),
-            program_fp,
-        ),
+            crate::cache::loft_build_fingerprint(),
+            crate::cache::loft_exe_identity(),
+        )
+    };
+    let fp = mix_fp(
+        mix_fp(loft_fp, program_fp),
         mix_fp(
             contributing_fingerprint(contributing),
             crate::cache::native_release_flags_fingerprint(),

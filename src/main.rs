@@ -8927,6 +8927,13 @@ fn main() {
             // the cdylib + its fp, the two things `loft install` then needs.
             #[cfg(feature = "registry")]
             {
+                // @PLN199 G2c — the fields of an artifact's entry that name THIS loft, for a
+                // release job that builds its artifacts through ordinary runs.
+                if argv.get(i).is_some_and(|s| s == "--identity") {
+                    println!("loft_exe_id: {}", loft::cache::loft_exe_identity());
+                    println!("triple: {}", loft::cache::host_triple());
+                    return;
+                }
                 let pkg_path = if argv.get(i).is_some_and(|s| !s.starts_with('-')) {
                     std::path::PathBuf::from(&argv[i])
                 } else {

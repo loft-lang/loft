@@ -35,6 +35,7 @@ jobs:
             os: ubuntu-latest
             container: quay.io/pypa/manylinux_2_28_x86_64:2026.10.16-1@sha256:1e7b8460ad8fb3fb0fbe1cd818845159ac896b4fd17452d56e892c291f3b97a8
             glibc: '2.28'
+            artifacts: true
           - target: x86_64-apple-darwin
             # macos-15 is Apple Silicon, so this leg CROSS-builds and the bundle it
             # produces cannot run natively on the runner that made it.  Declared here
@@ -43,10 +44,15 @@ jobs:
             # that goes unnoticed.
             os: macos-15
             cross: rosetta
+          # `artifacts`: the leg builds the published libraries' compiled artifacts with the
+          # binary it ships (@PLN199 G2c).  Only a leg that can RUN that binary: the
+          # x86_64-apple-darwin leg cross-builds.
           - target: aarch64-apple-darwin
             os: macos-latest
+            artifacts: true
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            artifacts: true
 
     steps:
       - uses: actions/checkout@v5
@@ -166,7 +172,8 @@ jobs:
           # 1 — the binary runs at all, and it is the version the tag claims.  A bundle
           #     named for one version carrying the binary of another is the failure the
           #     hashes cannot see: every digest would be internally consistent.
-          got="$("./$exe" --version)"
+          # The first line: the second names the toolchain a native build would use (@C102).
+          got="$("./$exe" --version | head -n 1)"
           if [ "$got" != "loft $version" ]; then
             echo "version mismatch: tag says 'loft $version', binary says '$got'" >&2
             exit 1
@@ -230,6 +237,38 @@ jobs:
           path: |
             dist/*.zip
             dist/*.zip.sha256
+
+      # @PLN199 G2c — the published libraries, compiled by the binary this leg ships, so a
+      # user without `rustc` runs them compiled.  The binary is the bundle's, still in the
+      # target directory beside the rlib its build left in `deps/` (a bundle carries none).
+      # It never holds the release back: a library that does not build runs interpreted,
+      # which is what it does today — RELEASE_PUBLISH.md § Library artifacts.
+      - name: Build the library artifacts
+        if: ${{ matrix.artifacts }}
+        continue-on-error: true
+        timeout-minutes: 120
+        shell: bash
+        env:
+          LOFT_VERSION: ${{ github.ref_name }}
+        run: |
+          # make-release.sh always builds with `--target`, the host's own triple included.
+          bin="target/install-lib/${{ matrix.target }}/release/loft"
+          case "${{ matrix.target }}" in *windows*) bin="$bin.exe";; esac
+          scripts/release-lib-artifacts.sh --loft "$bin" --out "dist-lib/${{ matrix.target }}" | tee lib-artifacts.log
+          {
+            echo "### Library artifacts — ${{ matrix.target }}"
+            echo '```'
+            cat lib-artifacts.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the library artifacts
+        if: ${{ matrix.artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-artifacts-${{ matrix.target }}
+          path: dist-lib/${{ matrix.target }}
+          if-no-files-found: ignore
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -264,7 +303,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: loft-*
           merge-multiple: true
+
+      # One directory per leg: each holds its own `artifacts.json`.  The files are attached
+      # beside the bundles; the listings become the registry entry's `artifacts`.
+      - name: Download the library artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: lib-artifacts
+          pattern: lib-artifacts-*
 
       # The artifact the registry entry names for the version ITSELF.  Built here
       # rather than in the build matrix because all four legs would otherwise emit the
@@ -284,8 +332,10 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
+          mkdir -p lib-artifacts
+          find lib-artifacts -name '*loft_auto_*' -exec cp {} artifacts/ \;
           python3 scripts/gen-toolchain-entry.py \
-            --version "$version" --dir artifacts \
+            --version "$version" --dir artifacts --artifacts lib-artifacts \
             --published "$(git log -1 --format=%cI HEAD)" \
             --out "artifacts/loft-$version-registry-entry.json"
 
