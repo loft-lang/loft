@@ -148,9 +148,20 @@ them the null-checked `%`, `/` and `-` of the chunk and hex index (12.7 % of the
 `rec_and_len` out of line 76 of them), the undo push (`vector_append` + `vector_finish` +
 `clear_vector` ~185 a step).  The levers inside the focus — `rec_and_len` inline at the element
 write, a push with room left written in place, `s.us_redo = []` on an empty vector skipped —
-are *est.* −12 % together (≈ 3.7×); with the arithmetic ≈ 3.3×.  2.5× needs L7 as well (the
-chunk vector's and each `ck_hexes` header held by the caller across the four walks a step,
-re-derived after `map_ensure_chunk` appends; *est.* −25–30 %, never priced): ≈ 2.4×.
+are *est.* −12 % together (≈ 3.7×); with the arithmetic ≈ 3.3×.  2.5× needs L7, PRICED
+(`l7/price_slope_l7.py`; seven interleaved rounds, hash 3f61de on every form):
+
+| form (baseline 183.9 ms) | ms | |
+|---|--:|--:|
+| L7: `m_chunks`' header and base taken once in `slope_path_with_undo`, handed down to the four walks a step, re-derived after `map_ensure_chunk`'s append | 159.0 | −13.5 % |
+| the matched chunk's `ck_hexes` record and length read through the held chunk address, not resolved again (`length_vector`, `get_vector`, `rec_and_len`) — in the callee, no L7 | 168.4 | −8.4 % |
+| both | 144.6 | −21.4 % |
+| L7 with every chunk's `ck_hexes` header in a caller table (a ceiling: a per-element header cache is no rule) | 136.0 | −26.4 % |
+
+L7 is −262 instructions a step; it holds while the undo push writes another store than the
+map's (a store-number compare, `(R-Alias)`'s versioned clause) and the hex write grows
+nothing.  The nested read is `(R-RecPtr)`'s address clause one level down, general.  Both
+with the arithmetic ≈ 2.8×; with the push levers it does not overlap ≈ 2.5×.
 
 #### The rows still near or over 4×, toward WELL below 3× (2026-10-21, at `8308712f1`)
 
@@ -179,10 +190,9 @@ branches.  What each row needs:
   owner's "proved away by ranges": −12.3 % priced 2026-10-20), the element read's two header
   reads shared (−4.8 % priced), the `Hex` value read and written as one block instead of
   seven checked fields (*est.* −8 %), `s.us_redo = []` skipped on an empty vector (*est.* −2 %):
-  ≈ 3.2×.  Well below 3× needs the three chunk walks per step to stop re-deriving the chunk
-  vector's and each `ck_hexes` header: L7, the caller's held headers handed into
-  `map_get_hex` / `map_set_hex` (*est.* −25–30 %, ≈ 2.3×), which must re-derive after
-  `map_ensure_chunk` appends a chunk.
+  ≈ 3.2×.  Well below 3× needs the chunk walks per step to stop re-deriving the chunk
+  vector's and each `ck_hexes` header: L7 and the nested read, PRICED −21.4 % together (the
+  table above).
 - **`field_add_cell`.**  The keyed runtime's checks validated once per probe (*est.* −5 %), each
   keyed operation's fixed metadata (`keyed_entry_long` 64, `Entries::of` 37, `read_seed` 17,
   `sub_record_type` 14 instructions) resolved by the emitter where the type, field and key
@@ -445,7 +455,8 @@ The levers, by reach — each a compiler or runtime rule, never a library rewrit
   native — a decision (@C entry) before it is built.  `request`.
 - **L6 — the keyed insert path.**  Unpriced; `field_add_cell` is the row to profile line by line.
 - **L7 — a callee's chunk walk set up once per caller loop.**  `(R-Inputs)` for the chunk
-  vector `map_get_hex` / `map_set_hex` walk.  `slope_path_with_undo`.
+  vector `map_get_hex` / `map_set_hex` walk.  `slope_path_with_undo`, PRICED −13.5 %; with
+  the nested read through the held address (local, general) −21.4 %.
 - **L8 — a small append run through the caller's window.**  `(R-PushFill)`'s run clause across a
   call.  `encode_bytes`, cbor `encode`.
 
