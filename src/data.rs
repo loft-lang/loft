@@ -5760,6 +5760,15 @@ pub struct Data {
     /// computed field it came from.  Not part of a program image: only the layout command
     /// reads it, from a fresh parse.
     pub default_sources: std::collections::BTreeMap<(String, String), Vec<String>>,
+    /// @PLN196 — the types whose values outlive the program that wrote them, and so must
+    /// convert when their layout changes: what a `store_load*` / `store_persist*` /
+    /// `swap_world` call hands over (a reload swaps the world, never a frame), every `pub`
+    /// type the project declares (a library's user stores those), and every type one of them
+    /// holds.  Struct and enum definition numbers.  `None` — not computed, or a store call
+    /// whose argument names no concrete type — means every user type counts.  The parser sets
+    /// it after pass 2; the release baseline, `loft layout check` and the
+    /// `layout-upgrade-refused` warning read it.
+    pub surviving: Option<std::collections::BTreeSet<u32>>,
     /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
     /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
     /// forever.  A refused program does not run, so this needs no place in the image.
@@ -6506,6 +6515,7 @@ impl Data {
             value_structs: HashSet::new(),
             user_operator_conversions: false,
             default_sources: std::collections::BTreeMap::new(),
+            surviving: None,
             refused_type_templates: HashSet::new(),
             type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),

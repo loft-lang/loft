@@ -1756,8 +1756,8 @@ fn layout_as(
     (code, format!("{out}{err}"))
 }
 
-const SRC_V2: &str = "struct Inner { label: text, size: integer }\nstruct Item { id: integer, note: text, inner: Inner, count: integer = len($.inner.label), tag: integer = len($.note) }\nfn main() {}\n";
-const SRC_V3: &str = "struct Inner { size: integer }\nstruct Item { id: integer, note: text, inner: Inner, count: integer, tag: integer }\nfn main() {}\n";
+const SRC_V2: &str = "struct Inner { label: text, size: integer }\npub struct Item { id: integer, note: text, inner: Inner, count: integer = len($.inner.label), tag: integer = len($.note) }\nfn main() {}\n";
+const SRC_V3: &str = "struct Inner { size: integer }\npub struct Item { id: integer, note: text, inner: Inner, count: integer, tag: integer }\nfn main() {}\n";
 
 /// Cases 2 and 7: the sources are recorded, and a drop across records is refused naming the
 /// dropped field, the computed one and the release; the in-record case (`note`, cell below)
@@ -1793,7 +1793,7 @@ fn layout_check_refuses_a_dropped_source() {
 fn layout_check_dropped_source_is_cured_by_a_routine_or_the_floor() {
     let dir = cell_dir("src_cures");
     assert_eq!(layout_as(&dir, "accept", "2.0", "", SRC_V2).0, 0);
-    let v3 = "struct Inner { label: text, size: integer }\nstruct Item { id: integer, inner: Inner, count: integer, tag: integer }\nfn main() {}\n";
+    let v3 = "struct Inner { label: text, size: integer }\npub struct Item { id: integer, inner: Inner, count: integer, tag: integer }\nfn main() {}\n";
     let (code, out) = layout_as(&dir, "check", "3.0", "", v3);
     assert!(
         code == 1
@@ -1850,7 +1850,7 @@ fn layout_check_source_release_carries_forward() {
         "floor 1.5 < 2.0 ({code})\n{out}"
     );
     // Dropping `size`, which no default reads, is a plain removal.
-    let v3b = "struct Inner { label: text }\nstruct Item { id: integer, note: text, inner: Inner, count: integer = len($.inner.label), tag: integer = len($.note) }\nfn main() {}\n";
+    let v3b = "struct Inner { label: text }\npub struct Item { id: integer, note: text, inner: Inner, count: integer = len($.inner.label), tag: integer = len($.note) }\nfn main() {}\n";
     let (code, out) = layout_as(&dir, "check", "3.0", "", v3b);
     assert!(
         code == 0 && out.contains("Inner.size removed") && !out.contains("refused"),
@@ -1909,6 +1909,60 @@ fn parser_warns_on_an_upgrade_the_baseline_refuses() {
     assert!(
         code == 0 && !out.contains("layout-upgrade-refused"),
         "without a baseline nothing warns, warm cache or not ({code})\n{out}"
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
+/// Only a type whose values outlive the program warns: one a store call hands over, one such
+/// a type holds (here through a vector), and a `pub` one, which a library's user may store.
+/// A type nothing stores stays silent, unless a store call takes an untyped `reference`,
+/// which could be any type.  `loft layout check` draws the same line.
+#[test]
+fn parser_warns_only_for_types_that_outlive_the_program() {
+    let dir = cell_dir("parse_survive");
+    let base = "struct World { items: vector<Item> }\nstruct Item { id: integer, label: text }\n\
+                struct Popup { text: text, ttl: integer }\n\
+                fn save(w: World) -> boolean { store_persist_copy(w, \"w.db\") }\nfn main() {}\n";
+    assert_eq!(layout_as(&dir, "accept", "2.0", "", base).0, 0);
+    let lock = loft::file_access::read_to_string(dir.join("layout.lock")).unwrap();
+    assert!(
+        lock.contains("Item") && !lock.contains("Popup"),
+        "the baseline holds the stored types only:\n{lock}"
+    );
+    let run = |src: &str| {
+        let (code, out) = layout_as(&dir, "check", "3.0", "", src);
+        let (_, run_out, run_err) = run_loft(&dir, &["prog.loft"]);
+        (code, out, format!("{run_out}{run_err}"))
+    };
+    let popup = base.replace("ttl: integer", "ttl: text");
+    let (code, out, warn) = run(&popup);
+    assert!(
+        code == 0 && !out.contains("refused") && !warn.contains("layout-upgrade-refused"),
+        "a type nothing stores is silent ({code})\n{out}\n{warn}"
+    );
+    let (code, out, warn) = run(&base.replace("label: text", "label: integer"));
+    assert!(
+        code == 1 && out.contains("Item.label") && warn.contains("layout-upgrade-refused"),
+        "a type the stored world holds warns ({code})\n{out}\n{warn}"
+    );
+    // Each of the two below is its own 2.0 release, in which Popup outlived the program too:
+    // a release whose stores never held a Popup has none to convert.
+    let keep = "fn keep(r: reference) -> boolean { store_persist_copy(r, \"r.db\") }\n";
+    assert_eq!(
+        layout_as(&dir, "accept", "2.0", "", &format!("{base}{keep}")).0,
+        0
+    );
+    let (code, _, warn) = run(&format!("{popup}{keep}"));
+    assert!(
+        code == 1 && warn.contains("layout-upgrade-refused") && warn.contains("Popup.ttl"),
+        "an untyped store call counts every type ({code})\n{warn}"
+    );
+    let public = |src: &str| src.replace("struct Popup", "pub struct Popup");
+    assert_eq!(layout_as(&dir, "accept", "2.0", "", &public(base)).0, 0);
+    let (code, _, warn) = run(&public(&popup));
+    assert!(
+        code == 1 && warn.contains("layout-upgrade-refused") && warn.contains("Popup.ttl"),
+        "a pub type counts ({code})\n{warn}"
     );
     let _ = loft::file_access::remove_dir_all(&dir);
 }
@@ -1999,7 +2053,9 @@ fn loft_package_records_an_applications_baseline() {
     loft::file_access::create_dir_all(dir.join("src")).unwrap();
     loft::file_access::write(
         dir.join("src/cellgame.loft"),
-        "struct Unit { id: integer, hp: integer, hp_max: integer = $.hp }\nfn main() { u = Unit { id: 1, hp: 5 }; println(\"{u.hp_max}\"); }\n",
+        "struct Unit { id: integer, hp: integer, hp_max: integer = $.hp }\n\
+         fn save(u: Unit) -> boolean { store_persist_copy(u, \"units.db\") }\n\
+         fn main() { u = Unit { id: 1, hp: 5 }; println(\"{u.hp_max}\"); }\n",
     )
     .unwrap();
     let _ = run_loft(&dir, &["package", "."]);

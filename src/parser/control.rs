@@ -21275,6 +21275,22 @@ impl Parser {
         });
     }
 
+    /// @PLN196 — a call that hands a value to a store file or to the next build: its type
+    /// outlives this program, so its layout changes must convert (`Data::surviving`).
+    fn note_store_handoff(&mut self, name: &str, types: &[Type]) {
+        if self.first_pass
+            || self.default
+            || !(name.starts_with("store_load")
+                || name.starts_with("store_persist")
+                || name == "swap_world")
+        {
+            return;
+        }
+        if let Some(t) = types.first() {
+            self.store_handoffs.push(t.clone());
+        }
+    }
+
     /// Dispatch a parsed call to the appropriate handler: diagnostics, special
     /// forms (`map/filter/reduce/sort/parallel_for`), fn-ref calls, or normal calls.
     #[allow(clippy::too_many_arguments)]
@@ -21311,6 +21327,7 @@ impl Parser {
             return self.parse_call_diagnostic(val, name, list, types, call_pos);
         }
         self.check_persist_bind_root(name, list, arg_pos);
+        self.note_store_handoff(name, types);
         match special {
             // @PLN105 Phase 1 — deliver(tag, value): hand the value's descriptor
             // handle to the host. Lower to OpDeliver(tag, value, db_tp), filling

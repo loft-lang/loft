@@ -111,7 +111,11 @@ load" for a change every loader in fact refuses.
   to (`layout-upgrade-refused`, `Parser::check_layout_baseline`; owner, 2026-10-22: a warning,
   not an error), the one answer `loft layout check` prints (`layout_schema::baseline_report`,
   which asks `Stores::baseline_upgrade`, routines included); `loft package` refuses to
-  release while one stands.
+  release while one stands.  The baseline and the check cover the types whose values outlive
+  the program (`Data::surviving`, owner 2026-10-22): what a store or `swap_world` call hands
+  over — a reload happens only at the host's main loop, so the world is what survives it, never
+  a frame — every `pub` type of the project, which a library's user may store, and every type
+  one of them holds; a store call on an untyped `reference` makes every type count.
 
 ## Goal
 

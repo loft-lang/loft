@@ -6692,7 +6692,8 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
-    let roots = loft::layout_schema::program_roots(&p.data);
+    // The types whose values outlive the program: stored, swapped across a reload, or `pub`.
+    let roots = loft::layout_schema::surviving_roots(&p.data);
     // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
     let mut identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     // The baseline sits beside `loft.toml`; a program with no manifest keeps it beside itself.

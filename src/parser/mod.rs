@@ -213,6 +213,9 @@ pub struct Parser {
     /// Paths only (content is re-read once at save time — no per-file memory);
     /// may contain duplicates across the two parse passes, deduped at use.
     pub parsed_sources: Vec<String>,
+    /// @PLN196 — the argument type of every `store_load*` / `store_persist*` / `swap_world`
+    /// call pass 2 met: the seeds of `Data::surviving`.
+    pub(crate) store_handoffs: Vec<Type>,
     /// All definitions
     pub data: Data,
     pub database: Stores,
@@ -1834,6 +1837,7 @@ impl Parser {
             todo_files: Vec::new(),
             track_sources: false,
             parsed_sources: Vec::new(),
+            store_handoffs: Vec::new(),
             pass_started: None,
             speculative_type_refs: std::collections::HashSet::new(),
             qualified_stubs: std::collections::HashMap::new(),

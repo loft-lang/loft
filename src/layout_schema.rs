@@ -95,6 +95,27 @@ pub fn program_roots(data: &crate::data::Data) -> Vec<u16> {
         .collect()
 }
 
+/// The roots of a release baseline: the user types whose values outlive the program
+/// (`Data::surviving`), or every user type ([`program_roots`]) when that set is unknown.
+#[must_use]
+pub fn surviving_roots(data: &crate::data::Data) -> Vec<u16> {
+    let all = program_roots(data);
+    match &data.surviving {
+        None => all,
+        Some(set) => all
+            .into_iter()
+            .filter(|t| set.iter().any(|d| data.def(*d).known_type == *t))
+            .collect(),
+    }
+}
+
+/// Whether the struct named `tp` outlives the program (`Data::surviving`; all do when unknown).
+fn survives(data: &crate::data::Data, tp: &str) -> bool {
+    data.surviving
+        .as_ref()
+        .is_none_or(|set| set.contains(&data.def_nr(tp)))
+}
+
 // ── @PLN196 step 9: where a computed field's value comes from ──────────────────────────────
 
 /// `@FR-L-Upgrade-Source` — the sources section of a project baseline: per field of a user
@@ -113,6 +134,7 @@ pub fn render_sources(data: &crate::data::Data, previous: &str, version: &str) -
         let d_nr = data.def_nr(tp);
         if d_nr == u32::MAX
             || crate::file_access::is_stdlib_source(data.def(d_nr).position.file.as_str())
+            || !survives(data, tp)
         {
             continue;
         }
@@ -178,6 +200,7 @@ pub fn lost_sources(
             || data.def_type(d_nr) != DefType::Struct
             || data.attr(d_nr, field) == usize::MAX
             || routines.iter().any(|r| r == tp)
+            || !survives(data, tp)
         {
             continue; // gone with its value, or carried by the type's routine
         }
@@ -253,7 +276,7 @@ pub fn baseline_report(
     let Some(text) = ss::read_baseline(project) else {
         return Ok(None);
     };
-    let roots = program_roots(data);
+    let roots = surviving_roots(data);
     let identity = of_scoped(stores, &roots, data);
     // A baseline is read with no release floor: it is this project's own earlier release.
     match ss::verdict_for_sidecar_text(&text, &identity, &crate::database::Release::default()) {

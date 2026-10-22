@@ -224,6 +224,7 @@ impl Parser {
             }
             self.lambda_counters.clear();
             self.fn_lambdas.clear();
+            self.store_handoffs.clear();
             Self::load_main_file(&mut self.lexer, filename, content);
             self.parse_file();
             self.resolve_deferred_unknowns();
@@ -243,7 +244,9 @@ impl Parser {
             // be asked whether it removes from a `&` parameter.
             self.check_reshape_under_reference();
             self.synth_drop_cascades();
-            self.check_layout_baseline(filename);
+            let project = Self::project_of(filename);
+            self.compute_surviving(&project);
+            self.check_layout_baseline(&project);
         }
         self.diagnostics.fill(self.lexer.diagnostics());
         self.diagnostics.is_empty()
@@ -1676,6 +1679,67 @@ impl Parser {
         }
     }
 
+    /// The project `filename` belongs to: the directory of the nearest `loft.toml` above it,
+    /// else the file's own directory — where the release baseline sits.
+    fn project_of(filename: &str) -> std::path::PathBuf {
+        crate::resolution_scope::project_root(filename)
+            .or_else(|| {
+                std::path::Path::new(filename)
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+            })
+            .unwrap_or_default()
+    }
+
+    /// `Data::surviving`: the types whose values outlive this program.  Seeds are the types
+    /// the store and swap calls hand over (`store_handoffs`) and every `pub` struct or enum
+    /// the project's own sources declare — a library's user may store any of them; the set is
+    /// closed over what each one holds, through fields, collections and enum variants.  A
+    /// call whose argument names no concrete type (`r: reference`) leaves it `None`: every
+    /// user type counts.
+    fn compute_surviving(&mut self, project: &std::path::Path) {
+        let mut todo: Vec<u32> = Vec::new();
+        for t in std::mem::take(&mut self.store_handoffs) {
+            if !type_defs(&self.data, &t, &mut todo) {
+                self.data.surviving = None;
+                return;
+            }
+        }
+        let root = crate::file_access::plain_canonical(project);
+        for d_nr in 0..self.data.definitions() {
+            let def = self.data.def(d_nr);
+            if matches!(def.def_type, DefType::Struct | DefType::Enum)
+                && def.pub_visible
+                && !def.name.starts_with("__")
+                && !def.name.contains('<')
+                && crate::file_access::plain_canonical(std::path::Path::new(
+                    def.position.file.as_str(),
+                ))
+                .starts_with(&root)
+            {
+                todo.push(d_nr);
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(d_nr) = todo.pop() {
+            if d_nr == u32::MAX || !seen.insert(d_nr) {
+                continue;
+            }
+            let def = self.data.def(d_nr);
+            for a in &def.attributes {
+                // A field of no concrete type has nothing stored to follow.
+                let _ = type_defs(&self.data, &a.typedef, &mut todo);
+            }
+            if def.def_type == DefType::Enum {
+                todo.extend((0..self.data.definitions()).filter(|&v| {
+                    self.data.def(v).parent == d_nr && self.data.def_type(v) == DefType::EnumValue
+                }));
+            }
+        }
+        seen.retain(|&d| matches!(self.data.def_type(d), DefType::Struct | DefType::Enum));
+        self.data.surviving = Some(seen);
+    }
+
     /// `layout-upgrade-refused` — a change to a stored type that a store written by the
     /// project's last release could not be upgraded across: the baseline `layout.lock` beside
     /// `loft.toml` (recorded by `loft package`) against this program's types, the same answer
@@ -1683,14 +1747,10 @@ impl Parser {
     /// warning, at the stored type's declaration: the program still runs while a refactor is
     /// half done, a library's CI denies warnings, and `loft package` refuses to release over
     /// one.  The baseline is a source of this compile, so editing it is a program-cache miss.
-    fn check_layout_baseline(&mut self, filename: &str) {
+    fn check_layout_baseline(&mut self, project: &std::path::Path) {
         use crate::schema_sidecar::baseline_path;
-        let entry = std::path::Path::new(filename);
-        let project = crate::resolution_scope::project_root(filename)
-            .or_else(|| entry.parent().map(std::path::Path::to_path_buf))
-            .unwrap_or_default();
         let lock = [
-            baseline_path(&project),
+            baseline_path(project),
             project.join(".loft").join("layout.lock"),
         ]
         .into_iter()
@@ -1704,7 +1764,7 @@ impl Parser {
         }
         let routines = Self::upgrade_routines(&self.data);
         let report = crate::layout_schema::baseline_report(
-            &project,
+            project,
             &self.database,
             &self.data,
             self.database.release(),
@@ -2181,5 +2241,38 @@ impl Parser {
             .filter(|(_, loaded)| **loaded == canonical)
             .map(|(id, _)| self.data.get_source(id))
             .find(|src| *src != u16::MAX)
+    }
+}
+
+/// The struct, enum and variant definitions type `t` stores, pushed onto `out`; `false` when
+/// it names no concrete type (an untyped `reference`, an unresolved type).
+fn type_defs(data: &crate::data::Data, t: &Type, out: &mut Vec<u32>) -> bool {
+    match t {
+        Type::Reference(d, _) => {
+            let known = matches!(
+                data.def_type(*d),
+                DefType::Struct | DefType::Enum | DefType::EnumValue
+            );
+            if known {
+                out.push(*d);
+            }
+            known
+        }
+        Type::Enum(d, _, _)
+        | Type::Sorted(d, _, _)
+        | Type::Index(d, _, _)
+        | Type::Radix(d, _, _)
+        | Type::Trie(d, _, _)
+        | Type::Hash(d, _, _) => {
+            out.push(*d);
+            true
+        }
+        Type::Vector(inner, _)
+        | Type::Optional(inner)
+        | Type::RefVar(inner)
+        | Type::Rewritten(inner) => type_defs(data, inner, out),
+        Type::Tuple(items) => items.iter().all(|i| type_defs(data, i, out)),
+        Type::Unknown(_) => false,
+        _ => true,
     }
 }

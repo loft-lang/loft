@@ -112,7 +112,8 @@ graphics/
 
 `loft package` is the release step of every project with a `[package]` version, a library or
 an application.  Before it builds the tarball it records `layout.lock` beside `loft.toml`: the
-layout of the types the entry program reaches, the release, and which stored fields each
+layout of the types whose values outlive the program (those its store and `swap_world` calls
+hand over, every `pub` type it declares, and what they hold), the release, and which stored fields each
 computed field's default reads (DATABASE.md § A store that skipped releases).  Commit it with
 the release: from then on every compile of the project warns (`layout-upgrade-refused`) at a
 stored type a store of that release could not be upgraded to, and `loft package` refuses to

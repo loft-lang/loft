@@ -470,7 +470,11 @@ build is refused by this rule or converted by the upgrade map
                       The refusal, and every other change the baseline's stores cannot be
                       upgraded across, is the compiler's `layout-upgrade-refused` warning at
                       the stored type, `loft layout check`'s exit 1, and `loft package`'s
-                      refusal to release; the three ask one function.
+                      refusal to release; the three ask one function.  The baseline and the
+                      check cover the types whose values outlive the program: those a store
+                      or swap call hands over, every pub type of the project, and what they
+                      hold — all of them when a store call's argument is an untyped
+                      reference.
 ```
 
 **In words.** A user who skips releases opens a store two layouts back.  The one-step
@@ -517,7 +521,9 @@ falsifier ([@PLN97](../plans/97-layout-contract/README.md)):
   clearing it, the first release carried across a re-accept, and an unrelated drop allowed;
   `parser_warns_on_an_upgrade_the_baseline_refuses` (the warning at the type, a changed kind,
   the silent cures, a warm program cache, a removed baseline) and
-  `loft_package_refuses_an_upgrade_the_baseline_refuses` (the 2.0 baseline kept).
+  `loft_package_refuses_an_upgrade_the_baseline_refuses` (the 2.0 baseline kept),
+  `parser_warns_only_for_types_that_outlive_the_program` (stored, held, untyped, pub, and the
+  silent type nothing stores).
 - **`L-Align`** — `tests/layout_alignment.rs` asks `Stores::alignment_violations` of every
   finished type (the standard library and a corpus of the spellings that reach the layout
   differently), compares the restated tuple storage view with the `__tuple<…>` record's own
