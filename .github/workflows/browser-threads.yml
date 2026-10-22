@@ -101,13 +101,14 @@ jobs:
     # nightly, and a gate that goes red on runner noise gets ignored, which
     # costs more than the tenths it buys.
     #
-    # MIN_BLOCK_RATIO_X10 replaced MIN_FRAME_RATIO_X10.  The frame-count ratio
-    # it named was decided by Chrome's ~1 Hz rAF throttle for a hidden page,
-    # not by par: the threaded leg read a frozen `frames=12 max_gap_ms=1017`
-    # across five runs on different runners while the sequential leg varied
-    # with the compute, so whichever leg the throttle hit lost the ratio.  The
-    # gate now reads the main-thread BLOCK time, which a sparse frame schedule
-    # cannot move.  See tests/wasm/par-ui-responsive.sh.
+    # MIN_PAR_SPEEDUP_PCT is the UI gate's bar on the PART of each frame's
+    # main-thread block that par decides — the block less the frame's serial
+    # compile-and-dispatch cost, which the page times apart.  Not a frame count
+    # (Chrome's ~1 Hz rAF throttle for a hidden page decides that), and not the
+    # whole block either (its fixed serial share moves the ratio with frame
+    # size, loft#2125).  On this runner the par part speeds up about 1.36x on 4
+    # workers and 1.0x on one; 120 sits between them.  See
+    # tests/wasm/par-ui-responsive.sh.
     #
     # CONCURRENCY_STAT=max — with 12 reps on 4 contended vCPUs, rayon gave one
     # rep a single worker; concurrency demonstrated across the reps is what this
@@ -127,7 +128,7 @@ jobs:
       MIN_SPEEDUP_PCT: "150"
       CONCURRENCY_STAT: "max"
       THREADS: "4"
-      MIN_BLOCK_RATIO_X10: "13"
+      MIN_PAR_SPEEDUP_PCT: "120"
       SCALING_WORK: "2000000"
       UI_WORK: "120000"
       UI_WINDOW: "9000"

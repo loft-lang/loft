@@ -113,8 +113,8 @@ jobs:
     env:
       WAIT_SCALE: "3"
       THREADS: "4"
-      MIN_BLOCK_RATIO_X10: "13"
-      UI_WORK: "15000"
+      MIN_PAR_SPEEDUP_PCT: "120"
+      UI_WORK: "120000"
       UI_WINDOW: "9000"
     steps:
       - uses: actions/checkout@v5
@@ -183,8 +183,8 @@ jobs:
           {
             echo "## UI-responsiveness probe — ${n} repetitions"
             echo ""
-            echo "| run | leg | frames | max_gap_ms | avg_block_ms | max_block_ms | value |"
-            echo "|---:|---|---:|---:|---:|---:|---|"
+            echo "| run | leg | frames | max_gap_ms | avg_block_ms | serial_ms | par_block_ms | value |"
+            echo "|---:|---|---:|---:|---:|---:|---:|---|"
           } >> "$GITHUB_STEP_SUMMARY"
           rc=0
           for i in $(seq 1 "$n"); do
@@ -194,17 +194,17 @@ jobs:
             printf '%s\n' "$out" | grep -E '^ +(threaded|sequential):' | while read -r line; do
               leg="${line%%:*}"; leg="${leg# }"
               f() { printf '%s' "$line" | grep -oP "$1=\K[0-9.]+"; }
-              printf '| %s | %s | %s | %s | %s | %s | %s |\n' \
+              printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' \
                 "$i" "$leg" "$(f frames)" "$(f max_gap_ms)" \
-                "$(f avg_block_ms)" "$(f max_block_ms)" "$(f value)" \
+                "$(f avg_block_ms)" "$(f serial_ms)" "$(f par_block_ms)" "$(f value)" \
                 >> "$GITHUB_STEP_SUMMARY"
             done
           done
           {
             echo ""
             echo "A metric that reads the WORK varies between repetitions; one that reads"
-            echo "the browser's frame scheduling repeats.  \`avg_block_ms\` is what the gate"
-            echo "asserts on (threaded must be ${MIN_BLOCK_RATIO_X10}/10 x shorter); \`frames\` is reported only."
+            echo "the browser's frame scheduling repeats.  \`par_block_ms\` is what the gate"
+            echo "asserts on (threading must speed it up ${MIN_PAR_SPEEDUP_PCT}%); \`frames\` is reported only."
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
