@@ -557,19 +557,21 @@ pub fn swap_export() -> String {
         return String::new();
     };
     GAME_SESSION.with(|gs| {
-        gs.borrow().as_ref().map_or_else(String::new, |session| {
-            let db = &session.state.database;
-            if let Some((sidecar, image)) = db.world_image(&root, kt) {
-                return format!(
-                    "{SWAP_IMAGE_MARKER}\n{}\n{}",
-                    crate::base64::encode(sidecar.as_bytes()),
-                    crate::base64::encode(&image)
-                );
-            }
-            let mut json = String::new();
-            db.show_json(&mut json, &root, kt, false);
-            json
-        })
+        gs.borrow_mut()
+            .as_mut()
+            .map_or_else(String::new, |session| {
+                let db = &mut session.state.database;
+                if let Some((sidecar, image)) = db.world_image(&root, kt) {
+                    return format!(
+                        "{SWAP_IMAGE_MARKER}\n{}\n{}",
+                        crate::base64::encode(sidecar.as_bytes()),
+                        crate::base64::encode(&image)
+                    );
+                }
+                let mut json = String::new();
+                db.show_json(&mut json, &root, kt, false);
+                json
+            })
     })
 }
 
@@ -586,7 +588,7 @@ pub fn swap_export() -> String {
 pub fn swap_check(files_json: &str) -> String {
     let world = swap_root().and_then(|(root, kt)| {
         GAME_SESSION.with(|gs| {
-            gs.borrow().as_ref().and_then(|session| {
+            gs.borrow_mut().as_mut().and_then(|session| {
                 session
                     .state
                     .database
