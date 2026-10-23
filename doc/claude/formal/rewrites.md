@@ -3232,10 +3232,17 @@ read it.  Guard
                  block's prelude, which calls no user function — is emitted twice: under
                  a run-time guard `|x| <= G` for each such field (G = 2^20) with those
                  field reads RANGED `[-G, G]`, and as before.  THE VARIABLE CLAUSE: an
-                 integer VARIABLE the block reads but never assigns and never hands out
-                 by reference — a parameter or a local a counted range's ends or a
-                 call's arguments are built from — is a guard leaf the same way, ranged
-                 `[-G, G]` in the copy (a null fails the test: its magnitude is 2^63).  Inside the guarded copy a
+                 integer VARIABLE a counted range's start or end in the block is built
+                 from, which the block never assigns and the function never hands out
+                 by reference — a window walk's bounds — is a guard leaf the same way,
+                 ranged `[-G, G]` in the copy (a null fails the test: its magnitude is
+                 2^63); one the facts bound only wider is tightened by the test.  The
+                 copy is emitted only when it ranges some call the unguarded block
+                 does not, leaves no call doing checked integer work checked, and uses
+                 the fewest leaves that do (fields, then unranged variables, then wider
+                 ones); a variable ranged both by the function and by the copy keeps
+                 the intersection.  A variant counts as ranging a call only when it
+                 turns an operator plain that the plain body keeps checked.  Inside the guarded copy a
                  local's derived range is kept only when every assignment of it in the
                  whole function lies in the block and it never escapes by reference.  A
                  call there — or inside a ranged variant — whose every integer argument
@@ -3256,6 +3263,9 @@ from a window walk, `for wr in r0..r0 + hq { for wqq in q0..q0 + wq { … edge_m
 (hex_shape's `chain_marks`), whose bounds are parameters rather than record fields: plain
 arithmetic in the helpers alone is −4 %, with the window's two range ends too −23 %, because
 LLVM inlines and folds the walk only once no operator on it carries the overflow report.
+Guarding any other variable, or a copy that leaves a checked call beside the ranged ones,
+duplicates the loop for a few operators and cost the inlining it was for (`slope_path_with_undo`
++7 %, `stencil_rotate` +10 %, `edgeset_count` +65 % before these conditions).
 The variable clause's own switch is `LOFT_NO_RANGED_CALL_VARS=1`; cell
 `tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft`, pins
 `tests/ranged_call_vars.rs`.  `(R-Range)` cannot range a parameter or a field by
