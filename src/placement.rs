@@ -140,7 +140,11 @@ pub fn read_as_own(dump: &str) -> std::borrow::Cow<'_, str> {
             break;
         };
         let digits = start + e + ",elem_size=".len();
-        let end = digits + dump[digits..].bytes().take_while(u8::is_ascii_digit).count();
+        let end = digits
+            + dump[digits..]
+                .bytes()
+                .take_while(u8::is_ascii_digit)
+                .count();
         let rest = &dump[end..];
         let Some(token) = rest
             .strip_prefix(",placement=")

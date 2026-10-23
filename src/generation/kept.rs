@@ -386,7 +386,7 @@ impl KeptWalk<'_> {
         for (i, op) in b.operators.iter().enumerate() {
             // A statement: an operator the block emits as one — any but the value of a
             // block that yields one.
-            let stmt = i < last || matches!(b.result, Type::Void);
+            let stmt = i < last || b.result == Type::Void;
             self.stmt(op, stmt, depth);
         }
     }
