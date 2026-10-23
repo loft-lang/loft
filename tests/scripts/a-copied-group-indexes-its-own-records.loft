@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A COPY of a record holding a linked group — `vector<S>` beside `hash<S[k]>`, one record set
+// (`@FR-Col-Group`) — is a group of its own: its hash indexes the copy's records, so a write
+// through the copy's vector reads back through the copy's hash and the source is untouched.
+// The cells: a field write through the vector (g1) and through the hash (g2), a repeated key
+// the vector keeps twice and the hash once (g3, `(Col-Group-Dup)`: the later record is the
+// one indexed), a removal through the copy's hash (g4), a group large enough that the
+// rebuilt hash grows (g5), and the group's two views at once (g6).  A loaded store is a copy
+// too; `tests/store_persist_loft.rs` drives that half with every hash layout.  Every value is
+// hand-computed.  Both backends.
+//
+// @falsified-at: hand-measured (efa9009b4, 2026-10-23) — before the copy indexed the group's
+// views over the copied records, the copy's hash held COPIES of them: g1's read through the
+// hash answered 22 (the value before the write) on `--interpret` and `--native`, under every
+// hash layout (`LOFT_NO_HASH_TAG=1`, `LOFT_NO_HASH_INLINE=1`, neither).
+
+struct S { k: integer, w: integer }
+struct G { grp: vector<S>, by_k: hash<S[k]>, tag: integer }
+struct G2 { grp: vector<S>, by_k: hash<S[k]>, ix: index<S[k]>, tag: integer }
+
+fn fill(g: G, n: integer) {
+  for k in 1..n + 1 { g.grp += [S { k: k, w: k * 11 }]; }
+}
+
+fn sum_w(g: const G) -> integer {
+  s = 0;
+  for e in g.by_k { s += e.w; }
+  s
+}
+
+fn g1() {
+  a = G { tag: 1 };
+  fill(a, 3);
+  b = a;
+  b.grp[1].w = 777;
+  println("g1 {b.by_k[2].w ?? -1} {a.by_k[2].w ?? -1} {a.grp[1].w}");
+  assert((b.by_k[2].w ?? -1) == 777 && (a.by_k[2].w ?? -1) == 22 && a.grp[1].w == 22, "g1");
+}
+
+fn g2() {
+  a = G { tag: 2 };
+  fill(a, 3);
+  b = a;
+  b.by_k[3].w = 555;
+  println("g2 {b.grp[2].w} {a.grp[2].w} {a.by_k[3].w ?? -1}");
+  assert(b.grp[2].w == 555 && a.grp[2].w == 33 && (a.by_k[3].w ?? -1) == 33, "g2");
+}
+
+fn g3() {
+  a = G { tag: 3 };
+  fill(a, 3);
+  a.grp += [S { k: 2, w: -1 }];
+  b = a;
+  b.grp[3].w = 900;
+  println("g3 {len(b.grp)} {len(b.by_k)} {b.by_k[2].w ?? -1} {b.grp[1].w} {a.by_k[2].w ?? -1}");
+  assert(len(b.grp) == 4 && len(b.by_k) == 3 && (b.by_k[2].w ?? -1) == 900 && b.grp[1].w == 22
+         && (a.by_k[2].w ?? -1) == -1, "g3");
+}
+
+fn g4() {
+  a = G { tag: 4 };
+  fill(a, 3);
+  b = a;
+  b.by_k[1] = null;
+  println("g4 {len(b.grp)} {len(b.by_k)} {b.grp[0].k} {len(a.grp)} {len(a.by_k)}");
+  assert(len(b.grp) == 2 && len(b.by_k) == 2 && b.grp[0].k == 2 && len(a.grp) == 3
+         && len(a.by_k) == 3, "g4");
+}
+
+fn g5() {
+  a = G { tag: 5 };
+  fill(a, 300);
+  b = a;
+  b.grp[299].w = 1;
+  println("g5 {len(b.by_k)} {sum_w(b)} {b.by_k[300].w ?? -1} {sum_w(a)}");
+  assert(len(b.by_k) == 300 && sum_w(b) == 493351 && (b.by_k[300].w ?? -1) == 1
+         && sum_w(a) == 496650, "g5");
+}
+
+fn g6() {
+  a = G2 { tag: 6 };
+  for k in 1..6 { a.grp += [S { k: k, w: k * 11 }]; }
+  b = a;
+  b.grp[4].w = 4;
+  first = 0;
+  for e in b.ix { if first == 0 { first = e.k; } }
+  println("g6 {b.by_k[5].w ?? -1} {b.ix[5].w ?? -1} {len(b.ix)} {first} {a.ix[5].w ?? -1}");
+  assert((b.by_k[5].w ?? -1) == 4 && (b.ix[5].w ?? -1) == 4 && len(b.ix) == 5 && first == 1
+         && (a.ix[5].w ?? -1) == 55, "g6");
+}
+
+fn main() {
+  g1();
+  g2();
+  g3();
+  g4();
+  g5();
+  g6();
+}

@@ -4326,6 +4326,59 @@ impl Stores {
         true
     }
 
+    /// Is field `i` of record type `tp` a VIEW of a linked group — a route to records a
+    /// sibling field owns (a leading `u16::MAX` in `other_indexes`, loft#898)?
+    fn is_group_view(&self, tp: u16, i: usize) -> bool {
+        matches!(&self.types[tp as usize].parts,
+            Parts::Struct(fields) | Parts::EnumValue(_, fields)
+                if fields[i].other_indexes.first() == Some(&u16::MAX))
+    }
+
+    /// @FR-Col-Group — index every VIEW of record `to` over the records its copied owner
+    /// holds, in the owner's order, as an insert through the owner would
+    /// ([`Self::link_record_siblings`]): a later record under a repeated key takes the key,
+    /// which is the state the source settled to (`(Col-Group-Dup)`).  A view displaces by
+    /// unlinking only, so nothing the owner holds is freed.  A record type with no group
+    /// has no field naming a sibling and returns at once.
+    fn relink_group_views(&mut self, to: &DbRef, tp: u16) {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) = &self.types[tp as usize].parts
+        else {
+            return;
+        };
+        if fields.iter().all(|f| f.other_indexes.is_empty()) {
+            return;
+        }
+        let fields = fields.clone();
+        for (owner, f) in fields.iter().enumerate() {
+            if f.other_indexes.is_empty() || f.other_indexes.first() == Some(&u16::MAX) {
+                continue;
+            }
+            let views: Vec<(u16, u16)> = f
+                .other_indexes
+                .iter()
+                .filter(|n| fields[**n as usize].other_indexes.first() == Some(&u16::MAX))
+                .map(|n| (*n, fields[*n as usize].content))
+                .collect();
+            if views.is_empty() {
+                continue;
+            }
+            let held = DbRef {
+                store_nr: to.store_nr,
+                rec: to.rec,
+                pos: to.pos + u32::from(fields[owner].position),
+            };
+            for child in self.for_each_owned_child(&held, f.content).children {
+                for &(view, view_tp) in &views {
+                    if self.absent_nullable_record(self.content(view_tp), &child.child) {
+                        continue;
+                    }
+                    let o = self.field_ref(to, tp, view);
+                    self.insert_record(&o, &child.child, view_tp, true);
+                }
+            }
+        }
+    }
+
     pub fn copy_claims(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         if self.copy_absent_collection(rec, to, tp)
             || (self.owns_plain_vectors(tp) && self.copy_plain_vectors(rec, to, tp))
@@ -4370,20 +4423,29 @@ impl Stores {
                 // every record copy (@PLN157 § V-e, 7.5 % of the `smooth` row).
                 for i in 0..fields.len() {
                     let f = self.field_at(tp, i);
-                    self.copy_claims(
-                        &DbRef {
-                            store_nr: rec.store_nr,
-                            rec: rec.rec,
-                            pos: rec.pos + u32::from(f.position),
-                        },
-                        &DbRef {
-                            store_nr: to.store_nr,
-                            rec: to.rec,
-                            pos: to.pos + u32::from(f.position),
-                        },
-                        f.content,
-                    );
+                    let from = DbRef {
+                        store_nr: rec.store_nr,
+                        rec: rec.rec,
+                        pos: rec.pos + u32::from(f.position),
+                    };
+                    let into = DbRef {
+                        store_nr: to.store_nr,
+                        rec: to.rec,
+                        pos: to.pos + u32::from(f.position),
+                    };
+                    // @FR-Col-Group — a VIEW of a linked group holds the records the group's
+                    // owner holds.  Copied as a collection of its own it holds COPIES of them,
+                    // which a write through the owner does not reach; so it starts empty and
+                    // is indexed over the copied owner below.
+                    if self.is_group_view(tp, i) {
+                        if !self.copy_absent_collection(&from, &into, f.content) {
+                            self.store_mut(&into).set_u32_raw(into.rec, into.pos, 0);
+                        }
+                        continue;
+                    }
+                    self.copy_claims(&from, &into, f.content);
                 }
+                self.relink_group_views(to, tp);
                 self.lease_if_file(to, tp);
             }
             Parts::Vector(_) | Parts::Sorted(_, _) => {

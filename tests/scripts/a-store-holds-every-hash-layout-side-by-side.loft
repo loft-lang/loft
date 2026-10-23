@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// One store holds hash tables of every layout side by side — PLAIN (4-byte slots, as a store
+// written before `(Col-Tag)` has them), TAGGED (`(Col-Tag)`), INLINE (`(Col-Inline)`) and a
+// BORROWING table of a linked group — and every build reads and writes all of them, on both
+// backends: the layout is the WRITER's policy (`LOFT_NO_HASH_TAG=1`, `LOFT_NO_HASH_INLINE=1`)
+// and each table records its own in its header.  Driven by `tests/store_persist_loft.rs`,
+// which runs it three times against one path, each run under a layout and a backend of its
+// own: `write` builds the world and binds it; `update` loads it, grows three tables past
+// their size (each rebuilt in the updater's layout), removes from two, makes a new table and
+// leaves one untouched (it keeps the writer's layout); `read` loads the result.  Every value
+// is hand-computed.  Without the driver's path it prints nothing.
+//
+// @falsified-at: hand-measured (efa9009b4, 2026-10-23) — with the inline layout on, a load
+// copied the group's hash `by_k` as a table of its own, so the update's adds through `grp`
+// went to a table holding copies beside borrowed records, and the read answered
+// `by_k=100/100/55550` and `by250=null` (250 records, 345125).  Plain and tagged writers
+// answered right; so did both before the change that made a table inline.
+
+struct Own { k: integer, v: integer }
+struct Named { name: text, n: integer }
+struct Shr { k: integer, w: integer }
+struct Keep { k: integer, v: integer }
+struct Late { k: integer, s: text }
+
+struct World {
+  own: hash<Own[k]>,
+  named: hash<Named[name]>,
+  grp: vector<Shr>,
+  by_k: hash<Shr[k]>,
+  keep: hash<Keep[k]>,
+  late: hash<Late[k]>,
+}
+
+fn digest(w: const World, tag: text) {
+  so = 0; co = 0;
+  for e in w.own { so += e.v; co += 1 }
+  sn = 0; cn = 0;
+  for e in w.named { sn += e.n; cn += 1 }
+  sg = 0; cg = 0;
+  for e in w.by_k { sg += e.w; cg += 1 }
+  sk = 0; ck = 0;
+  for e in w.keep { sk += e.v; ck += 1 }
+  sl = 0; cl = 0;
+  for e in w.late { sl += len(e.s); cl += 1 }
+  println("{tag} own={co}/{len(w.own)}/{so} named={cn}/{len(w.named)}/{sn} grp={len(w.grp)} by_k={cg}/{len(w.by_k)}/{sg} keep={ck}/{sk} late={cl}/{sl}");
+  o35 = w.own[35]; o36 = w.own[36]; o37 = w.own[37]; o600 = w.own[600];
+  println("{tag} own35={o35.v} own36={o36.v} own37={o37.v} own600={o600.v}");
+  n6 = w.named["n6"]; n7 = w.named["n7"]; n8 = w.named["n8"]; n399 = w.named["n399"];
+  println("{tag} n6={n6.n} n7={n7.n} n8={n8.n} n399={n399.n}");
+  b64 = w.by_k[64]; b250 = w.by_k[250]; k10 = w.keep[10]; l50 = w.late[50];
+  println("{tag} by64={b64.w} by250={b250.w} keep10={k10.v} late50={l50.s}");
+}
+
+// 300 keys, every fifth removed; 200 names, every fourth removed; 100 group records; 10 kept.
+fn write(w: World) {
+  for k in 1..301 { w.own += [Own { k: k, v: k * 7 }] }
+  for k in 1..301 { if k % 5 == 0 { w.own[k] = null } }
+  for i in 0..200 { w.named += [Named { name: "n{i}", n: i * 3 }] }
+  for i in 0..200 { if i % 4 == 0 { w.named["n{i}"] = null } }
+  for k in 1..101 { w.grp += [Shr { k: k, w: k * 11 }] }
+  for k in 1..11 { w.keep += [Keep { k: k, v: k * k }] }
+}
+
+// 300 keys more, every third of the first 300 that is left removed; 200 names more, every
+// odd one of the first 200 removed; 150 group records more; a new table of 50.
+fn update(w: World) {
+  for k in 301..601 { w.own += [Own { k: k, v: k * 7 }] }
+  for k in 1..301 { if k % 3 == 0 && k % 5 != 0 { w.own[k] = null } }
+  for i in 200..400 { w.named += [Named { name: "n{i}", n: i * 3 }] }
+  for i in 0..200 { if i % 2 == 1 { w.named["n{i}"] = null } }
+  for k in 101..251 { w.grp += [Shr { k: k, w: k * 11 }] }
+  for k in 1..51 { w.late += [Late { k: k, s: "s{k}" }] }
+}
+
+fn main() {
+  path = env_variable("LOFT_PERSIST_TEST_PATH") ?? "";
+  mode = env_variable("LOFT_PERSIST_TEST_MODE") ?? "";
+  if path == "" { return }
+  w = World {};
+  if mode == "write" {
+    write(w);
+    if !store_persist_bind(w, path) { println("FAIL write-bind"); return }
+    digest(w, "write");
+  } else if mode == "update" {
+    if !store_persist_bind(w, path) { println("FAIL update-bind"); return }
+    digest(w, "loaded");
+    update(w);
+    digest(w, "updated");
+  } else if mode == "read" {
+    if !store_load(w, path) { println("FAIL read-load"); return }
+    digest(w, "read");
+    println("read verify={store_verify(w)}");
+  } else { println("FAIL unknown-mode") }
+}

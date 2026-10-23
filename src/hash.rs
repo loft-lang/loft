@@ -121,6 +121,34 @@ pub fn hash_inline() -> bool {
     *ON.get_or_init(|| !keys::env_set("LOFT_NO_HASH_INLINE") && hash_tag())
 }
 
+/// `LOFT_TRACE_HASH_LAYOUT=1` — each table made, grown or demoted names its layout on stderr,
+/// with the record that holds it: what a store holds is otherwise visible only in its bytes.
+fn trace_layout(event: &str, hash: &DbRef, from: Option<u32>, flags: u32) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| keys::env_set("LOFT_TRACE_HASH_LAYOUT")) {
+        return;
+    }
+    let name = |f: u32| {
+        let kind = if f & INLINE != 0 {
+            "inline"
+        } else if f & TAGGED != 0 {
+            "tagged"
+        } else {
+            "plain"
+        };
+        let own = if stride_of(f) == 0 { " borrowing" } else { "" };
+        format!("{kind}{own}")
+    };
+    let from = from.map_or(String::new(), |f| format!("{} -> ", name(f)));
+    eprintln!(
+        "hash layout: {event} {from}{} at {}:{}+{}",
+        name(flags),
+        hash.store_nr,
+        hash.rec,
+        hash.pos
+    );
+}
+
 /// A table's header word `STRIDE_FLD` read once, with what it decides.
 #[derive(Clone, Copy)]
 struct Hdr {
@@ -556,6 +584,12 @@ pub fn ensure_table(hash: &DbRef, stride: u32, stores: &mut [Store]) -> u32 {
     let seed = keys::fresh_seed();
     write_seed(keys::mut_store(hash, stores), claim, seed);
     keys::mut_store(hash, stores).set_u32_raw(hash.rec, hash.pos, claim);
+    trace_layout(
+        "made",
+        hash,
+        None,
+        keys::store(hash, stores).get_u32_raw(claim, STRIDE_FLD),
+    );
     claim
 }
 
@@ -1259,6 +1293,12 @@ pub fn reserve(hash: &DbRef, count: i64, stride: u32, stores: &mut [Store], keys
 fn install_table(hash: &DbRef, old_claim: u32, new_claim: u32, stores: &mut [Store]) {
     keys::mut_store(hash, stores).set_u32_raw(hash.rec, hash.pos, new_claim);
     if old_claim != 0 {
+        let store = keys::store(hash, stores);
+        let (was, now) = (
+            store.get_u32_raw(old_claim, STRIDE_FLD),
+            store.get_u32_raw(new_claim, STRIDE_FLD),
+        );
+        trace_layout("grown", hash, Some(was), now);
         keys::mut_store(hash, stores).delete(old_claim);
     }
 }
@@ -2438,6 +2478,11 @@ fn inline_demote(hash: &DbRef, claim: u32, stores: &mut [Store], keys: &[Key]) {
     let table = arena_table(store, new_slot_bytes(), h.stride);
     write_seed(store, table, seed);
     store.set_u32_raw(hash.rec, hash.pos, table);
+    let (was, now) = (
+        store.get_u32_raw(claim, STRIDE_FLD),
+        store.get_u32_raw(table, STRIDE_FLD),
+    );
+    trace_layout("demoted", hash, Some(was), now);
     let e0 = ent0(h.count);
     let mut bytes = vec![0u8; h.stride as usize];
     for at in 0..h.count {
