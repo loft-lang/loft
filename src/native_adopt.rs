@@ -657,6 +657,8 @@ pub fn adopt_shared_cdylib(
     // is worth more than the argument.  A mismatch falls through to REBUILD,
     // which is the same thing a name miss already does — and REBUILD is why this
     // probe, too, must not load `so` itself (loft#999).
+    // The probe OPENS the artifact, so whatever it links must be loadable first.
+    crate::opt::native_key::load_linked_packages(data, export_set);
     if crate::file_access::exists(&so)
         && !source_newer_than(contributing, &so)
         && artifact_matches_layout(&so, fp)

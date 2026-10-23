@@ -30,6 +30,7 @@
 //! args are already valid in it).  Args/return are passed through the uniform
 //! [`LibArg`] slot.
 
+use crate::opt::native_key::{linked_packages, native_pkg_lib};
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
@@ -608,27 +609,6 @@ fn emit_program(
         out.shared_ids.take().map(std::cell::RefCell::into_inner)
     };
     (String::from_utf8(buf).unwrap_or_default(), ids)
-}
-
-/// @PLN199 G1 — the `[native]` packages a library artifact links: those that declare a
-/// `#native` definition its exports reach.  The program around it may load others; linked
-/// too, their symbols shared the artifact's flat C-ABI namespace, and one exported by two of
-/// them refused a library that calls only its own.
-fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(String, String)> {
-    let roots: Vec<u32> = export_set.iter().copied().collect();
-    let reach = crate::opt::names::reachable_functions(data, &roots);
-    data.native_packages
-        .iter()
-        .filter(|(_, dir)| {
-            reach.iter().any(|&d| {
-                let def = data.def(d);
-                !def.native().is_empty()
-                    && *def.code() == crate::data::Value::Null
-                    && crate::file_access::is_under(def.position().file.as_str(), dir)
-            })
-        })
-        .cloned()
-        .collect()
 }
 
 /// The `#native` symbols two of `linked` packages declare: what [`linked_packages`]' link
@@ -1556,16 +1536,9 @@ fn native_cabi_link_enabled() -> bool {
 /// executable path); kept separate because that helper lives in the binary crate
 /// and this builder lives in the library crate.
 fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
-    // The cdylib is named after the `[library] native` stem, which can differ
-    // from the crate name; read it from the manifest (the SAME stem the
-    // interpreter resolves with), falling back to the crate name when absent.
-    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-        .and_then(|m| m.native)
-        .unwrap_or_else(|| crate_name.replace('-', "_"));
-    let Some(so) = crate::native_build::resolve_native_lib(pkg_dir, &stem) else {
+    let Some((stem, so_path)) = native_pkg_lib(crate_name, pkg_dir) else {
         return Vec::new();
     };
-    let so_path = std::path::PathBuf::from(&so);
     let Some(so_dir) = so_path.parent() else {
         return Vec::new();
     };

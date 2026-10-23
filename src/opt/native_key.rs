@@ -392,3 +392,65 @@ pub(crate) fn prefix_fingerprint(stores: &Stores, n: usize) -> Option<u64> {
     let parts: Vec<&[u8]> = facts.iter().map(Vec::as_slice).collect();
     Some(crate::cache::stable_hash(&parts))
 }
+
+/// @PLN199 G1 — the `[native]` packages a library artifact links: those that declare a
+/// `#native` definition its exports reach.  The program around it may load others; linked
+/// too, their symbols shared the artifact's flat C-ABI namespace, and one exported by two of
+/// them refused a library that calls only its own.
+pub(crate) fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(String, String)> {
+    let roots: Vec<u32> = export_set.iter().copied().collect();
+    let reach = crate::opt::names::reachable_functions(data, &roots);
+    data.native_packages
+        .iter()
+        .filter(|(_, dir)| {
+            reach.iter().any(|&d| {
+                let def = data.def(d);
+                !def.native().is_empty()
+                    && *def.code() == crate::data::Value::Null
+                    && crate::file_access::is_under(def.position().file.as_str(), dir)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+/// The `[library] native` stem of the package at `pkg_dir` and its resolved cdylib — the file
+/// a library artifact that calls the package links (`native_lib::native_pkg_cabi_link_args`) and needs
+/// loaded first where there is no RPATH ([`load_linked_packages`]).  The stem can differ from
+/// the crate name; it is read from the manifest (the SAME stem the interpreter resolves with),
+/// falling back to the crate name.  `None` when the cdylib cannot be resolved
+/// ([`crate::extensions::resolve_native_lib`] already printed why).
+pub(crate) fn native_pkg_lib(crate_name: &str, pkg_dir: &str) -> Option<(String, std::path::PathBuf)> {
+    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+        .and_then(|m| m.native)
+        .unwrap_or_else(|| crate_name.replace('-', "_"));
+    let so = crate::native_build::resolve_native_lib(pkg_dir, &stem)?;
+    Some((stem, std::path::PathBuf::from(so)))
+}
+
+/// Load, into this process, the cdylib of every `[native] crate` package the artifact for
+/// `export_set` links, before anything opens that artifact.  Windows has no RPATH: the
+/// artifact names `<package>.dll` as an import, and the loader resolves an import from the
+/// modules already loaded or from its search path (the `.exe`'s directory, the system
+/// directories, `PATH`) — never from the package's build directory, where the DLL is.  A
+/// package loaded first is resolved by its module name.  Without it the artifact did not
+/// load, its layout probe answered "unopenable", and every run rebuilt it and interpreted
+/// the library anyway (loft#2147).  The host loads these packages for their own functions
+/// regardless; this only moves that load ahead of the artifact's.
+#[cfg(feature = "native-extensions")]
+pub(crate) fn load_linked_packages(data: &Data, export_set: &HashSet<u32>) {
+    if !crate::platform::loads_library_dependencies_first()
+        || data.native_packages.is_empty()
+        || !crate::platform::native_cabi_link()
+    {
+        return;
+    }
+    for (crate_name, pkg_dir) in &linked_packages(data, export_set) {
+        if let Some((_, so)) = native_pkg_lib(crate_name, pkg_dir) {
+            crate::c_libs::load_one(&so.to_string_lossy());
+        }
+    }
+}
+
+#[cfg(not(feature = "native-extensions"))]
+pub(crate) fn load_linked_packages(_data: &Data, _export_set: &HashSet<u32>) {}
