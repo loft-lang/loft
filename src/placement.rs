@@ -108,7 +108,7 @@ pub const HASH: &str = "3";
 /// The older [`HASH`] tokens this build reads as they were written (@C152): every table of a
 /// `2` store is an arena table of untagged slots, which a `3` table's header can also say, so
 /// such a store is handed over unchanged — no conversion, no refusal.  `1` is not here: a slot
-/// of a store written before @PLN135 arc H holds a record number, not an arena index.
+/// of a `1` store holds a record number, not an arena index.
 pub const HASH_READS: &[&str] = &["2"];
 
 /// Does this build read a `hash` written under placement `token`?

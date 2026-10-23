@@ -2008,8 +2008,7 @@ When the structure is not correctly filled
 */
 /// Count the live records in a hash table: the header's live count (`LEN_FLD`), which every
 /// insert, removal and rebuild maintains and [`validate`] checks against the occupied slots.
-/// It used to walk the bucket array, so `len(h)` cost a pass over the whole table.  Returns 0
-/// for an absent or uninitialised hash.
+/// Constant time.  Returns 0 for an absent or uninitialised hash.
 ///
 /// Powers `len(h)` for `hash<T[key]>` (P192).
 #[must_use]
