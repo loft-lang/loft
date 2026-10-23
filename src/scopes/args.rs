@@ -309,6 +309,21 @@ impl Scopes<'_> {
             {
                 amp_foreign.push(orig);
             }
+            // loft#2145 — the same mark for a VIEW local: the store the write-back displaces is
+            // the one it views, owned elsewhere (`Scopes::view_rebind`).
+            if outer_call != u32::MAX
+                && let Value::Call(cs, cargs) = scanned.unspan()
+                && *cs == create_stack_nr
+                && let Some(Value::Var(v)) = cargs.first().map(Value::unspan)
+                && let Some(&w) = self.view_rebind.get(v)
+                && data
+                    .def(outer_call)
+                    .attributes()
+                    .get(arg_idx)
+                    .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
+            {
+                amp_foreign.push(w);
+            }
             if let Value::Insert(ops) = scanned {
                 // Existing A5.6 hoisting: lift Set(w, Null) for owned Reference.
                 let is_a56_hoisted = Self::is_null_init_preamble(&ops, function);

@@ -57,6 +57,38 @@ pub(super) fn tail_calls(v: &Value) -> Vec<&Value> {
     }
 }
 
+/// The locals handed to a `&` heap parameter anywhere in `ops` — `OpCreateStack(Var(v))` as a
+/// call argument whose parameter `Type::is_amp_rebindable_heap` — each of which the callee may
+/// rebind by a whole-value write-back that no `Set` here shows.  Asked of the parameter's TYPE,
+/// not of whether this callee does rebind: a `&` heap parameter exists to be replaced, and the
+/// answer only keeps a buffer out of the pool, never lets one in.
+pub(super) fn amp_rebound_locals(ops: &[Value], data: &Data) -> HashSet<u16> {
+    fn walk(v: &Value, data: &Data, create_stack: u32, out: &mut HashSet<u16>) {
+        if let Value::Call(d, args) = v.unspan() {
+            for (i, a) in args.iter().enumerate() {
+                if let Value::Call(cs, cargs) = a.unspan()
+                    && *cs == create_stack
+                    && let Some(Value::Var(x)) = cargs.first().map(Value::unspan)
+                    && data
+                        .def(*d)
+                        .attributes()
+                        .get(i)
+                        .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
+                {
+                    out.insert(*x);
+                }
+            }
+        }
+        v.for_each_child(&mut |c| walk(c, data, create_stack, out));
+    }
+    let create_stack = data.def_nr("OpCreateStack");
+    let mut out = HashSet::default();
+    for op in ops {
+        walk(op, data, create_stack, &mut out);
+    }
+    out
+}
+
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub(super) fn reuse_record_buffers(
     code: &mut Value,
@@ -89,6 +121,11 @@ pub(super) fn reuse_record_buffers(
             fed_locals.entry(av).or_default().push(v);
         }
     }
+    let amp_rebound = if guarded.is_empty() {
+        HashSet::default()
+    } else {
+        amp_rebound_locals(&bl.operators, data)
+    };
     let db_nr = data.def_nr("OpDatabase");
     let clear_nr = data.def_nr("OpClear");
     // Emitted in variable order so identical source compiles to identical IR.
@@ -149,6 +186,20 @@ pub(super) fn reuse_record_buffers(
             // it displaces, which would be this buffer's.  A local whose rebind keeps what
             // it displaces (the loft#1522 veto) releases nothing there.
             decline(av, "its result local is assigned more than once");
+            continue;
+        }
+        if !ungated
+            && fed_locals
+                .get(&av)
+                .is_some_and(|vs| vs.iter().any(|v| amp_rebound.contains(v)))
+        {
+            // A `&` heap argument is a second assignment the caller does not write: the
+            // callee's whole-value write-back re-points the local and releases the store it
+            // displaced (`@FR-B-Ref-Write`), which under reuse is this buffer's (loft#2145).
+            decline(
+                av,
+                "its result local is handed to a `&` parameter that can rebind it",
+            );
             continue;
         }
         if !ungated

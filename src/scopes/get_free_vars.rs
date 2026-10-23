@@ -196,6 +196,12 @@ impl Scopes<'_> {
         let mut guarded_hooks: std::collections::HashSet<u16> =
             std::collections::HashSet::default();
         let vars = self.variables(to_scope);
+        // loft#2145 — the view locals among them a `&` callee may have rebound (released last
+        // below, from this list: the sweep consumes `vars`).
+        let view_rebound: Vec<(u16, u16)> = vars
+            .iter()
+            .filter_map(|v| self.view_rebind.get(v).map(|&w| (*v, w)))
+            .collect();
         if scope_debug {
             eprintln!(
                 "[get_free_vars] fn={} to_scope={to_scope} scope={} vars={vars:?} ret_var={ret_var} \
@@ -1139,6 +1145,22 @@ impl Scopes<'_> {
                         ls.push(call("OpFreeRef", param, data));
                     }
                 }
+            }
+        }
+        // loft#2145 — a view local a `&` callee rebound holds the store the write-back installed,
+        // which is its own (`(O-Latest)`); one still naming the store it views equals its
+        // snapshot and releases nothing.  Re-snapshotted after the release, so a loop's next
+        // pass compares against what this pass left rather than a store already released.
+        for &(v, w) in &view_rebound {
+            if v != ret_var && !return_sources.contains(&v) {
+                guarded.push(Value::Call(
+                    data.def_nr("OpFreeRefIfDistinct"),
+                    vec![Value::Var(v), Value::Var(w)],
+                ));
+                guarded.push(Value::Call(
+                    data.def_nr("OpPutRef"),
+                    vec![Value::Var(w), Value::Var(v)],
+                ));
             }
         }
         if !guarded.is_empty() {

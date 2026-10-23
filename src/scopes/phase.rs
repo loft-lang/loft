@@ -197,6 +197,7 @@ pub(super) fn run_scan_phase(
         entry_witness: None,
         local_owns: HashMap::default(),
         owner_witness: HashMap::default(),
+        view_rebind: HashMap::default(),
         prefix_released: Vec::new(),
         displaced_owned,
         views_to_materialise,
@@ -303,6 +304,18 @@ pub(super) fn run_scan_phase(
         scopes.var_scope.insert(w, 0);
         scopes.var_order.push(w);
         scopes.owner_witness.insert(v, w);
+    }
+    // loft#2145 — the view locals a `&` callee may rebind, and the snapshot of the store each
+    // views.  Minted before the scan: `scan_args` protects the snapshot at every such call.
+    for v in view_rebind_locals(orig_code, &function, data, &scopes.owner_witness) {
+        let name = format!("__vrb_{}", function.name(v));
+        let tp = function.tp(v).without_deps();
+        let w = function.add_temp_var(&name, &tp);
+        // A self-dep, as the owner witness has: not a borrow, not an owner, freed by nothing.
+        function.depend(w, w);
+        scopes.var_scope.insert(w, 0);
+        scopes.var_order.push(w);
+        scopes.view_rebind.insert(v, w);
     }
     // ⚠ @FR-N-Road (@PLN160) — this mechanism is NULLABLE BY CONSTRUCTION, and the dense
     // spelling of the same mixed-ownership local answers the identical question by STORE
@@ -492,6 +505,24 @@ pub(super) fn run_scan_phase(
     // call and not as `null`, because a heap local's `= null` lowers to `OpInitRef` — a
     // stack-record placeholder the allocator is expected to replace — and a free of THAT is
     // the `#306` refusal.
+    // loft#2145 — each view snapshot is taken right after the local's one bind, and starts at
+    // the sentinel like an owner witness, so an exit reached before the bind compares the
+    // local with nothing it could be.
+    if !scopes.view_rebind.is_empty() {
+        let mut pairs: Vec<(u16, u16)> = scopes.view_rebind.iter().map(|(&v, &w)| (v, w)).collect();
+        pairs.sort_unstable();
+        for &(v, w) in &pairs {
+            snapshot_after_bind(&mut code, v, w, data);
+        }
+        if let Some(bl) = body_block_mut(&mut code) {
+            for &(_, w) in pairs.iter().rev() {
+                bl.operators.insert(
+                    0,
+                    v_set(w, Value::Call(data.def_nr("OpNullRefSentinel"), vec![])),
+                );
+            }
+        }
+    }
     if !scopes.owner_witness.is_empty()
         && let Some(bl) = body_block_mut(&mut code)
     {
@@ -900,4 +931,90 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
     let name = def.attributes().get(idx)?.name.clone();
     let v = function.var(&name);
     (v != u16::MAX).then_some(v)
+}
+
+/// loft#2145 — the VIEW locals a `&` callee may rebind: each is handed to a `&` heap parameter
+/// (`buffers::amp_rebound_locals`), borrows from another variable (its deps name one), is a
+/// record or a struct-enum, and is bound ONCE, by a statement.  The once is what lets the
+/// snapshot sit right after the bind: `--native` declares a local at its first bind, so a
+/// release placed before a second one would be the only safe spelling of a rebind, and a
+/// local bound once never needs it.  A local the owner witness already carries has its own
+/// release protocol and is left to it; an argument is loft#1287's, a compiler temp is a slot.
+fn view_rebind_locals(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+    owner_witness: &HashMap<u16, u16>,
+) -> Vec<u16> {
+    let rebound = super::buffers::amp_rebound_locals(std::slice::from_ref(code), data);
+    if rebound.is_empty() {
+        return Vec::new();
+    }
+    let mut binds: HashMap<u16, usize> = HashMap::default();
+    fn count(v: &Value, out: &mut HashMap<u16, usize>) {
+        if let Value::Set(x, _) = v.unspan() {
+            *out.entry(*x).or_insert(0) += 1;
+        }
+        v.for_each_child(&mut |c| count(c, out));
+    }
+    count(code, &mut binds);
+    let mut out: Vec<u16> = rebound
+        .into_iter()
+        .filter(|&v| {
+            !function.is_argument(v)
+                && !function.is_compiler_generated(v)
+                && !owner_witness.contains_key(&v)
+                && matches!(
+                    function.tp(v).base(),
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
+                )
+                && function.tp(v).depend().iter().any(|&d| d != v)
+                && binds.get(&v) == Some(&1)
+                && bound_by_statement(code, v)
+        })
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+/// Is `v`'s bind a statement of some block (not nested inside an expression)?
+fn bound_by_statement(code: &Value, v: u16) -> bool {
+    let mut found = false;
+    fn walk(n: &Value, v: u16, found: &mut bool) {
+        if let Value::Block(bl) = n.unspan()
+            && bl
+                .operators
+                .iter()
+                .any(|op| matches!(op.unspan(), Value::Set(x, _) if *x == v))
+        {
+            *found = true;
+        }
+        n.for_each_child(&mut |c| walk(c, v, found));
+    }
+    walk(code, v, &mut found);
+    found
+}
+
+/// Insert `OpPutRef(w, v)` after the statement that binds `v` (see [`view_rebind_locals`]).
+fn snapshot_after_bind(code: &mut Value, v: u16, w: u16, data: &Data) {
+    fn walk(n: &mut Value, v: u16, w: u16, put: u32) -> bool {
+        if let Value::Block(bl) = n.unspan_mut()
+            && let Some(i) = bl
+                .operators
+                .iter()
+                .position(|op| matches!(op.unspan(), Value::Set(x, _) if *x == v))
+        {
+            bl.operators
+                .insert(i + 1, Value::Call(put, vec![Value::Var(w), Value::Var(v)]));
+            return true;
+        }
+        let mut done = false;
+        n.for_each_child_mut(&mut |c| {
+            if !done {
+                done = walk(c, v, w, put);
+            }
+        });
+        done
+    }
+    walk(code, v, w, data.def_nr("OpPutRef"));
 }

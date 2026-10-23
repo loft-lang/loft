@@ -398,6 +398,14 @@ struct Scopes<'s> {
     /// itself is never freed.  Keyed on every id the local is known by (the original and
     /// any scope copy `scan_set` makes of it).  [`owner_witness_locals`] picks them.
     owner_witness: HashMap<u16, u16>,
+    /// loft#2145 / `@FR-B-Ref-Write` — a VIEW local (a projection: its deps name another
+    /// variable) handed to a `&` heap parameter → `__vrb_<name>`, a snapshot of the store it
+    /// views.  The callee's whole-value write-back re-points the local and releases the store
+    /// it displaced, but that store is the viewed one, not the local's: it is protected for
+    /// the call (`scan_args`), and the local releases at scope exit only a store distinct from
+    /// the snapshot — the one a write-back installed, which `(O-Latest)` makes its own.
+    /// [`view_rebind_locals`] picks them.
+    view_rebind: HashMap<u16, u16>,
     /// `@FR-L-CapRebind` — the closure records the statement being scanned releases in its
     /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
     /// snapshot (`displaced_drop`) skips them: one release per displaced record.
