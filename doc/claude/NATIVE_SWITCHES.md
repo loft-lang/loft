@@ -601,6 +601,8 @@ for a wrong integer, or a missing overflow error, out of a call inside a loop on
 `LOFT_TRACE_RANGED_CALL=1` names each copy, variant and decline, and `LOFT_HOIST_VERIFY=1`
 checks every plain operator.  **`LOFT_NO_RANGED_CALL_VARS=1`** keeps the guard to hoisted record
 fields: no integer VARIABLE (a window walk's bounds) is a guard leaf — the next step finer.
+**`LOFT_NO_WHILE_COUNTER=1`** checks the step of `while i < E { …; i += 1 }` again (`(R-Range)`'s
+while-counter clause) — the bisect step for a wrong counter or index out of such a loop on native.
 **`LOFT_NO_DISTINCT_VERSION=1`** (`(R-Alias)`'s versioned clause, default-ON, generation time,
 `--native` only) emits every loop once — with it off, a loop that grows the function's return
 buffer while it reads a parameter also runs a copy under a run-time test that the two stores
@@ -645,9 +647,8 @@ header and base sums what it can PLAIN first, a block of 1024 at a time, admitte
 element lies in `[−2^40, 2^40)` and the running total is more than `2^50` from the i64 edge
 (the nest's magnitude-bound proof, taken from the data per block in the same pass, so no
 prefix in the block can overflow and the plain sum IS the checked answer), and the checked
-loop resumes where the first block declines (the stdlib `sum` 11.9 → 3.7 µs, 6.45× → 2.06× of
-Rust, pinned; no answer changes on any input, a null element and a large element take the checked
-loop) — and is the first bisect step for a wrong sum out of such a loop on native.
+loop resumes where the first block declines (no answer changes on any input: a null element and
+a large element take the checked loop) — the first bisect step for a wrong sum on native.
 `LOFT_HOIST_VERIFY=1` re-runs every admitted block through the checked add and panics on a
 disagreement — the proof itself, so it has no blind spot.  The bound test is spelled in
 add / shift / or on purpose: baseline x86-64 is SSE2, with a packed 64-bit add and no packed
@@ -737,9 +738,8 @@ record of that type through any route a caller could view — a by-value record 
 is a VIEW of its argument (`bump(p, w) { w.x = 5.0; p.x }` called `bump(a, a)` answers 5),
 so the write set keyed by record type decides, a callee's return buffer and the frame's
 own records set apart from it (`WriteSet::reaches_record`); a call site hands a value
-local or an admitted call as it is and reads the fields off any other record at the site
-(mesh3d `mat4_transform` 9.9 → 2.64 ms, 5.0× → 1.32× of Rust; `sphere` −38 %) — and is
-the first bisect step for a wrong field read through a small-record parameter on native.
+local or an admitted call as it is and reads the fields off any other record at the site — and
+is the first bisect step for a wrong field read through a small-record parameter on native.
 The interpreter is the values oracle; `LOFT_TRACE_VALUEREC=1` names each parameter
 carried and each declined with the reason, and the aliasing cells are
 `loft-suite/attic/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
@@ -931,7 +931,7 @@ BASES (a fresh store, or a clear of the buffer's own, moves no element a base ad
 The SETS into that buffer are admitted as its mint is — a `??`
 fallback's text field (`Seq { …, name: "" }`) was written with `OpSetText`, the one op
 outside the twelve scalar setters, so a callee carrying such a fallback stayed a WRITING
-callee and the loop calling it held no header (stage's `pack_instances`, 24.3× → 8.4×).
+callee and the loop calling it held no header.
 **`LOFT_NO_NULL_BUFFER_HOIST=1`** restores the blocking form, mint and sets, and is the
 first bisect step for a wrong element read in a loop that discharges a record element
 with `?` or `??`; `LOFT_HOIST_VERIFY=1` is the falsifier.
