@@ -253,6 +253,14 @@ the new object: a local edit rebuilds the edited unit, a library's publish build
 object (the registry's CI, G2c's open half), a loft release whose passes change a unit's output
 rebuilds it (G2c).  A dependency's bug fix, its API unchanged, rebuilds only the dependency.
 
+**Inlining across a unit boundary is opt-in (owner, 2026-10-23).**  By default the line holds: a
+call into another unit is a call, on every tier.  A function its author MARKS for inlining is
+copied into its callers' units, like Rust's `#[inline]`; its body then belongs to its unit's API
+fingerprint, so changing it rebuilds the units that inlined it.  Inside a unit nothing changes:
+today's automatic inlining — `#[inline]` on every loop-free function (`Output::fn_inline_attr`,
+[NATIVE_SWITCHES.md § Inlining hints](../NATIVE_SWITCHES.md#inlining-hints)) and the IR's
+`leaf_inline` — stays, and stops at the boundary unless the callee is marked.
+
 Keying on the generated code is what makes the rule exact without versioning passes by hand:
 generating is milliseconds, compiling is the cost, and a pass that does not change a unit's
 output leaves its hash — and its compiled form — alone.
@@ -305,7 +313,9 @@ layout or to a signature moves the version.  It is also the interface an ANSI-C 
 | B7.9 | units stop embedding the runtime: a unit's calls into the runtime go through the versioned table; the hot accessors that need only the layout (a field read or write at a `DbRef`) stay inline.  A performance trade — measured on the bench lanes (`make perf-check`) before it is taken, per accessor family | the bench rows; the corpus on both backends |
 | B7.10 | the reuse guard, both directions: build a unit; rebuild loft with an unrelated change (a parser comment, an interpreter fix) and assert the unit is REUSED; change an optimisation pass so the unit's output changes and assert it is REBUILT; change a runtime function's body and assert it is reused and runs the new body | the test, falsified by keying on the loft build again |
 | B7.11 | the interpreter's unit: a package's IR (parsed, scoped, optimised) cached per package and keyed as the table above says, after B4 gives `front` and `opt` fingerprints of their own; the IR codec and the start-up caches exist, keyed today on the whole program and the standard library | a program using three libraries starts with three cached images after one library's edit rebuilds only that one |
-| B7.12 | native builds link packages as units: a library compiled once as an rlib (or, after B7.9, an object behind the interface) and linked by every program that uses it; the test tier reuses it, `--native-release` optimises across units with thin LTO — so one compiled form serves "build fast" and "ship fast" | B7.1's CPU time; the bench lanes unchanged on `--native-release` |
+| B7.12 | native builds link packages as units: a library compiled once as an rlib (or, after B7.9, an object behind the interface) and linked by every program that uses it, on every tier; a call across units is a call | B7.1's CPU time; the bench lanes, read with B7.14's report |
+| B7.13 | the inline mark: a loft annotation on a `pub fn` (spelling the owner's — e.g. `#inline`) that copies it into callers' units; `leaf_inline` and `fn_inline_attr` cross a unit boundary only for a marked callee, and a marked function's body hash joins its unit's API fingerprint | a test: a marked function inlined across units, its body changed, its callers rebuilt; an unmarked one called, its body changed, its callers reused |
+| B7.14 | where marks matter: a report of the inlines that cross a package boundary today (`leaf_inline`'s admissions and the `#[inline]` hints on calls into another package, per bench routine) and each one's effect when the boundary holds — the list a library author marks from | the report; the bench rows that moved, each marked or accepted |
 
 Not addressed by this plan: the 451 test binaries each linking all of `libloft` — a link cost
 the split does not remove (the corpus leaving the crate is @PLN193).
@@ -315,7 +325,8 @@ the split does not remove (the corpus leaving the crate is @PLN193).
 B0 → B1 → B2 → B3 → B5 (the probe, from @PLN91) → B4 when @PLN191 is ready; B6 whenever wanted.
 B7.1 can run any time (the baseline); B7.5 needs only @PLN199's keyed ids and can come early;
 B7.8–B7.10 (the versioned runtime interface and the reuse guard) follow B3.5's census and come
-before B7.2–B7.4 rely on them; B7.11–B7.12 follow B4.
+before B7.2–B7.4 rely on them; B7.11–B7.12 follow B4; B7.14's report comes before B7.12 holds the
+line, so the marks B7.13 needs are known when it does.
 B1 and B2 make the interpreter a defined part on their own; B3 is what the C backend needs.
 
 ## Dependencies
