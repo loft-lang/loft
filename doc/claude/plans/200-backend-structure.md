@@ -193,9 +193,25 @@ Smallest closure first.
 | B3.1 | `src/lower/mod.rs`: `pub struct ProgramPlan { reachable, dup_fn_names, dead_by_fn, value_records, apart, dv, ps, sw }` and `pub fn plan_program(data, stores, opts) -> ProgramPlan` — the computation of `output_functions` (`mod.rs:10878-10950`) and of 9161–9217, moved; `Output` holds `plan: Rc<ProgramPlan>` and its eight fields become reads of it | protocol |
 | B3.2 | the ~30 `*_disabled` switches on `Output` → `lower::Switches`, read once per program; a second emitter honours the same switches | protocol; `NATIVE_SWITCHES.md` unchanged |
 | B3.3 | the plan computations whose files write no Rust (`decode_view.rs`, `decode_structure_scan.rs`, `stream_walk.rs`, `apart_value.rs`, `apart_records.rs`, `destination.rs`, `view_return.rs`, `hand_over.rs`, `keyed_entry.rs`, `keyed_place.rs`, `file_hold.rs`, `ranged_call.rs`) → `src/lower/`, one per commit; where one is a method on `Output`, it becomes a free function over `(data, stores, &ProgramPlan, def_nr)` first, in the same commit | protocol each |
-| B3.4 | the PER-FUNCTION decisions computed during emission (`vec_headers`, `rec_ptrs`, `ptr_windows`, the hoist tiers, …): a `FnPlan` built before a function is written, for each decision that can be made before writing — measured one by one; a decision that depends on what was already written stays in `rust` and is listed | protocol; the list in this file |
+| B3.4 | the PER-FUNCTION decisions computed during emission (`vec_headers`, `vec_bases`, `rec_ptrs`, `ptr_windows`, the hoist tiers, …) move into a `FnPlan` built before a function is written — ONE DECISION FAMILY AT A TIME, in order of measured weight, each when the C backend wants it (decision below); a decision that depends on what was already written stays in `rust` and is listed | protocol per family; the family's bench rows on both emitters |
+| B3.4a | the first family: the vector header and element base held across a loop (`vec_headers`, `vec_bases`, the element pointer per iteration) — most of the measured 3.6× below | protocol; the example's loop on both emitters |
 | B3.5 | the runtime surface: a census of every runtime item emitted Rust names (beyond `CODEGEN_RUNTIME_FNS`: store methods, `loft::state::`, `loft::native_lib::`), generated from the corpus's emission; the input to the C backend's runtime decision (@PLN91) | the census, committed as a report |
 | B3.6 | `lower ↔ interp` forbidden at 0; `lower → rust` budget 0 | `check` |
+
+**Decision (owner, 2026-10-23): the C backend starts PLAIN.**  It reads the whole-program plans
+(B3.1) and emits the general form; the per-function decisions reach it family by family
+(B3.4, B3.4a first).  Measured on `total(ps: vector<P>) { for p in ps { s += p.x * p.y } }`,
+200 passes over a million records, `--native-release`:
+
+| emission | time |
+|---|---|
+| with the per-function decisions (Rust today: header and element base held, fields read at the element's address) | 186–191 ms |
+| without them (every element and field through the general store lookup) | 682–698 ms — 3.6× |
+| the interpreter | 8,169 ms |
+
+So a plain C backend is correct from its first function, ~12× the interpreter on this loop, and
+checkable against the interpreter over the whole corpus before any decision is shared; each
+family that moves is then one measured step on both emitters.
 
 ## B4 — the crates
 
@@ -356,6 +372,4 @@ B1 and B2 make the interpreter a defined part on their own; B3 is what the C bac
 
 ## Open questions for the owner
 
-1. B3.4's ambition: share the per-function hoisting decisions with the C backend, or start C
-   with the program-level plans only and a plainer emission?
-2. B6: wanted now, later, or not at all?
+1. B6: wanted now, later, or not at all?
