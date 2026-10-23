@@ -85,7 +85,7 @@ pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> S
         stores,
         &export,
         true,
-        crate::native_lib::type_layout_fingerprint(stores),
+        crate::opt::native_key::type_layout_fingerprint(stores),
     )
     // Built into the host: its bridges reach the host's own table, not one handed over.
     .replace(

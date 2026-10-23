@@ -994,7 +994,7 @@ impl State {
         data: &crate::data::Data,
         t: &crate::data::Type,
     ) -> Option<DbRef> {
-        let tname = crate::native_lib::hidden_dest_type_name(data, &self.database, t)?;
+        let tname = crate::opt::native_key::hidden_dest_type_name(data, &self.database, t)?;
         let db_tp = self.database.name(&tname);
         if db_tp == u16::MAX {
             return None;
