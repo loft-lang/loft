@@ -58,35 +58,49 @@ pub(super) fn tail_calls(v: &Value) -> Vec<&Value> {
 }
 
 /// The locals handed to a `&` heap parameter anywhere in `ops` — `OpCreateStack(Var(v))` as a
-/// call argument whose parameter `Type::is_amp_rebindable_heap` — each of which the callee may
-/// rebind by a whole-value write-back that no `Set` here shows.  Asked of the parameter's TYPE,
-/// not of whether this callee does rebind: a `&` heap parameter exists to be replaced, and the
-/// answer only keeps a buffer out of the pool, never lets one in.
+/// call argument whose parameter `Type::is_amp_rebindable_heap` — that the callee REASSIGNS as
+/// a whole, at any depth of forwarding (`parser::callee_param_reassigns`): a whole-value
+/// write-back no `Set` here shows.  A callee that only writes fields through the link displaces
+/// nothing, so neither the buffer it fills nor the store a view names needs keeping from it.
 pub(super) fn amp_rebound_locals(ops: &[Value], data: &Data) -> HashSet<u16> {
-    fn walk(v: &Value, data: &Data, create_stack: u32, out: &mut HashSet<u16>) {
+    struct Walk<'a> {
+        data: &'a Data,
+        create_stack: u32,
+        cache: std::collections::HashMap<u32, Vec<bool>>,
+        out: HashSet<u16>,
+    }
+    fn walk(v: &Value, w: &mut Walk) {
         if let Value::Call(d, args) = v.unspan() {
             for (i, a) in args.iter().enumerate() {
                 if let Value::Call(cs, cargs) = a.unspan()
-                    && *cs == create_stack
+                    && *cs == w.create_stack
                     && let Some(Value::Var(x)) = cargs.first().map(Value::unspan)
-                    && data
+                    && w.data
                         .def(*d)
                         .attributes()
                         .get(i)
                         .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
+                    && crate::parser::callee_param_reassigns(*d, w.data, &mut w.cache)
+                        .get(i)
+                        .copied()
+                        .unwrap_or(true)
                 {
-                    out.insert(*x);
+                    w.out.insert(*x);
                 }
             }
         }
-        v.for_each_child(&mut |c| walk(c, data, create_stack, out));
+        v.for_each_child(&mut |c| walk(c, w));
     }
-    let create_stack = data.def_nr("OpCreateStack");
-    let mut out = HashSet::default();
+    let mut w = Walk {
+        data,
+        create_stack: data.def_nr("OpCreateStack"),
+        cache: std::collections::HashMap::new(),
+        out: HashSet::default(),
+    };
     for op in ops {
-        walk(op, data, create_stack, &mut out);
+        walk(op, &mut w);
     }
-    out
+    w.out
 }
 
 #[expect(clippy::too_many_lines, reason = "inherited")]
