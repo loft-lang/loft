@@ -4986,7 +4986,7 @@ impl State {
             let stack_variant = if let Some(Value::Var(v)) = parameters.first()
                 && matches!(stack.function.tp(*v), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
             {
-                crate::generation::ops::refvar_text_stack_variant(name.as_str())
+                crate::text_calls::refvar_text_stack_variant(name.as_str())
             } else {
                 None
             };
