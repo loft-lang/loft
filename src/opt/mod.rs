@@ -12,6 +12,7 @@ pub mod attrs;
 pub mod char_walk;
 pub mod iteration;
 pub mod loop_records;
+pub mod names;
 pub mod non_sentinel;
 pub mod range;
 pub mod text_borrow;

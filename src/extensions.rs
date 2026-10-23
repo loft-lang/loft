@@ -842,7 +842,7 @@ pub fn reachable_unimplemented_natives(
     let guard = NATIVE_REGISTRY
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut out: Vec<String> = crate::generation::reachable_functions(data, &[entry])
+    let mut out: Vec<String> = crate::opt::names::reachable_functions(data, &[entry])
         .into_iter()
         .filter(|&d| {
             let def = data.def(d);

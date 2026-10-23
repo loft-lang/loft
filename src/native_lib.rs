@@ -75,7 +75,7 @@ pub fn generate_interface(data: &Data, export_set: &HashSet<u32>) -> String {
     }
     let mut fns: Vec<u32> = export_set.iter().copied().collect();
     fns.sort_unstable();
-    let decl_dups = crate::generation::duplicate_fn_names(data);
+    let decl_dups = crate::opt::names::duplicate_fn_names(data);
     for d in fns {
         let def = data.def(d);
         let name = def.name().strip_prefix("n_").unwrap_or(def.name());
@@ -95,7 +95,7 @@ pub fn generate_interface(data: &Data, export_set: &HashSet<u32>) -> String {
         let _ = writeln!(
             src,
             "#native \"loft_shared_{}\"",
-            crate::generation::disambiguated_fn_ident(&decl_dups, def)
+            crate::opt::names::disambiguated_fn_ident(&decl_dups, def)
         );
     }
     src
@@ -422,13 +422,13 @@ pub fn mark_native_exports(data: &mut Data, candidates: &HashSet<u32>) -> HashSe
 /// the library interprets (Step 2's invariant: a library that can't compile native
 /// silently interprets, no `exit`, no `OpStaticCall` to an unbuilt symbol).
 pub fn mark_exports(data: &mut Data, export: &HashSet<u32>) {
-    let dups = crate::generation::duplicate_fn_names(data);
+    let dups = crate::opt::names::duplicate_fn_names(data);
     for &d in export {
         // The disambiguated ident (#305) — must equal the cdylib wrapper's
         // exported symbol, or `wire_shared_native_fns`' dlsym misses it.
         let sym = format!(
             "loft_shared_{}",
-            crate::generation::disambiguated_fn_ident(&dups, data.def(d))
+            crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
         );
         data.def_mut(d).native = sym;
     }
@@ -508,12 +508,12 @@ pub fn probe_and_mark_exports(
         probe.unresolved = all(data);
         return probe;
     }
-    let dups = crate::generation::duplicate_fn_names(data);
+    let dups = crate::opt::names::duplicate_fn_names(data);
     let mut resolvable: HashSet<u32> = HashSet::new();
     for &d in export {
         let sym = format!(
             "loft_shared_{}",
-            crate::generation::disambiguated_fn_ident(&dups, data.def(d))
+            crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
         );
         if crate::c_libs::bridge_symbol_resolves(&sym) {
             resolvable.insert(d);
@@ -1060,7 +1060,7 @@ fn emit_program(
 /// them refused a library that calls only its own.
 fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(String, String)> {
     let roots: Vec<u32> = export_set.iter().copied().collect();
-    let reach = crate::generation::reachable_functions(data, &roots);
+    let reach = crate::opt::names::reachable_functions(data, &roots);
     data.native_packages
         .iter()
         .filter(|(_, dir)| {
@@ -1255,7 +1255,7 @@ impl<T: Copy, const N: usize> IdTable<T, N> {
 pub fn generate_cdylib_lib_rs(data: &Data, stores: &Stores, export_set: &HashSet<u32>) -> String {
     let entry: Vec<u32> = export_set.iter().copied().collect();
     let (mut src, _) = emit_program(data, stores, &entry, false);
-    let dups = crate::generation::duplicate_fn_names(data);
+    let dups = crate::opt::names::duplicate_fn_names(data);
     for &d in export_set {
         src.push('\n');
         src.push_str(&export_wrapper(data, &dups, d));
@@ -1304,7 +1304,7 @@ pub(crate) fn shared_cdylib_source(
     entry.sort_unstable();
     let (mut src, mut ids) = emit_program(data, stores, &entry, own_ids);
     src.push_str(HOST_INIT_SRC);
-    let dups = crate::generation::duplicate_fn_names(data);
+    let dups = crate::opt::names::duplicate_fn_names(data);
     for &d in &entry {
         src.push('\n');
         src.push_str(&shared_bridge_wrapper(
@@ -1360,7 +1360,7 @@ fn export_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> String {
     let def = data.def(d_nr);
     // The emitted program disambiguates colliding fn names (#305) — the
     // wrapper must call (and be named after) the SAME identifier.
-    let inner = crate::generation::disambiguated_fn_ident(dups, def); // e.g. "n_double"
+    let inner = crate::opt::names::disambiguated_fn_ident(dups, def); // e.g. "n_double"
     let ret = rust_type(def.returned(), &Context::Result);
     // Positional params (`a0`, `a1`, …) so wrapper arg names never clash with
     // anything; types match the inner function's argument-context signature.
@@ -1432,7 +1432,7 @@ fn shared_bridge_wrapper(
     use std::fmt::Write as _;
     let def = data.def(d_nr);
     // Same identifier the emitted program uses for this fn (#305).
-    let inner = crate::generation::disambiguated_fn_ident(dups, def); // e.g. "n_vec_sum"
+    let inner = crate::opt::names::disambiguated_fn_ident(dups, def); // e.g. "n_vec_sum"
 
     let mut body = String::new();
     let mut fwd = String::new();
@@ -2861,7 +2861,7 @@ fn artifact_sources(
         .filter(|def| under(def.position().file.as_str(), pkg_dir))
         .map(|def| def.source)
         .chain(
-            crate::generation::reachable_functions(data, &roots)
+            crate::opt::names::reachable_functions(data, &roots)
                 .into_iter()
                 .map(|d| data.def(d).source),
         )
@@ -3124,7 +3124,7 @@ pub fn cached_or_build_shared_cdylib(
 fn fn_numbering_fingerprint(data: &Data, export_set: &HashSet<u32>) -> u64 {
     use std::hash::{Hash, Hasher};
     let roots: Vec<u32> = export_set.iter().copied().collect();
-    let mut reach: Vec<u32> = crate::generation::reachable_functions(data, &roots)
+    let mut reach: Vec<u32> = crate::opt::names::reachable_functions(data, &roots)
         .into_iter()
         .collect();
     reach.sort_unstable();

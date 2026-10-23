@@ -120,8 +120,8 @@ pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> S
             let def = data.def(d);
             let sym = format!(
                 "loft_shared_{}",
-                crate::generation::disambiguated_fn_ident(
-                    &crate::generation::duplicate_fn_names(data),
+                crate::opt::names::disambiguated_fn_ident(
+                    &crate::opt::names::duplicate_fn_names(data),
                     def
                 )
             );
