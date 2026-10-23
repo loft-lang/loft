@@ -821,7 +821,7 @@ fn rewrite_gated(
         let kept = if loop_record_off() {
             HashMap::new()
         } else {
-            crate::generation::hoist::loop_records(data, stores, caller).recs
+            crate::opt::loop_records::loop_records(data, stores, caller).recs
         };
         let lost: Vec<(u16, u16)> = done
             .iter()
