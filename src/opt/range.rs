@@ -864,3 +864,112 @@ pub fn plain_form(op_name: &str, args: usize) -> Option<&'static str> {
         _ => None,
     }
 }
+
+/// Why [`range`] answered `None` for `v`: the first leaf the proof could not range, named by
+/// KIND, or the operator whose ranged operands may still overflow.  `@FR-R-Range`'s decline
+/// reason for the decline census (`LOFT_DECLINE_CENSUS`), so the widening with the most
+/// checked operators behind it is a count, not a guess.  A report only: nothing is emitted
+/// from it.  The fallback names the node's shape rather than a cause, which a reader of the
+/// census takes as "not classified" — it can only under-report a kind, never admit a site.
+#[must_use]
+pub fn blocker<F: RangeFacts + ?Sized>(
+    data: &Data,
+    nn: &HashMap<u16, bool>,
+    rv: &F,
+    vars: &crate::variables::Function,
+    code: &Value,
+    v: &Value,
+    depth: u8,
+) -> &'static str {
+    let unranged = |x: &Value| range(data, nn, rv, x, 0).is_none();
+    let next = |x: &Value| blocker(data, nn, rv, vars, code, x, depth + 1);
+    if depth > 6 {
+        return "a chain of locals";
+    }
+    match v.unspan() {
+        Value::Long(l) if *l == i64::MIN => "a null literal",
+        Value::Var(nr) if vars.is_argument(*nr) => "a parameter",
+        // A local is charged to the ROOT of its first unranged assignment, so the census
+        // counts the leaf a widening would have to range, whatever locals carry it.
+        Value::Var(nr) => {
+            let nr = *nr;
+            let mut escaped = std::collections::HashSet::new();
+            super::non_sentinel::collect_escapes(data, code, &mut escaped);
+            if escaped.contains(&nr) {
+                return "a local handed out by reference";
+            }
+            let mut tuple = false;
+            let mut sets: Vec<&Value> = Vec::new();
+            code.walk(&mut |n| match n.unspan() {
+                Value::Set(x, e) if *x == nr => sets.push(e),
+                Value::TuplePut(x, _, _) if *x == nr => tuple = true,
+                _ => {}
+            });
+            if tuple {
+                return "a local bound from a tuple";
+            }
+            if sets
+                .iter()
+                .any(|e| e.any_node(&mut |n| matches!(n, Value::Var(x) if *x == nr)))
+            {
+                return "a local stepped by itself (a counter or accumulator)";
+            }
+            match sets.into_iter().find(|e| unranged(e)) {
+                Some(e) => next(e),
+                None => "a local ranged only through another unranged local",
+            }
+        }
+        Value::If(_, then_arm, else_arm) => {
+            if unranged(then_arm) {
+                next(then_arm)
+            } else {
+                next(else_arm)
+            }
+        }
+        Value::Block(b) => match b
+            .operators
+            .iter()
+            .rev()
+            .find(|op| !matches!(op, Value::Line(_)))
+        {
+            Some(tail) => next(tail),
+            None => "an empty block",
+        },
+        Value::Return(inner) => next(inner),
+        Value::Call(d_nr, args) => {
+            if (*d_nr as usize) >= data.definitions.len() {
+                return "a call of another shape";
+            }
+            let def = data.def(*d_nr);
+            let name = def.name();
+            if plain_form(name, args.len()).is_some()
+                || matches!(name, "OpLandInt" | "OpLorInt" | "OpEorInt" | "OpSRightInt")
+            {
+                return match args.iter().find(|a| unranged(a)) {
+                    Some(a) => next(a),
+                    None => "ranged operands whose result may overflow",
+                };
+            }
+            if name.starts_with("OpGet") {
+                let element = args.first().is_some_and(|b| {
+                    matches!(b.unspan(), Value::Call(e, _)
+                        if (*e as usize) < data.definitions.len()
+                            && data.def(*e).name().starts_with("OpGetVector"))
+                });
+                return if element {
+                    "a vector element"
+                } else {
+                    "a record field"
+                };
+            }
+            if name.starts_with("OpConv") || name.starts_with("OpCast") {
+                return "a conversion";
+            }
+            if def.is_loft_defined() {
+                return "a user call's result";
+            }
+            "a native call's result"
+        }
+        _ => "an expression of another shape",
+    }
+}
