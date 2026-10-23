@@ -3675,8 +3675,8 @@ reads such a `main` as a possible leak, and it is a working set.
 ### A leaf carries no frame
 
 ```
-  (R-Leaf)       a function whose body calls no user function and no fn-ref — a LEAF
-                 — is emitted without a shadow-stack frame push and without a fn-ref
+  (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
+                 bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
                  buffer guard: it cannot recurse, cannot reach stack_trace / assert /
                  panic, and cannot sit between the frame that pushed a buffer and
                  the one that releases it.  The live-flip check stays.
@@ -3693,7 +3693,10 @@ both backends, is `(R-InlineLeaf)` (proposed).
                  emitted as a leaf is: every user function it reaches, transitively,
                  has a loft body, none of them lies on a cycle, and none calls a
                  fn-ref, runs `parallel` or yields.  A native user-level callee
-                 (no loft body) makes the tree opaque, so the caller keeps its frame.
+                 (no loft body) makes the tree opaque, so the caller keeps its frame —
+                 except a store BRACKET the compiler emits around an argument
+                 (`set_store_lock`, `protect_store_frees`, `unprotect_store_frees`),
+                 which sets a store flag and calls no loft code.
                  The named tiers keep every non-leaf frame.
 ```
 

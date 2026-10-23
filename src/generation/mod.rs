@@ -7282,6 +7282,9 @@ impl Output<'_> {
                 let name = callee.name();
                 let loft_bodied = matches!(callee.code(), Value::Block(_));
                 let free = name.starts_with("n_") || callee.is_free_overload();
+                if is_store_bracket(name) {
+                    return false;
+                }
                 if free && !loft_bodied {
                     // a native user-level function: what it reaches is not visible here
                     return true;
@@ -14081,11 +14084,27 @@ pub fn rec_ptr_lock(ptr: &str) -> String {
 /// The one answer to two questions: a function whose body makes none is a LEAF and carries
 /// no frame (N4), and a statement that makes one first records the line it calls from
 /// (`cr_call_site`, loft#1753).
+/// The compiler's store BRACKETS — the natives it emits around a call's reference arguments
+/// (`set_store_lock` for a `const` parameter, `protect_store_frees` / `unprotect_store_frees`
+/// for the fn-call free bracket).  Each sets or clears a flag on one store and calls no loft
+/// code, so it neither re-enters a function nor reaches `stack_trace()`: a call to one is no
+/// FRAME to the leaf rules (`@FR-R-LeafChain`), which a bracket added around an argument
+/// would otherwise take a function out of.
+pub(crate) fn is_store_bracket(name: &str) -> bool {
+    matches!(
+        name,
+        "n_set_store_lock" | "n_protect_store_frees" | "n_unprotect_store_frees"
+    )
+}
+
 pub(crate) fn calls_a_frame(data: &Data, code: &Value) -> bool {
     code.any_node(&mut |v| match v {
         Value::Call(d, _) => {
             let callee = data.def(*d);
             let name = callee.name();
+            if is_store_bracket(name) {
+                return false;
+            }
             // A free overload member (`f_…`) is a free function in all but its key.
             name.starts_with("n_")
                 || callee.is_free_overload()
