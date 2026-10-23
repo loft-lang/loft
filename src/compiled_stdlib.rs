@@ -80,12 +80,18 @@ fn prefix_fingerprint(stores: &Stores, n: usize) -> Option<u64> {
 #[must_use]
 pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> String {
     let export = export_set(data);
-    let library = crate::native_lib::generate_shared_cdylib_lib_rs(data, stores, &export)
-        // Built into the host: its bridges reach the host's own table, not one handed over.
-        .replace(
-            crate::native_lib::HOST_INIT_SRC,
-            crate::native_lib::IN_HOST_TABLE_SRC,
-        );
+    let library = crate::native_lib::shared_cdylib_source(
+        data,
+        stores,
+        &export,
+        true,
+        crate::native_lib::type_layout_fingerprint(stores),
+    )
+    // Built into the host: its bridges reach the host's own table, not one handed over.
+    .replace(
+        crate::native_lib::HOST_INIT_SRC,
+        crate::native_lib::IN_HOST_TABLE_SRC,
+    );
     let mut out = String::from(
         "// @generated — DO NOT EDIT BY HAND.\n\
          //\n\

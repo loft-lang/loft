@@ -38,15 +38,45 @@ pub fn arg_tuple_nested(t: (integer, (float, boolean))) -> float {
 }
 pub fn arg_tuple_ref(t: (Ck, integer)) -> integer { t.0.v * t.1 }
 
+// Tuples of scalars returned by value — the shape most published functions declined on.
+pub fn ret_pair(n: integer) -> (integer, integer) { (n + 1, n * 3) }
+pub fn ret_fpair(x: float) -> (float, float) { (x * 0.5, x + 0.25) }
+pub fn ret_mixed(n: integer) -> (float, integer, boolean) { (n as float * 1.5, n - 10, n > 3) }
+pub fn ret_nested(n: integer) -> (integer, (float, boolean)) { (n * n, (n as float / 4.0, n % 2 == 0)) }
+pub fn ret_pair_null(n: integer) -> (integer, integer) { (null, n) }
+
 // A reference to the caller's variable.
 pub fn arg_ref(n: &integer) { n += 5; }
 pub fn arg_ref_float(f: &float) { f = f * 2.0; }
 pub fn arg_ref_bool(b: &boolean) { b = !b; }
 pub fn arg_ref_two(a: &integer, k: integer) -> integer { a = a * k; a + 1 }
 
+// A reference to the caller's record, vector or keyed collection: its slot, which the
+// callee may write through or rebind.
+pub fn arg_ref_rec(c: &Ck, d: integer) { c.v += d; }
+pub fn arg_ref_rec_rebind(c: &Ck, v: integer) { c = Ck { k: 0, v: v }; }
+pub fn arg_ref_vec(xs: &vector<integer>, d: integer) -> integer { xs += [d, d * 2]; len(xs) }
+pub fn arg_ref_hash(h: &hash<Ck[k]>, key: integer, v: integer) {
+    h[key] = null;
+    h[key] = Ck { k: key, v: v };
+}
+
 // Function values: passed in, returned, and local.
 pub fn arg_fn(f: fn(integer) -> integer, x: integer) -> integer { f(x) + 1 }
 pub fn ret_fn() -> fn(integer) -> integer { fn(a: integer) -> integer { a * 7 } }
+
+// A call through a function value whose signature takes or returns a small record.  The value
+// names a function of this library, called compiled, or one of the script's, called back in
+// the interpreter, which takes and answers the record by reference (loft#2129).
+pub struct Gpt { pub x: float, pub y: integer, pub on: boolean }
+fn gpt_measure(s: text, p: Gpt) -> float { if p.on { (len(s) as float) * p.x } else { p.y as float } }
+fn gpt_style(n: integer) -> Gpt { Gpt { x: n as float * 0.5, y: n, on: n > 2 } }
+pub fn measure_gpt(f: fn(text, Gpt) -> float, s: text, n: integer) -> float {
+    f(s, Gpt { x: 2.0, y: n, on: n > 0 })
+}
+pub fn measure_gpt_own(s: text, n: integer) -> float { measure_gpt(gpt_measure, s, n) }
+pub fn style_gpt(f: fn(integer) -> Gpt, n: integer) -> float { p = f(n); p.x + (p.y as float) }
+pub fn style_gpt_own(n: integer) -> float { style_gpt(gpt_style, n) }
 pub fn local_lambda(x: integer) -> integer {
     f = fn(a: integer) -> integer { a + 1 };
     f(x)

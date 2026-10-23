@@ -410,6 +410,10 @@ impl OpEmitter for HoistedLengthEmitter {
             {
                 return write!(ctx.w, "(__st_{t}.len() as i64)");
             }
+            // `@FR-R-RecPtr`'s nested clause — a vector field of a view with an address.
+            if let Some(h) = args.first().and_then(|v| ctx.output.field_header_expr(v)) {
+                return write!(ctx.w, "(i64::from(({h}).len))");
+            }
             return super::default::DefaultEmitter.emit(ctx, args);
         };
         write!(ctx.w, "(i64::from({header}.len))")
@@ -595,12 +599,18 @@ pub struct OpGetVectorNullableEmitter;
 
 impl OpEmitter for OpGetVectorNullableEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        let (Some(header), [vec_val, size_val, index_val]) =
-            (args.first().and_then(|a| header_for(ctx, a)), args)
-        else {
+        let [vec_val, size_val, index_val] = args else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        let header = header.to_string();
+        // A loop's held header, else `@FR-R-RecPtr`'s nested clause — the header of a
+        // vector field read through its view's address, valued at the read.
+        let header = match header_for(ctx, vec_val) {
+            Some(h) => h.to_string(),
+            None => match ctx.output.field_header_expr(vec_val) {
+                Some(h) => format!("({h})"),
+                None => return super::default::DefaultEmitter.emit(ctx, args),
+            },
+        };
         let verify = verify(ctx);
         write!(
             ctx.w,
@@ -626,17 +636,26 @@ pub struct OpGetVectorEmitter;
 
 impl OpEmitter for OpGetVectorEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        let (Some(header), [vec_val, size_val, index_val]) =
-            (args.first().and_then(|a| header_for(ctx, a)), args)
-        else {
+        let [vec_val, size_val, index_val] = args else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        let header = header.to_string();
+        // A loop's held header, else `@FR-R-RecPtr`'s nested clause, bound after the index
+        // so the header is the field's value at the read.
+        let (header, nested) = match header_for(ctx, vec_val) {
+            Some(h) => (h.to_string(), None),
+            None => match ctx.output.field_header_expr(vec_val) {
+                Some(h) => ("__vh".to_string(), Some(h)),
+                None => return super::default::DefaultEmitter.emit(ctx, args),
+            },
+        };
         let verify = verify(ctx);
         write!(ctx.w, "{{let __vr = ")?;
         ctx.emit(vec_val)?;
         write!(ctx.w, "; let __vi = ")?;
         ctx.emit(index_val)?;
+        if let Some(h) = nested {
+            write!(ctx.w, "; let __vh = {h}")?;
+        }
         write!(
             ctx.w,
             "; stores.vec_get_hoisted_or_raise_runtime::<{verify}>(&{header}, &__vr, ("
@@ -769,7 +788,11 @@ impl OpEmitter for NewRecordEmitter {
                 crate::rewrite_census::fired("R-FieldAppend", 1);
                 write!(ctx.w, "stores.field_vector_append::<{}>(&(", !no_prefill)?;
                 ctx.emit(&args[0])?;
-                return write!(ctx.w, "), {pos}, {size}, {elem})");
+                return write!(
+                    ctx.w,
+                    "), {pos}, {size}, {})",
+                    ctx.output.type_lit_bare(elem, "u16")
+                );
             }
             // `@FR-R-FieldAppend`'s bare clause — `v += [x]` on a plain vector: the slot
             // `record_new`'s first path claims, its prefill one zero fill where the
@@ -785,7 +808,11 @@ impl OpEmitter for NewRecordEmitter {
                     zero && !no_prefill
                 )?;
                 ctx.emit(&args[0])?;
-                return write!(ctx.w, "), {size}, {elem})");
+                return write!(
+                    ctx.w,
+                    "), {size}, {})",
+                    ctx.output.type_lit_bare(elem, "u16")
+                );
             }
             // @PLN157 § V-y (`@FR-R-CompleteWrite`) — an UNFUSED mint whose every group
             // in this function covers the element type calls the no-prefill twin; the
@@ -798,9 +825,9 @@ impl OpEmitter for NewRecordEmitter {
                 write!(ctx.w, "OpNewRecordNP(cell,")?;
                 ctx.emit(&args[0])?;
                 write!(ctx.w, ", ")?;
-                ctx.emit_i32_slot(&args[1])?;
+                ctx.emit_param_slot(1, &args[1])?;
                 write!(ctx.w, ", ")?;
-                ctx.emit_i32_slot(&args[2])?;
+                ctx.emit_param_slot(2, &args[2])?;
                 return write!(ctx.w, ")");
             }
             return super::default::DefaultEmitter.emit(ctx, args);
@@ -968,6 +995,9 @@ impl OpEmitter for KeepRangeEmitter {
         let (Some(hdr), Some(Value::Int(tp))) = (held, args.get(3).map(Value::unspan)) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
+        let tp_lit = ctx
+            .output
+            .type_lit_u16(u16::try_from(*tp).unwrap_or(u16::MAX));
         crate::rewrite_census::fired("R-Refresh", 1);
         let verify = verify(ctx);
         write!(ctx.w, "{{ let _kl: i64 = (")?;
@@ -978,7 +1008,7 @@ impl OpEmitter for KeepRangeEmitter {
         ctx.emit(&args[0])?;
         write!(
             ctx.w,
-            "), _kl, _kh, {tp}_u16) {{ let _l = i64::from({hdr}.h.len); let _lo = _kl.clamp(0, _l); {hdr}.h.len = (_kh.clamp(_lo, _l) - _lo) as u32; if {verify} {{ vector::verify_kept_header(&{hdr}.h, &("
+            "), _kl, _kh, {tp_lit}) {{ let _l = i64::from({hdr}.h.len); let _lo = _kl.clamp(0, _l); {hdr}.h.len = (_kh.clamp(_lo, _l) - _lo) as u32; if {verify} {{ vector::verify_kept_header(&{hdr}.h, &("
         )?;
         ctx.emit(&args[0])?;
         write!(

@@ -277,6 +277,9 @@ struct SharedSig {
     /// attribution instrument to check the retbuf-vs-return orphan (@PLN118 arc F).
     hidden_dest: Option<usize>,
     ret: Option<ArgT>,
+    /// @PLN199 — a returned tuple of scalars: its leaves, in element order, one `ret[i]` each
+    /// (`ret` is then `None`).  Empty for any other return.
+    ret_leaves: Vec<ArgT>,
 }
 
 /// @PLN11 Arc N — side table for the **shared-store** bridge
@@ -446,9 +449,16 @@ fn compute_shared_sig(data: &crate::data::Data, d_nr: u32) -> Option<SharedSig> 
             }
         }
     }
-    let ret = match def.returned().base() {
-        Type::Void | Type::Null => None,
-        t => Some(marshal_arg_t(t)?),
+    let (ret, ret_leaves) = match def.returned().base() {
+        Type::Void | Type::Null => (None, Vec::new()),
+        t @ Type::Tuple(_) => (
+            None,
+            tuple_leaves(t)
+                .into_iter()
+                .map(marshal_arg_t)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        t => (Some(marshal_arg_t(t)?), Vec::new()),
     };
     Some(SharedSig {
         pops,
@@ -456,6 +466,7 @@ fn compute_shared_sig(data: &crate::data::Data, d_nr: u32) -> Option<SharedSig> 
         text_workbuf,
         hidden_dest,
         ret,
+        ret_leaves,
     })
 }
 
@@ -987,6 +998,36 @@ mod impl_symbol_tests {
     }
 }
 
+/// @PLN199 C0 — every library cdylib receives the host's table before any of its bridges can
+/// be called.  Idempotent: the cdylib keeps the first table it is handed.
+/// @PLN199 G0b-2 — and the numbers this program gives the types and functions its code names,
+/// by key.  A library that names one this program lacks refuses, and leaves the search: its
+/// functions are not wired (the probe before marking said so, and left them interpreted).
+#[cfg(feature = "native-extensions")]
+fn init_library_cdylibs(state: &crate::state::State, data: &crate::data::Data) {
+    type InitFn =
+        unsafe extern "C" fn(*const crate::native_lib::HostTable, *const std::ffi::c_void) -> u32;
+    let ids = crate::lib_ids::HostIds::new(data, &state.database);
+    let mut refused = Vec::new();
+    for (lib, init) in crate::c_libs::dlsym_in_each("loft_shared_init") {
+        let init: InitFn = unsafe { std::mem::transmute(init) };
+        let accepted = unsafe {
+            init(
+                &raw const crate::native_lib::HOST_TABLE,
+                (&raw const ids).cast::<std::ffi::c_void>(),
+            )
+        };
+        // Said already: `native_lib::probe_and_mark_exports` asked the same question of a
+        // library before marking its functions, and those interpret.
+        if accepted != 1 {
+            refused.push(lib);
+        }
+    }
+    if !refused.is_empty() {
+        crate::c_libs::refuse_loaded(refused);
+    }
+}
+
 /// @PLN11 Arc N — wire the **shared-store** bridge dispatchers.  For every
 /// `#native "loft_shared_…"` definition (the marker for an auto-generated
 /// shared-store bridge), resolve the bridge symbol from the loaded cdylibs via
@@ -996,14 +1037,7 @@ mod impl_symbol_tests {
 /// they handle disjoint symbol sets, `wire_native_fns` skips `loft_shared_…`).
 #[cfg(feature = "native-extensions")]
 pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::data::Data) {
-    // @PLN199 C0 — every library cdylib receives the host's table before any of its bridges
-    // can be called.  Idempotent: the cdylib keeps the first table it is handed.
-    type InitFn = unsafe extern "C" fn(*const crate::native_lib::HostTable) -> u32;
-    for init in crate::c_libs::dlsym_in_each("loft_shared_init") {
-        let init: InitFn = unsafe { std::mem::transmute(init) };
-        let accepted = unsafe { init(&raw const crate::native_lib::HOST_TABLE) };
-        debug_assert_eq!(accepted, 1, "a library cdylib refused this host's table");
-    }
+    init_library_cdylibs(state, data);
     // Phase 1: collect resolvable shared bridges (no lock held).
     let mut wired: Vec<(String, u16, *const (), SharedSig)> = Vec::new();
     for d_nr in 0..data.definitions() {
@@ -1316,7 +1350,15 @@ fn shared_store_dispatch_raw(
         None
     };
 
-    let mut ret = LibArg::ZERO;
+    // One `LibArg` per returned value: a tuple of scalars answers one per leaf.
+    let mut ret_inline = [LibArg::ZERO; INLINE_ARGS];
+    let mut ret_spill: Vec<LibArg> = Vec::new();
+    let ret_ptr: *mut LibArg = if sig.ret_leaves.len() <= INLINE_ARGS {
+        ret_inline.as_mut_ptr()
+    } else {
+        ret_spill.resize(sig.ret_leaves.len(), LibArg::ZERO);
+        ret_spill.as_mut_ptr()
+    };
     let stores_ptr: *mut crate::database::Stores = stores_raw;
     // SAFETY: `bridge_ptr` is a `loft_shared_…` export of an auto-generated cdylib
     // that links this exact `LibArg` / `Stores` / `DbRef` from libloft, so the ABI
@@ -1328,14 +1370,8 @@ fn shared_store_dispatch_raw(
         usize,
         *mut LibArg,
     ) = unsafe { std::mem::transmute(bridge_ptr) };
-    unsafe {
-        bridge(
-            stores_ptr,
-            args.as_ptr(),
-            args.len(),
-            std::ptr::from_mut(&mut ret),
-        )
-    };
+    unsafe { bridge(stores_ptr, args.as_ptr(), args.len(), ret_ptr) };
+    let ret = unsafe { *ret_ptr };
     // Reborrowed after the call: the bridge may have called back into the interpreter.
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
 
@@ -1371,6 +1407,15 @@ fn shared_store_dispatch_raw(
         );
     }
 
+    // The leaves of a returned tuple, in element order: where the interpreter's tuple lies.
+    for (i, leaf) in sig.ret_leaves.iter().enumerate() {
+        let r = unsafe { *ret_ptr.add(i) };
+        match leaf {
+            ArgT::F64 => stores.put::<f64>(stack, f64::from_bits(r.scalar as u64)),
+            ArgT::Bool => stores.put(stack, r.scalar != 0),
+            _ => stores.put::<i64>(stack, r.scalar),
+        }
+    }
     match sig.ret {
         None => {}
         Some(ArgT::I32 | ArgT::I64) => stores.put::<i64>(stack, ret.scalar),

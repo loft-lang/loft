@@ -54,10 +54,10 @@ impl Output<'_> {
                 let texts: Vec<String> = k.texts.iter().map(|t| format!("{t}_u32")).collect();
                 write!(
                     w,
-                    "let __rk_keep: u32 = stores.refill_keep_open(&{v_nr}, {}_u16, {}_u32); \
+                    "let __rk_keep: u32 = stores.refill_keep_open(&{v_nr}, {}, {}_u32); \
                      let __rk_end: u32 = 8 + __rk_keep * {}_u32; \
                      let _rk_guard = loft::codegen_runtime::RefillKeepGuard::new(cell, {v_nr}, {}_u32, __rk_keep, {}_u32, &[{}]);",
-                    k.wrapper_tp,
+                    self.type_lit_u16(k.wrapper_tp),
                     k.field,
                     k.size,
                     k.field,
@@ -145,7 +145,10 @@ impl Output<'_> {
         if let [target, source, tp] = vals {
             let target_expr = self.generate_expr_buf(target)?;
             let source_expr = self.generate_expr_buf(source)?;
-            let known_expr = self.generate_expr_buf(tp)?;
+            let known_expr = match self.type_id_code(tp, "i64") {
+                Some(code) => code,
+                None => self.generate_expr_buf(tp)?,
+            };
             write!(
                 w,
                 "{{ let _av_t = {target_expr}; let _av_s = {source_expr}; \

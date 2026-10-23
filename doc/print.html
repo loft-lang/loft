@@ -3329,7 +3329,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <section class="print-section" id="33-features">
 <h1>Feature catalogue</h1>
 <p>Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in <code>doc/features/</code> in the repository, where <code>@F2</code> is <code>F2.md</code>.</p>
-<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 77 of the 91 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
+<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 77 of the 92 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
 <p>The catalogue is generated from the <code>loft-lang/features</code> issue tracker, which is the single source of truth: every entry is an issue, and <code>make features-check</code> regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.</p>
 <h2 id="language-features">Language features</h2>
 <ul>
@@ -3424,6 +3424,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <li><strong>@F124</strong> — Operators on a program's own type — <code>operator compare</code>, <code>plus</code>, <code>minus</code>, <code>times</code>, <code>negate</code>, <code>divided_by</code>, <code>remainder</code>, <code>to_&lt;type&gt;</code></li>
 <li><strong>@F125</strong> — Text slicing — <code>s[a..b]</code>, <code>s[a..]</code>, <code>s[..b]</code>, <code>s[i]</code> (byte offsets; <code>char_slice</code> for characters)</li>
 <li><strong>@F126</strong> — A store's failure arm — <code>place = value else { … }</code> runs when the write did not land</li>
+<li><strong>@F127</strong> — Store upgrade — a changed struct converts its stored data, or says why it cannot</li>
 </ul>
 <h2 id="tooling-and-infrastructure">Tooling and infrastructure</h2>
 <ul>
@@ -4495,7 +4496,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self: const <span class="ty">hash</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
-<p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — <code>elms</code> slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.</p>
+<p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — <code>elms</code> slots (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  A slot is 8 bytes; a hash that owns its records keeps each in its slot too, so a slot then costs 8 bytes plus the record.  Records kept in separate allocations are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self: const <span class="ty">index</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>

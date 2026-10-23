@@ -78,7 +78,7 @@ if command -v sha256sum >/dev/null; then SHA="sha256sum"; else SHA="shasum -a 25
 host=$(rustc -vV | sed -n 's/^host: //p')
 CROSS_OK=""
 case "$host" in
-  x86_64-unknown-linux-gnu)  NATIVE="x86_64-unknown-linux-musl" ;;
+  x86_64-unknown-linux-gnu)  NATIVE="x86_64-unknown-linux-gnu" ;;
   x86_64-apple-darwin)       NATIVE="x86_64-apple-darwin" ;;
   aarch64-apple-darwin)      NATIVE="aarch64-apple-darwin"; CROSS_OK="x86_64-apple-darwin" ;;
   x86_64-pc-windows-msvc)    NATIVE="x86_64-pc-windows-msvc" ;;

@@ -1032,6 +1032,50 @@ pub fn OpGetRecord(
     get_record_lookup(cell, data, db_tp, key).or_null()
 }
 
+/// `@FR-R-TypedKeyed` — [`OpGetHashLong`] with the key's byte position handed in by the
+/// emitter: an inline table (`(Col-Inline)`) answers from one checked walk, and every other
+/// table — or a lazy-bound collection's miss, which fetches — takes [`OpGetHashLong`].
+#[inline(always)]
+#[allow(clippy::inline_always)]
+pub fn OpGetHashLongAt(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    db_tp: i32,
+    key_pos: u32,
+    key: i64,
+) -> DbRef {
+    let stores: &Stores = unsafe { &*cell.get() };
+    if data.rec != 0
+        && (data.store_nr as usize) < stores.allocations.len()
+        && !crate::keys::keyed_verify()
+    {
+        let store = &stores.allocations[data.store_nr as usize];
+        let claim = store.collection_rec(data.rec, data.pos);
+        if claim != 0
+            && let Some(found) =
+                crate::hash::inline_find_int(store, data.store_nr, claim, key_pos, key)
+            && (found.rec != 0 || !stores.lazy_bound(&data))
+        {
+            return found.or_null();
+        }
+    }
+    get_hash_long_slow(cell, data, db_tp, key)
+}
+
+/// [`OpGetHashLongAt`] past its inline walk — kept out of line so the walk inlines alone.
+///
+/// # Panics
+/// As [`OpGetHashLong`].
+#[inline(never)]
+fn get_hash_long_slow(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    db_tp: i32,
+    key: i64,
+) -> DbRef {
+    OpGetHashLong(cell, data, db_tp, key)
+}
+
 /// [`OpGetRecord`] for a `hash<T[k]>` whose ONE key is an integer, the key handed over as
 /// the value (`@FR-R-TypedKeyed`): what `--native` emits where the collection's kind and
 /// its key's are read off the schema at generation time.
@@ -1046,6 +1090,7 @@ pub fn OpGetRecord(
 ///
 /// # Panics
 /// Under `LOFT_KEYED_VERIFY=1`, when the typed lookup and the general one disagree.
+#[inline]
 pub fn OpGetHashLong(
     cell: &std::cell::UnsafeCell<Stores>,
     data: DbRef,

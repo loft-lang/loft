@@ -1037,29 +1037,42 @@ pub fn find_hash_entry<P: PageProvider>(
     if room < crate::hash::RESERVED_WORDS {
         return (0, 0);
     }
-    let elms = (room - crate::hash::RESERVED_WORDS) * 2;
-    let stride = reader.u32_at(claim, crate::hash::STRIDE_FLD);
+    // `(Col-Tag)` — the table's slot width is in its header.
+    let flags = reader.u32_at(claim, crate::hash::STRIDE_FLD);
+    let sb = if flags & crate::hash::TAGGED != 0 {
+        8
+    } else {
+        crate::hash::SLOT_BYTES
+    };
+    let stride = crate::hash::stride_of(flags);
+    // `(Col-Inline)` — an inline table's entry is in the table record, at its bucket.
+    let inline = flags & crate::hash::INLINE != 0;
+    let elms = if inline {
+        crate::hash::inline_count_of(flags)
+    } else {
+        crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb)
+    };
     let seed = reader.i64_at(claim, crate::hash::SEED_FLD) as u64;
     let hash_val = crate::keys::key_hash(key, seed);
     let mut index = crate::hash::home_bucket(hash_val, elms);
-    let mut slot = reader.u32_at(
-        claim,
-        crate::hash::BUCKET0 + index * crate::hash::SLOT_BYTES,
-    );
+    let mut slot = reader.u32_at(claim, crate::hash::BUCKET0 + index * sb);
     for _ in 0..elms {
         if slot == 0 {
             return (0, 0);
         }
-        let (rec, pos) = entry_at(reader, claim, slot, stride);
+        let (rec, pos) = if !inline {
+            entry_at(reader, claim, slot, stride)
+        } else if slot == crate::hash::TOMB {
+            (0, 0)
+        } else {
+            (claim, crate::hash::ent0(elms) + index * stride)
+        };
         if rec != 0 && key_compare_reader(reader, key, rec, pos, keys) == std::cmp::Ordering::Equal
         {
             return (rec, pos);
         }
         index = (index + 1) % elms;
-        slot = reader.u32_at(
-            claim,
-            crate::hash::BUCKET0 + index * crate::hash::SLOT_BYTES,
-        );
+        slot = reader.u32_at(claim, crate::hash::BUCKET0 + index * sb);
     }
     (0, 0)
 }
@@ -1115,7 +1128,17 @@ pub fn hash_bucket_addrs<P: PageProvider>(
     if room < crate::hash::RESERVED_WORDS {
         return Vec::new();
     }
-    let elms = (room - crate::hash::RESERVED_WORDS) * 2;
+    let flags = reader.u32_at(claim, crate::hash::STRIDE_FLD);
+    let sb = if flags & crate::hash::TAGGED != 0 {
+        8
+    } else {
+        crate::hash::SLOT_BYTES
+    };
+    let elms = if flags & crate::hash::INLINE != 0 {
+        crate::hash::inline_count_of(flags)
+    } else {
+        crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb)
+    };
     if elms == 0 {
         return Vec::new();
     }
@@ -1125,9 +1148,8 @@ pub fn hash_bucket_addrs<P: PageProvider>(
         .map(|k| {
             let index = crate::hash::home_bucket(crate::keys::key_hash(k, seed), elms);
             (
-                u64::from(claim) * 8
-                    + u64::from(crate::hash::BUCKET0 + index * crate::hash::SLOT_BYTES),
-                crate::hash::SLOT_BYTES as usize,
+                u64::from(claim) * 8 + u64::from(crate::hash::BUCKET0 + index * sb),
+                sb as usize,
             )
         })
         .collect()

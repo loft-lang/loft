@@ -342,6 +342,14 @@ integration, listed below):
 > The page THROWS on any unmet clause with its deadline INSIDE the
 > harness window (negative-control verified: no pushes → harness fails).
 
+**The world through the converter (@PLN196 step 8):** the page asks `swap_check(files)`
+before it disposes A — B is compiled and checked against A's world, so a change the converter
+refuses leaves A serving and the reason in the page — and a world that owns its store goes
+over as its image and layout sidecar (`LOFT-IMAGE`), which B's `swap_world` loads through the
+converter: an added field takes its default, computed ones included, as on native.  A world
+sharing its store still goes as JSON.  The test pushes a refused build (a field changes kind)
+and a grown one (`bonus = $.count * 10`, checked against the count at the swap).
+
 **Residual (compiled-module variant):** swapping a whole `--html` wasm
 module under the page (store export across INSTANCES rather than runs)
 — gated on the --html pipeline meeting the kernel scripts; the host
@@ -357,8 +365,10 @@ mixed → background rebuild → swap → still debuggable.  **SHIPPED**:
 - **The control channel** rides the game port: `D!:`-prefixed frames are
   kernel-handled (the script never sees them), gated on
   `LOFT_DEBUG_CONTROL=1` AND a loopback peer.  Commands: `bp <fn>`,
-  `flip <fn> <0|1>`, `eval <var>`, `resume`, `reload`, `rebuild`,
-  `rebuild?`, `swap auto|<path>`.  Transport lives in engine_host;
+  `flip <fn> <0|1>`, `eval <var>`, `resume`, `reload`, `apply` (the
+  editor's Apply: a held edit under `LOFT_LIVE_RELOAD=hold` lands at the
+  next poll, through a pause too), `rebuild`, `rebuild?` (a failed build
+  answers `3 <why>`), `swap auto|<path>`.  Transport lives in engine_host;
   SEMANTICS in live_dispatch — split by a MAILBOX, because a paused
   dispatch holds the `LIVE` borrow and the control handler runs inside
   the pause's own mini-pump (`try_borrow` direct path when free; posted

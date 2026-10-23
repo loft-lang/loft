@@ -372,6 +372,45 @@ fn a_discarded_record_result_is_released_beside_a_value_record() {
     ]);
 }
 
+/// `(H-FreeAll)` with `@FR-R-ValueRecord` — a work buffer the function never mints is minted
+/// at its declaration on neither side of its free (loft#2123).  With a value-record function
+/// anywhere in the program (`mk`, unused), the dead-buffer judgement drops the free of a
+/// `__ref_p2_` buffer nothing mints, and `--native` still minted a store for it where it was
+/// declared: one `main_vector<integer>` store left at exit per call.
+#[test]
+fn a_dead_work_buffer_is_not_minted_at_its_declaration() {
+    const ZIP: &str = "struct R { a: integer }\n\
+                       fn mk() -> R { R { a: 1 } }\n\
+                       fn zip<T, U>(a: vector<T>, b: vector<U>) -> vector<(T, U)> { \
+                       out: vector<(T, U)> = []; \
+                       for i in 0..len(a) { out += [(a[i], b[i])]; } out }\n";
+    let main = |body: &str| format!("{ZIP}fn main() {{ {body} }}");
+    check(&[
+        (
+            "vector_members",
+            main(
+                "a: vector<vector<integer>> = [[1, 2], [3]]; vv = zip(a, [10, 20]); \
+                 println(\"R{len(vv)} {vv[1].1} {vv[0].0[1]}\");",
+            ),
+            "R2 20 2",
+        ),
+        (
+            "called_twice",
+            main(
+                "t = 0; for k in 0..3 { vv = zip([[k], [k, k]], [1, 2]); t += len(vv[1].0); } \
+                 println(\"R{t}\");",
+            ),
+            "R6",
+        ),
+        // CONTROL: integer members, whose monomorph mints no work buffer.
+        (
+            "integer_members",
+            main("z = zip([1, 2, 3], [4, 5, 6]); println(\"R{z[2].0 + z[2].1}\");"),
+            "R9",
+        ),
+    ]);
+}
+
 /// `(H-FreeAll)` with `@FR-O-Witness` — a call that returns its argument is COPIED into the
 /// local it binds (`c = id(b)`), and a later rebind of `c` releases that copy.  The oracle read
 /// the callee's return as a borrow, so the owner tracker was never pointed at the copy, and the

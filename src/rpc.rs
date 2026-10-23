@@ -570,10 +570,11 @@ fn diagnostics_event(file: &str, diags: &[crate::diagnostics::DiagEntry]) -> Str
         .iter()
         .map(|d| {
             format!(
-                "{{\"line\":{},\"col\":{},\"level\":{},\"message\":{}}}",
+                "{{\"line\":{},\"col\":{},\"level\":{},\"code\":{},\"message\":{}}}",
                 d.line,
                 d.col,
                 esc(level_str(d.level)),
+                d.code.map_or_else(|| "null".to_string(), esc),
                 esc(&d.message)
             )
         })

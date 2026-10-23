@@ -92,11 +92,11 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
     let Some(bin) = r.version.binaries.get(&triple) else {
         return false;
     };
+    let pkg_dir = registry_index::extract_dir(&r.name, &r.version.semver);
     // Only a binary built against THIS loft's loft-ffi ABI is compatible.
     if bin.loft_ffi_fp != Some(crate::cache::loft_ffi_fingerprint()) {
         return false;
     }
-    let pkg_dir = registry_index::extract_dir(&r.name, &r.version.semver);
     // The cdylib stem is the package manifest's `[library] native` field.
     let Some(stem) = crate::manifest::read_manifest(&pkg_dir.join("loft.toml").to_string_lossy())
         .and_then(|m| m.native)
@@ -121,6 +121,62 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
     }
     // Stamp the sidecar so Phase 1's fp-gated resolve accepts the binary.
     crate::cache::write_native_artifact_fingerprint(&dir, crate::cache::loft_ffi_fingerprint());
+    true
+}
+
+/// @PLN199 G3a — the artifacts the running loft's release built for the packages of `graph`,
+/// fetched into each package's `native-auto/`, where a run adopts them with no `rustc`.  For
+/// every package of the graph, the ones already installed included: the loft before this one
+/// may have installed them, and its artifacts do not run in this one.  The release's row
+/// names them (`Version::artifacts`); one built by another loft is never fetched.
+fn fetch_release_artifacts(
+    index: &RegistryIndex,
+    graph: &[ResolvedPackage],
+    opts: &InstallOptions,
+) {
+    if opts.offline {
+        return;
+    }
+    let triple = crate::cache::host_triple();
+    for r in graph {
+        let Some(bin) = index.release_artifact(&r.name, &r.version.semver, &triple) else {
+            continue;
+        };
+        let (Some(exe), Some(stem)) = (bin.loft_exe_id, &bin.stem) else {
+            continue;
+        };
+        // A filename, off the network: the stem's own alphabet and nothing else.
+        if exe != crate::cache::loft_exe_identity()
+            || !stem.starts_with("loft_auto_")
+            || !stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        let dir = registry_index::extract_dir(&r.name, &r.version.semver).join("native-auto");
+        if !crate::file_access::exists(dir.join(crate::platform::cdylib_file_name(stem))) {
+            fetch_auto_artifact(&dir, stem, bin);
+        }
+    }
+}
+
+/// Download an auto-compiled library artifact to `dir/<stem>`'s platform name, checked
+/// against the signed index's hash.
+fn fetch_auto_artifact(
+    dir: &std::path::Path,
+    stem: &str,
+    bin: &registry_index::BinaryEntry,
+) -> bool {
+    if crate::file_access::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let dest = dir.join(crate::platform::cdylib_file_name(stem));
+    let Ok(bytes) = registry_index::download_tarball(&bin.url, &dest) else {
+        return false;
+    };
+    if crate::integrity::verify_sha256(&bytes, &bin.sha256).is_err() {
+        let _ = crate::file_access::remove_file(&dest);
+        return false;
+    }
     true
 }
 
@@ -296,6 +352,7 @@ pub fn install_one(
             .push((r.name.clone(), r.version.semver.clone()));
     }
 
+    fetch_release_artifacts(&index, &graph, opts);
     // A cache-internal resolution installs but records nothing — there is no
     // consumer project here, only the cached dependency whose source triggered
     // this (see `InstallOptions::skip_lockfile`).
@@ -1279,6 +1336,7 @@ mod tests {
             provides: vec![],
             triggers: vec![],
             binaries: BTreeMap::new(),
+            artifacts: BTreeMap::new(),
             api: vec![],
             prerelease: false,
             published: "p".to_string(),
@@ -1680,6 +1738,7 @@ mod tests {
             provides: vec![],
             triggers: vec![],
             binaries: BTreeMap::new(),
+            artifacts: BTreeMap::new(),
             api: vec![],
             prerelease: false,
             published: "p".to_string(),
@@ -1814,6 +1873,7 @@ mod tests {
                 provides: Vec::new(),
                 triggers: Vec::new(),
                 binaries: std::collections::BTreeMap::new(),
+                artifacts: std::collections::BTreeMap::new(),
                 api: Vec::new(),
                 prerelease: false,
                 published: "2026-07-31T00:00:00Z".to_string(),

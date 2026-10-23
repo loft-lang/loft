@@ -752,7 +752,11 @@ impl Stores {
                     .into_iter()
                     .map(|(d, _)| d)
                     .collect();
-                e.sort_by_key(|d| (d.rec, d.pos));
+                // An inline table lists its entries in insertion order already; its positions
+                // are its buckets, which a seed orders (`(Col-Inline)`).
+                if !crate::hash::is_inline(st, cur) {
+                    e.sort_by_key(|d| (d.rec, d.pos));
+                }
                 e
             }
             Parts::Index(..) => crate::btree::records(from, &self.allocations)
@@ -810,6 +814,13 @@ impl Stores {
             );
             return Ok(());
         };
+        // `(Col-Inline)` — an inline table files an entry by copying it out of its stage, and
+        // moves every entry when it grows.  Sized for the whole collection first it never
+        // grows here, so an entry stays where it was filed and the references taken to it
+        // below — a pending fill, a mapped record — stay true once moved off the stage.
+        if matches!(self.types[coll_tp as usize].parts, Parts::Hash(..)) {
+            self.reserve_hash(&slot, elements.len() as i64, coll_tp);
+        }
         for src in elements {
             let before = self.collection_count(&slot, coll_tp);
             let rec = self.record_new(&parent, parent_tp, field);
@@ -818,8 +829,47 @@ impl Stores {
                 run.rec_map.insert(src.rec, rec);
             }
             let elem_tp = run.map.pairs[elem].new;
+            let pending_from = run.pending.len();
+            let owed_from = self.owed.fills.len();
             self.convert(run, elem, &src, &rec, Container::At(rec, elem_tp))?;
             self.record_finish(&parent, &rec, parent_tp, field);
+            let stage = rec;
+            let rec = self.filed(&rec);
+            if rec != stage {
+                // The element was built in a stage and copied into its table: what was taken
+                // to the stage now names the entry, at the same offset into it.
+                let moved = |d: &mut DbRef| {
+                    if d.store_nr == stage.store_nr && d.rec == stage.rec && d.pos >= stage.pos {
+                        *d = DbRef {
+                            store_nr: rec.store_nr,
+                            rec: rec.rec,
+                            pos: rec.pos + (d.pos - stage.pos),
+                        };
+                    }
+                };
+                for p in &mut run.pending[pending_from..] {
+                    match p {
+                        Pending::Fill { rec: d, .. } => moved(d),
+                        Pending::Routine {
+                            item, old, from, ..
+                        } => {
+                            moved(item);
+                            moved(old);
+                            moved(from);
+                        }
+                    }
+                }
+                // The fills a load OWES its program (`run.owe`) name their records the same way.
+                for (d, _, old) in &mut self.owed.fills[owed_from..] {
+                    moved(d);
+                    moved(old);
+                }
+                if src.pos == 8
+                    && let Some(d) = run.rec_map.get_mut(&src.rec)
+                {
+                    moved(d);
+                }
+            }
             if self.collection_count(&slot, coll_tp) == before {
                 let key = crate::keys::get_key(
                     &rec,
@@ -995,6 +1045,19 @@ pub enum WorldPlan {
     Same,
     /// The world converts; the changes, one per line of `UpgradeMap::changes`.
     Converts(Vec<String>),
+}
+
+/// The running world against this program, every refusal kept ([`Stores::world_upgrade`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldUpgrade {
+    /// The release of the build that runs the world.
+    pub version: String,
+    /// The layout is this program's: nothing converts.
+    pub same: bool,
+    /// What converts, one line per change.
+    pub changes: Vec<String>,
+    /// What stops the world from crossing, each with its path from the world's type.
+    pub refusals: Vec<crate::database::Refusal>,
 }
 
 /// The layout a `.dschema` text records, read back into its description, with the id of the
@@ -1178,6 +1241,29 @@ impl Stores {
         sidecar: &str,
         routines: &Routines,
     ) -> Result<WorldPlan, String> {
+        let up = self.world_upgrade(sidecar, routines)?;
+        if let Some(r) = up.refusals.first() {
+            return Err(self.refusal_for(&up.version, format!("{}: {}", r.path, r.reason)));
+        }
+        Ok(if up.same {
+            WorldPlan::Same
+        } else {
+            WorldPlan::Converts(up.changes)
+        })
+    }
+
+    /// [`Self::world_upgrade_plan`] with every refusal kept, each with its field path from the
+    /// world's type: what an editor shows at the type while the old build keeps running
+    /// (`layout-upgrade-refused`, the parser's `check_running_world`).
+    ///
+    /// # Errors
+    /// Why the world cannot even be compared: a layout this build cannot read, a release this
+    /// build does not admit, or a world type this program does not define.
+    pub fn world_upgrade(
+        &self,
+        sidecar: &str,
+        routines: &Routines,
+    ) -> Result<WorldUpgrade, String> {
         let (id, old, old_root) = recorded_layout(sidecar, "the running world")?;
         self.release().admits(&id.version)?;
         let name = old.names[&old_root].clone();
@@ -1186,16 +1272,52 @@ impl Stores {
         })?;
         let current = crate::schema_sidecar::LayoutIdentity::of(self, &[new_root]);
         if current.layout_hash == id.layout_hash && current.dump == id.dump {
-            return Ok(WorldPlan::Same);
+            return Ok(WorldUpgrade {
+                version: id.version,
+                same: true,
+                changes: Vec::new(),
+                refusals: Vec::new(),
+            });
         }
         // The world records the release of the instance that runs it: the same decision as a
         // load of a store that release wrote (@FR-L-Upgrade-Routine).
         let routines = self.routines_for(&id.version, routines);
         let map = self.upgrade_map(&old, old_root, new_root, true, &routines);
-        if let Some(r) = map.refusals.first() {
-            return Err(self.refusal_for(&id.version, format!("{}: {}", r.path, r.reason)));
+        Ok(WorldUpgrade {
+            version: id.version,
+            same: false,
+            changes: map.changes,
+            refusals: map.refusals,
+        })
+    }
+
+    /// What a store written with the project's baseline layout `old` (accepted as release
+    /// `version`) does on its way into this program's `roots`: the changes it goes through and
+    /// the refusals that stop it, each refusal's path starting at its root type's name.  The
+    /// same decision a load takes, routines included, so `loft layout check` and the parser's
+    /// `layout-upgrade-refused` warning cannot disagree with the converter.  A root the
+    /// baseline does not hold has no stored data to carry, and is skipped.
+    #[must_use]
+    pub fn baseline_upgrade(
+        &self,
+        old: &LayoutDesc,
+        version: &str,
+        roots: &[u16],
+        routines: &Routines,
+    ) -> (Vec<String>, Vec<crate::database::Refusal>) {
+        let routines = self.routines_for(version, routines);
+        let mut changes = Vec::new();
+        let mut refusals = Vec::new();
+        for &root in roots {
+            let name = &self.types[root as usize].name;
+            let Some((&old_root, _)) = old.names.iter().find(|(_, n)| *n == name) else {
+                continue;
+            };
+            let map = self.upgrade_map(old, old_root, root, true, &routines);
+            changes.extend(map.changes);
+            refusals.extend(map.refusals);
         }
-        Ok(WorldPlan::Converts(map.changes))
+        (changes, refusals)
     }
 
     /// `@FR-L-Upgrade-Routine` — the routines that run on a store whose recorded release is
@@ -1607,9 +1729,12 @@ impl Stores {
             .write_beside(path)
             .map_err(|e| e.to_string())
     }
+}
 
+#[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
+impl Stores {
     /// The byte image of the store in `slot`, ending at its last live record.
-    fn store_image(&self, slot: u16) -> Option<Vec<u8>> {
+    pub(crate) fn store_image(&self, slot: u16) -> Option<Vec<u8>> {
         let s = &self.allocations[slot as usize];
         let words = s.capacity_words();
         let raw = unsafe { std::slice::from_raw_parts(s.base_ptr(), (words as usize) * 8) };
@@ -1619,6 +1744,20 @@ impl Stores {
             words,
             live_end.max(crate::store::MIN_BOUND_WORDS),
         )
+    }
+
+    /// @PLN18 08-S6 — the world record `w` of type `tp` as the browser swap hands it over: its
+    /// store's layout sidecar and image, when `w` is the root of a store of its own; `None`
+    /// for a world that shares its store, which goes over as JSON.
+    pub(crate) fn world_image(&self, w: &DbRef, tp: u16) -> Option<(String, Vec<u8>)> {
+        let store = &self.allocations[w.store_nr as usize];
+        if store.known_type != tp || w.rec != crate::store::PRIMARY {
+            return None;
+        }
+        let image = self.store_image(w.store_nr)?;
+        let sidecar =
+            crate::schema_sidecar::LayoutIdentity::of_store(self, w.store_nr, tp).to_sidecar();
+        Some((sidecar, image))
     }
 }
 

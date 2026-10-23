@@ -61,7 +61,10 @@ And the surfaces a running program *depends* on, so "keeps running" includes "it
 dependencies keep working":
 
 4. **Store / heap layout** — a store persisted by an older loft keeps reading correctly
-   (@PLN97's layout-identity hash is the authority).
+   (@PLN97's layout-identity hash is the authority).  A collection kind may carry several
+   layouts side by side, each instance recording its own (@C152): a new layout is ADDITIVE,
+   since every build reads the older ones, and an older loft must REFUSE a store holding a
+   layout it cannot read, never misread it.
 5. **On-disk + wire format** — serialized data, the IR codec, any protocol: old data keeps
    reading to the same values.
 6. **Package format** — `loft.toml`, the package layout, the registry: existing packages

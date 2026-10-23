@@ -1361,3 +1361,318 @@ fn a_refused_advisory_feed_is_not_left_in_the_cache() {
         cached_feed.display()
     );
 }
+
+/// @PLN199 G2c + G3 — the release builds the published libraries' artifacts with the loft it
+/// ships, its registry row names them, and a user of that loft runs them compiled with no
+/// `rustc`; an artifact another loft built is never fetched.
+///
+/// The producer is the release job's own chain: `scripts/release-lib-artifacts.sh` over a
+/// registry holding `calc` and the `base` it uses, then `gen-toolchain-entry.py --artifacts`
+/// for the release row.  The consumer installs `calc` into its own home and runs a program
+/// with `rustc` hidden from `PATH`: `tri(10)` = 0+1+…+9 = 45, plus `base::one()` = 46.  It
+/// installs twice — first under an index whose row names another loft (nothing fetched, the
+/// run interprets and says so: the control), then under the real row, with both packages
+/// already installed, as after an upgrade of loft (both artifacts fetched, the run compiled).
+#[test]
+fn a_released_library_artifact_runs_compiled_without_rustc() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: no rustc to build the producer's artifacts with");
+        return;
+    }
+    let has_tomllib = ["python3.13", "python3.12", "python3.11", "python3"]
+        .iter()
+        .any(|p| {
+            loft::platform::process::harness_command(p)
+                .args(["-c", "import tomllib"])
+                .output()
+                .is_ok_and(|o| o.status.success())
+        });
+    if !has_tomllib {
+        eprintln!("skip: the release job's matrix reader needs Python 3.11+");
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let loft_bin = env!("CARGO_BIN_EXE_loft");
+    let tmp = tmpdir("g2c_artifact");
+    let package = |name: &str, version: &str, deps: &str, body: &str| {
+        let src = tmp.join("src").join(name);
+        write_file(
+            &src.join("loft.toml"),
+            &format!(
+                "[package]\nname = \"{name}\"\nversion = \"{version}\"\nloft = \">=0.8\"\n\n\
+                 [library]\nentry = \"src/{name}.loft\"\n{deps}"
+            ),
+        );
+        write_file(&src.join(format!("src/{name}.loft")), body);
+        loft::package::package_create(&src, Some(&tmp)).expect("package_create")
+    };
+    let base = package("base", "0.1.0", "", "pub fn one() -> integer { 1 }\n");
+    let calc = package(
+        "calc",
+        "0.2.0",
+        "\n[dependencies]\nbase = \"^0.1\"\n",
+        "use base;\n\npub fn tri(n: integer) -> integer {\n  t = base::one();\n  \
+         for i in 0..n { t += i; }\n  t\n}\n",
+    );
+    let row = |t: &loft::package::PackageOutput, version: &str, deps: &str| {
+        format!(
+            r#"{{"description":"probe package","versions":{{"{version}":{{"url":"{}",
+                "sha256":"{}","size":{},"loft":">=0.8","deps":{{{deps}}},
+                "published":"2026-10-22T00:00:00Z"}}}}}}"#,
+            common::file_url(&t.tarball),
+            t.sha256,
+            t.size
+        )
+    };
+    let libraries = format!(
+        r#""base":{},"calc":{}"#,
+        row(&base, "0.1.0", ""),
+        row(&calc, "0.2.0", r#""base":"^0.1""#)
+    );
+    let index_of = |name: &str, packages: &str| -> PathBuf {
+        let path = tmp.join(format!("{name}.json"));
+        write_file(
+            &path,
+            &format!(
+                r#"{{"schema_version":1,"updated":"2026-10-22T00:00:00Z","packages":{{{packages}}}}}"#
+            ),
+        );
+        path
+    };
+
+    // The producer: the release job's step, then its entry.
+    let lib_index = index_of("libraries", &libraries);
+    let leg = tmp.join("dist-lib");
+    let produced = loft::platform::process::harness_command("bash")
+        .arg(root.join("scripts/release-lib-artifacts.sh"))
+        .arg("--loft")
+        .arg(loft_bin)
+        .arg("--out")
+        .arg(&leg)
+        .arg("--index")
+        .arg(&lib_index)
+        .arg("--registry")
+        .arg(common::file_url(&lib_index))
+        .arg("--allow-unsigned")
+        .output()
+        .expect("run release-lib-artifacts.sh");
+    let said = String::from_utf8_lossy(&produced.stdout).into_owned();
+    assert!(
+        produced.status.success()
+            && said.contains("ok  calc 0.2.0")
+            && said.contains("ok  base 0.1.0"),
+        "the release job did not build both artifacts:\n{said}\n{}",
+        String::from_utf8_lossy(&produced.stderr)
+    );
+    let version = loft::manifest::LOFT_RUNNING_VERSION;
+    let zips = tmp.join("release");
+    fa::create_dir_all(&zips).unwrap();
+    fa::write(zips.join(format!("loft-{version}-src.zip")), b"source").unwrap();
+    for triple in loft::self_update::PUBLISHED_TRIPLES {
+        let zip = zips.join(format!("loft-{version}-{triple}.zip"));
+        let made = loft::platform::process::harness_command("python3")
+            .args([
+                "-c",
+                "import zipfile,sys\nz=zipfile.ZipFile(sys.argv[1],'w')\n\
+                 z.writestr('x/SHA256SUMS','')\nz.close()\n",
+            ])
+            .arg(&zip)
+            .output()
+            .expect("build a stand-in bundle");
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+    }
+    let entry = loft::platform::process::harness_command("python3")
+        .arg(root.join("scripts/gen-toolchain-entry.py"))
+        .args(["--version", version, "--published", "2026-10-22T00:00:00Z"])
+        .arg("--dir")
+        .arg(&zips)
+        .arg("--artifacts")
+        .arg(&leg)
+        .current_dir(&root)
+        .output()
+        .expect("run gen-toolchain-entry.py");
+    assert!(
+        entry.status.success(),
+        "gen-toolchain-entry.py --artifacts: {}",
+        String::from_utf8_lossy(&entry.stderr)
+    );
+    // The entry names the release's asset URLs; here the files are served from the leg.
+    let release_base = format!("https://github.com/loft-lang/loft/releases/download/v{version}");
+    let entry =
+        String::from_utf8_lossy(&entry.stdout).replace(&release_base, &common::file_url(&leg));
+    let loft_row = entry
+        .trim()
+        .strip_prefix('{')
+        .and_then(|e| e.strip_suffix('}'))
+        .expect("the entry is one object")
+        .to_string();
+    assert!(
+        loft_row.contains("\"calc@0.2.0\"") && loft_row.contains("\"base@0.1.0\""),
+        "the release row does not name both artifacts:\n{loft_row}"
+    );
+    let exe = String::from_utf8_lossy(
+        &loft::platform::process::harness_command(loft_bin)
+            .args(["build-native", "--identity"])
+            .output()
+            .expect("loft build-native --identity")
+            .stdout,
+    )
+    .lines()
+    .find_map(|l| l.strip_prefix("loft_exe_id: ").map(str::to_string))
+    .expect("build-native --identity names the loft");
+    let foreign = loft_row.replace(
+        &format!("\"loft_exe_id\": \"{exe}\""),
+        &format!(
+            "\"loft_exe_id\": \"{}\"",
+            exe.parse::<u64>().map_or(1, |e| e ^ 1)
+        ),
+    );
+    assert_ne!(foreign, loft_row, "the row names no loft_exe_id to replace");
+
+    // The consumer.
+    let home = tmpdir("g2c_artifact_home");
+    let project = home.join("project");
+    write_file(
+        &project.join("loft.toml"),
+        "[package]\nname = \"consumer\"\nversion = \"0.0.0\"\n\n[dependencies]\ncalc = \"=0.2.0\"\n",
+    );
+    write_file(
+        &project.join("src/main.loft"),
+        "use calc;\nfn main() { println(\"{calc::tri(10)}\"); }\n",
+    );
+    let install = |index: &Path| {
+        let out = loft::platform::process::harness_command(loft_bin)
+            .args(["install", "--refresh", "--allow-unsigned"])
+            .current_dir(&project)
+            .env("HOME", &home)
+            .env("LOFT_HOME", &home)
+            .env("LOFT_REGISTRY_URL", common::file_url(index))
+            .output()
+            .expect("run loft install");
+        assert!(
+            out.status.success(),
+            "loft install:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    let artifacts = || -> usize {
+        ["base-0.1.0", "calc-0.2.0"]
+            .iter()
+            .filter(|p| {
+                fa::read_dir(home.join(".loft/registry").join(p).join("native-auto"))
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .any(|e| e.file_name().unwrap_or_default().contains("loft_auto_"))
+            })
+            .count()
+    };
+    let run = || -> (bool, String, String) {
+        let out = loft::platform::process::harness_command(loft_bin)
+            .args(["--interpret", "src/main.loft"])
+            .current_dir(&project)
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &home)
+            .env("LOFT_HOME", &home)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TRACE_NATIVE_GATE", "1")
+            .output()
+            .expect("run the program");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+
+    // Another loft's release row: nothing is fetched, and the run says it interprets.
+    install(&index_of("foreign", &format!("{libraries},{foreign}")));
+    assert_eq!(
+        artifacts(),
+        0,
+        "an artifact built by another loft was fetched"
+    );
+    let (ok, out, err) = run();
+    assert!(
+        ok && out == "46",
+        "interpreted, tri(10) = 46:\n{out}\n{err}"
+    );
+    assert!(
+        err.contains("no Rust toolchain") && err.contains("no compiled artifact for this loft"),
+        "CONTROL FAILED: without the artifacts the run did not report interpreting:\n{err}"
+    );
+
+    // This loft's row, both packages already installed: both artifacts arrive, and the
+    // same run is compiled.
+    install(&index_of("released", &format!("{libraries},{loft_row}")));
+    assert_eq!(artifacts(), 2, "the release's artifacts were not fetched");
+    let (ok, out, err) = run();
+    assert!(
+        ok && out == "46",
+        "tri(10) = 46 with no rustc:\n{out}\n{err}"
+    );
+    assert!(
+        !err.contains("no Rust toolchain"),
+        "the run fell back for want of rustc instead of adopting the fetched artifacts:\n{err}"
+    );
+
+    // A fresh install under the real row: every artifact is newer than every source it was
+    // built from, a dependency's included, so the first run is compiled.
+    let fresh_home = tmpdir("g2c_artifact_fresh");
+    let fresh = |run_home: &Path| {
+        let project = run_home.join("project");
+        fa::create_dir_all(project.join("src")).unwrap();
+        fa::copy(home.join("project/loft.toml"), project.join("loft.toml")).unwrap();
+        fa::copy(
+            home.join("project/src/main.loft"),
+            project.join("src/main.loft"),
+        )
+        .unwrap();
+        let installed = loft::platform::process::harness_command(loft_bin)
+            .args(["install", "--refresh", "--allow-unsigned"])
+            .current_dir(&project)
+            .env("HOME", run_home)
+            .env("LOFT_HOME", run_home)
+            .env(
+                "LOFT_REGISTRY_URL",
+                common::file_url(&tmp.join("released.json")),
+            )
+            .output()
+            .expect("run loft install");
+        assert!(
+            installed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&installed.stderr)
+        );
+        loft::platform::process::harness_command(loft_bin)
+            .args(["--interpret", "src/main.loft"])
+            .current_dir(&project)
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", run_home)
+            .env("LOFT_HOME", run_home)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TRACE_NATIVE_GATE", "1")
+            .output()
+            .expect("run the program")
+    };
+    let out = fresh(&fresh_home);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success()
+            && String::from_utf8_lossy(&out.stdout).trim() == "46"
+            && !err.contains("no Rust toolchain"),
+        "a fresh install did not run compiled:\n{err}"
+    );
+    let _ = fa::remove_dir_all(&fresh_home);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home);
+}

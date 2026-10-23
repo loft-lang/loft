@@ -123,7 +123,7 @@ impl OpEmitter for TextDispatchEmitter {
                     write!(ctx.w, ", ")?;
                     ctx.emit(record_val)?;
                     write!(ctx.w, ", ")?;
-                    ctx.emit_i32_slot(tp_val)?;
+                    ctx.emit_type_slot(tp_val)?;
                     write!(ctx.w, ", ")?;
                     ctx.emit_i32_slot(fmt_val)?;
                     write!(ctx.w, ")")?;

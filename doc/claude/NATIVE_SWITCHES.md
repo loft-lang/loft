@@ -29,18 +29,18 @@ checking form of every hoisted read (re-derives the header, panics on a stale on
 suite under it after touching the gate; **`LOFT_NO_VECTOR_HOIST=1`** emits the pre-885 form,
 which is the before-half of an A/B on one binary and the first bisect step for a
 native-only wrong answer in a vector loop; **`LOFT_NO_ELEM_FUSE=1`** keeps the hoisted header
-but leaves the scalar element read UNFUSED, one bisect step finer, and is the middle rung that
-showed stage 2 is worth ~3.2× on top of stage 1 (projected ~1.4×) — more than the hoist itself,
-because the second store resolution it removes costs more than the arithmetic it saves;
+but leaves the scalar element read UNFUSED, one bisect step finer;
 `LOFT_TRACE_FUSE=1` names each fuse the parser's gate declined.  **`LOFT_NO_FN_HEADER=1`**
 keeps `(R-Header)`'s FUNCTION clause off: a body that reads a vector parameter twice or more
 and leaves it as it found it (`hoist::param_untouched`, a callee asked the same of the position
 the parameter reaches, a recursion answering for itself) derives the header at every read
 again instead of once at entry — the first bisect step for a wrong element read OUTSIDE any
 loop under `--native`; `LOFT_TRACE_HOIST_DECLINE=1` names the parameter declined and the op
-that touches it.  Measured on cbor's `read_value` (the byte reads of a decoder's head): the
-runtime vector lookup fell from 7 % of the check profile to 2 %, decode 2.65 → 2.53 s per 60
-driver rounds.
+that touches it.  **`LOFT_NO_KEPT_HEADER=1`** keeps the KEPT clause off: a record parameter's
+vector field (`m.chunks`) walked by a chain of callees, one of which appends to it, is derived
+at every walk again instead of held from the outermost reader and handed down by `&mut` to
+`__kh` twins — the first bisect step for a stale length or a missing element after an append
+in a callee; `LOFT_HOIST_VERIFY=1` checks every holder read, `LOFT_TRACE_KEPT=1` names each verdict.
 **`LOFT_NO_SCALAR_HOIST=1`** (@PLN157 P4c) reads every record scalar field per iteration
 again — a loop that cannot write `lay.x0` otherwise reads it ONCE into a local, keyed by
 (record type, offset) over the body's typed write set — and is the bisect step for a wrong
@@ -216,61 +216,56 @@ to a plain local that is only read (`len(parts)`, `parts[i]`, `for p in parts`) 
 binding block is a TABLE of slices over the text, never a vector — and is the first bisect
 step for a wrong length, piece or walk out of a split bound to a name.
 `LOFT_TRACE_SPLIT_TABLE=1` names each bind admitted and each declined with its reason.
-**`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time; `--native`,
-and since @PLN198 the interpreter for a walk of a real vector — its slot holds the element's
-`Str`, bound by `OpPutText` and read by `OpArgText`, from the same admission) makes the loop variable of `for p in vector<text>` — and of a lazily split text —
-copy its element into a `String` again — with it off, `p` is bound as the `&str` the
-element read answers and read bare, where the body reads it only as a text VALUE (an
-operand at a `text` position, the source of a bind into another slot), never writes,
-links or captures it, and (for a vector) writes no store; a text VALUE op — scalar and
-text operands, a scalar or text result, or a write to a text VARIABLE — is no store write
-to that condition, and `OpGetText` is a reader, so the walk holds its header, length and
-base like any other (the stdlib `join` 5.40× → 1.96× of Rust, `split_walk` 1.80× →
-1.01×, `parse_num` 1.46× → 0.98×) — and is the first bisect step for a wrong, stale or
-crashing text read through such a loop variable on native.  `LOFT_HOIST_VERIFY=1`
-re-reads the element at the walk's release and panics when the borrow does not name it
-(address first, so a dangling borrow is never read); `LOFT_TRACE_TEXT_BORROW=1` names each
-walk admitted and each declined with its reason.  A `&p` link, `p += …`, `p` handed to a
-`&text` parameter, tupled or returned, a store written in the body and a generator keep
-the copy.  Its FORMAT clause is under the same switch: a text local bound to a format
-string (`cs = "{c}"`) whose work text is the format's own reads that work text as a `&str`
-instead of a copy (markdown `render_inline` 7.5 → 3.8 ms); a format that reads the local,
-and a local copied into another variable, keep the copy.
+**`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time; `--native`, and
+the interpreter's walk of a real vector, whose slot holds the element's `Str`) makes the loop
+variable of `for p in vector<text>` — and of a lazily split text — copy its element into a
+`String` again — with it off, `p` is bound as the `&str` the element read answers and read
+bare, where the body reads it only as a text VALUE (an operand at a `text` position, the source
+of a bind into another slot), never writes, links or captures it, and (for a vector) writes no
+store; a text VALUE op — scalar and text operands, a scalar or text result, or a write to a
+text VARIABLE — is no store write to that condition, and `OpGetText` is a reader, so the walk
+holds its header, length and base like any other (the stdlib `join` 5.40× → 1.96× of Rust,
+`split_walk` 1.80× → 1.01×, `parse_num` 1.46× → 0.98×) — and is the first bisect step for a
+wrong, stale or crashing text read through such a loop variable on native.
+`LOFT_HOIST_VERIFY=1` re-reads the element at the walk's release and panics when the borrow
+does not name it (address first, so a dangling borrow is never read);
+`LOFT_TRACE_TEXT_BORROW=1` names each walk admitted and each declined with its reason.  A `&p`
+link, `p += …`, `p` handed to a `&text` parameter, tupled or returned, a store written in the
+body and a generator keep the copy.  Its FORMAT clause is under the same switch: a text local
+bound to a format string (`cs = "{c}"`) whose work text is the format's own reads that work
+text as a `&str` instead of a copy (markdown `render_inline` 7.5 → 3.8 ms); a format that reads
+the local, and a local copied into another variable, keep the copy.
 **`LOFT_NO_SLICE_BORROW=1`** (`@FR-R-SliceBorrow`, default-ON, generation time, `--native`
 only) makes a text local bound to a value slice of a plain text parameter — `t = line[2..5]`,
-or a slice of a local that itself borrows — copy the slice into a `String` again; with it
-off, `t` is bound as the `&str` the slice answers (`let var_t: &str = OpGetTextSub(…)`) and
-read bare, where every mention of `t` is a text VALUE read (the reading of
-`LOFT_NO_TEXT_BORROW` above).  The first bisect step for a wrong or stale text read through
-a slice-bound local on native; `LOFT_TRACE_TEXT_BORROW=1` names each such local as "a slice
-of a parameter's text" or its decline.  An append to `t`, a rebind to a built text, a `&t`
-link, `t` handed to a `&text` parameter, tupled or returned, a slice of a `&text` or rebound
-parameter, a slice of an OWNED local and a generator keep the copy.  `LOFT_NO_TEXT_BORROW=1`
-turns this clause off with the rest.
-**`LOFT_NO_TEXT_CLEAR=1`** (`@FR-R-TextClear`, default-ON, generation time, `--native`
+or a slice of a local that itself borrows — copy the slice into a `String` again; with it off,
+`t` is bound as the `&str` the slice answers (`let var_t: &str = OpGetTextSub(…)`) and read
+bare, where every mention of `t` is a text VALUE read (the reading of `LOFT_NO_TEXT_BORROW`
+above).  The first bisect step for a wrong or stale text read through a slice-bound local on
+native; `LOFT_TRACE_TEXT_BORROW=1` names each such local as "a slice of a parameter's text" or
+its decline.  An append to `t`, a rebind to a built text, a `&t` link, `t` handed to a `&text`
+parameter, tupled or returned, a slice of a `&text` or rebound parameter, a slice of an OWNED
+local and a generator keep the copy.  `LOFT_NO_TEXT_BORROW=1` turns this clause off with the
+rest. **`LOFT_NO_TEXT_CLEAR=1`** (`@FR-R-TextClear`, default-ON, generation time, `--native`
 only) empties a text with a fresh `String` again — with it off, `s = ""` on a declared text
-local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext
-`materialise` −59 %) — and is the first bisect step for a text that reads leftover content
-after it was emptied.
-**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, runtime and generation time, `--native` only) copies a
-record that owns no heap through the full release-and-walk path again — with it off, such a
-copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %), and the
-emitter writes such a copy from a variable as its bytes, address to address where the block
-holds both — and is the first bisect step for a wrong value or a leak right after a record
-copy.
-**`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time, `--native` only)
-makes `for c in text` take every character through the step as written again — with it
-off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
-every other byte, a NUL — whose read notes a fault — and the end take the written step in
-the `else` arm), and where nothing in the loop writes the text its null test — a content
-compare of the whole text LLVM does not hoist — is asked ONCE before the loop
-(`char_walk` 4.62× → 2.48× of Rust; the stdlib `split`, built on such a walk, 12.5× →
-7.8×) — and is the first bisect step for a wrong character, a wrong `c#index` or a missed
-fault out of a character walk on native.  `LOFT_HOIST_VERIFY=1` runs the written step
-beside the fast arm and panics when they disagree, and asserts the hoisted null test
-inside the loop; `LOFT_TRACE_CHAR_WALK=1` names each walk and whether its null test moved.
-A call or literal source keeps the written step (the lowering evaluates such a source per
-iteration).
+local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext `materialise`
+−59 %) — and is the first bisect step for a text that reads leftover content after it was
+emptied. **`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, runtime and generation time,
+`--native` only) copies a record that owns no heap through the full release-and-walk path again
+— with it off, such a copy that keeps its source is the block copy alone (zttext `insert_text`
+≈ −40 %), and the emitter writes such a copy from a variable as its bytes, address to address
+where the block holds both — and is the first bisect step for a wrong value or a leak right
+after a record copy. **`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time,
+`--native` only) makes `for c in text` take every character through the step as written again —
+with it off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
+every other byte, a NUL — whose read notes a fault — and the end take the written step in the
+`else` arm), and where nothing in the loop writes the text its null test — a content compare of
+the whole text LLVM does not hoist — is asked ONCE before the loop (`char_walk` 4.62× → 2.48×
+of Rust; the stdlib `split`, built on such a walk, 12.5× → 7.8×) — and is the first bisect step
+for a wrong character, a wrong `c#index` or a missed fault out of a character walk on native.
+`LOFT_HOIST_VERIFY=1` runs the written step beside the fast arm and panics when they disagree,
+and asserts the hoisted null test inside the loop; `LOFT_TRACE_CHAR_WALK=1` names each walk and
+whether its null test moved. A call or literal source keeps the written step (the lowering
+evaluates such a source per iteration).
 
 ## Element bases and record addresses
 
@@ -331,13 +326,13 @@ and under each growth refusal a `class` line gives the view's and each mover's c
 `use-after-growth`: whether any address-served use follows the first growth, the question an
 ordered remainder clause would ask (priced, not built: `bench/portal/analysis/recptr-remainder.md`).
 `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
-**`LOFT_NO_ELEMENT_ADDRESS=1`** (`@FR-R-RecPtr`'s element clause, default-ON, generation
-time, `--native` only) writes a value record into `v[i]` through the element read and its
-address taken back out of the reference — with it off, the element is derived where it is
-written: one header read, the in-range test, the reference and the address both from the
-record and the index (`map_set_hex` −5.6 % of `slope_path_with_undo`).  The first bisect step
-for a value record written into the wrong element, or an out-of-range write that raised
-twice or not at all.
+**`LOFT_NO_ELEMENT_ADDRESS=1`** (`@FR-R-RecPtr`'s element clause, `--native`) writes a value
+record into `v[i]` through the element read, not derived where it is written from one header
+read and the index.  First bisect step for a record written into the wrong element, or an
+out-of-range write that raised twice or not at all.
+**`LOFT_NO_FIELD_HEADER=1`** (`@FR-R-RecPtr`'s nested clause, `--native`) resolves a view's
+VECTOR field (`len(c.items)`, `c.items[i]`) through the store again, not through the view's
+address.  First bisect step for a wrong length or element of a record's vector field.
 **`LOFT_NO_TEXT_FIELD=1`** (`@FR-R-RecPtr`'s text clause, default-ON, generation time,
 `--native` only) makes a TEXT field of a `for e in v` loop variable (`e.name`) resolve the
 store, the record and the text at each read again — with it off, the view's address from
@@ -982,6 +977,18 @@ backends share.  **`LOFT_NO_GUARD_FREE=1`** constructs the guard on every non-le
 again — the bisect step for a leaked or doubly-freed fn-ref return buffer in a program with
 recursion — and `LOFT_TRACE_GUARD_FREE=1` names, per function that keeps its guard, the
 reachable callee that registers.
+
+## Library artifacts
+
+**A `use`d library's cdylib names its type ids and function numbers by key (@PLN199 G0b-2,
+generation time, library artifacts only):** a type id is read from a table its
+`loft_shared_init` fills from the loading program (`__tid(k)`), and a function it carries is
+numbered by its own constant (`FN_LOCAL | k`), translated where a value leaves or enters its
+code — so one artifact can run in a program that numbers its types and functions differently.
+**`LOFT_NO_LIB_IDS=1`** writes the generating program's numbers as literals again: the A/B for
+a library routine that moved, and the falsifier of `n2_cdylib`'s renumbered-program guard.
+**`LOFT_TRACE_LIB_IDS=1`** prints the loading program's key of every type, the first look when
+an artifact is refused for naming a key the program lacks.
 
 ## Inlining hints
 

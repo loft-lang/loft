@@ -7,7 +7,7 @@
 
 use super::backings::delivered_work_ref;
 use super::call;
-use super::capture_builds::capture_build_backings;
+use super::capture_builds::{capture_build_backings, has_owner_slot};
 use super::disturbance::Disturbance;
 use crate::data::{Data, Type, Value, v_set};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -299,9 +299,12 @@ pub(super) fn nullable_locals_that_displace(
 ///
 /// A local with only owning assignments keeps the static free placement (the proxy is right
 /// for it), and one with only views has nothing to release.  Excluded on purpose: a
-/// parameter (its entry stash is the witness, `Function::rebind_orig`), a captured local (a
-/// closure reads the capture-time `DbRef`, @FR-L-CapHeap — the record takes over the free), a
-/// loop variable (bound by `Iter`, not by a `Set`), and the compiler's own temporaries.
+/// parameter (its entry stash is the witness, `Function::rebind_orig`), a captured local whose
+/// record has no OWNER slot (a closure reads the capture-time `DbRef`, @FR-L-CapHeap, and with
+/// nowhere to put the per-run answer the record takes over the free statically), a loop
+/// variable (bound by `Iter`, not by a `Set`), and the compiler's own temporaries.  A captured
+/// local WITH an owner slot is witnessed when its assignments mix ownership or it is assigned
+/// more than once, and the build hands the witness to that slot (loft#2131, loft#2132).
 pub(super) fn owner_witness_locals(
     code: &Value,
     function: &Function,
@@ -325,7 +328,9 @@ pub(super) fn owner_witness_locals(
             && (*t as usize) < function.count() as usize
             && !function.name(*t).starts_with("__")
             && !function.is_argument(*t)
-            && !function.is_captured(*t)
+            // loft#2131 — a captured local whose record carries an OWNER slot is witnessed
+            // like any other: the build hands the witness to that slot.
+            && (!function.is_captured(*t) || has_owner_slot(data, function, *t))
             && !function.was_loop_var(*t)
             && !matches!(function.tp(*t), Type::RefVar(_))
             && function.tp(*t).base().heap_def_nr().is_some()
@@ -368,6 +373,37 @@ pub(super) fn owner_witness_locals(
     // one, `owns_displaced_store`'s per-BINDING `!is_captured` veto is asked at two sites that
     // are statically identical and is right at only one of them (loft#1388).
     let builds = capture_build_backings(data, function, code);
+    // loft#2132, `@FR-O-Latest` — a captured local with an owner slot that is ASSIGNED MORE THAN
+    // ONCE: what a rebind displaces before the build is the frame's to release, and what the
+    // local holds at the build is the record's.  Only store identity tells those apart once
+    // the binding is captured, so it is witnessed even where every assignment mints.
+    // Counted only where a local is captured at all: the walk allocates a map per function, and
+    // the stdlib and most programs have no closure in most functions (the front end's pinned
+    // allocation count, tests/frontend_counts.rs).
+    let any_capture = (0..function.count()).any(|v| function.is_captured(v));
+    let multi = if any_capture {
+        super::phase::multi_assigned_in(code)
+    } else {
+        HashSet::default()
+    };
+    let reassigned_captures: Vec<u16> = multi
+        .into_iter()
+        .filter(|&v| {
+            v < function.count()
+                && function.is_captured(v)
+                && has_owner_slot(data, function, v)
+                && !function.is_argument(v)
+                && !function.name(v).starts_with("__")
+                && !function.was_loop_var(v)
+                && !matches!(function.tp(v), Type::RefVar(_))
+                && function.tp(v).base().heap_def_nr().is_some()
+                && !materialised_views.contains_key(&v)
+        })
+        .collect();
+    for v in reassigned_captures {
+        minted.insert(v);
+        viewed.insert(v);
+    }
     for &v in &builds.reassigned_after_build {
         // Both spellings of "the record took this local's store": a STRUCT capture names the
         // local outright, a COLLECTION capture names a view whose backing local is this one.

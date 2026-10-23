@@ -40,6 +40,21 @@ fn main() {
     println("stdlib [{path.basename()}] [{path.dir()}] {len(path.dir())} {tail}"); // [tool] [/usr/local/bin] 14 <tool
     t = ret_tuple(4);
     println("ret_tuple {t.0} {t.1}"); // 8 t4
+    p = ret_pair(5);
+    sum = 0;
+    for rp in 0..1000 {
+        q = ret_pair(rp);
+        sum += q.0 + q.1;
+    }
+    println("ret_pair {p.0} {p.1} {sum}"); // 6 15, and the sum of 4i+1 over 0..1000 = 1999000
+    fp = ret_fpair(3.0);
+    println("ret_fpair {fp.0} {fp.1}"); // 1.5 3.25
+    m = ret_mixed(4);
+    println("ret_mixed {m.0} {m.1} {m.2}"); // 6 -6 true
+    nt = ret_nested(6);
+    println("ret_nested {nt.0} {nt.1.0} {nt.1.1}"); // 36 1.5 true
+    pn = ret_pair_null(7);
+    println("ret_pair_null {pn.0 ?? -1} {pn.1}"); // -1 7
     println("arg_tuple {arg_tuple((3, 4))}"); // 304
     q = (7, 9);
     println("arg_tuple_var {arg_tuple(q)} {arg_tuple_text((5, "x"), 2)}"); // 709 x7
@@ -60,7 +75,23 @@ fn main() {
     acc = 0;
     for _ in 0..1000 { arg_ref(acc); }
     println("arg_ref_field {rec.v} {acc}"); // 7 5000
+    rc = Ck { k: 1, v: 10 };
+    arg_ref_rec(rc, 5);
+    for _ in 0..1000 { arg_ref_rec(rc, 1); }
+    println("arg_ref_rec {rc.v}"); // 10 + 5 + 1000 = 1015
+    // A thousand rebinds keep the live-store count flat (`LOFT_STORES=warn`).
+    for rb in 0..1000 { arg_ref_rec_rebind(rc, rb); }
+    arg_ref_rec_rebind(rc, 77);
+    println("arg_ref_rec_rebind {rc.k} {rc.v}"); // 0 77
+    xs: vector<integer> = [1];
+    nx = arg_ref_vec(xs, 3);
+    println("arg_ref_vec {nx} {xs}"); // 3 [1,3,6]
+    hh: hash<Ck[k]> = [];
+    for hk in 0..100 { arg_ref_hash(hh, hk % 10, hk); }
+    println("arg_ref_hash {len(hh)} {hh[3].v}"); // 10 93 (key 3 last written at 93)
     println("arg_fn {arg_fn(twice, 5)}"); // 11
+    println("measure_gpt {measure_gpt_own("abc", 4)} {measure_gpt_own("abc", 0)}"); // 3 * 2.0 = 6, off: 0
+    println("style_gpt {style_gpt_own(3)}"); // 1.5 + 3 = 4.5
     f = ret_fn();
     println("ret_fn {f(3)}"); // 21
     println("local_lambda {local_lambda(10)} {local_lambda_text(4)} {local_lambda_rec(5)}"); // 11 n4 15

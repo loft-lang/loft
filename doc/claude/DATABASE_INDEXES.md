@@ -73,14 +73,31 @@ byte  8: SEED_FLD   (u64) — the per-hash seed, stored WITH the buckets so any
 byte 16: DIR_FLD    (u32) — the entry arena's chunk directory (`src/arena.rs`)
 byte 20: NEXT_FLD   (u32) — the arena's append cursor
 byte 24: FREE_FLD   (u32) — head of the arena's free list
-byte 28: STRIDE_FLD (u32) — bytes per entry slot, 0 when the table BORROWS
-byte 32: BUCKET0    — slots, 4 bytes each (0 = empty)
+byte 28: STRIDE_FLD (u32) — bytes per entry slot (0 when the table BORROWS) in the
+                            low 16 bits; the TAGGED and INLINE flags in the top two
+byte 32: BUCKET0    — the slots (0 = empty)
 ```
 
-`elms = (room - RESERVED_WORDS) * 2`, with `RESERVED_WORDS = 4`.
+A table records its layout in `STRIDE_FLD`, and the layouts live side by side: one store holds
+tables of every layout, and every build reads and writes all of them on both backends
+(`formal/collections.md` `(Col-Layouts)`, @C152).  Which layout a NEW table takes is the writer's
+policy (`LOFT_NO_HASH_TAG=1`, `LOFT_NO_HASH_INLINE=1`, BOTH_BACKEND_SWITCHES.md);
+`LOFT_TRACE_HASH_LAYOUT=1` names each table made, grown or demoted.
 
-A slot holds the entry's arena index and nothing else — no cached hash, no entry in the table —
-so a lookup is two random reads, the slot and then the entry (@C105).
+| layout | slot | where the entries are | a hit reads |
+|---|---|---|---|
+| untagged | 4 bytes: the entry's arena index | the arena (below) | the slot, then the entry |
+| TAGGED (`(Col-Tag)`) | 8 bytes: the entry index, then the low 32 bits of the key's digest | the arena, or the records a group or a reference shares (`STRIDE_FLD` 0) | the slot; the entry only where the tag matches |
+| INLINE (`(Col-Inline)`) | 8 bytes: the entry's insertion number, then the tag | IN the table, one per bucket after the slots (`hash::ent0`) | the table record only |
+
+`elms = (room - RESERVED_WORDS) * 2` for an untagged table and half that for a tagged one; an
+inline table keeps its bucket count's exponent in `STRIDE_FLD` bits 16–20, names the record
+that owns the collection at field 4 and keeps its live count at field 16.  A table is made
+inline only when its element type owns its entries — no group shares them and no stored
+`reference<T>` names them — because an inline entry MOVES when the table grows (@C105).  A
+record handed to an inline table from elsewhere demotes it to a tagged arena table first
+(`hash::inline_demote`).  An untagged table is read as it was written and rebuilt tagged when
+it next grows under a tagging writer.
 
 ### An insert is one hash and one probe walk
 
@@ -104,11 +121,11 @@ for every insert.  Measured on 5,000 integer keys: a fill −37 %
   (`find_fast`, `find_long`): inside one arm the comparison is a read and a compare.
   `FastKey::matches` / `order` are `#[inline(always)]` because as hints they were declined,
   and an out-of-line comparator re-dispatched on the kind per bucket.
-* **`home_bucket`** — the ONE place a digest becomes a bucket number, `digest % count`.
-  It is a 64-bit division on every lookup's critical path, priced at 7–10 % of a
-  cache-resident lookup, and it stays: a multiply-shift reduction would move every entry
-  of every stored hash, and an exact reciprocal needs a per-table number the header has no
-  word for.  Both are a format break (`crate::placement::HASH`).
+* **`home_bucket`** — the ONE place a digest becomes a bucket number, `digest mod count`
+  (`@FR-Col-Bucket`, @C146).  A table's count is a power of two, so the remainder is a mask;
+  a count that is not (a store written before the rule, `LOFT_NO_POW2_BUCKETS=1`) takes the
+  division, and both place every key where `digest mod count` says.  A tagged table's
+  rebuild places each entry from its tag's low bits, reading no key.
 * **A removal** recognises its entry by DECODING the slots on its chain (`Entries::names`)
   and answers the bucket value that named it, which `free_slot` releases — so it never
   maps a record back to an arena index (`arena::index_of`, a directory scan it used to
@@ -119,7 +136,7 @@ for every insert.  Measured on 5,000 integer keys: a fill −37 %
 
 ### Entries live in a chunked arena, not one record each (@PLN135 arc H)
 
-A bucket slot holds a **1-based arena index**, not a record number. Entries sit packed at
+In an arena table a bucket slot holds a **1-based arena index**, not a record number. Entries sit packed at
 a fixed stride inside chunk records, so a `hash` costs 18.6 bytes an entry where a record
 each cost 27.67, and 2000 entries claim 9 store records (table + directory + 6 chunks)
 instead of 2000. Filling one is ~1.28x faster; **lookups are unchanged** — see
@@ -436,26 +453,26 @@ written without meaning a group; there is no diagnostic for it yet (loft#926).
 Collision resolution is **linear probing**: on collision, advance slot index by 1 (wrapping). The load factor threshold is (`hash::is_full`):
 
 ```rust
-length + RESERVED_WORDS >= room
+length * 2 >= elms        // LOFT_NO_HALF_LOAD=1: length * 4 >= elms * 3
 ```
 
-which is `length >= elms / 2` — a table is rebuilt at HALF full.  It was three quarters
-(`length * 2 / 3` in the same test) until 2026-09-21.  A probe here is a dependent read of
-the entry, with no fingerprint to reject on, and a miss walks to the first empty bucket:
-8.5 buckets at 0.75 against 2.5 at 0.5 — a table just under the old threshold measured
-2.30 key compares a hit and 5.36 a miss.  The price is the bucket array, 4 bytes a slot:
-~10.7 bytes an entry averaged over a doubling instead of ~7.1.  It is a WRITER's policy:
-no reader assumes a load, so stores written under either rule read under both, and
-`LOFT_NO_HALF_LOAD=1` restores the old one.  When it is met after an insertion, the table is rehashed
+— a table is rebuilt at HALF full; an inline table counts its tombstones in `length`.  A miss
+walks to the first empty bucket, 2.5 buckets on average at half load against 8.5 at three
+quarters; the price is the bucket array, ~10.7 bytes an entry of 4-byte slots averaged over a
+doubling instead of ~7.1.  It is a WRITER's policy: no reader assumes a load, so stores written
+under either rule read under both.  When it is met after an insertion, the table is rebuilt
 into a new record with doubled capacity, and the arena's four fields travel with it —
 leaving them behind would strand every chunk and hand out index 1 again on top of a live
 entry. `reserve(h, n)` sizes the table so this never fires while filling to `n`; it claims
 one word PAST the trigger, because a table sized to exactly the trigger grows on the last
-insert and the reservation buys nothing.
+insert and the reservation buys nothing.  How the threshold was chosen:
+[DATABASE_INDEXES-history.md](DATABASE_INDEXES-history.md#the-load-factor).
 
 ### Hash Function
 
-`hash` from `src/keys.rs` is used to compute a 64-bit hash from the record's key fields. The slot index is `hash % slot_count`.
+`keys::key_hash` computes a 64-bit digest of the record's key fields with the table's seed; the
+home bucket is `hash::home_bucket(digest, count)`, and a tagged slot keeps the digest's low 32
+bits.
 
 ### Key Functions
 
@@ -468,7 +485,8 @@ insert and the reservation buys nothing.
 
 ### Deletion
 
-Deletion uses **backward shift**: after zeroing the removed slot, scan forward and shift back any element whose probe distance to the now-vacant slot is shorter than its probe distance to its current slot. This maintains the invariant that every element is reachable from its home slot by linear probing without encountering an empty slot.
+An INLINE table removes by TOMBSTONE: the slot is marked `hash::TOMB`, no other entry moves, and
+a rebuild drops the tombstones (`(Col-Remove)`).  An arena table uses **backward shift**: after zeroing the removed slot, scan forward and shift back any element whose probe distance to the now-vacant slot is shorter than its probe distance to its current slot. This maintains the invariant that every element is reachable from its home slot by linear probing without encountering an empty slot.
 
 The probe distance formula used:
 ```rust

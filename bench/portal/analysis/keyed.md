@@ -323,6 +323,61 @@ What remains of the row is the walk: 22 ns per element through `OpStep` → `ste
 `arena::slot` and two field reads, against the twin's 6 ns `HashMap` lookup — the
 record-backed element read, § What is left's territory, not the sort.
 
+## What the tagged and inline tables bought (2026-10-22, LOCAL — a format change, not pushed)
+
+`(Col-Tag)` and `(Col-Inline)` (`formal/collections.md`, PROPOSED; C105 being revisited) on
+`field_add_cell`, `stats.py` on x86-64: 4.21× → 3.19× (the tag: a probe compares the digest's
+low word before it reads an entry; the count read from the header) → 2.62× (entries in the
+bucket table, the one-integer-key paths checked once and walked in place, the key position a
+constant the emitter hands in) → **2.28×**, and 2.30× once the layout's own defects were
+fixed (below).  `build_index` 1.63× → 1.36×, `collect_dirty_inputs` 2.82× → 2.75×; every hash
+matches its twin.
+
+**What the suite found in the layout, all fixed on the branch.**  An inline table broke four
+facts the arena layout kept: the record holding an entry names the collection's owner at
+field 4 (`Stores::path` read garbage — the owner now sits there, the live count at 16, the
+bucket count's exponent in the flags); a record handed in from elsewhere was copied and then
+FREED (a stage mark tells the table's own stage apart, and a foreign record turns the table
+back into an arena table); the raw entry writes bypassed a locked store's refusal; and an
+upgrade kept references to an entry's stage after the entry moved.  Two store measures were
+layout-blind too: the live digest read empty buckets' bytes, and the compaction gate compared
+a rebuild's arena capacity, not its content.  A growing inline table also leaves the tables
+it outgrew as free space between records — the memory a speed-first layout trades, as
+hashbrown does; `reserve` avoids it.
+
+**The last step was not instructions.**  Moving the walks into the caller took 4.5 % of the
+instructions and none of the cycles.  A cycle profile showed why: the walk answered an
+`Option<DbRef>` through memory, written a field at a time (`u16`, `u32`, `u32`) and read
+back as one eight-byte load — a store the processor cannot forward to that load, about a
+sixth of `field_add_cell`'s cycles in three such sites.  Inlined always, and the filing of a
+miss answering a POSITION (a register) rather than a reference, cycles fell 1.79 G → 1.62 G
+against the twin's 0.73 G.  The same shape is left wherever a `DbRef` temporary has its
+address taken on a cold path (a `&(DbRef { … })` handed to a runtime function whose error
+arm escapes it): LLVM keeps the whole temporary in memory and the hot copy stalls — 3.5 % of
+the routine at the `xs` append.  A runtime entry that takes `DbRef` BY VALUE, its cold arm
+out of line, is the general cure; not built.
+
+**The layout slowed the key-order walk: `hash_walk` 3.12× → 4.14×; BUILT, now 1.62×.**
+`for e in h` builds its order per pass (`records_sorted`), and over an inline table `records`
+answered INSERTION order — a sort by sequence number (18 % of the row's cycles) — before the
+key sort reordered everything, through five intermediate vectors.  A key-order walk needs no
+insertion order: a hash's keys are unique.  Built (`hash::inline_sorted`), each step timed on
+the walk alone (µs/op): the slots swept in place of the insertion-ordered list 355 → 315; the
+sweep through the base checked once, into a vector sized by the live count, → 264; the key
+read straight into `([i64; N], position)` and sorted by key alone (the pair comparison was a
+third dearer on 5 000 entries) → 228; `vector::step_ordered` inlined into `OpStep` → 196 — it
+answered `(DbRef, u32)` through memory, the store-forwarding stall below, 60 % of `OpStep`'s
+samples; the sweep BRANCH-FREE → 147: every slot's pair is written and only a live slot
+advances the count, where the occupancy test mispredicted on most slots.  `stats.py`:
+`hash_walk` **1.62×**, `reload_and_record` (two compound-keyed walks a pass) 3.53× → **2.62×**,
+every hash unchanged.  A text, float or narrow-only key keeps the general sort; the guard is
+`a-hash-walk-is-in-key-order-across-widths-and-removals` (falsified: a dead slot walked, a
+tombstone walked).
+
+Read cycles before instructions: `perf record -e cycles` and `perf annotate` put the samples
+on the instruction AFTER a stalled load, so a hot `mov %rax,0x20(%rsp)` straight after an
+eight-byte read of a just-written stack slot is this stall, not the move.
+
 ## What is left
 
 A lookup is 444 instructions against Rust's 177, and ~3.5× in time — the time ratio is

@@ -123,6 +123,12 @@ impl OpEmitter for OpCoroutineNextEmitter {
                 return Ok(());
             }
             if channel == 2 {
+                // @PLN199 G0b-2 — the slot holds the program's number (`__norm`).
+                let (norm_open, norm_close) = if ctx.output.shared_ids.is_some() {
+                    ("__norm(", ")")
+                } else {
+                    ("", "")
+                };
                 // @P328 native — unified channel, fn-ref rebuild.  Native
                 // fn-ref repr is `(u32 d_nr, DbRef closure)` (see
                 // `generation/mod.rs::rust_type` for `Type::Function`).
@@ -139,7 +145,7 @@ impl OpEmitter for OpCoroutineNextEmitter {
                     ctx.w,
                     "{{ let mut _loft_yield_buf: [i64; 2] = [0xFFFF_i64 << 32, 0]; \
                      {cr}::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
-                     ((_loft_yield_buf[0] as u32), DbRef {{ \
+                     ({norm_open}(_loft_yield_buf[0] as u32){norm_close}, DbRef {{ \
                        store_nr: ((_loft_yield_buf[0] >> 32) & 0xFFFF) as u16, \
                        rec: _loft_yield_buf[1] as u32, \
                        pos: (_loft_yield_buf[1] >> 32) as u32 \

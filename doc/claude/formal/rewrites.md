@@ -653,6 +653,74 @@ also grows; falsifiers `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1`.  Sites: `hoist
 `LOFT_POISON=1` by a plant that keeps the base: t2 reads `null`); pin
 `tests/text_set_header.rs`.
 
+```
+  (R-Header), the KEPT clause: a vector field p.f of a plain-record PARAMETER p
+                 that a body never rebinds is KEPT by that body when everything
+                 in it that could change the field's header — its record or its
+                 length — is one of: (a) a record append to p.f itself (the
+                 OpNewRecord … OpFinishRecord group) as a statement outside any
+                 loop; (b) a statement that is a call to a loft function, or
+                 the assignment of one; nothing else.  A store-free op, a scalar
+                 setter and a heap-free record copy change no header; any other
+                 writer mentions no variable that may name p's record or the
+                 vector — p, a variable whose type reaches p's record type, a
+                 vector of the field's element type — unless it is its own
+                 store's; a call that is not a statement leaves every such
+                 argument untouched (the function clause's question); no `CallRef`,
+                 `par` or `yield`, and nothing it calls can lock or unlock a
+                 store (the header carries the lock).  A kept field the body
+                 READS — a walk, an element, a length, or a call that hands p to
+                 a function keeping the field at that position — has ONE holder:
+                 bound at entry where the body HANDS IT DOWN to a callee's kept
+                 twin and the reads it serves, as emitted, are two or more;
+                 received from the caller by `&mut` in the body's KEPT TWIN.  Every read
+                 serves from the holder; after each op of (a) and each call of
+                 (b) the holder is derived again, except a call to the callee's
+                 kept twin, which hands the holder down and so keeps it current
+                 itself.  No base is kept: a claim anywhere may move the store's
+                 memory, never a record number or a length.  A body some rewrite
+                 emits a RUN of statements in — the hand-over's rotate, an
+                 element-first build, `(R-Apart)`, a stream walk — keeps nothing:
+                 the run is emitted outside the statements a holder is refreshed
+                 after.  A kept call takes the ranged form of the kept twin
+                 (`__rg__kh`) where `(R-RangedCall)` admits it.
+```
+
+**The kept clause, in words.**  L7 (`bench/portal/analysis/worklist.md`): lane 17's
+`slope_path_with_undo` walks `m.m_chunks` four times a step in four callees
+(`map_get_hex` twice, `map_ensure_chunk`, `map_set_hex`), each deriving the header from the
+store, and one of them appends to it.  The function clause cannot hold it (a callee writes the
+vector) and the twin clause cannot hand it over (the callee grows a store).  A header changes
+only where something names its record: the apart clause's mention argument, applied to a
+whole body, with the appends that DO name it refreshing the holder at their own site
+(`(R-Refresh)`).  Hand price −13.5 %.  Switch `LOFT_NO_KEPT_HEADER=1`; falsifier
+`LOFT_HOIST_VERIFY=1` (every read of a holder asserts it against a fresh derivation);
+`LOFT_TRACE_KEPT=1` names each candidate key and its verdict.  Sites: `kept::kept_paths` (the
+verdict; `kept::untouched_field` asks a plain callee, and sees a local VIEW of the field, which
+`param_untouched` does not), `Output::begin_kept_headers` (the holders, in the plain body, its
+ranged variant and the `__kh` twin), `Output::kept_after_statement` (the refresh, and a `for`
+walk's hidden vector served from the holder), `Output::kept_twin_call` (the hand-down),
+`Output::kh_live_check` (a twin the live tier flips into the interpreter refreshes before it
+returns).  Guard `tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft`
+(falsified twice: no refresh after the append group, no refresh after a plain call that may
+append); pin `tests/kept_header.rs`.  `Output::kept_check_taken` stops the generation when a
+statement that changes a held field was taken by another rewrite — the net under the run-emitting
+list, which caught the element-first build.  The versioned copy of `(R-Alias)` does not count a
+path held only by a kept holder as held: the copy buys more than a base there (crawler's
+`build_vis_texture` keeps its push window in it; withheld, 1.14× → 2.94× of its twin).  A
+plain body binds only a holder it hands down, counted as emitted (`Output::kept_effective_uses`:
+a callee `kept_of` declines, or a loop's call that takes the `__inv` twin, serves nothing) —
+own reads alone are what the loop's and the function clause's headers already serve lazily,
+and an eager holder of a field read on one branch cost hex_body's `bone_shape_has` 7.7 %.
+A held read reports no index fault, as no held header does: loft#2134, open. <!-- doc-lint: ok -->
+A loop that changes no kept field copies the holder into its own header local
+for its extent (`Output::kept_loop_copy`): read through the `&mut`, the header stayed in memory
+across the loop's calls (zttext's `materialise`, +11 % until it did).  Measured with
+`bench/stats.py` against `LOFT_NO_KEPT_HEADER=1` (7 samples, every hash equal):
+`slope_path_with_undo` −11.0 %, zttext `materialise` −8.9 % and `seg` −4.4 %, stage
+`pack_instances` −4.1 %, `resolve_move` −2.5 %; over the 47 routines of the lanes it reaches
+most, geomean −0.6 %.
+
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
 it), with @PLN157 P4d's path key (`lay.px` is `(lay, [32])`) and the hoisted loop
 bound (`len(P)` served by the header, queue item 1).  The path is pure, so evaluating
@@ -1340,6 +1408,18 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  and an index out of range takes the element read itself, so its
                  raise and the null it answers are that read's.  Pre-evaluation
                  asks the same question and leaves the element read in place.
+                 THE NESTED CLAUSE: a VECTOR field of r — `r.items`, or through
+                 inline sub-records `r.pos.items` at the summed offset — read by
+                 a length (`len`, OpLengthVector) or an element read (OpGetVector,
+                 OpGetVectorNullable, the element clause's write) takes its header
+                 through the address: the field's vector record one load at it,
+                 the length one read of that record, at each use, so a write to
+                 the field before the read is seen.  The null address holds the
+                 absent vector.  A view whose only uses are such reads takes its
+                 address on this clause alone when two reads share the one store
+                 resolution the address costs, or one under the base clause, where
+                 the address is free; that use enters the verdict before its
+                 growth, free and rebind conditions, as the text clause's does.
 ```
 
 **In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -1366,7 +1446,10 @@ address, where a `vec_get_or_raise_runtime` reference and an address read out of
 round trip — `map_set_hex` in `slope_path_with_undo` 200.9 → 189.6 µs native, −5.6 %, the hand-written form exactly;
 switch `LOFT_NO_ELEMENT_ADDRESS`, guard
 `tests/scripts/a-record-written-into-an-element-is-addressed-once.loft`), `vector::rec_ptr` / `rec_get` /
-`rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
+`rec_set`; the nested clause `Output::field_header_expr`, `Output::extra_view_use`,
+`hoist::vector_field_reads` and `vector::field_header` (switch `LOFT_NO_FIELD_HEADER`, guard
+`tests/scripts/a-vector-field-of-a-view-reads-through-its-address.loft`;
+`slope_path_with_undo` −7.0 %, `resolve_move` −6.1 % native, hashes equal).  Cells `tests/scripts/157-record-ptr.loft` and
 `loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft`, pins
 `tests/record_ptr.rs`.  The `for e in v` loop
 variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
@@ -6154,8 +6237,10 @@ Native only; the interpreter moves as before and is the reference.
                  consumed as a record at a fn-ref call site (an argument the callee
                  keeps as a record, a field it is not read through) declines it as a
                  direct call's would.  A capturing arm, an optional result, a `par`
-                 worker, a `&text` argument that picks a store instance, and a fn-ref
-                 target no listed dispatch reaches keep the record outright.  An arm
+                 worker, a `&text` argument that picks a store instance, a fn-ref
+                 target no listed dispatch reaches, and — in a library artifact — a
+                 dispatch whose `_ =>` arm calls back into the interpreter keep the
+                 record outright.  An arm
                  is a function whose RECORD matches the signature's, not only its
                  Rust ABI: the type checker refuses any other in that slot.  The
                  interpreter is untouched: the tuple is native's representation of
@@ -6166,7 +6251,10 @@ Native only; the interpreter moves as before and is the reference.
 call, to hand back a record `default_style` had already answered in registers (the fn-ref
 result ABI stops at the buffer road, `@FR-O-Unknown`).  The target set of a fn-ref is complete
 in the emitted binary (`src/generation/emit.rs` writes the `match`), so the admission
-`(R-ValueRecord)` proves per function lifts to the signature.  Sound where every arm is
+`(R-ValueRecord)` proves per function lifts to the signature.  A library artifact is the
+exception: a value the script hands in names a callee the artifact does not carry, and the
+`_ =>` arm calls it back in the interpreter (`HostTable::call_ref`), which takes and answers
+records — so there the group is open, and its arms keep their records.  Sound where every arm is
 admitted; a null fn-ref answers the null tuple exactly as the buffer road answers a null
 record.  The parameter half is what makes the result half reach `flow_layout_full`: its
 `measure(r.str, resolve(r.style))` hands the resolved record straight to a second dispatch,
@@ -6463,7 +6551,7 @@ into it), and `rotate_into` declines it as a defence.
 **−17.1 %**, hash unchanged; the routine looped alone 1.01 → 0.85 s.  The hand price, −34 %,
 also removed the `truncate_to` call (a no-op on a steady push) and the build of `e`, which the
 clause leaves.  The truncating take that preceded it measured a loss and is not built
-(`rewrites-history.md` § 2026-10-21).
+(`rewrites-history.md`).
 
 **What it may not do — the limitations** (written for the general rule; the rotate clause
 meets each by the run-time test above).
@@ -6523,7 +6611,7 @@ meets each by the run-time test above).
 **The division (an owner ruling).**  The vector hand-over is this rule's canonical case:
 storage whose size is only known at run time, kept across statements, where the block and its
 capacity are worth carrying from the dying value to the new one.  It may serve more shapes,
-but a separate FIXED-SIZE object — a record whose fields are scalars, or a value whose size the
+but a separate fixed-size object — a record whose fields are scalars, or a value whose size the
 type fixes — is not one of them: it lives on the stack (`(R-Apart)`), where it needs no block
 to hand over at all.
 
@@ -6548,7 +6636,7 @@ purer case: its whole panel is frame-local (built, hit-tested, read, rebound eac
 the ~19 claims and ~19 deletes a frame vanish with `(R-Apart)` alone — once it holds texts and
 vectors of texts, which it does not yet.
 
-**Status: the rotate clause BUILT** (switch `LOFT_NO_HAND_OVER=1`, trace
+**The rotate clause is built** (switch `LOFT_NO_HAND_OVER=1`, trace
 `LOFT_TRACE_HAND_OVER=1`; guard `tests/scripts/158-rotate.loft` — every cell hand-computed, the
 interpreter as oracle, both switch states under `LOFT_POISON`, `LOFT_POISON_CLAIM`,
 `LOFT_STRICT_STORES` and the leak check, falsified by sabotage; pin `tests/hand_over_rotate.rs`).

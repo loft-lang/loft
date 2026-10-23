@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A keyed insert and a keyed lookup agree on every key width and position, and across
+// removals: the one-integer-key paths (`@FR-R-KeyedEntry`, `@FR-R-TypedKeyed`) take an 8-byte
+// key at its byte position and walk the table in place, and every other width keeps the
+// general entry.  An inline table (`(Col-Inline)`) removes by tombstone, so a removed key's
+// bucket is skipped, never reused, until the table is rebuilt.  Hand-computed values; both
+// backends.
+//
+// k1 pins the widths' answers; it cannot fail on the emitter's own 8-byte filter, because the
+// rewrite admits only a key written by `OpSetInt` (`generation/keyed_entry.rs`), so a narrower
+// key never reaches it — dropping the filter changed nothing, measured.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-22) — a removal that empties its slot
+// instead of leaving a tombstone ends later walks early: k3 answered `417 126372` on the
+// interpreter and `409 123225` native.
+
+struct A { v: integer, k: u8 }
+struct B { k: u16, v: integer }
+struct C { s: text, k: i32, v: integer }
+struct D { v: integer, w: integer, k: integer }
+struct Hs { a: hash<A[k]>, b: hash<B[k]>, c: hash<C[k]>, d: hash<D[k]> }
+
+// k1 — four widths, keys at four positions, upserts.  a: v = 7k for an even k (the
+// re-insert), 3k+1 for an odd one, sum over 0..199 = 7*9900 + (3*10000 + 100) = 99400.
+// b: v = i, 44850.  c: v = i*i, 41541750.  d: 3000 keys, the first 1000 re-inserted at
+// v = i+5: 4498500 + 5000 = 4503500.  A miss reads null.
+fn k1() {
+  h = Hs { a: [], b: [], c: [], d: [] };
+  for i in 0..200 { h.a += [A { k: (i & 255) as u8, v: 3 * i + 1 }]; }
+  for i in 0..100 { h.a += [A { k: ((2 * i) & 255) as u8, v: 7 * i * 2 }]; }
+  sa = 0;
+  for i in 0..200 { sa += h.a[(i & 255) as u8].v ?? -1000000; }
+  for i in 0..300 { h.b += [B { k: ((1000 + 7 * i) & 65535) as u16, v: i }]; }
+  sb = 0;
+  for i in 0..300 { sb += h.b[((1000 + 7 * i) & 65535) as u16].v ?? -1000000; }
+  for i in 0..500 { h.c += [C { s: "x{i}", k: (i * 13 - 3000) as i32, v: i * i }]; }
+  sc = 0;
+  for i in 0..500 { sc += h.c[(i * 13 - 3000) as i32].v ?? -1000000; }
+  for i in 0..3000 { h.d += [D { k: i * 1000003 - 99, v: i, w: -i }]; }
+  for i in 0..1000 { h.d += [D { k: i * 1000003 - 99, v: i + 5, w: 0 }]; }
+  sd = 0;
+  for i in 0..3000 { sd += h.d[i * 1000003 - 99].v ?? -1000000; }
+  r = "{len(h.a)} {sa} {len(h.b)} {sb} {len(h.c)} {sc} {len(h.d)} {sd} {h.d[12].v ?? -7}";
+  println("k1 {r}");
+  assert(r == "200 99400 300 44850 500 41541750 3000 4503500 -7", "k1");
+}
+
+// k2 — churn: 0..1000 at v = k, then five rounds of removing the keys ≡ r (mod 5) and
+// re-inserting them at v = k + 1000*(r+1).  After round r every key ≡ r has gained
+// 1000*(r+1): sum = 499500 + 200*1000*(1+2+3+4+5) = 3499500, still 1000 keys, and a
+// removed-then-missing key (5000) reads null.
+fn k2() {
+  h = Hs { a: [], b: [], c: [], d: [] };
+  for i in 0..1000 { h.d += [D { k: i, v: i, w: 0 }]; }
+  for r in 0..5 {
+    for i in 0..1000 { if i % 5 == r { h.d[i] = null; } }
+    for i in 0..1000 { if i % 5 == r { h.d += [D { k: i, v: i + 1000 * (r + 1), w: 0 }]; } }
+  }
+  s = 0;
+  for i in 0..1000 { s += h.d[i].v ?? -1000000; }
+  println("k2 {len(h.d)} {s} {h.d[5000].v ?? -1}");
+  assert(len(h.d) == 1000 && s == 3499500 && (h.d[5000].v ?? -1) == -1, "k2");
+}
+
+// k3 — removal while walking: 0..600, every key ≡ 0 (mod 3) removed during the walk.  Left:
+// 400 keys, sum 0..599 = 179700 minus the multiples of 3 (3*(0..199) = 59700) = 120000.
+fn k3() {
+  h = Hs { a: [], b: [], c: [], d: [] };
+  for i in 0..600 { h.d += [D { k: i, v: i, w: 0 }]; }
+  for e in h.d { if e.k % 3 == 0 { h.d[e.k] = null; } }
+  s = 0;
+  for e in h.d { s += e.v; }
+  println("k3 {len(h.d)} {s}");
+  assert(len(h.d) == 400 && s == 120000, "k3");
+}
+
+fn main() {
+  k1();
+  k2();
+  k3();
+  println("keyed widths ok");
+}

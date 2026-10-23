@@ -60,15 +60,14 @@ that names the fix.
 `x as i32` etc.  Use plain `integer` for ordinary arithmetic — it has
 the full 64-bit range.
 
-**Uncomputable arithmetic → null, and the program KEEPS RUNNING** (@C80, the
-spreadsheet model): divide / modulo by zero, and integer overflow
-(`i64::MAX + 1`), are uncomputable, so they yield `null` and execution CONTINUES
-— no trap, no halt, identically in dev / test / production.  Any arithmetic
-landing exactly on `i64::MIN` also reads as `null` (the in-band sentinel).
-Defend a site with `?? <fallback>` to turn the null into a value; a CONSTANT zero
-divisor warns at compile time; a runtime one, like an index out of range, logs one Warn line
-unless the site is defended (`??`, a null check) — the value is null either way.  A function returning `integer` may `return null` (it yields `i64::MIN`,
-detectable with `!result`).
+**Uncomputable arithmetic → null, and the program KEEPS RUNNING** (@C80, the spreadsheet
+model): divide / modulo by zero, and integer overflow (`i64::MAX + 1`), are uncomputable,
+so they yield `null` and execution CONTINUES — no trap, no halt in every build.  Any
+arithmetic landing exactly on `i64::MIN` also reads as `null` (the in-band sentinel).
+Defend a site with `?? <fallback>` to turn the null into a value; a CONSTANT zero divisor
+warns at compile time; a runtime one, like an index out of range, logs one Warn line unless
+the site is defended (`??`, a null check) — the value is null either way.  A function
+returning `integer` may `return null` (it yields `i64::MIN`, detectable with `!result`).
 
 **Prefer `x?` when the fallback is just the type's zero (@PLN116).** Postfix `?`
 discharges `T?` to `T` using **the type's own** default, so `?? 0` / `?? 0.0` /

@@ -153,6 +153,13 @@ fn main() {
     // moves it.  A content hash, not a timestamp, so a release rebuilt from its source
     // archive bakes the same bytes (`scripts/repro-roundtrip.sh`).
     println!("cargo:rustc-env=LOFT_BUILD_STAMP={:016x}", source_stamp());
+    // @PLN199 G2c — a release bundle's binary (`scripts/repro-flags.sh`), whose identity is
+    // what it was built from rather than its file's modification time (`cache::loft_exe_identity`).
+    println!(
+        "cargo:rustc-env=LOFT_RELEASE_BUNDLE={}",
+        std::env::var("LOFT_RELEASE_BUNDLE").unwrap_or_default()
+    );
+    println!("cargo:rerun-if-env-changed=LOFT_RELEASE_BUNDLE");
 
     // The version this loft answers to — what a package's `loft = ">=…"` floor is checked
     // against, and what `loft --version` prints.  A RELEASE is its `Cargo.toml` version.  Any

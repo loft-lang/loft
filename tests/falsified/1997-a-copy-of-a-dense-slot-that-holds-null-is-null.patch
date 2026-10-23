@@ -1,21 +1,21 @@
 diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
-index d4bbfc90a..66b47a1d8 100644
+index c3ac783d4..2dd044380 100644
 --- a/src/generation/dispatch.rs
 +++ b/src/generation/dispatch.rs
-@@ -1894,7 +1894,7 @@ impl Output<'_> {
+@@ -1943,7 +1943,7 @@ impl Output<'_> {
                  let target = copy_target(&format!("var_{name}"), first_bind);
                  write!(
                      w,
 -                    "if {src_expr}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
 +                    "if false && {src_expr}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
-                      else {{ var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32); \
-                      OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32); }}"
+                      else {{ var_{name} = OpDatabase(cell,{target}, {tp_lit}); \
+                      OpCopyRecord(cell,{src_expr}, var_{name}, {tp_lit}); }}"
                  )?;
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 2648e7350..848da66a5 100644
+index 072c041ce..863524270 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -4081,13 +4081,15 @@ impl State {
+@@ -4074,13 +4074,15 @@ impl State {
          // Every record bind takes it (`@FR-N-Store`, `@FR-N-Road`): the type of neither side
          // says the source is there — a source typed non-null can hold `nullref`
          // (`Variables::record_copy_source`).

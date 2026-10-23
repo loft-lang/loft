@@ -83,6 +83,27 @@ pub(crate) fn debug_mailbox_drain() -> Vec<DebugCmd> {
     DEBUG_MAILBOX.with(|m| std::mem::take(&mut *m.borrow_mut()))
 }
 
+/// Set by the editor's Apply (`D!:apply`): under `LOFT_LIVE_RELOAD=hold` a saved edit waits
+/// for it, because a save is for reading the edit and its warnings, not for running it.
+/// The reload poll takes it ([`take_apply`]).
+static APPLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ask the live tier to apply the saved edits at its next poll.
+pub fn request_apply() {
+    APPLY.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether an Apply waits, without taking it.
+#[must_use]
+pub fn apply_pending() -> bool {
+    APPLY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Take a waiting Apply: true once per request.
+pub fn take_apply() -> bool {
+    APPLY.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Typed twin for generated code: `live_flip(name: text, on: boolean) -> boolean`.
 pub fn n_live_flip(_cell: &UnsafeCell<Stores>, name: &str, on: u8) -> u8 {
     u8::from(set_flip(name, on == 1))

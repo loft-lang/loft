@@ -496,8 +496,37 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
                 rebuilds — and can take up to twice the bucket array an exact size would.  The ONE
                 place a digest becomes a bucket is `hash::home_bucket`, for the writer and the paged
                 reader alike.
+  (Col-Tag)     (@C105, @C152) a hash table's bucket slot carries, beside the entry it names, a
+                TAG: the low 32 bits of the key's digest.  A probe compares the tag before it
+                reads the entry, so a walk past other keys reads the bucket array only, and the
+                one entry it reads is the one it answers; a rebuild places every entry from its
+                tag alone (the home bucket of a power-of-two table is the tag's low bits),
+                reading no key and hashing nothing.  Entries do not move — a stored reference,
+                a view and a group member see what they saw — so it holds for every hash.  The
+                table records its slot width in its header: a table with untagged 4-byte slots
+                is read as it is written and rebuilt tagged when it next grows.
+  (Col-Inline)  (@C105, @C152) a hash whose element type T is ADMITTED keeps its entries IN the
+                bucket table, one per bucket beside its tag: a probe and the entry it answers
+                share the table.  An entry MOVES only when the table grows (a keyed add, which
+                ends every view already — binding.md B-Disturb) and when a store is loaded or
+                compacted; a removal leaves a tombstone, so a walk that removes as it goes sees
+                no entry move.  T is admitted when its entries are the table's own: no
+                `reference<T>` field in the program (heap.md H-LongRef: nothing stored names an
+                entry) and no other collection sharing T's records (Col-Group) — the type's
+                `linked` fact, decided when the program's types are finished.  A record handed
+                to the table that it did not stage (a sibling view's, as Col-Group's other
+                routes hand them) turns the table back into (Col-Tag)'s layout first and is
+                filed borrowed: the condition costs the layout, never a value.  The record
+                holding an entry names the collection's owner at field 4, in either layout.
+  (Col-Layouts) (@C152) the layouts above live side by side: each table records its own in its
+                header (untagged, tagged, inline; owning or borrowing), one store holds tables
+                of every layout, and every build reads and writes every layout on both
+                backends.  Which layout a NEW table takes is the writing build's policy
+                (LOFT_NO_HASH_TAG, LOFT_NO_HASH_INLINE); a table keeps its layout until it is
+                rebuilt, and a value never depends on the layout.
 ```
-*Anchors:* DATABASE.md:693,:704; VERIFICATION.md heap.md "H-Copy (keyed)" (oracle `16`).
+*Anchors:* DATABASE.md:693,:704; VERIFICATION.md heap.md "H-Copy (keyed)" (oracle `16`); `src/hash.rs` `STRIDE_FLD` flags `TAGGED`/`INLINE`;
+(Col-Layouts) `tests/store_persist_loft.rs` `every_hash_layout_lives_beside_the_others_in_one_store`.
 
 ### 1.9 The linked GROUP — `Col-Group` (cross-link [DATABASE.md § Clearing one member](../DATABASE.md))
 
@@ -517,6 +546,9 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
                 itself, so a dense vector<E> and a vector<E?> cannot both be routes to one
                 record set, and a struct declaring both beside a keyed member is REFUSED
                 (loft#1385).  Every member dense, or every member nullable, is one set.
+                A COPY of the struct is a group of its own: a member that is a VIEW starts
+                empty in the copy and indexes the copy's records, so a write through one copy
+                never reaches the other.
                 Membership is the whole SET, not a pair: *at least one of THEM* is a question
                 about every collection over that element type in the struct, and the second
                 sentence settles the rest by being applied twice — if a and h are one record

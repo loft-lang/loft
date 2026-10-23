@@ -32,6 +32,7 @@ pub mod file_hold;
 pub use crate::fnref;
 pub mod hand_over;
 pub mod hoist;
+pub mod kept;
 pub mod keyed_entry;
 pub mod keyed_place;
 pub mod non_sentinel;
@@ -739,6 +740,46 @@ enum PackageLink {
     StaticBound,
 }
 
+/// @PLN199 G0a — the operator parameters that carry a type id (`OpDatabase(pos, db_tp)`,
+/// `OpNewRecord(data, parent_tp, fld)`, …): the `default/*.loft` spelling of one.  An
+/// argument at such a parameter is written through `Output::type_lit`.
+pub(crate) const TYPE_ID_PARAMS: [&str; 6] =
+    ["tp", "db_tp", "parent_tp", "enum_tp", "struct_kt", "kt"];
+
+/// @PLN199 G0b-2 — the bits of such an argument that are flags rather than the id
+/// (`keys::COPY_FREE_SOURCE`, `keys::COPY_FRESH_DEST`, `allocation::CLEAR_KEYED_VIEW`): a type
+/// id stays below them.
+pub(crate) const TYPE_ID_FLAGS: u16 = 0xC000;
+
+/// @PLN199 G0b-2 — the ids a library artifact's code reads from its tables, in the order the
+/// code first named them: `types[k]` is the type `__tid(k)` stands for, `fns[k]` the function
+/// `__fid(k)` does, both in the numbering of the program the artifact was generated in.
+#[derive(Default)]
+pub struct SharedIds {
+    pub types: Vec<u16>,
+    type_at: HashMap<u16, usize>,
+    pub fns: Vec<u32>,
+    fn_at: HashMap<u32, usize>,
+}
+
+impl SharedIds {
+    /// The table position of type `tp`, added at its first use.
+    pub fn type_slot(&mut self, tp: u16) -> usize {
+        *self.type_at.entry(tp).or_insert_with(|| {
+            self.types.push(tp);
+            self.types.len() - 1
+        })
+    }
+
+    /// The table position of function `d_nr`, added at its first use.
+    pub fn fn_slot(&mut self, d_nr: u32) -> usize {
+        *self.fn_at.entry(d_nr).or_insert_with(|| {
+            self.fns.push(d_nr);
+            self.fns.len() - 1
+        })
+    }
+}
+
 /// Use this to drive Rust code generation from a compiled loft program.
 /// It bundles the read-only compile-time data with the mutable emission state
 /// so that individual emits functions don't need to pass both separately.
@@ -904,6 +945,10 @@ pub struct Output<'a> {
     /// written into `v[i]` takes its element through `vec_get_or_raise_runtime` and its
     /// address back out of the reference ([`Output::element_copy_dest`]).
     pub element_address_disabled: bool,
+    /// `LOFT_NO_FIELD_HEADER=1` — `@FR-R-RecPtr`'s nested clause off: a vector field of a
+    /// record view (`v.items`) resolves its store and record again at each length or
+    /// element read ([`Output::field_header_expr`]).
+    pub field_header_disabled: bool,
     /// Set while a tuple is written into an element whose address the element clause
     /// derived beside its reference (`__cp` beside `__cd`): the tuple write takes that address
     /// instead of reading it back out of `__cd`.
@@ -1360,6 +1405,15 @@ pub struct Output<'a> {
     pub in_adopt_delivery: u32,
     /// @PLN157 § V-p — per-callee memo of [`hoist::callee_inputs`], shared across the program.
     pub input_cache: hoist::InputCache,
+    /// `@FR-R-Header`'s kept clause — per-function memo of [`kept::kept_paths`].
+    pub kept_cache: kept::KeptCache,
+    /// The kept fields the `__kh` twin being emitted receives by `&mut`, in parameter order.
+    pub kh_twin: Option<std::rc::Rc<Vec<kept::KeptPath>>>,
+    /// The kept holders of the function body being emitted (`Output::begin_kept_headers`).
+    pub kept_holders: Vec<kept::KeptHolder>,
+    /// The argument lists of the calls this function emitted as a callee's `__kh` twin: the
+    /// twin keeps the holder current, so no refresh follows them.
+    pub kh_twin_sites: HashSet<usize>,
     /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
     /// form, as before @PLN157 § V-p (`@FR-R-Inputs`): the bisect step for a wrong value read
     /// through a record parameter inside a callee that a hoisting loop calls.
@@ -1665,6 +1719,10 @@ pub struct Output<'a> {
     /// (`native_lib::emit_program`): its `#c` symbols resolve at first call
     /// ([`PackageLink::Library`]).
     pub library_unit: bool,
+    /// @PLN199 G0b-2 — set for a `use`d library's shared-store cdylib: the type ids and
+    /// function numbers its code names, each read from a table the host fills when it loads
+    /// the artifact (`__tid(k)` / `__fid(k)`) rather than written as this program's literal.
+    pub shared_ids: Option<std::cell::RefCell<SharedIds>>,
     /// @PLN26 phase 1 — `#native` symbols exported by 2+ packages.  A *reachable*
     /// call to one is rejected at native codegen (the flat C-ABI namespace can't
     /// disambiguate); two packages sharing an UNUSED symbol still build.  Computed
@@ -2357,6 +2415,7 @@ impl<'a> Output<'a> {
         // A generation run is about ONE program; per-definition facts from the previous
         // run name other functions by the same numbers.
         non_sentinel::begin_generation();
+        range::begin_generation();
         Output {
             data,
             stores,
@@ -2409,6 +2468,7 @@ impl<'a> Output<'a> {
             index_rec_ptr_disabled: std::env::var("LOFT_NO_INDEX_RECPTR").is_ok_and(|v| v != "0"),
             element_address_disabled: std::env::var("LOFT_NO_ELEMENT_ADDRESS")
                 .is_ok_and(|v| v != "0"),
+            field_header_disabled: std::env::var("LOFT_NO_FIELD_HEADER").is_ok_and(|v| v != "0"),
             element_ptr_held: false,
             guarded_fill_disabled: std::env::var("LOFT_NO_GUARDED_FILL").is_ok_and(|v| v != "0"),
             held_index_subst: HashMap::new(),
@@ -2479,6 +2539,10 @@ impl<'a> Output<'a> {
                 .is_ok_and(|v| v != "0"),
             wrapper_cache: HashMap::new(),
             input_cache: hoist::InputCache::default(),
+            kept_cache: kept::KeptCache::default(),
+            kh_twin: None,
+            kept_holders: Vec::new(),
+            kh_twin_sites: HashSet::new(),
             push_headers: Vec::new(),
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
@@ -2632,6 +2696,7 @@ impl<'a> Output<'a> {
             native_cabi: false,
             native_bind: false,
             library_unit: false,
+            shared_ids: None,
             native_collisions: data
                 .native_symbol_collisions()
                 .into_iter()
@@ -2721,14 +2786,14 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
     if !crate::keys::join_own_enabled() {
         return HashSet::new();
     }
-    // (owned_count, borrow_count) per candidate var.
-    let mut counts: HashMap<u16, (u32, u32)> = HashMap::new();
+    // (owned_count, borrow_count, detached) per candidate var.
+    let mut counts: HashMap<u16, (u32, u32, bool)> = HashMap::new();
     fn classify_set(
         data: &crate::data::Data,
         def_nr: u32,
         v: u16,
         to: &Value,
-        counts: &mut HashMap<u16, (u32, u32)>,
+        counts: &mut HashMap<u16, (u32, u32, bool)>,
     ) {
         let vars = data.def(def_nr).variables();
         // @FR-O-Proxy asks oracle — this counts owned-vs-borrow assignments to pick the
@@ -2741,6 +2806,18 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
             // witness is left to the IR: two trackers of one store would free it twice.
             && vars.owner_witness(v).is_none();
         if !is_candidate {
+            return;
+        }
+        // A DETACH (`is_null_sentinel_detach`) says the scope pass hands this work-ref's store
+        // on BY IDENTITY — to a closure record's owner slot (loft#2131), to a binding that
+        // adopted a construction (loft#1513) — and takes it back the same way.  The IR then
+        // tracks the store, and a second tracker here frees it twice: as a runtime-Join local,
+        // the detach and the hand-back both read as a "borrow reassign" that released the
+        // tracked store the record had just taken — on this backend alone, since the
+        // interpreter's displacement free reads the same predicate and declines.  Such a
+        // work-ref is left to the IR, as an owner-witnessed local is above.
+        if crate::data::is_null_sentinel_detach(v, to, data, vars) {
+            counts.entry(v).or_insert((0, 0, false)).2 = true;
             return;
         }
         let owned = match to.unspan() {
@@ -2757,7 +2834,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
             // Not a heap-store-producing assign (scalar, null, …).
             _ => return,
         };
-        let e = counts.entry(v).or_insert((0, 0));
+        let e = counts.entry(v).or_insert((0, 0, false));
         if owned {
             e.0 += 1;
         } else {
@@ -2768,7 +2845,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
         data: &crate::data::Data,
         def_nr: u32,
         node: &Value,
-        counts: &mut HashMap<u16, (u32, u32)>,
+        counts: &mut HashMap<u16, (u32, u32, bool)>,
     ) {
         match node {
             Value::Set(v, to) => {
@@ -2810,7 +2887,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
     walk(data, def_nr, data.def(def_nr).code(), &mut counts);
     counts
         .into_iter()
-        .filter(|(_, (owned, borrow))| *owned >= 1 && *borrow >= 1)
+        .filter(|(_, (owned, borrow, detached))| *owned >= 1 && *borrow >= 1 && !*detached)
         .map(|(v, _)| v)
         .collect()
 }
@@ -4345,8 +4422,9 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "{{ let _pn = {count}; if _pn > 0 && {h}.store_nr != u16::MAX && {h}.rec != 0 {{ let _hn = i64::from(hash::count(&{h}, &stores.allocations)); stores.reserve_hash(&{h}, _hn.saturating_add(_pn.saturating_mul({}_i64)), {}_u16); }} }} //@FR-R-PushFill hash reservation",
-            hf.per_pass, hf.tp
+            "{{ let _pn = {count}; if _pn > 0 && {h}.store_nr != u16::MAX && {h}.rec != 0 {{ let _hn = i64::from(hash::count(&{h}, &stores.allocations)); stores.reserve_hash(&{h}, _hn.saturating_add(_pn.saturating_mul({}_i64)), {}); }} }} //@FR-R-PushFill hash reservation",
+            hf.per_pass,
+            self.type_lit_u16(hf.tp)
         )?;
         crate::rewrite_census::fired("R-PushFill/hash", 1);
         Ok(())
@@ -4723,10 +4801,14 @@ impl Output<'_> {
         // `polygon_crossings`, +8 % on `fill_polygon`).
         // A path's root counts through its dep chain: `for e in v` walks a hidden local bound
         // to the parameter `v`, whose header the copy holds once `v` is tested apart.
+        // A body's KEPT holder (`(R-Header)`'s kept clause) is no such frame: the copy also
+        // gains what the apart test licenses beyond a base — a push window on the buffer it
+        // grows (crawler's `build_vis_texture`: 1.14× → 2.94× of its twin when the holder
+        // withheld the copy) — so the decision is the one it was before the holder existed.
         let mut gained: Vec<u16> = Vec::new();
         for (p, _) in &versioned.vectors {
             if !plain.vectors.iter().any(|(q, _)| q == p)
-                && self.active_vec_header(p).is_none()
+                && (self.active_vec_header(p).is_none() || self.kept_holds_only(p))
                 && let Some(r) = self.param_root(p.0, &params)
                 && !gained.contains(&r)
             {
@@ -4833,6 +4915,7 @@ impl Output<'_> {
                         _ => u16::MAX,
                     },
                 );
+                let extra_use = this.extra_view_use(&stmts, at);
                 hoist::record_view_ptr(
                     &stmts,
                     at,
@@ -4850,6 +4933,7 @@ impl Output<'_> {
                         assumed,
                     }),
                     Some(&this.hoist_owned),
+                    extra_use,
                 )
                 .is_ok()
             };
@@ -5025,6 +5109,33 @@ impl Output<'_> {
             push_frame.insert(path, name);
         }
         for (path, expr) in candidates {
+            // `(R-Header)`'s kept clause — a body's holder read through a `&mut` stays in memory
+            // across every call the loop makes; a loop that changes nothing it holds takes a
+            // local copy, as it would derive its own header (zttext's `materialise` read
+            // `(*__kh_0).len` per pass, +11 %).
+            if let Some(held) = self.kept_loop_copy(lp, &path) {
+                self.hoist_counter += 1;
+                let name = format!("__vh_{}", self.hoist_counter);
+                lines.push(format!(
+                    "let {name} = {held}; //@FR-R-Header kept clause: the loop's copy of the holder"
+                ));
+                frame.insert(path.clone(), name.clone());
+                if base_paths.contains(&path)
+                    && self.active_vec_base(&path).is_none()
+                    && !self.coroutine_persistent_fields.contains_key(&path.0)
+                {
+                    let base = format!("__vb_{}", self.hoist_counter);
+                    lines.push(format!(
+                        "let {base}: *const u8 = vector::vec_base(&{name}, &stores.allocations); //@PLN157 § V-ak element base of the held header"
+                    ));
+                    lines.push(format!(
+                        "let {}: (*const u8, u32) = vector::text_span_of(&{name}, &stores.allocations);",
+                        base.replacen("__vb_", "__ts_", 1)
+                    ));
+                    base_frame.insert(path.clone(), base);
+                }
+                continue;
+            }
             if self.vec_headers.iter().any(|f| f.contains_key(&path)) {
                 // `@FR-R-Base` — an enclosing frame holds the header (a plain one, or a
                 // push header's `.h` where the enclosing loop pushes the path).  This loop
@@ -5739,6 +5850,59 @@ impl Output<'_> {
         ))
     }
 
+    /// The uses of the view bound at `stmts[at]` that [`hoist::record_view_ptr`]'s own walk does
+    /// not count, so a view whose only uses they are still meets every condition of the
+    /// verdict: `@FR-R-RecPtr`'s text clause (a TEXT field read, when the binding is a held
+    /// iteration with a text span beside its base) and its nested clause (VECTOR field reads
+    /// — two, which share the one store resolution the address costs, or one when a held
+    /// iteration gives the address for free).
+    fn extra_view_use(&self, stmts: &[Value], at: usize) -> bool {
+        let Some(Value::Set(r, _)) = stmts.get(at).map(Value::unspan) else {
+            return false;
+        };
+        let rest = &stmts[at + 1..];
+        let held = self.held_iteration_base(&stmts[at]);
+        let text = hoist::reads_text_field(rest, *r, self.data)
+            && held
+                .as_ref()
+                .is_some_and(|(_, base, ..)| self.held_text_span(base).is_some());
+        let nested = !self.field_header_disabled && {
+            let reads = hoist::vector_field_reads(rest, *r, self.data);
+            reads >= 2 || (reads == 1 && held.is_some())
+        };
+        text || nested
+    }
+
+    /// `@FR-R-RecPtr`'s nested clause — a `VecHeader` expression for vector operand `vec` when
+    /// it is a field of a record view whose address an enclosing block holds (`v.items`, or
+    /// through inline sub-records `v.pos.items` at the summed offset): the field's vector
+    /// record one load through the address, its length one read of that record
+    /// (`vector::field_header`).  The address is valid for the block the view's proof
+    /// covers, and the field is read at the use, so a write to the field before it is
+    /// seen.  `None` when no address is held — a bare vector, a value local, a view the
+    /// block declined — and the operand is resolved as before.
+    pub fn field_header_expr(&mut self, vec: &Value) -> Option<String> {
+        if self.field_header_disabled {
+            return None;
+        }
+        let (root, offs) = hoist::vector_path(self.data, vec)?;
+        if offs.is_empty() {
+            return None;
+        }
+        let ptr = self.active_rec_ptr(root)?.to_owned();
+        let lock = rec_ptr_lock(&ptr);
+        let off: i64 = offs.iter().sum();
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(root))
+            .ok()?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        crate::rewrite_census::fired("R-RecPtr/nested", 1);
+        Some(format!(
+            "unsafe {{ vector::field_header::<{}>({ptr}, {lock}, &({operand}), ({off}_i64) as u32, &stores.allocations) }}",
+            self.hoist_verify
+        ))
+    }
+
     /// `@FR-R-RecPtr`'s text clause — the expression reading TEXT field `fld` of record view
     /// `v` through its held address and the text span beside the base it came from, or
     /// `None` when the view holds no address or its address has no span.
@@ -5788,6 +5952,7 @@ impl Output<'_> {
             return Ok(false);
         }
         let twin_params = self.twin_params_of(&stmts[at + 1..], *r);
+        let extra_use = self.extra_view_use(stmts, at);
         let verdict = hoist::record_view_ptr(
             stmts,
             at,
@@ -5807,6 +5972,7 @@ impl Output<'_> {
                 })
                 .as_ref(),
             Some(&self.hoist_owned),
+            extra_use,
         );
         // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
         // append grows a store) may still hold its address for its own WINDOW, up to its
@@ -5833,20 +5999,6 @@ impl Output<'_> {
                 }
             }
             (v, _) => v,
-        };
-        // `@FR-R-RecPtr`'s text clause — a view whose only served use is a TEXT field read
-        // still takes an address when the binding is a held iteration with a text span beside
-        // its base: every other condition of the verdict held (`NO_FUSABLE_USE` is its last).
-        let verdict = match verdict {
-            Err(hoist::NO_FUSABLE_USE)
-                if hoist::reads_text_field(&stmts[at + 1..], *r, self.data)
-                    && self
-                        .held_iteration_base(&stmts[at])
-                        .is_some_and(|(_, base, ..)| self.held_text_span(&base).is_some()) =>
-            {
-                Ok(*r)
-            }
-            v => v,
         };
         let r = match verdict {
             Ok(r) => r,
@@ -7793,10 +7945,10 @@ impl Output<'_> {
                 if self.dest_twin.is_none()
                     && let Some(key) = self.value_records.fns.get(&self.def_nr)
                 {
-                    let tp = hoist::layout_record(*key);
+                    let tp = self.type_lit(hoist::layout_record(*key));
                     let _ = write!(
                         pre,
-                        " let __lrb: DbRef = OpDatabase(cell, DbRef::NULL, {tp}_i32);"
+                        " let __lrb: DbRef = OpDatabase(cell, DbRef::NULL, {tp});"
                     );
                     let _ = write!(pushes, " st.put_stack(__lrb);");
                     let _ = write!(post, " OpFreeRef(cell, __lrb, \"__lrb\");");
@@ -8180,7 +8332,10 @@ fn loft_ckpt_report() {{
             } else {
                 PackageLink::StaticBound
             }
-        } else if self.native_cabi && self.library_unit {
+        } else if self.library_unit {
+            // On either link: the cdylib is linked against none of the C libraries the host
+            // bound, so a `#c` symbol resolves at its first call.  A plain `extern "C"` for it
+            // links on Linux, where a cdylib may leave symbols undefined, and not on macOS.
             PackageLink::Library
         } else if self.native_cabi {
             PackageLink::CAbi
@@ -9322,23 +9477,28 @@ extern crate loft;"
             &reachable,
             self.checkpoints,
         )?;
-        writeln!(w, "fn init(cell: &std::cell::UnsafeCell<Stores>) {{")?;
-        writeln!(
-            w,
-            "    let db: &mut Stores = unsafe {{ &mut *cell.get() }};"
-        )?;
-        // Register ALL types (0..till) so runtime type IDs match compile-time IDs.
-        self.output_init(w, 0, till)?;
-        // The targets first: `finish` links a type a stored `reference<T>` names (`@C145`),
-        // so it lays the type out by reference — as the interpreter's `finish` does.
-        self.emit_reference_targets(w)?;
-        writeln!(w, "    db.finish();")?;
-        // Initiative 03 Phase 3b: emit code to build CONST_STORE
-        // vectors and populate `db.const_refs` — mirrors the
-        // interpreter path in `compile::build_const_vectors`.
-        self.emit_const_vectors(w, till)?;
-        self.emit_lazy_fetch_registration(w, till)?;
-        writeln!(w, "}}\n")?;
+        // @PLN199 G1 — a library artifact runs in its host's stores, whose types and constants
+        // the host made, and names them by key: the program's type table is no part of it.
+        if self.shared_ids.is_none() {
+            writeln!(w, "fn init(cell: &std::cell::UnsafeCell<Stores>) {{")?;
+            writeln!(
+                w,
+                "    let db: &mut Stores = unsafe {{ &mut *cell.get() }};"
+            )?;
+            // Register ALL types (0..till) so runtime type IDs match compile-time IDs.
+            self.output_init(w, 0, till)?;
+            // The targets first: `finish` links a type a stored `reference<T>` names
+            // (`@C145`), so it lays the type out by reference — as the interpreter's
+            // `finish` does.
+            self.emit_reference_targets(w)?;
+            writeln!(w, "    db.finish();")?;
+            // Initiative 03 Phase 3b: emit code to build CONST_STORE
+            // vectors and populate `db.const_refs` — mirrors the
+            // interpreter path in `compile::build_const_vectors`.
+            self.emit_const_vectors(w, till)?;
+            self.emit_lazy_fetch_registration(w, till)?;
+            writeln!(w, "}}\n")?;
+        }
         // Emit only reachable functions across the full definition range.
         self.output_functions(w, 0, till, Some(&reachable))?;
         self.emit_ckpt_table(w)
@@ -9412,7 +9572,8 @@ extern crate loft;"
                     let v = format!("__entry_ret_{i}");
                     let _ = write!(
                         prelude,
-                        "    let mut {v}: DbRef = {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.null_named(\"{v}\") }};\n    {v} = OpDatabase(&cell, {v}, {tp}_i32);\n"
+                        "    let mut {v}: DbRef = {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.null_named(\"{v}\") }};\n    {v} = OpDatabase(&cell, {v}, {});\n",
+                        self.type_lit(tp)
                     );
                     let _ = write!(args, ", {v}");
                 }
@@ -10843,7 +11004,7 @@ extern crate loft;"
         // site, so it cannot be a per-function analysis.
         if !self.value_records_done {
             self.value_records_done = true;
-            self.value_records = hoist::value_records(self.data, self.stores);
+            self.value_records = hoist::value_records(self.data, self.stores, self.library_unit);
             crate::rewrite_census::fired("R-ValueRecord", self.value_records.fns.len());
             // Every function's DEAD buffers, once: a loop judging a call reads the callee's
             // body with its own dead buffers exempt (`HoistOwned::for_callee`).
@@ -10936,6 +11097,13 @@ extern crate loft;"
                 self.twin = Some(inputs);
                 self.output_function(w, dnr, program_store.as_ref())?;
                 self.twin = None;
+            }
+            // `(R-Header)`'s KEPT clause — the `__kh` twin beside it: the same body, handed
+            // the caller's holders of the fields it keeps.
+            if let Some(kept) = self.kept_of(dnr) {
+                self.kh_twin = Some(kept);
+                self.output_function(w, dnr, program_store.as_ref())?;
+                self.kh_twin = None;
             }
             self.output_plan_twins(w, dnr, program_store.as_ref())?;
         }
@@ -11151,7 +11319,7 @@ extern crate loft;"
         {
             let (key, twin) = self.rg_requests[at];
             self.rg_emitted.insert((key, twin));
-            let dnr = key & !decode_view::DV_BIT;
+            let dnr = key & !decode_view::DV_BIT & !kept::KH_BIT;
             if std::env::var("LOFT_TRACE_RANGED_CALL").is_ok() {
                 eprintln!(
                     "ranged-call: emits {}{}__rg",
@@ -11168,6 +11336,16 @@ extern crate loft;"
             if twin && self.twin.is_none() {
                 continue;
             }
+            // `(R-Header)`'s kept clause — a ranged `__kh` twin, handed the caller's holders.
+            self.kh_twin = if key & kept::KH_BIT != 0 {
+                self.kept_of(dnr)
+            } else {
+                None
+            };
+            if key & kept::KH_BIT != 0 && self.kh_twin.is_none() {
+                self.twin = None;
+                continue;
+            }
             self.range_override.push(std::rc::Rc::new(facts));
             self.emitting_ranged = true;
             self.dv_active = key & decode_view::DV_BIT != 0;
@@ -11176,6 +11354,7 @@ extern crate loft;"
             self.emitting_ranged = false;
             self.range_override.pop();
             self.twin = None;
+            self.kh_twin = None;
             r?;
         }
         Ok(())
@@ -11958,7 +12137,7 @@ extern crate loft;"
             writeln!(
                 w,
                 "// loft:{}:{}",
-                crate::file_access::portable_str(def.position().file.as_str()),
+                self.source_path(def.position().file.as_str()),
                 def.position().line
             )?;
         }
@@ -11987,6 +12166,8 @@ extern crate loft;"
                 "__apr"
             } else if self.nk_twin {
                 "__nk"
+            } else if self.kh_twin.is_some() {
+                "__kh"
             } else {
                 ""
             },
@@ -12076,6 +12257,13 @@ extern crate loft;"
                 write!(w, ", __ip_{k}: *const u8, __il_{k}: bool")?;
             }
         }
+        // `(R-Header)`'s KEPT clause — the caller's holder of each kept field, by `&mut`: the
+        // twin reads through it and keeps it current.
+        if let Some(kh) = &self.kh_twin {
+            for k in 0..kh.len() {
+                write!(w, ", __kh_{k}: &mut vector::VecHeader")?;
+            }
+        }
         write!(
             w,
             "{}{}) ",
@@ -12124,6 +12312,28 @@ extern crate loft;"
         vdb_prologue.push_str(&ps_prologue);
         let sw_prologue = self.sw_prologue(def_nr);
         vdb_prologue.push_str(&sw_prologue);
+        // @PLN199 G0b-2 — a function value handed to a library artifact's function takes the
+        // artifact's own number on entry (`__norm`), so a dispatch on it matches a constant arm.
+        if self.shared_ids.is_some() {
+            use std::fmt::Write as _;
+            for (i, a) in def.attributes().iter().enumerate() {
+                if matches!(a.typedef.base(), Type::Function(..))
+                    && rust_type(&a.typedef, &Context::Argument) == "(u32, DbRef)"
+                    && !self.sw_param_dropped(def_nr, i)
+                    && matches!(
+                        self.ps_param(def_nr, i),
+                        decode_structure_emit::PsParam::Same
+                    )
+                    && matches!(
+                        self.apart_twin_param(def_nr, i),
+                        apart_emit::TwinParam::Same
+                    )
+                {
+                    let name = sanitize(&a.name);
+                    let _ = write!(vdb_prologue, "\n  var_{name}.0 = __norm(var_{name}.0);");
+                }
+            }
+        }
         // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
         // every free the body names of it skips.
         if self.vr_twin
@@ -12574,7 +12784,13 @@ extern crate loft;"
                 // P199 — prepend the `&mut Stores` derivation from the
                 // `&UnsafeCell<Stores>` parameter so templates and inner
                 // emissions see `stores` as a regular `&mut Stores` binding.
-                let escaped_file = loft_file.replace('\\', "\\\\");
+                // @PLN199 G1a — a library artifact names the file inside its package.
+                let escaped_file = if self.shared_ids.is_some() {
+                    self.source_path(loft_file)
+                } else {
+                    loft_file.to_string()
+                }
+                .replace('\\', "\\\\");
                 // A key may carry any spelling a type has (an instance's bound types).
                 let loft_name = loft_name.replace('\\', "\\\\").replace('"', "\\\"");
                 // @PLN18 08-S2 — the live-dispatch entry check precedes even
@@ -12590,6 +12806,13 @@ extern crate loft;"
                     // inputs are derived from them).
                     if let Some(s) = self.twin.as_ref().and(self.live_check_by_def.get(&def_nr)) {
                         s.clone()
+                    } else if self.kh_twin.is_some()
+                        && let Some(s) = self.live_check_by_def.get(&def_nr).cloned()
+                    {
+                        // `(R-Header)`'s KEPT clause — the original's check too, and the
+                        // parked call may have changed a kept field: every holder handed
+                        // in is derived again before the answer goes back.
+                        self.kh_live_check(&s)?
                     } else {
                         let s = self.live_entry_check(def).unwrap_or_default();
                         self.live_check_by_def.insert(def_nr, s.clone());

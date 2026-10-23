@@ -50,9 +50,11 @@
 >   fns) is **08 scenario S2's build** — one home, gated there; 02's own
 >   scope (the interpreter-target dispatch, @C71 minimal, on the running
 >   demo) is fully shipped: live reload + reenter + the frame contract.
-> - The 6b wire-up shipped: `launch_game` sets `LOFT_LIVE_RELOAD=1` (opt
->   out with `=0`) — every IDE-launched game is live-editable; the child's
->   `live-reload:` stderr lines are the structured feedback.
+> - The 6b wire-up shipped: `launch_game` sets `LOFT_LIVE_RELOAD=hold` (opt
+>   out with `=0`) — every IDE-launched game is live-editable, and a saved
+>   edit waits for the editor's Apply (`D!:apply`); `=1` applies on save,
+>   as a direct run does.  The child's `live-reload:` stderr lines are the
+>   structured feedback.
 
 **Goal.** Editing one function of a RUNNING kernel game takes effect at the
 next frame boundary, with ONLY that function dropping to the interpreter —

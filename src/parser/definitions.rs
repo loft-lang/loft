@@ -3561,6 +3561,7 @@ impl Parser {
                 // hidden out-parameter of its own).  Runs first: the rejection below
                 // consumes this parent's lambda list.
                 self.finalize_capture_storage(self.context);
+                self.add_capture_owner_slots(self.context);
                 self.box_nested_capture_attrs(self.context);
                 self.reject_shared_mutable_scalar_captures(self.context);
             }
@@ -9010,7 +9011,15 @@ impl Parser {
         let mut out = Vec::new();
         for a_nr in 0..self.data.def(d_nr).attributes().len() {
             let a = &self.data.def(d_nr).attributes()[a_nr];
-            if a.hidden {
+            // loft#2131 — a closure record's OWNER slot (`add_capture_owner_slots`) is hidden
+            // and holds the capture's whole record where the record owns it, so its DROP hooks
+            // run here as a capture's do; a copy never duplicates what it owns.  Where it owns
+            // nothing the scope pass strips the walk.
+            let owner_slot = a
+                .name
+                .strip_suffix("__own")
+                .is_some_and(|base| self.data.attr(d_nr, base) != usize::MAX);
+            if a.hidden && !(owner_slot && matches!(hook, Hook::Drop)) {
                 continue;
             }
             let Some((fd, read_tp)) = self.cascade_field_target(&a.typedef) else {

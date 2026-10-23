@@ -79,7 +79,11 @@ impl OpEmitter for OpDropFnRefEmitter {
             "{{ let __df = {vn}; if __df.1.rec != 0 && stores.allocations.get(__df.1.store_nr as usize).is_some_and(|s| !s.is_free()) {{ match __df.0 {{ "
         )?;
         for (lambda, cascade) in arms {
-            write!(ctx.w, "{lambda}_u32 => {cascade}(cell, __df.1), ")?;
+            write!(
+                ctx.w,
+                "{} => {cascade}(cell, __df.1), ",
+                ctx.output.fn_arm(lambda)
+            )?;
         }
         write!(ctx.w, "_ => {{}} }} }} }}")
     }
@@ -179,9 +183,14 @@ impl OpEmitter for OpFreeRefEmitter {
                     })
                     .collect();
                 for (buf, tp) in hosted {
+                    let tp_lit = if ctx.output.shared_ids.is_some() {
+                        ctx.output.type_lit_u16(tp)
+                    } else {
+                        format!("{tp}u16")
+                    };
                     write!(
                         ctx.w,
-                        "stores.free_record_in(&(var_{buf}), {tp}u16); var_{buf} = DbRef::NULL; "
+                        "stores.free_record_in(&(var_{buf}), {tp_lit}); var_{buf} = DbRef::NULL; "
                     )?;
                 }
             }
@@ -196,6 +205,11 @@ impl OpEmitter for OpFreeRefEmitter {
                 && let Some(pair) = ctx.output.move_pairs.get(v)
             {
                 let tp = pair.buf_tp;
+                let tp_lit = if ctx.output.shared_ids.is_some() {
+                    ctx.output.type_lit_u16(tp)
+                } else {
+                    format!("{tp}u16")
+                };
                 let name = super::super::sanitize(
                     ctx.output
                         .data
@@ -205,7 +219,7 @@ impl OpEmitter for OpFreeRefEmitter {
                 );
                 write!(
                     ctx.w,
-                    "{{ stores.free_record_in(&(var_{name}), {tp}u16); var_{name} = DbRef::NULL; }}"
+                    "{{ stores.free_record_in(&(var_{name}), {tp_lit}); var_{name} = DbRef::NULL; }}"
                 )?;
                 return Ok(());
             }
@@ -554,14 +568,21 @@ impl OpCopyRecordEmitter {
         ctx.output
             .write_tuple_fields(ctx.w, d, to, &format!("var_{name}"))?;
         if let Some(sub) = fresh.filter(|_| presence.is_some()) {
-            write!(ctx.w, "}} else {{ stores.set_default_value({sub}, &(")?;
+            write!(
+                ctx.w,
+                "}} else {{ stores.set_default_value({}, &(",
+                ctx.output.type_lit_bare(sub, "u16")
+            )?;
             ctx.emit(to)?;
             write!(ctx.w, ")); }} ")?;
         } else if presence.is_some() {
             write!(ctx.w, "}} else {{ stores.copy_null_into(&(")?;
             ctx.emit(to)?;
             write!(ctx.w, "), (")?;
-            ctx.emit(tp_val)?;
+            match ctx.output.type_id_code(tp_val, "i64") {
+                Some(code) => write!(ctx.w, "{code}")?,
+                None => ctx.emit(tp_val)?,
+            }
             write!(ctx.w, ") as u16); }} ")?;
         }
         write!(ctx.w, "}}")
@@ -600,7 +621,8 @@ impl OpCopyRecordEmitter {
         ctx.emit(&from)?;
         write!(
             ctx.w,
-            ".store_nr == u16::MAX {{ stores.set_default_value({sub}, &("
+            ".store_nr == u16::MAX {{ stores.set_default_value({}, &(",
+            ctx.output.type_lit_bare(sub, "u16")
         )?;
         ctx.emit(dst)?;
         write!(ctx.w, ")); }} else {{ ")?;
@@ -639,13 +661,19 @@ impl OpCopyRecordEmitter {
                 // `@FR-R-RecPtr`'s element clause: the element derived in place, its
                 // reference and its address both from the record and the index.
                 if let Some((vector, index, size)) = ctx.output.element_copy_dest(args) {
+                    // The nested clause: the record and length of a view's vector field
+                    // through the view's address, when its block holds one.
+                    let rec_len = match ctx.output.field_header_expr(vector) {
+                        Some(h) => format!("{{ let __h = {h}; (__h.rec, __h.len) }}"),
+                        None => "vector::rec_and_len(&__vr, &stores.allocations)".to_string(),
+                    };
                     write!(ctx.w, "{{ let __vr: DbRef = ")?;
                     ctx.emit(vector)?;
                     write!(ctx.w, "; let __vi: i64 = ")?;
                     ctx.emit(index)?;
                     write!(
                         ctx.w,
-                        "; let (__er, __el) = vector::rec_and_len(&__vr, &stores.allocations); \
+                        "; let (__er, __el) = {rec_len}; \
                          let (__cd, __cp): (DbRef, *const u8) = match vector::elem_index(__vi, __el) {{ \
                          Some(__f) => (DbRef {{ store_nr: __vr.store_nr, rec: __er, pos: 8 + __f * {size} }}, \
                          unsafe {{ stores.allocations[__vr.store_nr as usize].elem_base(__er).add(__f as usize * {size}) }}), \
@@ -862,7 +890,7 @@ fn emit_copy_plain(
             write!(ctx.w, ", ")?;
             ctx.emit_ref(dst)?;
             write!(ctx.w, ", ")?;
-            ctx.emit_i32_slot(tp_val)?;
+            ctx.emit_type_slot(tp_val)?;
             write!(ctx.w, ")")?;
         }
     }

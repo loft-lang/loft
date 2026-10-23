@@ -14,6 +14,7 @@ behind these rules are in [RELEASE-history.md](RELEASE-history.md).
 ## Contents
 - [Tag & publish — the mechanics](#tag--publish--the-mechanics-draft-first-under-immutable-releases)
 - [The bundles and the registry entry](#the-bundles-and-the-registry-entry)
+- [Library artifacts](#library-artifacts)
 - [What the tag pipeline proves about the artifacts](#what-the-tag-pipeline-proves-about-the-artifacts)
 - [The site](#the-site)
 - [The reference PDF](#the-reference-pdf)
@@ -91,9 +92,15 @@ The registry ([PKG_REGISTRY.md](PKG_REGISTRY.md)) is the trusted distribution po
 toolchain ships through it — signed, with checksums a user can verify offline.
 
 - **One bundle per supported target**, built by `release.yml` through
-  `scripts/make-release.sh`: `x86_64-unknown-linux-musl`, `x86_64-apple-darwin`,
+  `scripts/make-release.sh`: `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`,
   `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.  An `aarch64-unknown-linux-*` target is a
   matrix row to add when it is needed.
+- **The Linux bundle is dynamically linked and built against glibc 2.28**, inside the
+  manylinux image `release.yml` pins by digest.  Dynamic, because a static binary cannot
+  load a library's native code; glibc 2.28, the version RHEL 8 and Debian 10
+  ship, so it starts on those and on every newer distribution.  The bundle smoke checks
+  both: an ELF interpreter, and no glibc symbol newer than the floor.  A musl system builds
+  from source; `scripts/install.sh` says so.
 - **Each bundle is a self-contained zip** — `bin/loft`, the `default/` stdlib, examples,
   `loft-reference.pdf`, `BUILD-INFO` and `SHA256SUMS` — attached to the draft as
   `loft-<version>-<triple>.zip` with its `.zip.sha256`.
@@ -112,6 +119,47 @@ toolchain ships through it — signed, with checksums a user can verify offline.
   the one platform-divergent step: `apply_bundle` renames the target aside and copies in,
   because Windows cannot overwrite a running binary but can rename it.  The unit tests exercise
   rename-then-copy on the Windows leg, never against the `loft.exe` executing them.
+
+## Library artifacts
+
+A bundle carries no `libloft.rlib`, so a released loft cannot compile a library: without an
+artifact built for it, every library it runs is interpreted.  The release therefore builds
+the published libraries' artifacts itself, with the binary it ships, and the release's row
+in the registry names them.
+
+- **Which legs.**  A leg builds them when its matrix row says `artifacts: true`:
+  `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`.  The
+  `x86_64-apple-darwin` leg cross-builds and cannot run its own binary.  The Linux leg
+  builds them inside the manylinux image, so they link against the same glibc 2.28 as the
+  binary that loads them.
+- **How.**  `scripts/release-lib-artifacts.sh --loft <bin> --out <dir>` installs every
+  published library at its latest version into a scratch home, and runs a program that only
+  `use`s it.  That ordinary run compiles the library and its dependencies under the names a
+  user's run of the same loft computes.  `<bin>` is the bundle's binary in the target
+  directory, where the rlib of its own build still lies in `deps/`.  A library that fails to
+  build is listed in the job summary and left out; it runs interpreted.  The step never
+  fails the leg.
+- **What is attached.**  Each artifact (`loft_auto_<package>_<version>_<key>` with the
+  platform's extension), and one `lib-artifacts-<triple>.json` per leg listing package,
+  version, triple, stem, file, sha256 and `loft_exe_id`.
+- **The entry.**  `gen-toolchain-entry.py --artifacts <dir>` turns the listings into the
+  version's `artifacts`: `{"<package>@<version>": {"<triple>": {url, sha256, loft_exe_id,
+  stem}}}`, hashing each file itself.  The listings are release assets, so the entry
+  regenerated at the splice (step 4) carries the artifacts too.
+- **The identity.**  An artifact runs only in the loft that built it.  A release bundle's
+  binary (`LOFT_RELEASE_BUNDLE`, set by `scripts/repro-flags.sh`) is therefore named by what
+  it was built from: version, commit, target, features and source stamp.  Its file's
+  modification time is not part of it, because that time is the unpacking machine's.
+  `loft build-native --identity` prints the id.
+- **The consumer.**  `loft install` reads the running loft's own release row.  After every
+  package of the graph is in place, it fetches the artifacts for them into each package's
+  `native-auto/`, packages that were already installed included.  It checks each against
+  the signed hash, and skips any built by another loft.
+- **Guard:** `registry_e2e::a_released_library_artifact_runs_compiled_without_rustc` runs
+  the script and the generator over a two-library registry.  A consumer then installs under
+  another loft's row (nothing fetched, the run interprets), under the real row with both
+  packages already installed, and in a fresh home.  The last two runs are compiled with no
+  `rustc` on `PATH`.
 
 ## What the tag pipeline proves about the artifacts
 
@@ -226,8 +274,11 @@ exempt, because it is not a `loft package`, and the weekly `repro-build.yml` cov
 - **The Windows link:** `rust-lld` stamps a wall-clock TimeDateStamp and PDB GUID;
   `scripts/repro-flags.sh` passes `/Brepro` and `/DEBUG:NONE` on a Windows host.  A Windows
   bundle ships no PDB.
-- **Comparing with a GitHub artifact** needs the musl target: releases ship
-  `x86_64-unknown-linux-musl`, and a local `cargo build --release` is `-gnu`.
+- **Comparing with a GitHub artifact** needs the release's image: the Linux bundle is built
+  in the manylinux container `release.yml` names, and a local build links against this
+  machine's glibc and gcc, so its bytes differ.  `repro-build.yml` rebuilds in that image;
+  `linux_bundle_image_is_one_image` (`tests/doc_hygiene.rs`) keeps the three workflows on
+  one.
 
 ## Release artifacts
 
@@ -236,6 +287,7 @@ exempt, because it is not a `loft package`, and the weekly `repro-build.yml` cov
 | Annotated tag `vYYYY.M.P` | `git tag -a vYYYY.M.P -m "…" && git push origin vYYYY.M.P` — the push triggers `release.yml` |
 | Four bundles `loft-<v>-<triple>.zip` + `.sha256`, each with `bin/`, `default/`, `examples/`, `loft-reference.pdf`, `BUILD-INFO`, `SHA256SUMS` | `release.yml` → `scripts/make-release.sh`, attached to the DRAFT, each smoke-run from its own zip |
 | `loft-<v>-src.zip` + `loft-<v>-registry-entry.json` | the draft job, derived from the bundles it just built |
+| Library artifacts `loft_auto_*` + `lib-artifacts-<triple>.json` | the `artifacts: true` legs, `scripts/release-lib-artifacts.sh` ([§ Library artifacts](#library-artifacts)) |
 | crates.io `loft` | `release.yml` `crates-io` job, when `CARGO_REGISTRY_TOKEN` is set |
 | HTML docs | committed under `doc/`, served from `main:/docs` and rebuilt on every push — no release step |
 | The signed registry entry | step 4 above, by hand (`M-registry-splice`), read back by `A-registry-this` |

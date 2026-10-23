@@ -2471,6 +2471,24 @@ use a separate collection or add after the loop"
                         }
                     }
                     Value::Var(x) if self.vars.is_compiler_generated(*x) => out.push(*x),
+                    // A call arm delivers into its hidden return buffer, the store the local
+                    // holds on that path (loft#2131: left out, a sunk bind of a call and a copy
+                    // recorded one owner and no join, and an escaping closure over the local
+                    // read the call's buffer after the frame freed it).
+                    Value::Call(_, args) => {
+                        if let Some(b) = args.iter().find_map(|a| match a.unspan() {
+                            Value::Var(b)
+                                if self.vars.is_compiler_generated(*b)
+                                    && self.vars.name(*b).starts_with("__ref_")
+                                    && matches!(self.vars.tp(*b).base(), Type::Vector(_, _)) =>
+                            {
+                                Some(*b)
+                            }
+                            _ => None,
+                        }) {
+                            out.push(b);
+                        }
+                    }
                     _ => {}
                 }
             }

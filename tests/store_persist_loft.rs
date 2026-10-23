@@ -4739,3 +4739,132 @@ fn a_hash_written_under_either_bucket_sizing_reads_under_both() {
         );
     }
 }
+
+/// The hash layouts a store can hold, each as the WRITER's policy that makes it:
+/// `(Col-Tag)` off (plain 4-byte slots, the layout a store written before it carries),
+/// `(Col-Inline)` off (tagged, entries in the arena), and neither off (inline where the
+/// element type owns its entries, tagged where a group shares them).
+const HASH_LAYOUTS: [(&str, &[(&str, &str)]); 3] = [
+    ("plain", &[("LOFT_NO_HASH_TAG", "1")]),
+    ("tagged", &[("LOFT_NO_HASH_INLINE", "1")]),
+    ("inline", &[]),
+];
+
+/// One run of the layout script: stdout, stderr and the exit code.
+fn run_layouts(
+    backend: &str,
+    path: &Path,
+    mode: &str,
+    env: &[(&str, &str)],
+) -> (String, String, i32) {
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg(backend)
+        .arg(
+            workspace_root()
+                .join("tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft"),
+        )
+        .env("LOFT_PERSIST_TEST_PATH", path)
+        .env("LOFT_PERSIST_TEST_MODE", mode)
+        .env("LOFT_TIMEOUT", "300")
+        .env_remove("LOFT_NO_HASH_TAG")
+        .env_remove("LOFT_NO_HASH_INLINE")
+        .envs(env.iter().copied())
+        .current_dir(workspace_root())
+        .output()
+        .expect("failed to invoke loft binary");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+/// The four digest lines the script prints for the world as written, every value
+/// hand-computed: 240 of 300 keys (sum 7 × 36000), 150 of 200 names (3 × 15000), 100 group
+/// records (11 × 5050), 10 kept (385).
+fn layouts_written(tag: &str) -> String {
+    format!(
+        "{tag} own=240/240/252000 named=150/150/45000 grp=100 by_k=100/100/55550 keep=10/385 late=0/0\n\
+         {tag} own35=null own36=252 own37=259 own600=null\n\
+         {tag} n6=18 n7=21 n8=null n399=null\n\
+         {tag} by64=704 by250=null keep10=100 late50=null\n"
+    )
+}
+
+/// The same after the update: 460 keys (7 × (36000 − 12000 + 135150)), 250 names
+/// (3 × (15000 − 10000 + 59900)), 250 group records (11 × 31375), 50 late texts of 141 bytes.
+fn layouts_updated(tag: &str) -> String {
+    format!(
+        "{tag} own=460/460/1114050 named=250/250/194700 grp=250 by_k=250/250/345125 keep=10/385 late=50/141\n\
+         {tag} own35=null own36=null own37=259 own600=4200\n\
+         {tag} n6=18 n7=null n8=null n399=1197\n\
+         {tag} by64=704 by250=2750 keep10=100 late50=s50\n"
+    )
+}
+
+/// @FR-Col-Layouts @C152 — every hash layout lives beside the others in one store, and
+/// the interpreter and the native build each read and write all of them.  For every writer
+/// layout against every updater layout, with the backends crossed: the world is written
+/// under one, loaded, grown, shrunk and given a new table under the other, and read back by
+/// the first backend under the third policy.  The update's trace names what the store holds
+/// after it, so the mix is measured, not assumed.
+#[test]
+fn every_hash_layout_lives_beside_the_others_in_one_store() {
+    for (first, second) in [("--interpret", "--native"), ("--native", "--interpret")] {
+        for (wn, we) in HASH_LAYOUTS {
+            for (un, ue) in HASH_LAYOUTS {
+                let cell = format!("{wn} written {first}, {un} update {second}");
+                let dir = scratch(&format!("layouts_{wn}_{un}_{}", &first[2..]));
+                let path = dir.join("world.store");
+                let (out, err, code) = run_layouts(first, &path, "write", we);
+                assert_eq!(
+                    (code, out.as_str()),
+                    (0, layouts_written("write").as_str()),
+                    "{cell}: write\n{err}"
+                );
+                let mut env = ue.to_vec();
+                env.push(("LOFT_TRACE_HASH_LAYOUT", "1"));
+                let (out, err, code) = run_layouts(second, &path, "update", &env);
+                let want = format!(
+                    "{}{}",
+                    layouts_written("loaded"),
+                    layouts_updated("updated")
+                );
+                assert_eq!(
+                    (code, out.as_str()),
+                    (0, want.as_str()),
+                    "{cell}: update\n{err}"
+                );
+                // The new table takes the updater's layout, whatever the store held before.
+                let made = match un {
+                    "plain" => "made plain at",
+                    "tagged" => "made tagged at",
+                    _ => "made inline at",
+                };
+                assert!(
+                    err.contains(made),
+                    "{cell}: the new table must be {un}:\n{err}"
+                );
+                // A plain table the updater grows comes back tagged unless it writes plain.
+                if wn == "plain" && un != "plain" {
+                    assert!(
+                        err.contains("grown plain -> tagged")
+                            && err.contains("grown plain borrowing -> tagged borrowing"),
+                        "{cell}: the grown plain tables must be rebuilt tagged:\n{err}"
+                    );
+                }
+                let third = HASH_LAYOUTS
+                    .iter()
+                    .find(|(n, _)| *n != wn && *n != un)
+                    .map_or(&[][..], |l| l.1);
+                let (out, err, code) = run_layouts(first, &path, "read", third);
+                let want = format!("{}read verify=true\n", layouts_updated("read"));
+                assert_eq!(
+                    (code, out.as_str()),
+                    (0, want.as_str()),
+                    "{cell}: read\n{err}"
+                );
+            }
+        }
+    }
+}

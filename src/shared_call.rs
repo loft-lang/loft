@@ -195,7 +195,9 @@ pub fn variant(
     if args.len() != def.attributes().len() || (0..at).any(|i| args[i] as usize != i) {
         return None;
     }
-    let name = format!("{}__given_{}", def.name(), sharing.f);
+    // Named after the callee's NAME, not its number, which the program around a library
+    // decides (@PLN199 G0b-2).
+    let name = format!("{}__given_{}", def.name(), data.def(sharing.f).name());
     let var_fn = data.add_variant_fn(wrapper, &name, VARIANT);
     let given = insert_param(data, var_fn, at, &given_tp);
     let mut code = std::mem::replace(&mut data.definitions[var_fn as usize].code, Value::Null);

@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A vector FIELD of a record view — `c.items` where `c` is a loop variable or `c = v[i]?` —
+// answers its length and its elements as the store holds them (`@FR-R-RecPtr`'s nested
+// clause: under a held view address the field's vector record and length are read through
+// that address, `vector::field_header`).  Each cell reads lengths, in-range elements (the
+// nullable `?` read and the raising read), out-of-range and negative indexes, an empty and
+// an absent field, a field reached through an inline sub-record, and writes a value record
+// into an element; the sums are hand-computed.  Both backends.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-22) — `vector::field_header` answering
+// length 0 made `--native` answer `n1 0 210 14`; reading the field four bytes past its
+// offset (the neighbouring `ps`) answered `n1 6 210 14`.  The interpreter has no such
+// clause and answered right under both.
+
+struct P { a: integer, b: integer }
+struct C { id: integer, items: vector<integer>, ps: vector<P> }
+struct In { w: integer, xs: vector<integer> }
+struct O { tag: integer, inner: In }
+struct W { cs: vector<C>, os: vector<O> }
+
+// Chunk c (0..4) holds items c*10 + j for j in 0..c+1 and ps (j, c) for j in 0..c.
+fn build() -> W {
+  w = W { cs: [], os: [] };
+  for c in 0..4 {
+    its: vector<integer> = [];
+    for j in 0..c + 1 { its += [c * 10 + j]; }
+    pv: vector<P> = [];
+    for j in 0..c { pv += [P { a: j, b: c }]; }
+    w.cs += [C { id: c, items: its, ps: pv }];
+  }
+  w
+}
+
+// n1 — the loop variable's field: lengths 1+2+3+4 = 10; items sum Σc (c+1)*10c + Σj =
+// 0 + 20+1 + 60+3 + 120+6 = 210; ps.b summed over every element: 1*1 + 2*2 + 3*3 = 14.
+fn n1() -> text {
+  w = build();
+  n = 0; s = 0; pb = 0;
+  for c in w.cs {
+    n += len(c.items);
+    for j in 0..len(c.items) { s += c.items[j]; }
+    for j in 0..len(c.ps) { pb += c.ps[j].b; }
+  }
+  "n1 {n} {s} {pb}"
+}
+
+// n2 — an explicit view `c = v[i]?`: chunk 3's items 30..33; [-1] is the last, 33; [9]? is
+// past the end, null, so `?? -1` answers -1; the raising read of [2] is 32.
+fn n2() -> text {
+  w = build();
+  c = w.cs[3]?;
+  if len(c.items) != 4 { return "n2 out of range"; }
+  last = c.items[-1] ?? -2;
+  past = c.items[9] ?? -1;
+  mid = c.items[2];
+  "n2 {len(c.items)} {last} {past} {mid}"
+}
+
+// n3 — chunk 0 has no ps (empty) and a record pushed bare has absent fields: every length
+// is 0 and every read past the end is null.
+fn n3() -> text {
+  w = build();
+  w.cs += [C { id: 9 }];
+  d = w.cs[0]?;
+  e = w.cs[4]?;
+  a = d.ps[0];
+  "n3 {len(d.ps)} {a.a ?? -3} {len(e.items)} {e.items[0] ?? -5} {len(e.ps)}"
+}
+
+// n4 — a value record written into an element of a view's vector field, chunk by chunk:
+// ps[0] of chunks 1..3 becomes P { a: 100 + c, b: 7 }; then the a's of every ps element are
+// summed: (101) + (102 + 1) + (103 + 1 + 2) = 310.
+fn set_first(w: W, c: integer, p: P) {
+  for x in w.cs {
+    if x.id == c {
+      x.ps[0] = p;
+      return;
+    }
+  }
+}
+
+fn n4() -> text {
+  w = build();
+  for c in 1..4 { set_first(w, c, P { a: 100 + c, b: 7 }); }
+  s = 0; nb = 0;
+  for x in w.cs {
+    for j in 0..len(x.ps) {
+      s += x.ps[j].a;
+      if x.ps[j].b == 7 { nb += 1; }
+    }
+  }
+  "n4 {s} {nb}"
+}
+
+// n5 — a vector field behind an inline sub-record: o.inner.xs for o in 0..3 holds o*5 + j
+// for j in 0..2*o: lengths 0 + 2 + 4 = 6; sum (5+6) + (10+11+12+13) = 57.
+fn n5() -> text {
+  w = build();
+  for o in 0..3 {
+    xs: vector<integer> = [];
+    for j in 0..2 * o { xs += [o * 5 + j]; }
+    w.os += [O { tag: o, inner: In { w: o, xs: xs } }];
+  }
+  n = 0; s = 0;
+  for o in w.os {
+    n += len(o.inner.xs);
+    for j in 0..len(o.inner.xs) { s += o.inner.xs[j]; }
+  }
+  "n5 {n} {s}"
+}
+
+fn main() {
+  r1 = n1();
+  println(r1);
+  assert(r1 == "n1 10 210 14", r1);
+  r2 = n2();
+  println(r2);
+  assert(r2 == "n2 4 33 -1 32", r2);
+  r3 = n3();
+  println(r3);
+  assert(r3 == "n3 0 -3 0 -5 0", r3);
+  r4 = n4();
+  println(r4);
+  assert(r4 == "n4 310 3", r4);
+  r5 = n5();
+  println(r5);
+  assert(r5 == "n5 6 57", r5);
+}

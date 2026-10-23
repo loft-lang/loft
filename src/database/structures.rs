@@ -488,7 +488,109 @@ impl Stores {
         let at = rec.pos + u32::from(k.position);
         self.store_mut(&rec).set_int(rec.rec, at, key);
         self.record_finish(data, &rec, parent_tp, field);
-        rec
+        self.filed(&rec)
+    }
+
+    /// Where `rec` lives after `record_finish` filed it: the inline hash entry its staged bytes
+    /// were copied into (`(Col-Inline)`), or `rec` itself.
+    #[must_use]
+    pub fn filed(&self, rec: &DbRef) -> DbRef {
+        match self.last_filed {
+            Some((staged, filed)) if staged == *rec => filed,
+            _ => *rec,
+        }
+    }
+
+    /// The constants a keyed field's entry needs, resolved where the emitter knows the field:
+    /// its byte offset in the parent record (0 for `field == u16::MAX`, the collection being
+    /// the value itself) and its element type ([`Self::keyed_entry_long_at`]).
+    #[must_use]
+    pub fn keyed_field_consts(&self, parent_tp: u16, field: u16) -> (u32, u16) {
+        let tp = self.sub_record_type(parent_tp, field);
+        let d = self.field_ref(
+            &DbRef {
+                store_nr: 0,
+                rec: 0,
+                pos: 0,
+            },
+            parent_tp,
+            field,
+        );
+        (d.pos, tp)
+    }
+
+    /// [`Self::keyed_entry_long`] with the field's offset and element type handed in as the
+    /// emitter resolved them ([`Self::keyed_field_consts`]), and `key_pos` — the byte position
+    /// of an 8-byte integer key, `u32::MAX` for a narrower one.  An inline table
+    /// (`(Col-Inline)`) answers from one checked walk inlined here; everything else is
+    /// [`Self::keyed_entry_long_slow`].
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    #[allow(clippy::inline_always)]
+    pub fn keyed_entry_long_at(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        field_off: u32,
+        elem_tp: u16,
+        key_pos: u32,
+        key: i64,
+    ) -> DbRef {
+        if key_pos != u32::MAX && self.live_scratches.is_empty() && !keys::keyed_verify() {
+            let d = DbRef {
+                store_nr: data.store_nr,
+                rec: data.rec,
+                pos: data.pos + field_off,
+            };
+            if let Some(store) = self.allocations.get(d.store_nr as usize) {
+                let claim = store.collection_rec(d.rec, d.pos);
+                if claim != 0
+                    && let Some(rec) = crate::hash::inline_entry_int(
+                        &d,
+                        claim,
+                        key_pos,
+                        key,
+                        &mut self.allocations,
+                    )
+                {
+                    return rec;
+                }
+            }
+        }
+        self.keyed_entry_long_slow(data, parent_tp, field, field_off, elem_tp, key)
+    }
+
+    /// [`Self::keyed_entry_long_at`] past its inline walk: [`hash::entry_one_int`] on the
+    /// table, and the general entry where it answers `None` (no table yet, a table that
+    /// borrows its entries, a sort in flight over this collection).
+    #[inline(never)]
+    fn keyed_entry_long_slow(
+        &mut self,
+        data: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        field_off: u32,
+        elem_tp: u16,
+        key: i64,
+    ) -> DbRef {
+        if self.live_scratches.is_empty() && !keys::keyed_verify() {
+            let d = DbRef {
+                store_nr: data.store_nr,
+                rec: data.rec,
+                pos: data.pos + field_off,
+            };
+            if let Some(rec) = crate::hash::entry_one_int(
+                &d,
+                &mut self.allocations,
+                &self.types[elem_tp as usize].keys,
+                key,
+                data.rec,
+            ) {
+                return rec;
+            }
+        }
+        self.keyed_entry_long(data, parent_tp, field, key)
     }
 
     /// [`Self::keyed_entry_long`] for a hash keyed by one to four integer parts
@@ -548,7 +650,7 @@ impl Stores {
         let text = store.set_str(key);
         store.set_u32_raw(rec.rec, at, text);
         self.record_finish(data, &rec, parent_tp, field);
-        rec
+        self.filed(&rec)
     }
 
     /**
@@ -1299,11 +1401,12 @@ impl Stores {
                     self.verify_probe(data, rec, tp, &probed);
                 }
                 match probed {
-                    hash::Probed::Free { bucket, index } => hash::add_at(
+                    hash::Probed::Free { bucket, index, tag } => hash::add_at(
                         data,
                         rec,
                         bucket,
                         index,
+                        tag,
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     ),
@@ -1343,21 +1446,23 @@ impl Stores {
                     } => {
                         self.displace_keyed(data, &existing, tp, c, secondary);
                         displaced = Some(existing);
-                        hash::add(
+                        let filed = hash::add(
                             data,
                             rec,
                             &mut self.allocations,
                             &self.types[tp as usize].keys,
                         );
+                        self.last_filed = (filed != *rec).then_some((*rec, filed));
                     }
                     hash::Probed::Unknown => {
                         displaced = self.dedup_keyed(data, rec, tp, c, secondary);
-                        hash::add(
+                        let filed = hash::add(
                             data,
                             rec,
                             &mut self.allocations,
                             &self.types[tp as usize].keys,
                         );
+                        self.last_filed = (filed != *rec).then_some((*rec, filed));
                     }
                 }
             }

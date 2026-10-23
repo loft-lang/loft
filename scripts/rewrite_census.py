@@ -26,8 +26,11 @@ Each program is compiled to native Rust only (`--native-emit --lean`, no rustc, 
 (`src/rewrite_census.rs`).  The body is the benches, the code whose speed is the goal: every
 `bench/NN_*/bench.loft` lane in this repo, and the portal libraries' own benches wherever a
 checkout exists (`bench/portal/libs.tsv`, `checkout_libs.sh`).  A library row carries the
-checkout's commit; when the checkout has moved since the baseline, its rows are not judged —
-the library changed, not the compiler.
+checkout's commit and every dependency version its lane's `loft.lock` resolved
+(`33aa4cc2c+cbor@0.1.12+crypto@0.3.11`); when either has moved since the baseline, its rows are
+not judged — the library or what it compiles with changed, not the compiler.  The lock is no
+tracked file of the library's, so two machines can hold two resolutions of one checkout, and a
+row compared across them reported a drop no compiler change made.
 
 Every `use`d library is compiled INTO the program (`LOFT_NO_NATIVE_LIBS=1`), so each program counts
 the rewrites of every library function it reaches.  A library may otherwise run from a compiled
@@ -70,8 +73,33 @@ def programs():
         pkg, _, name = spec.rpartition("=")
         commit = subprocess.run(["git", "-C", pkg, "rev-parse", "--short=9", "HEAD"],
                                 capture_output=True, text=True).stdout.strip() or "?"
-        out.append((name, commit, Path(pkg), ["bench/bench.loft"]))
+        out.append((name, commit + resolved(Path(pkg)), Path(pkg), ["bench/bench.loft"]))
     return out
+
+
+def resolved(pkg):
+    """`+name@version` for every dependency the lane's `loft.lock` resolved, sorted.  A library
+    row is a function of its checkout AND of the dependencies its lane compiles with them, and
+    the lock is no tracked file of the library's: each machine keeps what its first install
+    resolved.  A lane whose dependencies differ from the baseline row's is therefore another
+    program, reported as moved and not judged — never a drop (loft#2135: `crypto` 0.3.11
+    against 0.3.14 moved four of pluginabi's rows).  Read line by line: this runs on a
+    Python without `tomllib`."""
+    lock = pkg / "loft.lock"
+    if not lock.is_file():
+        return ""
+    deps, name = [], None
+    for line in lock.read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"')
+        if line.startswith("[[package]]"):
+            name = None
+        elif key == "name":
+            name = value
+        elif key == "version" and name:
+            deps.append(f"+{name}@{value}")
+            name = None
+    return "".join(sorted(deps))
 
 
 def census(loft, prog):
@@ -137,7 +165,8 @@ def write_baseline(results):
     lines = [
         "# The rewrite census: how often each rewrite is admitted per bench program.",
         "# Written by `scripts/rewrite_census.py --bless`; a drop against it fails `make rewrite-census`.",
-        "# program <TAB> commit (a library checkout's; `-` for an in-repo lane) <TAB> rule <TAB> count",
+        "# program <TAB> commit (a library checkout's, then `+name@version` per dependency its lane "
+        "resolved; `-` for an in-repo lane) <TAB> rule <TAB> count",
     ]
     for name, commit, counts in sorted(results, key=lambda r: r[0]):
         for rule, n in sorted(counts.items()):

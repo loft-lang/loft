@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `for e in h` visits a hash in KEY order (`@FR-Col-Order`) on every key width, on compound
+// keys and across removals.  An inline table (`(Col-Inline)`) builds that order in one sweep of
+// its slots: a 4- or 8-byte key part read straight from the entry, a narrower part through the
+// checked read, a text key through the general sort; a removed key's tombstone is never walked.
+// Each cell inserts in a scrambled order, removes a share, and walks: the keys must rise
+// strictly, and the count, sum, first and last key are hand-computed.  Both backends.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-22) — the sweep counting every slot answered
+// `w1 out of order at 0` on both backends; counting a tombstone as live answered
+// `w1 256 32640 0 255` (the removed keys walked again).
+
+struct A { v: integer, k: u8 }
+struct B { k: u16, v: integer }
+struct C { s: text, k: i32, v: integer }
+struct D { v: integer, w: integer, k: integer }
+struct P { x: integer, y: i32, z: u8, v: integer }
+struct T { name: text, v: integer }
+struct Hs { a: hash<A[k]>, b: hash<B[k]>, c: hash<C[k]>, d: hash<D[k]> }
+struct Hp { p: hash<P[x, y, z]> }
+struct Ht { t: hash<T[name]> }
+
+// w1 — u8: keys (i*7) & 255 for i in 0..256 — 7 is odd, so every byte once; the odd keys
+// removed.  Left: the 128 even keys 0, 2, …, 254, sum 2*(0+…+127) = 16256.
+fn w1() -> text {
+  h = Hs { a: [], b: [], c: [], d: [] };
+  for i in 0..256 { h.a += [A { k: ((i * 7) & 255) as u8, v: i }]; }
+  for i in 0..128 { h.a[((2 * i + 1) & 255) as u8] = null; }
+  n = 0; s = 0; prev = -1; first = -1; last = -1;
+  for e in h.a {
+    k = e.k as integer;
+    if k <= prev { return "w1 out of order at {k}"; }
+    if first < 0 { first = k; }
+    prev = k; last = k; n += 1; s += k;
+  }
+  "w1 {n} {s} {first} {last}"
+}
+
+// w2 — u16 and i32: u16 keys 1000 + 7*((i*37) % 300) for i in 0..300 (37 is prime to 300, so
+// each of 1000, 1007, …, 3093 once); keys with an even index j removed, leaving j = 1, 3, …,
+// 299: 150 keys, sum 150*1000 + 7*(1+3+…+299) = 150000 + 7*22500 = 307500, 1007 to 3093.
+// i32: keys 13*((i*41) % 500) - 3000 for i in 0..500, every 4th index j removed: 375 keys,
+// sum 13*(124750 - 4*7750) - 3000*375 = 13*93750 - 1125000 = 93750, -2987 to 3487.
+fn w2() -> text {
+  h = Hs { a: [], b: [], c: [], d: [] };
+  for i in 0..300 { h.b += [B { k: ((1000 + 7 * ((i * 37) % 300)) & 65535) as u16, v: i }]; }
+  for j in 0..150 { h.b[((1000 + 14 * j) & 65535) as u16] = null; }
+  nb = 0; sb = 0; prev = -1; fb = -1; lb = -1;
+  for e in h.b {
+    k = e.k as integer;
+    if k <= prev { return "w2 u16 out of order at {k}"; }
+    if fb < 0 { fb = k; }
+    prev = k; lb = k; nb += 1; sb += k;
+  }
+  for i in 0..500 { h.c += [C { s: "c{i}", k: (13 * ((i * 41) % 500) - 3000) as i32, v: i }]; }
+  for j in 0..125 { h.c[(13 * 4 * j - 3000) as i32] = null; }
+  nc = 0; sc = 0; prevc = -100000; fc = 100000; lc = 100000;
+  for e in h.c {
+    k = e.k as integer;
+    if k <= prevc { return "w2 i32 out of order at {k}"; }
+    if fc == 100000 { fc = k; }
+    prevc = k; lc = k; nc += 1; sc += k;
+  }
+  "w2 {nb} {sb} {fb} {lb} {nc} {sc} {fc} {lc}"
+}
+
+// w3 — integer, spread wide and negative: keys (i*7919 % 4001) * 1000003 - 2000000000 for i in
+// 0..4001 (7919 is prime to 4001), the keys with an odd index j removed in two waves, then the
+// odd j in 0..1000 re-inserted.  Left: the 2001 even j in 0..4001 and the 500 odd j below
+// 1000, 2501 keys.  Sum of j: (0+2+…+4000) + (1+3+…+999) = 4002000 + 250000 = 4252000, so the
+// sum is 4252000*1000003 - 2501*2000000000 = 4252012756000 - 5002000000000 = -749987244000.
+fn w3() -> text {
+  h = Hs { a: [], b: [], c: [], d: [] };
+  for i in 0..4001 { h.d += [D { k: ((i * 7919) % 4001) * 1000003 - 2000000000, v: i, w: 0 }]; }
+  for j in 0..1000 { h.d[(2 * j + 1) * 1000003 - 2000000000] = null; }
+  for j in 1000..2000 { h.d[(2 * j + 1) * 1000003 - 2000000000] = null; }
+  for j in 0..500 { h.d += [D { k: (2 * j + 1) * 1000003 - 2000000000, v: j, w: 1 }]; }
+  n = 0; s = 0; prev = -9000000000; first = 0; last = 0;
+  for e in h.d {
+    if e.k <= prev { return "w3 out of order at {e.k}"; }
+    if n == 0 { first = e.k; }
+    prev = e.k; last = e.k; n += 1; s += e.k;
+  }
+  "w3 {n} {s} {first} {last}"
+}
+
+// w4 — a compound key (integer, i32, u8): x = i % 5, y = 3 - (i / 5) % 7 (so -3 … 3), z =
+// (i * 11) % 4 for i in 0..140, every (x, y, z) distinct (z follows i mod 4 through 11*i, and
+// i = x + 5*q + 35*r covers each (x, y) four times with four z).  The x = 2 keys removed: 112
+// left.  Order is (x, y, z) lexicographic; the walk scores rises.  Sum of x: 28*(0+1+3+4) = 224.
+fn w4() -> text {
+  h = Hp { p: [] };
+  for i in 0..140 {
+    h.p += [P { x: i % 5, y: (3 - (i / 5) % 7) as i32, z: ((i * 11) & 3) as u8, v: i }];
+  }
+  for e in h.p { if e.x == 2 { h.p[e.x, e.y, e.z] = null; } }
+  n = 0; sx = 0; px = -1; py = -1000; pz = -1;
+  for e in h.p {
+    y = e.y as integer;
+    z = e.z as integer;
+    if e.x < px || (e.x == px && (y < py || (y == py && z <= pz))) {
+      return "w4 out of order at {e.x} {y} {z}";
+    }
+    px = e.x; py = y; pz = z; n += 1; sx += e.x;
+  }
+  "w4 {n} {sx}"
+}
+
+// w5 — a text key takes the general sort: names "k{(i*7) % 50}" for i in 0..50, the ones
+// whose number is a multiple of 10 removed: 45 left, first "k1", last "k9" (text order).
+fn w5() -> text {
+  h = Ht { t: [] };
+  for i in 0..50 { h.t += [T { name: "k{(i * 7) % 50}", v: i }]; }
+  for i in 0..5 { h.t["k{i * 10}"] = null; }
+  n = 0; prev = ""; first = ""; last = "";
+  for e in h.t {
+    if n > 0 && e.name <= prev { return "w5 out of order at {e.name}"; }
+    if n == 0 { first = e.name; }
+    prev = e.name; last = e.name; n += 1;
+  }
+  "w5 {n} {first} {last}"
+}
+
+// w6 — an empty hash and an emptied one walk nothing.
+fn w6() -> text {
+  h = Hs { a: [], b: [], c: [], d: [] };
+  n = 0;
+  for e in h.d { n += 1 + e.v; }
+  for i in 0..40 { h.d += [D { k: i, v: i, w: 0 }]; }
+  for i in 0..40 { h.d[i] = null; }
+  for e in h.d { n += 1 + e.v; }
+  "w6 {n} {len(h.d)}"
+}
+
+fn main() {
+  r1 = w1();
+  println(r1);
+  assert(r1 == "w1 128 16256 0 254", r1);
+  r2 = w2();
+  println(r2);
+  assert(r2 == "w2 150 307500 1007 3093 375 93750 -2987 3487", r2);
+  r3 = w3();
+  println(r3);
+  assert(r3 == "w3 2501 -749987244000 -2000000000 2000012000", r3);
+  r4 = w4();
+  println(r4);
+  assert(r4 == "w4 112 224", r4);
+  r5 = w5();
+  println(r5);
+  assert(r5 == "w5 45 k1 k9", r5);
+  r6 = w6();
+  println(r6);
+  assert(r6 == "w6 0 0", r6);
+}

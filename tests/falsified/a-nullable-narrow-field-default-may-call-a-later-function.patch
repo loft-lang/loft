@@ -1,8 +1,8 @@
-diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index 18c5c31a9..81177ef27 100644
---- b/src/parser/definitions.rs
-+++ a/src/parser/definitions.rs
-@@ -6592,13 +6592,7 @@ impl Parser {
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index 527943243..622029f83 100644
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -7551,13 +7551,7 @@ impl Parser {
          // turns out to need a temporary is re-parsed from here into a
          // function of its own (`default_value_fn`).
          let value_start = self.lexer.link();
@@ -15,8 +15,8 @@ index 18c5c31a9..81177ef27 100644
 -                || (self.unresolved_names, self.unresolved_types) != unresolved_before);
          self.expected = Type::Unknown(0);
          self.init_field_tracking = false;
-         if a_type.is_unknown() {
-@@ -6655,14 +6649,7 @@ impl Parser {
+         self.record_default_sources(d_nr, a_name);
+@@ -7615,14 +7609,7 @@ impl Parser {
          let dflt_fn = format!("__dflt_{}_{a_name}", self.data.def(d_nr).name());
          // The checked narrowing `convert` gives a nullable narrow field is pass 2's alone, so
          // pass 1 asks the same TYPE question to mint the function it will be hoisted into.

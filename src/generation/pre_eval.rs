@@ -450,7 +450,15 @@ impl Output<'_> {
                 search_from = ret_pos + 1;
             }
         }
-        std::borrow::Cow::Owned(result)
+        // A block the passes left as it was keeps its own nodes: plans keyed by a node's
+        // address (`@FR-R-DecodeView`'s structure clause drops statements by it) read the
+        // emitted block, and a copy of an unchanged one hides every node from them
+        // (loft#2130).
+        if result.len() == ops.len() && result.iter().zip(ops).all(|(a, b)| a == b) {
+            std::borrow::Cow::Borrowed(ops)
+        } else {
+            std::borrow::Cow::Owned(result)
+        }
     }
 
     /// Does `val` read any LOCAL of this function — as opposed to an argument, a literal, or a

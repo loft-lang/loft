@@ -84,6 +84,7 @@ LAYERS: list[tuple[str, list[str]]] = [
     ]),
     ("runtime", [
         "c_call", "codegen_runtime", "compile", "compiled_stdlib", "create", "debugger",
+        "lib_ids",
         "engine_host", "extensions", "fill", "fuzz_keyed", "fuzz_oracle", "introspect",
         "live_control", "live_dispatch", "live_rebuild", "live_reload", "native", "native_gate",
         "native_lib", "parallel", "parallel_natives", "profiler", "stack", "state", "wasm_gl",

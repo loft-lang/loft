@@ -645,9 +645,11 @@ impl Stores {
         }
         self.record_finish(parent, &new, parent_tp, field);
         // @P317 — LOFT_LOG=copy_check: warn if the keyed deep copy changed any
-        // nested collection length (before the source-free below).
+        // nested collection length (before the source-free below).  Read the entry as
+        // filed: an inline table freed the staged `new` (`(Col-Inline)`).
         if self.copy_check_enabled() {
-            self.report_copy_mismatches(value, &new, content_tp, "set_keyed");
+            let filed = self.filed(&new);
+            self.report_copy_mismatches(value, &filed, content_tp, "set_keyed");
         }
     }
 
@@ -703,7 +705,7 @@ impl Stores {
         let key: Vec<Content> = sub.iter().map(|v| Content::Long(*v)).collect();
         let new = self.keyed_place_begin(coll, db, &key);
         self.keyed_place_finish(coll, &new, db, &key);
-        new
+        self.filed(&new)
     }
 
     /// The second half of [`Self::keyed_place_begin`]: the subscript's key written into the

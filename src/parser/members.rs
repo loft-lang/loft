@@ -1002,7 +1002,9 @@ impl Parser {
                 // tuple-element-of-struct-field path closes the
                 // remaining gap.
                 let d_nr_only = match value {
-                    Value::FnRef(d_nr, _, _) => Value::Int(d_nr),
+                    Value::FnRef(d_nr, _, tp) => {
+                        return vec![self.fn_number_write(ref_code.clone(), pos_v, d_nr, &tp)];
+                    }
                     Value::Var(v)
                         if matches!(self.vars.tp(v), Type::Function(..))
                             && self.vars.closure_var_of(v).is_none() =>

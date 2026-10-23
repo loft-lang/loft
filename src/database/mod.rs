@@ -42,7 +42,7 @@ pub use journal::Journal;
 pub use types::Type;
 pub use upgrade::{
     FileUpgrade, FileUpgradeJob, Fills, Pending, PendingFills, Routine, Routines, WorldPlan,
-    owed_key, routine_key,
+    WorldUpgrade, owed_key, routine_key,
 };
 pub use upgrade_map::{FieldFrom, How, Pair, Refusal, UpgradeMap};
 
@@ -441,6 +441,9 @@ pub struct Stores {
     /// the collection as it is at that step (`@FR-I-For`), as a `vector` or `sorted` walk
     /// already did.  Runtime-only, like `lazy_sources`: `clone` starts it empty.
     pub(crate) live_scratches: Vec<(DbRef, DbRef)>,
+    /// `(Col-Inline)` — the last staged entry `record_finish` copied into an inline hash, and
+    /// the entry it became ([`Stores::filed`]).
+    pub(crate) last_filed: Option<(DbRef, DbRef)>,
     /// `@FR-H-RefHome` — the copies [`Stores::evacuate`] made while a store is about to be
     /// freed: `((the record copied, the store it was copied into), the copy)`, so two holders
     /// in one store that named one record name one copy.  Forgotten when the copied record's
@@ -782,6 +785,7 @@ impl Clone for Stores {
             lazy_errors: HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            last_filed: None,
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
@@ -1548,6 +1552,9 @@ pub static NATIVE_FAIL_FAST: std::sync::atomic::AtomicBool =
 /// The type number of `text`: the sixth base type [`Stores::new`] registers, fixed for
 /// every program.
 pub const TEXT_TP: u16 = 5;
+/// The base types `Stores::new` registers first, in the same order in every program: their
+/// ids are the same everywhere.
+pub const BASE_TYPES: u16 = 7;
 
 impl Stores {
     #[must_use]
@@ -1562,6 +1569,7 @@ impl Stores {
             lazy_errors: HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            last_filed: None,
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
             upgrade_routines: upgrade::Routines::new(),

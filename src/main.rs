@@ -6692,9 +6692,6 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
-    let roots = loft::layout_schema::program_roots(&p.data);
-    // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
-    let mut identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     // The baseline sits beside `loft.toml`; a program with no manifest keeps it beside itself.
     let project =
         loft::resolution_scope::project_root(&abs.to_string_lossy()).unwrap_or_else(|| {
@@ -6702,48 +6699,63 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .to_path_buf()
         });
+    // The types whose values outlive the program: stored, swapped across a reload, or `pub`.
+    p.compute_surviving(&project);
+    let roots = loft::layout_schema::surviving_roots(&p.data);
+    // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
+    let mut identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     let release = loft::manifest::release_of(&project.to_string_lossy());
 
     match sub {
         // @PLN196 step 9 — the baseline records the release it was accepted as and where each
         // computed field's value comes from, carrying forward when each line first appeared.
-        "accept" => match record_baseline(&mut identity, &project, &p.data, &release) {
-            Ok(()) => {
-                println!(
-                    "loft layout: recorded baseline ({} user types)",
-                    roots.len()
-                );
-                0
+        "accept" => run_layout_accept(&mut identity, &project, &p.data, &release, roots.len()),
+        // `release` is `loft package`'s step: refuse over an upgrade the baseline refuses,
+        // else record the new baseline.
+        "check" | "release" => {
+            let routines = parser::Parser::upgrade_routines(&p.data);
+            let report = loft::layout_schema::baseline_report(
+                &project,
+                &p.database,
+                &p.data,
+                &release,
+                &routines,
+            );
+            match report {
+                Err(e) => {
+                    eprintln!("loft layout: {e}");
+                    1
+                }
+                Ok(None) if sub == "check" => {
+                    if ss::read_baseline(&project).is_none() {
+                        println!("loft layout: no baseline yet — run `loft layout accept {file}`.");
+                    }
+                    0
+                }
+                Ok(Some(r)) if sub == "check" => {
+                    println!(
+                        "loft layout: a store written with the baseline layout upgrades as follows"
+                    );
+                    for c in &r.changes {
+                        println!("  {c}");
+                    }
+                    for x in &r.refused {
+                        println!("  refused: {}", x.text);
+                    }
+                    i32::from(!r.refused.is_empty())
+                }
+                Ok(Some(r)) if !r.refused.is_empty() => {
+                    eprintln!(
+                        "loft package: a store the last release wrote cannot be upgraded to this one"
+                    );
+                    for x in &r.refused {
+                        eprintln!("  refused: {}", x.text);
+                    }
+                    1
+                }
+                Ok(_) => run_layout_accept(&mut identity, &project, &p.data, &release, roots.len()),
             }
-            Err(e) => {
-                eprintln!("loft layout: could not write baseline: {e}");
-                1
-            }
-        },
-        "check" => match ss::check_against_baseline(&project, &identity) {
-            Ok(ss::SchemaVerdict::Fresh) => {
-                println!("loft layout: no baseline yet — run `loft layout accept {file}`.");
-                0
-            }
-            // Nothing changed, so nothing to say.
-            Ok(ss::SchemaVerdict::Match) => 0,
-            Ok(ss::SchemaVerdict::Changed(_)) => {
-                layout_upgrade_report(&project, &p.database, &p.data, &roots, file, &release)
-            }
-            // A baseline is read with no release floor.
-            Ok(ss::SchemaVerdict::Refused(why)) => {
-                eprintln!("loft layout: {why}");
-                1
-            }
-            Ok(ss::SchemaVerdict::Unreadable) => {
-                eprintln!("loft layout: baseline unreadable — delete `layout.lock` and re-accept.");
-                1
-            }
-            Err(e) => {
-                eprintln!("loft layout: {e}");
-                1
-            }
-        },
+        }
         other => {
             eprintln!("loft layout: unknown subcommand `{other}` (use `accept` or `check`)");
             1
@@ -6751,24 +6763,48 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     }
 }
 
-/// `loft package`'s baseline step: `loft layout accept` on the package's entry, when it
-/// declares types.  A failure is reported and does not stop the release.
+/// `loft layout accept`: record the baseline and say so.
+fn run_layout_accept(
+    identity: &mut loft::schema_sidecar::LayoutIdentity,
+    project: &std::path::Path,
+    data: &loft::data::Data,
+    release: &loft::database::Release,
+    types: usize,
+) -> i32 {
+    match record_baseline(identity, project, data, release) {
+        Ok(()) => {
+            println!("loft layout: recorded baseline ({types} user types)");
+            0
+        }
+        Err(e) => {
+            eprintln!("loft layout: could not write baseline: {e}");
+            1
+        }
+    }
+}
+
+/// `loft package`'s baseline step, on the package's entry: refuse the release when a store
+/// the last release wrote could not be upgraded to this one (the `layout-upgrade-refused`
+/// warning), else record the new baseline.  `false` stops the release; a package with no
+/// entry records nothing and goes on.
 #[cfg(feature = "registry")]
-fn record_release_baseline(pkg_path: &std::path::Path) {
+fn record_release_baseline(pkg_path: &std::path::Path) -> bool {
     let Some(m) = loft::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy())
     else {
-        return;
+        return true;
     };
     let Some(entry) = m.entry_or_default() else {
-        return;
+        return true;
     };
     let entry = pkg_path.join(entry);
     if !fa::exists(&entry) {
-        return;
+        return true;
     }
-    if run_layout_command("accept", &entry.to_string_lossy()) != 0 {
-        eprintln!("loft package: the layout baseline was not recorded");
+    if run_layout_command("release", &entry.to_string_lossy()) != 0 {
+        eprintln!("loft package: not released — the layout baseline was not recorded");
+        return false;
     }
+    true
 }
 
 /// `loft layout accept`: write `identity` as the project's baseline, with the release it is
@@ -6849,91 +6885,6 @@ fn upgrade_each(program: &mut loft::host::Program, stores: &[String]) -> i32 {
         }
     }
     exit
-}
-
-/// @PLN196 step 2 — what an upgrade from the baseline layout to this program's would do to a
-/// store, from the upgrade map: every change, every refusal with its reason.  Exits 1 when
-/// anything is refused, so a project's CI can gate on a change its stored data cannot cross.
-fn layout_upgrade_report(
-    project: &std::path::Path,
-    db: &loft::database::Stores,
-    data: &loft::data::Data,
-    roots: &[u16],
-    file: &str,
-    release: &loft::database::Release,
-) -> i32 {
-    use loft::database::{LayoutDesc, UpgradeMap};
-    let text = loft::schema_sidecar::read_baseline(project).unwrap_or_default();
-    let old = loft::schema_sidecar::LayoutIdentity::from_sidecar(&text)
-        .ok_or_else(|| "the baseline is not a layout file".to_string())
-        .and_then(|id| {
-            let mut d = LayoutDesc::from_dump(&id.dump)?;
-            d.apply_facts(&id.facts)?;
-            Ok((d, id.sources))
-        });
-    let (old, sources) = match old {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!(
-                "loft layout: the baseline cannot be read by this version of loft ({e}) — \
-                 re-run `loft layout accept {file}` with the version that wrote it, or accept anew."
-            );
-            return 1;
-        }
-    };
-    let new = db.layout_descriptor(roots);
-    let mut changes: Vec<String> = Vec::new();
-    let mut refused: Vec<String> = Vec::new();
-    for &root in roots {
-        let name = db.types[root as usize].name.clone();
-        let Some((&old_root, _)) = old.names.iter().find(|(_, n)| **n == name) else {
-            continue; // a type the baseline did not have: no stored data to carry
-        };
-        let map = UpgradeMap::derive(&old, old_root, &new, root);
-        changes.extend(map.changes);
-        refused.extend(
-            map.refusals
-                .into_iter()
-                .map(|r| format!("{} — {}", r.path, r.reason)),
-        );
-    }
-    let new_names: std::collections::BTreeSet<&str> = roots
-        .iter()
-        .map(|r| db.types[*r as usize].name.as_str())
-        .collect();
-    for (id, name) in &old.names {
-        let user = !matches!(old.nodes.get(id), Some(loft::database::LayoutNode::Base(_)))
-            && name.chars().next().is_some_and(char::is_uppercase)
-            && !name.contains("::");
-        if user && !new_names.contains(name.as_str()) && !db.names.contains_key(name) {
-            changes.push(format!(
-                "{name} is gone: a store whose root is a `{name}` cannot be read"
-            ));
-        }
-    }
-    // @PLN196 step 9 — a dropped field a computed field was made from (`@FR-L-Upgrade-Source`).
-    let routines: Vec<String> = loft::parser::Parser::upgrade_routine_defs(data)
-        .iter()
-        .map(|r| data.def(r.item).name().to_string())
-        .collect();
-    refused.extend(loft::layout_schema::lost_sources(
-        data, &sources, release, &routines,
-    ));
-    changes.sort();
-    changes.dedup();
-    refused.sort();
-    refused.dedup();
-    if changes.is_empty() && refused.is_empty() {
-        return 0;
-    }
-    println!("loft layout: a store written with the baseline layout upgrades as follows");
-    for c in &changes {
-        println!("  {c}");
-    }
-    for r in &refused {
-        println!("  refused: {r}");
-    }
-    i32::from(!refused.is_empty())
 }
 
 /// `loft fix [--apply] <file…>` — @PLN131 steps 3–4: check each suggested fix by running
@@ -8870,8 +8821,8 @@ fn main() {
                 // value comes from (`@FR-L-Upgrade-Source`), so the next release's `loft layout
                 // check` can tell what an older store still needs.  Before the tarball, which
                 // then carries it; never for a byte comparison.
-                if !tarball_only {
-                    record_release_baseline(&pkg_path);
+                if !tarball_only && !record_release_baseline(&pkg_path) {
+                    std::process::exit(1);
                 }
                 match loft::package::package_create(&pkg_path, None) {
                     Ok(out) => {
@@ -8927,6 +8878,13 @@ fn main() {
             // the cdylib + its fp, the two things `loft install` then needs.
             #[cfg(feature = "registry")]
             {
+                // @PLN199 G2c — the fields of an artifact's entry that name THIS loft, for a
+                // release job that builds its artifacts through ordinary runs.
+                if argv.get(i).is_some_and(|s| s == "--identity") {
+                    println!("loft_exe_id: {}", loft::cache::loft_exe_identity());
+                    println!("triple: {}", loft::cache::host_triple());
+                    return;
+                }
                 let pkg_path = if argv.get(i).is_some_and(|s| !s.starts_with('-')) {
                     std::path::PathBuf::from(&argv[i])
                 } else {
@@ -9008,12 +8966,19 @@ fn main() {
                         );
                         std::process::exit(1);
                     }
+                    // @PLN199 G2b — the libraries a program that `use`s this one compiles
+                    // with it (its dependencies), so the artifact takes the name that
+                    // program's run computes for it.
+                    let mut pending = std::mem::take(&mut p.pending_native_compile);
+                    if !pending.iter().any(|d| d == &pkg_str) {
+                        pending.push(pkg_str.clone());
+                    }
                     match loft::native_lib::cached_or_build_shared_cdylib(
                         &p.data,
                         &p.database,
                         &export,
                         &pkg_str,
-                        std::slice::from_ref(&pkg_str),
+                        &pending,
                     ) {
                         Ok(Some(so)) => {
                             // This cdylib `extern crate loft`s — it statically embeds
@@ -9024,10 +8989,17 @@ fn main() {
                             // `loft_ffi_fp` here would mislabel it as widely portable —
                             // a corruption-shaped trap for any consumer that gated on
                             // it.  rustc is named too, for human/diagnostic clarity.
+                            // @PLN199 G2b — the artifact's full name (the stem a consumer's
+                            // run computes) and the loft it runs in, the two fields of its
+                            // registry binary entry.
+                            let full_stem = file_access::file_stem(&so)
+                                .map(|s| s.strip_prefix("lib").unwrap_or(&s).to_string())
+                                .unwrap_or_default();
                             report(
                                 so.to_string_lossy().to_string(),
-                                loft::native_lib::auto_cdylib_stem(&pkg_str),
+                                full_stem,
                                 &[
+                                    format!("loft_exe_id: {}", loft::cache::loft_exe_identity()),
                                     format!(
                                         "loft_build_fp: {}",
                                         loft::cache::loft_build_fingerprint()
@@ -9924,8 +9896,13 @@ fn main() {
         {
             continue;
         }
-        if std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some() {
+        if let Some(trace) = std::env::var_os("LOFT_TRACE_NATIVE_GATE") {
             loft::native_lib::trace_partition(&p.data, pkg_dir);
+            // @PLN199 F1 — `=only` reports the partition and builds nothing: the census
+            // (`make gate-census`) asks it of every published library, with no `rustc`.
+            if trace == "only" {
+                continue;
+            }
         }
         let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
         if export.is_empty() {
@@ -9949,7 +9926,12 @@ fn main() {
                 // BEFORE marking, so a symbol that will not resolve leaves its
                 // function interpreting instead of compiling into an
                 // `OpStaticCall` that panics at the first call.
-                let probe = loft::native_lib::probe_and_mark_exports(&mut p.data, &export, &so);
+                let probe = loft::native_lib::probe_and_mark_exports(
+                    &mut p.data,
+                    &p.database,
+                    &export,
+                    &so,
+                );
                 if probe.marked > 0 {
                     auto_native_libs.push(so.to_string_lossy().into_owned());
                 }
@@ -9962,9 +9944,11 @@ fn main() {
                              function(s) would run interpreted. Rebuild it with \
                              `make rebuild-native-cdylibs`, or unset LOFT_REQUIRE_NATIVE.",
                             if probe.not_loaded {
-                                "it does not load"
+                                "it does not load".to_string()
+                            } else if let Some(key) = &probe.refused {
+                                format!("it names `{key}`, which this program does not have")
                             } else {
-                                "some bridge symbols are missing"
+                                "some bridge symbols are missing".to_string()
                             },
                             probe.unresolved.len(),
                         );
@@ -9991,9 +9975,11 @@ fn main() {
                         shown.join(", "),
                         n = probe.unresolved.len(),
                         why = if probe.not_loaded {
-                            "does not load"
+                            "does not load".to_string()
+                        } else if let Some(key) = &probe.refused {
+                            format!("names `{key}`, which this program does not have")
                         } else {
-                            "does not export their bridge symbols"
+                            "does not export their bridge symbols".to_string()
                         },
                     );
                 }
@@ -10046,6 +10032,15 @@ fn main() {
                          for your program, while a library still builds its cdylib)."
                     );
                     std::process::exit(1);
+                }
+                if std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some() {
+                    // @PLN199 G3b — the partition trace names why the whole library is
+                    // interpreted: no artifact built by this loft, and no `rustc` to build one.
+                    eprintln!(
+                        "[native-gate] {}: interpreted — no compiled artifact for this loft and \
+                         no rustc",
+                        loft::file_access::file_name(pkg_dir).unwrap_or_default()
+                    );
                 }
                 eprintln!(
                     "loft: library '{pkg_dir}' has no native build and no Rust toolchain to \
@@ -12842,8 +12837,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // The table is not freed on the way out: the process is ending, and freeing it was a
     // third of a warm `hello`'s exit (@PLN179 finding 001).  Plain memory with no `Drop`
     // effect, unlike the run's stores, which `state` still drops — a durable store writes its
-    // clean-close sidecar there.
-    std::mem::forget(data);
+    // clean-close sidecar there.  It is parked in a static rather than forgotten, so it stays
+    // reachable: a leak checker reads forgotten memory as a leak of every run.  A static is
+    // never dropped, and a `OnceLock` set is a synchronised store nothing optimises away.
+    static KEPT_DATA: std::sync::OnceLock<std::sync::Arc<loft::data::Data>> =
+        std::sync::OnceLock::new();
+    let _ = KEPT_DATA.set(data);
 }
 
 /// Where `loft test` looks for a package's tests, and the prefix it prints.

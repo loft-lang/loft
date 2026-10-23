@@ -61,7 +61,7 @@ C101	code	src/libscan.rs::RESERVED_PACKAGE_NAMES; src/main.rs::is_reserved_packa
 C102	code	src/main.rs	ok	-	
 C103	code	src/data.rs::fn builtin_type_alias	ok	-	
 C104	code	src/database/lazy.rs::fn lazy_range	ok	-	
-C105	code	src/hash.rs::SLOT_BYTES	ok	-	tests/layout_golden.rs placement_contract_is_pinned pins the slot directly
+C105	code	src/hash.rs::SLOT_BYTES; src/hash.rs::pub const INLINE	ok	-	tests/layout_golden.rs placement_contract_is_pinned pins the untagged slot; the tagged and inline layouts are exercised by the keyed guards and store_persist_loft every_hash_layout_lives_beside_the_others_in_one_store
 C106	code	src/use_analysis.rs::c-binding-not-interpretable; src/c_signature.rs::MAX_C_ARITY	ok	-	bare `C106` in c_call.rs
 C107	code	src/c_signature.rs::fn plan	ok	-	its guard skips without a C compiler
 C108	code	src/c_signature.rs::fn of_loft; src/c_signature.rs::fn pointee_takes	ok	-	
@@ -102,9 +102,10 @@ C142	code	src/parser/objects.rs::formatting never traps: a fault in the hole yie
 C143	code	src/database/format.rs::a record renders EVERY field it declares	ok	-	
 C144	code	src/generation/hoist.rs::NULLABLE_LAYOUT	ok	-	
 C145	code	src/database/types.rs::pub fn is_linked(&self; src/store.rs::fn entomb(&mut self	ok	-	
-C146	code	src/hash.rs::pub fn home_bucket(digest: u64, count: u32); src/hash.rs::fn room_for_buckets(elms: u64)	ok	-	
+C146	code	src/hash.rs::pub fn home_bucket(digest: u64, count: u32); src/hash.rs::fn room_for_buckets(elms: u64, sb: u32)	ok	-	
 C147	code	src/btree.rs; src/placement.rs::the B+tree in `crate::btree`	ok	-	
 C148	code	src/store.rs; src/database/format.rs; src/parser/objects.rs	ok	-	
 C149	code	src/limits.rs::pub const LIMIT: u32 = 300	ok	-	
 C150	code	src/generation/mod.rs::fn hash_reserve(&mut self	ok	-	
 C151	code	src/hash.rs::pub fn records_by_slot	ok	-	
+C152	code	src/hash.rs::pub fn hash_inline	ok	-	the layouts coexist and both backends read and write them (store_persist_loft every_hash_layout_lives_beside_the_others_in_one_store); placement::HASH 3 reads 2 (layout_golden an_older_hash_token_this_build_reads_hands_the_store_over_raw)

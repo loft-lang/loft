@@ -1635,13 +1635,38 @@ or build a local and use that."
         }
     }
 
+    /// The name of the lambda about to be parsed: `__lambda_<enclosing>_<k>`, the `k`-th
+    /// lambda of the enclosing function, so a library's lambdas are named by the library
+    /// alone and not by whatever a program parsed before its `use` (@PLN199 G0-0).  A lambda
+    /// inside a lambda counts in the function the outer one belongs to, and `k` is all
+    /// digits, so the enclosing name is what lies between the prefix and the last `_`, and
+    /// no two functions' lambdas share a name.  Outside any function: `__lambda_<k>`.
+    pub(crate) fn next_lambda_name(&mut self) -> String {
+        let root = if self.context == u32::MAX {
+            String::new()
+        } else {
+            let name = self.data.def(self.context).name();
+            match name.strip_prefix("n___lambda_") {
+                Some(rest) => rest.rsplit_once('_').map_or("", |(r, _)| r).to_string(),
+                None => name.strip_prefix("n_").unwrap_or(name).to_string(),
+            }
+        };
+        let k = self.lambda_counters.entry(root.clone()).or_insert(0);
+        let name = if root.is_empty() {
+            format!("__lambda_{k}")
+        } else {
+            format!("__lambda_{root}_{k}")
+        };
+        *k += 1;
+        name
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_lambda(&mut self, code: &mut Value) -> Type {
         if self.discovering > 0 {
             return self.lambda_signature();
         }
-        let lambda_name = format!("__lambda_{}", self.lambda_counter);
-        self.lambda_counter += 1;
+        let lambda_name = self.next_lambda_name();
         let stored_name = format!("n_{lambda_name}");
 
         let outer_context = self.context;
@@ -1946,8 +1971,7 @@ or build a local and use that."
             self.skip_short_lambda(expect_close);
             return Type::Unknown(0);
         }
-        let lambda_name = format!("__lambda_{}", self.lambda_counter);
-        self.lambda_counter += 1;
+        let lambda_name = self.next_lambda_name();
         let stored_name = format!("n_{lambda_name}");
 
         // Capture hint types before entering the new context.  The overload set this lambda is
@@ -2410,6 +2434,14 @@ or build a local and use that."
                 if own_rec != u32::MAX
                     && (self.data.attr(own_rec, &cap_name) == usize::MAX
                         || self.capture_attr(d_nr, closure_rec_d, &cap_name) != aid)
+                {
+                    continue;
+                }
+                // loft#2131 — an OWNER slot (`add_capture_owner_slots`) is written by the scope
+                // pass, from the capture's owner witness, and by nothing here.
+                if slot_name
+                    .strip_suffix("__own")
+                    .is_some_and(|base| self.data.attr(closure_rec_d, base) != usize::MAX)
                 {
                     continue;
                 }
@@ -3136,6 +3168,78 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 if is_cell {
                     self.data.retype_capture_attr(rec, a_nr, inline_tp.clone());
                 }
+            }
+        }
+    }
+
+    /// `@FR-L-CapOwn`, `@FR-O-Witness` (loft#2131, loft#2132) — give each record-typed capture
+    /// of a LOCAL an OWNER slot beside it, `<name>__own`, hidden.
+    ///
+    /// The capture slot holds what the closure READS, and `@FR-L-CapHeap` makes that the store
+    /// the local names at the build — shared, never copied.  Whether the record also OWNS that
+    /// store is a fact about the run, not the binding: a local bound from a value branch
+    /// (`r = if p { mk(5) } else { base.inner }`) or rebound before the build
+    /// (`x = mk(1); x = base.inner`) holds a store of its own on one run and a view of the
+    /// caller's on another.  The frame already answers that per run with the local's owner
+    /// witness, and the scope pass hands the witness to this slot at the build, so the record's
+    /// cascade releases exactly the store the frame owned there, or nothing.
+    ///
+    /// Added for every such capture, at the parent's pass-1 body end, because only the scope
+    /// pass knows which locals carry a witness and the record is laid out before it runs.  A
+    /// slot whose local has no witness is never written, and the scope pass marks it borrowed,
+    /// so it leaves the record's cascade.  A fn field's UNION record (loft#1874) is left alone:
+    /// its captures keep the record's static adoption.
+    pub(crate) fn add_capture_owner_slots(&mut self, parent_d: u32) {
+        if !self.first_pass
+            || parent_d == u32::MAX
+            || (parent_d as usize) >= self.data.definitions.len()
+        {
+            return;
+        }
+        let Some(lambdas) = self.fn_lambdas.get(&parent_d).cloned() else {
+            return;
+        };
+        for lam in lambdas {
+            let rec = self.data.def(lam).closure_record();
+            if rec == u32::MAX || self.data.def(rec).name.starts_with("__closure_u_") {
+                continue;
+            }
+            let mut slots: Vec<(String, u32)> = Vec::new();
+            for a in 0..self.data.attributes(rec) {
+                if self.data.def(rec).attributes[a].hidden {
+                    continue;
+                }
+                let name = self.data.attr_name(rec, a);
+                let Type::Reference(d, _) = self.data.attr_type(rec, a).base().clone() else {
+                    continue;
+                };
+                if name.starts_with("__")
+                    || self.data.def(d).def_type != DefType::Struct
+                    || self.data.def(d).name.starts_with("__")
+                {
+                    continue;
+                }
+                let v = self.vars.var(&name);
+                if v == u16::MAX
+                    || self.vars.is_argument(v)
+                    || !matches!(self.vars.tp(v).base(), Type::Reference(_, _))
+                {
+                    continue;
+                }
+                slots.push((name, d));
+            }
+            for (name, d) in slots {
+                let own = format!("{name}__own");
+                if self.data.attr(rec, &own) != usize::MAX {
+                    continue;
+                }
+                let o = self.data.add_attribute(
+                    &mut self.lexer,
+                    rec,
+                    &own,
+                    Type::Reference(d, Deps::share_sentinel()),
+                );
+                self.data.definitions[rec as usize].attributes[o].hidden = true;
             }
         }
     }
@@ -6266,22 +6370,34 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// that crashes when the element is later called or freed (#263). So each source
     /// shape is projected to its d_nr:
     ///
-    /// * `Value::Int(d)` — what `parse_fn_ref` lowers a bare function name to. Already the
-    ///   bare d_nr; write it.
     /// * `Value::Var(v)` — a fn-ref local. `FnRefDnr(v)` projects the d_nr via `OpVarInt`.
-    /// * `Value::Call(…)` — a call that returns a fn-ref. Materialise it into a temp
-    ///   first, then project that; the temp is marked `skip_free` because its closure half
-    ///   is the null sentinel and scope-exit must never dereference it.
+    /// * `Value::Int(d)` — what `parse_fn_ref` lowers a bare function name to — and
+    ///   `Value::Call(…)` — a call that returns a fn-ref.  Materialised into a temp first,
+    ///   then projected; the temp is marked `skip_free` because its closure half is the null
+    ///   sentinel and scope-exit must never dereference it.
     ///
     /// Anything else is handed back untouched, which is what the struct-field path
     /// (`emit_fn_ref_field_write`) and the #247 guard are there to judge.
+    /// @PLN199 G0b-2 — `OpSetInt4(at, pos, d)` for the constant function `d` of type `fn_tp`:
+    /// through a temporary, as [`Self::fn_ref_slot_dnr`] does, so the write is the
+    /// variable's projection (`FnRefDnr`), where a library artifact writes the program's
+    /// number of a function it numbers itself.
+    pub(crate) fn fn_number_write(&mut self, at: Value, pos: Value, d: i32, fn_tp: &Type) -> Value {
+        let (dnr, mut ops) = self.fn_ref_slot_dnr(&Value::Int(d), fn_tp);
+        ops.push(self.cl("OpSetInt4", &[at, pos, dnr]));
+        v_block(ops, Type::Void, "fn_number_write")
+    }
+
     pub(crate) fn fn_ref_slot_dnr(&mut self, src: &Value, in_t: &Type) -> (Value, Vec<Value>) {
         match src.unspan() {
-            Value::Int(_) => (src.clone(), Vec::new()),
             Value::Var(v) if matches!(self.vars.tp(*v), Type::Function(..)) => {
                 (Value::FnRefDnr(*v), Vec::new())
             }
-            Value::Call(_, _) => {
+            // A named function (`Int(d_nr)`) goes through a temporary as a call result does,
+            // so the store write is the variable's projection: a library artifact numbers
+            // its own functions, and the projection is where it writes the program's
+            // number instead (@PLN199 G0b-2).
+            Value::Int(_) | Value::Call(_, _) => {
                 let fn_type = if let Type::Function(params, ret, _, consts) = in_t {
                     Type::Function(params.clone(), ret.clone(), Deps::none(), *consts)
                 } else {

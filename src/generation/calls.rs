@@ -277,6 +277,10 @@ impl Output<'_> {
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
     /// pre-phase-09 `output_call_user_fn`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one call's twin forms are one decision"
+    )]
     pub(super) fn user_fn_call_body(
         &mut self,
         w: &mut dyn Write,
@@ -339,27 +343,52 @@ impl Output<'_> {
         }
         // `@FR-R-RangedCall` — the ranged variant, when every integer argument is proven
         // within its bound.  Not for a forward site, which spells its own call shape.
+        // `(R-Header)`'s KEPT clause — the callee's `__kh` twin, handed the holders this body
+        // keeps for the fields the callee keeps; only where no other twin form applies.
+        let kh_args = if twin_args.is_none()
+            && forward.is_none()
+            && !append
+            && !dest
+            && own.is_none()
+            && (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+        {
+            self.kept_twin_call(self.current_call_def, vals)
+        } else {
+            None
+        };
         let ranged = forward.is_none()
             && !append
             && own.is_none()
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
-            && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
+            && self.ranged_call(
+                self.current_call_def,
+                vals,
+                twin_args.is_some(),
+                kh_args.is_some(),
+            );
         let (released_first, refill_twin) = self.refill_text_call(
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some() || append || own.is_some(),
+            twin_args.is_some()
+                || kh_args.is_some()
+                || ranged
+                || forward.is_some()
+                || append
+                || own.is_some(),
         )?;
         write!(
             w,
-            "{}{}{}{}{}{}(",
+            "{}{}{}{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
             if ranged { "__rg" } else { "" },
             if refill_twin { "__rt" } else { "" },
             if append { "__ap" } else { "" },
-            own.unwrap_or("")
+            own.unwrap_or(""),
+            if kh_args.is_some() { "__kh" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::runtime_abi::Abi::Cell) {
@@ -369,6 +398,11 @@ impl Output<'_> {
         let callee_nr = self.current_call_def;
         self.emit_user_call_args(w, def_fn, vals, first_arg)?;
         if let Some(extra) = &twin_args {
+            for e in extra {
+                write!(w, ", {e}")?;
+            }
+        }
+        if let Some(extra) = &kh_args {
             for e in extra {
                 write!(w, ", {e}")?;
             }
@@ -399,7 +433,8 @@ impl Output<'_> {
             // record is minted here, as the callee's exit mints it.
             write!(
                 w,
-                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {tp}_i32); }} "
+                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {}); }} ",
+                self.type_lit(tp)
             )?;
             self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
             write!(w, "__vd }}")?;
@@ -511,7 +546,11 @@ impl Output<'_> {
             return Ok((false, true));
         }
         let name = super::sanitize(self.data.def(self.def_nr).variables().name(buf));
-        write!(w, "{{ stores.remove_claims(&(var_{name}), {tp}_u16); ")?;
+        write!(
+            w,
+            "{{ stores.remove_claims(&(var_{name}), {}); ",
+            self.type_lit_u16(tp)
+        )?;
         Ok((true, false))
     }
 
@@ -740,12 +779,12 @@ impl Output<'_> {
                 && matches!(def_fn.attributes()[idx].typedef, Type::Routine(_));
             if param_is_fnref && matches!(v, Value::Int(_)) {
                 let mut buf = Vec::new();
-                self.output_code_inner(&mut buf, v)?;
+                self.emit_fn_number(&mut buf, v)?;
                 let s = String::from_utf8(buf).unwrap();
                 write!(w, "({s} as u32, loft::keys::DbRef::NULL)")?;
             } else if param_is_routine && matches!(v, Value::Int(_)) {
                 let mut buf = Vec::new();
-                self.output_code_inner(&mut buf, v)?;
+                self.emit_fn_number(&mut buf, v)?;
                 let s = String::from_utf8(buf).unwrap();
                 write!(w, "{s} as u32")?;
             } else {
@@ -881,6 +920,18 @@ impl Output<'_> {
                 }
                 if let Some(respelled) = tuple_arg_place {
                     write!(w, "{respelled}")?;
+                } else if param_is_narrow
+                    && super::TYPE_ID_PARAMS.contains(&def_fn.attributes()[idx].name.as_str())
+                {
+                    self.emit_type_slot(w, v)?;
+                } else if let Some(code) = (idx < def_fn.attributes().len()
+                    && super::TYPE_ID_PARAMS.contains(&def_fn.attributes()[idx].name.as_str())
+                    && rust_type(&def_fn.attributes()[idx].typedef, &Context::Argument) == "i64")
+                    .then(|| self.type_id_code(v, "i64"))
+                    .flatten()
+                {
+                    // A plain `integer` parameter that takes a type id (`hash_sorted(h, tp)`).
+                    write!(w, "{code}")?;
                 } else if param_is_narrow {
                     self.emit_i32_slot(w, v)?;
                 } else {
@@ -1206,6 +1257,29 @@ impl Output<'_> {
                 {
                     let inner = self.generate_expr_buf(&vals[a_nr])?;
                     res = replace_placeholder(&res, &name, &format!("(&*({inner}))"));
+                    continue;
+                }
+                // A definition number (`OpConstRef(d_nr)`) is the program's (`def_lit_as`).
+                if a.name == "d_nr"
+                    && let Value::Int(n) = vals[a_nr].unspan()
+                    && let Ok(d) = u32::try_from(*n)
+                    && rust_type(&a.typedef, &Context::Result) == "i64"
+                {
+                    let lit = self.def_lit_as(d, "i64");
+                    res = replace_placeholder(&res, &name, &format!("({lit})"));
+                    continue;
+                }
+                // A constant type id (`TYPE_ID_PARAMS`) is written by `type_lit_as`, at the
+                // narrow width the parameter declares.
+                if super::TYPE_ID_PARAMS.contains(&a.name.as_str())
+                    && let Value::Int(n) = vals[a_nr].unspan()
+                    && let Ok(tp) = u16::try_from(*n)
+                    && !res.contains(&format!("u32::from({name})"))
+                    && let ty @ ("u8" | "u16" | "i8" | "i16" | "i32" | "u32") =
+                        rust_type(&a.typedef, &Context::Result).as_str()
+                {
+                    let lit = self.type_lit_as(tp, ty);
+                    res = replace_placeholder(&res, &name, &format!("({lit})"));
                     continue;
                 }
                 let mut with = self.generate_expr_buf(&vals[a_nr])?;

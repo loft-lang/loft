@@ -36,7 +36,7 @@ use crate::generation::{Output, returns_owned_string, rust_type};
 use crate::keys::DbRef;
 pub(crate) use crate::native_gate::is_text_work_buffer;
 use crate::platform::process::{Program, Spawn};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// @PLN11 Arc N / N2 (lean interface) — generate the loft-source **interface** a
 /// script adopts to call a native library: the public type definitions the
@@ -445,6 +445,9 @@ pub struct BridgeProbe {
     /// True when the artifact itself could not be `dlopen`ed, so none of its
     /// exports resolve.
     pub not_loaded: bool,
+    /// @PLN199 G0b-2 — the key of a type or function the artifact names and this program
+    /// does not have: it is refused, and none of its exports is marked.
+    pub refused: Option<String>,
 }
 
 impl BridgeProbe {
@@ -477,18 +480,32 @@ impl BridgeProbe {
 /// the decision after it is made.
 pub fn probe_and_mark_exports(
     data: &mut Data,
+    stores: &Stores,
     export: &HashSet<u32>,
     so: &std::path::Path,
 ) -> BridgeProbe {
     let mut probe = BridgeProbe::default();
-    if !crate::c_libs::load_cdylib(&so.to_string_lossy()) {
-        // `load_cdylib` has already printed the classified dlopen diagnostic.
-        probe.not_loaded = true;
-        probe.unresolved = export
+    let all = |data: &Data| -> Vec<String> {
+        let mut v: Vec<String> = export
             .iter()
             .map(|&d| data.def(d).original_name().clone())
             .collect();
-        probe.unresolved.sort_unstable();
+        v.sort_unstable();
+        v
+    };
+    if !crate::c_libs::load_cdylib(&so.to_string_lossy()) {
+        // `load_cdylib` has already printed the classified dlopen diagnostic.
+        probe.not_loaded = true;
+        probe.unresolved = all(data);
+        return probe;
+    }
+    // @PLN199 G0b-2 — an artifact names its types and functions by key; one that names a key
+    // this program lacks is never marked, so its functions interpret rather than reach a
+    // bridge that cannot run.
+    let ids = crate::lib_ids::HostIds::new(data, stores);
+    if init_one(so, (&raw const ids).cast()) == Some(0) {
+        probe.refused = Some(ids.take_missing().unwrap_or_default());
+        probe.unresolved = all(data);
         return probe;
     }
     let dups = crate::generation::duplicate_fn_names(data);
@@ -508,6 +525,23 @@ pub fn probe_and_mark_exports(
     probe.marked = resolvable.len();
     mark_exports(data, &resolvable);
     probe
+}
+
+/// @PLN199 G0b-2 — hand the library cdylib at `path` this host's table and `ids` (its
+/// `loft_shared_init`), and answer what it says: 1 accepted, 0 refused, `None` when it
+/// cannot be opened or has no such entry.  Opens it by path — a handle on an image already
+/// loaded, which `c_libs::load_cdylib` keeps.
+#[cfg(feature = "native-extensions")]
+fn init_one(path: &std::path::Path, ids: *const std::ffi::c_void) -> Option<u32> {
+    type InitFn = unsafe extern "C" fn(*const HostTable, *const std::ffi::c_void) -> u32;
+    let lib = unsafe { crate::c_libs::open_library(&path.to_string_lossy()) }.ok()?;
+    let init: libloading::Symbol<InitFn> = unsafe { lib.get(b"loft_shared_init\0") }.ok()?;
+    Some(unsafe { init(&raw const HOST_TABLE, ids) })
+}
+
+#[cfg(not(feature = "native-extensions"))]
+fn init_one(_path: &std::path::Path, _ids: *const std::ffi::c_void) -> Option<u32> {
+    None
 }
 
 /// @PLN11 Arc N / N3 (Step 2) — the cdylib **export set** for the library at
@@ -587,7 +621,7 @@ pub fn trace_partition(data: &Data, pkg_dir: &str) {
 ///
 /// The candidate filter must exclude **synthetic** functions, not just lambdas: a
 /// `pub fn`'s parse sprays `pub_visible` over every def it creates (`parser/mod.rs`),
-/// so a nested lambda (`__lambda_N`) is also `pub_visible` — but it is a *fn-ref*
+/// so a nested lambda (`__lambda_<fn>_<k>`) is also `pub_visible` — but it is a *fn-ref*
 /// target the script cannot name, never a direct-`Call` dispatch target.  The
 /// `__`-prefix is the codebase's synthetic-name convention (same marker
 /// `native_gate` uses for synthetic params), so excluding it covers the whole class
@@ -601,7 +635,7 @@ pub fn mark_library_native(data: &mut Data, pkg_dir: &str) -> HashSet<u32> {
 
 /// Is `stored_name` (an `n_<name>` definition name) a compiler-generated
 /// (synthetic) function — i.e. its user-facing name starts with `__` (lambdas
-/// `__lambda_N`, and any future synthetic kind)?  Such functions are never a
+/// `__lambda_<fn>_<k>`, and any future synthetic kind)?  Such functions are never a
 /// script-callable public API, so they are not auto-native dispatch targets.
 fn is_synthetic_name(stored_name: &str) -> bool {
     stored_name
@@ -757,10 +791,18 @@ pub struct HostTable {
         n: usize,
         ret: *mut LibArg,
     ),
+    /// @PLN199 G0b-2 — this program's id of the type named `key` (`lib_ids::TypeNames::key`),
+    /// or `u16::MAX`; `ids` is what the host passed to `loft_shared_init`.
+    pub type_id:
+        unsafe extern "C" fn(ids: *const std::ffi::c_void, key: *const u8, len: usize) -> u16,
+    /// @PLN199 G0b-2 — this program's number of the function named `key` (`lib_ids::fn_key`),
+    /// or `u32::MAX`.
+    pub fn_id:
+        unsafe extern "C" fn(ids: *const std::ffi::c_void, key: *const u8, len: usize) -> u32,
 }
 
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 4;
+pub const HOST_ABI: u32 = 5;
 
 /// The table this process hands to every library cdylib it loads.
 pub static HOST_TABLE: HostTable = HostTable {
@@ -768,6 +810,8 @@ pub static HOST_TABLE: HostTable = HostTable {
     coroutine_adopt: host_coroutine_adopt,
     coroutines: HOST_COROUTINES,
     call_ref: host_call_ref,
+    type_id: crate::lib_ids::host_type_id,
+    fn_id: crate::lib_ids::host_fn_id,
 };
 
 /// @PLN199 D2 / D3 — the host's coroutine table as a library cdylib sees it: the runtime's
@@ -906,16 +950,16 @@ unsafe extern "C" fn host_coroutine_adopt(
 }
 
 /// The part of every library cdylib that receives the [`HostTable`]: `loft_shared_init`
-/// stores it, and `__host()` reads it.  Appended by [`generate_shared_cdylib_lib_rs`]; the
-/// compiled standard library, which is built INTO the host, swaps it for
-/// [`IN_HOST_TABLE_SRC`].
+/// fills the artifact's id tables from it ([`id_tables_src`]), stores it, and `__host()`
+/// reads it.  Appended by [`generate_shared_cdylib_lib_rs`]; the compiled standard library,
+/// which is built INTO the host, swaps it for [`IN_HOST_TABLE_SRC`].
 pub(crate) const HOST_INIT_SRC: &str = "
 static __HOST: std::sync::OnceLock<&'static loft::native_lib::HostTable> = std::sync::OnceLock::new();
 
 #[unsafe(no_mangle)]
-pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable) -> u32 {
+pub extern \"C\" fn loft_shared_init(table: *const loft::native_lib::HostTable, ids: *const std::ffi::c_void) -> u32 {
     let table: &'static loft::native_lib::HostTable = unsafe { &*table };
-    if table.abi != loft::native_lib::HOST_ABI {
+    if table.abi != loft::native_lib::HOST_ABI || !__fill_ids(table, ids) {
         return 0;
     }
     let _ = __HOST.set(table);
@@ -963,11 +1007,22 @@ mod __coro {
 /// Build the shared `--native` program (header + `init` + only the functions
 /// reachable from `entry` + their deps) for `data`.  Both cdylib generators
 /// append their export wrappers to this.
-fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
+///
+/// With `own_ids`, the code reads the ids of the types and functions it names from tables the
+/// host fills at load (`Output::shared_ids`), and those ids come back beside the source.
+fn emit_program(
+    data: &Data,
+    stores: &Stores,
+    entry: &[u32],
+    own_ids: bool,
+) -> (String, Option<crate::generation::SharedIds>) {
     let _census = crate::rewrite_census::Pause::new();
     let mut buf: Vec<u8> = Vec::new();
-    {
+    let ids = {
         let mut out = Output::new(data, stores);
+        if own_ids {
+            out.shared_ids = Some(std::cell::RefCell::default());
+        }
         // @PLN26 phase 2 — a cdylib that calls a `[native] crate` package emits
         // that package's fns as C-ABI `extern "C"` decls naming `loft_ffi::Loft*`,
         // its `.so` linked (sealing the package's whole Rust crate graph), exactly
@@ -976,6 +1031,11 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
         // and link never disagree.  No-op when the library uses no native package.
         out.native_cabi = native_cabi_link_enabled();
         out.library_unit = true;
+        if own_ids {
+            // @PLN199 G1 — only the packages this artifact links can collide in its link.
+            let set: HashSet<u32> = entry.iter().copied().collect();
+            out.native_collisions = linked_collisions(data, &linked_packages(data, &set));
+        }
         // @PLN157 — a library cdylib is a SHIPPED binary: the lean tier, exactly as a
         // `--native-release` program.  Its functions run under the consumer's every
         // call, and the named per-call frame push was that lane's largest cost.
@@ -989,8 +1049,195 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
         // reachable subset) — exactly what a `--native` binary emits from `n_main`,
         // so unreachable operator stubs never surface.
         let _ = out.output_native_library(&mut buf, 0, data.definitions(), entry);
+        out.shared_ids.take().map(std::cell::RefCell::into_inner)
+    };
+    (String::from_utf8(buf).unwrap_or_default(), ids)
+}
+
+/// @PLN199 G1 — the `[native]` packages a library artifact links: those that declare a
+/// `#native` definition its exports reach.  The program around it may load others; linked
+/// too, their symbols shared the artifact's flat C-ABI namespace, and one exported by two of
+/// them refused a library that calls only its own.
+fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(String, String)> {
+    let roots: Vec<u32> = export_set.iter().copied().collect();
+    let reach = crate::generation::reachable_functions(data, &roots);
+    data.native_packages
+        .iter()
+        .filter(|(_, dir)| {
+            reach.iter().any(|&d| {
+                let def = data.def(d);
+                !def.native().is_empty()
+                    && *def.code() == crate::data::Value::Null
+                    && crate::file_access::is_under(def.position().file.as_str(), dir)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+/// The `#native` symbols two of `linked` packages declare: what [`linked_packages`]' link
+/// cannot tell apart.
+fn linked_collisions(data: &Data, linked: &[(String, String)]) -> HashSet<String> {
+    let mut by_sym: HashMap<&str, HashSet<usize>> = HashMap::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.native().is_empty() || *def.code() != crate::data::Value::Null {
+            continue;
+        }
+        if let Some(at) = linked
+            .iter()
+            .position(|(_, dir)| crate::file_access::is_under(def.position().file.as_str(), dir))
+        {
+            by_sym.entry(def.native()).or_default().insert(at);
+        }
     }
-    String::from_utf8(buf).unwrap_or_default()
+    by_sym
+        .into_iter()
+        .filter(|(_, pkgs)| pkgs.len() > 1)
+        .map(|(s, _)| s.to_string())
+        .collect()
+}
+
+/// @PLN199 G0b-2 — the code a library artifact carries for `entry` and what it reaches, with
+/// its id tables: what `tests/lib_ids.rs` generates in two programs that number the same
+/// functions differently and requires to be the same text (outside `init`, the program's own
+/// type table).
+#[doc(hidden)]
+#[must_use]
+pub fn library_code_rs(data: &Data, stores: &Stores, entry: &[u32]) -> String {
+    let (mut src, ids) = emit_program(data, stores, entry, true);
+    src.push_str(&id_tables_src(data, stores, &ids.unwrap_or_default()));
+    src
+}
+
+/// @PLN199 G0b-2 — the id tables of a library artifact: the key of each type and function its
+/// code reads by position (`lib_ids`), the slots `loft_shared_init` fills with the loading
+/// program's numbers, and the readers.  The slots are written once, at load, before any bridge
+/// runs, and only read after, so a read is a plain load (`loft::native_lib::IdTable`), which
+/// the optimiser may merge with another read of the same slot — what lets a fn-value dispatch
+/// that made its value from `__fid(k)` fold its `__fid(k)` arm as it folds a literal one.  A
+/// key the program lacks refuses the artifact (`__fill_ids` answers false).
+fn id_tables_src(data: &Data, stores: &Stores, ids: &crate::generation::SharedIds) -> String {
+    use std::fmt::Write as _;
+    let names = crate::lib_ids::TypeNames::new(data, stores);
+    let type_keys: Vec<String> = ids.types.iter().map(|&t| names.key(t)).collect();
+    let fn_keys: Vec<String> = ids
+        .fns
+        .iter()
+        .map(|&d| crate::lib_ids::fn_key(data, d))
+        .collect();
+    let list = |keys: &[String]| {
+        let mut s = String::new();
+        for k in keys {
+            let _ = writeln!(s, "    {k:?},");
+        }
+        s
+    };
+    let (nt, nf) = (type_keys.len(), fn_keys.len());
+    format!(
+        "
+static __TID: loft::native_lib::IdTable<u16, {nt}> = loft::native_lib::IdTable::new(0);
+const __TID_KEYS: [&str; {nt}] = [
+{}];
+static __FID: loft::native_lib::IdTable<u32, {nf}> = loft::native_lib::IdTable::new(0);
+const __FID_KEYS: [&str; {nf}] = [
+{}];
+
+#[allow(dead_code)]
+#[inline(always)]
+fn __tid(k: usize) -> u16 {{
+    __TID.get(k)
+}}
+
+#[allow(dead_code)]
+#[inline(always)]
+fn __fid(k: usize) -> u32 {{
+    __FID.get(k)
+}}
+
+/// The program's number of function value number `f`: a function of this artifact's is
+/// numbered by its table position here (`0x8000_0000 | k`).
+#[allow(dead_code)]
+#[inline(always)]
+fn __to_host(f: u32) -> u32 {{
+    if f & 0x8000_0000 != 0 && f != u32::MAX {{ __FID.get((f & 0x7fff_ffff) as usize) }} else {{ f }}
+}}
+
+/// This artifact's number of function value number `f`, as the program numbered it: its own
+/// for a function it carries, the program's for any other.
+#[allow(dead_code)]
+#[inline(always)]
+fn __norm(f: u32) -> u32 {{
+    if f & 0x8000_0000 != 0 {{
+        return f;
+    }}
+    let local = __FLOCAL.get(0);
+    let at = f as usize;
+    if at < local.len() && local[at] != 0 {{ local[at] }} else {{ f }}
+}}
+
+/// The program's function numbers to this artifact's: `0x8000_0000 | k` at the program's
+/// number of function `k`, 0 elsewhere.
+static __FLOCAL: loft::native_lib::IdTable<&'static [u32], 1> = loft::native_lib::IdTable::new(&[]);
+
+fn __fill_ids(table: &loft::native_lib::HostTable, ids: *const std::ffi::c_void) -> bool {{
+    for (k, key) in __TID_KEYS.iter().enumerate() {{
+        let id = unsafe {{ (table.type_id)(ids, key.as_ptr(), key.len()) }};
+        if id == u16::MAX {{
+            return false;
+        }}
+        unsafe {{ __TID.set(k, id) }};
+    }}
+    for (k, key) in __FID_KEYS.iter().enumerate() {{
+        let id = unsafe {{ (table.fn_id)(ids, key.as_ptr(), key.len()) }};
+        if id == u32::MAX {{
+            return false;
+        }}
+        unsafe {{ __FID.set(k, id) }};
+    }}
+    let mut local = vec![0_u32; (0..{nf}).map(|k| __FID.get(k) as usize + 1).max().unwrap_or(0)];
+    for k in 0..{nf} {{
+        local[__FID.get(k) as usize] = 0x8000_0000 | k as u32;
+    }}
+    unsafe {{ __FLOCAL.set(0, Box::leak(local.into_boxed_slice())) }};
+    true
+}}
+",
+        list(&type_keys),
+        list(&fn_keys)
+    )
+}
+
+/// @PLN199 G0b-2 — a library artifact's table of ids (`__tid` / `__fid`): written by its
+/// `loft_shared_init` before any of its code runs, read by that code after.  The write-once
+/// discipline is what makes a plain read sound, and a plain read is what the optimiser can
+/// merge with another read of the same slot, where an atomic one it cannot.
+pub struct IdTable<T: Copy, const N: usize>(std::cell::UnsafeCell<[T; N]>);
+
+// SAFETY: written only by `loft_shared_init`, which the host runs once per artifact before
+// handing out any of the artifact's functions, on any thread.
+unsafe impl<T: Copy, const N: usize> Sync for IdTable<T, N> {}
+
+impl<T: Copy, const N: usize> IdTable<T, N> {
+    #[must_use]
+    pub const fn new(zero: T) -> Self {
+        IdTable(std::cell::UnsafeCell::new([zero; N]))
+    }
+
+    /// Slot `k`.
+    #[inline]
+    #[must_use]
+    pub fn get(&self, k: usize) -> T {
+        unsafe { (*self.0.get())[k] }
+    }
+
+    /// Fill slot `k`.
+    ///
+    /// # Safety
+    /// Only while no code that reads the table can run: from `loft_shared_init`.
+    pub unsafe fn set(&self, k: usize, v: T) {
+        unsafe { (*self.0.get())[k] = v };
+    }
 }
 
 /// Generate the cdylib `lib.rs` source for `data`'s **scalar** export set: the
@@ -1007,7 +1254,7 @@ fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
 #[must_use]
 pub fn generate_cdylib_lib_rs(data: &Data, stores: &Stores, export_set: &HashSet<u32>) -> String {
     let entry: Vec<u32> = export_set.iter().copied().collect();
-    let mut src = emit_program(data, stores, &entry);
+    let (mut src, _) = emit_program(data, stores, &entry, false);
     let dups = crate::generation::duplicate_fn_names(data);
     for &d in export_set {
         src.push('\n');
@@ -1027,19 +1274,53 @@ pub fn generate_shared_cdylib_lib_rs(
     stores: &Stores,
     export_set: &HashSet<u32>,
 ) -> String {
+    shared_cdylib_source(
+        data,
+        stores,
+        export_set,
+        false,
+        type_layout_fingerprint(stores),
+    )
+}
+
+/// [`generate_shared_cdylib_lib_rs`].  `in_host`: the code writes this program's ids as
+/// literals and carries no id tables — the compiled standard library, built into the host
+/// against the type prefix every program starts with.  `LOFT_NO_LIB_IDS=1` writes a library
+/// artifact's ids as literals too, with empty tables: the artifact then serves only the
+/// program it was generated in (the A/B and the falsifier of @PLN199 G0b-2).
+///
+/// `artifact_fp` is the key the artifact declares itself built for (`LAYOUT_FP_SYMBOL`).
+pub(crate) fn shared_cdylib_source(
+    data: &Data,
+    stores: &Stores,
+    export_set: &HashSet<u32>,
+    in_host: bool,
+    artifact_fp: u64,
+) -> String {
+    let own_ids = !in_host && std::env::var_os("LOFT_NO_LIB_IDS").is_none();
     // Sorted: the artifact's source is then the same bytes for the same set, which a
     // generated file under a drift guard needs (@PLN181), and a `HashSet`'s order is not.
     let mut entry: Vec<u32> = export_set.iter().copied().collect();
     entry.sort_unstable();
-    let mut src = emit_program(data, stores, &entry);
+    let (mut src, mut ids) = emit_program(data, stores, &entry, own_ids);
     src.push_str(HOST_INIT_SRC);
     let dups = crate::generation::duplicate_fn_names(data);
     for &d in &entry {
         src.push('\n');
-        src.push_str(&shared_bridge_wrapper(data, stores, &dups, d));
+        src.push_str(&shared_bridge_wrapper(
+            data,
+            stores,
+            &dups,
+            d,
+            !in_host,
+            ids.as_mut(),
+        ));
+    }
+    if !in_host {
+        src.push_str(&id_tables_src(data, stores, &ids.unwrap_or_default()));
     }
     src.push('\n');
-    src.push_str(&layout_fp_export(type_layout_fingerprint(stores)));
+    src.push_str(&layout_fp_export(artifact_fp));
     src
 }
 
@@ -1120,11 +1401,17 @@ fn export_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> String {
 ///
 /// Finally it forwards to the inner `--native` fn and writes the return.
 #[expect(clippy::too_many_lines, reason = "inherited")]
+///
+/// `own_ids`: the artifact numbers its own functions (`Output::fn_lit_as`), so a function
+/// value it answers takes the program's number on the way out (`__to_host`).  With `ids`, a
+/// destination the bridge allocates takes its type from the artifact's table (`__tid`).
 fn shared_bridge_wrapper(
     data: &Data,
     stores: &Stores,
     dups: &HashSet<String>,
     d_nr: u32,
+    own_ids: bool,
+    mut ids: Option<&mut crate::generation::SharedIds>,
 ) -> String {
     // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its record's
     // fields in REGISTERS, so this wrapper stops forwarding the hidden dest and writes
@@ -1132,7 +1419,7 @@ fn shared_bridge_wrapper(
     // when it supplied one, a fresh store when it did not, and `(*ret).dbref` names it
     // either way — so the C boundary keeps its record contract while the loft-to-loft
     // call inside the cdylib takes the value path.
-    let value_rec = crate::generation::hoist::value_records(data, stores);
+    let value_rec = crate::generation::hoist::value_records(data, stores, true);
     let value_fields = value_rec
         .fn_fields(d_nr)
         .map(<[(i64, &'static str)]>::to_vec);
@@ -1149,6 +1436,8 @@ fn shared_bridge_wrapper(
 
     let mut body = String::new();
     let mut fwd = String::new();
+    // Statements after the call: a `&T` argument's local, back into the caller's slot.
+    let mut write_backs = String::new();
     let mut slot = 0usize; // next public-arg LibArg slot
     // @PLN118 arc F — hidden dests the bridge allocated as a FALLBACK (caller
     // forwarded a null/empty ref).  If the inner fn ignores its retbuf and returns
@@ -1210,10 +1499,24 @@ fn shared_bridge_wrapper(
                     format!("{var}.rec == 0")
                 };
                 let _ = writeln!(body, "    if {absent} {{");
-                let _ = writeln!(
-                    body,
-                    "        let _tid{slot} = unsafe {{ (&*cell.get()) }}.name({tname:?});"
-                );
+                // @PLN199 G0b-2 — by key in a library artifact: a registered NAME is the
+                // first definition's to register it, which a program's own type can be.
+                let tp = stores.name(&tname);
+                match ids
+                    .as_deref_mut()
+                    .filter(|_| tp != u16::MAX)
+                    .map(|t| t.type_slot(tp))
+                {
+                    Some(k) => {
+                        let _ = writeln!(body, "        let _tid{slot} = __tid({k});");
+                    }
+                    None => {
+                        let _ = writeln!(
+                            body,
+                            "        let _tid{slot} = unsafe {{ (&*cell.get()) }}.name({tname:?});"
+                        );
+                    }
+                }
                 let _ = writeln!(
                     body,
                     "        assert!(_tid{slot} != u16::MAX, \"shared bridge: type {tname} not registered in the caller store\");"
@@ -1247,6 +1550,27 @@ fn shared_bridge_wrapper(
                 // dest-passing) before this frame drops.
                 let _ = writeln!(body, "    let mut {var}: String = String::new();");
                 let _ = write!(fwd, ", &mut {var}");
+            }
+            // @PLN199 — `&T` to a record, vector, keyed collection or data enum: the slot the
+            // caller's `DbRef` names holds that value's `DbRef`.  It is copied into a local,
+            // `--native`'s `&mut DbRef` parameter writes through or rebinds the local, and the
+            // local goes back to the slot after the call — re-resolved then, because a call
+            // back into the interpreter may grow its stack, and the slot with it.
+            crate::native_gate::BridgeAttrKind::Marshal if matches!(a.typedef.base(), Type::RefVar(inner) if crate::data::is_dbref(inner.base())) =>
+            {
+                let at = slot;
+                slot += 1;
+                let _ = writeln!(body, "    let {var}_at: DbRef = a[{at}].dbref;");
+                let _ = writeln!(
+                    body,
+                    "    let mut {var}_v: DbRef = if {var}_at.rec == 0 {{ DbRef::NULL }} else {{ \
+                     *unsafe {{ &*cell.get() }}.store(&{var}_at).addr::<DbRef>({var}_at.rec, {var}_at.pos) }};"
+                );
+                let _ = write!(fwd, ", &mut {var}_v");
+                let _ = writeln!(
+                    write_backs,
+                    "    if {var}_at.rec != 0 {{ *unsafe {{ &mut *cell.get() }}.store_mut(&{var}_at).addr_mut::<DbRef>({var}_at.rec, {var}_at.pos) = {var}_v; }}"
+                );
             }
             crate::native_gate::BridgeAttrKind::Marshal => {
                 let ty = rust_type(&a.typedef, &Context::Argument);
@@ -1311,7 +1635,7 @@ fn shared_bridge_wrapper(
         );
         w
     } else {
-        bridge_write_ret(def.returned(), &call, returns_owned_string(def))
+        bridge_write_ret(def.returned(), &call, returns_owned_string(def), own_ids)
     };
 
     // @PLN118 arc F — after writing the return, free every bridge-allocated
@@ -1354,6 +1678,7 @@ fn shared_bridge_wrapper(
          let _ = ({slot}, a);\n\
          {body}    \
          {ret_stmt}\n\
+         {write_backs}\
          {free_orphans}\
          }}\n",
     )
@@ -1387,6 +1712,18 @@ pub(crate) fn hidden_dest_type_name(data: &Data, stores: &Stores, t: &Type) -> O
             )
         }
         _ => None,
+    }
+}
+
+/// The leaves of the returned tuple `t`, each with its field path in the Rust tuple the inner
+/// fn answers (`.1.0`), in element order.
+fn returned_tuple_leaves<'t>(t: &'t Type, path: String, out: &mut Vec<(String, &'t Type)>) {
+    if let Type::Tuple(elems) = t.base() {
+        for (i, e) in elems.iter().enumerate() {
+            returned_tuple_leaves(e, format!("{path}.{i}"), out);
+        }
+    } else {
+        out.push((path, t));
     }
 }
 
@@ -1466,10 +1803,29 @@ fn bridge_read(t: &Type, slot: &str) -> String {
 /// the inner fn: text producers split into those returning an owned `String`
 /// (nwb / FFI-direct / curated) and those returning a buffer-backed `Str`, and the
 /// bridge must borrow `&str` from the right one (`String` has no `.str()`).
-fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
+fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool, own_ids: bool) -> String {
     // `Optional(τ)` rides τ's sentinel layout (@PLN25) — write as the base type.
     match t.base() {
         Type::Void | Type::Null => format!("let _ = {expr};"),
+        // @PLN199 — a tuple of scalars (`native_gate::is_returned_tuple_leaf`): the inner fn
+        // answers a Rust tuple, and each leaf goes to its own `ret[i]`, in element order —
+        // the slots the dispatcher pushes back onto the interpreter's stack one by one.
+        Type::Tuple(_) => {
+            use std::fmt::Write as _;
+            let mut leaves = Vec::new();
+            returned_tuple_leaves(t, String::new(), &mut leaves);
+            let mut out = format!("let __t = ({expr});\n    unsafe {{\n");
+            for (i, (path, leaf)) in leaves.iter().enumerate() {
+                let value = if matches!(leaf.base(), Type::Float) {
+                    format!("__t{path}.to_bits() as i64")
+                } else {
+                    format!("(__t{path}) as i64")
+                };
+                let _ = writeln!(out, "        (*ret.add({i})).scalar = {value};");
+            }
+            out.push_str("    }");
+            out
+        }
         // Plain (tag-only) enum returns a `u8` tag → widen into the scalar slot.
         Type::Integer(_) | Type::Character | Type::Boolean | Type::Enum(_, false, _) => {
             format!("unsafe {{ (*ret).scalar = ({expr}) as i64; }}")
@@ -1486,7 +1842,8 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool) -> String {
         | Type::Trie(_, _, _) => format!("unsafe {{ (*ret).dbref = ({expr}); }}"),
         // @PLN199 C1 — a function value, as the `(d_nr, closure)` pair.
         Type::Function(..) => format!(
-            "let __f = ({expr});\n    unsafe {{ (*ret).scalar = i64::from(__f.0); (*ret).dbref = __f.1; }}"
+            "let __f = ({expr});\n    unsafe {{ (*ret).scalar = i64::from({}); (*ret).dbref = __f.1; }}",
+            if own_ids { "__to_host(__f.0)" } else { "__f.0" }
         ),
         // @PLN199 D1 — a generator: the inner fn answers its state machine, which the host
         // registers in ITS coroutine table (the cdylib's is a copy of its own), writing the
@@ -1850,13 +2207,33 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
 /// Returns a message if the rlib can't be found, the source can't be written,
 /// `rustc` can't be launched, or compilation fails (the message includes the
 /// `rustc` stderr tail and the kept `lib.rs` path for inspection).
-#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn build_shared_cdylib(
     data: &Data,
     stores: &Stores,
     export_set: &HashSet<u32>,
     out_dir: &std::path::Path,
     stem: &str,
+) -> Result<std::path::PathBuf, String> {
+    build_keyed_cdylib(
+        data,
+        stores,
+        export_set,
+        out_dir,
+        stem,
+        type_layout_fingerprint(stores),
+    )
+}
+
+/// [`build_shared_cdylib`], declaring itself built for `artifact_fp` (the key
+/// [`artifact_matches_layout`] asks it for).
+#[expect(clippy::too_many_lines, reason = "inherited")]
+fn build_keyed_cdylib(
+    data: &Data,
+    stores: &Stores,
+    export_set: &HashSet<u32>,
+    out_dir: &std::path::Path,
+    stem: &str,
+    artifact_fp: u64,
 ) -> Result<std::path::PathBuf, String> {
     // Same pre-check as `auto_build_native` / the driver's native path: a
     // live rustc differing from loft's build rustc cannot link the
@@ -1876,7 +2253,7 @@ pub fn build_shared_cdylib(
          (or `make check-rlib` to check before a gate); a `cargo build --bin loft` \
          refreshes the binary but not the library rlib the native path links",
     )?;
-    let src = generate_shared_cdylib_lib_rs(data, stores, export_set);
+    let src = shared_cdylib_source(data, stores, export_set, false, artifact_fp);
     crate::file_access::create_dir_all(out_dir).map_err(|e| format!("create {e}"))?;
     let rs = out_dir.join(format!("{stem}.rs"));
     crate::file_access::write(&rs, &src).map_err(|e| format!("write {e}"))?;
@@ -1967,7 +2344,7 @@ pub fn build_shared_cdylib(
         // Link each native package's resolved cdylib `.so` (the same `-L native`
         // / `-l dylib` / RPATH the executable path emits) so the cdylib's
         // `extern "C"` calls resolve at link time and the `.so` loads at run time.
-        for (crate_name, pkg_dir) in &data.native_packages {
+        for (crate_name, pkg_dir) in &linked_packages(data, export_set) {
             args.extend(native_pkg_cabi_link_args(crate_name, pkg_dir));
         }
     }
@@ -2142,9 +2519,23 @@ pub fn toolchain_failure_hint(stderr: &str) -> Option<String> {
 /// **every** non-`[A-Za-z0-9_]` char to `_` — enforcing the full invalid-character
 /// class, not just `-`/`.`.  The constant `loft_auto_` prefix guarantees the leading
 /// character is alphabetic (a crate name may not start with a digit).  (#294)
+///
+/// @PLN199 G2b — the package's NAME and VERSION from its `loft.toml` (`glb` 0.1.0 →
+/// `loft_auto_glb_0_1_0`), the directory's name only without one: a registry install and the
+/// checkout CI builds a prebuilt from lie in differently named directories, and both must
+/// name the artifact alike.
 #[must_use]
 pub fn auto_cdylib_stem(pkg_dir: &str) -> String {
-    let raw = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| "lib".to_string());
+    let raw = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+        .and_then(|m| {
+            let name = m.name?;
+            Some(match m.version {
+                Some(v) => format!("{name}_{v}"),
+                None => name,
+            })
+        })
+        .or_else(|| crate::file_access::file_name(pkg_dir))
+        .unwrap_or_else(|| "lib".to_string());
     format!(
         "loft_auto_{}",
         raw.replace(|c: char| !(c.is_ascii_alphanumeric() || c == '_'), "_")
@@ -2321,9 +2712,9 @@ fn artifact_stem(so: impl crate::file_access::HostPath) -> Option<String> {
 /// asked at all — an artifact this process cannot load is not one it can adopt,
 /// and saying so here is what lets `prune_artifacts` delete concurrently.
 ///
-/// Note this compares the RAW `type_layout_fingerprint`, not the mixed key the
-/// filename carries: an artifact built by a different loft BUILD cannot link
-/// against this one's rlib at all, so the layout is the part worth asserting here.
+/// The value compared is the key the filename carries (`cached_or_build_shared_cdylib`),
+/// so a file that reached the name another way — copied, or built for another program by a
+/// literal build — is refused for what it is, not for what its name says.
 ///
 /// The question is always asked through [`layout_fp_off_path`], never at `so`
 /// itself, because a caller that hears "no" REBUILDS at that very path — see
@@ -2452,17 +2843,91 @@ fn report_unprobeable(so: &std::path::Path, why: &str) {
 
 /// A digest of the package directories compiled into an auto-native artifact, in sorted
 /// order so the order they were resolved in does not name a second artifact.
+/// @PLN199 G0c — the libraries among `pending` whose code the artifact for `pkg_dir` can
+/// carry: `pkg_dir` itself, what it imports, transitively, and the home of every function
+/// its exports reach (a qualified `use dep;` binds no import).  The program around it may
+/// load others (`pending` is every library it compiles), and those are no part of what this
+/// artifact is — keyed on them, a second program that loads one more library rebuilt it.
+fn artifact_sources(
+    data: &Data,
+    pkg_dir: &str,
+    pending: &[String],
+    export_set: &HashSet<u32>,
+) -> Vec<String> {
+    let under = |file: &str, dir: &str| crate::file_access::is_under(file, dir);
+    let roots: Vec<u32> = export_set.iter().copied().collect();
+    let mut sources: HashSet<u16> = (0..data.definitions())
+        .map(|d| data.def(d))
+        .filter(|def| under(def.position().file.as_str(), pkg_dir))
+        .map(|def| def.source)
+        .chain(
+            crate::generation::reachable_functions(data, &roots)
+                .into_iter()
+                .map(|d| data.def(d).source),
+        )
+        // The program's source is no library's: an instance the program made of one of the
+        // library's generics lies in the library's file, and the program imports everything.
+        .filter(|&s| s != crate::data::MAIN_SOURCE)
+        .collect();
+    loop {
+        let before = sources.len();
+        for imp in data.applied_imports() {
+            if sources.contains(&imp.into_source) {
+                sources.insert(imp.lib_source);
+            }
+        }
+        if sources.len() == before {
+            break;
+        }
+    }
+    let mut out: Vec<String> = pending
+        .iter()
+        .filter(|dir| {
+            dir.as_str() == pkg_dir
+                || (0..data.definitions()).any(|d| {
+                    let def = data.def(d);
+                    // A stdlib definition can lie in a library's file — the wrapper type
+                    // `main_vector<T>` the library's `vector<T>` minted — and is no code of it.
+                    def.source != crate::data::STD_SOURCE
+                        && sources.contains(&def.source)
+                        && under(def.position().file.as_str(), dir)
+                })
+        })
+        .cloned()
+        .collect();
+    if !out.iter().any(|d| d == pkg_dir) {
+        out.push(pkg_dir.to_string());
+    }
+    out
+}
+
+/// @PLN199 G1b — which packages, by name and version (`loft.toml`), not by where they lie:
+/// the same library at two places is the same artifact.  A registry version is immutable; an
+/// edited local package is caught by the staleness check beside this key.  A directory with
+/// no manifest is named by its last component.
 fn contributing_fingerprint(contributing: &[String]) -> u64 {
     use std::hash::{Hash, Hasher};
-    let mut dirs: Vec<&String> = contributing.iter().collect();
-    dirs.sort_unstable();
-    dirs.dedup();
+    let mut ids: Vec<(String, String)> = contributing
+        .iter()
+        .map(|dir| {
+            let m = crate::manifest::read_manifest(&format!("{dir}/loft.toml"));
+            let name = m
+                .as_ref()
+                .and_then(|m| m.name.clone())
+                .or_else(|| crate::file_access::file_name(dir))
+                .unwrap_or_default();
+            (name, m.and_then(|m| m.version).unwrap_or_default())
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    dirs.hash(&mut h);
+    ids.hash(&mut h);
+    crate::cache::host_triple().hash(&mut h);
     h.finish()
 }
 
-fn type_layout_fingerprint(stores: &Stores) -> u64 {
+pub(crate) fn type_layout_fingerprint(stores: &Stores) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     stores.types.len().hash(&mut h);
@@ -2508,19 +2973,25 @@ pub fn cached_or_build_shared_cdylib(
     stores: &Stores,
     export_set: &HashSet<u32>,
     pkg_dir: &str,
-    contributing: &[String],
+    pending: &[String],
 ) -> Result<Option<std::path::PathBuf>, String> {
     let out_dir = std::path::Path::new(pkg_dir).join("native-auto");
-    // #461 — the generated cdylib hardcodes type-table INDICES (e.g. `OpWriteFile`'s
-    // `db_tp`), but those indices SHIFT with which libraries are loaded (an `i32`
-    // write is `db_tp=64` standalone, `67` once `hex_grid` is parsed).  At runtime
-    // the cdylib resolves the index against the caller's SHARED `Stores` type table,
-    // so a cdylib built in one consumer's context, then reused (cached per-library)
-    // by another consumer whose table differs, reads the WRONG type and corrupts
-    // (the moros GLB header wrote 8-byte fields for `as i32` → version 0).  Fold the
-    // caller's type-table layout into the freshness key so a context mismatch
-    // rebuilds instead of silently linking an index-incompatible cdylib.
+    let contributing = &artifact_sources(data, pkg_dir, pending, export_set)[..];
+    // #461 — type-table INDICES shift with which libraries are loaded (an `i32` write is
+    // `db_tp=64` standalone, `67` once `hex_grid` is parsed), and a cdylib that hardcoded
+    // them, reused by a consumer whose table differs, read the WRONG type and corrupted
+    // (the moros GLB header wrote 8-byte fields for `as i32` → version 0).  A literal build
+    // still folds the caller's layout into its key for that reason.
     let layout_fp = type_layout_fingerprint(stores);
+    // @PLN199 G0c — an artifact that names its ids by key (`lib_ids`) runs in any program
+    // that has those keys, so neither the program's type table nor its function numbering is
+    // part of what it is built for: the loft that built it and the sources it carries are.
+    // A literal build (`LOFT_NO_LIB_IDS=1`) still serves one program, and keeps both.
+    let program_fp = if std::env::var_os("LOFT_NO_LIB_IDS").is_some() {
+        mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set))
+    } else {
+        0
+    };
     // And WHICH packages were compiled in.  The artifact carries the code of every library
     // it reaches, a dependency's included, so two runs that resolved `use probepkg` to
     // different versions build different libraries — with the SAME layout when the versions
@@ -2532,21 +3003,21 @@ pub fn cached_or_build_shared_cdylib(
     // …and WHICH loft executable: the artifact is this binary's generated code, called through
     // this binary's store layout, so a different binary must rebuild rather than adopt it —
     // the rlib's hash alone stays the same when an installed `loft` is upgraded without it
-    // (loft#1776).
-    let fp = mix_fp(
+    // (loft#1776).  A release bundle's binary names its build by itself: the release builds
+    // its artifacts beside an rlib that ships nowhere, and a user's copy has none to hash.
+    let loft_fp = if crate::cache::release_bundle() {
+        crate::cache::loft_exe_identity()
+    } else {
         mix_fp(
-            mix_fp(
-                crate::cache::loft_build_fingerprint(),
-                crate::cache::loft_exe_identity(),
-            ),
-            layout_fp,
-        ),
+            crate::cache::loft_build_fingerprint(),
+            crate::cache::loft_exe_identity(),
+        )
+    };
+    let fp = mix_fp(
+        mix_fp(loft_fp, program_fp),
         mix_fp(
             contributing_fingerprint(contributing),
-            mix_fp(
-                crate::cache::native_release_flags_fingerprint(),
-                fn_numbering_fingerprint(data, export_set),
-            ),
+            crate::cache::native_release_flags_fingerprint(),
         ),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
@@ -2581,7 +3052,7 @@ pub fn cached_or_build_shared_cdylib(
     // probe, too, must not load `so` itself (loft#999).
     if crate::file_access::exists(&so)
         && !source_newer_than(contributing, &so)
-        && artifact_matches_layout(&so, layout_fp)
+        && artifact_matches_layout(&so, fp)
     {
         return Ok(Some(so));
     }
@@ -2600,13 +3071,13 @@ pub fn cached_or_build_shared_cdylib(
         .map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
     if crate::file_access::exists(&so)
         && !source_newer_than(contributing, &so)
-        && artifact_matches_layout(&so, layout_fp)
+        && artifact_matches_layout(&so, fp)
     {
         return Ok(Some(so));
     }
 
     let build = |out_dir: &std::path::Path| -> Result<Option<std::path::PathBuf>, String> {
-        let built = build_shared_cdylib(data, stores, export_set, out_dir, &stem)?;
+        let built = build_keyed_cdylib(data, stores, export_set, out_dir, &stem, fp)?;
         crate::cache::write_native_artifact_fingerprint(out_dir, fp);
         // Bound the directory, while the build lock is still held.  A new artifact
         // appears per consumer type-layout (#715) and nothing collected the old
@@ -2629,7 +3100,7 @@ pub fn cached_or_build_shared_cdylib(
     // loaded image by PATH for the process, so probing here and rebuilding at the
     // same path made the later load return the stale image (loft#777, and loft#999
     // for the one-unlucky-`copy` route back into it).
-    if !crate::file_access::exists(&so) || !artifact_matches_layout(&so, layout_fp) {
+    if !crate::file_access::exists(&so) || !artifact_matches_layout(&so, fp) {
         crate::cache::write_run_source_hash(&out_dir, source_content_hash(contributing));
         return build(&out_dir);
     }
@@ -2649,8 +3120,7 @@ pub fn cached_or_build_shared_cdylib(
 /// code writes a function value's `d_nr` as a literal (a fn-ref dispatch arm, a `FnRef` it
 /// makes), and the interpreter hands it values of ITS numbering, so an artifact serves only
 /// a program that numbers those functions the same way.  A library's functions are numbered
-/// before the script's, so editing the script does not change this.  Names alone would not
-/// do: a lambda's name is its position in the parse (`__lambda_N`).
+/// before the script's, so editing the script does not change this.
 fn fn_numbering_fingerprint(data: &Data, export_set: &HashSet<u32>) -> u64 {
     use std::hash::{Hash, Hasher};
     let roots: Vec<u32> = export_set.iter().copied().collect();

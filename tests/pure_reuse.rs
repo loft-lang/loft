@@ -142,6 +142,20 @@ fn the_sharing_bodies_are_the_admitted_shapes() {
     assert_eq!(got, SHARED_TRACE, "the sharing bodies moved:\n{err}");
 }
 
+/// The calls of `name` in `src`: `name(` not preceded by an identifier character, so a
+/// variant named after it (`n_has__given_n_names(`) is not counted as one.
+fn calls_of(src: &str, name: &str) -> usize {
+    let pat = format!("{name}(");
+    src.match_indices(&pat)
+        .filter(|(i, _)| {
+            src[..*i]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+        })
+        .count()
+}
+
 #[test]
 fn a_check_and_a_use_call_the_total_function_once() {
     for (env, want) in [(&[][..], 1usize), (&[("LOFT_NO_PURE_REUSE", "1")][..], 0)] {
@@ -161,7 +175,7 @@ fn a_check_and_a_use_call_the_total_function_once() {
         // With the rule `c1` decodes itself, once, and calls both wrappers' variants; without
         // it, it calls the two wrappers, each of which decodes.
         assert_eq!(
-            c1.matches("n_names(").count(),
+            calls_of(c1, "n_names"),
             want,
             "{env:?}: n_c1's own n_names calls"
         );

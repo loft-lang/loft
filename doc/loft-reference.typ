@@ -6988,7 +6988,7 @@ Calling the inner function directly does the same thing, and calling it twice is
 
 Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in `doc/features/` in the repository, where `\@F2` is `F2.md`.
 
-The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 77 of the 91 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
+The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 77 of the 92 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
 
 The catalogue is generated from the `loft-lang/features` issue tracker, which is the single source of truth: every entry is an issue, and `make features-check` regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.
 
@@ -7085,6 +7085,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F124\*\* — Operators on a program's own type — `operator compare`, `plus`, `minus`, `times`, `negate`, `divided\_by`, `remainder`, `to\_\<type\>`
 - \*\*\@F125\*\* — Text slicing — `s\[a..b\]`, `s\[a..\]`, `s\[..b\]`, `s\[i\]` (byte offsets; `char\_slice` for characters)
 - \*\*\@F126\*\* — A store's failure arm — `place = value else { … }` runs when the write did not land
+- \*\*\@F127\*\* — Store upgrade — a changed struct converts its stored data, or says why it cannot
 
 === Tooling and infrastructure
 
@@ -8531,7 +8532,7 @@ Number of elements in a hash collection.
 pub fn size(self: const hash) -> integer
 ```
 
-The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
+The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  A slot is 8 bytes; a hash that owns its records keeps each in its slot too, so a slot then costs 8 bytes plus the record.  Records kept in separate allocations are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
 
 ```rust
 pub fn size(self: const index) -> integer

@@ -223,7 +223,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     if disabled() || data.open_world {
         return 0;
     }
-    let vr = crate::generation::hoist::value_records(data, stores);
+    let vr = crate::generation::hoist::value_records(data, stores, false);
     if vr.fns.is_empty() && vr.params.is_empty() {
         return 0;
     }

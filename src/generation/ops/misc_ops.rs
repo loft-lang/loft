@@ -88,12 +88,12 @@ impl OpEmitter for OpDatabaseEmitter {
                     ctx.w,
                     "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 || stores.is_frame_held(var_{name}.store_nr) {{ var_{name} = {mint}(cell,var_{name}, "
                 )?;
-                ctx.emit_i32_slot(tp_val)?;
+                ctx.emit_type_slot(tp_val)?;
                 if complete {
                     return write!(ctx.w, ") }} /* @FR-R-LoopRecord kept record */");
                 }
                 write!(ctx.w, ") }} else {{ stores.set_default_value(")?;
-                ctx.emit_i32_slot(tp_val)?;
+                ctx.emit_type_slot(tp_val)?;
                 return write!(
                     ctx.w,
                     " as u16, &var_{name}) }} /* @FR-R-LoopRecord kept record, defaults re-established */"
@@ -123,7 +123,7 @@ impl OpEmitter for OpDatabaseEmitter {
                     ctx.w,
                     "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 || stores.is_frame_held(var_{name}.store_nr) {{ var_{name} = {mint}(cell,var_{name}, "
                 )?;
-                ctx.emit_i32_slot(tp_val)?;
+                ctx.emit_type_slot(tp_val)?;
                 return write!(
                     ctx.w,
                     ") }} else {{ vector::vector_buffer_reset(&var_{name}, &mut stores.allocations) }} /* @PLN157 § V-al loop buffer */"
@@ -174,7 +174,7 @@ impl OpEmitter for OpDatabaseEmitter {
             }
             ctx.emit(var_val)?;
             write!(ctx.w, ", ")?;
-            ctx.emit_i32_slot(tp_val)?;
+            ctx.emit_type_slot(tp_val)?;
             write!(ctx.w, ")")?;
             if !hosted.is_empty() {
                 write!(ctx.w, ";")?;
@@ -209,9 +209,9 @@ impl OpEmitter for OpStepEmitter {
         write!(ctx.w, ", ")?;
         ctx.emit(&args[1])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[2])?;
+        ctx.emit_param_slot(2, &args[2])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[3])?;
+        ctx.emit_iter_arg(&args[2], &args[3])?;
         write!(ctx.w, ")")
     }
 }
@@ -236,9 +236,9 @@ impl OpEmitter for OpRemoveEmitter {
         write!(ctx.w, ", ")?;
         ctx.emit(&args[1])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[2])?;
+        ctx.emit_param_slot(2, &args[2])?;
         write!(ctx.w, ", ")?;
-        ctx.emit_i32_slot(&args[3])?;
+        ctx.emit_param_slot(3, &args[3])?;
         write!(ctx.w, ")")
     }
 }

@@ -95,6 +95,27 @@ pub fn program_roots(data: &crate::data::Data) -> Vec<u16> {
         .collect()
 }
 
+/// The roots of a release baseline: the user types whose values outlive the program
+/// (`Data::surviving`), or every user type ([`program_roots`]) when that set is unknown.
+#[must_use]
+pub fn surviving_roots(data: &crate::data::Data) -> Vec<u16> {
+    let all = program_roots(data);
+    match &data.surviving {
+        None => all,
+        Some(set) => all
+            .into_iter()
+            .filter(|t| set.iter().any(|d| data.def(*d).known_type == *t))
+            .collect(),
+    }
+}
+
+/// Whether the struct named `tp` outlives the program (`Data::surviving`; all do when unknown).
+fn survives(data: &crate::data::Data, tp: &str) -> bool {
+    data.surviving
+        .as_ref()
+        .is_none_or(|set| set.contains(&data.def_nr(tp)))
+}
+
 // ── @PLN196 step 9: where a computed field's value comes from ──────────────────────────────
 
 /// `@FR-L-Upgrade-Source` — the sources section of a project baseline: per field of a user
@@ -113,6 +134,7 @@ pub fn render_sources(data: &crate::data::Data, previous: &str, version: &str) -
         let d_nr = data.def_nr(tp);
         if d_nr == u32::MAX
             || crate::file_access::is_stdlib_source(data.def(d_nr).position.file.as_str())
+            || !survives(data, tp)
         {
             continue;
         }
@@ -132,18 +154,17 @@ pub fn render_sources(data: &crate::data::Data, previous: &str, version: &str) -
 /// fields were made from: for each sources line whose struct and field still exist but one of
 /// whose sources this build no longer declares, a sentence naming the dropped field, the
 /// computed one, and the two cures — an `upgrade` routine for the struct, or a floor
-/// (`data_compatible_with`) at or above the release that started computing it.  Empty when
-/// nothing is lost.
-#[must_use]
+/// (`data_compatible_with`) at or above the release that started computing it.  Each
+/// refusal is at the computed field (`Item.count`).  Empty when nothing is lost.
 ///
-/// `routines` names the structs the build has an `upgrade` routine for
-/// (`Parser::upgrade_routine_defs`, which the caller asks: this layer names no parser).
+/// `routines` names the structs the build has an `upgrade` routine for.
+#[must_use]
 pub fn lost_sources(
     data: &crate::data::Data,
     sources: &str,
     release: &crate::database::Release,
     routines: &[String],
-) -> Vec<String> {
+) -> Vec<Refused> {
     use crate::data::{DefType, Type};
     let floor = crate::database::version_triple(&release.oldest);
     // The struct field a path stops resolving at (`Inner.label`), or `None` when it resolves.
@@ -179,6 +200,7 @@ pub fn lost_sources(
             || data.def_type(d_nr) != DefType::Struct
             || data.attr(d_nr, field) == usize::MAX
             || routines.iter().any(|r| r == tp)
+            || !survives(data, tp)
         {
             continue; // gone with its value, or carried by the type's routine
         }
@@ -201,12 +223,111 @@ pub fn lost_sources(
             } else {
                 format!("raise `data_compatible_with` to \"{since}\"")
             };
-            out.push(format!(
-                "{dropped} is dropped, and {from} computes {target} from it: a store older than \
-                 that holds no {target} and would lose the value — write \
-                 `fn upgrade(from: Release, old: <the old fields>, item: {tp})`, or {floor_cure}"
-            ));
+            out.push(Refused {
+                at: target.to_string(),
+                text: format!(
+                    "{dropped} is dropped, and {from} computes {target} from it: a store older \
+                     than that holds no {target} and would lose the value — write \
+                     `fn upgrade(from: Release, old: <the old fields>, item: {tp})`, or \
+                     {floor_cure}"
+                ),
+            });
         }
     }
     out
+}
+
+/// What a store written with the project's release baseline (`layout.lock`) does on its way
+/// into this program: the changes it goes through, and the refusals that would stop it.
+#[derive(Debug, Default)]
+pub struct UpgradeReport {
+    /// Each change a converting load makes, in words.
+    pub changes: Vec<String>,
+    /// Each change no load can carry.
+    pub refused: Vec<Refused>,
+}
+
+/// One change no load can carry.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Refused {
+    /// The field path it is about, from a stored type's name (`Item.count`, `World.items[].x`).
+    pub at: String,
+    /// What is refused and how to cure it, as a sentence.
+    pub text: String,
+}
+
+/// The upgrade from the baseline recorded in `project` to this program — the one answer
+/// `loft layout check` prints and the parser's `layout-upgrade-refused` warning shows
+/// (`@FR-L-Upgrade-Source`, `@FR-L-Upgrade-Routine`).  `Ok(None)`: no baseline, or one this
+/// program matches.  `routines` is the program's `upgrade` routines
+/// (`Parser::upgrade_routines`, which the caller asks: this layer names no parser).
+///
+/// # Errors
+/// A baseline this version of loft cannot read, in words.
+pub fn baseline_report(
+    project: &std::path::Path,
+    stores: &Stores,
+    data: &crate::data::Data,
+    release: &crate::database::Release,
+    routines: &crate::database::Routines,
+) -> Result<Option<UpgradeReport>, String> {
+    use crate::database::LayoutDesc;
+    use crate::schema_sidecar::{self as ss, SchemaVerdict};
+    let Some(text) = ss::read_baseline(project) else {
+        return Ok(None);
+    };
+    let roots = surviving_roots(data);
+    let identity = of_scoped(stores, &roots, data);
+    // A baseline is read with no release floor: it is this project's own earlier release.
+    match ss::verdict_for_sidecar_text(&text, &identity, &crate::database::Release::default()) {
+        SchemaVerdict::Changed(_) => {}
+        SchemaVerdict::Unreadable => {
+            return Err(
+                "the baseline is unreadable — delete `layout.lock` and accept again".into(),
+            );
+        }
+        _ => return Ok(None),
+    }
+    let baseline = LayoutIdentity::from_sidecar(&text)
+        .ok_or_else(|| "the baseline is not a layout file".to_string())?;
+    let mut old = LayoutDesc::from_dump(&baseline.dump)?;
+    old.apply_facts(&baseline.facts)?;
+    let (mut changes, map_refused) =
+        stores.baseline_upgrade(&old, &baseline.version, &roots, routines);
+    let mut refused: Vec<Refused> = map_refused
+        .into_iter()
+        .map(|r| Refused {
+            text: format!("{} — {}", r.path, r.reason),
+            at: r.path,
+        })
+        .collect();
+    let new_names: std::collections::BTreeSet<&str> = roots
+        .iter()
+        .map(|r| stores.types[*r as usize].name.as_str())
+        .collect();
+    for (id, name) in &old.names {
+        let user = !matches!(
+            old.nodes.get(id),
+            Some(crate::database::LayoutNode::Base(_))
+        ) && name.chars().next().is_some_and(char::is_uppercase)
+            && !name.contains("::");
+        if user && !new_names.contains(name.as_str()) && !stores.names.contains_key(name) {
+            changes.push(format!(
+                "{name} is gone: a store whose root is a `{name}` cannot be read"
+            ));
+        }
+    }
+    let named: Vec<String> = routines
+        .keys()
+        .map(|t| stores.types[*t as usize].name.clone())
+        .collect();
+    refused.extend(lost_sources(data, &baseline.sources, release, &named));
+    changes.sort();
+    changes.dedup();
+    refused.sort_by(|a, b| a.text.cmp(&b.text));
+    refused.dedup();
+    if changes.is_empty() && refused.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(UpgradeReport { changes, refused }))
 }

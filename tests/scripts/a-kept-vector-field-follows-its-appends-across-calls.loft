@@ -1,0 +1,247 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A vector FIELD of a record parameter — `m.cs` — that a chain of calls walks and appends to
+// answers what the store holds at every read (`@FR-R-Header`'s kept clause: the field's
+// header is held across the calls, handed down by `&mut` to the callees that keep it, and
+// derived again after each append to it and each call that may change it).  The cells: the
+// lane-17 chain (walks in four callees, one append), an append read back in the same body,
+// a callee that empties the field, an append through a local VIEW of the field, the same
+// record as two parameters, appends inside a loop, the length read inside the appended
+// element, the map and the undo stack inline in one record (one store), a recursion, and an
+// appending call nested beside a length read.  Every value is hand-computed (g1 and g8 by a
+// mirror in Python).  Both backends.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-22) — no refresh after the append group:
+// `--native` answered `g1 23 1858 23 0`; no refresh after a plain call that may append:
+// `g3 30033 0`.  The interpreter has no such clause and answered right under both.
+
+struct Hx { h: integer, k: integer }
+struct Ck { cx: integer, hs: vector<Hx> }
+struct Mp { name: text, cs: vector<Ck> }
+struct Us { es: vector<Hx>, redo: vector<Hx> }
+struct Wd { tag: integer, m: Mp, s: Us }
+
+fn mk(cx: integer) -> Ck {
+  v: vector<Hx> = [];
+  for j in 0..4 { v += [Hx { h: cx * 10 + j, k: 0 }]; }
+  Ck { cx: cx, hs: v }
+}
+
+fn ensure(m: &Mp, cx: integer) {
+  for c in m.cs { if c.cx == cx { return; } }
+  m.cs += [mk(cx)];
+}
+
+fn get(m: Mp, cx: integer, j: integer) -> Hx {
+  for c in m.cs {
+    if c.cx == cx { if j >= 0 && j < len(c.hs) { return c.hs[j]?; } }
+  }
+  Hx {}
+}
+
+fn put(m: &Mp, cx: integer, j: integer, x: Hx) {
+  ensure(m, cx);
+  for c in m.cs {
+    if c.cx == cx { c.hs[j] = x; return; }
+  }
+}
+
+fn bump(m: &Mp, cx: integer, j: integer, d: integer) {
+  cur = get(m, cx, j);
+  cur.h = cur.h + d;
+  put(m, cx, j, cur);
+}
+
+fn log(s: &Us, m: Mp, cx: integer, j: integer) {
+  p = get(m, cx, j);
+  s.es += [p];
+  s.redo = [];
+}
+
+fn step(s: &Us, m: &Mp, cx: integer, j: integer, d: integer) {
+  log(s, m, cx, j);
+  bump(m, cx, j, d);
+}
+
+fn run(s: &Us, m: &Mp, n: integer) {
+  for i in 0..n { step(s, m, i % 5, i % 4, i); }
+}
+
+fn total(m: Mp) -> integer {
+  t = 0;
+  for c in m.cs { for x in c.hs { t += x.h; } }
+  t
+}
+
+// g1 — the chain: 23 steps over 5 chunks made on first touch (python mirror: 5 577 23 327).
+fn g1() -> text {
+  m = Mp { name: "a" };
+  s = Us {};
+  run(s, m, 23);
+  e = 0;
+  for x in s.es { e += x.h; }
+  "g1 {len(m.cs)} {total(m)} {len(s.es)} {e}"
+}
+
+// g2 — an append and reads of the same field after it, in one body: the length and a walk
+// see each new chunk.  Chunks 7, 8, 7 (present), 9: lengths 1 2 2 3; cx sum 24.
+fn grow_and_count(m: &Mp, cx: integer) -> integer {
+  ensure(m, cx);
+  n = len(m.cs);
+  for c in m.cs { n += c.cx * 100; }
+  n
+}
+
+fn g2() -> text {
+  m = Mp { name: "b" };
+  a = grow_and_count(m, 7);
+  b = grow_and_count(m, 8);
+  c = grow_and_count(m, 7);
+  d = grow_and_count(m, 9);
+  "g2 {a} {b} {c} {d}"
+}
+
+// g3 — a callee that empties the field by assignment, between walks: the chain must see the
+// empty vector (0) and then the chunk ensure adds back (1, total 30+31+32+33 = 126).
+fn reset(m: &Mp) { m.cs = []; }
+
+fn reset_then(m: &Mp, cx: integer) -> integer {
+  ensure(m, cx);
+  reset(m);
+  z = len(m.cs);
+  for c in m.cs { if c.cx >= 0 { z += 1000; } }
+  ensure(m, cx);
+  z * 10 + len(m.cs)
+}
+
+fn g3() -> text {
+  m = Mp { name: "c" };
+  ensure(m, 1);
+  ensure(m, 2);
+  r = reset_then(m, 3);
+  "g3 {r} {total(m)}"
+}
+
+// g4 — an append through a local VIEW of the field, in a callee: the caller's walk after it
+// sees 3 chunks (cx 1, 2, 4), sum of cx 7.
+fn via_view(m: &Mp, cx: integer) {
+  v = m.cs;
+  v += [mk(cx)];
+}
+
+fn view_then(m: &Mp) -> integer {
+  ensure(m, 1);
+  ensure(m, 2);
+  via_view(m, 4);
+  t = 0;
+  for c in m.cs { t += c.cx; }
+  t * 10 + len(m.cs)
+}
+
+fn g4() -> text {
+  m = Mp { name: "d" };
+  "g4 {view_then(m)}"
+}
+
+// g5 — the same map as two by-value parameters (one record), appended through the second:
+// the first's walk after it sees the new chunk (cx 1 then 5: 2 chunks, cx sum 6).
+fn twice(a: Mp, b: Mp, cx: integer) -> integer {
+  ensure(a, 1);
+  b.cs += [mk(cx)];
+  t = 0;
+  for c in a.cs { t += c.cx; }
+  t * 10 + len(a.cs)
+}
+
+fn g5() -> text {
+  m = Mp { name: "e" };
+  "g5 {twice(m, m, 5)}"
+}
+
+// g6 — appends inside a loop of a callee, read after each: lengths 1..4, then a walk.
+fn fill_loop(m: &Mp, n: integer) -> integer {
+  t = 0;
+  for i in 0..n {
+    m.cs += [mk(i)];
+    t = t * 10 + len(m.cs);
+  }
+  for c in m.cs { t += c.cx; }
+  t
+}
+
+fn g6() -> text {
+  m = Mp { name: "f" };
+  "g6 {fill_loop(m, 4)}"
+}
+
+// g7 — the field's length read INSIDE the appended element: the element sees the length
+// before the append (0, then 1, then 2): cx 0 1 2, then a walk sums 3.
+fn self_len(m: &Mp) -> integer {
+  m.cs += [Ck { cx: len(m.cs) }];
+  m.cs += [Ck { cx: len(m.cs) }];
+  m.cs += [Ck { cx: len(m.cs) }];
+  t = 0;
+  for c in m.cs { t += c.cx; }
+  t * 10 + len(m.cs)
+}
+
+fn g7() -> text {
+  m = Mp { name: "g" };
+  "g7 {self_len(m)}"
+}
+
+// g8 — the map and the undo stack inline in ONE record, one store: the undo push claims in
+// the map's store between the walks.  Same steps as g1, same answer.
+fn g8() -> text {
+  w = Wd { tag: 1 };
+  run(w.s, w.m, 23);
+  e = 0;
+  for x in w.s.es { e += x.h; }
+  "g8 {len(w.m.cs)} {total(w.m)} {len(w.s.es)} {e}"
+}
+
+// g9 — a recursion that appends on the way down and walks on the way back:
+// chunks 3, 2, 1 made; each level adds len(m.cs) after its call: 3 + 3 + 3 = 9.
+fn deep(m: &Mp, k: integer) -> integer {
+  if k == 0 { return 0; }
+  ensure(m, k);
+  r = deep(m, k - 1);
+  r + len(m.cs)
+}
+
+fn g9() -> text {
+  m = Mp { name: "h" };
+  "g9 {deep(m, 3)} {len(m.cs)}"
+}
+
+// g10 — a call that appends, nested in an expression beside a length read:
+// add_one answers the new length; the sum reads len(m.cs) after it (left to right): 1+1, 2+2.
+fn add_one(m: &Mp, cx: integer) -> integer {
+  m.cs += [mk(cx)];
+  len(m.cs)
+}
+
+fn nested(m: &Mp) -> integer {
+  a = add_one(m, 1) + len(m.cs);
+  b = add_one(m, 2) + len(m.cs);
+  a * 10 + b
+}
+
+fn g10() -> text {
+  m = Mp { name: "i" };
+  "g10 {nested(m)}"
+}
+
+fn main() {
+  r = g1(); println(r); assert(r == "g1 5 577 23 327", r);
+  r = g2(); println(r); assert(r == "g2 701 1502 1502 2403", r);
+  r = g3(); println(r); assert(r == "g3 1 126", r);
+  r = g4(); println(r); assert(r == "g4 73", r);
+  r = g5(); println(r); assert(r == "g5 62", r);
+  r = g6(); println(r); assert(r == "g6 1240", r);
+  r = g7(); println(r); assert(r == "g7 33", r);
+  r = g8(); println(r); assert(r == "g8 5 577 23 327", r);
+  r = g9(); println(r); assert(r == "g9 9 3", r);
+  r = g10(); println(r); assert(r == "g10 24", r);
+}

@@ -166,20 +166,21 @@ fn plan_for_package(pkg: &Package, current: &str, triple: &str) -> Plan {
 /// The triple naming the release artifact that applies to this host — the key a
 /// toolchain entry's `binaries` map is looked up by.
 ///
-/// This is the PUBLISHED triple, not the one this binary happened to be built with, and
-/// the difference is load-bearing on Linux: releases ship `x86_64-unknown-linux-musl`
-/// (static, so it runs on glibc systems too) while a local `cargo build` is
-/// `-gnu`.  Returning the build triple would send every Linux user looking for an entry
-/// that does not exist, and they would be told "published, but not built for your
-/// platform" about the very artifact meant for them.  `scripts/install.sh` derives the
-/// same name from `uname`, and [`PUBLISHED_TRIPLES`] pins the pair together.
+/// Composed from the platform rather than taken from the build, so it names the release
+/// for this host whatever the local build called itself, and keyed on the C library
+/// because that decides which release can run here: Linux releases are `-gnu`,
+/// dynamically linked so they can load a library's native code (loft#2127), and a loft
+/// built from source on musl must not replace itself with one — its `-musl` name finds
+/// no release, and it is told so.  `scripts/install.sh` derives the same name from
+/// `uname`, and [`PUBLISHED_TRIPLES`] pins the pair together.
 #[must_use]
 pub fn host_triple() -> String {
     let arch = std::env::consts::ARCH;
     match std::env::consts::OS {
         "macos" => format!("{arch}-apple-darwin"),
         "windows" => format!("{arch}-pc-windows-msvc"),
-        _ => format!("{arch}-unknown-linux-musl"),
+        _ if cfg!(target_env = "musl") => format!("{arch}-unknown-linux-musl"),
+        _ => format!("{arch}-unknown-linux-gnu"),
     }
 }
 
@@ -192,7 +193,7 @@ pub const PUBLISHED_TRIPLES: &[&str] = &[
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
     "x86_64-pc-windows-msvc",
-    "x86_64-unknown-linux-musl",
+    "x86_64-unknown-linux-gnu",
 ];
 
 // ── @PLN78 step 5 — the advisory half ───────────────────────────────────────────
@@ -484,6 +485,8 @@ mod tests {
                     url: format!("https://example/loft-{semver}-{t}.zip"),
                     sha256: format!("hash-{semver}-{t}"),
                     loft_ffi_fp: None,
+                    loft_exe_id: None,
+                    stem: None,
                 },
             );
         }
@@ -503,6 +506,7 @@ mod tests {
             provides: Vec::new(),
             triggers: Vec::new(),
             binaries,
+            artifacts: BTreeMap::new(),
             api: Vec::new(),
             prerelease: false,
             published: "2026-07-21T00:00:00Z".to_string(),
@@ -669,11 +673,10 @@ mod tests {
         assert_eq!(built_for, vec!["aarch64-apple-darwin".to_string()]);
     }
 
-    /// The lookup key must be a triple the release actually PUBLISHES.  It was not:
-    /// Linux composed `-gnu` (the build triple) while releases ship `-musl`, so every
-    /// Linux user would have been told "published, but not built for your platform"
-    /// about the artifact meant for them.  Caught by writing the installer's own
-    /// detection, not by reading the code.
+    /// The lookup key must be a triple the release actually PUBLISHES, or every user of
+    /// that platform is told "published, but not built for your platform" about the
+    /// artifact meant for them.  Not on musl, which no release is built for.
+    #[cfg(not(target_env = "musl"))]
     #[test]
     fn host_triple_is_one_the_release_publishes() {
         let t = host_triple();

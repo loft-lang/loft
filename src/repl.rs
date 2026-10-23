@@ -1830,6 +1830,9 @@ pub struct ReplSession {
     /// A game is a real `loft` run in its own process — its frame loop (and, once the
     /// graphics library lands, its native window) must not block the serve loop.
     game: Option<GameProc>,
+    /// @PLN196 — where a game this session launched writes its world's layout
+    /// (`LOFT_WORLD_LAYOUT_OUT`): [`compile`](Self::compile) checks each save against it.
+    world_file: Option<std::path::PathBuf>,
     /// @PLN14 arc A — **the session store**: one detached `Store` holding a
     /// materialized copy of every heap-backed binding's value.  It is adopted into
     /// each eval's throwaway `State` just long enough to materialize into, then
@@ -1966,6 +1969,7 @@ impl ReplSession {
             paused: None,
             workspace_file: None,
             game: None,
+            world_file: None,
             session_store: None,
             store_observe: store_observe_default(),
             env: std::collections::HashMap::new(),
@@ -2048,6 +2052,7 @@ impl ReplSession {
             paused: None,
             workspace_file: None,
             game: None,
+            world_file: None,
             session_store: None,
             store_observe: store_observe_default(),
             env: std::collections::HashMap::new(),
@@ -2267,10 +2272,21 @@ impl ReplSession {
         let src = crate::file_access::read_to_string(path)?;
         let sp = self.savepoint();
         let pre_diag = self.parser.diagnostics.entries().len();
+        self.parser.running_world = self.running_world();
         self.parser.parse_str(&src, path, false);
+        self.parser.running_world = None;
         let produced = self.parser.diagnostics.entries()[pre_diag..].to_vec();
         self.rewind(sp);
         Ok(produced)
+    }
+
+    /// The layout of the world the game this session launched holds, while that game — or
+    /// the build it swapped to — runs: the file's first line names the process that wrote it.
+    fn running_world(&self) -> Option<String> {
+        let text = crate::file_access::read_to_string(self.world_file.as_ref()?).ok()?;
+        let (head, layout) = text.split_once('\n')?;
+        let pid: u32 = head.strip_prefix("loft-world pid=")?.trim().parse().ok()?;
+        (crate::platform::pid_alive(pid) != Some(false)).then(|| layout.to_string())
     }
 
     /// @PLN16 M5e slice 5 — run every test in `path` and return a structured outcome per
@@ -2554,9 +2570,19 @@ impl ReplSession {
         // by default — the child's file watcher reacts to every IDE save and
         // hot-swaps the edited fn (tier 0); its `live-reload:` stderr lines
         // are the structured feedback.  LOFT_LIVE_RELOAD=0 opts out.
+        // HELD: a save never changes the running game by itself — the
+        // edit is read and its warnings reviewed first, and the editor's Apply makes it active
+        // (`D!:apply`), because a warning does not stop a program.
         if std::env::var_os("LOFT_LIVE_RELOAD").is_none() {
-            spawn = spawn.env("LOFT_LIVE_RELOAD", "1");
+            spawn = spawn.env("LOFT_LIVE_RELOAD", "hold");
         }
+        // @PLN196 — the game writes its world's layout here, so each save is checked against
+        // the world the next build has to carry.
+        let world_file =
+            std::env::temp_dir().join(format!("loft_serve_world_{}.dschema", std::process::id()));
+        let _ = crate::file_access::remove_file(&world_file);
+        spawn = spawn.env("LOFT_WORLD_LAYOUT_OUT", &world_file);
+        self.world_file = Some(world_file);
         // @PLN18 08-S7 editor support — an IDE-launched game is DEBUGGABLE by
         // default: the D!: control channel answers on the game's port
         // (loopback-only) and a compiled game keeps the parked interpreter
@@ -2611,6 +2637,9 @@ impl ReplSession {
         // reaping the child alone would leave the server running and holding its port.
         // The launch owns the tree (`platform::process`), which stops it on every platform.
         let _ = g.child.stop_tree();
+        if let Some(w) = &self.world_file {
+            let _ = crate::file_access::remove_file(w);
+        }
         Some(std::mem::take(
             &mut *g
                 .output

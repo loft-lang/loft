@@ -1,8 +1,8 @@
-diff --git b/src/generation/coroutine.rs a/src/generation/coroutine.rs
-index 83a1d5773..7886d2160 100644
---- b/src/generation/coroutine.rs
-+++ a/src/generation/coroutine.rs
-@@ -1572,10 +1572,7 @@ fn persistent_default(tp: &Type) -> String {
+diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
+index 7e338153b..f29737bab 100644
+--- a/src/generation/coroutine.rs
++++ b/src/generation/coroutine.rs
+@@ -1737,10 +1737,7 @@ fn persistent_default(tp: &Type) -> String {
      if is_text_slot(tp) {
          return "String::new()".to_string();
      }
@@ -14,7 +14,7 @@ index 83a1d5773..7886d2160 100644
          // A heap local starts as the null reference and the body's own `OpDatabase` fills
          // it — the same initialiser the per-arm `let` used before these became fields.
          Type::Reference(_, _)
-@@ -1597,7 +1594,7 @@ fn persistent_default(tp: &Type) -> String {
+@@ -1764,7 +1761,7 @@ fn persistent_default(tp: &Type) -> String {
          // `0_u32`, a `single` field `f32` and initialised `0.0_f64`, a `boolean` field `u8`
          // and initialised `false` — so a generator holding a local of any of those types
          // did not compile under `--native` at all, while `--interpret` ran it.
@@ -23,22 +23,22 @@ index 83a1d5773..7886d2160 100644
      }
  }
  
-diff --git b/src/generation/ops/coroutine.rs a/src/generation/ops/coroutine.rs
-index 91ecb8faa..158610377 100644
---- b/src/generation/ops/coroutine.rs
-+++ a/src/generation/ops/coroutine.rs
-@@ -179,13 +179,9 @@ impl OpEmitter for OpCoroutineNextEmitter {
-                     ctx.w,
-                     "loft::codegen_runtime::coroutine_next_i64({gen_code}, stores)"
-                 )?,
+diff --git a/src/generation/ops/coroutine.rs b/src/generation/ops/coroutine.rs
+index 99908df99..b447dbec5 100644
+--- a/src/generation/ops/coroutine.rs
++++ b/src/generation/ops/coroutine.rs
+@@ -182,13 +182,9 @@ impl OpEmitter for OpCoroutineNextEmitter {
+             }
+             match byte_size {
+                 8 => write!(ctx.w, "{cr}::coroutine_next_i64({gen_code}, stores)")?,
 -                // `boolean`: the transport carries its storage byte, and `255` is its null — a
 -                // `!= 0` test read a yielded null as `true` (`(G-Next)`).  The value is only
 -                // ever stored into a `u8` slot (the `for` binding, a delegation's item), so
 -                // the byte goes through as it is.
                  1 => write!(
                      ctx.w,
--                    "(loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) as u8)"
-+                    "(loft::codegen_runtime::coroutine_next_i64({gen_code}, stores) != 0)"
+-                    "({cr}::coroutine_next_i64({gen_code}, stores) as u8)"
++                    "({cr}::coroutine_next_i64({gen_code}, stores) != 0)"
                  )?,
                  // size_of::<DbRef>() == 12 — Reference-yielding generator (@P326).
-                 12 => write!(
+                 12 => write!(ctx.w, "{cr}::coroutine_next_dbref({gen_code}, stores)")?,

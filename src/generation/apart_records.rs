@@ -199,7 +199,15 @@ fn candidate_types(data: &Data, stores: &Stores) -> HashMap<u32, RecLayout> {
             out.insert(
                 d as u32,
                 RecLayout {
-                    rust: format!("Apr{d}"),
+                    // Named by the definition's source and name (@PLN199 G1), which the
+                    // program around a library does not change, where its number does.
+                    rust: format!(
+                        "Apr_{}_{}",
+                        super::apart_value::ident_part(
+                            &data.source_label(data.def(d as u32).source)
+                        ),
+                        super::apart_value::ident_part(data.def(d as u32).name())
+                    ),
                     rec_tp: kt,
                     fields: rec_fields,
                 },

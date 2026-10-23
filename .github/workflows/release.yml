@@ -17,12 +17,25 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Empty on every leg but Linux, which then runs on the runner itself.
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
+          # Dynamically linked, so the released loft can `dlopen` a library's native
+          # code (a static musl binary cannot: loft#2127).  Built inside the manylinux
+          # image so it links against glibc 2.28 and runs on RHEL 8, Debian 10, Ubuntu
+          # 20.04 and later; built on the runner's own glibc it would refuse to start on any
+          # system older than that runner.  The image is pinned by digest, and
+          # daily-build.yml and repro-build.yml name the same one
+          # (`linux_bundle_image_is_one_image`), because the C toolchain and glibc it
+          # carries are part of the bytes a rebuild has to reproduce.
+          - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64:2026.10.16-1@sha256:1e7b8460ad8fb3fb0fbe1cd818845159ac896b4fd17452d56e892c291f3b97a8
+            glibc: '2.28'
+            artifacts: true
           - target: x86_64-apple-darwin
             # macos-15 is Apple Silicon, so this leg CROSS-builds and the bundle it
             # produces cannot run natively on the runner that made it.  Declared here
@@ -31,10 +44,15 @@ jobs:
             # that goes unnoticed.
             os: macos-15
             cross: rosetta
+          # `artifacts`: the leg builds the published libraries' compiled artifacts with the
+          # binary it ships (@PLN199 G2c).  Only a leg that can RUN that binary: the
+          # x86_64-apple-darwin leg cross-builds.
           - target: aarch64-apple-darwin
             os: macos-latest
+            artifacts: true
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            artifacts: true
 
     steps:
       - uses: actions/checkout@v5
@@ -44,12 +62,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # scripts/make-release.sh needs `zip` to assemble the bundle; Linux also
-      # needs musl-tools for the static target.  macOS ships zip already;
-      # Windows runs the script under Git-Bash and gets zip from chocolatey.
+      # scripts/make-release.sh needs `zip` to assemble the bundle.  The Linux leg
+      # runs as root inside the manylinux image, which has dnf and no sudo.  macOS
+      # ships zip already; Windows runs the script under Git-Bash and gets zip from
+      # chocolatey.
+      # The image keeps its Pythons under /opt/python; release-lib-artifacts.sh calls
+      # `python3`, so one goes on PATH when none is there.
       - name: Install packaging tools (Linux)
         if: runner.os == 'Linux'
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y musl-tools zip unzip
+        run: |
+          timeout 600 dnf -y -q install zip unzip
+          command -v python3 >/dev/null || ln -s "$(ls -d /opt/python/cp3*/bin/python3 | sort -V | tail -1)" /usr/local/bin/python3
+          python3 --version
 
       - name: Install packaging tools (Windows)
         if: runner.os == 'Windows'
@@ -153,12 +177,31 @@ jobs:
           # 1 — the binary runs at all, and it is the version the tag claims.  A bundle
           #     named for one version carrying the binary of another is the failure the
           #     hashes cannot see: every digest would be internally consistent.
-          got="$("./$exe" --version)"
+          # The first line: the second names the toolchain a native build would use (@C102).
+          got="$("./$exe" --version | head -n 1)"
           if [ "$got" != "loft $version" ]; then
             echo "version mismatch: tag says 'loft $version', binary says '$got'" >&2
             exit 1
           fi
           echo "  ok  $got"
+
+          # 1b — the Linux binary is dynamically linked, so it can load a library's
+          #      native code, and it asks for no glibc newer than the floor the
+          #      matrix row promises.  Both are properties of the build environment,
+          #      not of the source: the same source built static, or on the runner's
+          #      own glibc, compiles and runs here and fails on a user's machine.
+          if [ -n "${{ matrix.glibc }}" ]; then
+            if ! readelf -l "$exe" | grep -q 'program interpreter'; then
+              echo "$exe is statically linked, so it cannot load a library's native code" >&2
+              exit 1
+            fi
+            newest=$(objdump -T "$exe" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+            if [ "$(printf '%s\n%s\n' "$newest" "${{ matrix.glibc }}" | sort -V | tail -1)" != "${{ matrix.glibc }}" ]; then
+              echo "$exe needs glibc $newest, newer than the ${{ matrix.glibc }} this bundle promises" >&2
+              exit 1
+            fi
+            echo "  ok  dynamically linked, glibc $newest at most"
+          fi
 
           # 2 — every file the bundle shipped still hashes to its manifest, and nothing
           #     unlisted sits in default/.  Exit 2 ("nothing to verify") fails here as
@@ -199,6 +242,38 @@ jobs:
           path: |
             dist/*.zip
             dist/*.zip.sha256
+
+      # @PLN199 G2c — the published libraries, compiled by the binary this leg ships, so a
+      # user without `rustc` runs them compiled.  The binary is the bundle's, still in the
+      # target directory beside the rlib its build left in `deps/` (a bundle carries none).
+      # It never holds the release back: a library that does not build runs interpreted,
+      # which is what it does today — RELEASE_PUBLISH.md § Library artifacts.
+      - name: Build the library artifacts
+        if: ${{ matrix.artifacts }}
+        continue-on-error: true
+        timeout-minutes: 120
+        shell: bash
+        env:
+          LOFT_VERSION: ${{ github.ref_name }}
+        run: |
+          # make-release.sh always builds with `--target`, the host's own triple included.
+          bin="target/install-lib/${{ matrix.target }}/release/loft"
+          case "${{ matrix.target }}" in *windows*) bin="$bin.exe";; esac
+          scripts/release-lib-artifacts.sh --loft "$bin" --out "dist-lib/${{ matrix.target }}" | tee lib-artifacts.log
+          {
+            echo "### Library artifacts — ${{ matrix.target }}"
+            echo '```'
+            cat lib-artifacts.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the library artifacts
+        if: ${{ matrix.artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-artifacts-${{ matrix.target }}
+          path: dist-lib/${{ matrix.target }}
+          if-no-files-found: ignore
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -229,6 +304,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The bundles, and the library artifacts with each leg's `lib-artifacts-<triple>.json`
+      # (@PLN199 G2c): all of them are the release's assets, the listings included, so the
+      # entry regenerated from a download of the release names the artifacts too.
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -254,7 +332,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           python3 scripts/gen-toolchain-entry.py \
-            --version "$version" --dir artifacts \
+            --version "$version" --dir artifacts --artifacts artifacts \
             --published "$(git log -1 --format=%cI HEAD)" \
             --out "artifacts/loft-$version-registry-entry.json"
 

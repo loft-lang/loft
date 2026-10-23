@@ -90,24 +90,28 @@ jobs:
     # CALIBRATION.  A GitHub runner has 4 vCPUs against this project's 24-core
     # dev box, so the gates measure the same claims at floors the hardware can
     # actually deliver — lowered, not switched off.  A `par` that stops
-    # parallelising still fails: 4 workers must beat 1 by 1.5x and the frame
-    # count must still rise by half.  Every VALUE assertion is untouched; these
-    # only retune what is sampled and how fast it must be.
+    # parallelising still fails both timing bars, because each sits between
+    # what one worker measures (100 %) and what this runner's slowest healthy
+    # run measures.  Every VALUE assertion is untouched; these only retune what
+    # is sampled and how fast it must be.
     #
-    # Measured on the runner (kept here so the numbers have a source): scaling
-    # 100/159/224% over 1/2/4 workers, `--html` and dispatch both over 4
-    # workers, every value equal to the interpreter's.  The UI gate's floor
-    # sits below what the runner shows rather than just under it: this runs
-    # nightly, and a gate that goes red on runner noise gets ignored, which
-    # costs more than the tenths it buys.
+    # MIN_SPEEDUP_PCT is the scaling gate's 4-worker bar.  ubuntu-latest comes
+    # in two CPU types: on the faster one (one worker ~2.0 s) four workers
+    # measure 139–148 %, on the slower one (3–4.7 s) 156–180 %, and the
+    # sequential fallback equals one worker on both.  125 sits between 100 and
+    # 139; 150 sat inside the faster type's range (loft#2133).  A bar under
+    # what the runner shows rather than just under it: this runs nightly, and a
+    # gate that goes red on runner noise gets ignored, which costs more than
+    # the tenths it buys.
     #
-    # MIN_BLOCK_RATIO_X10 replaced MIN_FRAME_RATIO_X10.  The frame-count ratio
-    # it named was decided by Chrome's ~1 Hz rAF throttle for a hidden page,
-    # not by par: the threaded leg read a frozen `frames=12 max_gap_ms=1017`
-    # across five runs on different runners while the sequential leg varied
-    # with the compute, so whichever leg the throttle hit lost the ratio.  The
-    # gate now reads the main-thread BLOCK time, which a sparse frame schedule
-    # cannot move.  See tests/wasm/par-ui-responsive.sh.
+    # MIN_PAR_SPEEDUP_PCT is the UI gate's bar on the PART of each frame's
+    # main-thread block that par decides — the block less the frame's serial
+    # compile-and-dispatch cost, which the page times apart.  Not a frame count
+    # (Chrome's ~1 Hz rAF throttle for a hidden page decides that), and not the
+    # whole block either (its fixed serial share moves the ratio with frame
+    # size, loft#2125).  On this runner the par part speeds up 130–136 % on 4
+    # workers and 100 % on one; 115 sits between them.  See
+    # tests/wasm/par-ui-responsive.sh.
     #
     # CONCURRENCY_STAT=max — with 12 reps on 4 contended vCPUs, rayon gave one
     # rep a single worker; concurrency demonstrated across the reps is what this
@@ -124,10 +128,10 @@ jobs:
       WAIT_SCALE: "3"
       POOLS: "1 2 4"
       SPEEDUP_AT: "4"
-      MIN_SPEEDUP_PCT: "150"
+      MIN_SPEEDUP_PCT: "125"
       CONCURRENCY_STAT: "max"
       THREADS: "4"
-      MIN_BLOCK_RATIO_X10: "13"
+      MIN_PAR_SPEEDUP_PCT: "115"
       SCALING_WORK: "2000000"
       UI_WORK: "120000"
       UI_WINDOW: "9000"

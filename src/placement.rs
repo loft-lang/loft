@@ -34,6 +34,10 @@
 //! program reads it with, so its records would be read at the wrong stride …
 //! ```
 //!
+//! A bump need not refuse the stores a build CAN read: [`HASH_READS`] lists the older hash
+//! tokens this build reads as written, and `schema_sidecar::classify` hands such a store over
+//! raw (@C152).
+//!
 //! Only stores that CONTAIN the changed kind are affected: the token is rendered per
 //! collection, so bumping [`HASH`] leaves a store of plain structs and vectors loading
 //! exactly as before. That is why this is a token per kind rather than a bump of
@@ -93,7 +97,75 @@ const BASELINE: &str = "1";
 /// by a post-H loft would take a record number for an arena index and find an entry at
 /// a byte offset nothing put one at, so it must REFUSE rather than answer — which is
 /// what this token buys, and the reason it shipped before H rather than with it.
-pub const HASH: &str = "2";
+///
+/// `3` is the tagged and inline tables (`(Col-Tag)`, `(Col-Inline)`): a slot may carry a tag,
+/// a table may keep its entries in its own record, and each table records which in its
+/// header (`(Col-Layouts)`, @C152).  A build before them reads such a table as untagged and
+/// would misread it, so it must REFUSE a store carrying `3` — which a token it does not know
+/// makes it do.  This build reads a `2` store as it was written ([`HASH_READS`]).
+pub const HASH: &str = "3";
+
+/// The older [`HASH`] tokens this build reads as they were written (@C152): every table of a
+/// `2` store is an arena table of untagged slots, which a `3` table's header can also say, so
+/// such a store is handed over unchanged — no conversion, no refusal.  `1` is not here: a slot
+/// of a `1` store holds a record number, not an arena index.
+pub const HASH_READS: &[&str] = &["2"];
+
+/// Does this build read a `hash` written under placement `token`?
+#[must_use]
+pub fn hash_reads(token: &str) -> bool {
+    token == HASH || HASH_READS.contains(&token)
+}
+
+/// `dump` (a `Stores::layout_dump`) with every `hash` part written under a token this build
+/// reads ([`HASH_READS`]) given this build's own: the dump the same types have when written
+/// now.  A store whose dump equals the running program's after this is read raw, as an
+/// unchanged layout is (`schema_sidecar::classify`).  Any other part is left as it is, so a
+/// token this build does not read still differs and is refused.
+#[must_use]
+pub fn read_as_own(dump: &str) -> std::borrow::Cow<'_, str> {
+    let own = tag(HASH);
+    let mut out = String::new();
+    let mut from = 0;
+    let mut at = 0;
+    while let Some(i) = dump[at..].find("hash<") {
+        let start = at + i;
+        at = start + 5;
+        // A row names its hash type and then lays it out (`hash<E[k]>\tsize=4\thash<E>(…)`):
+        // both reach the same part, which is rewritten once.
+        if start < from || (start > 0 && dump.as_bytes()[start - 1].is_ascii_alphanumeric()) {
+            continue;
+        }
+        let Some(e) = dump[start..].find(",elem_size=") else {
+            break;
+        };
+        let digits = start + e + ",elem_size=".len();
+        let end = digits
+            + dump[digits..]
+                .bytes()
+                .take_while(u8::is_ascii_digit)
+                .count();
+        let rest = &dump[end..];
+        let Some(token) = rest
+            .strip_prefix(",placement=")
+            .and_then(|r| r.split_once(')'))
+            .map(|(t, _)| t)
+        else {
+            continue;
+        };
+        if HASH_READS.contains(&token) {
+            out.push_str(&dump[from..end]);
+            out.push_str(&own);
+            from = end + ",placement=".len() + token.len();
+            at = from;
+        }
+    }
+    if from == 0 {
+        return std::borrow::Cow::Borrowed(dump);
+    }
+    out.push_str(&dump[from..]);
+    std::borrow::Cow::Owned(out)
+}
 
 /// `index<T[k]>` — the B+tree in `crate::btree` (@C147): the collection's slot names
 /// an ARENA record whose node 0 is the header and whose nodes hold 8-byte key parts beside

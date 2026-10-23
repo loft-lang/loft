@@ -49,36 +49,43 @@ for p in $POOLS 0; do
 done
 # distinct workers tracks pool size
 for p in $POOLS; do [ "${DW[$p]:-0}" -ge "$p" ] 2>/dev/null || { echo "FAIL: P=$p ran on ${DW[$p]:-?} workers"; fail=1; }; done
-# Monotonic along the measured pools up to SPEEDUP_AT.  Pools past that are
-# measured and printed but not asserted: beyond the core count more workers stop
-# buying wall-clock, which is a property of the machine, not of the dispatch.
-prev=""
-for p in $POOLS; do
-  if [ -n "$prev" ]; then
-    [ "${PAR[$p]}" -lt "${PAR[$prev]}" ] 2>/dev/null \
-      || { echo "FAIL: no speedup ${prev}->${p} (${PAR[$prev]}->${PAR[$p]})"; fail=1; }
-  fi
-  prev="$p"
-  [ "$p" = "$SPEEDUP_AT" ] && break
-done
-sp="$(pct "${PAR[$BASE]}" "${PAR[$SPEEDUP_AT]}")"
-# A speedup under the bar is re-measured alone before it fails, as the speed gate does
+# The timing verdict on the current curve: monotonic along the measured pools up to
+# SPEEDUP_AT, and MIN_SPEEDUP_PCT reached there.  Pools past SPEEDUP_AT are measured and
+# printed but not asserted: beyond the core count more workers stop buying wall-clock,
+# which is a property of the machine, not of the dispatch.  Sets `sp` and, when the
+# curve misses, `why`.
+timing_ok() {
+  why=""
+  local prev="" p
+  for p in $POOLS; do
+    if [ -n "$prev" ] && ! [ "${PAR[$p]}" -lt "${PAR[$prev]}" ] 2>/dev/null; then
+      why="${why:+$why; }no speedup ${prev}->${p} (${PAR[$prev]}->${PAR[$p]})"
+    fi
+    prev="$p"
+    [ "$p" = "$SPEEDUP_AT" ] && break
+  done
+  sp="$(pct "${PAR[$BASE]}" "${PAR[$SPEEDUP_AT]}")"
+  [ "$sp" -ge "$MIN_SPEEDUP_PCT" ] || why="${why:+$why; }${SPEEDUP_AT}-worker speedup ${sp}% < ${MIN_SPEEDUP_PCT}%"
+  [ -z "$why" ]
+}
+# A curve that misses is re-measured before it fails, as the speed gate does
 # (scripts/test_speed_gate.py): contention on a shared runner does not repeat, a dispatch
-# that cannot scale does.  Each re-measurement takes a fresh pair — both legs, so a slow
-# base cannot pass a slow parallel run.
+# that cannot scale does.  Each re-measurement takes a fresh curve over every asserted
+# pool, so one slow point cannot pass or fail another run's.  The steps need it as much
+# as the endpoint: about one run in four, two workers land where they barely beat one
+# while four workers in the same run reach 170 % (loft#2133).
 attempt=0
-while [ "$sp" -lt "$MIN_SPEEDUP_PCT" ] && [ $attempt -lt "${SPEEDUP_RETRIES:-2}" ]; do
+while ! timing_ok && [ $attempt -lt "${SPEEDUP_RETRIES:-2}" ]; do
   attempt=$(( attempt + 1 ))
-  echo "  ${SPEEDUP_AT}-worker speedup ${sp}% < ${MIN_SPEEDUP_PCT}% — re-measuring (attempt $attempt)"
-  for p in $BASE $SPEEDUP_AT; do
+  echo "  $why — re-measuring (attempt $attempt)"
+  for p in $POOLS; do
     r="$(runP $p)"; echo "  $r"
     echo "$r" | grep -q 'success=true' || { echo "FAIL: P=$p unsuccessful"; exit 1; }
     PAR[$p]="$(echo "$r" | grep -oP 'par_ms=\K\d+')"
+    [ "$p" = "$SPEEDUP_AT" ] && break
   done
-  sp="$(pct "${PAR[$BASE]}" "${PAR[$SPEEDUP_AT]}")"
 done
-[ "$sp" -ge "$MIN_SPEEDUP_PCT" ] \
-  || { echo "FAIL: ${SPEEDUP_AT}-worker speedup ${sp}% < ${MIN_SPEEDUP_PCT}% (after $attempt re-measurement(s))"; fail=1; }
+timing_ok || { echo "FAIL: $why (after $attempt re-measurement(s))"; fail=1; }
 if [ $fail -eq 0 ]; then
   curve=""
   for p in $POOLS; do curve="$curve ${p}w=${PAR[$p]}ms($(pct "${PAR[$BASE]}" "${PAR[$p]}")%)"; done

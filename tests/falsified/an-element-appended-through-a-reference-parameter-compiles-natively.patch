@@ -1,8 +1,8 @@
-diff --git b/src/generation/emit.rs a/src/generation/emit.rs
-index dc7363f04..0e8789138 100644
---- b/src/generation/emit.rs
-+++ a/src/generation/emit.rs
-@@ -4401,6 +4401,7 @@ impl Output<'_> {
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index a1dee24d2..a502f7243 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -5532,6 +5532,7 @@ impl Output<'_> {
          }
          let pair = &self.elem_first.pairs[pi];
          let dvars = self.data.def(self.def_nr).variables();
@@ -10,7 +10,7 @@ index dc7363f04..0e8789138 100644
          let elmn = sanitize(dvars.name(pair.elm));
          let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
          self.indent(w)?;
-@@ -4431,19 +4432,15 @@ impl Output<'_> {
+@@ -5562,20 +5563,16 @@ impl Output<'_> {
                  "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &({operand}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
              );
          }
@@ -18,25 +18,26 @@ index dc7363f04..0e8789138 100644
 -        let mut out: Vec<u8> = Vec::new();
 -        self.output_code_inner(&mut out, &Value::Var(pair.out))?;
 -        let out = String::from_utf8_lossy(&out).into_owned();
+         let tp_lit = self.type_lit(u16::try_from(tp).unwrap_or(u16::MAX));
          if fld == 65535 {
              writeln!(
                  w,
--                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
-+                "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
+-                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp_lit}, 65535_i32); //@PLN157 § V-z element minted at the declaration"
++                "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {tp_lit}, 65535_i32); //@PLN157 § V-z element minted at the declaration"
              )
          } else {
              writeln!(
                  w,
--                "var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
-+                "var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
+-                "var_{elmn} = OpNewRecord(cell, {out}, {tp_lit}, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
++                "var_{elmn} = OpNewRecord(cell, var_{outn}, {tp_lit}, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
              )
          }
      }
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index f3c800430..0fbf8978a 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -7094,12 +7094,9 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 29410b75d..71f4c2a0b 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -7241,12 +7241,9 @@ impl Parser {
              }
          }
  

@@ -135,15 +135,58 @@ recorded layout differs from the loading program's collection type is REFUSED
 sidecar (a legacy store) falls back to the `store_verify` backstop. Set
 `LOFT_LOADER_STATS=1` to observe `bytes_fetched` vs file size.
 
+#### A changed definition: the store upgrade
+
 The WHOLE-IMAGE loaders read the file through the program's types, and records are
 fixed-stride, so a store whose structs changed — even by one field added at the end — must
-never be read raw (`@FR-L-Sound`).  They CONVERT it instead (@PLN196): the
+never be read raw (`@FR-L-Sound`).  They CONVERT it instead: the
 `.dschema` names the layout that wrote the file, the store upgrade map pairs it with the
 program's, and the converter builds a new store in which every stored value arrives under its
 own name and every added field takes its default (a default may read the record through `$`).
 A change the map cannot carry — one that looks like a rename, a narrowed number, a changed
 kind, a changed key with duplicates under it — is refused: the call returns `false` and names
-the reason.  `loft layout check <program> <store>` prints what an upgrade would do.
+the reason.  `loft layout upgrade <program> <store>…` converts a file on disk and prints what it
+did; `loft layout check <program>` prints what a store written with the recorded baseline
+(below) would go through.
+
+**One map, one converter.**  The upgrade map (`UpgradeMap`, `src/database/upgrade_map.rs`) is
+derived from the old layout description and the new type table and nothing else: per new
+field where its value comes from, per old field whether it is dropped, per keyed collection how
+it is rebuilt, and the refusals with their reasons.  The check prints it, the converter
+(`Stores::upgrade_store`, `src/database/upgrade.rs`) executes it, and every caller below runs
+that converter, so no caller re-decides a field's fate.  Old bytes are read only through the
+old layout and written only through the new one; a type whose dump line (closure included) is
+unchanged is copied raw.
+
+| change | upgrade |
+|---|---|
+| field added | its default: a constant is written directly; an expression runs over the upgraded record after the carried fields, so it may read `$` |
+| field removed | not copied, nor the heap it owned |
+| number widened (narrow to wide integer, single to double float) | converted; a null stays null (`@FR-L-Null`) |
+| number narrowed, a field's kind changed | **refused**, naming the field and both types |
+| enum variant added / removed | nothing to do / a value of the removed variant becomes null |
+| a field removed and one added in the same type | **refused** as a rename: do it in two steps (below) |
+| key of a keyed collection changed | rebuilt by insertion under the new key |
+| index added over records already stored (`@FR-Col-Group`) | built by insertion |
+| an insert that would displace a record (a duplicate under a new key) | **refused**, with the count and the first key |
+| index removed | not copied; the records it shared stay with the other members |
+| `T` turns linked or unlinked (a keyed collection over it added or removed anywhere) | each element rewritten at the new stride, never a raw copy; the report names the collection that flipped it |
+| a reference inside the store | re-pointed through the old-to-new record map |
+| a reference into another store | **refused** |
+
+**A rename takes two upgrades.**  A default is type-checked against the NEW struct, so
+`name: text = $.label` compiles only while `label` is still declared: release N adds `name`
+filled from `label`, a later release drops `label`.  No single upgrade both loses a name and
+creates one, so a wrong guess about a drop and an add cannot destroy data.
+
+```loft
+struct Item {                          // v2 of { id, label, price }
+  id: integer, label: text, price: integer,
+  name: text = $.label,                // a rename, step 1
+  cents: integer = $.price * 100,      // a unit change
+  title: text = "{$.id}: {$.label}"    // a combination
+}
+```
 
 | path | an older layout |
 |---|---|
@@ -185,13 +228,30 @@ refuses stores written before 2.0 (retiring the routine's older branches), and
 by 1.4, and this program reads stores from 2.0 on; open it once with 2.3, then with this one*.
 A store that records no release passes the floor.
 
-`loft layout check` catches the move at the edit that loses it (`@FR-L-Upgrade-Source`):
+The compiler catches the move at the edit that loses it (`@FR-L-Upgrade-Source`):
 `loft layout accept` — and `loft package`, the release step of a library and of an application
 alike — records in the baseline
 (`layout.lock` beside `loft.toml`, committed with the release) which stored fields each computed field reads
 (`Item.count <- inner.label since 2.0`), and a later build that drops one of them is refused —
 *Inner.label is dropped, and 2.0 computes Item.count from it* — until the build has an
-`upgrade` routine for `Item` or `data_compatible_with` is `"2.0"` or later.
+`upgrade` routine for `Item` or `data_compatible_with` is `"2.0"` or later.  Every compile
+of the project shows it as the `layout-upgrade-refused` warning at `struct Item` — the program
+still runs — while `loft layout check` exits 1 on it and `loft package` will not release over
+it (DIAGNOSTICS.md).
+
+**Which types are checked** (`Data::surviving`): the types whose values outlive the program —
+what a `store_*` call or `swap_world` hands over, every `pub` type of the project (a library's
+user may store it), and every type one of them holds.  A store call on an untyped `reference`
+makes every type count.  A stored type that only a side program declares is not recorded.
+
+**A running world is checked the same way.**  A live rebuild compiles the next build against
+the running world's layout (`LOFT_CHECK_WORLD`, `Stores::world_upgrade`), so a change the map
+refuses fails the build and the swap is never offered; the world then crosses through
+`swap_world` and the converter, in a native host and in the browser
+(`Stores::load_world_image`).  In `loft --serve` a save compiles the file against the running
+game's world — a refusal is the same `layout-upgrade-refused` warning, at the world's type —
+and only **⇄ Apply** (Ctrl+Shift+Enter) activates the rebuilt program
+([plans/16-debugger/IDE.md](plans/16-debugger/IDE.md)).
 
 #### What the file's SIZE and BYTES mean (loft#710)
 
@@ -705,7 +765,7 @@ loft runtime value
                             └── Key comparison  → src/keys.rs
 ```
 
-- A `hash<MyStruct>` is a hash-table record in one `Store` pointing to element records in another (or the same) `Store`.
+- A `hash<MyStruct>` is a bucket-table record in the collection's `Store`.  Its entries sit in a chunked arena, IN the table (an element type no group or reference shares), or are the records a group member holds; each table records its layout and they live side by side ([DATABASE_INDEXES.md § Record Layout](DATABASE_INDEXES.md#record-layout), @C152).
 - An `index<MyStruct>` is a B+tree whose nodes are one arena record in the collection's store, holding key parts and the numbers of the element records: O(log n) lookup by key, range queries and ordered iteration.
 - A `vector<T>` is a single record with inline elements; a `sorted<T>` by value uses the same layout but maintains sort order via insertion sort on add.
 - All cross-record pointers are `u32` rec offsets within the same `Store`; cross-store references use the full `DbRef`.

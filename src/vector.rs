@@ -1157,6 +1157,22 @@ fn get_vector_cold(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef 
     get_vector(db, size, from, stores)
 }
 
+/// `(R-Header)`'s KEPT clause under `LOFT_HOIST_VERIFY=1` — a holder's read, checked
+/// against the header derived from the store now.
+///
+/// # Panics
+/// When they differ: something changed the vector's record or length and no refresh
+/// followed it.
+#[must_use]
+pub fn kept_header(h: VecHeader, db: &DbRef, stores: &[Store]) -> VecHeader {
+    let fresh = vec_header(db, stores);
+    assert!(
+        h == fresh,
+        "@FR-R-Header kept clause: held {h:?} but the store holds {fresh:?}"
+    );
+    h
+}
+
 /// @PLN157 § V-ak (`@FR-R-Base`) — the address of element 0 of the vector `h` describes,
 /// or null for an absent vector.  Bound once beside a header in a loop the emitter proved
 /// GROWS NO STORE, so the buffer the address points into cannot be reallocated while the
@@ -1284,6 +1300,70 @@ pub unsafe fn rec_get<T: Copy + PartialEq + std::fmt::Debug>(
         );
     }
     v
+}
+
+/// `@FR-R-RecPtr`'s nested clause — the header of the vector held in field `fld` of the record
+/// view whose address is `ptr`: the field's vector record one load through the address, its
+/// length one read of that record, where [`vec_header`] resolves the store and reads the
+/// field through it again.  The null record (a null address) holds the absent vector, as
+/// `vec_header` answers for a null `DbRef`; `locked` is the view's own lock state, held
+/// beside its address, and a vector field lives in its record's store.
+///
+/// # Safety
+///
+/// As [`rec_get`]: `ptr` must be [`rec_ptr`] of `db` with no store reallocated since, and
+/// `fld` the offset of a vector field of the record's type.
+///
+/// # Panics
+///
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header disagrees with `vec_header` of the
+/// field.  Never in the emitted default.
+#[must_use]
+#[inline]
+pub unsafe fn field_header<const VERIFY: bool>(
+    ptr: *const u8,
+    locked: bool,
+    db: &DbRef,
+    fld: u32,
+    stores: &[Store],
+) -> VecHeader {
+    let h = if ptr.is_null() {
+        VecHeader {
+            store_nr: db.store_nr,
+            rec: 0,
+            len: 0,
+            locked: false,
+        }
+    } else {
+        // SAFETY: the caller's block proof — `ptr` addresses a live record whose store has
+        // not moved, and `fld` is a field of it.
+        let raw = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };
+        let rec = if raw == DbRef::ABSENT_REC { 0 } else { raw };
+        let len = if rec == 0 {
+            0
+        } else {
+            stores[db.store_nr as usize].get_u32_raw(rec, 4)
+        };
+        VecHeader {
+            store_nr: db.store_nr,
+            rec,
+            len,
+            locked,
+        }
+    };
+    if VERIFY {
+        let field = DbRef {
+            store_nr: db.store_nr,
+            rec: db.rec,
+            pos: db.pos + fld,
+        };
+        assert_eq!(
+            h,
+            vec_header(&field, stores),
+            "a vector field's header read through its record's address disagrees with the store"
+        );
+    }
+    h
 }
 
 /// `@FR-R-RecPtr` — one in-place scalar field write through a record address: nothing for
@@ -2368,6 +2448,12 @@ pub fn is_scratch_header(store: &Store, scratch: &DbRef) -> bool {
 ///   sits at the header's offset 8 (`data.pos + 4`).  Yielding in that store lets the
 ///   scratch live in a different (writable) store than a read-only/exposed source — see
 ///   expose-iteration-scratch.md.
+///
+/// Inlined ALWAYS: out of line it answers `(DbRef, u32)` through memory, written a field at
+/// a time and read back eight bytes at a time — a store the processor cannot forward, and
+/// the stall was a tenth of a `for e in hash` walk (`bench/portal/analysis/keyed.md`).
+#[allow(clippy::inline_always)]
+#[inline(always)]
 pub fn step_ordered(
     data: &DbRef,
     cur: u32,

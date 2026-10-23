@@ -119,17 +119,16 @@ forbidden, silent *graceful* data is the preservation you want.
 **Who it wins.** Prototypers and game devs who iterate structures live and refuse
 to lose the running game's state to a recompile.
 
-**The turn-off.** **Rename.** The first time they rename a field — an ordinary
-refactor — it reads as delete+create and the value is lost. The single most
-common edit hits the single real gap, on day one. (It warns rather than dropping
-silently, but the data is still gone.)
+**The turn-off.** **A rename is two edits, not one.** The new name is added and
+filled from the old (`name: text = $.label`), and the old one dropped a release
+later. A one-step rename is refused with that cure named, so nothing is lost — but
+a programmer who knows an ORM's rename migration does not expect the second step.
 
-**Raise it higher.** Upgrade stored data to a changed definition store to store,
-with a rename done in two upgrades (the new name filled from the old while both
-exist, the old dropped later) — [@PLN196](plans/196-store-upgrade.md)
-([GOALS.md § what survives an edit](GOALS.md#why-a-language-not-a-store-bolted-onto-an-existing-one)).
-*Check:* a field renamed in two upgrades keeps its values, and a one-step rename is
-refused; both locked by regression tests.
+**Raise it higher.** The working-set loaders (`store_load_key*`) still refuse a
+changed layout where the whole-image loaders convert it
+([DATABASE.md § the store upgrade](DATABASE.md#a-changed-definition-the-store-upgrade)).
+*Check:* a paged load of an older store reads every entry it touches under the new
+layout, on both backends, as `tests/store_upgrade.rs` checks the whole-image load.
 
 ---
 

@@ -472,6 +472,7 @@ pub mod install;
 pub mod integrity;
 pub mod introspect;
 pub mod layout_schema;
+pub mod lib_ids;
 pub mod libscan;
 pub mod lockfile;
 pub mod log_config;

@@ -278,15 +278,22 @@ behind them (almost always already shipped), and a test in the `tests/rpc.rs` sh
      `serve_ws_game_launch_streams_and_stops` (finite game → output + `exit:0`; infinite loop
      → killed). This transport is exactly what the GL window uses the day the graphics lib
      lands — launching a windowed game is the same child process.
-   - **6b — `reload` hot-swap + 6c — breakpoint-in-game: OPEN (the plan continues).**
-     The real dependency is the **@C71/N9 per-fn interpret-on-compiled-baseline execution
-     model over a shared store** ([DESIGN_DECISIONS § @C71](../../DESIGN_DECISIONS.md) — a
-     design, not yet a build); faking hot-swap (e.g. by full restart) would ship the
-     workaround as the feature, so 6b/6c wait for that build. **The engine-host design
-     exploration is recorded in [ENGINE_HOST.md](../18-engine-host/ENGINE_HOST.md)** — the tiered execution
-     model (interpret → WASM-swap → native baseline) and the main-loop IO contract
-     (budgeted drain, completion-as-event, store-resident accumulation) that the @C71
-     build plan starts from.
+   - **6b — edit the running game, 6c — breakpoint-in-game: SHIPPED** through the engine
+     host ([08-live-build-swap.md](../18-engine-host/08-live-build-swap.md) S2–S7): a
+     function edit lands in the running game over the shared store (tier-0 live reload), a
+     changed definition crosses by a background rebuild and a swap that carries the world
+     through the store converter (@PLN196), and an entry breakpoint pauses the game with its
+     frame in the variables panel.
+   - **Apply — a save never changes the running game** (owner, 2026-10-22: code is reviewed
+     before it runs, and a warning does not stop a program).  `launch_game` starts the game
+     with `LOFT_LIVE_RELOAD=hold`, so a saved function edit waits.  Save writes, compiles —
+     checking the save against the running game's world, so a change the next build could not
+     carry it across is a `layout-upgrade-refused` warning at the world's type — and starts the
+     rebuild in the background.  **⇄ Apply** (or **Ctrl+Shift+Enter**) makes what was saved
+     active: the ready build swaps in with the world, a build still compiling swaps when it is
+     ready, a failed build applies nothing and says why, and without a rebuild (a game with no
+     live driver) or while paused the held function edits land (`D!:apply`).  Test:
+     `serve_apply_holds_saved_edits_and_carries_the_world`.
      **Correction (2026-06-10, the library-register inspection):** the graphics runtime is
      NOT missing — `graphics` (with gridmesh/imaging/shapes) is a **published registry
      package** (`loft-lang/loft-libs-graphics`, signed index at `loft-lang/registry`), one
@@ -297,7 +304,7 @@ behind them (almost always already shipped), and a test in the `tests/rpc.rs` sh
      so **6a's Game button should reach a real native GL window today** via an installed
      registry package. **Next step on this slice:** verify install → `use graphics` →
      `launchGame` end-to-end (upgrades 6a from "transport ready" to "verified with the
-     window"), then 6b/6c when @C71 gets its build plan.
+     window").
 
 Slices 1–5 make a usable IDE for a **self-contained** loft program (the stdlib is its only
 dependency); slice 6 is the lavition payoff. They land in order; 1 is the prerequisite for

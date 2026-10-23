@@ -11,7 +11,7 @@
 # loft is not only Rust.  `ring` (reached through rustls → ureq) compiles C and
 # assembly through the `cc` crate, with whatever C compiler the build host provides:
 # `cl.exe` from the Visual Studio toolset on Windows, Apple clang on macOS,
-# `musl-gcc` for the musl target.  rustc's version, `Cargo.lock` and the remapped
+# the manylinux image's gcc on Linux.  rustc's version, `Cargo.lock` and the remapped
 # paths pin the Rust side; nothing pinned this one.
 #
 # Measured 2026-09-15 on one `windows-2025-vs2026` runner, one source, one rustc
@@ -50,15 +50,13 @@ repro_c_toolchain() {
       sdkv=$(xcrun --show-sdk-version 2>/dev/null)
       echo "${clang:-cc unknown} / macOS SDK ${sdkv:-unknown}"
       ;;
-    *-linux-musl)
-      local c
-      for c in x86_64-linux-musl-gcc musl-gcc; do
-        if command -v "$c" >/dev/null 2>&1; then
-          echo "$c $("$c" --version 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')"
-          return
-        fi
-      done
-      echo "musl-gcc unknown"
+    *-linux-gnu)
+      # The glibc too: the binary links against it, so its version decides which
+      # symbol versions the binary asks for.
+      local gcc glibc
+      gcc=$(cc --version 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')
+      glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null)
+      echo "${gcc:-cc unknown} / ${glibc:-glibc unknown}"
       ;;
     *)
       local generic

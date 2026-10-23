@@ -96,7 +96,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN72](https://github.com/loft-lang/plans/issues/72) | future | Renderer backend boundary |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
 | [@PLN199](https://github.com/loft-lang/plans/issues/199) | next | A `use`d library compiles whole — only a generic keeps a loft function interpreted; a published library arrives compiled without `rustc` (`LOFT_TRACE_NATIVE_GATE=1` shows what is left; [plan](plans/199-library-compiles-whole.md)) |
-| [@PLN196](https://github.com/loft-lang/plans/issues/196) | future | Store upgrade — a changed definition converts its data store to store, on disk, in memory and in wasm, or says why it cannot ([plan](plans/196-store-upgrade.md)) |
 
 ### U — Ease of use
 
@@ -124,6 +123,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN158](https://github.com/loft-lang/plans/issues/158) | future | Release performance pass — every routine against an industry reference twin ([PERF_PORTAL.md](PERF_PORTAL.md)) |
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |
 | [@PLN191](https://github.com/loft-lang/plans/issues/191) | active | The loft crate split into a DAG of crates — an edit rebuilds its own layer, a clean release build compiles the layers in parallel (P0 measures incremental release first) |
+| [@PLN200](https://github.com/loft-lang/plans/issues/200) | next | The interpreter and the code generators as defined parts — `opt` (what every backend asks, the interpreter's optimisations), `interp` (a contract), `lower` (a compiled target's decisions as data) apart from the Rust writer: the base for an ANSI-C backend ([plan](plans/200-backend-structure.md)) |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |
 
 ### N — Niche / opportunistic

@@ -211,7 +211,7 @@ fn a_bundle_that_fails_its_manifest_replaces_nothing() {
 fn install_sh_installs_the_whole_bundle_and_it_verifies() {
     use std::io::Write as _;
     let version = env!("CARGO_PKG_VERSION");
-    let name = format!("loft-{version}-x86_64-unknown-linux-musl");
+    let name = format!("loft-{version}-x86_64-unknown-linux-gnu");
     let root = scratch("install-sh");
 
     // A bundle laid out the way make-release.sh lays one out: the runtime and the files

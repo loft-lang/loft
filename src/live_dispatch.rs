@@ -626,7 +626,9 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                 DebugCmd::Reload(cid) => {
                     // The S3 poll-now: the world is swapped IN at a pause, so
                     // the reload host sees the real CONST_STORE.  Offsets the
-                    // edit moved re-resolve before anything fires again.
+                    // edit moved re-resolve before anything fires again.  An
+                    // explicit reload is an Apply: a held edit lands too.
+                    crate::live_control::request_apply();
                     let grew = crate::live_reload::poll(st);
                     if grew {
                         debug_reapply_bps(st, data);
@@ -656,6 +658,11 @@ fn debug_pause_loop(st: &mut State, data: &crate::data::Data, hit: &crate::debug
                     );
                 }
             }
+        }
+        // The editor's Apply while paused: the saved edits land through the pause, like a
+        // reload, and the breakpoints follow the offsets they moved.
+        if crate::live_control::apply_pending() && crate::live_reload::poll(st) {
+            debug_reapply_bps(st, data);
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
     }

@@ -689,7 +689,11 @@ pub fn written_vars(body: &Block, data: &Data, vars: &crate::variables::Function
 /// allowance took a heap-holding record: a push header hoisted off the literal buffer's
 /// vector field before the loop, the buffer re-minted per pass, the element lost —
 /// `1575-…`'s c3 read `null(oob)` for `1`.)
-fn rebound_vars(body: &Block, data: &Data, vars: &crate::variables::Function) -> HashSet<u16> {
+pub(super) fn rebound_vars(
+    body: &Block,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> HashSet<u16> {
     let mut rebound: HashSet<u16> = HashSet::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
@@ -1278,7 +1282,7 @@ pub(super) fn mover_roots(
 /// Can a value of type `t` hold a record of definition `target`, at any depth — through a
 /// reference, an enum's payload, a collection's elements, a tuple?  A type this walk does not
 /// know answers YES: a miss here would let a loop hold a header something can still move.
-fn type_reaches(data: &Data, t: &Type, target: u32, seen: &mut HashSet<u32>) -> bool {
+pub(super) fn type_reaches(data: &Data, t: &Type, target: u32, seen: &mut HashSet<u32>) -> bool {
     match t {
         Type::Integer(_)
         | Type::Boolean
@@ -2038,7 +2042,7 @@ fn lazy_buffer_mint(name: &str, args: &[Value], vars: Option<&crate::variables::
 /// struct-enum, a variant, a nullable and a synthetic `__nullable<S>` answer `None`: their
 /// payload offsets are a layout question this key does not model, so they are neither
 /// hoisted nor classified as a write target (which keeps every scalar out of that loop).
-fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
+pub(super) fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
     if matches!(tp, Type::Optional(_)) {
         return None;
     }
@@ -3077,6 +3081,7 @@ pub fn record_view_ptr(
     twin_params: &HashSet<(u32, u16)>,
     facts: Option<&StoreFacts>,
     owned: Option<&HoistOwned>,
+    extra_use: bool,
 ) -> Result<u16, &'static str> {
     let Some(Value::Set(r, rhs)) = stmts.get(at).map(Value::unspan) else {
         return Err("not a binding");
@@ -3113,6 +3118,7 @@ pub fn record_view_ptr(
         facts,
         owned,
         None,
+        extra_use,
     )?;
     Ok(*r)
 }
@@ -3165,6 +3171,7 @@ pub fn param_view_ptr(
         facts,
         owned,
         None,
+        false,
     )?;
     Ok(p)
 }
@@ -3269,6 +3276,7 @@ pub fn mint_window(
         None,
         owned,
         Some(*e),
+        false,
     )?;
     Ok((*e, finish))
 }
@@ -3490,6 +3498,7 @@ fn view_extent_verdict(
     facts: Option<&StoreFacts>,
     owned: Option<&HoistOwned>,
     fresh_e: Option<u16>,
+    extra_use: bool,
 ) -> Result<(), &'static str> {
     let verdict = view_extent_verdict_inner(
         rest,
@@ -3503,6 +3512,7 @@ fn view_extent_verdict(
         facts,
         owned,
         fresh_e,
+        extra_use,
     );
     if let Err(why) = verdict {
         let def = data.def(def_nr);
@@ -3532,6 +3542,7 @@ fn view_extent_verdict_inner(
     facts: Option<&StoreFacts>,
     owned: Option<&HoistOwned>,
     fresh_e: Option<u16>,
+    extra_use: bool,
 ) -> Result<(), &'static str> {
     let vars = data.def(def_nr).variables();
     let r = &r;
@@ -3594,8 +3605,11 @@ fn view_extent_verdict_inner(
     }
     // Asked before the growth walk: a view the remainder never reads through its address
     // gains nothing from one, so its verdict names that and not a growth that would have
-    // cost nothing (the decline census counts the reasons that cost).
-    if !touched {
+    // cost nothing (the decline census counts the reasons that cost).  `extra_use` is the
+    // emitter's own count of the uses this walk does not see — a text field read under a
+    // held span, a vector field read (`@FR-R-RecPtr`'s text and nested clauses) — so such a
+    // view still meets every condition below.
+    if !touched && !extra_use {
         return Err(NO_FUSABLE_USE);
     }
     // `@FR-R-RecPtr`'s remainder clause — a push or mint into a store proven apart from the
@@ -3763,10 +3777,10 @@ fn copy_serves_view(
         || ((is_r(&args[1]) || is_r(&args[0])) && flat_copy(stores, name, args).is_some())
 }
 
-/// [`record_view_ptr`]'s LAST decline — every other condition held, and no statement of the
-/// remainder reads or writes a field the address serves.  The emitter's text clause admits
-/// such a view when its address comes from a held base with a text span beside it and the
-/// remainder reads a TEXT field of it (`Output::bind_record_ptr`).
+/// [`record_view_ptr`]'s FIRST decline after the walk, asked before the growth, free and
+/// rebind conditions: no statement of the remainder reads or writes a field the address
+/// serves, and the emitter counted no use of its own (`extra_use` — the text and nested
+/// clauses, `Output::extra_view_use`).
 pub const NO_FUSABLE_USE: &str = "no fusable field read or write of the view";
 
 /// Does `rest` read a text field of view `r` directly — `OpGetText(r, fld)` with a literal
@@ -3782,6 +3796,34 @@ pub fn reads_text_field(rest: &[Value], r: u16, data: &Data) -> bool {
                     && matches!(a.get(1).map(Value::unspan), Some(Value::Int(_))))
         })
     })
+}
+
+/// How many reads in `rest` take a VECTOR field of view `r` as their vector — a length or an
+/// element read (`OpLengthVector` or `len`'s `t_6vector_len`, whose body it is,
+/// `OpGetVector`, `OpGetVectorNullable`) whose operand is an
+/// `OpGetField` path rooted at `r`: the reads `@FR-R-RecPtr`'s nested clause serves
+/// (`Output::field_header_expr`).  Counted by site, not by execution.
+#[must_use]
+pub fn vector_field_reads(rest: &[Value], r: u16, data: &Data) -> usize {
+    let mut n = 0;
+    for op in rest {
+        op.any_node(&mut |node| {
+            if let Value::Call(g, a) = node
+                && (*g as usize) < data.definitions.len()
+                && matches!(
+                    data.def(*g).name(),
+                    "OpLengthVector" | "t_6vector_len" | "OpGetVector" | "OpGetVectorNullable"
+                )
+                && a.first()
+                    .and_then(|v| vector_path(data, v))
+                    .is_some_and(|(root, offs)| root == r && !offs.is_empty())
+            {
+                n += 1;
+            }
+            false
+        });
+    }
+    n
 }
 
 /// `@FR-R-RecPtr`'s path clause is on — `LOFT_NO_NESTED_FIELD=1` keeps a field reached
@@ -8261,7 +8303,7 @@ pub fn param_untouched(
 /// alone) — that owns the store it names: its deps name its own `__vdb_` witness, it is no
 /// link and no closure capture.  Its store is fresh to this frame, so it cannot be a
 /// parameter's.
-fn local_owns_store(
+pub(super) fn local_owns_store(
     data: &Data,
     d_nr: u32,
     vars: &crate::variables::Function,
@@ -9002,7 +9044,7 @@ const TEXT_VARIABLE_OPS: [&str; 16] = [
 /// scalar?" accepts, turning every mutator into a reader. That is not a hypothetical: it
 /// is how the first cut of this gate let `v.remove(0)` run inside a hoisted loop.
 /// `parameters_declared` is the guard that keeps it from coming back.
-fn native_op_is_store_free(def: &crate::data::Definition) -> bool {
+pub(super) fn native_op_is_store_free(def: &crate::data::Definition) -> bool {
     if PURE_NULLARY_OPS.contains(&def.name())
         || READ_ONLY_COLLECTION_OPS.contains(&def.name())
         || TEXT_VARIABLE_OPS.contains(&def.name())
@@ -9020,7 +9062,7 @@ fn native_op_is_store_free(def: &crate::data::Definition) -> bool {
 
 /// True for the types that cannot name a store. Anything else — a reference, a collection,
 /// text, a tuple, an iterator, an unresolved type — counts as one that can.
-fn is_scalar(tp: &Type) -> bool {
+pub(super) fn is_scalar(tp: &Type) -> bool {
     matches!(
         tp.base(),
         Type::Integer(_)
@@ -14240,8 +14282,11 @@ fn nullable_presence_layout(
 /// local it binds — never storing it, passing it on, returning it or binding it into a
 /// collection.  A single non-reading site declines the whole function, so no site has to
 /// materialise a record out of a tuple and no site can be made slower.
+///
+/// `library` is a library artifact's generation: its dispatches can end in the call back to
+/// the interpreter, whose callee takes and answers records (loft#2129).
 #[expect(clippy::too_many_lines, reason = "inherited")]
-pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
+pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecords {
     let mut out = ValueRecords::default();
     if value_record_disabled() {
         return out;
@@ -14368,7 +14413,12 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                             super::fnref::dispatch_arms(data, &every, vars.tp(*v), args.len())
                     {
                         let ds: Vec<u32> = found.iter().map(|a| a.d_nr).collect();
-                        if fnref_site_listed(data, vars.tp(*v), args, &found) {
+                        // A group changes its arms' signatures together, which holds only
+                        // while they are every callee (`@FR-R-FnRefValue`): in a library
+                        // artifact a dispatch the call back carries ends in an interpreted one
+                        // (`output_call_ref`'s own condition), so its arms keep their records.
+                        let open = library && crate::fnref::upcall_carries(vars.tp(*v));
+                        if !open && fnref_site_listed(data, vars.tp(*v), args, &found) {
                             // The record the dispatch may answer as a tuple, when it answers one.
                             let rec = match vars.tp(*v).base() {
                                 Type::Function(_, ret, ..) => plain_record_type(data, ret),

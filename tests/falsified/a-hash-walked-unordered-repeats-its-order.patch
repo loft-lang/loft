@@ -1,14 +1,19 @@
-diff --git b/src/hash.rs a/src/hash.rs
-index 2b837891f..1eaff350f 100644
---- b/src/hash.rs
-+++ a/src/hash.rs
-@@ -1229,6 +1229,9 @@ pub fn records_by_slot(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
-     if claim == 0 {
+diff --git a/src/hash.rs b/src/hash.rs
+index 5754bbf4f..4f9e0da38 100644
+--- a/src/hash.rs
++++ b/src/hash.rs
+@@ -2128,7 +2128,13 @@ pub fn records_by_slot(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
          return Vec::new();
      }
+     if is_inline(store, claim) {
+-        return inline_entries(store, hash_ref.store_nr, claim);
++        return inline_slots(store, hash_ref.store_nr, claim)
++            .into_iter()
++            .map(|(_, at)| at)
++            .collect();
++    }
 +    if claim != 0 {
 +        return records(hash_ref, stores);
-+    }
+     }
      let count = elms(store, claim);
-     let width = stride(store, claim);
-     let mut slots: Vec<u32> = (0..count)
+     let sb = slot_bytes(store, claim);

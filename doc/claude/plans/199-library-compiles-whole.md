@@ -285,77 +285,124 @@ value (`generation/emit.rs:390` and `:392`, `({d_nr}_u32, …)`), the dispatch a
 (`emit.rs:1820`, `{d_nr}_u32 =>`), and the closure drop cascade's arm
 (`generation/ops/ref_ops.rs:82`, `{lambda}_u32 =>`).  Checked with `introspect_diff.sh` empty.
 
-**G0b-2 — in a library cdylib, both helpers read tables filled at init.**
-- `type_lit` prints `__tid(k)` and `fn_lit` prints `__fid(k)`; `Output` records each `k` with
-  the `(package, name)` it stands for, and the generated source ends with
-  `static __TID: [AtomicU16; N]` / `__FID: [AtomicU32; M]` and the two name tables.
-- A dispatch arm cannot match a non-constant: in library mode it becomes a guard,
-  `f if f == __fid(3) =>`, one arm per candidate as now — the fn-ref dispatch and the drop
-  cascade alike.
-- The names come from the HOST's definitions, not its store: `loft_shared_init` takes a second
-  argument, and `HostTable` two entries — `type_id(ctx, pkg, name) -> u16` and
-  `fn_id(ctx, pkg, name) -> u32` — answered from the `Data` that
-  `extensions::wire_shared_native_fns` already holds.  Qualified by package, so a program's
-  own `InputState` beside a library's never answers for it (the loft#1706 class that
-  `hidden_dest_type_name` handles per call today).  A name the host lacks makes the init
-  answer 0, and the artifact is rebuilt, as an undeclared layout is.
-- A relaxed `AtomicU16` load per id, never a `OnceLock` (an acquire load per call cost a
-  generator loop 6-8 % in D2).
-- Check: the parity guards (`gatefull`, `callback`) on every mode; a struct-allocating loop and a
-  fn-value dispatch loop in a cdylib within 2 % of the literal build (`bench.py`-style A/B);
-  and the falsifying case — an artifact built for one program, adopted by a second whose types
-  and functions are numbered differently (build it, then remove the fingerprint from the key in
-  a probe): right answers with G0b-2, wrong ones without.
+**G0b-2 — in a library cdylib, the code names its ids by key (done).**  `Output::shared_ids`
+is set for a library artifact (`native_lib::emit_program`, not for the compiled standard
+library); the helpers record each id at a table position `k`, and the source ends with the
+key tables (`id_tables_src`) that `loft_shared_init(table, ids)` fills from the host
+(`HostTable::type_id` / `fn_id`, answered by `lib_ids::HostIds`).
+- A key is the program-independent name (`lib_ids`): `<source label>::<name>` for a declared
+  type or a function (`Data::source_label`, persisted in both IR images), and for a type
+  spelled from others (`main_vector<…>`, `__tuple<…>`, a generic instance) its parts' keys, a
+  cycle written as a back-reference.  A key the host lacks refuses the artifact, naming it.
+- A type id is `__tid(k)`, a plain load from a write-once table (`native_lib::IdTable`); the
+  two flag bits an operator packs into `tp` (`TYPE_ID_FLAGS`) are or-ed back on.
+- A function the artifact carries is numbered `FN_LOCAL | k`, a CONSTANT, so a dispatch arm
+  stays a constant and a value made in the artifact folds into a direct call as a literal one
+  did: guards on `__fid(k)` measured 1.7–2.6× on a fn-value loop, this within 1 %.  A value
+  takes the program's number where it leaves the artifact's code (`__to_host`: a store write
+  through `FnRefDnr`, a bridge return, a generator slot image, a call back) and the
+  artifact's where it enters (`__norm`: a store read, a fn-typed parameter's prologue, a
+  `vector<fn>` parallel input, a generator slot read).  A number never normalised still
+  answers right, through the call back.  A function written into a store as a constant goes
+  through a temporary (`Parser::fn_number_write`), so its write is that projection too.
+- `LOFT_NO_LIB_IDS=1` writes literals again (the A/B; NATIVE_SWITCHES.md), and
+  `LOFT_TRACE_LIB_IDS=1` prints the host's key of every type.
+- Guards: `tests/lib_ids.rs` generates every corpus and suite program as a library artifact
+  alone and behind a prefix that renumbers it, and requires the same code outside `init`;
+  `n2_cdylib::a_library_artifact_runs_in_a_program_that_numbers_it_differently` runs an
+  artifact in a program that numbers it differently (a crash with `LOFT_NO_LIB_IDS=1`).
 
-**G0c — key the artifact on what it references.**  Replace `type_layout_fingerprint(stores)` and
-`fn_numbering_fingerprint` in `cached_or_build_shared_cdylib`'s key (`native_lib.rs` ~2509) with
-one fingerprint over the recorded `(package, name)` of every type — with its size and field
-offsets — and every function — with its signature.  `artifact_matches_layout` probes the same
-value.
-- A generic instantiated with a type from OUTSIDE the library (`i_<T>_n_…` with a script's `T`)
-  is program-specific; it leaves the shared artifact's export set and keeps today's
-  per-program artifact, keyed as now.  `library_candidates` (`native_lib.rs` ~529) is where the
-  split is made.
-- Check: two scripts with different structs using one library build it once (the second run
-  creates no file in `native-auto/`); the per-program artifact appears only when the script
-  instantiates a library generic with its own type.
+**G0c — key the artifact on what it is (done).**  An artifact that names its ids by key
+depends on the loft that built it and the sources it carries, nothing of the program:
+`cached_or_build_shared_cdylib` keys it on the loft build and executable and on
+`artifact_sources` — the library, what it imports, transitively, and the home of every
+function its exports reach (a qualified `use dep;` binds no import) — not on every library
+the program compiles.  The artifact declares that key (`LAYOUT_FP_SYMBOL`) and the adoption
+probe asks for it.  A literal build (`LOFT_NO_LIB_IDS=1`) keeps the program's layout and
+numbering in its key.
+- `probe_and_mark_exports` hands a loaded artifact the program's keys before marking its
+  functions: one that names a key the program lacks is refused, said once, and its
+  functions interpret.
+- A bridge that allocates a destination takes its type from the id table, not from a
+  registered name (which the program's own same-named type can hold).
+- A type variable's placeholder is keyed `typevar` (its `#n` counts the generics before it).
+- A library generic instantiated with a program's type is no export (it interprets); the
+  shared artifact carries only the library's own instances.
+- Guards: `n3_use_native::cdylib_type_indices_stay_valid_across_consumer_contexts` — two
+  programs that number `binwriter`'s types differently share ONE artifact and both write the
+  right bytes; `a_foreign_context_artifact_is_rejected_not_adopted` plants a literal build's
+  artifact at the shared name and requires it rebuilt; `tests/lib_ids.rs`'s prefix carries
+  generics.
 
-**G1 — a reproducible name.**
-- G1a: generated source carries no machine path.  `cr_call_push` / `cr_call_push_lean`
-  (`generation/mod.rs` ~12590) print the absolute file; print it relative to the package root
-  (`<pkg>/src/x.loft`), which is what a stack trace should show anyway.
-- G1b: the stem hashes `contributing_fingerprint` (the library's sources), `loft_exe_identity`,
-  `cache::host_triple` and the G0c fingerprint — nothing from the program.
-- Check: the same library, checked out at two paths, built by the same `loft`, produces the
-  same stem and byte-identical `.rs`.
+**G1 — a reproducible artifact (done).**  A library artifact is a function of the library and
+the loft that builds it: the same library at two places, used by two programs, generates the
+same stem and byte-identical source.
+- No program in it: no `init()` (the host's stores hold the types and constants), and the
+  C-ABI link and its collision check cover only the `[native]` packages whose `#native`
+  definitions the exports reach (`linked_packages`), not every package the program loads.
+- No machine in it: a source file is named inside its package (`Output::source_path`,
+  `<package>/src/x.loft`) in frames and line comments, and the stem identifies each of
+  `artifact_sources` by package name and version, plus the host triple.  A stdlib wrapper
+  type lying in a library's file (`main_vector<T>`) does not make that library a source.
+- Guard: `n3_use_native::the_same_library_at_two_places_generates_the_same_artifact`.
 
-**G2 — the producer.**
-- G2a: `BinaryEntry` (`registry_index.rs:123`, parsed at ~400 beside `loft_ffi_fp`) gains
-  `loft_exe_id: Option<u64>` and `stem: Option<String>` (the G1 name).  A unit test reads an
-  index line with and without them.
-- G2b: `loft build-native` (`main.rs:8845`) builds the AUTO cdylib for a package with no
-  `[library] native`, and prints the G1 stem and `loft_exe_identity`.
-- G2c: the release pipeline (RELEASE_PUBLISH.md) runs G2b over every registry library's latest
-  version per released triple and adds the entries; trust is the existing signed index (the
-  entry's `sha256`).  A library published between releases is built by the registry's CI.
+**G2 — the producer (done).**
+- G2a: `BinaryEntry` carries `loft_exe_id` (a string in the index, as `loft_ffi_fp`) and
+  `stem` for a library's auto-compiled artifact; an older entry reads both as absent
+  (`registry_index::tests::a_binary_entry_names_the_loft_and_stem_of_an_auto_artifact`).
+- G2b: `loft build-native <checkout>` builds a pure-loft library's artifact, keyed on the
+  libraries a program using it compiles with it, and reports `cdylib:`, the full `stem:`,
+  `loft_exe_id:` and `triple:` — the fields of the entry.  The family stem is the package's
+  name and version (`auto_cdylib_stem`), so a checkout and a registry install name it alike;
+  the checkout must lie in a directory named after the package (`use <name>` resolves it).
+- G2c: each release leg that can run its binary (`artifacts: true` in `release.yml`: macOS
+  arm64, Windows) runs `scripts/release-lib-artifacts.sh`, which installs every published
+  library in a scratch home and `use`s it, so the ordinary run builds its artifact and its
+  dependencies' under a user's names; the artifacts and one `lib-artifacts-<triple>.json`
+  per leg are release assets, and `gen-toolchain-entry.py --artifacts` lists them in the
+  release's row as `artifacts[<package>@<version>][<triple>]`.  An auto-compiled artifact
+  belongs to the loft release that built it — a library's `binaries` holds one per triple,
+  and every release carries its own — so the consumer reads its own loft's row.
+  - A release bundle's binary (`LOFT_RELEASE_BUNDLE`) is named by its build, not by its
+    file's modification time, and its artifact key hashes no rlib: the user's copy has none.
+  - Linux builds them too, now that its bundle is a dynamically linked gnu build
+    (loft#2127), inside the same manylinux image.
+  - Open beside it, the registry's: its validator's gate 2b re-checks `binaries` hashes by
+    download and not yet `artifacts` (a wrong one only makes `loft install` refuse it).
 
-**G3 — the consumer.**  `fetch_prebuilt` (`install.rs:87`) returns false for a package without
-`m.native`.
-- G3a: a second branch: no stem in the manifest, a binary entry whose `loft_exe_id` equals
-  `cache::loft_exe_identity()` → write it to `native-auto/<stem>` with the dylib's platform
-  name.  `cached_or_build_shared_cdylib` then adopts it on its first branch (present, current,
-  layout probe passes), with or without `rustc` (`native_lib::rustc_available`, ~2046).
-- G3b: the trace names a library that interprets because no prebuilt matches this loft and
-  `rustc` is absent.
-- Check: a registry fixture with `rustc` hidden from `PATH` runs compiled (the trace's `n of n`);
-  the same binary under another `loft_exe_id` is never fetched.
+**G3 — the consumer (done).**
+- G3a: `install::fetch_release_artifacts` reads the running loft's release row after every
+  package of the graph is in place, installed before included: an artifact is fetched only
+  when its id is the running loft's, checked against the index's hash, and written to
+  `<package>/native-auto/<stem>`, where the run's first branch adopts it with or without
+  `rustc`.
+- G3b: `LOFT_TRACE_NATIVE_GATE=1` names a library that interprets because no artifact of
+  this loft is there and there is no `rustc`.
+- Guard: `registry_e2e::a_released_library_artifact_runs_compiled_without_rustc` — the
+  release script and the entry generator over a fixture registry of `calc` and the `base` it
+  uses; installed under another loft's row nothing is fetched and the run interprets (the
+  control); under the real row, already installed and in a fresh home, both artifacts arrive
+  and the run is compiled with `rustc` off `PATH`.  Falsified by dropping the identity check
+  and by fetching only for freshly placed packages.
 
 ## Phase F — the gate is the rule
 
-- **F1 — the census.**  `LOFT_TRACE_NATIVE_GATE=1` over every registry library's published
-  version (`scripts/revalidate_libs_local.sh` already resolves them), counted per decline
-  reason, as `make gate-census`: a report, never a gate.  It orders the standing shapes below
-  by how many published functions each keeps interpreted.
+- **F1 — the census (done).**  `make gate-census` (`scripts/gate_census.sh`) installs every
+  registry library's published version into a scratch home and runs a one-line `use` of it
+  under `LOFT_TRACE_NATIVE_GATE=only` (the partition, no build, no `rustc`), then counts the
+  decline reasons over the registry by the shape they name.  A report, never a gate; its
+  latest reading is on the plan issue.
+- **F3 — a returned tuple of scalars (done).**  The census's leading shape: the gate admits a
+  tuple of plain `integer`, `float` and `boolean` leaves (`is_returned_tuple_leaf`), the
+  bridge writes one `ret[i]` per leaf, and the dispatcher pushes them in element order —
+  the mirror of the tuple parameters of A3.  `gatefull` carries the shapes (`ret_pair`,
+  `ret_fpair`, `ret_mixed`, `ret_nested`, `ret_pair_null`).
+- **F4 — a `&T` parameter of a heap type (done).**  A `&` to a record, vector, keyed
+  collection or data enum: the bridge copies the caller's `DbRef` out of the slot, `--native`'s
+  `&mut DbRef` writes through or rebinds the copy, and the copy goes back to the slot after the
+  call, re-resolved there because a call back may grow the interpreter's stack.  `gatefull`:
+  `arg_ref_rec`, `arg_ref_rec_rebind` (a thousand rebinds under `LOFT_STORES=warn`),
+  `arg_ref_vec`, `arg_ref_hash`.  After it the census finds no published function interpreted.
 - **F2 — the generators `--native` cannot carry.**  `coroutine_layout::channel_tag` answers
   `CHANNEL_NONE` for a tuple yield holding a text or a nested tuple (`coroutine_layout.rs` ~181),
   which the generator answers with a `compile_error!` on `--native` too (loft#1132) — so this is
@@ -379,7 +426,7 @@ is scheduled.  One is lifted when a consumer or a profile meets it — the trace
 
 | shape | where it declines |
 |---|---|
-| `&text`, `&vector`, `&(…)` parameters | `native_gate::is_ref_scalar` |
+| `&text`, `&(…)` parameters | `native_gate::is_ref_scalar` |
 | a narrow scalar (`single`, `character`, a plain enum, a sized `integer`) in a tuple parameter, a generator's yield, a `&T`, or a function value's signature | `is_tuple_leaf`, `generator_crosses`, `is_ref_scalar`, `fnref::upcall_carries` |
 | a tuple yield | `generator_crosses` |
 | a function value with a `&T` parameter, or a keyed-collection result | `fnref::upcall_carries` |
@@ -395,9 +442,8 @@ The procedure, the one every step above followed:
 
 ## Order
 
-Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3.  D4 is dropped.  The open steps, each one commit:
+Done: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0-0, G0a, G0b-1, G0b-2, G0c, G1, G2a, G2b, G2c, G3, F1, F3, F4.
+D4 is dropped.  The open steps, each one commit:
 
-G0-0 → G0a (per file) → G0b-1 → G0b-2 → G0c → G1a → G1b → G2a → G2b → G3a → G3b → G2c, and,
-independent of G: F1 → F2 → the standing shapes in F1's order → F-last.  G0a and G0b-1 change
-no behaviour and can land any time; G0b-2 is the step that makes an artifact shareable, and
-G2c, the release job, is last because it publishes.
+F2 → the standing shapes in F1's order → F-last.  G2c's job runs at the next tag; its
+first run is checked on the draft's assets and summary before the owner publishes.

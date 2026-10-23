@@ -5711,7 +5711,7 @@ impl Parser {
     /// pass-1 type is the literal's expected instance there.  Whatever it numbers per pass
     /// would renumber what follows — a `_vec_N` temporary left standing took the name the
     /// next vector wanted (`_vec_1` met `vector<Mine>` under a `vector<text>`), and a lambda
-    /// is a definition numbered by `lambda_counter`.  So the variable table is put back
+    /// is a definition numbered per enclosing function by `lambda_counters`.  So the variable table is put back
     /// whole, and while [`Parser::discovering`] a lambda defines nothing: the long form
     /// answers the type its header spells, and a short one — whose parameter types come from
     /// the very type this read is after — answers nothing, and its field binds nothing.

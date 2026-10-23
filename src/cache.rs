@@ -201,23 +201,46 @@ fn binary_signature_tag() -> String {
     }
 }
 
+/// Whether this binary is a release bundle's (`scripts/repro-flags.sh` sets
+/// `LOFT_RELEASE_BUNDLE`, `build.rs` bakes it in).
+#[must_use]
+pub fn release_bundle() -> bool {
+    !env!("LOFT_RELEASE_BUNDLE").is_empty()
+}
+
 /// Which `loft` EXECUTABLE this is: its build id and the binary's own modification time
 /// ([`binary_signature_tag`]).  An auto-native library artifact holds code THIS binary's
 /// generator emitted and is called through THIS binary's store layout, so it must never be
 /// reused by another one — not even by a binary that finds the same `libloft.rlib`.  Keyed
 /// on the rlib alone, an installed `loft` upgraded without its rlib reused the previous
 /// binary's artifact and corrupted the store on the first call (loft#1776).
+///
+/// A release bundle's binary is named by what it was built from instead — the version, the
+/// target, the features and [`build_identity_tag`], all baked in — because its file's time is
+/// the unpacking machine's: the release builds library artifacts with this binary, and the
+/// copy a user unpacks must answer the same (@PLN199 G2c).
 #[must_use]
 pub fn loft_exe_identity() -> u64 {
-    use std::hash::{Hash, Hasher};
     use std::sync::OnceLock;
     static ID: OnceLock<u64> = OnceLock::new();
-    *ID.get_or_init(|| {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        BUILD_ID.hash(&mut h);
-        binary_signature_tag().hash(&mut h);
-        h.finish()
-    })
+    *ID.get_or_init(|| exe_identity_of(release_bundle(), &|| binary_signature_tag()))
+}
+
+/// Pure core of [`loft_exe_identity`]: `mtime` is asked only of a binary that is not a release
+/// bundle's.
+fn exe_identity_of(release: bool, mtime: &dyn Fn() -> String) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    BUILD_ID.hash(&mut h);
+    if release {
+        LOFT_VERSION.hash(&mut h);
+        host_triple().hash(&mut h);
+        feature_signature().hash(&mut h);
+        build_identity_tag().hash(&mut h);
+    } else {
+        mtime().hash(&mut h);
+    }
+    h.finish()
 }
 
 /// @PLN11 G2 / track 1 — whether the whole-program startup cache is active for
@@ -1413,6 +1436,28 @@ fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
 
 #[cfg(test)]
 mod tests {
+    /// @PLN199 G2c — a release bundle's binary is named by what it was built from, so the copy
+    /// a user unpacks, with that machine's file times, is the binary the release built library
+    /// artifacts with; any other binary keeps its file's time in its name (loft#1776).
+    #[test]
+    fn a_release_binary_is_named_by_its_build_not_its_file_time() {
+        let at = |t: &'static str| move || t.to_string();
+        assert_eq!(
+            super::exe_identity_of(true, &at("1.5")),
+            super::exe_identity_of(true, &at("2.7")),
+            "a release binary unpacked at another time is another loft"
+        );
+        assert_ne!(
+            super::exe_identity_of(false, &at("1.5")),
+            super::exe_identity_of(false, &at("2.7")),
+            "CONTROL: a development binary rebuilt from the same commit keeps one identity"
+        );
+        assert_ne!(
+            super::exe_identity_of(true, &at("1.5")),
+            super::exe_identity_of(false, &at("1.5")),
+        );
+    }
+
     /// loft#930 — the `--lib` search path is part of the program-cache key.  Keying on
     /// the script path alone made one script run against two library trees reuse the
     /// FIRST tree's build, and the drift manifest could not catch it: it re-validates the

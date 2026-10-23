@@ -1761,8 +1761,7 @@ fn brick_buster_pack_step_matches_its_manifest() {
 /// `self_update::host_triple` derives the registry lookup key the same way.  They are
 /// two hand-written derivations of one fact, in different languages, and the failure
 /// when they drift is silent: the installer 404s, or `self-update` reports "published,
-/// but not built for your platform" about the artifact meant for that host.  That
-/// already happened once — Linux composed `-gnu` while releases ship `-musl`.
+/// but not built for your platform" about the artifact meant for that host.
 ///
 /// So pin them together: every triple the shell can produce must appear in
 /// `PUBLISHED_TRIPLES`, which is itself checked against a real release.
@@ -1777,7 +1776,7 @@ fn installer_and_self_update_agree_on_the_published_triples() {
     let sh = fa::read_to_string("scripts/install.sh").expect("read install.sh");
     let published = loft::self_update::PUBLISHED_TRIPLES;
     // The shell composes `$arch-<rest>`; check each literal suffix it can emit.
-    for suffix in ["-apple-darwin", "-unknown-linux-musl", "-pc-windows-msvc"] {
+    for suffix in ["-apple-darwin", "-unknown-linux-gnu", "-pc-windows-msvc"] {
         if !sh.contains(suffix) {
             continue;
         }
@@ -1880,6 +1879,40 @@ fn the_release_records_the_c_toolchain_the_verifier_compares() {
     assert!(
         vf.contains("^c-toolchain = ") && vf.contains("repro_c_toolchain \"$TARGET\""),
         "repro-verify.sh must read `c-toolchain` back out of BUILD-INFO and compare its own"
+    );
+}
+
+/// @PLN199 G2c — a release bundle's binary is named by what it was built from, so the copy a
+/// user unpacks runs the library artifacts the release built with it.  The mark spans three
+/// files: `repro-flags.sh` exports it (sourced by the release and by its verifier, which must
+/// bake the same bytes), `build.rs` bakes it in, and `cache::release_bundle` reads it.  An
+/// edit that drops one end leaves every release artifact unadoptable, and nothing fails: the
+/// libraries interpret.
+#[test]
+fn the_release_bundle_mark_reaches_the_binary() {
+    let rf = fa::read_to_string("scripts/repro-flags.sh").expect("read repro-flags.sh");
+    let build = fa::read_to_string("build.rs").expect("read build.rs");
+    let cache = fa::read_to_string("src/cache.rs").expect("read src/cache.rs");
+    assert!(
+        rf.lines()
+            .any(|l| l.trim() == "export LOFT_RELEASE_BUNDLE=1"),
+        "scripts/repro-flags.sh must export LOFT_RELEASE_BUNDLE=1"
+    );
+    for name in ["make-release.sh", "repro-verify.sh"] {
+        let src = fa::read_to_string(format!("scripts/{name}")).expect("read the script");
+        assert!(
+            src.contains("repro-flags.sh"),
+            "{name} must source scripts/repro-flags.sh"
+        );
+    }
+    assert!(
+        build.contains("cargo:rustc-env=LOFT_RELEASE_BUNDLE={}")
+            && build.contains("rerun-if-env-changed=LOFT_RELEASE_BUNDLE"),
+        "build.rs must bake LOFT_RELEASE_BUNDLE into the binary"
+    );
+    assert!(
+        cache.contains("env!(\"LOFT_RELEASE_BUNDLE\")"),
+        "cache::release_bundle must read the baked mark"
     );
 }
 
@@ -1991,6 +2024,47 @@ fn repro_matrix_covers_every_published_triple() {
             "repro-build.yml rebuilds `{target}` on `{os}` but release.yml builds it on \
              `{release_os}`: a rebuild on another architecture is a different build, so it \
              could only ever report a mismatch. Give it a runner of the release's architecture"
+        );
+    }
+}
+
+/// The Linux release bundle is built in one container image, and every workflow that
+/// builds or rebuilds it names that image.  Its glibc decides which systems the binary
+/// starts on and its C toolchain is part of the bytes, so a daily build on another image
+/// is not the artefact a release ships, and a rebuild on another image can only report a
+/// difference that says nothing about the source (loft#2127).
+#[test]
+fn linux_bundle_image_is_one_image() {
+    let mut seen: Vec<(&str, String)> = Vec::new();
+    for wf in [
+        ".github/workflows/release.yml",
+        ".github/workflows/daily-build.yml",
+        ".github/workflows/repro-build.yml",
+    ] {
+        let text = fa::read_to_string(wf).expect("read workflow");
+        let images: Vec<String> = text
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("container:"))
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.starts_with("${{"))
+            .collect();
+        assert_eq!(
+            images.len(),
+            1,
+            "{wf} must name exactly one container image, the Linux bundle's: {images:?}"
+        );
+        assert!(
+            images[0].contains("@sha256:"),
+            "{wf} names `{}` without a digest, so the image can change under the same name",
+            images[0]
+        );
+        seen.push((wf, images[0].clone()));
+    }
+    for (wf, image) in &seen[1..] {
+        assert_eq!(
+            image, &seen[0].1,
+            "{wf} builds the Linux bundle in another image than {}",
+            seen[0].0
         );
     }
 }

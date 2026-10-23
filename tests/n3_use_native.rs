@@ -159,7 +159,7 @@ fn use_compile_native_library_dispatches_on_real_binary() {
 /// `label` stays interpreted — with no user-facing error and the script calling all alike.
 ///
 /// Also verifies the synthetic-exclusion invariant: `apply_inc`'s nested lambda
-/// (`__lambda_N`, made `pub_visible` by the enclosing `pub fn`) is NOT a dispatch
+/// (`__lambda_apply_inc_0`, made `pub_visible` by the enclosing `pub fn`) is NOT a dispatch
 /// target — it is a fn-ref target, not script-callable public API — so no
 /// `loft_shared_n___lambda` symbol appears in the cdylib.
 // @speed 1.2
@@ -245,6 +245,149 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     let _ = fa::remove_dir_all(native_auto);
 }
 
+/// @PLN199 G0-0 — a library's lambdas are named by the library alone.  A lambda is
+/// `__lambda_<enclosing fn>_<k>`, so a second `use` parsed before `mathmixed` — one whose
+/// own function carries a lambda — leaves `mathmixed`'s lambda names as they were.  A table
+/// that maps a library's functions by name (what a prebuilt artifact needs) depends on it.
+#[test]
+fn a_librarys_lambda_names_do_not_depend_on_what_was_parsed_before_it() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir().join(format!("loft_n3_lambda_names_{pid}"));
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
+    let lib = private_lib(&tmp, &["mathmixed"]);
+    fa::create_dir_all(lib.join("lead/src")).unwrap();
+    fa::write(
+        lib.join("lead/loft.toml"),
+        "[package]\nname = \"lead\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/lead.loft\"\n",
+    )
+    .unwrap();
+    fa::write(
+        lib.join("lead/src/lead.loft"),
+        "pub fn lead_step(x: integer) -> integer {\n\
+         \x20   f = fn(a: integer) -> integer { a * 2 };\n\
+         \x20   f(x)\n\
+         }\n",
+    )
+    .unwrap();
+    let alone = tmp.join("alone.loft");
+    fa::write(
+        &alone,
+        "use mathmixed::*;\nfn main() { println(\"{apply_inc(10)} {label(4)}\"); }\n",
+    )
+    .unwrap();
+    let after = tmp.join("after.loft");
+    fa::write(
+        &after,
+        "use lead::*;\nuse mathmixed::*;\n\
+         fn main() { println(\"{apply_inc(10)} {label(4)} {lead_step(5)}\"); }\n",
+    )
+    .unwrap();
+    let lambdas = |prog: &std::path::Path, expect: &str| -> Vec<String> {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(&lib)
+            .arg(prog)
+            .env("LOFT_LOG", "static")
+            .output()
+            .expect("run the loft binary");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let all = format!("{stdout}{}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "loft exited non-zero:\n{all}");
+        assert_eq!(stdout.lines().last(), Some(expect), "program output");
+        let mut names: Vec<String> = all
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter(|w| w.starts_with("n___lambda_"))
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let mathmixed = ["n___lambda_apply_inc_0", "n___lambda_label_0"];
+    // apply_inc(10) = 11, label(4) = 40, lead_step(5) = 10.
+    let a = lambdas(&alone, "11 40");
+    let b = lambdas(&after, "11 40 10");
+    assert_eq!(a, mathmixed, "mathmixed's lambdas, used alone");
+    assert_eq!(
+        b,
+        [
+            "n___lambda_apply_inc_0",
+            "n___lambda_label_0",
+            "n___lambda_lead_step_0"
+        ],
+        "mathmixed's lambdas keep their names behind a library with a lambda of its own"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}
+
+/// @PLN199 G1 — an artifact is a function of the library alone: the same library at two
+/// places, used by two different programs, generates the same stem and the same source —
+/// no machine path (`<package>/src/…` in its frames and line comments) and nothing of the
+/// program's type table.
+#[test]
+fn the_same_library_at_two_places_generates_the_same_artifact() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_g1_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&tmp);
+    let one = private_lib(&tmp.join("one"), &["mathmixed", "typeshift"]);
+    let two = private_lib(&tmp.join("elsewhere/two"), &["mathmixed"]);
+    let alone = tmp.join("alone.loft");
+    fa::write(
+        &alone,
+        "use mathmixed::*;\nfn main() { println(\"{apply_inc(10)}\"); }\n",
+    )
+    .unwrap();
+    let shifted = tmp.join("shifted.loft");
+    fa::write(
+        &shifted,
+        "use typeshift::*;\nuse mathmixed::*;\n\
+         fn main() { _ = ts_touch(); println(\"{apply_inc(10)}\"); }\n",
+    )
+    .unwrap();
+    let source = |lib: &std::path::Path, prog: &std::path::Path| -> (String, String) {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(lib)
+            .arg(prog)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run the loft binary");
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "11",
+            "apply_inc(10) = 11:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let rs = fa::read_dir(lib.join("mathmixed/native-auto"))
+            .expect("the run built mathmixed")
+            .into_iter()
+            .find(|e| fa::has_extension(e, "rs"))
+            .expect("a generated source");
+        let name = fa::file_name(rs.os_spelling()).unwrap_or_default();
+        (name, fa::read_to_string(&rs).unwrap_or_default())
+    };
+    let (stem_one, src_one) = source(&one, &shifted);
+    let (stem_two, src_two) = source(&two, &alone);
+    assert_eq!(
+        stem_one, stem_two,
+        "the same library at two places takes one name"
+    );
+    assert!(
+        src_one == src_two,
+        "the same library generates the same source wherever it lies and whoever uses it"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}
+
 /// `LOFT_TRACE_NATIVE_GATE=1` names, per `use`d library, how many of the functions a script
 /// can call run compiled and, for each that stays interpreted, the rule that kept it there —
 /// before it, a function left out of the compiled library ran slower and nothing said so.
@@ -255,10 +398,10 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
 /// function that silently drops back to the interpreter adds one and fails.
 const GATEFULL_INTERPRETED: &[(&str, &str)] = &[];
 
-/// The callable functions the trace counts for `gatefull`: its thirty-three non-generic `pub fn`s,
+/// The callable functions the trace counts for `gatefull`: its forty-two non-generic `pub fn`s,
 /// `generic` as its one instantiation (`i_7integer_n_generic`), and the four operator stubs
 /// the `Numeric` bound declares (`t_6T_6_g1_OpMin`, …).
-const GATEFULL_CALLABLE: usize = 38;
+const GATEFULL_CALLABLE: usize = 51;
 
 #[test]
 fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
@@ -608,6 +751,23 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
              (stale cdylib type index resolved against the host table)"
         );
     }
+    // @PLN199 G0c — and it is ONE artifact: the code names its types by key, so the shifted
+    // context adopts what the bare one built instead of building its own.
+    let artifacts = fa::read_dir(native_auto)
+        .map(|rd| {
+            rd.into_iter()
+                .filter(|e| {
+                    let n = e.file_name().unwrap_or_default();
+                    n.contains("loft_auto_binwriter")
+                        && (n.ends_with(".so") || n.ends_with(".dylib") || n.ends_with(".dll"))
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(
+        artifacts, 1,
+        "two programs using binwriter share one artifact"
+    );
 
     let _ = fa::remove_dir_all(&tmp);
     let _ = fa::remove_dir_all(native_auto);
@@ -670,7 +830,8 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
         );
     }
     // The interpreted run built the library's shared cdylib; its bridge must ask for the
-    // library's row.
+    // library's row — by key since @PLN199 G0b-2 (`sharedname::Holder` in its id table), and
+    // never by the bare name the program's own `Holder` can hold.
     let generated: Vec<String> = fa::read_dir(lib.join("sharedname/native-auto"))
         .expect("the interpreted run built the library's cdylib")
         .into_iter()
@@ -680,7 +841,7 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     assert!(!generated.is_empty(), "no generated bridge source");
     for src in &generated {
         assert!(
-            src.contains(".name(\"sharedname::Holder\")") && !src.contains(".name(\"Holder\")"),
+            src.contains("\"sharedname::Holder\"") && !src.contains(".name(\"Holder\")"),
             "the bridge must mint the library's `sharedname::Holder`, not the program's `Holder`"
         );
     }
@@ -699,9 +860,11 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
 /// against a foreign table and reads at the wrong offsets. That is silent memory
 /// corruption, whose crash lands arbitrarily far from its cause.
 ///
-/// So the artifact now names its own layout (`loft_type_layout_fp_v1`) and the
+/// So the artifact now names the key it was built for (`loft_type_layout_fp_v1`) and the
 /// adopter asks. This plants one context's artifact at the other's exact filename
-/// — the aliasing #715 argues is unreachable — and requires that it be rejected.
+/// — the aliasing #715 argues is unreachable — and requires that it be rejected.  Since
+/// @PLN199 G0c an artifact that names its ids by key serves every context, so the foreign
+/// one is a literal build (`LOFT_NO_LIB_IDS=1`), which is keyed on its program.
 ///
 /// The test carries its own control, because "it rebuilt" has a boring competing
 /// explanation: copying a file changes its mtime, and a rebuild triggered by mtime
@@ -745,15 +908,18 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     )
     .unwrap();
 
-    let run = |prog: &std::path::Path| {
-        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .arg("--lib")
+    let run_with = |prog: &std::path::Path, literal: bool| {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--lib")
             .arg(&lib)
             .arg(prog)
-            .env("LOFT_NO_CACHE", "1")
-            .output()
-            .expect("run the loft binary")
+            .env("LOFT_NO_CACHE", "1");
+        if literal {
+            cmd.env("LOFT_NO_LIB_IDS", "1");
+        }
+        cmd.output().expect("run the loft binary")
     };
+    let run = |prog: &std::path::Path| run_with(prog, false);
     let sos = || -> Vec<std::path::PathBuf> {
         let mut v: Vec<_> = fa::read_dir(native_auto)
             .map(|rd| {
@@ -782,7 +948,12 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     assert_eq!(after_bare.len(), 1, "the bare context built one artifact");
     let bare_so = after_bare[0].clone();
 
-    assert!(run(&shifted).status.success(), "shifted context runs");
+    // @PLN199 G0c — an artifact that names its ids by key serves both contexts, so the
+    // foreign one is made by a LITERAL build, which is still built for its program alone.
+    assert!(
+        run_with(&shifted, true).status.success(),
+        "shifted context runs"
+    );
     let two = sos();
     if two.len() < 2 {
         // Both contexts fingerprinted the same, so there is no foreign artifact to

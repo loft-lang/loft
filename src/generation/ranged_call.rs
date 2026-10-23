@@ -300,7 +300,7 @@ impl super::Output<'_> {
     /// from it, every integer argument is proven within `[-L, L]`, and — for a twin call —
     /// every scalar input the twin takes is too.  Records the request; the variant is
     /// emitted after the program's functions.
-    pub(super) fn ranged_call(&mut self, d: u32, args: &[Value], twin: bool) -> bool {
+    pub(super) fn ranged_call(&mut self, d: u32, args: &[Value], twin: bool, kept: bool) -> bool {
         if !range::ranged_calls_enabled()
             || self.range_arith_disabled
             || self.in_coroutine_body
@@ -357,7 +357,11 @@ impl super::Output<'_> {
                 }
             }
         }
-        let key = (self.dv_key(d), twin);
+        // `(R-Header)`'s kept clause — the ranged variant of the callee's `__kh` twin.
+        let key = (
+            self.dv_key(d) | if kept { super::kept::KH_BIT } else { 0 },
+            twin,
+        );
         if !self.rg_emitted.contains(&key) && !self.rg_requests.contains(&key) {
             self.rg_requests.push(key);
         }

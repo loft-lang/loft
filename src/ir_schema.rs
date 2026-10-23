@@ -1500,6 +1500,17 @@ pub fn data_to_json(data: &Data) -> String {
         write_str(&mut out, name);
         let _ = write!(out, ",\"source\":{source}}}");
     }
+    // @PLN199 G0b-2 — the name each library source was loaded under, which a library
+    // artifact names that source's types and functions by.
+    out.push_str("],\"source_labels\":[");
+    for (i, (source, name)) in data.source_label_pairs().iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let _ = write!(out, "{{\"source\":{source},\"name\":");
+        write_str(&mut out, name);
+        out.push('}');
+    }
     // The type-variable placeholders' bound keys: like `use_names`, not derivable from the
     // definitions, and a parse continuing this Data needs them.  Sorted for a stable text.
     out.push_str("],\"type_var_bounds\":[");
@@ -1572,6 +1583,13 @@ pub fn data_from_json(src: &str) -> Result<Data, TypeDecodeError> {
             pairs.push((as_str(field(it, "name")?)?, as_u16(field(it, "source")?)?));
         }
         data.set_use_names(pairs);
+    }
+    if let Ok(Parsed::Array(items)) = field(&parsed, "source_labels") {
+        let mut pairs = Vec::with_capacity(items.len());
+        for it in items {
+            pairs.push((as_u16(field(it, "source")?)?, as_str(field(it, "name")?)?));
+        }
+        data.set_source_labels(pairs);
     }
     if let Ok(Parsed::Array(items)) = field(&parsed, "type_var_bounds") {
         for it in items {

@@ -539,7 +539,7 @@ fn runtime_scratch_pid(name: &str) -> Option<u32> {
 // `Option` is the cross-platform contract, not a unix one: the unix arm can always
 // decide, and the non-unix arm never can.  Clippy sees only the arm it compiles.
 #[cfg_attr(unix, allow(clippy::unnecessary_wraps))]
-fn pid_alive(pid: u32) -> Option<bool> {
+pub(crate) fn pid_alive(pid: u32) -> Option<bool> {
     #[cfg(unix)]
     {
         // A value that does not fit a POSITIVE `pid_t` names no process, and must never
@@ -762,6 +762,13 @@ pub fn native_compile_space_ok(scratch: &std::path::Path) -> bool {
 #[must_use]
 pub fn native_strip_symbols() -> bool {
     std::env::var_os("LOFT_NATIVE_KEEP_SYMBOLS").is_none()
+}
+
+/// Whether a native binary's symbols live in the executable itself, so keeping them makes it
+/// larger.  The MSVC linker writes them to a `<binary>.pdb` beside it instead.
+#[must_use]
+pub fn native_symbols_in_the_binary() -> bool {
+    !cfg!(windows)
 }
 
 /// Whether `[native] crate` packages link by C-ABI (their `.so`) rather than as Rust rlibs:

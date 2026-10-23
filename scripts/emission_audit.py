@@ -17,6 +17,8 @@ rewrites make about the loop they sit in (doc/claude/formal/rewrites.md):
             record push (@PLN157 § V-t) is the sanctioned form there
             (`push_record_hoisted` / `push_record_finish`, validated like a push).
   R-Inputs  a twin call (`<fn>__inv(cell, …)`) hands in only live holders.
+  R-Header  (kept clause) a body's `let mut __kh_N = vector::vec_header(&(P), …)` and a `__kh`
+            twin's `__kh_k: &mut vector::VecHeader` inputs are holders for the whole body.
   R-Base    (twin clause) a twin's `__ib_k` inputs are holders, and a view's shared base
             (`let __vb_N = __ib_k; //@FR-R-Base view base for …`) is derived from a live one.
   R-PushFill a push window (`let mut __pw_N = vector::push_window(&__ph_M, …)`) opens on a
@@ -41,6 +43,10 @@ import re
 import sys
 
 BIND_HEADER = re.compile(r"^\s*let (__vh_\d+) = vector::vec_header\(&\((.*)\), &stores\.allocations\);")
+# (R-Header)'s kept clause: a body's holder of a kept vector field, bound once at entry and
+# refreshed in place (`__kh_N = vector::vec_header(…)`), or a `__kh` twin's `&mut` input.
+BIND_KEPT_COPY = re.compile(r"^\s*let (__vh_\d+) = .*//@FR-R-Header kept clause: the loop's copy of the holder")
+BIND_KEPT = re.compile(r"^\s*let mut (__kh_\d+) = vector::vec_header\(&\((.*)\), &stores\.allocations\); //@FR-R-Header kept clause")
 BIND_PUSH = re.compile(r"^\s*let mut (__ph_\d+) = vector::push_header\(&\((.*)\), &stores\.allocations\);")
 BIND_VIEW = re.compile(r"^\s*let (__vh_\d+) = .*//@PLN157 § V-n view header for (\S+?)(?:,| |$)")
 # R-Base (@PLN157 § V-ak): an element base is derived FROM a live holder of the same path —
@@ -122,6 +128,8 @@ def audit(text, quiet=False):
             # (a base input `__ib_k` is the twin clause of R-Base: a holder like the rest)
             for param in re.findall(r"(__i[shb]_\d+): ", m.group(2)):
                 holders.append(Holder(param, "input", None, 1, nr))
+            for param in re.findall(r"(__kh_\d+): &mut vector::VecHeader", m.group(2)):
+                holders.append(Holder(param, "kept", None, 1, nr))
             earlier = 0
         code = line.split("//")[0]
         # R-GroupPush — a group header's Rust binding outlives its group; the emitter marks
@@ -144,6 +152,8 @@ def audit(text, quiet=False):
         # ---- bindings (R-State: one holder per path per frame) ----
         bound = None
         mh = BIND_HEADER.match(line)
+        mk = BIND_KEPT.match(line)
+        mkc = BIND_KEPT_COPY.match(line)
         mp = BIND_PUSH.match(line)
         mv = BIND_VIEW.match(line)
         ms = BIND_SCALAR.match(line)
@@ -237,7 +247,11 @@ def audit(text, quiet=False):
             depth += code.count("{") - code.count("}")
             holders = [h for h in holders if h.depth <= depth]
             continue
-        if mp:
+        if mk:
+            bound = Holder(mk.group(1), "kept", mk.group(2), depth, nr)
+        elif mkc:
+            bound = Holder(mkc.group(1), "kept", None, depth, nr)
+        elif mp:
             bound = Holder(mp.group(1), "push", mp.group(2), depth, nr)
         elif mv:
             bound = Holder(mv.group(1), "view", mv.group(2), depth, nr)

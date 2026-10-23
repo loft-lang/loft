@@ -10,6 +10,10 @@ use crate::ir_node::{IrBlock, IrNode};
 use std::io::Write;
 
 use super::text::count_format_ops;
+
+/// @PLN199 G0b-2 — the bit that marks a function number as a library artifact's own
+/// ([`Output::fn_lit_as`]); a program never numbers a definition this high.
+pub(crate) const FN_LOCAL: u32 = 0x8000_0000;
 use super::{
     Output, block_needs_i64_widen, block_tail_cast, default_native_value, default_native_value_in,
     narrow_int_cast, sanitize,
@@ -197,11 +201,18 @@ impl Output<'_> {
             ValueType::Int => {
                 if self.fn_ref_context {
                     // in fn-ref context (if-else branch), emit tuple.
-                    return write!(
-                        w,
-                        "({}_i32 as u32, loft::keys::DbRef::NULL)",
-                        node.int_value()
-                    );
+                    return match u32::try_from(node.int_value()) {
+                        Ok(d_nr) => write!(
+                            w,
+                            "({} as u32, loft::keys::DbRef::NULL)",
+                            self.fn_lit_as(d_nr, "i32")
+                        ),
+                        Err(_) => write!(
+                            w,
+                            "({}_i32 as u32, loft::keys::DbRef::NULL)",
+                            node.int_value()
+                        ),
+                    };
                 } else if self.i32_literal_context {
                     // tp-number / field-index / flag-enum slot: runtime wants i32.
                     return write!(w, "{}_i32", node.int_value());
@@ -235,9 +246,8 @@ impl Output<'_> {
                 // rustc errors trace back to the loft source line.
                 // One spelling on every host: the comment is part of generated source that is
                 // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
-                let file = crate::file_access::portable_str(
-                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
-                );
+                let file =
+                    self.source_path(&self.data.def(self.def_nr).position().file.replace('\n', ""));
                 // @PLN157 — remember where we are, so an operator checkpoint can name the
                 // loft line it came from.  This stream is the emitter's only notion of
                 // position.
@@ -301,7 +311,9 @@ impl Output<'_> {
                     let mut buf: Vec<u8> = Vec::new();
                     self.output_code_node(&mut buf, inner)?;
                     let code = String::from_utf8_lossy(&buf).into_owned();
-                    let push = self.eager_fnref_push(&inner.to_owned_value(), &code);
+                    let owned = inner.to_owned_value();
+                    let code = self.fn_number_code(&owned).unwrap_or(code);
+                    let push = self.eager_fnref_push(&owned, &code);
                     write!(w, "{push}")?;
                 } else if let Some(kinds) = self.yield_collect_kinds.clone() {
                     // A by-value tuple yield: push each element's `i64` image FLAT, in the
@@ -383,13 +395,13 @@ impl Output<'_> {
             // a null sentinel when non-capturing.
             ValueType::FnRef => {
                 let clos_var = node.fnref_clos_var();
-                let d_nr = node.fnref_dnr();
+                let d_nr = u32::try_from(node.fnref_dnr()).unwrap_or(u32::MAX);
                 if clos_var != u16::MAX {
                     // The closure record's PLACE — a struct field in a generator (loft#1587).
                     let place = self.var_place(clos_var);
-                    return write!(w, "({d_nr}_u32, {place})");
+                    return write!(w, "({}, {place})", self.fn_lit(d_nr));
                 }
-                return write!(w, "({d_nr}_u32, loft::keys::DbRef::NULL)");
+                return write!(w, "({}, loft::keys::DbRef::NULL)", self.fn_lit(d_nr));
             }
             ValueType::Parallel => {
                 // One Rust closure per arm, handed to `n_parallel_block_native`, which
@@ -461,6 +473,11 @@ impl Output<'_> {
                 // P215: project the d_nr from a fn-ref var's (u32, DbRef) tuple — through
                 // the slot's place, which is a struct field in a generator (loft#1587).
                 let place = self.var_place(node.fnref_dnr_var());
+                // @PLN199 G0b-2 — the number a store holds is the program's: a library
+                // artifact's own numbering stays in its code (`__to_host`).
+                if self.shared_ids.is_some() {
+                    return write!(w, "(__to_host({place}.0) as i64)");
+                }
                 return write!(w, "({place}.0 as i64)");
             }
             // Plan-07 — Span is transparent in native emit.
@@ -678,7 +695,14 @@ impl Output<'_> {
                     if as_block {
                         write!(w, "{{ ")?;
                     }
-                    self.output_code_node(w, e)?;
+                    match e
+                        .native()
+                        .and_then(|v| self.fn_number_code(v))
+                        .filter(|_| needs_fn_pair)
+                    {
+                        Some(code) => write!(w, "{code}")?,
+                        None => self.output_code_node(w, e)?,
+                    }
                     if as_block {
                         write!(w, " }}")?;
                     }
@@ -1817,7 +1841,7 @@ impl Output<'_> {
             d_nr, has_closure, ..
         } in &candidates
         {
-            write!(w, " {d_nr}_u32 => ")?;
+            write!(w, " {} => ", self.fn_arm(*d_nr))?;
             // P227: text-return arms wrap each call result with
             // `.to_string()` so heterogeneous candidate Rust signatures
             // (some return `Str`, some return `String`) collapse to a
@@ -1861,11 +1885,11 @@ impl Output<'_> {
             let arm_allocs_buf = vec_hbuf_tp.is_some() && !hidden_heap_attrs.is_empty();
             let _ = &cand_def_pre;
             if arm_allocs_buf {
-                let tp = vec_hbuf_tp.unwrap_or_default();
+                let tp = self.type_lit(vec_hbuf_tp.unwrap_or_default());
                 write!(
                     w,
                     "{{ let mut __vc_hbuf: DbRef = stores.null_named(\"__vc_hbuf\"); \
-                     __vc_hbuf = OpDatabase(cell, __vc_hbuf, {tp}_i32); let __vc_r = "
+                     __vc_hbuf = OpDatabase(cell, __vc_hbuf, {tp}); let __vc_r = "
                 )?;
             }
             // Build synthetic args matching this candidate's attribute list.
@@ -1903,7 +1927,10 @@ impl Output<'_> {
                             None => lent.push((tp, 1)),
                         }
                         crate::rewrite_census::fired("R-WorkBuffer/lent", 1);
-                        synthetic.push(Value::RawExpr(format!("__fwb.lend({tp}_i32, {k}_u32)")));
+                        synthetic.push(Value::RawExpr(format!(
+                            "__fwb.lend({}, {k}_u32)",
+                            self.type_lit(tp)
+                        )));
                     }
                 } else if a.hidden
                     && matches!(
@@ -2023,7 +2050,14 @@ impl Output<'_> {
             // script handed in names a callee this cdylib does not carry, and the interpreter
             // that loaded it runs that callee (`HostTable::call_ref`).  An absent fn-ref
             // reaches the interpreter's own `@FR-L-FnAbsent` guard there.
-            Self::write_upcall_arm(w, &param_types, &ret_type, &place, &closure_expr)?;
+            // A value that reaches this arm is no function of this artifact's, but a value
+            // the program numbered, and it leaves in the program's numbering (`__to_host`).
+            let callee = if self.shared_ids.is_some() {
+                format!("__to_host({place}.0)")
+            } else {
+                format!("{place}.0")
+            };
+            Self::write_upcall_arm(w, &param_types, &ret_type, &callee, &closure_expr)?;
         } else if let Some(fields) = &value_fields {
             write!(
                 w,
@@ -2059,7 +2093,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         param_types: &[Type],
         ret_type: &Type,
-        place: &str,
+        callee: &str,
         closure_expr: &str,
     ) -> std::io::Result<()> {
         let n = param_types.len();
@@ -2082,7 +2116,7 @@ impl Output<'_> {
             "]; let __uc = loft::native_lib::LibArg {{ dbref: {closure_expr}, \
              ..loft::native_lib::LibArg::ZERO }}; \
              let mut __ur = loft::native_lib::LibArg::ZERO; \
-             unsafe {{ (__host().call_ref)(cell.get(), {place}.0, &raw const __uc, __ua.as_ptr(), \
+             unsafe {{ (__host().call_ref)(cell.get(), {callee}, &raw const __uc, __ua.as_ptr(), \
              {n}, &raw mut __ur) }}; "
         )?;
         let read = match ret_type.base() {
@@ -2188,6 +2222,187 @@ impl Output<'_> {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// @PLN199 G1a — how generated code names a loft source file: as it is spelled, except in
+    /// a library artifact, which names it inside its package (`<package>/src/x.loft`) — no
+    /// machine path, so the same library at two places generates the same source, and a
+    /// stack trace through it reads the way the package does.
+    pub(super) fn source_path(&self, file: &str) -> String {
+        let plain = crate::file_access::portable_str(file);
+        if self.shared_ids.is_none() {
+            return plain;
+        }
+        let mut dir = crate::file_access::parent(file);
+        while let Some(d) = dir {
+            let manifest = d.join("loft.toml");
+            if crate::file_access::exists(&manifest) {
+                let name = crate::manifest::read_manifest(&manifest.to_string_lossy())
+                    .and_then(|m| m.name)
+                    .unwrap_or_default();
+                let rel = std::path::Path::new(file)
+                    .strip_prefix(&d)
+                    .map(|r| crate::file_access::portable_str(&r.to_string_lossy()))
+                    .unwrap_or(plain);
+                return format!("{name}/{rel}");
+            }
+            dir = crate::file_access::parent(&d);
+        }
+        plain
+    }
+
+    /// @PLN199 G0a — the literal a type id is written as in generated code, where the
+    /// runtime takes it as an `i32` (`OpDatabase(cell, r, 100_i32)`).  Every site that
+    /// writes a type id goes through here or [`Self::type_lit_u16`], so the code a library
+    /// artifact carries can name its types by a table filled when it loads instead.
+    pub(super) fn type_lit(&self, tp: u16) -> String {
+        self.type_lit_as(tp, "i32")
+    }
+
+    /// [`Self::type_lit`] where the runtime takes the type id as a `u16`.
+    pub(super) fn type_lit_u16(&self, tp: u16) -> String {
+        self.type_lit_as(tp, "u16")
+    }
+
+    /// [`Self::type_lit`] with `flags` or-ed into the bits above the id (`0x8000`, a call
+    /// that frees its source).
+    pub(super) fn type_lit_flagged(&self, tp: u16, flags: u16) -> String {
+        self.type_lit_as(tp | flags, "i32")
+    }
+
+    /// The table position a library artifact reads type `tp` from, or `None` where the
+    /// literal is written: outside one, and for a base type or the no-type id, which every
+    /// program numbers alike.
+    fn shared_type_slot(&self, tp: u16) -> Option<usize> {
+        let ids = self.shared_ids.as_ref()?;
+        (tp >= crate::database::BASE_TYPES && tp != u16::MAX)
+            .then(|| ids.borrow_mut().type_slot(tp))
+    }
+
+    /// The table position a library artifact reads function `d_nr` from, or `None`.
+    fn shared_fn_slot(&self, d_nr: u32) -> Option<usize> {
+        let ids = self.shared_ids.as_ref()?;
+        (d_nr != u32::MAX).then(|| ids.borrow_mut().fn_slot(d_nr))
+    }
+
+    /// [`Self::type_lit`] at the integer type `ty` a `#rust` template's parameter has.
+    ///
+    /// The two top bits of an operator's `tp` are flags, not part of the id
+    /// ([`super::TYPE_ID_FLAGS`]: `COPY_FREE_SOURCE`, `COPY_FRESH_DEST`, `CLEAR_KEYED_VIEW`), so a
+    /// table read stands for the id alone and the flags are or-ed back onto it.
+    pub(super) fn type_lit_as(&self, tp: u16, ty: &str) -> String {
+        let flags = tp & super::TYPE_ID_FLAGS;
+        match self
+            .shared_type_slot(tp & !super::TYPE_ID_FLAGS)
+            .filter(|_| tp != u16::MAX)
+        {
+            Some(k) if flags == 0 && ty == "u16" => format!("__tid({k})"),
+            Some(k) if flags == 0 => format!("(__tid({k}) as {ty})"),
+            Some(k) => format!("((__tid({k}) | {flags}) as {ty})"),
+            None => format!("{tp}_{ty}"),
+        }
+    }
+
+    /// [`Self::type_lit`] unsuffixed, where the callee's `ty` parameter types the literal.
+    pub(super) fn type_lit_bare(&self, tp: u16, ty: &str) -> String {
+        if self.shared_ids.is_some() {
+            self.type_lit_as(tp, ty)
+        } else {
+            format!("{tp}")
+        }
+    }
+
+    /// @PLN199 G0b-1 — the literal a function number (a definition's `d_nr`, the first half
+    /// of a function value) is written as.  Every site that writes one goes through here,
+    /// [`Self::fn_lit_as`] or [`Self::fn_arm`], so the code a library artifact carries can
+    /// name its functions by a table filled when it loads instead.
+    pub(super) fn fn_lit(&self, d_nr: u32) -> String {
+        self.fn_lit_as(d_nr, "u32")
+    }
+
+    /// [`Self::fn_lit`] at the integer type `ty` the surrounding code casts from.
+    ///
+    /// In a library artifact a function it carries is numbered by its own table position,
+    /// marked ([`FN_LOCAL`]): `FN_LOCAL | k` is a constant, so a dispatch on a value made here
+    /// folds as it does on a literal, where a table read would not.  A value takes the
+    /// program's number where it leaves the artifact's code (`__to_host`) and the local one
+    /// where it enters (`__norm`).
+    pub(super) fn fn_lit_as(&self, d_nr: u32, ty: &str) -> String {
+        match self.shared_fn_slot(d_nr) {
+            Some(k) if ty == "u32" => Self::fn_local(k),
+            Some(k) => format!("({} as {ty})", Self::fn_local(k)),
+            None => format!("{d_nr}_{ty}"),
+        }
+    }
+
+    /// The program's number of definition `d_nr` that is no function value — a constant
+    /// `OpConstRef` reads — at integer type `ty`: a library artifact reads it from its table.
+    pub(super) fn def_lit_as(&self, d_nr: u32, ty: &str) -> String {
+        match self.shared_fn_slot(d_nr) {
+            Some(k) => format!("(__fid({k}) as {ty})"),
+            None => format!("{d_nr}_{ty}"),
+        }
+    }
+
+    /// The constant a library artifact numbers its `k`-th function by.
+    fn fn_local(k: usize) -> String {
+        format!("{:#x}_u32", FN_LOCAL | u32::try_from(k).unwrap_or(0))
+    }
+
+    /// The pattern of the `match` arm that dispatches a function value to function `d_nr`.
+    pub(super) fn fn_arm(&self, d_nr: u32) -> String {
+        match self.shared_fn_slot(d_nr) {
+            Some(k) => Self::fn_local(k),
+            None => self.fn_lit(d_nr),
+        }
+    }
+
+    /// The code of `v` when it is a bare function number — an integer constant where a
+    /// function value or a routine is expected — written by [`Self::fn_lit_as`] at the width
+    /// a constant takes here; `None` for anything else.
+    pub(super) fn fn_number_code(&self, v: &Value) -> Option<String> {
+        match v.unspan() {
+            Value::Int(n) if !self.fn_ref_context => {
+                let ty = if self.i32_literal_context {
+                    "i32"
+                } else {
+                    "i64"
+                };
+                u32::try_from(*n).ok().map(|d| self.fn_lit_as(d, ty))
+            }
+            Value::Long(n) => u32::try_from(*n).ok().map(|d| self.fn_lit_as(d, "i64")),
+            _ => None,
+        }
+    }
+
+    /// Emit `v`, which holds a function number: through [`Self::fn_number_code`] when it is a
+    /// constant, as any expression otherwise.
+    pub(super) fn emit_fn_number(&mut self, w: &mut dyn Write, v: &Value) -> std::io::Result<()> {
+        match self.fn_number_code(v) {
+            Some(code) => write!(w, "{code}"),
+            None => self.output_code_inner(w, v),
+        }
+    }
+
+    /// The code of `v` when it is a constant type id, written by [`Self::type_lit_as`] at `ty`
+    /// (`i64` where a parameter is a plain `integer`); `None` for anything else.
+    pub(super) fn type_id_code(&self, v: &Value, ty: &str) -> Option<String> {
+        match v.unspan() {
+            Value::Int(tp) => u16::try_from(*tp).ok().map(|tp| self.type_lit_as(tp, ty)),
+            _ => None,
+        }
+    }
+
+    /// Emit an operator argument that is a type id ([`super::TYPE_ID_PARAMS`]): a constant one
+    /// through [`Self::type_lit`], anything else as the `i32` slot it is.
+    pub(super) fn emit_type_slot(&mut self, w: &mut dyn Write, val: &Value) -> std::io::Result<()> {
+        match val.unspan() {
+            Value::Int(tp) => match u16::try_from(*tp) {
+                Ok(tp) => write!(w, "{}", self.type_lit(tp)),
+                Err(_) => self.emit_i32_slot(w, val),
+            },
+            _ => self.emit_i32_slot(w, val),
         }
     }
 
@@ -3393,8 +3608,8 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __kp{site} = stores.keyed_place_begin(&({coll}), {}_u16, {keys});",
-            ks.tp
+            "let __kp{site} = stores.keyed_place_begin(&({coll}), {}, {keys});",
+            self.type_lit_u16(ks.tp)
         )?;
         for wr in &writes {
             self.indent(w)?;
@@ -3404,8 +3619,8 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "stores.keyed_place_finish(&({coll}), &__kp{site}, {}_u16, {keys});",
-            ks.tp
+            "stores.keyed_place_finish(&({coll}), &__kp{site}, {}, {keys});",
+            self.type_lit_u16(ks.tp)
         )?;
         self.indent(w)?;
         writeln!(w, "}}")?;
@@ -3437,8 +3652,8 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __kp{site} = stores.keyed_entry_ints(&({coll}), {}_u16, {parts});",
-            ks.tp
+            "let __kp{site} = stores.keyed_entry_ints(&({coll}), {}, {parts});",
+            self.type_lit_u16(ks.tp)
         )?;
         for wr in writes {
             self.indent(w)?;
@@ -3507,8 +3722,8 @@ impl Output<'_> {
                 .collect();
             writeln!(
                 w,
-                "let __ke{site}: DbRef = stores.keyed_entry_ints_at(&({coll}), {}_u16, {}_u16, &[{}]);",
-                ke.parent_tp,
+                "let __ke{site}: DbRef = stores.keyed_entry_ints_at(&({coll}), {}, {}_u16, &[{}]);",
+                self.type_lit_u16(ke.parent_tp),
                 ke.field,
                 list.join(", ")
             )?;
@@ -3516,15 +3731,26 @@ impl Output<'_> {
             let key = key.unwrap_or_else(|| "\"\"".to_string());
             writeln!(
                 w,
-                "let __ke{site}: DbRef = stores.keyed_entry_text(&({coll}), {}_u16, {}_u16, &*({key}));",
-                ke.parent_tp, ke.field
+                "let __ke{site}: DbRef = stores.keyed_entry_text(&({coll}), {}, {}_u16, &*({key}));",
+                self.type_lit_u16(ke.parent_tp),
+                ke.field
             )?;
         } else {
             let key = key.unwrap_or_else(|| "i64::MIN".to_string());
+            // The field's offset and element type resolved here, where they are constants.
+            let (off, etp) = self.stores.keyed_field_consts(ke.parent_tp, ke.field);
+            // An 8-byte integer key's position, for the inline walk; a narrow key takes none.
+            let kp = self.stores.types[etp as usize]
+                .keys
+                .first()
+                .filter(|k| matches!(k.type_nr.unsigned_abs(), 1 | 2))
+                .map_or(u32::MAX, |k| u32::from(k.position));
             writeln!(
                 w,
-                "let __ke{site}: DbRef = stores.keyed_entry_long(&({coll}), {}_u16, {}_u16, ({key}) as i64);",
-                ke.parent_tp, ke.field
+                "let __ke{site}: DbRef = stores.keyed_entry_long_at(&({coll}), {}, {}_u16, {off}_u32, {}, {kp}_u32, ({key}) as i64);",
+                self.type_lit_u16(ke.parent_tp),
+                ke.field,
+                self.type_lit_u16(etp)
             )?;
         }
         for wr in &writes {
@@ -3630,7 +3856,7 @@ impl Output<'_> {
         for (d, vt) in filled.iter().rev() {
             write!(w, "stores.remove_claims(&(")?;
             self.output_code_inner(w, d)?;
-            write!(w, "), ({vt}_u16)); ")?;
+            write!(w, "), ({})); ", self.type_lit_u16(*vt))?;
         }
         self.output_code_inner(w, level.else_v)?;
         writeln!(w, " }};")?;
@@ -3697,10 +3923,17 @@ impl Output<'_> {
         if adopt_delivery {
             self.in_adopt_delivery += 1;
         }
+        // @PLN199 G0b-2 — a function number read from a store is the program's; a library
+        // artifact takes its own for the functions it carries (`__norm`).
+        let (norm_open, norm_close) = if self.shared_ids.is_some() {
+            ("__norm(", ")")
+        } else {
+            ("", "")
+        };
         if bl.name == "fn_ref_field_read" && bl.operators.len() == 2 {
-            write!(w, "((")?;
+            write!(w, "({norm_open}(")?;
             self.output_code_inner(w, &bl.operators[0])?;
-            write!(w, ") as u32, ")?;
+            write!(w, ") as u32{norm_close}, ")?;
             self.output_code_inner(w, &bl.operators[1])?;
             write!(w, ")")?;
             return Ok(());
@@ -3713,9 +3946,9 @@ impl Output<'_> {
         // closure.
         if bl.name == "fn_ref_field_read" && bl.operators.len() > 2 {
             let last = bl.operators.len() - 1;
-            write!(w, "{{ let __fn_d = (")?;
+            write!(w, "{{ let __fn_d = {norm_open}(")?;
             self.output_code_inner(w, &bl.operators[0])?;
-            write!(w, ") as u32; ")?;
+            write!(w, ") as u32{norm_close}; ")?;
             for op in &bl.operators[1..last] {
                 self.output_code_inner(w, op)?;
                 write!(w, "; ")?;
@@ -3757,6 +3990,9 @@ impl Output<'_> {
         } else {
             false
         };
+        // `(R-Header)`'s KEPT clause — the holders of the kept fields, bound or received here
+        // for the whole body; refreshed after each statement that may change one.
+        let kept_frame = is_fn_body && self.begin_kept_headers(w)?;
         // @PLN157 § V-j (`@FR-R-MoveAppend`) — a paired `for f in call(…)`: place the
         // call's buffer as a record in the destination's own store, and arm the loop
         // variable so the append's OpCopyRecord emits the move.  The destination's
@@ -3778,8 +4014,12 @@ impl Output<'_> {
             self.indent(w)?;
             writeln!(
                 w,
-                "if var_{buf}.store_nr == u16::MAX {{ var_{buf} = stores.place_record_in(&var_{vdb}, {}u16); }} //@PLN157 § V-j placed buffer",
-                pair.buf_tp
+                "if var_{buf}.store_nr == u16::MAX {{ var_{buf} = stores.place_record_in(&var_{vdb}, {}); }} //@PLN157 § V-j placed buffer",
+                if self.shared_ids.is_some() {
+                    self.type_lit_u16(pair.buf_tp)
+                } else {
+                    format!("{}u16", pair.buf_tp)
+                }
             )?;
             self.active_move_vars.push(pair.loop_var);
         }
@@ -4144,6 +4384,8 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
+        // `(R-Header)`'s KEPT clause — the first statement not yet seen by the refresh.
+        let mut kept_next = 0usize;
         // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed, and
         // at a function body's head the ones its record PARAMETERS take for the whole body.
         let mut ptr_frames = if is_fn_body {
@@ -4186,9 +4428,8 @@ impl Output<'_> {
             if let Value::Line(line) = v {
                 // One spelling on every host: the comment is part of generated source that is
                 // compared (`compiled_stdlib_up_to_date`) and read back by the source map.
-                let file = crate::file_access::portable_str(
-                    &self.data.def(self.def_nr).position().file.replace('\n', ""),
-                );
+                let file =
+                    self.source_path(&self.data.def(self.def_nr).position().file.replace('\n', ""));
                 // @PLN157 — see the sibling in `output_code_node`: the statement-level
                 // half of the same position stream.
                 self.ckpt_cur_line = *line;
@@ -4235,7 +4476,8 @@ impl Output<'_> {
                 self.indent(w)?;
                 writeln!(
                     w,
-                    "if var_{name}.store_nr == u16::MAX {{ var_{name} = OpDatabase(cell, var_{name}, {tp}_i32); }}"
+                    "if var_{name}.store_nr == u16::MAX {{ var_{name} = OpDatabase(cell, var_{name}, {}); }}",
+                    self.type_lit(tp)
                 )?;
                 self.refill_text_pending = Some((b, tp, block_serial));
                 continue;
@@ -4969,9 +5211,13 @@ impl Output<'_> {
                 self.indent(w)?;
                 writeln!(w, "}}")?;
             }
+            self.kept_check_taken(operators, kept_next, vnr);
+            kept_next = vnr + 1;
+            self.kept_after_statement(w, operators, vnr)?;
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
+            view_frames += self.kept_alias(operators, vnr);
             if self.bind_record_ptr(w, operators, vnr, Some(block_serial))? {
                 ptr_frames += 1;
             }
@@ -4980,6 +5226,7 @@ impl Output<'_> {
             }
             self.bind_group_push(w, operators, vnr, block_serial)?;
         }
+        self.kept_check_taken(operators, kept_next, operators.len());
         if rt_call_at.is_some() {
             self.refill_text_unconsumed()?;
         }
@@ -5051,6 +5298,9 @@ impl Output<'_> {
         }
         if adopt_delivery {
             self.in_adopt_delivery -= 1;
+        }
+        if is_fn_body {
+            self.end_kept_headers(kept_frame);
         }
         if fn_frame {
             self.end_vector_hoist(w, true)?;
@@ -5316,15 +5566,16 @@ impl Output<'_> {
         let mut out: Vec<u8> = Vec::new();
         self.output_code_inner(&mut out, &Value::Var(pair.out))?;
         let out = String::from_utf8_lossy(&out).into_owned();
+        let tp_lit = self.type_lit(u16::try_from(tp).unwrap_or(u16::MAX));
         if fld == 65535 {
             writeln!(
                 w,
-                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
+                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp_lit}, 65535_i32); //@PLN157 § V-z element minted at the declaration"
             )
         } else {
             writeln!(
                 w,
-                "var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
+                "var_{elmn} = OpNewRecord(cell, {out}, {tp_lit}, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
             )
         }
     }

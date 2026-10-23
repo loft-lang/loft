@@ -423,6 +423,7 @@ index.json                        ← the ONE signature (Ed25519, 4 trust roots)
  ├ binaries[triple].sha256          → loft-<v>-<triple>.zip   checked once, at download
  │  └ manifest_sha256              → SHA256SUMS             checked any time, on what is INSTALLED
  │     └ bin/loft, default/*.loft, and every other file the bundle shipped
+ ├ artifacts[pkg@ver][triple].sha256 → loft_auto_*           a library compiled by this release
  └ version.sha256                   → loft-<v>-src.zip        the source the release was built from
 ```
 
@@ -433,7 +434,7 @@ generated from the artifacts of the run that built them.  Splice it in and open 
 # Download EVERY asset, then let the tool merge -- `--splice-into` regenerates the
 # entry from the artifacts it hashes, so the directory must hold all of them:
 gh release download v<version> -R loft-lang/loft -D <assets>
-scripts/gen-toolchain-entry.py --version <version> --dir <assets> \
+scripts/gen-toolchain-entry.py --version <version> --dir <assets> --artifacts <assets> \
     --splice-into <registry-checkout>/index.json
 ```
 
@@ -451,8 +452,8 @@ merges, refuses to overwrite a version already present, and leaves `yanked` alon
 
 **Two things the entry must keep.**  `loft_ffi_fp` is **absent** on every binary (it
 gates cdylib ABI compatibility and means nothing for an executable that links nothing
-of the host's), and the triples are the published ones — `x86_64-unknown-linux-musl`,
-never `-gnu`.  Both are pinned by tests rather than by this paragraph:
+of the host's), and the triples are the published ones — `x86_64-unknown-linux-gnu`
+for Linux.  Both are pinned by tests rather than by this paragraph:
 `generated_toolchain_entry_parses_and_drives_self_update` (`tests/mock_registry.rs`)
 and `installer_and_self_update_agree_on_the_published_triples`.
 
@@ -460,7 +461,9 @@ and `installer_and_self_update_agree_on_the_published_triples`.
 (reproducible build): there is no `loft.toml` at loft's repo root to re-package, and
 the version artifact is a `git archive` zip, not a `loft package` tarball.  Gate 2b
 verifies every `binaries` hash by download, so the exemption does not leave the
-binaries — the things users actually run — unchecked.
+binaries — the things users actually run — unchecked.  A release's `artifacts` are not
+re-checked there: a wrong hash makes `loft install` refuse that artifact, and the library
+interprets.
 
 > **Both landed in [loft-lang/registry#22](https://github.com/loft-lang/registry/pull/22),
 > merged 2026-08-31** — before which `loft` was in no index at all, and had never been.

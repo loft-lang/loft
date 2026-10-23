@@ -54,6 +54,8 @@ enum Rebuild {
 thread_local! {
     static REBUILD: RefCell<Rebuild> = const { RefCell::new(Rebuild::Idle) };
     static REBUILD_SEQ: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Why the last rebuild failed, for the editor that asked (`D!:rebuild?`).
+    static FAILURE: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// Spawn one background `--check --native` build of `src` via the driver.
@@ -209,6 +211,16 @@ fn rebuild_status() -> i64 {
                 .collect::<Vec<_>>()
                 .join("\n");
             eprintln!("loft-live: rebuild FAILED (old build keeps serving):\n{tail}");
+            // The line that says why: the world check's refusal or the compiler's error
+            // when there is one, else the last line the build printed.
+            let why = tail
+                .lines()
+                .find(|l| l.contains("cannot take over the running world") || l.contains("error"))
+                .or_else(|| tail.lines().last())
+                .unwrap_or("the build failed")
+                .trim()
+                .to_string();
+            FAILURE.with(|f| *f.borrow_mut() = why);
             *r = Rebuild::Failed;
             return REBUILD_FAILED;
         }
@@ -246,6 +258,12 @@ pub(crate) fn rebuild_status_ctl() -> i64 {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn rebuild_artifact_ctl() -> String {
     rebuild_artifact()
+}
+
+/// Why the last rebuild failed, in one line; "" when none has.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn rebuild_failure_ctl() -> String {
+    FAILURE.with(|f| f.borrow().clone())
 }
 
 /// The READY build's artifact path; "" unless `rebuild_status() == 2`.

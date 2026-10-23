@@ -171,7 +171,7 @@ impl Parser {
         if !default {
             self.data.source = crate::data::MAIN_SOURCE;
         }
-        self.lambda_counter = 0;
+        self.lambda_counters.clear();
         self.fn_lambdas.clear();
         self.parse_file();
         self.resolve_deferred_unknowns();
@@ -222,8 +222,9 @@ impl Parser {
             if !default {
                 self.data.source = crate::data::MAIN_SOURCE;
             }
-            self.lambda_counter = 0;
+            self.lambda_counters.clear();
             self.fn_lambdas.clear();
+            self.store_handoffs.clear();
             Self::load_main_file(&mut self.lexer, filename, content);
             self.parse_file();
             self.resolve_deferred_unknowns();
@@ -243,6 +244,8 @@ impl Parser {
             // be asked whether it removes from a `&` parameter.
             self.check_reshape_under_reference();
             self.synth_drop_cascades();
+            self.check_layout_baseline();
+            self.check_running_world();
         }
         self.diagnostics.fill(self.lexer.diagnostics());
         self.diagnostics.is_empty()
@@ -1406,7 +1409,7 @@ impl Parser {
         if !default {
             self.data.source = crate::data::MAIN_SOURCE;
         }
-        self.lambda_counter = 0;
+        self.lambda_counters.clear();
         self.fn_lambdas.clear();
         self.lexer.parse_string(content, filename);
         if !default && self.program_entry.is_none() {
@@ -1427,7 +1430,7 @@ impl Parser {
             if !default {
                 self.data.source = crate::data::MAIN_SOURCE;
             }
-            self.lambda_counter = 0;
+            self.lambda_counters.clear();
             self.fn_lambdas.clear();
             self.lexer.parse_string(content, filename);
             self.parse_file();
@@ -1462,7 +1465,7 @@ impl Parser {
         self.deferred_import_misses.clear();
         self.resolutions.clear();
         self.data.reset();
-        self.lambda_counter = 0;
+        self.lambda_counters.clear();
         self.fn_lambdas.clear();
         self.lexer.parse_string(content, filename);
         self.parse_file();
@@ -1477,7 +1480,7 @@ impl Parser {
             self.deferred_import_misses.clear();
             self.resolutions.clear();
             self.data.reset();
-            self.lambda_counter = 0;
+            self.lambda_counters.clear();
             self.fn_lambdas.clear();
             self.lexer.parse_string(content, filename);
             self.parse_file();
@@ -1675,6 +1678,200 @@ impl Parser {
         }
     }
 
+    /// `Data::surviving`: the types whose values outlive this program.  Seeds are the types
+    /// the store and swap calls hand over (`store_handoffs`) and every `pub` struct or enum
+    /// the project's own sources declare — a library's user may store any of them; the set is
+    /// closed over what each one holds, through fields, collections and enum variants.  A
+    /// call whose argument names no concrete type (`r: reference`) leaves it `None`: every
+    /// user type counts.
+    ///
+    /// Run only where a baseline is read or written: an ordinary compile with no
+    /// `layout.lock` pays nothing for it.
+    pub fn compute_surviving(&mut self, project: &std::path::Path) {
+        let mut todo: Vec<u32> = Vec::new();
+        for t in &self.store_handoffs {
+            if !type_defs(&self.data, t, &mut todo) {
+                self.data.surviving = None;
+                return;
+            }
+        }
+        let root = crate::file_access::plain_canonical(project);
+        // One canonical path per source file, not per definition.
+        let mut owned: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
+        for d_nr in 0..self.data.definitions() {
+            let def = self.data.def(d_nr);
+            if !matches!(def.def_type, DefType::Struct | DefType::Enum)
+                || !def.pub_visible
+                || def.name.starts_with("__")
+                || def.name.contains('<')
+            {
+                continue;
+            }
+            let file = def.position.file.as_str();
+            let mine = *owned.entry(file).or_insert_with(|| {
+                !crate::file_access::is_stdlib_source(file)
+                    && crate::file_access::plain_canonical(std::path::Path::new(file))
+                        .starts_with(&root)
+            });
+            if mine {
+                todo.push(d_nr);
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(d_nr) = todo.pop() {
+            if d_nr == u32::MAX || !seen.insert(d_nr) {
+                continue;
+            }
+            let def = self.data.def(d_nr);
+            for a in &def.attributes {
+                // A field of no concrete type has nothing stored to follow.
+                let _ = type_defs(&self.data, &a.typedef, &mut todo);
+            }
+            if def.def_type == DefType::Enum {
+                todo.extend((0..self.data.definitions()).filter(|&v| {
+                    self.data.def(v).parent == d_nr && self.data.def_type(v) == DefType::EnumValue
+                }));
+            }
+        }
+        seen.retain(|&d| matches!(self.data.def_type(d), DefType::Struct | DefType::Enum));
+        self.data.surviving = Some(seen);
+    }
+
+    /// `layout-upgrade-refused` — a change to a stored type that a store written by the
+    /// project's last release could not be upgraded across: the baseline `layout.lock` beside
+    /// `loft.toml` (recorded by `loft package`) against this program's types, the same answer
+    /// `loft layout check` gives (`@FR-L-Upgrade-Source`, `@FR-L-Upgrade-Routine`).  A
+    /// warning, at the stored type's declaration: the program still runs while a refactor is
+    /// half done, a library's CI denies warnings, and `loft package` refuses to release over
+    /// one.  The baseline is a source of this compile, so editing it is a program-cache miss.
+    fn check_layout_baseline(&mut self) {
+        // Every compile asks, and almost none has a lock: one path buffer serves both
+        // candidates (`schema_sidecar::baseline_path`, then the earlier `.loft/layout.lock`),
+        // sized up front so the ask costs one allocation (`tests/frontend_counts.rs`).
+        let Some(dir) = self.diagnostics.lint_project() else {
+            return;
+        };
+        let mut lock = std::path::PathBuf::with_capacity(dir.as_os_str().len() + 24);
+        lock.push(dir);
+        lock.push("layout.lock");
+        if !crate::file_access::is_file(&lock) {
+            lock.pop();
+            lock.push(".loft");
+            lock.push("layout.lock");
+            if !crate::file_access::is_file(&lock) {
+                return;
+            }
+        }
+        let project = dir.to_path_buf();
+        let project = project.as_path();
+        if self.track_sources {
+            self.parsed_sources
+                .push(lock.to_string_lossy().into_owned());
+        }
+        self.compute_surviving(project);
+        let routines = Self::upgrade_routines(&self.data);
+        let report = crate::layout_schema::baseline_report(
+            project,
+            &self.database,
+            &self.data,
+            self.database.release(),
+            &routines,
+        );
+        let refused = match report {
+            Ok(Some(r)) => r.refused,
+            Ok(None) => return,
+            Err(e) => {
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "layout-upgrade-refused",
+                    "{}: {e}",
+                    lock.display()
+                );
+                return;
+            }
+        };
+        for r in refused {
+            let ty =
+                r.at.split(['.', '['])
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+            self.warn_upgrade_refused(
+                &r.at,
+                &format!(
+                    "a store written by the last release cannot be upgraded to this build: {}",
+                    r.text
+                ),
+                format!(
+                    "write `fn upgrade(from: Release, old: <the old fields>, item: {ty})`, or \
+                     raise `data_compatible_with` in loft.toml past the releases it cannot read"
+                ),
+                "stores the earlier releases wrote must still open",
+            );
+        }
+    }
+
+    /// The running game's world against this program (`running_world`, set by `loft --serve`
+    /// while it runs one): a change the next build could not carry the world across is a
+    /// `layout-upgrade-refused` warning at the world's type, shown on save, before any rebuild
+    /// and while the old build keeps running.  The same decision the live rebuild takes
+    /// (`Stores::world_upgrade`), so the editor and the rebuild cannot disagree.
+    fn check_running_world(&mut self) {
+        let Some(world) = self.running_world.take() else {
+            return;
+        };
+        let routines = Self::upgrade_routines(&self.data);
+        match self.database.world_upgrade(&world, &routines) {
+            Ok(up) => {
+                for r in up.refusals {
+                    self.warn_upgrade_refused(
+                        &r.path,
+                        &format!(
+                            "the running world cannot be carried into this build: {} — {}",
+                            r.path, r.reason
+                        ),
+                        "keep the old definition until the game has moved to this build, or \
+                         stop the game and start it again: a new game starts a new world"
+                            .to_string(),
+                        "the running game keeps its world",
+                    );
+                }
+            }
+            Err(e) => {
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "layout-upgrade-refused",
+                    "the running world cannot be carried into this build: {e}"
+                );
+            }
+        }
+        self.running_world = Some(world);
+    }
+
+    /// One `layout-upgrade-refused` warning, at the definition of the type the field path `at`
+    /// starts from (a field path names no source line of its own), with its cure.
+    fn warn_upgrade_refused(&mut self, at: &str, message: &str, cure: String, condition: &str) {
+        let ty = at.split(['.', '[']).next().unwrap_or_default();
+        let d_nr = self.data.def_nr(ty);
+        let pos = if d_nr == u32::MAX {
+            *self.lexer.pos()
+        } else {
+            *self.data.def(d_nr).position()
+        };
+        self.lexer
+            .pos_diagnostic_coded(Level::Warning, &pos, "layout-upgrade-refused", message);
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: cure,
+            condition: Some(condition.to_string()),
+            edit: None,
+            concept: "packages",
+            concept_ref: "@F55",
+        });
+    }
+
     /// Only parse a specific string, only useful for parser tests.
     #[allow(dead_code)]
     pub fn parse_str(&mut self, text: &str, filename: &str, logging: bool) {
@@ -1708,7 +1905,7 @@ impl Parser {
         // input carrying a lambda minted `__lambda_0` again while the first input's
         // definition was still in the session: *"Cannot redefine '__lambda_0'"*, so a session
         // could hold one lambda and no more.
-        let lambda_base = self.lambda_counter;
+        let lambda_base = self.lambda_counters.clone();
         self.fn_lambdas.clear();
         self.declared_capabilities.clear();
         self.member_access.clear();
@@ -1733,7 +1930,7 @@ impl Parser {
         self.resolutions.clear();
         self.data.reset();
         // Pass 2 mints the same names pass 1 did, so it starts where pass 1 started.
-        self.lambda_counter = lambda_base;
+        self.lambda_counters = lambda_base;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
         self.first_pass = false;
@@ -1746,6 +1943,8 @@ impl Parser {
         // @PLN130 F9 (loft#779) — see `parse`.
         self.check_reshape_under_reference();
         self.synth_drop_cascades();
+        // An editor's compile of a save (`loft --serve`) against the game it runs.
+        self.check_running_world();
         self.diagnostics.fill(self.lexer.diagnostics());
     }
 
@@ -1782,7 +1981,7 @@ impl Parser {
         self.resolutions.clear();
         // The counter continues, as `parse_str`'s does and for the same reason: the session
         // still holds the definitions the previous input minted.
-        let lambda_base = self.lambda_counter;
+        let lambda_base = self.lambda_counters.clone();
         self.fn_lambdas.clear();
         self.data.source = source;
         self.parse_file();
@@ -1796,7 +1995,7 @@ impl Parser {
         self.deferred_unknown.clear();
         self.deferred_import_misses.clear();
         self.resolutions.clear();
-        self.lambda_counter = lambda_base;
+        self.lambda_counters = lambda_base;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
         self.first_pass = false;
@@ -2099,5 +2298,38 @@ impl Parser {
             .filter(|(_, loaded)| **loaded == canonical)
             .map(|(id, _)| self.data.get_source(id))
             .find(|src| *src != u16::MAX)
+    }
+}
+
+/// The struct, enum and variant definitions type `t` stores, pushed onto `out`; `false` when
+/// it names no concrete type (an untyped `reference`, an unresolved type).
+fn type_defs(data: &crate::data::Data, t: &Type, out: &mut Vec<u32>) -> bool {
+    match t {
+        Type::Reference(d, _) => {
+            let known = matches!(
+                data.def_type(*d),
+                DefType::Struct | DefType::Enum | DefType::EnumValue
+            );
+            if known {
+                out.push(*d);
+            }
+            known
+        }
+        Type::Enum(d, _, _)
+        | Type::Sorted(d, _, _)
+        | Type::Index(d, _, _)
+        | Type::Radix(d, _, _)
+        | Type::Trie(d, _, _)
+        | Type::Hash(d, _, _) => {
+            out.push(*d);
+            true
+        }
+        Type::Vector(inner, _)
+        | Type::Optional(inner)
+        | Type::RefVar(inner)
+        | Type::Rewritten(inner) => type_defs(data, inner, out),
+        Type::Tuple(items) => items.iter().all(|i| type_defs(data, i, out)),
+        Type::Unknown(_) => false,
+        _ => true,
     }
 }

@@ -3101,6 +3101,7 @@ impl Stores {
             lazy_errors: std::collections::HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            last_filed: None,
             evacuated: Vec::new(),
             owed: super::upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
@@ -3343,7 +3344,16 @@ impl Stores {
                     *problems += 1;
                     return;
                 }
-                let elms = (room - crate::hash::RESERVED_WORDS) * 2;
+                // `(Col-Inline)` — an inline table's entries are positions in the table
+                // record itself, listed by the hash's own walk.
+                if crate::hash::is_inline(store, cur) {
+                    for entry in crate::hash::records(rec, &self.allocations) {
+                        self.validate_claims(&entry, *v, &format!("{path}{{inline}}"), problems);
+                    }
+                    return;
+                }
+                let sb = crate::hash::slot_bytes(store, cur);
+                let elms = (room - crate::hash::RESERVED_WORDS) * 8 / sb;
                 // @PLN135 arc H — a slot holds an arena INDEX for a hash that owns its
                 // entries, and a record number for one that borrows them (a secondary
                 // index).  The stride the table records is the discriminator, and the
@@ -3361,8 +3371,7 @@ impl Stores {
                     return;
                 }
                 for i in 0..elms {
-                    let slot =
-                        store.get_u32_raw(cur, crate::hash::BUCKET0 + i * crate::hash::SLOT_BYTES);
+                    let slot = store.get_u32_raw(cur, crate::hash::BUCKET0 + i * sb);
                     if slot == 0 {
                         continue;
                     }
@@ -4098,7 +4107,12 @@ impl Stores {
         // appended.  The destination allocates its slots through the same arena, so
         // visiting in that order rebuilds the source's physical layout.
         let mut children = self.for_each_owned_child(rec, tp).children;
-        children.sort_by_key(|c| (c.child.rec, c.child.pos));
+        // An inline table lists its entries in insertion order already (`(Col-Inline)`); an
+        // arena's position order is its hand-out order.
+        let src_claim = self.store(rec).get_u32_raw(rec.rec, rec.pos);
+        if src_claim == 0 || !hash::is_inline(self.store(rec), src_claim) {
+            children.sort_by_key(|c| (c.child.rec, c.child.pos));
+        }
         let stride = crate::hash::stride_for(size);
         for child in children {
             let src_db = child.child;
@@ -4312,6 +4326,59 @@ impl Stores {
         true
     }
 
+    /// Is field `i` of record type `tp` a VIEW of a linked group — a route to records a
+    /// sibling field owns (a leading `u16::MAX` in `other_indexes`, loft#898)?
+    fn is_group_view(&self, tp: u16, i: usize) -> bool {
+        matches!(&self.types[tp as usize].parts,
+            Parts::Struct(fields) | Parts::EnumValue(_, fields)
+                if fields[i].other_indexes.first() == Some(&u16::MAX))
+    }
+
+    /// @FR-Col-Group — index every VIEW of record `to` over the records its copied owner
+    /// holds, in the owner's order, as an insert through the owner would
+    /// ([`Self::link_record_siblings`]): a later record under a repeated key takes the key,
+    /// which is the state the source settled to (`(Col-Group-Dup)`).  A view displaces by
+    /// unlinking only, so nothing the owner holds is freed.  A record type with no group
+    /// has no field naming a sibling and returns at once.
+    fn relink_group_views(&mut self, to: &DbRef, tp: u16) {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) = &self.types[tp as usize].parts
+        else {
+            return;
+        };
+        if fields.iter().all(|f| f.other_indexes.is_empty()) {
+            return;
+        }
+        let fields = fields.clone();
+        for (owner, f) in fields.iter().enumerate() {
+            if f.other_indexes.is_empty() || f.other_indexes.first() == Some(&u16::MAX) {
+                continue;
+            }
+            let views: Vec<(u16, u16)> = f
+                .other_indexes
+                .iter()
+                .filter(|n| fields[**n as usize].other_indexes.first() == Some(&u16::MAX))
+                .map(|n| (*n, fields[*n as usize].content))
+                .collect();
+            if views.is_empty() {
+                continue;
+            }
+            let held = DbRef {
+                store_nr: to.store_nr,
+                rec: to.rec,
+                pos: to.pos + u32::from(fields[owner].position),
+            };
+            for child in self.for_each_owned_child(&held, f.content).children {
+                for &(view, view_tp) in &views {
+                    if self.absent_nullable_record(self.content(view_tp), &child.child) {
+                        continue;
+                    }
+                    let o = self.field_ref(to, tp, view);
+                    self.insert_record(&o, &child.child, view_tp, true);
+                }
+            }
+        }
+    }
+
     pub fn copy_claims(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         if self.copy_absent_collection(rec, to, tp)
             || (self.owns_plain_vectors(tp) && self.copy_plain_vectors(rec, to, tp))
@@ -4321,9 +4388,46 @@ impl Stores {
         self.copy_claims_kind(rec, to, tp);
     }
 
+    /// The struct arm of [`Self::copy_claims_kind`]: each of the `n` fields of record type `tp`
+    /// copied from `rec` into `to`, a linked group's views indexed over the copied owner.
+    fn copy_struct_fields(&mut self, rec: &DbRef, to: &DbRef, tp: u16, n: usize) {
+        // A record that owns no heap has nothing here to copy — its bytes
+        // came with the block copy — so the per-field descent is skipped.
+        if !self.type_owns_heap(tp) {
+            return;
+        }
+        // By index, re-borrowing the row per field: the list was cloned here on
+        // every record copy (@PLN157 § V-e, 7.5 % of the `smooth` row).
+        for i in 0..n {
+            let f = self.field_at(tp, i);
+            let from = DbRef {
+                store_nr: rec.store_nr,
+                rec: rec.rec,
+                pos: rec.pos + u32::from(f.position),
+            };
+            let into = DbRef {
+                store_nr: to.store_nr,
+                rec: to.rec,
+                pos: to.pos + u32::from(f.position),
+            };
+            // @FR-Col-Group — a VIEW of a linked group holds the records the group's
+            // owner holds.  Copied as a collection of its own it holds COPIES of them,
+            // which a write through the owner does not reach; so it starts empty and
+            // is indexed over the copied owner below.
+            if self.is_group_view(tp, i) {
+                if !self.copy_absent_collection(&from, &into, f.content) {
+                    self.store_mut(&into).set_u32_raw(into.rec, into.pos, 0);
+                }
+                continue;
+            }
+            self.copy_claims(&from, &into, f.content);
+        }
+        self.relink_group_views(to, tp);
+        self.lease_if_file(to, tp);
+    }
+
     /// The per-kind half of [`Self::copy_claims`], for a value that is present.
     fn copy_claims_kind(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
-        // TODO prevent copying secondary structures
         match &self.types[tp as usize].parts {
             Parts::Base if tp == 5 => {
                 // text — P220: discriminate null source from empty-string
@@ -4347,30 +4451,8 @@ impl Stores {
                 }
             }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                // A record that owns no heap has nothing here to copy — its bytes
-                // came with the block copy — so the per-field descent is skipped.
-                if !self.type_owns_heap(tp) {
-                    return;
-                }
-                // By index, re-borrowing the row per field: the list was cloned here on
-                // every record copy (@PLN157 § V-e, 7.5 % of the `smooth` row).
-                for i in 0..fields.len() {
-                    let f = self.field_at(tp, i);
-                    self.copy_claims(
-                        &DbRef {
-                            store_nr: rec.store_nr,
-                            rec: rec.rec,
-                            pos: rec.pos + u32::from(f.position),
-                        },
-                        &DbRef {
-                            store_nr: to.store_nr,
-                            rec: to.rec,
-                            pos: to.pos + u32::from(f.position),
-                        },
-                        f.content,
-                    );
-                }
-                self.lease_if_file(to, tp);
+                let n = fields.len();
+                self.copy_struct_fields(rec, to, tp, n);
             }
             Parts::Vector(_) | Parts::Sorted(_, _) => {
                 // Pass the CONTAINER type: the keystone walk keys on it, and the helper
@@ -4754,6 +4836,36 @@ impl Stores {
         );
     }
 
+    /// A hash that owns its entries, of a type that owns no heap: the walk would list every
+    /// entry only for each to release nothing, and its chunks free them whole — so the release
+    /// is the chunks and the table.  Here and not in the walk, whose list is also what a copy
+    /// re-files and an equality compares.  `false` when `tp` is not such a hash or its field
+    /// names no table this store owns: the walk releases it.
+    fn release_plain_hash(&mut self, rec: &DbRef, tp: u16) -> bool {
+        let Parts::Hash(v, _) = &self.types[tp as usize].parts else {
+            return false;
+        };
+        if self.owns_heap(*v) {
+            return false;
+        }
+        let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
+        if cur == 0
+            || Self::owned_edge_absent(cur)
+            || !self.owned_edge_in_store(rec, cur)
+            || !hash::owns_entries(self.store(rec), cur)
+        {
+            return false;
+        }
+        for extra in hash::arena_records(rec, &self.allocations) {
+            self.store_mut(rec).delete(extra);
+        }
+        self.store_mut(rec).delete(cur);
+        // The field named the table: emptied, as the walk's `zero_field` empties every
+        // collection's.
+        self.store_mut(rec).set_u32_raw(rec.rec, rec.pos, 0);
+        true
+    }
+
     fn remove_claims_mode(&mut self, rec: &DbRef, tp: u16, borrowed: bool) {
         // loft#796 — the record itself must be inside its store before anything reads
         // its fields.  The per-edge guards in `for_each_owned_child` catch a rotten
@@ -4868,6 +4980,9 @@ impl Stores {
                     )
                 {
                     self.remove_struct_claims(rec, tp);
+                    return;
+                }
+                if !borrowed && self.release_plain_hash(rec, tp) {
                     return;
                 }
                 let walk = self.owned_walk(rec, tp, borrowed);
@@ -5974,12 +6089,25 @@ impl Stores {
             | Parts::ShortRaw(..) => {}
             _ => {
                 let walk = self.owned_walk(db, tp, false);
+                // `(Col-Inline)` — an inline table's live bytes are its header, its slots and
+                // the entries its occupied slots name; an empty bucket's entry bytes are a gap,
+                // as a vector's capacity past its length is.
+                let inline = if matches!(self.types[tp as usize].parts, Parts::Hash(..)) {
+                    block_at(db).filter(|&t| crate::hash::is_inline(store, t))
+                } else {
+                    None
+                };
+                if let Some(t) = inline {
+                    crate::hash::inline_live_spans(store, t, |from, len| {
+                        Self::mark_bytes(live, from, len);
+                    });
+                }
                 for r in walk
                     .container_rec
                     .into_iter()
                     .chain(walk.extra_recs.iter().copied())
                 {
-                    if r < cap {
+                    if r < cap && Some(r) != inline {
                         let words = store.read::<i32>(r, 0).unsigned_abs() as usize;
                         Self::mark_bytes(live, r as usize * 8, words * 8);
                     }
@@ -6509,7 +6637,14 @@ impl Stores {
             | Parts::Index(_, _)
             | Parts::ChildRec(_) => {
                 let walk = self.for_each_owned_child(rec, tp);
-                let mut total = 0u32;
+                // `(Col-Inline)` — the table's own excess: an inline table carries its entries,
+                // so the buckets it outgrew its live count by are words a rebuild returns.
+                let mut total = if matches!(self.types[tp as usize].parts, Parts::Hash(..)) {
+                    let claim = self.store(rec).collection_rec(rec.rec, rec.pos);
+                    crate::hash::inline_slack(self.store(rec), claim)
+                } else {
+                    0
+                };
                 for c in walk.children {
                     total =
                         total.saturating_add(self.intra_record_slack(&c.child, c.child_tp, budget));
@@ -6794,6 +6929,15 @@ impl Stores {
         // there forever and `allocations` would grow per load.  The scratch
         // slot is ours, so releasing it is ours too.
         self.release_slot(dst_slot);
+        // The rebuild claimed into a fresh arena, so its capacity is where that arena's own
+        // growth last landed — a fact about how it was built, not what it holds (loft#710).
+        // Trimmed to its content plus the format's eighth, as an image of it is written
+        // (`compact_bound_store`, `bind_path`), the comparison below is of what each holds:
+        // compared raw, a store already written tight read as dense whatever its slack.
+        let mark = rebuilt.usage();
+        if mark.walk_complete {
+            rebuilt.shrink_to(crate::store::slack_target(mark.live_end_words));
+        }
         let after_words = rebuilt.capacity_words();
         if after_words >= before_words {
             // Nothing gained — leave the loaded store exactly as it is.
@@ -6997,6 +7141,35 @@ impl Stores {
     /// (0-size block) or drive a heap over-read; it is rejected (`false`).
     /// `load_path` (the trusted path) validates only in debug and is faster;
     /// use this for a file whose provenance you don't control.
+    /// @PLN196 / @PLN18 08-S6 — load a store image handed over in memory with the text of its
+    /// `.dschema` (`sidecar`): the browser swap's world.  The same layout reads raw, an older
+    /// one converts (`@FR-L-Sound`), anything else is refused with the reason on stderr;
+    /// `builtin` names the call in that reason.
+    pub fn load_world_image(
+        &mut self,
+        slot: u16,
+        sidecar: &str,
+        bytes: &[u8],
+        what: &str,
+        builtin: &str,
+    ) -> bool {
+        let Some(current) = self.slot_layout_identity(slot) else {
+            return false;
+        };
+        let verdict =
+            crate::schema_sidecar::verdict_for_sidecar_text(sidecar, &current, self.release());
+        if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
+            let done = self.load_upgraded_from(slot, sidecar, bytes, what);
+            return Self::conversion_took(done, what, builtin);
+        }
+        if !Self::layout_verdict_ok(&verdict, what, builtin) {
+            return false;
+        }
+        let recorded =
+            crate::schema_sidecar::LayoutIdentity::from_sidecar(sidecar).and_then(|id| id.slot);
+        self.load_bytes_from(slot, bytes, recorded, what, builtin)
+    }
+
     pub fn load_path_untrusted(&mut self, slot: u16, path: &std::path::Path) -> bool {
         // An older layout converts in memory, as `store_load` does (@PLN196); the converter
         // validates the image's structure before it reads a record.
@@ -8513,7 +8686,9 @@ impl Stores {
         // copy that built its own bucket or node would be a second implementation of
         // the structure the collection is checked against.
         match kind {
-            PagedKind::Hash => crate::hash::add(local, &entry, &mut self.allocations, keys),
+            PagedKind::Hash => {
+                crate::hash::add(local, &entry, &mut self.allocations, keys);
+            }
             PagedKind::Trie => crate::trie_db::add(local, &entry, &mut self.allocations, keys),
             PagedKind::Radix => crate::radix_db::add(local, &entry, &mut self.allocations, keys),
         }
@@ -8857,7 +9032,7 @@ impl Stores {
 /// track the data.  Interior free blocks still remain: reclaiming those means
 /// relocating records and rewriting every `DbRef`, which is compaction, not
 /// this.
-#[cfg(feature = "mmap")]
+#[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
     // PRIMARY = 1 is the first record's word position.
     let mut rec: u32 = 1;
@@ -8899,7 +9074,7 @@ pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
 ///
 /// Returns `None` if the source bytes don't describe a walkable record chain,
 /// or if `target_words` would cut into live data.
-#[cfg(feature = "mmap")]
+#[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 pub(super) fn build_padded_store_image(
     src: &[u8],
     src_words: u32,
