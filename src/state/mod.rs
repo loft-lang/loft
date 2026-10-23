@@ -956,7 +956,8 @@ impl State {
     */
     #[must_use]
     pub fn new(mut db: Stores) -> State {
-        let stack_cur = db.database(1000);
+        // DEFINED: the stack census reads the stack store whole (`Store::defined`).
+        let stack_cur = db.database_defined(1000);
         crate::store_census::set_stack_store(stack_cur.store_nr);
         db.stack_store_at_zero = true; // #306 — protect slot 0 from whole-store frees
         // @PLN154 — arm the stack shadow.  Here and only here: the shadow is what makes a
@@ -9123,7 +9124,8 @@ impl State {
         library: Arc<Vec<Call>>,
     ) -> State {
         let mut db = worker.stores;
-        let stack_cur = db.database(1000);
+        // DEFINED: the stack census reads the stack store whole (`Store::defined`).
+        let stack_cur = db.database_defined(1000);
         crate::store_census::set_stack_store(stack_cur.store_nr);
         // @PLN154 — a worker runs the same bytecode on its own frame, so it gets its own
         // shadow; without this the detector would be blind to exactly the `par` arms.

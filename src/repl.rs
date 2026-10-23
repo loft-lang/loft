@@ -4527,7 +4527,13 @@ impl ReplSession {
     fn session_slot(&mut self, state: &mut State) -> u16 {
         match self.session_store.take() {
             Some(store) => state.database.adopt_store(store),
-            None => state.database.database(SESSION_STORE_WORDS).store_nr,
+            // DEFINED: the resume image writes the session store whole (`Store::defined`).
+            None => {
+                state
+                    .database
+                    .database_defined(SESSION_STORE_WORDS)
+                    .store_nr
+            }
         }
     }
 

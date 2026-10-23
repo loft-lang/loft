@@ -783,6 +783,14 @@ impl Stores {
         self.database_named(size, "")
     }
 
+    /// [`Stores::database`] for a store whose raw bytes leave the process as they are — the
+    /// REPL's resume image, the stack census — so every byte of it is written
+    /// (`Store::defined`).
+    pub fn database_defined(&mut self, size: u32) -> DbRef {
+        self.want_defined = true;
+        self.database_named(size, "")
+    }
+
     /// Try to allocate a new named store.
     /// # Panics
     /// When a store already in use is allocated again.
@@ -911,6 +919,11 @@ impl Stores {
         // included), not only `OpDatabase`. Read before the mutable slot borrow.
         let alloc_pc = self.alloc_pc;
         let serial = self.stores_allocated;
+        if std::mem::take(&mut self.want_defined) {
+            // A fresh DEFINED buffer in place of whatever the slot held: a reused one carries
+            // bytes nobody wrote.  `Store::new` leaves it `free`, as the assert below wants.
+            self.allocations[slot as usize] = Store::new_defined(100);
+        }
         let store = &mut self.allocations[slot as usize];
         // @P317 — enrich the tripwire: this fires when the free-bitmap and the
         // per-store `free` flag disagree (a double-free, an rc under-count, or a
@@ -3090,6 +3103,7 @@ impl Stores {
             allocations,
             records_created: self.records_created,
             stores_allocated: self.stores_allocated,
+            want_defined: false,
             alloc_pc: self.alloc_pc,
             stack_store_at_zero: self.stack_store_at_zero,
             // @PLN129 arc A — a worker inherits NO lazy binding, deliberately. A
@@ -5127,225 +5141,15 @@ impl Stores {
         }
     }
 
-    /// @PLAN38 — bind the Store at `slot` to a file at `path`, returning
-    /// `true` on success.  Dryopea-driven "the hash IS the file" entry
-    /// point: a freshly-allocated container (e.g. `hash<X[k]>::new()`)
-    /// can be re-rooted onto disk in one call, after which all mutations
-    /// are durable via mmap/msync without any explicit save loop.
-    ///
-    /// Two modes, selected by whether the file already exists:
-    ///
-    /// 1. **Fresh file (path does not exist or is empty):** the current
-    ///    in-memory Store's bytes are padded out to ≥ 1024 words with a
-    ///    valid trailing free block, written to disk via
-    ///    `MmapStorage::open` + `resize`, then `Store::open` mmaps it
-    ///    back.  Caller-side `DbRef`s into this slot stay valid because
-    ///    the on-disk record layout is byte-identical to the in-memory
-    ///    one we just copied.
-    ///
-    /// 2. **Existing file:** `Store::open(path)` validates the SIGNATURE
-    ///    and rebuilds the free-list; the in-memory state at this slot is
-    ///    dropped in favour of the on-disk image.  Caller-side `DbRef`s
-    ///    remain valid IFF the on-disk record at `rec=1` describes the
-    ///    same type as the in-memory container the caller just made —
-    ///    this is the load-on-startup path and assumes the consumer
-    ///    pinned the type at allocation time (typical pattern: allocate
-    ///    an empty `hash<X[k]>`, immediately call `bind_path`, then read
-    ///    keys back).
-    ///
-    /// Failure modes (return `false`):
-    /// - `slot >= self.allocations.len()`.
-    /// - Path is empty / not valid UTF-8 / I/O error writing the snapshot.
-    /// - Existing-file branch encounters a bad SIGNATURE (caught via
-    ///   `std::panic::catch_unwind`, since `Store::open` panics on
-    ///   format mismatch).
-    ///
-    /// Metadata preserved across the swap: `ref_count`, `known_type`,
-    /// `free`, `created_at`, `last_op_at`, `lock_origin` (the bookkeeping
-    /// the `Stores` collection needs to keep the slot accounted for in
-    /// the bitmap and the rc walk).  Cleared on the new Store:
-    /// `claims` (init() wipes it; matches `database_named` post-swap
-    /// state), `borrowed`, `read_only`.
-    ///
-    /// Off when the `mmap` feature is disabled: returns `false`.
-    #[cfg(feature = "mmap")]
-    pub fn bind_path(&mut self, slot: u16, path: &std::path::Path) -> bool {
-        let slot_idx = slot as usize;
-        if slot_idx >= self.allocations.len() {
-            return false;
-        }
-        let path_str = match path.to_str() {
-            Some(s) if !s.is_empty() => s,
-            _ => return false,
-        };
-
-        // Distinguish fresh vs existing by file size — a valid loft Store
-        // file is always ≥ 8 bytes (SIGNATURE + free-space index).  A
-        // smaller or missing file is "fresh" and triggers the
-        // snapshot-then-mmap path.
-        let exists = std::fs::metadata(path).is_ok_and(|m| m.len() >= 8);
-
-        // An existing file is READ through this slot's type, so it passes the same
-        // layout gate as `store_load` (`@FR-L-Sound`).  It has to come before the open:
-        // a refused bind must leave the slot as it was, and must not reach the sidecar
-        // write at the end of this function, which records THIS program's layout and
-        // so would wave every later load of the file through.
-        // Read before the sidecar is rewritten for this slot below.
-        let recorded = if exists {
-            Self::recorded_slot(path)
-        } else {
-            None
-        };
-        // A file written under an older layout is converted and upgraded in place (@PLN196,
-        // open question 3); the drain after this call finishes the bind.
-        if exists && self.layout_changed(slot, path) {
-            let done = self.bind_upgraded(slot, path);
-            return Self::conversion_took(done, &path.display().to_string(), "store_persist_bind");
-        }
-        if exists && !self.schema_gate_ok(slot, path, "store_persist_bind") {
-            return false;
-        }
-
-        // Preserve the slot's bookkeeping across the swap.
-        let preserved = {
-            let s = &self.allocations[slot_idx];
-            (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned)
-        };
-
-        if !exists {
-            // @PLN134 — lay the tries out BEFORE the snapshot. This is the image a
-            // reader will page, and a trie numbered in insertion order costs it 27
-            // pages of 64 KB per prefix query instead of 3. Semantics-preserving, so
-            // the live store simply keeps the better layout too.
-            let laid = self.relayout_trees(slot);
-            if laid > 0 && std::env::var_os("LOFT_LOADER_STATS").is_some() {
-                crate::loft_eprintln!("store_persist_bind: laid out {laid} tree(s) for paging");
-            }
-            // FRESH PATH — snapshot current bytes, size the image to the data,
-            // write to disk, then re-open via mmap.
-            let src_words = self.allocations[slot_idx].capacity_words();
-            let snapshot = {
-                let s = &self.allocations[slot_idx];
-                let raw =
-                    unsafe { std::slice::from_raw_parts(s.base_ptr(), (src_words as usize) * 8) };
-                raw.to_vec()
-            };
-            // loft#710: the arena's CAPACITY is not what the store holds — the
-            // tail past the last record is whatever the last 7/3 growth
-            // over-allocated, and persisting it made the file size a fact about
-            // how the store was BUILT rather than what is in it.  Size the image
-            // from the high-water mark instead.
-            //
-            // Not to the mark exactly: a bound store stays live, and growth
-            // multiplies by 7/3, so a store with no slack left pays a 2.33×
-            // file resize on its very next claim — measurably WORSE than the
-            // tail we removed.  An eighth keeps ordinary post-bind activity off
-            // that cliff while staying a function of the content, which is the
-            // property the issue is about: two builds of the same data now land
-            // within ~5% of each other instead of 1.84× apart.
-            //
-            // Never below the floor `Store::open` expects, and a chain the walk
-            // cannot follow falls back to the whole capacity — the file is never
-            // shortened on a guess.
-            //
-            // The eighth is NOT clamped to the arena's current capacity, and
-            // that is a fix, not an omission (@PLN123).  This read
-            // `.min(src_words)` — "never larger than the capacity we would have
-            // written before" — which was a safe conservatism while capacity was
-            // always comfortably above the mark.  `store_reclaim` (arc A) trims
-            // capacity TO the mark, so the clamp collapsed the eighth to zero
-            // for exactly the stores that had just been tidied, and the first
-            // claim after binding then paid the 7/3 ladder the paragraph above
-            // exists to avoid.  Measured on a 2,000-record hash: reclaim-then-
-            // bind wrote 187,784 bytes and the first READ of the collection took
-            // it to 438,160 — 2.07x LARGER than never reclaiming at all
-            // (211,256), because iterating a keyed collection claims its
-            // key-sorted snapshot inside the store.  The slack is deliberate;
-            // it has to survive a caller who tidied up first.
-            let live_end = store_image_live_end(&snapshot, src_words).unwrap_or(src_words);
-            let target_words =
-                crate::store::slack_target(live_end).max(crate::store::MIN_BOUND_WORDS);
-            let padded = match build_padded_store_image(&snapshot, src_words, target_words) {
-                Some(b) => b,
-                None => return false,
-            };
-            if crate::keys::env_set("LOFT_STORE_LIVE_DIGEST") {
-                let (digest, n) = self.live_digest(slot);
-                crate::loft_eprintln!(
-                    "loft: live-digest {digest:016x} bytes {n} {}",
-                    path.display()
-                );
-            }
-            if std::fs::write(path, &padded).is_err() {
-                return false;
-            }
-        }
-
-        // Both branches: open the file via Store::open.  Wrapped in
-        // catch_unwind because Store::open panics on signature mismatch
-        // for the existing-file branch — we surface that as a clean
-        // `false` return instead of crashing the interpreter.
-        let new_store = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::store::Store::open(path_str)
-        }));
-        let mut new_store = match new_store {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-
-        // Re-apply preserved metadata onto the new Store.  Slot bitmap sees
-        // continuity; the on-disk bytes carry the user data.
-        new_store.set_known_type(preserved.0);
-        new_store.free = preserved.1;
-        new_store.set_created_at(preserved.2);
-        new_store.last_op_at = preserved.3;
-        new_store.pinned = preserved.4;
-
-        // An existing file's references name the slot it was written from; the fresh branch
-        // just wrote this slot's own bytes, whose references already name it.
-        if exists {
-            let what = path.display().to_string();
-            if !self.adopt_image(slot, new_store, recorded, &what, "store_persist_bind") {
-                return false;
-            }
-        } else {
-            self.allocations[slot_idx] = new_store;
-        }
-        // @PLN123 B3 — the OTHER load moment, and the one the plan is really
-        // about: a bound store is what a long-lived store normally is.  Only on
-        // the EXISTING-file branch — the fresh branch is a WRITE, where a
-        // program's interior references are still live and moving records would
-        // dangle them (§ B2).
-        if exists && Self::compact_on_load_enabled() {
-            self.compact_bound_store(slot, path);
-        }
-        // @PLN97 3b.5 — record the layout identity beside the store
-        // (`<path>.dschema`) so a later (possibly remote) working-set load can
-        // reject a mismatched layout BEFORE range-reading foreign bytes at
-        // schema-derived offsets. Best-effort: a store without a sidecar just
-        // falls back to the post-copy `store_verify` backstop on load.
-        if preserved.0 != u16::MAX {
-            let id = crate::schema_sidecar::LayoutIdentity::of_store(self, slot, preserved.0);
-            if id.write_beside(path).is_err() && std::env::var_os("LOFT_LOADER_STATS").is_some() {
-                crate::loft_eprintln!(
-                    "store_persist_bind: could not write layout sidecar beside {}",
-                    path.display()
-                );
-            }
-        }
-        true
-    }
-
     /// @PLN134 — write a persisted IMAGE of the collection in `slot`, laid out
     /// for PAGING, and leave the live store exactly where it was.
     ///
-    /// The difference from [`bind_path`](Self::bind_path) is the whole point.
-    /// Binding snapshots the live bytes, so every record keeps its position and
-    /// the caller's `DbRef`s stay valid — a guarantee `store_persist_bind`
-    /// documents and must keep. But position IS the layout: a record number is a
-    /// word offset, so records claimed in insertion order are scattered across
-    /// the image, and a prefix query that returns 20 of them touches ~20 pages of
-    /// 64 KB to read a few hundred bytes each.
+    /// A copy of the live bytes would keep every record's position, but position
+    /// IS the layout: a record number is a word offset, so records claimed in
+    /// insertion order are scattered across the image, and a prefix query that
+    /// returns 20 of them touches ~20 pages of 64 KB to read a few hundred bytes
+    /// each.  It would also write bytes nobody wrote — a vector's spare capacity,
+    /// a text's padding — which a store does not fill (`@FR-H-Claim`).
     ///
     /// So this writes a REBUILT copy instead. The rebuild re-claims every record
     /// in its collection's own walk order — KEY order for a `trie` — and the copy
@@ -5436,20 +5240,8 @@ impl Stores {
         false
     }
 
-    /// No-op shim when the `mmap` feature is disabled.  Always returns
-    /// `false` so consumers branch into their non-mmap fallback (today,
-    /// JSON via `text as Struct`).  Avoids `cfg`-gating every caller.
-    #[cfg(not(feature = "mmap"))]
-    #[allow(clippy::unused_self)]
-    pub fn bind_path(&mut self, _slot: u16, _path: &std::path::Path) -> bool {
-        false
-    }
-
-    /// Load a persisted store image at `path` into `slot`, HEAP-backed — the
-    /// portable, non-durable counterpart of [`bind_path`](Stores::bind_path).
-    /// Unlike `bind_path` there is no fresh/create branch (you load an
-    /// EXISTING store) and no mmap, so it works on **every** backend — this is
-    /// the piece wasm lacked.  The slot's empty store is replaced by a heap
+    /// Load a persisted store image at `path` into `slot`, HEAP-backed.  There is
+    /// no mmap, so it works on **every** backend.  The slot's empty store is replaced by a heap
     /// store copied from the file, keeping the slot bookkeeping.  Returns
     /// `false` on a missing / truncated / wrong-format file (via the
     /// `Store::load` signature check under `catch_unwind`), never a misread.
@@ -5527,120 +5319,6 @@ impl Stores {
         } else if Self::compact_on_load_enabled() {
             let _ = self.compact_slot(slot);
         }
-        true
-    }
-
-    /// @PLN123 B3 — compact a store that was just BOUND to an existing file,
-    /// and put the smaller image back on disk.
-    ///
-    /// The mmap case of compaction-at-load.  `compact_slot` leaves the slot
-    /// holding a dense HEAP store, so the file still carries the old bytes and
-    /// has to be rewritten and re-mapped — "the hash IS the file" has to keep
-    /// being true.
-    ///
-    /// Every failure path leaves the caller with a correct store:
-    /// - compaction declines → nothing happened, the mapped store stands;
-    /// - the write fails → the ORIGINAL file is untouched (the image goes to a
-    ///   temp file and is renamed over, so the file is never half-written), and
-    ///   the store is re-bound from it;
-    /// - the re-open fails → the same re-bind, from the file that is now the
-    ///   compacted one.
-    ///
-    /// The re-bind on failure is what keeps the contract: a bound collection
-    /// must come back file-backed or not at all, never as a heap store that
-    /// silently stops persisting.
-    #[cfg(feature = "mmap")]
-    fn compact_bound_store(&mut self, slot: u16, path: &std::path::Path) {
-        let stats = std::env::var_os("LOFT_LOADER_STATS").is_some();
-        let saved = match self.compact_slot(slot) {
-            Ok(words) => words,
-            Err(why) => {
-                if stats {
-                    crate::loft_eprintln!("store_persist_bind: not compacted #{slot} — {why}");
-                }
-                return;
-            }
-        };
-        // The slot now holds a dense heap store; put it on disk and map it back.
-        //
-        // loft#730 — at the CONTENT size plus the format's eighth, not at the
-        // arena's capacity. `compact_slot` builds the dense store by claiming
-        // into a fresh arena, so its capacity is whatever the arena's own 7/3
-        // growth last landed on — and writing that raw put the growth tail
-        // straight back into the file the compaction had just earned. Measured
-        // on a 100-record store: compaction brought the live bytes from
-        // 5 468 440 to 3 227 032 (1.008x its content, a perfect rebuild) while
-        // the file only went 6 152 000 -> 5 172 832, because 1 945 792 bytes of
-        // arena tail were written out with it. The next pass then read the file
-        // as dense and declined, so the loss was permanent.
-        //
-        // This is the same fact `bind_path` already applies to the image it
-        // writes, and it is deliberately the same call: the eighth exists
-        // because a store trimmed to exactly its content pays a 2.33x resize on
-        // its very next claim, and merely READING a keyed collection claims a
-        // snapshot inside it (loft#710, loft#727).
-        // `build_padded_store_image` is what makes the shorter image a valid
-        // store: it copies up to the last live record and writes ONE free block
-        // covering the rest, so the free chain never points past EOF. A raw
-        // slice of the arena would carry a free list describing bytes the file
-        // no longer has.
-        let image = {
-            let s = &self.allocations[slot as usize];
-            let cap = s.capacity_words();
-            let raw = unsafe { std::slice::from_raw_parts(s.base_ptr(), (cap as usize) * 8) };
-            let live_end = store_image_live_end(raw, cap).unwrap_or(cap);
-            let target = crate::store::slack_target(live_end)
-                .max(crate::store::MIN_BOUND_WORDS)
-                .min(cap);
-            match build_padded_store_image(raw, cap, target) {
-                Some(b) => b,
-                // Sizing failed (a malformed chain): write what compaction
-                // produced rather than lose it.
-                None => raw.to_vec(),
-            }
-        };
-        let rebound = write_image_atomic(path, &image).is_ok() && self.rebind(slot, path);
-        if !rebound {
-            // Could not land the compacted image.  Re-bind from whatever the
-            // file holds — the original bytes if the write never happened, the
-            // compacted ones if it did — so the collection is file-backed
-            // either way.
-            if !self.rebind(slot, path) && stats {
-                crate::loft_eprintln!(
-                    "store_persist_bind: #{slot} could not be re-bound after compaction"
-                );
-            }
-            return;
-        }
-        if stats {
-            crate::loft_eprintln!("store_persist_bind: compacted #{slot} — {saved} words returned");
-        }
-    }
-
-    /// Re-open `path` and adopt it into `slot`, keeping the slot's bookkeeping.
-    /// The tail both branches of [`bind_path`] end in, and the recovery step
-    /// [`compact_bound_store`](Self::compact_bound_store) leans on.
-    #[cfg(feature = "mmap")]
-    fn rebind(&mut self, slot: u16, path: &std::path::Path) -> bool {
-        let Some(path_str) = path.to_str() else {
-            return false;
-        };
-        let preserved = {
-            let s = &self.allocations[slot as usize];
-            (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned)
-        };
-        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::store::Store::open(path_str)
-        }));
-        let Ok(mut store) = opened else {
-            return false;
-        };
-        store.set_known_type(preserved.0);
-        store.free = preserved.1;
-        store.set_created_at(preserved.2);
-        store.last_op_at = preserved.3;
-        store.pinned = preserved.4;
-        self.allocations[slot as usize] = store;
         true
     }
 
@@ -6010,12 +5688,16 @@ impl Stores {
         };
         Self::mark_bytes(&mut live, 8, 4);
         self.mark_live(&root, store.known_type, &mut live, 0);
-        // SAFETY: `capacity_words() * 8` is the buffer the store owns.
-        let raw = unsafe { std::slice::from_raw_parts(store.base_ptr(), bytes) };
+        // Only LIVE bytes are read, one at a time through the pointer: the rest of the
+        // buffer is free space and slack nobody wrote (`Store::defined`).
+        let base = store.base_ptr();
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         let mut n = 0u64;
-        for (i, (&b, &l)) in raw.iter().zip(&live).enumerate() {
+        for (i, &l) in live.iter().enumerate() {
             if l {
+                // SAFETY: `i < capacity_words() * 8`, the buffer the store owns, and a live
+                // byte is one the store wrote.
+                let b = unsafe { base.add(i).read() };
                 n += 1;
                 for x in (i as u64).to_le_bytes().into_iter().chain([b]) {
                     h ^= u64::from(x);
@@ -6658,7 +6340,7 @@ impl Stores {
         }
     }
 
-    fn type_is_compactable(&self, tp: u16, seen: &mut Vec<u16>) -> bool {
+    pub(super) fn type_is_compactable(&self, tp: u16, seen: &mut Vec<u16>) -> bool {
         if tp as usize >= self.types.len() {
             return false;
         }
@@ -6739,7 +6421,7 @@ impl Stores {
     /// note, which is the reasoning in full.
     ///
     /// [`compact_slot`]: Self::compact_slot
-    fn rebuild_into_scratch(
+    pub(super) fn rebuild_into_scratch(
         &mut self,
         slot: u16,
         tp: u16,
@@ -6748,7 +6430,8 @@ impl Stores {
         use crate::store::PRIMARY;
         // The destination's FIRST claim is the root, so it lands at PRIMARY —
         // where the source has it, and where the caller's reference points.
-        let mut dst = crate::store::Store::new_in_use(root_words + PRIMARY + 1);
+        // DEFINED: a rebuilt store is what an image is written from (`Store::defined`).
+        let mut dst = crate::store::Store::new_in_use_defined(root_words + PRIMARY + 1);
         let dst_root = dst.claim(root_words);
         if dst_root != PRIMARY {
             return Err("a fresh store did not hand out PRIMARY first");
@@ -6840,12 +6523,6 @@ impl Stores {
             }
             if s.read_only || s.is_borrowed() {
                 return Err("store is read-only or borrowed");
-            }
-            if s.has_durable_sidecar() {
-                // Same reason `shrink_to` refuses (F4): the sidecar records the
-                // file's byte length and CRC, so rewriting the image behind its
-                // back reports a healthy store as corrupt.
-                return Err("a durable sidecar records this file's length and CRC");
             }
             if s.known_type == u16::MAX {
                 return Err("store records no type, so there is no schema to walk");
@@ -7568,21 +7245,6 @@ impl Stores {
     pub fn reclaim_store(&mut self, slot: u16) -> i64 {
         match self.allocations.get_mut(slot as usize) {
             Some(store) => i64::from(store.reclaim_tail()) * 8,
-            None => 0,
-        }
-    }
-
-    /// @PLN126 — flush what has been written to a bound store's file and drop it from
-    /// the resident set, answering the bytes dropped.  The loft-callable half of
-    /// [`crate::store::Store::release_resident`].
-    ///
-    /// A sibling of [`Self::reclaim_store`] and deliberately not a mode of it: that one
-    /// changes the file's LENGTH and is a decision about disk, this one changes only
-    /// what is resident and is a decision about memory.  A caller wants one or the
-    /// other, never "some of both".
-    pub fn release_store(&mut self, slot: u16) -> i64 {
-        match self.allocations.get_mut(slot as usize) {
-            Some(store) => i64::try_from(store.release_resident()).unwrap_or(i64::MAX),
             None => 0,
         }
     }

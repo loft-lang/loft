@@ -687,7 +687,7 @@ mod paged {
     fn build(relayout: bool) -> (Store, DbRef, Vec<Key>, Vec<String>, usize) {
         let words = corpus();
         let keys = vec![w_key()];
-        let mut store = Store::new_in_use(1 << 20);
+        let mut store = Store::new_in_use_defined(1 << 20);
         let coll = crate::radix_tree::empty_collection(&mut store);
         let mut order: Vec<usize> = (0..words.len()).collect();
         for i in 0..words.len() {

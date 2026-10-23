@@ -173,9 +173,9 @@ fn wasm_reachable(sources: &[(PathBuf, String)], item: &str) -> Option<bool> {
 /// @C87 — the `#rust"…"` template path is kept: this walks every stdlib template, so a change
 /// that retired the path for per-Op emitters fails here.
 ///
-/// The failure this prevents is not subtle once seen, and impossible to see before:
-/// `store_durable_seal` ran on `--interpret` and `--native` and made `--native-wasm`
-/// fail inside rustc, naming `loft::store::Store`.
+/// The failure this prevents is not subtle once seen, and impossible to see before: a
+/// template naming an mmap-only item runs on `--interpret` and `--native` and makes
+/// `--native-wasm` fail inside rustc, naming `loft::store::Store`.
 #[test]
 fn stdlib_rust_templates_resolve_on_wasm() {
     let sources = rust_sources();
@@ -184,11 +184,11 @@ fn stdlib_rust_templates_resolve_on_wasm() {
         "expected to scan loft's src/ tree, found {} files",
         sources.len()
     );
-    // Positive control: the scan must be able to SEE a feature gate. `open_durable` is
+    // Positive control: the scan must be able to SEE a feature gate. `open_mapped` is
     // mmap-only with no fallback sibling — if this ever reads as wasm-reachable the
     // detector has gone blind and a green result below means nothing.
     assert_eq!(
-        wasm_reachable(&sources, "open_durable"),
+        wasm_reachable(&sources, "open_mapped"),
         Some(false),
         "positive control failed: the cfg scan no longer sees `#[cfg(feature = \"mmap\")]`"
     );

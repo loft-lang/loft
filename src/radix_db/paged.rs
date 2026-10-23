@@ -222,7 +222,7 @@ fn points(w: &Width) -> Vec<(i64, i64)> {
 fn build(w: &Width, relayout: bool) -> (Store, DbRef, Vec<Key>, usize) {
     let keys = keys_for(w);
     let pts = points(w);
-    let mut store = Store::new_in_use(1 << 18);
+    let mut store = Store::new_in_use_defined(1 << 18);
     let coll = crate::radix_tree::empty_collection(&mut store);
     let mut order: Vec<usize> = (0..pts.len()).collect();
     let mut seed = 0x9e37_79b9_7f4a_7c15_u64;

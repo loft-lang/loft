@@ -499,6 +499,9 @@ pub struct Stores {
     /// elements → ~4 (near the scalar baseline). A `value struct` built in place allocates
     /// none. `LOFT_ALLOC_REPORT=1` prints it; the pub field is read in-process for assertions.
     pub stores_allocated: u64,
+    /// The next store [`Stores::database_named`] hands out is DEFINED (`Store::defined`):
+    /// set by [`Stores::database_defined`], consumed by the allocation.
+    pub(crate) want_defined: bool,
     /// @PLN105 leak provenance — the bytecode position of the currently-executing op,
     /// republished per-op by the interpreter's dispatch loop. `database_named` stamps it
     /// into each freshly-allocated store's `created_at` so a leaked store's allocation
@@ -796,6 +799,7 @@ impl Clone for Stores {
             peak: 0,
             records_created: 0,
             stores_allocated: 0,
+            want_defined: false,
             alloc_pc: 0,
             free_bits: Vec::new(),
             bridge_text_dest: None,
@@ -1580,6 +1584,7 @@ impl Stores {
             peak: 0,
             records_created: 0,
             stores_allocated: 0,
+            want_defined: false,
             alloc_pc: 0,
             free_bits: Vec::new(),
             bridge_text_dest: None,

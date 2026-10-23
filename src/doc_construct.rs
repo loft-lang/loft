@@ -111,7 +111,6 @@ pub const CONSTRUCTS: &[&str] = &[
     "fn:sizeof",
     "fn:stack_trace",
     "fn:store_reclaim",
-    "fn:store_release",
     "fn:ticks",
     "fn:to_json",
     "def:operator-compare",
@@ -144,7 +143,6 @@ const DOCUMENTED_FNS: &[(&str, &str)] = &[
     ("sizeof", "fn:sizeof"),
     ("stack_trace", "fn:stack_trace"),
     ("store_reclaim", "fn:store_reclaim"),
-    ("store_release", "fn:store_release"),
     ("ticks", "fn:ticks"),
     ("to_json", "fn:to_json"),
 ];

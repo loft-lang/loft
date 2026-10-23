@@ -412,7 +412,7 @@ const CODES: &[(&str, &str)] = &[
         "fn main() { print(\"needs a project with a release baseline in layout.lock\"); }",
     ),
     (
-        "persist-bind-through-field",
+        "persist-through-field",
         "struct Inner { k: integer }\n\
          struct Outer { items: hash<Inner[k]> }\n\
          fn main() { o = Outer { items: [] }; store_persist_bind(o.items, \"loft_trig.store\"); }",
