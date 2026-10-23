@@ -14,6 +14,7 @@ pub mod iteration;
 pub mod loop_records;
 pub mod non_sentinel;
 pub mod range;
+pub mod writes;
 
 /// Forget every analysis memo: the range analysis's call memo (keyed by a definition's
 /// address) and the non-null analysis's answers (keyed by its number) are facts about ONE
