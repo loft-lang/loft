@@ -123,7 +123,10 @@ ladder with every build and check, its measured cost and the rules it gives is
 [CI_BUDGET.md § What a build and each check costs here](CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder);
 the dev binary serves the whole loop (`--interpret`, `--native`, `introspect`,
 `--native-emit`), and a release build is for the rlib the native test suites link, once per
-fix.  Tests that depend on release-only behaviour (parallel timing windows, perf
+fix.  ⚠ A bare `loft p.loft` on a box with `rustc` runs NATIVE (`--help`: "native is
+default"), so a probe meant for the interpreter says `--interpret`; a "plain" run set beside
+a `--native` run measures one backend twice, and an interpreter-only defect then reads as
+a test-runner effect.  Tests that depend on release-only behaviour (parallel timing windows, perf
 assertions) take `PROFILE=release`:
 
 ```
