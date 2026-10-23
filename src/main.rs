@@ -12838,11 +12838,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // third of a warm `hello`'s exit (@PLN179 finding 001).  Plain memory with no `Drop`
     // effect, unlike the run's stores, which `state` still drops — a durable store writes its
     // clean-close sidecar there.  It is parked in a static rather than forgotten, so it stays
-    // reachable: a leak checker reads forgotten memory as a leak of every run.  The write is
-    // volatile because nothing reads the static, and an ordinary store to it is optimised away.
-    static mut KEPT_DATA: *const loft::data::Data = std::ptr::null();
-    // SAFETY: the one write to `KEPT_DATA`, on the main thread as the process ends.
-    unsafe { std::ptr::write_volatile(&raw mut KEPT_DATA, std::sync::Arc::into_raw(data)) };
+    // reachable: a leak checker reads forgotten memory as a leak of every run.  A static is
+    // never dropped, and a `OnceLock` set is a synchronised store nothing optimises away.
+    static KEPT_DATA: std::sync::OnceLock<std::sync::Arc<loft::data::Data>> =
+        std::sync::OnceLock::new();
+    let _ = KEPT_DATA.set(data);
 }
 
 /// Where `loft test` looks for a package's tests, and the prefix it prints.
