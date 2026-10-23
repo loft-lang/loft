@@ -557,11 +557,8 @@ impl KeptWalk<'_> {
 /// Is `tp` a vector whose element may be `elm` — the same record type, or, for a field of
 /// another element kind, any vector at all?
 fn same_vector(data: &Data, tp: &Type, elm: Option<u16>) -> bool {
-    let mut t = tp;
-    while let Type::RefVar(e) | Type::Optional(e) | Type::Rewritten(e) = t {
-        t = e;
-    }
-    let Type::Vector(e, _) = t else {
+    // @FR-N-Shape: the shape under `?`, `&` and the rewritten marker.
+    let Type::Vector(e, _) = tp.peel_link() else {
         return false;
     };
     match (e.peel_link(), elm) {
