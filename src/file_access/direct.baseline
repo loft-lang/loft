@@ -6,11 +6,10 @@
 6 src/cache_gc.rs
 3 src/codegen_runtime.rs
 1 src/compile.rs
-8 src/database/allocation.rs
+6 src/database/allocation.rs
 7 src/database/io.rs
 3 src/database/journal.rs
 3 src/database/loft_file.rs
-4 src/database/spans.rs
 1 src/documentation.rs
 1 src/extensions.rs
 1 src/ir_read.rs
@@ -36,7 +35,7 @@
 2 src/repl.rs
 2 src/self_update.rs
 3 src/state/io.rs
-23 src/store.rs
+10 src/store.rs
 1 src/store_census.rs
 1 src/timeout.rs
 1 src/verify_self.rs

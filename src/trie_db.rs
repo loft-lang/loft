@@ -880,7 +880,7 @@ mod paged {
             "kerklaan",
         ];
         let keys = vec![w_key()];
-        let mut store = Store::new_in_use(1 << 14);
+        let mut store = Store::new_in_use_defined(1 << 14);
         let coll = crate::radix_tree::empty_collection(&mut store);
         for w in SIX {
             let ptr = store.set_str(w);

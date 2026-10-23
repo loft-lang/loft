@@ -27,7 +27,6 @@
 1 tests/placement_remote.rs
 1 tests/placement_worker.rs
 1 tests/self_update_swap.rs
-1 tests/store_persist_loft.rs
 1 tests/wasm_debug_relay.rs
 1 tests/windows_probe.rs
 2 tests/wrap.rs
