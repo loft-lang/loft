@@ -4,6 +4,7 @@ bench/portal/analysis/invert/price_invert.py	--help
 bench/portal/analysis/over-9x/pluginabi_check_request/price_decode_view.py	--help
 bench/portal/analysis/x2/price_cbor_encode.py	--help
 bench/portal/analysis/x8/price_binary_read.py	--help
+bench/portal/analysis/l7/price_slope_l7.py	--help
 bench/run_bench.sh	--help
 bench/stats.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/grammar_gen.py	--help

@@ -173,7 +173,10 @@ def apply_table(src):
 
 
 def main():
-    src = open(sys.argv[1]).read()
+    if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__ or "usage: price_slope_l7.py <emitted.rs> <out.rs> [L7] [N | TABLE]")
+        sys.exit(0 if sys.argv[1:2] in (["-h"], ["--help"]) else 2)
+    src = open(sys.argv[1], encoding="utf-8").read()
     levers = set(sys.argv[3:])
     assert levers <= {"L7", "N", "TABLE"} and not ({"N", "TABLE"} <= levers), levers
     if "L7" in levers or "TABLE" in levers:
@@ -182,7 +185,7 @@ def main():
         src = apply_nested(src, "L7" in levers)
     if "TABLE" in levers:
         src = apply_table(src)
-    open(sys.argv[2], "w").write(src)
+    open(sys.argv[2], "w", encoding="utf-8").write(src)
 
 
 if __name__ == "__main__":
