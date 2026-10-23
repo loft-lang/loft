@@ -4124,14 +4124,12 @@ impl Stores {
         if src_claim == 0 || !hash::is_inline(self.store(rec), src_claim) {
             children.sort_by_key(|c| (c.child.rec, c.child.pos));
         }
-        let stride = crate::hash::stride_for(size);
         for child in children {
             let src_db = child.child;
-            // The destination's slot comes from ITS arena, not from a claim: an entry
-            // has no header word and no back-pointer of its own any more (the chunk
-            // carries the owner).  Allocate, copy the payload, deep-copy the nested
-            // claims, then re-insert by key.
-            let new_db = crate::hash::alloc_entry(to, stride, to.rec, &mut self.allocations);
+            // The destination's entry takes the layout its TYPE asks for (`hash_entry`): a
+            // slot of its own table, or a record when a group's views share it.  Allocate,
+            // copy the payload, deep-copy the nested claims, then re-insert by key.
+            let new_db = self.hash_entry(to, content_tp, to.rec);
             self.copy_block(&src_db, &new_db, size);
             self.copy_claims(&src_db, &new_db, content_tp);
             hash::add(to, &new_db, &mut self.allocations, &keys);
@@ -8280,10 +8278,7 @@ impl Stores {
         let (bytes, entry) = match kind {
             PagedKind::Hash => {
                 let stride = crate::hash::stride_for(u32::from(self.size(content_tp)));
-                (
-                    stride,
-                    crate::hash::alloc_entry(local, stride, local.rec, &mut self.allocations),
-                )
+                (stride, self.hash_entry(local, content_tp, local.rec))
             }
             // Both tree kinds store an element as a claimed RECORD with its payload
             // at offset 8, so the copy is the same claim; only the linker differs.
