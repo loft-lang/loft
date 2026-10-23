@@ -640,7 +640,7 @@ pub struct ValueLeaves {
     /// block emitter is handed).
     pub objects: HashSet<usize>,
     /// EVERY `Var` node at a value position, view or value local, by both addresses — the
-    /// whole-value reads a tuple serves, which is what [`local_uses_ok`] accounts a value
+    /// whole-value reads a tuple serves, which is what [`local_uses_ok`](super::local_uses_ok) accounts a value
     /// local's read at the tail of a branch arm against.
     pub reads: HashSet<usize>,
     /// `materialized_view_return` blocks at a value position, by the `Block`'s address: the
@@ -648,10 +648,10 @@ pub struct ValueLeaves {
     pub mv_returns: HashSet<usize>,
     /// `@FR-R-ValueRecord`'s nullable clause — the `null` exits at a value position of a
     /// `-> S?` body, by both addresses: each emits the ABSENT tuple
-    /// ([`ValueTuple::absent`]).
+    /// ([`ValueTuple::absent`](super::layout::ValueTuple::absent)).
     pub nulls: HashSet<usize>,
     /// The leaves whose own tuple is DENSE and that stand where a nullable one is expected
-    /// ([`widened_leaves`]), by both addresses, with the nullable key: each emits its tuple
+    /// (`widened_leaves`), by both addresses, with the nullable key: each emits its tuple
     /// with the presence word appended.
     pub widen: HashMap<usize, u16>,
 }

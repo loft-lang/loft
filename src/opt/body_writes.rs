@@ -114,7 +114,7 @@ pub(crate) fn close_over_links(rebound: &mut HashSet<u16>, vars: &crate::variabl
 ///
 /// For the record ADDRESS only: a read through it loads the bytes where they are each
 /// time, so no aliasing question arises.  `(R-Scalar)`'s hoisted scalars keep
-/// [`scalar_read`]'s bare-variable key on purpose — a hoist CACHES a value keyed by
+/// `scalar_read`'s bare-variable key on purpose — a hoist CACHES a value keyed by
 /// (record type, offset), and a write through a sub-record view (`p = v.pos; p.x = …`)
 /// is typed by the sub-record, which would never evict a key typed by the parent.
 #[must_use]

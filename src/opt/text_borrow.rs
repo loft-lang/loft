@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 /// `@FR-R-TextBorrow` — the head of a walk of TEXTS, as the parser lowers
 /// `for p in words` over a `vector<text>`: the loop variable, its `#index`, the vector
 /// variable and the element read, `OpGetText(OpGetVectorNullable(vec, size, index), 0)`.  Shape only,
-/// like [`iteration_head`]; a record walk, a reversed walk or a text iterator answers
+/// like [`iteration_head`](crate::opt::iteration::iteration_head); a record walk, a reversed walk or a text iterator answers
 /// `None`.  The vector operand must be a VARIABLE: the hidden `_vector_N` the parser binds
 /// before the loop, which is what a lazy split is keyed by too.
 #[must_use]

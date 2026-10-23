@@ -471,8 +471,7 @@ thread_local! {
 }
 
 /// Forget every memoised call range: a new run is about a new program.  Called by
-/// `crate::generation::Output::new`, beside `non_sentinel::begin_generation`, and by
-/// `leaf_inline::rewrite_program`, which asks the memo before generation does.
+/// [`super::begin_program`], beside `non_sentinel::begin_generation`.
 pub(crate) fn begin_generation() {
     CALL_MEMO.with(|m| m.borrow_mut().clear());
 }

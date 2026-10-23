@@ -223,7 +223,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     if disabled() || data.open_world {
         return 0;
     }
-    let vr = crate::generation::hoist::value_records(data, stores, false);
+    let vr = crate::opt::value_records::value_records(data, stores, false);
     if vr.fns.is_empty() && vr.params.is_empty() {
         return 0;
     }
@@ -241,7 +241,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     for (&d, &tp) in &vr.fns {
         // `@FR-R-ValueRecord`'s nullable clause is `--native`'s alone: a `τ?` tuple carries a
         // presence word this pass has no spelling for, so the IR keeps the record form there.
-        if arms.contains(&d) || crate::generation::hoist::is_nullable_layout(tp) {
+        if arms.contains(&d) || crate::opt::value_records::layout::is_nullable_layout(tp) {
             continue;
         }
         if let Some(c) = callee_shape(data, stores, &w.ops, &mut w.layouts, d, tp) {

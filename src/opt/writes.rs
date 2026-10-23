@@ -218,8 +218,8 @@ pub struct HoistTiers {
     /// slot takes no holder instead of declining the loop (`LOFT_NO_REBOUND_MOVER` off).
     pub rebound_movers: bool,
     /// `(R-Header)`'s text clause — a text set (`OpSetText`, `OpSetTextReplace`) admitted.
-    /// Set ONLY by [`hoistable`] for the loop's header verdict, never by the emitter's
-    /// [`Output`](super::Output) tiers: a text set claims and frees text records, which moves
+    /// Set ONLY by `hoistable` for the loop's header verdict, never by the native emitter's
+    /// tiers (`Output::hoist_tiers`): a text set claims and frees text records, which moves
     /// no vector's record or length but may grow its store, so a reader of the gate that
     /// holds an ADDRESS (a record view's pointer, a push header) must keep declining it.
     pub text_set: bool,
@@ -262,7 +262,7 @@ pub(crate) fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
 }
 
 /// The typed setters an element write can be fused INTO (@PLN157 P4b), with the Rust
-/// type each stores.  The write twins of [`FUSABLE_GETTERS`], excluded for the same
+/// type each stores.  The write twins of `FUSABLE_GETTERS`, excluded for the same
 /// reasons: a setter that re-bases (`OpSetByte`/`OpSetShort`), masks or translates
 /// keeps the unfused emission.
 /// The scalar pushes a loop may hoist a header for (@PLN157 § V-q, `@FR-R-Push`): the op,
@@ -275,7 +275,7 @@ pub(crate) fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
 /// is `v` for every value a native `u8` holds (`byte_fits(0, v)` spans 0..=255, the enum
 /// null 255 included), so the element is the value itself and no bias rides along
 /// ([`push_operands`] answers none).  Their native value may be a `bool`, so every site
-/// that spells the pushed value casts it to the kind's type ([`push_value_cast`]).
+/// that spells the pushed value casts it to the kind's type (`push_value_cast`).
 ///
 /// [`HoistScalar`]: crate::vector::HoistScalar
 pub const FUSABLE_PUSHES: [(&str, &str, u32); 8] = [

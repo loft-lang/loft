@@ -46,7 +46,7 @@ pub struct ValueRecords {
     /// the site's record ([`fnref_value`]).
     pub fnref_sites: FnRefSites,
     /// `@FR-N-Store` — the admitted DENSE functions whose tuple is SURELY PRESENT
-    /// ([`surely_present_fns`]): every result is a build or another such function's.  Only
+    /// ([`surely_present_fns`](super::surely_present_fns)): every result is a build or another such function's.  Only
     /// their tuple may be widened with the constant presence word.
     pub sp: HashSet<u32>,
 }
@@ -106,7 +106,7 @@ impl ValueTuple {
     }
 
     /// @C144 — the ABSENT tuple of a nullable layout — every field its null, as a field read off the
-    /// null record answers ([`tuple_reads`]), and the presence word `false` — or a dense
+    /// null record answers (`tuple_reads`), and the presence word `false` — or a dense
     /// layout's tuple of field nulls.  ONE spelling for the `null` exit, a nullable value
     /// local's declaration and the bridge's null destination.
     #[must_use]
@@ -931,7 +931,7 @@ pub fn is_view_part(rt: &str) -> bool {
 }
 
 /// What one exit of an admitted body delivers for a view-leaf field — decided once by the
-/// gate ([`leaf_source`]), kept in [`ViewPlan::leaves`], and written by the emitter as it
+/// gate ([`leaf_source`](super::leaves::leaf_source)), kept in [`ViewPlan::leaves`], and written by the emitter as it
 /// stands, so the two cannot drift.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LeafSource {
@@ -1158,7 +1158,7 @@ pub(crate) fn leaf_root(
 /// undisturbed.
 ///
 /// `None` declines the function, and it is the answer whenever an exit's leaf cannot be
-/// PROVEN ([`leaf_source`]) — which includes every body that could disturb the place between
+/// PROVEN ([`leaf_source`](super::leaves::leaf_source)) — which includes every body that could disturb the place between
 /// the append the view names and the exit, since that is a path on which the fact fails.
 pub struct ViewPlan {
     /// Field byte offset → the places its exits view.  Empty set: every exit is a null view.

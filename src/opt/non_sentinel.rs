@@ -133,7 +133,7 @@ thread_local! {
 }
 
 /// Forget every per-definition answer: a new generation run is about a new program.
-/// Called by `crate::generation::Output::new`.
+/// Called by [`super::begin_program`].
 pub(crate) fn begin_generation() {
     RETURNS.with(|m| m.borrow_mut().clear());
 }
