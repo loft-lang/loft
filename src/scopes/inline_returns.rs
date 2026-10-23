@@ -468,15 +468,28 @@ impl Scopes<'_> {
             .iter()
             .map(Value::unspan)
             .find(|op| !matches!(op, Value::Call(d, _) if data.def(*d).name() == "OpFreeRef"));
-        let subject_is_user_call = match subject {
-            Some(Value::Set(_, rhs)) => match rhs.unspan() {
-                Value::Call(fn_nr, _) => data.def(*fn_nr).is_loft_defined(),
-                Value::CallRef(_, _) => true,
-                _ => false,
-            },
+        let Some(Value::Set(_, rhs)) = subject else {
+            return false;
+        };
+        let subject_is_user_call = match rhs.unspan() {
+            Value::Call(fn_nr, _) => data.def(*fn_nr).is_loft_defined(),
+            Value::CallRef(_, _) => true,
             _ => false,
         };
-        subject_is_user_call && self.join_is_witnessed(val, data)
+        // The borrow must arrive THROUGH the subject: a callee that hands back its argument or
+        // a store it minted.  That borrow is a returned value, fresh to the caller
+        // (`@FR-F-Ret`), so the guard's copy of it is the right answer.  A subject that is
+        // itself OWNED (`find(p) ?? base.inner`, `find` minting or answering null) is already
+        // owned by its `__ncc_N` temp, which the frame frees at exit; the block is a Join only
+        // because its DEFAULT arm is a place of this frame, and that arm is a view
+        // (`@FR-B-View`) the consumer shares (`@FR-F-ParamHeap`).  Lifting it copied the
+        // place on the interpreter and freed it from under its owner on `--native`.  Any
+        // other answer about the subject (owned, borrowed, unknown) declines the lift.
+        let borrow_through_subject = matches!(
+            crate::use_analysis::ownership_of(data, self.d_nr, rhs),
+            crate::use_analysis::Own::Join { .. }
+        );
+        subject_is_user_call && borrow_through_subject && self.join_is_witnessed(val, data)
     }
 
     /// Is this value a `Own::Join` — borrow-or-mint, settled only per execution — whose borrow
