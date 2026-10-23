@@ -521,7 +521,11 @@ fn placement_contract_is_pinned() {
     assert_eq!(loft::hash::STRIDE_MASK, 0xFFFF, "{BUMP}");
     assert_eq!(loft::hash::INLINE_LEN_FLD, 16, "{BUMP}");
     assert_eq!(loft::hash::TOMB, u32::MAX, "{BUMP}");
-    assert_eq!(loft::hash::inline_count_of(0x4000_0000 | (5 << 16)), 32, "{BUMP}");
+    assert_eq!(
+        loft::hash::inline_count_of(0x4000_0000 | (5 << 16)),
+        32,
+        "{BUMP}"
+    );
     assert_eq!(loft::hash::ent0(16), 32 + 16 * 8, "{BUMP}");
     assert_eq!(loft::placement::HASH, "3", "{BUMP}");
     assert_eq!(loft::placement::HASH_READS, ["2"], "{BUMP}");
@@ -635,7 +639,10 @@ fn an_older_hash_token_this_build_reads_hands_the_store_over_raw() {
     let release = loft::database::Release::default();
     // What a store written by a `2` build looks like to this one: every hash part under `2`.
     let older = text.replace(&own, ",placement=2)");
-    assert_ne!(older, text, "the older sidecar must differ from this build's");
+    assert_ne!(
+        older, text,
+        "the older sidecar must differ from this build's"
+    );
     assert!(
         matches!(
             verdict_for_sidecar_text(&older, &current, &release),
@@ -654,8 +661,10 @@ fn an_older_hash_token_this_build_reads_hands_the_store_over_raw() {
     let read = loft::placement::read_as_own(dump);
     assert_eq!(
         read,
-        format!("T\tsize=8\tidx=index<E>(keys=[1],elem_size=16,placement=2)\th=hash<E>(keys=[1],elem_size=16{})",
-            loft::placement::tag(loft::placement::HASH)),
+        format!(
+            "T\tsize=8\tidx=index<E>(keys=[1],elem_size=16,placement=2)\th=hash<E>(keys=[1],elem_size=16{})",
+            loft::placement::tag(loft::placement::HASH)
+        ),
         "only the hash part is read as this build's"
     );
 }

@@ -4388,9 +4388,46 @@ impl Stores {
         self.copy_claims_kind(rec, to, tp);
     }
 
+    /// The struct arm of [`Self::copy_claims_kind`]: each of the `n` fields of record type `tp`
+    /// copied from `rec` into `to`, a linked group's views indexed over the copied owner.
+    fn copy_struct_fields(&mut self, rec: &DbRef, to: &DbRef, tp: u16, n: usize) {
+        // A record that owns no heap has nothing here to copy — its bytes
+        // came with the block copy — so the per-field descent is skipped.
+        if !self.type_owns_heap(tp) {
+            return;
+        }
+        // By index, re-borrowing the row per field: the list was cloned here on
+        // every record copy (@PLN157 § V-e, 7.5 % of the `smooth` row).
+        for i in 0..n {
+            let f = self.field_at(tp, i);
+            let from = DbRef {
+                store_nr: rec.store_nr,
+                rec: rec.rec,
+                pos: rec.pos + u32::from(f.position),
+            };
+            let into = DbRef {
+                store_nr: to.store_nr,
+                rec: to.rec,
+                pos: to.pos + u32::from(f.position),
+            };
+            // @FR-Col-Group — a VIEW of a linked group holds the records the group's
+            // owner holds.  Copied as a collection of its own it holds COPIES of them,
+            // which a write through the owner does not reach; so it starts empty and
+            // is indexed over the copied owner below.
+            if self.is_group_view(tp, i) {
+                if !self.copy_absent_collection(&from, &into, f.content) {
+                    self.store_mut(&into).set_u32_raw(into.rec, into.pos, 0);
+                }
+                continue;
+            }
+            self.copy_claims(&from, &into, f.content);
+        }
+        self.relink_group_views(to, tp);
+        self.lease_if_file(to, tp);
+    }
+
     /// The per-kind half of [`Self::copy_claims`], for a value that is present.
     fn copy_claims_kind(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
-        // TODO prevent copying secondary structures
         match &self.types[tp as usize].parts {
             Parts::Base if tp == 5 => {
                 // text — P220: discriminate null source from empty-string
@@ -4414,39 +4451,8 @@ impl Stores {
                 }
             }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                // A record that owns no heap has nothing here to copy — its bytes
-                // came with the block copy — so the per-field descent is skipped.
-                if !self.type_owns_heap(tp) {
-                    return;
-                }
-                // By index, re-borrowing the row per field: the list was cloned here on
-                // every record copy (@PLN157 § V-e, 7.5 % of the `smooth` row).
-                for i in 0..fields.len() {
-                    let f = self.field_at(tp, i);
-                    let from = DbRef {
-                        store_nr: rec.store_nr,
-                        rec: rec.rec,
-                        pos: rec.pos + u32::from(f.position),
-                    };
-                    let into = DbRef {
-                        store_nr: to.store_nr,
-                        rec: to.rec,
-                        pos: to.pos + u32::from(f.position),
-                    };
-                    // @FR-Col-Group — a VIEW of a linked group holds the records the group's
-                    // owner holds.  Copied as a collection of its own it holds COPIES of them,
-                    // which a write through the owner does not reach; so it starts empty and
-                    // is indexed over the copied owner below.
-                    if self.is_group_view(tp, i) {
-                        if !self.copy_absent_collection(&from, &into, f.content) {
-                            self.store_mut(&into).set_u32_raw(into.rec, into.pos, 0);
-                        }
-                        continue;
-                    }
-                    self.copy_claims(&from, &into, f.content);
-                }
-                self.relink_group_views(to, tp);
-                self.lease_if_file(to, tp);
+                let n = fields.len();
+                self.copy_struct_fields(rec, to, tp, n);
             }
             Parts::Vector(_) | Parts::Sorted(_, _) => {
                 // Pass the CONTAINER type: the keystone walk keys on it, and the helper
