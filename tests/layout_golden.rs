@@ -110,7 +110,7 @@ const TYPES: &[&str] = &[
 /// alignment.  Ten rows moved and every one is a SIZE rounded up (`Item` 17→24, `Narrow`
 /// 7→8, `Scalars` 29→32, …) or an `elem_size` following it; no field position moved,
 /// because the corpus places no field after an inline record of odd size.)
-const LAYOUT_ALGO_HASH: u64 = 1_591_903_154_127_288_799;
+const LAYOUT_ALGO_HASH: u64 = 11_992_428_022_375_753_156;
 
 /// @PLN135 Q2 — `keys::key_hash` for a fixed seed over a fixed key set: the function a
 /// reader must reproduce to find an entry a writer placed. Pinned by
@@ -510,6 +510,21 @@ fn placement_contract_is_pinned() {
     // about it a red test rather than an entry silently read as a chunk that does
     // not exist.
     assert_eq!(loft::hash::SLOT_RECORD, 0x8000_0000, "{BUMP}");
+    // @C152 `(Col-Layouts)` — a table says its own layout in `STRIDE_FLD`: the stride in the
+    // low half, `TAGGED` (8-byte slots, `(Col-Tag)`) and `INLINE` (entries in the table,
+    // `(Col-Inline)`) in the top two bits, an inline table's bucket exponent from bit 16.
+    // An inline table keeps its live count where an arena table keeps its directory and
+    // marks a removed entry's slot with `TOMB`.  A reader that tells the layouts apart
+    // differently reads one as another, so each is pinned with the token that names them.
+    assert_eq!(loft::hash::TAGGED, 0x8000_0000, "{BUMP}");
+    assert_eq!(loft::hash::INLINE, 0x4000_0000, "{BUMP}");
+    assert_eq!(loft::hash::STRIDE_MASK, 0xFFFF, "{BUMP}");
+    assert_eq!(loft::hash::INLINE_LEN_FLD, 16, "{BUMP}");
+    assert_eq!(loft::hash::TOMB, u32::MAX, "{BUMP}");
+    assert_eq!(loft::hash::inline_count_of(0x4000_0000 | (5 << 16)), 32, "{BUMP}");
+    assert_eq!(loft::hash::ent0(16), 32 + 16 * 8, "{BUMP}");
+    assert_eq!(loft::placement::HASH, "3", "{BUMP}");
+    assert_eq!(loft::placement::HASH_READS, ["2"], "{BUMP}");
     // The arena's own geometry: a slot's address is a pure function of its index, so
     // these three ARE where an entry lives.  A reader that tiles the index space
     // differently finds an entry at a byte offset nothing put one at.
@@ -591,6 +606,57 @@ fn a_changed_placement_token_refuses_the_store() {
     assert!(
         verdict.as_corrupt_reason().is_some(),
         "the refusal must route through the store's corruption path so the reader is told"
+    );
+}
+
+/// @C152 — the other half of a placement bump: a store whose hashes carry an OLDER token this
+/// build reads as written (`placement::HASH_READS`) is handed over raw, as an unchanged layout
+/// is.  Every table records its own layout in its header (`(Col-Layouts)`), so nothing about
+/// a `2` store needs converting; refusing it, or converting it, would cost every store ever
+/// written with a hash for nothing.  A token this build does NOT read still refuses
+/// (`a_changed_placement_token_refuses_the_store`), and an `index`'s token is not a hash's.
+#[test]
+fn an_older_hash_token_this_build_reads_hands_the_store_over_raw() {
+    use loft::schema_sidecar::{LayoutIdentity, SchemaVerdict, verdict_for_sidecar_text};
+
+    let (data, db) = cached_default();
+    let mut p = Parser::new();
+    p.data = data;
+    p.database = db;
+    p.parse_str(CORPUS, "layout_corpus", false);
+    let roots = corpus_roots(&p.data);
+    let current = LayoutIdentity::of(&p.database, &roots);
+    let text = current.to_sidecar();
+    let own = format!(",placement={})", loft::placement::HASH);
+    assert!(
+        text.contains("hash<") && text.contains(&own),
+        "the corpus must contain a hash under this build's token for this test to mean anything"
+    );
+    let release = loft::database::Release::default();
+    // What a store written by a `2` build looks like to this one: every hash part under `2`.
+    let older = text.replace(&own, ",placement=2)");
+    assert_ne!(older, text, "the older sidecar must differ from this build's");
+    assert!(
+        matches!(
+            verdict_for_sidecar_text(&older, &current, &release),
+            SchemaVerdict::Match
+        ),
+        "a store whose hashes carry a token this build reads must be handed over raw"
+    );
+    // A token this build does not read is a changed layout, never a raw handoff.
+    let foreign = text.replace(&own, ",placement=9)");
+    assert!(
+        !verdict_for_sidecar_text(&foreign, &current, &release).is_raw_safe(),
+        "a hash token this build does not read must not be read raw"
+    );
+    // The rewrite reaches a hash part only: an index written under `2` stays `2`.
+    let dump = "T\tsize=8\tidx=index<E>(keys=[1],elem_size=16,placement=2)\th=hash<E>(keys=[1],elem_size=16,placement=2)";
+    let read = loft::placement::read_as_own(dump);
+    assert_eq!(
+        read,
+        format!("T\tsize=8\tidx=index<E>(keys=[1],elem_size=16,placement=2)\th=hash<E>(keys=[1],elem_size=16{})",
+            loft::placement::tag(loft::placement::HASH)),
+        "only the hash part is read as this build's"
     );
 }
 

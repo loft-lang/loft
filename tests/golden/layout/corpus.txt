@@ -27,7 +27,7 @@ byte<10,false>	size=1	byte(start=10,null=false)
 byte<10,true>	size=1	byte(start=10,null=true)
 character	size=4	base
 float	size=8	base
-hash<Item[ik]>	size=4	hash<Item>(keys=[0],elem_size=8,placement=2)
+hash<Item[ik]>	size=4	hash<Item>(keys=[0],elem_size=8,placement=3)
 index<Item[ik]>	size=4	index<Item>(keys=[(0, true)],elem_size=8,placement=2)
 int<-2147483647,false>	size=4	int4(start=-2147483647,null=false)
 int_raw<0,false>	size=4	int4raw(start=0,null=false)
