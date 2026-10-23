@@ -544,7 +544,7 @@ fn seed_elems(
     let mut sets: HashMap<u16, Vec<&Value>> = HashMap::new();
     code.walk(&mut |n| {
         if let Value::Set(t, e) = n.unspan()
-            && matches!(vars.tp(*t), crate::data::Type::Tuple(_))
+            && matches!(vars.tp(*t).base(), crate::data::Type::Tuple(_))
         {
             sets.entry(*t).or_default().push(e);
         }
@@ -553,7 +553,7 @@ fn seed_elems(
         if escaped.contains(&t) {
             continue;
         }
-        let crate::data::Type::Tuple(items) = vars.tp(t) else {
+        let crate::data::Type::Tuple(items) = vars.tp(t).base() else {
             continue;
         };
         for i in 0..items.len() {

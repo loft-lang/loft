@@ -1307,7 +1307,7 @@ impl Parser {
         // loft#2146 — an argument linked through a temp is stored back once the call returns.
         if !posts.is_empty() {
             let call = std::mem::replace(code, Value::Null);
-            if matches!(tp, Type::Void) {
+            if matches!(tp.base(), Type::Void) {
                 let mut ops = pres;
                 ops.push(call);
                 ops.extend(posts);
