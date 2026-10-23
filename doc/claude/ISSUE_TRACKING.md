@@ -144,6 +144,25 @@ files would.  The win is the *uniform* convention, not GitHub itself.
 - **Roadmap** — a `gh` Project board across the orgs for "which release bundles
   which consumer-driven work"; ROADMAP.md can't span orgs.
 
+## File only what the latest `main` has
+
+An issue records a defect that a user of `main` can hit, so a bug is filed only when its repro
+fails on a build of the current `origin/main`:
+
+```bash
+git fetch origin
+git worktree add ../loft-main-check origin/main      # a checkout of its own, never a switch
+cargo build --release --bin loft                     # in that worktree
+LOFT_TIMEOUT=60 ./target/release/loft --interpret repro.loft   # and --native
+```
+
+The body names what it was measured on (`measured on main @ <sha>`, § A repro carries the base
+below).  This holds for `scripts/claim.py file` too: a bug found and fixed at once is filed only
+when main has it.  A defect that exists only on a work branch — the branch's own unmerged work
+caused it, or exposed it in code main does not run — is not an issue: the branch fixes it before
+it merges and the commit message records scope and cause (inside a plan, the plan's docs too).
+When the latest main cannot be built or the repro cannot run there, say so and do not file.
+
 ## A repro carries the base it was measured on — name it
 
 A repro written from a work branch silently depends on every OTHER fix that branch holds, and

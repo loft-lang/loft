@@ -508,8 +508,15 @@ when the ordinary tools no longer work). In **stability work** the file-instead-
 hatches do NOT apply either: fix in the same session with a regression test. Record scope + root
 cause, never origin commit.
 
+**File only what the LATEST `main` has:** a bug becomes an issue only when its repro fails on a
+build of the current `origin/main` (fetched, built, run on both backends; the body says `measured
+on main @ <sha>`).  A defect that exists only on a work branch — its own unmerged work caused it —
+is that branch's to fix before it merges, recorded in the commit message (and the plan's docs
+inside a plan), never an issue, even one filed already fixed.
+[ISSUE_TRACKING.md § File only what main has](doc/claude/ISSUE_TRACKING.md#file-only-what-the-latest-main-has).
+
 **Claim before you fix, on the issue:** `scripts/claim.py take N` before starting any fix, and
-`scripts/claim.py file …` for a bug you find and fix at once — other streams, on other machines,
+`scripts/claim.py file …` for a bug you find and fix at once (one that main has) — other streams, on other machines,
 see the claim only there (`make work` hides it; the commit-msg hook warns on a duplicate `Fixes`).
 [ISSUE_TRACKING.md § Claiming an issue](doc/claude/ISSUE_TRACKING.md).
 
@@ -538,8 +545,7 @@ a documented surface, or needed a design call. The fixing commit is the ONLY mom
 exists, and the monthly ratio is what the contract-1 decision reads (`make bug-review` § 5,
 [.github/LABELS.md § `contract:`](.github/LABELS.md)); absence counts as UNJUDGED, never settled —
 the same push run that applies `fixed-pending-merge` reads this trailer and sets the `contract:`
-label, and warns when a `Fixes #N` arrives without one. **Inside a
-plan:** file only if it reproduces on `main`; branch-internal breakage stays in the plan's docs.
+label, and warns when a `Fixes #N` arrives without one.
 Don't scope-creep the active fix with unrelated bugs.
 
 ## Git safety — MANDATORY
