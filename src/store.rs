@@ -6545,30 +6545,38 @@ mod tests {
     fn a_delete_never_reads_an_unwritten_claim() {
         for (lazy, park) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut store = Store::new(160);
-            assert!(!store.defined, "a store is not filled");
+            assert!(!store.defined, "first store is not filled");
             store.free = false;
             store.lazy = lazy;
             store.park = park;
             // Sizes on each path: 5 parks (2..=16), 40 is lazy-small (<= 64), 80 is exact.
-            let a = store.claim(5);
-            let b = store.claim(5);
-            let c = store.claim(40);
-            let d = store.claim(80);
-            store.write::<i32>(a, 4, 11);
-            store.write::<i32>(c, 4, 33);
+            let first = store.claim(5);
+            let second = store.claim(5);
+            let mid = store.claim(40);
+            let wide = store.claim(80);
+            store.write::<i32>(first, 4, 11);
+            store.write::<i32>(mid, 4, 33);
             // Each freed block's left neighbour is a claimed block with unwritten payload.
-            store.delete(b);
-            store.delete(d);
-            let e = store.claim(5);
-            store.delete(e);
+            store.delete(second);
+            store.delete(wide);
+            let again = store.claim(5);
+            store.delete(again);
             // The tail: a claim that takes what is left of the store whole, then one the
             // free space cannot hold, which grows the store past a claimed tail block.
             let rest = store.claim(20);
             let big = store.claim(200);
-            assert_eq!(store.read::<i32>(a, 4), 11, "A's payload survives");
-            assert_eq!(store.read::<i32>(c, 4), 33, "C's payload survives");
+            assert_eq!(
+                store.read::<i32>(first, 4),
+                11,
+                "the first block's payload survives"
+            );
+            assert_eq!(
+                store.read::<i32>(mid, 4),
+                33,
+                "the middle block's payload survives"
+            );
             assert!(store.read::<i32>(rest, 0) > 0 && store.read::<i32>(big, 0) > 0);
-            store.delete(c);
+            store.delete(mid);
             store.delete(big);
         }
     }

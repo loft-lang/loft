@@ -325,14 +325,6 @@ impl Stores {
         vector::vector_finish(&d, &mut self.allocations);
     }
 
-    /// Create a fresh record for a collection element / nullable field and return its `DbRef`.
-    ///
-    /// # Panics
-    /// Panics on an unsupported `parent_tp`/`field` parts kind (an internal invariant
-    /// violation — the parser only emits `OpNewRecord` for collection/struct field types).
-    ///
-    /// `@C145`, `@FR-H-LongRef` — a linked element claims a record of its own here, so a
-    /// reference to it keeps its place while the collection around it grows or re-sorts.
     /// `@FR-Col-Inline` / `@FR-Col-Group` — a fresh entry for the hash at `hash` over element
     /// type `c`, owned by the record `owner`: a slot the table hands out when its entries are
     /// its own, ONE RECORD per entry when `c` is `linked` — a sibling view or a stored
@@ -353,6 +345,14 @@ impl Stores {
         }
     }
 
+    /// Create a fresh record for a collection element / nullable field and return its `DbRef`.
+    ///
+    /// # Panics
+    /// Panics on an unsupported `parent_tp`/`field` parts kind (an internal invariant
+    /// violation — the parser only emits `OpNewRecord` for collection/struct field types).
+    ///
+    /// `@C145`, `@FR-H-LongRef` — a linked element claims a record of its own here, so a
+    /// reference to it keeps its place while the collection around it grows or re-sorts.
     pub fn record_new(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
         // @PLN101 Slice 0 — count every heap record allocation (the cost value structs remove).
         self.records_created += 1;
