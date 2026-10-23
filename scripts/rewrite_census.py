@@ -184,7 +184,9 @@ def main() -> int:
     only = None
     if "--only" in args:
         only = set(args[args.index("--only") + 1].split(","))
-    loft = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
+    # Absolute: each program is compiled from its own directory, where a relative path
+    # (`make after-fix` passes `target/probe/probe/loft`) names nothing.
+    loft = os.path.abspath(os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft"))
     progs = [p for p in programs() if only is None or p[0] in only]
     warm_dependencies(loft, progs)
     with ThreadPoolExecutor(max_workers=4) as pool:
