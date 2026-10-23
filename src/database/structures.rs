@@ -333,6 +333,26 @@ impl Stores {
     ///
     /// `@C145`, `@FR-H-LongRef` — a linked element claims a record of its own here, so a
     /// reference to it keeps its place while the collection around it grows or re-sorts.
+    /// `@FR-Col-Inline` / `@FR-Col-Group` — a fresh entry for the hash at `hash` over element
+    /// type `c`, owned by the record `owner`: a slot the table hands out when its entries are
+    /// its own, ONE RECORD per entry when `c` is `linked` — a sibling view or a stored
+    /// reference names the entry by record number, which only a record that owns its block
+    /// answers (loft#843), and a table slot moves when the table grows.  Every path that
+    /// makes an entry — a constructor, a deep copy, a paged load — asks here, so the layout
+    /// follows the type and not the path.  The answer's payload is `stride_for(size)` bytes
+    /// either way, unwritten (`@FR-H-Claim`).
+    pub(crate) fn hash_entry(&mut self, hash: &DbRef, c: u16, owner: u32) -> DbRef {
+        let size = u32::from(self.size(c));
+        if self.types[c as usize].linked {
+            let rec = self.claim(hash, 1 + size.div_ceil(8));
+            self.store_mut(&rec).set_u32_raw(rec.rec, 4, owner);
+            rec
+        } else {
+            let stride = crate::hash::stride_for(size);
+            crate::hash::alloc_entry(hash, stride, owner, &mut self.allocations)
+        }
+    }
+
     pub fn record_new(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
         // @PLN101 Slice 0 — count every heap record allocation (the cost value structs remove).
         self.records_created += 1;
@@ -405,16 +425,12 @@ impl Stores {
             // arena.  `hash::add` then finds no table of its own and builds one
             // with stride 0, which is already how it records "these records are
             // somebody else's": it borrows them and frees nothing.
-            Parts::Hash(c, _) if !self.types[c as usize].linked => {
-                let stride = crate::hash::stride_for(u32::from(self.size(c)));
-                crate::hash::alloc_entry(&d, stride, data.rec, &mut self.allocations)
-            }
+            Parts::Hash(c, _) => self.hash_entry(&d, c, data.rec),
             Parts::Array(c)
             | Parts::Ordered(c, _)
             | Parts::Index(c, _)
             | Parts::Radix(c, _)
-            | Parts::Trie(c, _)
-            | Parts::Hash(c, _) => {
+            | Parts::Trie(c, _) => {
                 let rec = self.claim(&d, 1 + ((u32::from(self.size(c)) + 7) >> 3));
                 self.store_mut(&rec).set_u32_raw(rec.rec, 4, data.rec);
                 rec
