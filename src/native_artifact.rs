@@ -40,7 +40,7 @@ use std::collections::HashSet;
 /// Step 4 option 3.)
 ///
 /// # Errors
-/// Propagates a build failure from [`build_shared_cdylib`].
+/// Propagates a build failure from [`build_shared_cdylib`](crate::native_lib::build_shared_cdylib).
 pub fn cached_or_build_shared_cdylib(
     data: &Data,
     stores: &Stores,

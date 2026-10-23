@@ -1898,12 +1898,12 @@ fn artifact_stem(so: impl crate::file_access::HostPath) -> Option<String> {
     )
 }
 
-/// The building half of [`cached_or_build_shared_cdylib`]: build the artifact `stem` for `fp`
+/// The building half of `native_artifact::cached_or_build_shared_cdylib`: build the artifact `stem` for `fp`
 /// into `out_dir`, record `fp` beside it, and prune the package's older artifacts.  Called
 /// while the caller holds the package's build lock.
 ///
 /// # Errors
-/// Propagates a build failure from [`build_keyed_cdylib`].
+/// Propagates a build failure from `build_keyed_cdylib`.
 pub fn build_shared_artifact(
     data: &Data,
     stores: &Stores,

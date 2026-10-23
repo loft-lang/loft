@@ -13,7 +13,7 @@
 use crate::database::Stores;
 
 /// @PLN11 Arc N — a uniform 16/24-byte argument/return slot for the
-/// **shared-store** native-library bridge ([`generate_shared_cdylib_lib_rs`]).
+/// **shared-store** native-library bridge (`native_lib::generate_shared_cdylib_lib_rs`).
 ///
 /// The bridge knows each slot's type from the function signature, so no tag is
 /// needed: a scalar reads/writes `.scalar` (an `i64`, or float bits, or `0/1` for

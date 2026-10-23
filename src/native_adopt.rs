@@ -3,7 +3,7 @@
 // @I68 — Native Rust generator: the interpreter adopting a compiled library artifact
 
 //! The interpreter's side of a compiled library artifact: whether one on disk was built for
-//! this program ([`artifact_matches_layout`]), routing a library's calls to the bodies it
+//! this program (`artifact_matches_layout`), routing a library's calls to the bodies it
 //! carries ([`mark_exports`], [`probe_and_mark_exports`]), and the [`HOST_TABLE`] through
 //! which the artifact reaches this interpreter (its coroutines and function values).
 //! Building an artifact is the Rust writer's (`native_lib`); the key both use is
@@ -570,7 +570,7 @@ pub struct ArtifactKey {
     _lock: crate::file_access::File,
 }
 
-/// The adopting half of [`cached_or_build_shared_cdylib`]: the artifact's key, whether one on
+/// The adopting half of `native_artifact::cached_or_build_shared_cdylib`: the artifact's key, whether one on
 /// disk serves this run, and — under the build lock — whether to build one or interpret.
 ///
 /// # Errors

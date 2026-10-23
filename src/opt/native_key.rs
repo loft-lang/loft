@@ -14,9 +14,9 @@ use std::collections::HashSet;
 /// @PLN11 Arc N / N3 (Step 2) — the cdylib **export set** for the library at
 /// `pkg_dir`, computed **without marking** (`&Data`, not `&mut`): the library's
 /// top-level, user-named, `pub` functions (the dispatch-target invariant — see
-/// [`mark_library_native`]) intersected with the shared-store-dispatchable gate.
+/// `native_adopt::mark_library_native`) intersected with the shared-store-dispatchable gate.
 /// The build-before-mark flow builds the cdylib from this set, then calls
-/// [`mark_exports`] only on success.
+/// `native_adopt::mark_exports` only on success.
 #[must_use]
 pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
     let candidates = library_candidates(data, pkg_dir);
