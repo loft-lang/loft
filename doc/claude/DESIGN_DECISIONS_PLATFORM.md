@@ -363,6 +363,8 @@ writer into the first.
 data cannot carry; or the split costs measured speed at a boundary that an opt-in `#inline`
 cannot win back.  Decided 2026-10-23 (@PLN200) — [record](DESIGN_DECISIONS-history.md#c153--what-the-interpreter-can-use-lives-in-opt-a-compiled-targets-decisions-in-lower-a-backend-only-spells).
 **Holds at:** `@C153` — `scripts/crate_layers.py` (`LAYERS`, `SIBLINGS`, `BUDGET`),
-`src/opt/mod.rs`, [CODEGEN_METHOD.md § Where an analysis lives](CODEGEN_METHOD.md#where-an-analysis-lives);
+`src/opt/mod.rs`, `src/interp.rs` (the interpreter's one entry),
+[CODEGEN_METHOD.md § Where an analysis lives](CODEGEN_METHOD.md#where-an-analysis-lives),
+[INTERMEDIATE.md § The interpreter's contract](INTERMEDIATE.md#the-interpreters-contract);
 guard `tests/extraction_hygiene.rs` `library_modules_keep_their_layers`.
 **Catalogue:** @I64 (the bytecode compiler, whose analyses `opt` holds).

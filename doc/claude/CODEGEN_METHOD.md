@@ -442,8 +442,12 @@ ownership — each is a type fact that should drive codegen mechanically.
 | an analysis or a rewrite the interpreter can use, or one several backends ask | `opt` (`src/opt/`, and the IR passes beside it) |
 | a decision only a compiled target makes (value records, header hoists, streamed walks) | `lower`, as data |
 | how a decision is written in the target language | the backend (`src/generation/` for Rust) |
+| a layout that compiled code and the interpreter both link | the runtime (`host_abi`) |
+| a step that needs the interpreter AND a compiled target (adopt or build an artifact) | the driver, which composes the two halves (`native_artifact`) |
 
 The interpreter and the compiled targets are siblings: neither names the other.
+Code outside the interpreter reaches it through `src/interp.rs` alone
+([INTERMEDIATE.md § The interpreter's contract](INTERMEDIATE.md#the-interpreters-contract)).
 `python3 scripts/crate_layers.py check` holds the layering, and its budget of references that
 still cross may only fall.  A new analysis written inside the Rust writer is the wrong home even
 when only the Rust writer asks it today, if the interpreter could use it.

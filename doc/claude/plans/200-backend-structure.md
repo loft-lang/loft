@@ -224,6 +224,38 @@ table:
 
 ## B2 — the interpreter as a defined part
 
+**Done (2026-10-23):** the interpreter and the Rust writer name each other nowhere (interp ↔
+rust 0, from 22 and 25), and every layer budget is empty.  Code outside the interpreter reaches
+it through `src/interp.rs` alone, which `crate_layers.py`'s ENTRY rule holds at 0 (83
+references moved).  The contract is [INTERMEDIATE.md § The interpreter's
+contract](../INTERMEDIATE.md#the-interpreters-contract).  Where the code differs from the table:
+
+- **B2.0** (added): `native_gate` and `lib_ids` moved to the `opt` layer.  Both sides ask
+  them, which functions compile and which number a key names, so `@C153` puts them below both
+  siblings.
+- **B2.1**: the key went to `opt::native_key`, not to `interp`.  The Rust writer builds under
+  the key and the interpreter adopts by it, and the sibling rule forbids both directions.
+- **B2.2**: `toolchain.rs` is in `core`, because only the driver and the Rust writer ask it.
+  It also took `find_loft_rlib`, which the toolchain hint names.
+- **B2.3** split in two.  The ABI types (`LibArg`, `HostTable`, `HOST_ABI`, `IdTable`,
+  `LAYOUT_FP_SYMBOL`) went to `host_abi.rs` in the runtime set.  `native_lib` re-exports them,
+  so emitted code is unchanged.  `HOST_TABLE`, the host callbacks, export marking and the
+  layout probe went to `native_adopt.rs`, with no re-export.  The compiled standard library
+  now names `loft::native_adopt::HOST_TABLE`.
+- **B2.4**: `adopt_shared_cdylib` answers `Fresh`, `Interpret`, or `Build` with a key that
+  holds the build lock, and `build_shared_artifact` builds.  Neither sibling may call the
+  other, so their composition went to the driver layer (`native_artifact.rs`) rather than
+  staying in `native_lib`.
+- **B2.5**: the Rust section is `Options::rust`, a function the driver hands in
+  (`generation::introspect_rust`).  `introspect` itself moved to `interp`.  The 19 benches'
+  `--show-rust` output matches B1's binary.
+- **B2.6** is a file, `src/interp.rs`, with one re-export module per part.  `generate` and
+  `export_set` left `compiled_stdlib` for `stdlib_codegen.rs` (rust).  The regenerated
+  `compiled_stdlib_gen.rs` differs only in two header lines.
+- **B2.8**: `lib_placement`'s marking stays in the driver layer.  That layer may name every
+  layer, so moving it changes no count.  It returns with B6 (a binary without the driver's
+  worker code), if that is taken up.
+
 | step | change | check |
 |---|---|---|
 | B2.1 | `native_lib` KEY items → `src/native_key.rs` (`interp`): `library_export_set` 554, `library_candidates` 572, `is_synthetic_name` 640, `hidden_dest_type_name` 1702, `platform_cdylib_name` 2119, `auto_cdylib_stem` 2528, `mix_fp` 2546, `artifact_sources` 2851, `contributing_fingerprint` 2908, `type_layout_fingerprint` 2930, `fn_numbering_fingerprint` 3124, `source_content_hash` 3147, `source_newer_than` 3219 | protocol; `n2_cdylib`, `n3_use_native` |
@@ -398,9 +430,6 @@ B1 and B2 make the interpreter a defined part on their own; B3 is what the C bac
 
 ## Dependencies
 
-- **This plan's base is unmerged:** B2 moves @PLN199's adoption code (keys by name, the host
-  table, the release-bundle identity), which is on `firewall02-scripting` with the fixes
-  #2128–#2135; the work starts there or after that branch merges.
 - **@PLN191:** B0 lands before its P3 (the first crate), so P3 cuts along `opt < interp`,
   `opt < lower < rust`; B4 waits for its `core` and `front` crates.
 - **@PLN91:** B5's probe (P-cemit) and the C runtime decision are its.

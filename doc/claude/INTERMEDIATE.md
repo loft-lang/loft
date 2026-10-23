@@ -25,6 +25,7 @@ Variable/scope tracking during parsing is in `src/variables/` via `Function`.
 - [DbRef](#dbref)
 - [Key Patterns](#key-patterns)
 - [Debug Tools (`src/state/debug.rs`, debug builds only)](#debug-tools-srcstatedebugrs-debug-builds-only)
+- [The interpreter's contract](#the-interpreters-contract)
 
 ---
 
@@ -654,6 +655,53 @@ Output format:
 
 The `LOFT_IR` gate additionally checks the `logging` flag on the function definition
 (true for non-default-library functions) to suppress output for built-in operators.
+
+## The interpreter's contract
+
+The interpreter is one part of loft (`@C153`): the bytecode compiler, the bytecode machine,
+and the adoption of compiled library code.  This section says what it takes, what it gives,
+and what it may name.  `python3 scripts/crate_layers.py check` holds all three, run by
+`extraction_hygiene::library_modules_keep_their_layers`.
+
+**It takes:**
+
+- **Optimised IR.**  This is a `Data` after the front's scope pass and the `opt` passes
+  (`leaf_inline`, `ctor_literal`, `value_record`, …).
+- **The store schema.**  This is the `Stores` the parser built.
+- **Compiled code, through the host ABI (`host_abi`).**  That covers the standard library's
+  compiled bodies, built into the binary, and a library's compiled artifact.
+
+**It gives** what `src/interp.rs` lists, by part:
+
+| part | what it gives |
+|---|---|
+| `compile` | IR to bytecode (`byte_code`) |
+| `state` | the bytecode machine (`State`): execution, run-time values, the debugger's hooks |
+| `extensions` | natives: loading a library's compiled functions and wiring calls to them |
+| `compiled_stdlib`, `native_adopt` | routing calls to compiled bodies (`mark`, `adopt_shared_cdylib`, `probe_and_mark_exports`) |
+| `introspect`, `debugger`, `profiler`, `live_dispatch`, `live_reload` | the tools that look into a run |
+
+`native_adopt::HOST_TABLE` is what a compiled artifact calls back into: its coroutines and
+its function values.
+
+**It may name** `core`, `front`, `opt` and its own modules.
+
+- **No compiled target.**  The interpreter never names `lower` or a backend (`rust`), and
+  they never name it: they are siblings.
+- **One entry.**  Code outside the interpreter reaches it only through `src/interp.rs`.  This
+  covers the driver binaries as well (`src/main.rs`, its modules, `src/bin/`).
+
+Where the interpreter and a compiled target have to meet, the meeting point sits outside
+both of them:
+
+- **Answers both ask** live in `opt`: the key of a library artifact (`opt::native_key`),
+  which functions compile (`native_gate`), and the names a library gives its ids (`lib_ids`).
+- **The layout both link** lives in the runtime (`host_abi`).
+- **A decision that needs both halves** is composed by the driver.  The interpreter adopts
+  an artifact (`native_adopt::adopt_shared_cdylib`), the Rust writer builds one
+  (`native_lib::build_shared_artifact`), and `native_artifact::cached_or_build_shared_cdylib`
+  puts the two together.  In the same way, `introspect`'s Rust section is a function that
+  the driver hands in (`introspect::Options::rust`).
 
 ---
 
