@@ -147,6 +147,12 @@ its own guard.
 
 ## B0 — the layers
 
+**Done (2026-10-23):** B0.1 fixed loft#2142 (`generation::begin_program`, guard
+`leaf_inline::a_programs_non_null_facts_do_not_reach_the_next_program`); B0.2 added `SIBLINGS`
+and `selftest` to `crate_layers.py`; B0.3 set the layers — the five modules of @PLN191's
+RUNTIME set that sat in `runtime` went to `core`, below both siblings — with the crossings
+opt → rust 8, interp → rust 22, rust → interp 25 as the ratchet B1 and B2 cut.
+
 | step | change | check |
 |---|---|---|
 | B0.1 | **A fix first.**  `non_sentinel`'s memo `RETURNS` (`non_sentinel.rs:123-133`) is cleared only by `Output::new` (`mod.rs:2403`), yet `leaf_inline::rewrite_program` asks `non_sentinel_vars` before it (`leaf_inline.rs:1214`) and clears only the range memo (`:1157`): a process compiling several programs on one thread (the test harness, the REPL, the LSP) can answer from an earlier program's definition numbers — the failure the comment at `:123` describes.  Write the two-program reproduction first; then one `begin_program()` clearing every analysis memo, called at `leaf_inline.rs:1157` and `mod.rs:2403-2404` | the reproduction, red before, green after, both backends |
@@ -215,7 +221,9 @@ family that moves is then one measured step on both emitters.
 
 ## B4 — the crates
 
-After @PLN191 has extracted `core` and `front`, in its manner (one crate per step, re-exports keep
+@PLN191 now targets ONE crate, `loft-runtime` (its R3; R2 is complete — the runtime set names
+nothing outside it), and marks its compiler crates (P3–P7) superseded.  So `core` and `front`
+become crates HERE, before B4.1, in @PLN191's manner (one crate per step, re-exports keep
 every path, emitted Rust names unchanged).  The root `Cargo.toml` has no `[workspace]` yet;
 `fuzz/Cargo.toml:14-17` and `tools/zt-c-web-staging/web/wasm/Cargo.toml:21` depend on `loft` and
 keep doing so through the facade.
