@@ -41,3 +41,23 @@ lookup fell from 7 % of the check profile to 2 %, decode 2.65 → 2.53 s per 60 
 The unfused rung showed stage 2 (the fused element read) is worth ~3.2× on top of stage 1, the
 header hoist (projected ~1.4×) — more than the hoist itself, because the second store
 resolution it removes costs more than the arithmetic it saves.
+
+## Measurements moved from NATIVE_SWITCHES.md on 2026-10-23
+
+- **`LOFT_NO_GUARDED_CHAIN`'s profitability floor.**  Measured against the guard off, the
+  one-operator loops in `pil_hline` and `matches_at` were costing `fill_circle` and `fill_star`
+  ~50 %, `wide_line` 22 % and `parse` 18 %, while six-operator `composite_layer` gained 30 %.
+- **`LOFT_GUARDED_CHAIN_ONLY`.**  Built because the drawing `parse` row lost 18 % to ONE of six
+  admitted loops: a 3–8 trip loop in a per-byte helper, whose doubled body stopped inlining into
+  its caller.
+- **`LOFT_NO_VALUE_RECORD`'s site refusals.**  An element read at the site was measured wrong: the
+  write landed in the container, reading 109 where the copy holds 9.  A disturbance between the
+  bind and the last read was too: a removal made the result read the NEXT element's points.
+- **`LOFT_NO_VALUE_RECORD`'s per-path proof** replaced a per-exit test that was measured wrong: 0
+  points for 3, and 3,9 for 4,109.
+- **The narrow-element scalar hoist** took `hex_edge` `edges_cut` 4.47× → 1.70× and `hex_place`
+  `combine_cut` 4.13× → 2.16×.
+- **The text-walk header hold** took the stdlib `join` 5.40× → 1.96× of Rust, `split_walk` 1.80× →
+  1.01× and `parse_num` 1.46× → 0.98×.
+- **The character walk's ASCII arm** took `char_walk` 4.62× → 2.48× of Rust, and the stdlib
+  `split`, built on such a walk, 12.5× → 7.8×.

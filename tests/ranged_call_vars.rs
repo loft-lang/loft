@@ -83,3 +83,11 @@ fn switched_off_nothing_is_guarded() {
     assert!(!body(&rust, "n_walk").contains("unsigned_abs() <= 1048576u64"));
     assert!(!rust.contains("fn n_score__rg("));
 }
+
+#[test]
+fn the_variable_clause_switched_off_guards_no_variable() {
+    let rust = emit("vars_off", &[("LOFT_NO_RANGED_CALL_VARS", "1")]);
+    let walk = body(&rust, "n_walk");
+    assert!(!walk.contains("(var_q0).unsigned_abs()"), "{walk}");
+    assert!(!walk.contains("n_score__rg("), "{walk}");
+}

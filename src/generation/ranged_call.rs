@@ -34,6 +34,13 @@ use super::range::{self, Range, Ranges};
 use crate::data::{Block, Data, Type, Value};
 use std::collections::HashSet;
 
+/// `LOFT_NO_RANGED_CALL_VARS=1` — the variable clause off: a guard takes hoisted record fields
+/// only, as before it.  The bisect step for a native-only wrong answer in a window walk.
+fn variable_clause_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_NO_RANGED_CALL_VARS").map_or(true, |v| v == "0"))
+}
+
 /// The bound a ranged variant's integer parameters and scalar inputs are assumed within.
 pub const L: i64 = 1 << 30;
 /// The bound a guarded copy tests each hoisted field against.
@@ -264,6 +271,9 @@ impl super::Output<'_> {
     /// its nullability costs nothing.  Hidden parameters (a return buffer, an input) are not
     /// integers and fall out by type.
     fn variable_leaves(&mut self, block: &Value) -> Vec<u16> {
+        if !variable_clause_enabled() {
+            return Vec::new();
+        }
         let def = self.data.def(self.def_nr);
         let vars = def.variables();
         let mut written: HashSet<u16> = HashSet::new();

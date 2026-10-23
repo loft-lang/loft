@@ -61,8 +61,7 @@ callee a hoisting loop calls.
 **`LOFT_NO_NARROW_ELEMENT_WRITE=1`** (`@FR-R-Inputs`) makes a write into a NARROW-integer
 vector element (`i32`, `u16`, `u8`) untyped for the scalar hoist again, as a base-type element's
 never was: with it on, a loop whose callee writes such elements still holds the record fields
-nobody writes and calls the callee's twin (`hex_edge` `edges_cut` 4.47× → 1.70×, `hex_place`
-`combine_cut` 4.13× → 2.16×) — the bisect step for a stale field read in such a loop.
+nobody writes and calls the callee's twin — the bisect step for a stale field read in such a loop.
 **`LOFT_NO_TWIN_INLINE=1`** makes a twin that reaches no loop (but a literal `0..k`, k ≤ 16)
 take the plain `#[inline]` hint instead of `#[inline(always)]`: the A/B for a row that moved
 with it (suite + ten `hex_*` benches, 102 routines, geomean −1.1 %, `mesh_emit` −18 %,
@@ -224,9 +223,8 @@ bare, where the body reads it only as a text VALUE (an operand at a `text` posit
 of a bind into another slot), never writes, links or captures it, and (for a vector) writes no
 store; a text VALUE op — scalar and text operands, a scalar or text result, or a write to a
 text VARIABLE — is no store write to that condition, and `OpGetText` is a reader, so the walk
-holds its header, length and base like any other (the stdlib `join` 5.40× → 1.96× of Rust,
-`split_walk` 1.80× → 1.01×, `parse_num` 1.46× → 0.98×) — and is the first bisect step for a
-wrong, stale or crashing text read through such a loop variable on native.
+holds its header, length and base like any other — and is the first bisect step for a wrong,
+stale or crashing text read through such a loop variable on native.
 `LOFT_HOIST_VERIFY=1` re-reads the element at the walk's release and panics when the borrow
 does not name it (address first, so a dangling borrow is never read);
 `LOFT_TRACE_TEXT_BORROW=1` names each walk admitted and each declined with its reason.  A `&p`
@@ -259,9 +257,8 @@ after a record copy. **`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, ge
 with it off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
 every other byte, a NUL — whose read notes a fault — and the end take the written step in the
 `else` arm), and where nothing in the loop writes the text its null test — a content compare of
-the whole text LLVM does not hoist — is asked ONCE before the loop (`char_walk` 4.62× → 2.48×
-of Rust; the stdlib `split`, built on such a walk, 12.5× → 7.8×) — and is the first bisect step
-for a wrong character, a wrong `c#index` or a missed fault out of a character walk on native.
+the whole text LLVM does not hoist — is asked ONCE before the loop — and is the first bisect
+step for a wrong character, a wrong `c#index` or a missed fault out of a character walk on native.
 `LOFT_HOIST_VERIFY=1` runs the written step beside the fast arm and panics when they disagree,
 and asserts the hoisted null test inside the loop; `LOFT_TRACE_CHAR_WALK=1` names each walk and
 whether its null test moved. A call or literal source keeps the written step (the lowering
@@ -602,7 +599,8 @@ callee's ranged variant, compiled with plain arithmetic where (R-Range) proves i
 overflow (`edgeset_count` 15.8× → 1.9× with the byte read above).  It is the first bisect step
 for a wrong integer, or a missing overflow error, out of a call inside a loop on native;
 `LOFT_TRACE_RANGED_CALL=1` names each copy, variant and decline, and `LOFT_HOIST_VERIFY=1`
-checks every plain operator.
+checks every plain operator.  **`LOFT_NO_RANGED_CALL_VARS=1`** keeps the guard to hoisted record
+fields: no integer VARIABLE (a window walk's bounds) is a guard leaf — the next step finer.
 **`LOFT_NO_DISTINCT_VERSION=1`** (`(R-Alias)`'s versioned clause, default-ON, generation time,
 `--native` only) emits every loop once — with it off, a loop that grows the function's return
 buffer while it reads a parameter also runs a copy under a run-time test that the two stores
@@ -681,14 +679,11 @@ over record scalars no static proof can bound) — and is the first bisect step 
 index or accumulate in a counted loop on native.  A loop with ONE admitted operator
 declines on PROFITABILITY (the guard is a fixed cost per loop ENTRY against a saving of one
 null test per operator per ITERATION, and the doubled body costs a small hot function its
-inline): measured against the guard off, the one-operator loops in `pil_hline` and
-`matches_at` were costing `fill_circle` and `fill_star` ~50 %, `wide_line` 22 % and `parse`
-18 %, while six-operator `composite_layer` gains 30 %.  `LOFT_HOIST_VERIFY=1` is the falsifier,
-`LOFT_TRACE_CHAIN=1` names every loop admitted and declined with its operator count, and
+inline).  `LOFT_HOIST_VERIFY=1` is the falsifier, `LOFT_TRACE_CHAIN=1` names every loop
+admitted and declined with its operator count, and
 **`LOFT_GUARDED_CHAIN_ONLY=<fn>[,<fn>…]`** admits the guard in the named functions ALONE — the
 bisect step for a row that moved under `LOFT_NO_GUARDED_CHAIN`, because a whole-program A/B
-cannot say which admitted loop paid (the drawing `parse` row lost 18 % to ONE of six: a 3–8
-trip loop in a per-byte helper, whose doubled body stopped inlining into its caller).
+cannot say which admitted loop paid.
 
 ## The release-pass probe (a measurement instrument)
 
@@ -759,10 +754,8 @@ a null view, which reads as the empty vector it replaces.  The interpreter keeps
 form and is the values oracle.  Admitted only where the leaf's place outlives the frame and
 every call site READS it: a `?`-discharged element declines (its ownership is a join — the
 absent arm mints in the frame's store), an element read or an iteration at the site declines
-(an element read answers a PLACE the site can write through — measured: the write landed in the
-container, reading 109 where the copy holds 9), a disturbance between the bind and the last read
-declines (measured: a removal made the result read the NEXT element's points), and a `pub`
-function declines whole (`(R-Escape)`).  The exit's own answer is a PROOF rather than a
+(an element read answers a PLACE the site can write through), a disturbance between the bind
+and the last read declines, and a `pub` function declines whole (`(R-Escape)`).  The exit's own answer is a PROOF rather than a
 fallback: every mention of the return buffer must be one the tuple accounts for, because a
 field filled without an append — a returned vector literal, a record literal's vector field —
 read as "empty" delivered a null view for a vector of eight (`723-ncc-loop-element-bind`).  The
@@ -770,8 +763,7 @@ callee's half is a per-PATH PROOF (`hoist::fresh_leaf`, a forward walk that join
 and runs loops to a fixpoint): on every path to the exit the last change to the container was
 the append of the local's copy, and neither the local, a store it views, nor that element
 changed after it.  An append in each arm of an `if` views the container's LAST element; an
-append under a condition, or a local grown, rebound or written after its copy, declines
-(measured wrong under the per-exit test this replaced: 0 points for 3, and 3,9 for 4,109).  A
+append under a condition, or a local grown, rebound or written after its copy, declines.  A
 naming that reaches a SIBLING field or claims a record in the store moves nothing in the one
 the leaf views.  The gate stores each exit's leaf and the emitter writes the stored one.  It
 is the first bisect step for a wrong or stale vector read out of a record-returning call on
