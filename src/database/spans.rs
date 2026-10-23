@@ -196,12 +196,14 @@ impl Shape {
     /// The tile filed under `key`, where it lives NOW: an inline table moves its entries
     /// when it grows, so a reference taken before a later insert can name a freed table.
     fn tile(&self, key: u32) -> DbRef {
-        hash::find(
+        let found = hash::find(
             &self.field(),
             &self.db.allocations,
             self.db.keys(self.tiles_tp),
             &[Content::Long(i64::from(key))],
-        )
+        );
+        assert!(found.rec != 0, "tile {key} is not in the hash");
+        found
     }
 
     /// `t.steps += [TStep{…}]; t.roads += [TRoad{…}]` — one way binned into one tile,
