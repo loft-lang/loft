@@ -237,6 +237,30 @@ standard library's compiled code — can be keyed on what it actually depends on
 source and the runtime it links) instead of on the whole loft build, so an edit that changes
 neither reuses it.
 
+**The principle (owner, 2026-10-23): a compiled unit is reused unless its loft code changed or
+an optimisation pass changed what loft makes of it.**  The unit is the PACKAGE — the standard
+library, each library, the program — as a crate is for `rustc`.  Its key is what it was made
+from and what it must agree with, never "which loft binary":
+
+| unit | key | rebuilt when |
+|---|---|---|
+| a package compiled for a native target | hash of its GENERATED code ⊕ the runtime INTERFACE version ⊕ the toolchain (`rustc` version, target, flags) | its source changed, or a pass changed its output, or the interface or the toolchain moved |
+| a package's IR for the interpreter (B7.11) | its source ⊕ the `front` and `opt` fingerprints ⊕ the IR schema version | its source changed, or a front-end or optimisation pass changed |
+
+Keying on the generated code is what makes the rule exact without versioning passes by hand:
+generating is milliseconds, compiling is the cost, and a pass that does not change a unit's
+output leaves its hash — and its compiled form — alone.
+
+**What the principle requires of the runtime.**  Today a library artifact statically embeds a
+copy of `libloft` and shares the host's stores by memory (`main.rs`, `build-native`: "it
+statically embeds libloft").  A fix inside a runtime function then never reaches an old
+artifact, so ANY runtime change must rebuild every unit — the opposite of the principle.  A
+reusable unit reaches the runtime through a VERSIONED INTERFACE instead: the store layout it
+reads directly (field offsets, `DbRef`) and a table of the runtime functions it calls (the
+`HostTable` of @PLN199 already carries some: `call_ref`, type and function ids, coroutines).  A
+runtime function's body can then change without rebuilding a unit; only a change to the
+layout or to a signature moves the version.  It is also the interface an ANSI-C unit needs.
+
 **Measured (2026-10-23, macOS arm64):**
 
 | fact | value |
@@ -269,14 +293,21 @@ neither reuses it.
 | B7.6 | narrow the runtime set (@PLN191 R2): every module that leaves it is an edit that no longer invalidates compiled blocks — the report names the runtime modules the most commits touch | B7.1 over the history |
 | B7.7 | test selection from the crate graph (after B4): `find_problems.sh --changed` maps a diff's crates to the subjects that can observe them | a diff confined to `rust` selects no interpreter-only subject |
 
+| B7.8 | the runtime INTERFACE defined and versioned: the store layout (`Store`, `DbRef`, the record header — offsets and sizes computed, not written by hand) and the signature of every runtime function a unit calls (`runtime_abi`'s table, the `HostTable`); `runtime_interface_version()` hashes both | a test: changing a layout or a signature moves the version; changing a function's BODY does not |
+| B7.9 | units stop embedding the runtime: a unit's calls into the runtime go through the versioned table; the hot accessors that need only the layout (a field read or write at a `DbRef`) stay inline.  A performance trade — measured on the bench lanes (`make perf-check`) before it is taken, per accessor family | the bench rows; the corpus on both backends |
+| B7.10 | the reuse guard, both directions: build a unit; rebuild loft with an unrelated change (a parser comment, an interpreter fix) and assert the unit is REUSED; change an optimisation pass so the unit's output changes and assert it is REBUILT; change a runtime function's body and assert it is reused and runs the new body | the test, falsified by keying on the loft build again |
+| B7.11 | the interpreter's unit: a package's IR (parsed, scoped, optimised) cached per package and keyed as the table above says, after B4 gives `front` and `opt` fingerprints of their own; the IR codec and the start-up caches exist, keyed today on the whole program and the standard library | a program using three libraries starts with three cached images after one library's edit rebuilds only that one |
+| B7.12 | native builds link packages as units: a library compiled once as an rlib (or, after B7.9, an object behind the interface) and linked by every program that uses it; the test tier reuses it, `--native-release` optimises across units with thin LTO — so one compiled form serves "build fast" and "ship fast" | B7.1's CPU time; the bench lanes unchanged on `--native-release` |
+
 Not addressed by this plan: the 451 test binaries each linking all of `libloft` — a link cost
 the split does not remove (the corpus leaving the crate is @PLN193).
 
 ## Order
 
 B0 → B1 → B2 → B3 → B5 (the probe, from @PLN91) → B4 when @PLN191 is ready; B6 whenever wanted.
-B7.1 can run any time (the baseline); B7.2–B7.4 follow @PLN191's runtime crate and B3.5's census;
-B7.5 needs only @PLN199's keyed ids and can come earlier.
+B7.1 can run any time (the baseline); B7.5 needs only @PLN199's keyed ids and can come early;
+B7.8–B7.10 (the versioned runtime interface and the reuse guard) follow B3.5's census and come
+before B7.2–B7.4 rely on them; B7.11–B7.12 follow B4.
 B1 and B2 make the interpreter a defined part on their own; B3 is what the C backend needs.
 
 ## Dependencies
