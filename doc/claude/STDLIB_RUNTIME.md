@@ -305,30 +305,17 @@ Functions for interacting with the host operating system.
 | Function | Description |
 |----------|-------------|
 | `store_memory() -> text` | Returns a multi-line snapshot of all LIVE heap stores' internal utilisation — total capacity vs actual claimed data vs free space, record + free-block counts, **mergeable adjacent-free pairs** (free neighbours that should have coalesced), **`tail%` / `inner%`** (see below), and the largest stores by capacity with their type name and creation site (`bc:<pos>` — a bytecode position on the interpreter, mapping to source via `LOFT_LOG=static`; `0` on `--native`). Use to watch memory growth / fragmentation in a running program. See also `LOFT_STORES=log\|warn` (alloc/free trace). |
-| `store_reclaim(collection) -> integer` | Give back the free space at the END of a store-rooted collection's store, and answer with the BYTES handed back (`0` when there was nothing). For a collection bound with `store_persist_bind` that is the **file** shrinking; otherwise it is memory returned to the allocator. Records never move, so every reference stays valid. It keeps an eighth of the live content as slack — the store stays in use, and one trimmed to the byte would pay a 2.33× re-grow on its next claim — so a store already at that size answers `0`, and asking twice is free. Returns `0` and changes nothing for a store that is read-only, shares another store's memory, or carries a `store_durable_seal` sidecar. |
-| `store_release(collection) -> integer` | Say "everything I have written so far is finished": start writing it out to the bound file and stop holding it in memory, answering the BYTES dropped from the resident set (`0` when there was nothing to drop, when the collection is not bound to a file, or when the TARGET cannot honour the hint — the drop is `madvise` (MADV_DONTNEED), so a build without `mmap` and any non-unix target answer `0` by construction; the call is a residency hint, and a program running where it cannot be honoured is not a program that is wrong). For a GENERATOR streaming a large collection into a store bound with `store_persist_bind` — measured on a 20 000-record build, one call per record: peak memory **44.3 MB → 2.2 MB (20×) at no cost in wall clock**. Content is untouched and every reference stays valid; reading a released record re-reads it from the file at the cost of one page fault, so this is a hint that can cost speed and never an answer. **It pays when records are written in KEY ORDER and not returned to** — a build that keeps many records open at once scatters the arena with free blocks (3 691 against 10) and the allocator then keeps re-reading them, giving 1.0× instead of 20×. Not `store_reclaim`, which changes the file's LENGTH; this never does. Not a durability barrier — it asks for writeback to *start*, and `store_durable_seal` is what promises it landed. |
+| `store_reclaim(collection) -> integer` | Give back the free space at the END of a store-rooted collection's store, and answer with the BYTES handed back (`0` when there was nothing). The bytes go back to the allocator. Records never move, so every reference stays valid. It keeps an eighth of the live content as slack — the store stays in use, and one trimmed to the byte would pay a 2.33× re-grow on its next claim — so a store already at that size answers `0`, and asking twice is free. Returns `0` and changes nothing for a store that is read-only or shares another store's memory. |
 
 **`tail%` and `inner%` say WHERE a store's free space sits**, which is the
 difference between free space you get back and free space you do not.
 
 - **`tail`** — above the last record. This is what `store_reclaim` returns, less
-  the eighth it leaves behind. A persisted store's image already ends at the last
-  record, so the tail is arena capacity, not file bytes — until the store is
-  BOUND, where it is both. ⚠ **On a bound store, MID-RUN, that tail is why the
-  FILE SIZE compares nothing**: capacity grows by 7/3 and never shrinks by
-  itself, so between the bind and the release the file is a rung on a ladder —
-  two points a rung apart differ by 133% holding identical records, and one
-  holding twice the data can be byte-identical. Call `store_reclaim` before
-  reading a size in the middle of a run. The file a program LEAVES BEHIND needs
-  no such call: releasing the collection hands the tail back, so the finished
-  file follows its content (loft#752).
-- **`inner`** — between records. It is reusable for future allocation, but it
-  *is* written to the file, because the image has to span up to the last record.
-  `store_reclaim` does not touch it — **loading the store does**, automatically:
-  a collection read back by `store_load`, or bound to an existing file, is
-  rebuilt dense when its interior is worth it (@PLN123 arc B, see
-  [DATABASE.md](DATABASE.md)). So a high `inner` is a number you act on with the
-  next load, not with this call.
+  the eighth it leaves behind.
+- **`inner`** — between records. It is reusable for future allocation, and
+  `store_reclaim` does not touch it.  Neither reaches a file: `store_persist_copy`
+  writes the collection rebuilt, and `store_load` rebuilds a loaded store dense when
+  its interior is worth it (@PLN123 arc B, see [DATABASE.md](DATABASE.md)).
 
 A store built once reads `inner 0%`. One whose live set fell well below its peak
 reads a high `inner` — 71% in the case behind loft#713 — and that is the part

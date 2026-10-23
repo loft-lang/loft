@@ -123,7 +123,7 @@ fn main() {
   if mode == "reload" {
     if path == "" { println("FAIL reload-needs-a-path"); return }
     back: hash<Rec[id]> = [];
-    if !store_persist_bind(back, path) { println("FAIL reload-bind"); return }
+    if !store_load(back, path) { println("FAIL reload"); return }
     report(back, "reload");
     return
   }
@@ -143,6 +143,6 @@ fn main() {
 
   report(idx, "built");
   if path == "" { return }
-  if !store_persist_bind(idx, path) { println("FAIL bind"); return }
+  if !store_persist_copy(idx, path) { println("FAIL write"); return }
   report(idx, "persisted");
 }

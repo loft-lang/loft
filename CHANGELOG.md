@@ -16,6 +16,13 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**A collection is no longer bound to a file.**  `store_persist_bind`, `store_release`,
+`store_durable_check` and `store_durable_seal` are gone.  Save a collection with
+`store_persist_copy(collection, path)` — call it again whenever the state is worth saving — and
+read it back with `store_load(collection, path)`.  The image `store_persist_copy` writes is
+rebuilt, so it holds only what the collection holds and pages well.  In exchange no store's
+memory is filled before use, which every program paid for.
+
 **A field is private to the file that declares it.**  Reading, writing or matching a field
 from another file needs `pub` on that field (`struct Unit { pub name: text, hp: integer }`); a
 struct literal outside its file needs every field `pub`, and an enum's variants need `pub enum`.

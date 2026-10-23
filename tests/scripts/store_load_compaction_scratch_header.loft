@@ -10,7 +10,8 @@
 // owned, and that word became a block whose own header is zero — which
 // `claim_scan` steps over by adding zero to its position.  Every later claim on
 // that store looped forever, so `store_load` never returned, with nothing on
-// stderr and no bound of its own.  Fixed in `Stores::rebuild_into_scratch`.
+// stderr and no bound of its own.  Fixed in `Stores::rebuild_into_scratch`, which
+// `store_persist_copy` runs too: the write here takes the same path.
 //
 // The shape is what an asset pack has (@PLN146 F1) and is why it surfaced: a
 // container of several keyed collections — so the root record is wide enough
@@ -65,7 +66,7 @@ fn main() {
   p.pages += [Page { pg_name: "items", pg_w: 32, pg_h: 32, pg_rgba: bytes(4096, 2) }];
   p.blobs += [Blob { bl_key: "hit", bl_bytes: bytes(2048, 3) }];
   p.blobs += [Blob { bl_key: "ui", bl_bytes: bytes(3072, 4) }];
-  _ = store_persist_bind(p.blobs, path);
+  _ = store_persist_copy(p.blobs, path);
 
   q = empty();
   loaded = store_load(q.blobs, path);

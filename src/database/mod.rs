@@ -449,9 +449,9 @@ pub struct Stores {
     /// in one store that named one record name one copy.  Forgotten when the copied record's
     /// store is freed, right after its evacuations.  Runtime-only: `clone` starts it empty.
     pub(crate) evacuated: Vec<((DbRef, u16), DbRef)>,
-    /// @PLN196 — what the last converting `store_load` / `store_persist_bind` still owes:
-    /// the records whose added field has a computed default, which the program's drain fills
-    /// right after the call, and a bind that is finished once they are.  Runtime-only:
+    /// @PLN196 — what the last converting `store_load` still owes: the records whose added
+    /// field has a computed default, which the program's drain fills right after the call.
+    /// Runtime-only:
     /// `clone` starts it empty.
     pub(crate) owed: upgrade::Owed,
     /// @PLN196 step 9 — the `upgrade` routine of each record type, registered by the drain's

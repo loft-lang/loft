@@ -4,10 +4,9 @@
 // @PLN97 arc G Phase 1 — `store_load` (whole-file heap load).
 //
 // Driven by `tests/store_persist_loft.rs`: mode "write" persists a hash via
-// `store_persist_bind` (mmap); mode "load" reads that file back with
-// `store_load` into a FRESH, HEAP-backed hash (no mmap) and must return the
-// same keys AND key-lookup correctly — proving the heap load reads a
-// bind-written image byte-faithfully. A garbage file must reject cleanly
+// `store_persist_copy`; mode "load" reads that file back with `store_load`
+// into a FRESH hash and must return the same keys AND key-lookup correctly —
+// proving the load reads a written image byte-faithfully. A garbage file must reject cleanly
 // (false), not panic or misread.
 
 struct Rec {
@@ -43,8 +42,8 @@ fn main() {
     h += Rec { id: 42, val: 4200 };
     h += Rec { id: 7, val: 700 };
     h += Rec { id: 13, val: 1300 };
-    ok = store_persist_bind(h, path);
-    if !ok { println("FAIL write-bind-returned-false"); return }
+    ok = store_persist_copy(h, path);
+    if !ok { println("FAIL write-returned-false"); return }
     println("write keys={keys_of(h)}");
   } else if mode == "load" {
     ok = store_load(h, path);

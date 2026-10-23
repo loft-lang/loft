@@ -415,7 +415,7 @@ const CODES: &[(&str, &str)] = &[
         "persist-through-field",
         "struct Inner { k: integer }\n\
          struct Outer { items: hash<Inner[k]> }\n\
-         fn main() { o = Outer { items: [] }; store_persist_bind(o.items, \"loft_trig.store\"); }",
+         fn main() { o = Outer { items: [] }; store_persist_copy(o.items, \"loft_trig.store\"); }",
     ),
     (
         "shadowed-by-method",

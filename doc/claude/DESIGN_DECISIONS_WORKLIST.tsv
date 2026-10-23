@@ -109,3 +109,4 @@ C149	code	src/limits.rs::pub const LIMIT: u32 = 300	ok	-
 C150	code	src/generation/mod.rs::fn hash_reserve(&mut self	ok	-	
 C151	code	src/hash.rs::pub fn records_by_slot	ok	-	
 C152	code	src/hash.rs::pub fn hash_inline	ok	-	the layouts coexist and both backends read and write them (store_persist_loft every_hash_layout_lives_beside_the_others_in_one_store); placement::HASH 3 reads 2 (layout_golden an_older_hash_token_this_build_reads_hands_the_store_over_raw)
+C153	code	src/store.rs::fn claimed_block_ends_at	ok	-	a delete never reads an unwritten claim (store::tests::a_delete_never_reads_an_unwritten_claim, in the Miri job); raw_bytes asserts a defined store

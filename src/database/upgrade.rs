@@ -1107,8 +1107,8 @@ pub fn owed_key(tp: u16, field: u16) -> i64 {
 
 /// @PLN196 step 8 — what a converting load still owes the running program.  The converter
 /// fills every added field it can (a constant default, or absence); a default the program
-/// must compute is listed here, and the drain the parser puts after every `store_load` and
-/// `store_persist_bind` (`Parser::synth_upgrade_drain`) walks the list with
+/// must compute is listed here, and the drain the parser puts after every `store_load`
+/// (`Parser::synth_upgrade_drain`) walks the list with
 /// [`Stores::owed_next`] and [`Stores::owed_record`], calls each field's fill function, and
 /// ends with [`Stores::owed_finish`].
 #[derive(Default)]

@@ -7,9 +7,10 @@
 // backends: the layout is the WRITER's policy (`LOFT_NO_HASH_TAG=1`, `LOFT_NO_HASH_INLINE=1`)
 // and each table records its own in its header.  Driven by `tests/store_persist_loft.rs`,
 // which runs it three times against one path, each run under a layout and a backend of its
-// own: `write` builds the world and binds it; `update` loads it, grows three tables past
-// their size (each rebuilt in the updater's layout), removes from two, makes a new table and
-// leaves one untouched (it keeps the writer's layout); `read` loads the result.  Every value
+// own: `write` builds the world and writes it; `update` loads it, grows three tables past
+// their size (each rebuilt in the updater's layout), removes from two, makes a new table,
+// leaves one untouched (it keeps the writer's layout) and writes it back; `read` loads the
+// result.  Every value
 // is hand-computed.  Without the driver's path it prints nothing.
 //
 // @falsified-at: hand-measured (efa9009b4, 2026-10-23) — with the inline layout on, a load
@@ -81,13 +82,14 @@ fn main() {
   w = World {};
   if mode == "write" {
     write(w);
-    if !store_persist_bind(w, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(w, path) { println("FAIL write"); return }
     digest(w, "write");
   } else if mode == "update" {
-    if !store_persist_bind(w, path) { println("FAIL update-bind"); return }
+    if !store_load(w, path) { println("FAIL update-load"); return }
     digest(w, "loaded");
     update(w);
     digest(w, "updated");
+    if !store_persist_copy(w, path) { println("FAIL update-write"); return }
   } else if mode == "read" {
     if !store_load(w, path) { println("FAIL read-load"); return }
     digest(w, "read");

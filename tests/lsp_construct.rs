@@ -197,7 +197,6 @@ const CELLS: &[(&str, &str, &str)] = &[
     ("  k = sizeof(P);", "sizeof", "fn:sizeof"),
     ("  s = stack_trace();", "stack_trace", "fn:stack_trace"),
     ("  store_reclaim(p);", "store_reclaim", "fn:store_reclaim"),
-    ("  store_release(p);", "store_release", "fn:store_release"),
     ("  k = ticks();", "ticks", "fn:ticks"),
     ("  j = to_json(p);", "to_json", "fn:to_json"),
 ];

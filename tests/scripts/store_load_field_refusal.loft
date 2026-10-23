@@ -24,7 +24,7 @@ fn main() {
   if mode == "write" {
     w = FWrap { data: [] };
     w.data += [FRec { id: 4207, n: 7717 }];
-    if !store_persist_bind(w.data, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(w.data, path) { println("FAIL write-bind"); return }
     println("write ok");
   } else if mode == "loadkey" {
     // HASH field — now ACCEPTED (#632): descends FWrap to the `data` hash.
@@ -35,7 +35,7 @@ fn main() {
   } else if mode == "write_sorted" {
     s = SWrap { items: [] };
     s.items += FRec { id: 10, n: 100 };
-    if !store_persist_bind(s.items, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(s.items, path) { println("FAIL write-bind"); return }
     println("write ok");
   } else if mode == "loadrange_sorted" {
     // SORTED field — still REFUSED, audibly.

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
 
-//! @PLN126 — why `store_release` names a FRONTIER and not a record.
+//! @PLN126 — why a residency hint can name only a FRONTIER, not a record.
 //!
 //! The plan wanted a program to tell a bound store *"this record is finished"*, so a
 //! generator's resident set follows its working set instead of the kernel learning it
@@ -24,7 +24,8 @@
 //!
 //! What survived is the other claim: 87–99% of the pages below a record's finish
 //! frontier hold nothing written afterwards. That needs no per-record contiguity, and
-//! it is what `Store::release_resident` was built on.
+//! it is what the frontier release (`store_release`, removed with @C153 —
+//! DATABASE-history.md) was built on.
 //!
 //! **It reads the final layout, not a model of it.** Every word of the arena is painted
 //! with the record that owns it, through [`Stores::for_each_owned_child`] — the same

@@ -25,7 +25,7 @@ fn main() {
     b: vector<integer> = [];
     b += [99];
     v += VecRec { id: 7, tags: b };
-    if !store_persist_bind(v, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(v, path) { println("FAIL write-bind"); return }
     println("write ok");
   } else if mode == "loadkey" {
     ok = store_load_key(v, path, 13);

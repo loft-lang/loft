@@ -113,7 +113,7 @@ fn main() {
   while fg < grow { frag += [make(fg, reserved, shape)]; fg += 1; }
   for d in keep..grow { frag[d] = null }
   store_reclaim(frag);
-  if !store_persist_bind(frag, "{prefix}-fragmented.store") { println("FAIL bind-frag"); return }
+  if !store_persist_copy(frag, "{prefix}-fragmented.store") { println("FAIL bind-frag"); return }
   frag_bytes = file("{prefix}-fragmented.store").size;
   report(frag, "fragmented", frag_bytes, 0);
 
@@ -125,7 +125,7 @@ fn main() {
   dst: hash<Rec[id]> = [];
   for rb_r in frag { dst += [Rec { id: rb_r.id, label: rb_r.label, xs: rb_r.xs }] }
   t1 = ticks();
-  if !store_persist_bind(dst, "{prefix}-rebuilt.store") { println("FAIL bind-dst"); return }
+  if !store_persist_copy(dst, "{prefix}-rebuilt.store") { println("FAIL bind-dst"); return }
   dst_bytes = file("{prefix}-rebuilt.store").size;
   report(dst, "rebuilt", dst_bytes, t1 - t0);
 
@@ -144,13 +144,13 @@ fn main() {
   dst2: hash<Rec[id]> = [];
   for r2 in dst { dst2 += [Rec { id: r2.id, label: r2.label, xs: r2.xs }] }
   t5 = ticks();
-  if !store_persist_bind(dst2, "{prefix}-rebuilt2.store") { println("FAIL bind-dst2"); return }
+  if !store_persist_copy(dst2, "{prefix}-rebuilt2.store") { println("FAIL bind-dst2"); return }
   dst2_bytes = file("{prefix}-rebuilt2.store").size;
   report(dst2, "rebuilt2", dst2_bytes, t5 - t4);
 
   dst3: hash<Rec[id]> = [];
   for r3 in dst2 { dst3 += [Rec { id: r3.id, label: r3.label, xs: r3.xs }] }
-  if !store_persist_bind(dst3, "{prefix}-rebuilt3.store") { println("FAIL bind-dst3"); return }
+  if !store_persist_copy(dst3, "{prefix}-rebuilt3.store") { println("FAIL bind-dst3"); return }
   dst3_bytes = file("{prefix}-rebuilt3.store").size;
   report(dst3, "rebuilt3", dst3_bytes, 0);
 
@@ -162,7 +162,7 @@ fn main() {
   cg = 0;
   while cg < keep { ceiling += [make(cg, reserved, shape)]; cg += 1; }
   t3 = ticks();
-  if !store_persist_bind(ceiling, "{prefix}-fresh.store") { println("FAIL bind-fresh"); return }
+  if !store_persist_copy(ceiling, "{prefix}-fresh.store") { println("FAIL bind-fresh"); return }
   ceiling_bytes = file("{prefix}-fresh.store").size;
   report(ceiling, "fresh", ceiling_bytes, t3 - t2);
   store_reclaim(ceiling);

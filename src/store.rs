@@ -173,17 +173,15 @@ const MIN_FREE_TREE: i32 = 2;
 pub const MIN_BOUND_WORDS: u32 = 1024;
 
 /// The capacity a store of `live_end` words of content should be given: the
-/// high-water mark plus an **eighth**.  One home for a fact two paths need —
-/// the image [`crate::database::Stores::bind_path`] writes, and the capacity
-/// [`Store::reclaim_tail`] shrinks a live store to.
+/// high-water mark plus an **eighth**: the capacity [`Store::reclaim_tail`]
+/// shrinks a live store to, and a compacted load's.
 ///
-/// Never the bare mark, on either path.  A store that survives the operation
-/// keeps allocating, and growth multiplies by 7/3 ([`Store::resize_store`]), so
-/// a store trimmed to exactly its content pays a **2.33× resize on its very
-/// next claim** — for a bound store, on the file.  The claim that trips it is
-/// the most ordinary one there is: iterating a keyed collection claims its
-/// key-sorted snapshot inside the store, so merely READING the collection back
-/// re-grew the file the caller had just shortened (loft#710, loft#727).
+/// Never the bare mark.  A store that survives the operation keeps allocating,
+/// and growth multiplies by 7/3 ([`Store::resize_store`]), so a store trimmed to
+/// exactly its content pays a **2.33× resize on its very next claim**.  The
+/// claim that trips it is the most ordinary one there is: iterating a keyed
+/// collection claims its key-sorted snapshot inside the store, so merely
+/// READING the collection back re-grows it (loft#710, loft#727).
 ///
 /// An eighth, rather than a fixed reserve, because the quantity it has to
 /// absorb is a function of the CONTENT: that snapshot is 4 bytes per element.
@@ -453,7 +451,7 @@ pub struct Store {
     /// image, a placement arena, a resume image — is created DEFINED instead
     /// ([`Store::new_defined`]), so no byte it never wrote reaches a file or a peer, and
     /// reading it whole is not a read of uninitialised memory.  [`Store::raw_bytes`] asks
-    /// for it.
+    /// for it (@C153).
     pub(crate) defined: bool,
     /// @PLN126 — the word past the highest block ever claimed, carried forward by
     /// [`Store::claim_block`]: a monotone UPPER bound on [`StoreUsage::live_end_words`]
@@ -826,8 +824,7 @@ fn discard_sink(len: usize) -> *mut u8 {
 }
 
 impl Store {
-    /// True when this store's memory IS a memory-mapped file
-    /// (`store_persist_bind`) — its bytes are DURABLE state.
+    /// True when this store's memory IS a memory-mapped file ([`Store::open_mapped`]).
     #[must_use]
     pub fn is_file_backed(&self) -> bool {
         #[cfg(feature = "mmap")]
@@ -1830,11 +1827,13 @@ impl Store {
             self.forget_free(next);
             words -= nh;
         }
-        if start > PRIMARY {
+        if start > PRIMARY && !self.claimed_block_ends_at(start) {
             // The word before `start` is a free FOOTER only when the predecessor is free; a
-            // CLAIMED predecessor's last word is its payload, which holds any value
-            // (`@FR-H-Claim`) — `i32::MIN` included, which `-f` cannot negate.  The checks
-            // below reject a payload that merely looks like a footer.
+            // CLAIMED predecessor's last word is its payload, possibly unwritten
+            // (`@FR-H-Claim`), so it is not read at all (@C153).  A predecessor the claims
+            // do not know — a mapped image's — can still hold any value, `i32::MIN`
+            // included, which `-f` cannot negate: the checks below reject a word that
+            // merely looks like a footer.
             let f = self.read::<i32>(start - 1, 4);
             if f < 0
                 && let Some(pw) = f.checked_neg()
@@ -6531,6 +6530,45 @@ mod tests {
         assert!(store.lazy, "still in the phase");
         assert_eq!(store.dead_words, 0, "a tracked delete counts no dead words");
         assert_eq!(store.claim(100), big, "the tree hands the block back");
+    }
+
+    /// @C153 — a store's memory is not filled and a claim writes only its header, so a
+    /// claimed block's last word may be UNWRITTEN; no delete path may read it.  Every
+    /// delete below has a claimed predecessor, on the exact, lazy and parked paths, and the
+    /// last claim takes the store's tail, so the next claim's tail check meets a claimed
+    /// block ending the store.  Outside Miri a read of an unwritten word returns whatever
+    /// the allocator handed out and the free tree still refuses it as a footer, so only
+    /// the Miri job (`miri.yml`) sees this guard fail: there the read is undefined behaviour.
+    #[test]
+    fn a_delete_never_reads_an_unwritten_claim() {
+        for (lazy, park) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut store = Store::new(160);
+            assert!(!store.defined, "a store is not filled");
+            store.free = false;
+            store.lazy = lazy;
+            store.park = park;
+            // Sizes on each path: 5 parks (2..=16), 40 is lazy-small (<= 64), 80 is exact.
+            let a = store.claim(5);
+            let b = store.claim(5);
+            let c = store.claim(40);
+            let d = store.claim(80);
+            store.write::<i32>(a, 4, 11);
+            store.write::<i32>(c, 4, 33);
+            // Each freed block's left neighbour is a claimed block with unwritten payload.
+            store.delete(b);
+            store.delete(d);
+            let e = store.claim(5);
+            store.delete(e);
+            // The tail: a claim that takes what is left of the store whole, then one the
+            // free space cannot hold, which grows the store past a claimed tail block.
+            let rest = store.claim(20);
+            let big = store.claim(200);
+            assert_eq!(store.read::<i32>(a, 4), 11, "A's payload survives");
+            assert_eq!(store.read::<i32>(c, 4), 33, "C's payload survives");
+            assert!(store.read::<i32>(rest, 0) > 0 && store.read::<i32>(big, 0) > 0);
+            store.delete(c);
+            store.delete(big);
+        }
     }
 
     #[test]

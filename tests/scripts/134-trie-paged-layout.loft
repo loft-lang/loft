@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN134 — `store_persist_bind` on a `trie<T[k]>`, and the layout pass it runs.
+// @PLN134 — `store_persist_copy` on a `trie<T[k]>`, and the layout pass it runs.
 //
 // Writing the image is where the trie's node array is renumbered van Emde Boas,
 // because that image is what a reader pages: numbered in INSERTION order, one
@@ -11,7 +11,8 @@
 // ones a renumbering touches: key order, exact lookup, and the prefix walk.
 //
 // Driven by `tests/store_persist_loft.rs` twice against the same path: fresh
-// (build + persist), then reload in a SEPARATE process. Enough words that the
+// (build + persist; the live trie keeps its numbering), then reload the laid-out
+// image in a SEPARATE process. Enough words that the
 // tree has real depth — a six-word trie is three nodes, and a layout pass over
 // three nodes proves nothing about one over a million.
 //
@@ -82,12 +83,12 @@ fn main() {
       n += 1;
       t += [PWord { w: w, n: n }];
     }
-    ok = store_persist_bind(t, path);
-    if !ok { println("FAIL fresh-bind-returned-false"); return }
+    ok = store_persist_copy(t, path);
+    if !ok { println("FAIL fresh-write-returned-false"); return }
     report(t, "fresh");
   } else if mode == "reload" {
-    ok = store_persist_bind(t, path);
-    if !ok { println("FAIL reload-bind-returned-false"); return }
+    ok = store_load(t, path);
+    if !ok { println("FAIL reload-load-returned-false"); return }
     report(t, "reload");
   } else { println("FAIL unknown-mode") }
 }

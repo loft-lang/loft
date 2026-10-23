@@ -2229,13 +2229,10 @@ impl Stores {
     }
 
     /// Re-initialise a REUSED slot to a clean empty store.  If the slot still
-    /// holds a file-backed (mmap) store from a `store_persist_bind`, replace it
-    /// with a fresh anonymous store instead of `init()`-ing THROUGH the mmap:
-    /// `init()` writes the empty-store header into the mapped file, blanking the
-    /// persisted store's in-memory view so a later bind into the reused slot
-    /// reads an empty hash (the on-disk bytes, unsynced, survive — so a fresh
-    /// process still reads the data).  Dropping the old store flushes + closes
-    /// the mmap.  #513.
+    /// holds a file-backed (mapped) store, replace it with a fresh anonymous store
+    /// instead of `init()`-ing THROUGH the mapping: `init()` would write the
+    /// empty-store header into the mapped file.  Dropping the old store closes the
+    /// mapping.  #513.
     fn reinit_reused_slot(&mut self, slot: usize) {
         if self.allocations[slot].is_file_backed() {
             self.allocations[slot] = Store::new(100);
@@ -5195,27 +5192,29 @@ impl Stores {
         // On the COPY: this is the image a reader pages, and the live tree keeps
         // the numbering its own references were handed out against.
         let laid = self.relayout_trees(dst_slot);
+        if crate::keys::env_set("LOFT_STORE_LIVE_DIGEST") {
+            let (digest, n) = self.live_digest(dst_slot);
+            crate::loft_eprintln!(
+                "loft: live-digest {digest:016x} bytes {n} {}",
+                path.display()
+            );
+        }
         let rebuilt = self.take_store(dst_slot);
         self.release_slot(dst_slot);
 
         let src_words = rebuilt.capacity_words();
-        let snapshot = {
-            let raw =
-                unsafe { std::slice::from_raw_parts(rebuilt.base_ptr(), (src_words as usize) * 8) };
-            raw.to_vec()
-        };
-        drop(rebuilt);
-        let live_end = store_image_live_end(&snapshot, src_words).unwrap_or(src_words);
+        let raw = rebuilt.raw_bytes();
+        let live_end = store_image_live_end(raw, src_words).unwrap_or(src_words);
         let target_words = live_end.max(crate::store::MIN_BOUND_WORDS);
-        let Some(padded) = build_padded_store_image(&snapshot, src_words, target_words) else {
+        let Some(padded) = build_padded_store_image(raw, src_words, target_words) else {
             return false;
         };
+        drop(rebuilt);
         if std::fs::write(path, &padded).is_err() {
             return false;
         }
-        // Same sidecar the bind path writes, for the same reason: a paged or
-        // remote loader gates on it BEFORE range-reading foreign bytes, and an
-        // image written by this call is exactly the one that gets served.
+        // The layout sidecar: a paged or remote loader gates on it BEFORE
+        // range-reading foreign bytes.
         let id = crate::schema_sidecar::LayoutIdentity::of_store(self, slot, tp);
         if id.write_beside(path).is_err() && std::env::var_os("LOFT_LOADER_STATS").is_some() {
             crate::loft_eprintln!(
@@ -5271,7 +5270,7 @@ impl Stores {
             return false;
         }
 
-        // Preserve the slot's bookkeeping across the swap (mirrors bind_path).
+        // Preserve the slot's bookkeeping across the swap.
         let preserved = {
             let s = &self.allocations[slot_idx];
             (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned)
@@ -6495,13 +6494,11 @@ impl Stores {
     /// in interpreter stack slots and native locals; nothing can enumerate or
     /// rewrite them.
     ///
-    /// `bind_path`'s WRITE branch is emphatically not such a place: a program
-    /// keeps element references across `store_persist_bind`, and the reason
-    /// that works today is exactly what compaction removes — the image is a
-    /// byte-for-byte copy, so every record keeps its position.  The load path
-    /// is safe for a stronger reason than "probably nobody holds one": it
-    /// already replaces the slot's bytes wholesale, so an interior reference
-    /// held across it is already meaningless.
+    /// A WRITE is not such a place — a program keeps element references across
+    /// `store_persist_copy`, which is why it rebuilds into a scratch store and
+    /// leaves the live one alone.  The load path is safe for a stronger reason
+    /// than "probably nobody holds one": it already replaces the slot's bytes
+    /// wholesale, so an interior reference held across it is already meaningless.
     ///
     /// The collection ROOT does survive — the collection variable is a `DbRef`
     /// at `(slot, PRIMARY, 8)` — so it must not move.  It does not: the root
@@ -6553,10 +6550,9 @@ impl Stores {
         // construction: it never fires where nothing is to be had, and declines
         // some cases that would have paid moderately.
         //
-        // An eighth is the threshold because that is the slack the image format
-        // already carries deliberately (`bind_path` sizes an image at the
-        // high-water mark PLUS an eighth, loft#710) — a chosen bias for a
-        // DEFAULT-ON behaviour, where declining a marginal win costs a little
+        // An eighth is the threshold because that is the growth reserve a live
+        // store keeps deliberately (`slack_target`, loft#710) — a chosen bias for
+        // a DEFAULT-ON behaviour, where declining a marginal win costs a little
         // space and taking a marginal loss costs every load.
         {
             let u = self.allocations[idx].usage();
@@ -6608,9 +6604,9 @@ impl Stores {
         self.release_slot(dst_slot);
         // The rebuild claimed into a fresh arena, so its capacity is where that arena's own
         // growth last landed — a fact about how it was built, not what it holds (loft#710).
-        // Trimmed to its content plus the format's eighth, as an image of it is written
-        // (`compact_bound_store`, `bind_path`), the comparison below is of what each holds:
-        // compared raw, a store already written tight read as dense whatever its slack.
+        // Trimmed to its content plus the growth reserve (`slack_target`), the comparison
+        // below is of what each holds: compared raw, a store already written tight read as
+        // dense whatever its slack.
         let mark = rebuilt.usage();
         if mark.walk_complete {
             rebuilt.shrink_to(crate::store::slack_target(mark.live_end_words));
@@ -6888,10 +6884,9 @@ impl Stores {
     ///
     /// The `.dschema` sidecar already records the layout the file was written with, and
     /// the paged loaders already gate on it — this is the same gate on the whole-image
-    /// paths, `store_persist_bind` opening an existing file among them.  A store with no
-    /// sidecar (legacy, or written by another tool) still loads: the check can only
-    /// report what it knows, and refusing every unlabelled store would break programs
-    /// that are reading their own correct data.
+    /// paths.  A store with no sidecar (legacy, or written by another tool) still loads:
+    /// the check can only report what it knows, and refusing every unlabelled store would
+    /// break programs that are reading their own correct data.
     ///
     /// `builtin` names the call in the refusal, so the reader is sent to the line that
     /// asked.
@@ -8726,7 +8721,7 @@ pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
 /// @PLAN38 — build the Store byte image to persist, exactly `target_words`
 /// long, with the record chain still valid.
 ///
-/// Longer than the live data (the `bind_path` floor, or an active record at the
+/// Longer than the live data (the `MIN_BOUND_WORDS` floor, or an active record at the
 /// tail): the remainder becomes one trailing free block.  Exactly as long: the
 /// chain ends where the last record does, with no free tail at all — which is
 /// the loft#710 case, where the tail was 43% of the file.  Either way the

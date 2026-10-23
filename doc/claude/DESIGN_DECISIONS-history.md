@@ -5015,3 +5015,17 @@ had updated it (its sidecar rewritten to `placement=3`), were refused by `main` 
 *"the store's a hash was written by a build that lays it out differently (placement 3), which
 this build cannot read"*.
 
+## C153 — Store memory is not filled; only a store whose bytes leave the process is written whole
+
+Decided 2026-10-24 by the owner: *"I still want to remove any zero fill when possible, even if
+we get rid of functions"*, then *"yes, remove the bound-store family"*.  The zero fill had been
+removed once before and restored after regressions; measuring them showed the timing
+differences were code layout, not the fill (`grouped_fill_find` at 876 µs without the fill
+against 862 µs with it, and 883–888 µs under forced alignment alone).  What kept the fill was
+correctness, not speed: delete's backward merge read the last word of the block before it,
+which may be a claimed block's unwritten payload, and every raw-byte image (a bound file, a
+snapshot, the world image, the REPL resume image, a placement arena) wrote the whole buffer.
+The merge now asks the claims first, the images are written from a rebuilt defined store, and
+the bound-store family — `store_persist_bind`, `store_release`, `store_durable_check`,
+`store_durable_seal`, bound-file compaction and upgrade-on-bind — was removed: no library or
+consumer used it, only loft's own tests and four `loft-suite` attic cells.

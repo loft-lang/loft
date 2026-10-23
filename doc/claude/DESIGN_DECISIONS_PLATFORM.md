@@ -244,7 +244,7 @@ soundness question at once, so the proposal must name each rewrite it invalidate
 **Holds at:** `@C135` — the `#rust` refusal in `src/parser/definitions.rs` (with @C87),
 `(R-Escape)` in [formal/rewrites.md](formal/rewrites.md); guard
 `loft-suite/attic/scripts/c135-representation-is-observable-only-at-a-boundary.loft`; the file-backed
-boundary by the store format's guards (`tests/store_durable_format.rs`).
+boundary by the store format's guard (`tests/layout_golden.rs`).
 
 ## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
 

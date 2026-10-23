@@ -26,17 +26,17 @@ fn main() {
 
   if (env_variable("LOFT_LAZY_MODE") ?? "") == "write" {
     cs: hash<GCompany[id]> = [];
-    if !store_persist_bind(cs, cp) { println("FAIL company-bind"); return }
     cs += [GCompany { id: 7,  name: "Acme" }];
     cs += [GCompany { id: 9,  name: "Globex" }];
     cs += [GCompany { id: 11, name: "Initech" }];
 
     ps: hash<GPerson[id]> = [];
-    if !store_persist_bind(ps, pp) { println("FAIL person-bind"); return }
     ps += [GPerson { id: 1, name: "ada",    employer: 7 }];
     ps += [GPerson { id: 2, name: "grace",  employer: 7 }];   // SAME company
     ps += [GPerson { id: 3, name: "alan",   employer: 9 }];
     ps += [GPerson { id: 4, name: "edsger", employer: 11 }];
+    if !store_persist_copy(cs, cp) { println("FAIL company-write"); return }
+    if !store_persist_copy(ps, pp) { println("FAIL person-write"); return }
     println("seeded companies={cs.len()} persons={ps.len()}");
     return
   }

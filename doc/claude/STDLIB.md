@@ -298,10 +298,7 @@ switches tile only **3.8%** of the time, because the input arrives in roughly
 spatial order — moved +0.7%, inside its own run-to-run noise.
 
 So reach for it when growth genuinely interleaves; measure before keeping it when
-your input is ordered. The cost it removes is also *persisted*: a store written
-with `store_persist_bind` carries the claimed capacity, not the length, so on the
-interleaved shape the file went from 1.65× its payload to 1.13× for identical
-data.
+your input is ordered.
 
 <!-- from tests/reference/reserve.loft -->
 ```loft
