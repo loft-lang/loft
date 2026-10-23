@@ -4850,6 +4850,19 @@ impl Definition {
             && self.text_work_buffers() == 0
     }
 
+    /// The parameters a fn-ref call of this function passes VISIBLY: every attribute except
+    /// the hidden ones (work buffers, result buffers) and the `__closure` the call reads out of
+    /// the fn-ref slot.  A `&text` parameter is visible — it is in the fn type the call site
+    /// lowers against, so a count that left it out disagreed with the buffers that site
+    /// minted, and the trim in `State::fn_call_ref` left a buffer on the frame.
+    #[must_use]
+    pub fn fnref_visible_params(&self) -> usize {
+        self.attributes
+            .iter()
+            .filter(|a| !a.hidden && a.name != "__closure")
+            .count()
+    }
+
     #[must_use]
     pub fn text_work_buffers(&self) -> usize {
         self.attributes
@@ -7649,16 +7662,7 @@ impl Data {
             {
                 continue;
             }
-            let visible = def
-                .attributes()
-                .iter()
-                .filter(|a| {
-                    !a.hidden
-                        && a.name != "__closure"
-                        && !matches!(&a.typedef, Type::RefVar(t) if matches!(**t, Type::Text(_)))
-                })
-                .count();
-            if visible == params {
+            if def.fnref_visible_params() == params {
                 most = most.max(def.text_work_buffers());
             }
         }

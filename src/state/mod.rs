@@ -1234,17 +1234,7 @@ impl State {
                 && buf_span > 0
             {
                 let def = data.def(d_nr as u32);
-                let visible = def
-                    .attributes()
-                    .iter()
-                    .filter(|a| {
-                        !a.hidden
-                            && a.name != "__closure"
-                            && !matches!(&a.typedef,
-                                crate::data::Type::RefVar(t) if matches!(**t, crate::data::Type::Text(_)))
-                    })
-                    .count();
-                let pushed = data.fnref_text_buffers(visible, def.returned());
+                let pushed = data.fnref_text_buffers(def.fnref_visible_params(), def.returned());
                 let wanted = def.text_work_buffers();
                 let extra = u16::try_from(pushed.saturating_sub(wanted)).unwrap_or(0) * buf_span;
                 if extra > 0 && asz >= extra {
@@ -1700,8 +1690,7 @@ impl State {
             return false;
         }
         let name = def.name().to_string();
-        let visible = def.attributes().iter().filter(|a| !a.hidden).count();
-        let pushed = data.fnref_text_buffers(visible, def.returned());
+        let pushed = data.fnref_text_buffers(def.fnref_visible_params(), def.returned());
         let buf_span = self.stack_step(size_ref());
         let dest = if crate::state::codegen::is_text_dest_native(&name) {
             self.library_names.get(&format!("{name}_dest")).copied()
