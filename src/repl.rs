@@ -2570,7 +2570,7 @@ impl ReplSession {
         // by default — the child's file watcher reacts to every IDE save and
         // hot-swaps the edited fn (tier 0); its `live-reload:` stderr lines
         // are the structured feedback.  LOFT_LIVE_RELOAD=0 opts out.
-        // HELD (owner, 2026-10-22): a save never changes the running game by itself — the
+        // HELD: a save never changes the running game by itself — the
         // edit is read and its warnings reviewed first, and the editor's Apply makes it active
         // (`D!:apply`), because a warning does not stop a program.
         if std::env::var_os("LOFT_LIVE_RELOAD").is_none() {

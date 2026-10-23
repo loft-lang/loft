@@ -84,8 +84,8 @@ pub(crate) fn debug_mailbox_drain() -> Vec<DebugCmd> {
 }
 
 /// Set by the editor's Apply (`D!:apply`): under `LOFT_LIVE_RELOAD=hold` a saved edit waits
-/// for it, because a save is for reading the edit and its warnings, not for running it
-/// (owner, 2026-10-22).  The reload poll takes it ([`take_apply`]).
+/// for it, because a save is for reading the edit and its warnings, not for running it.
+/// The reload poll takes it ([`take_apply`]).
 static APPLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Ask the live tier to apply the saved edits at its next poll.

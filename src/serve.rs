@@ -548,7 +548,7 @@ function finishTests(m) {
 // Breakpoints are FN-ENTRY, name-keyed — they survive live reloads, and the
 // page re-arms them after a build swap (the S7 loop, in the UI).
 let gws = null, gport = 0, gameBps = new Set(), gamePaused = false, gameSwapped = false, reattach = 0;
-// Apply (owner, 2026-10-22): what a save wrote waits — `pendingApply` — until ⇄ Apply or
+// Apply: what a save wrote waits — `pendingApply` — until ⇄ Apply or
 // Ctrl+Shift+Enter.  The rebuild a save starts is `buildState` ("" none, building, ready,
 // failed); an Apply while it builds waits for it (`applyWhenReady`).
 let pendingApply = false, buildState = "", buildWhy = "", applyWhenReady = false, worldRefused = false;
