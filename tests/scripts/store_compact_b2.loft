@@ -104,9 +104,10 @@ fn main() {
   shape = env_variable("B2_SHAPE") ?? "rich";
   src_path = "{prefix}-src.store";
 
-  // A shape the rebuild must DECLINE: a `reference<T>` is a position, and this
-  // rebuild moves records without rewriting the positions that name them.  The
-  // image is written rebuilt, so the write declines: `false`, no file.
+  // A `reference<T>` into the SAME store: a position the plain rebuild cannot rewrite, so the
+  // image is rebuilt by the converter, which re-points each reference to the record it named
+  // (`@FR-L-Ref-Slot`).  Nodes 0..29 stay; node i links node (7i mod 29), so nodes 1..28
+  // name each of 1..28 once and node 29 names node 0: the links sum to 406.
   if shape == "refuse" {
     nodes: hash<Node[id]> = [];
     for i in 0..300 { nodes += [Node { id: i, label: "l-{i}", link: null }] }
@@ -127,8 +128,8 @@ fn main() {
     return
   }
 
-  // A reference into a store OUTSIDE the image: nothing in the file says what
-  // that store holds in the reader, so the load is refused.
+  // A reference into a store OUTSIDE the image: nothing in the file could say what that
+  // store holds in the reader, so the write declines: `false`, no file.
   if shape == "foreign" {
     pool: vector<Leaf> = [];
     for p in 0..50 { pool += [Leaf { v: p * 7 }] }

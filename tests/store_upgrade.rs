@@ -871,21 +871,31 @@ fn a_stored_reference_survives_a_load_into_another_slot() {
     let _ = loft::file_access::remove_dir_all(&dir);
 }
 
-/// A reference into a store that is not part of the file cannot be carried by it: the load
-/// is refused with that reason, and the collection is left empty.
+/// A reference into a store that is not part of the image cannot be carried by it: the write
+/// answers `false`, leaves no file, and says why under `LOFT_LOADER_STATS`.
 #[test]
-fn a_reference_into_another_store_refuses_the_load() {
+fn a_reference_into_another_store_refuses_the_write() {
     let writer = format!(
-        "{REF_TYPES}fn main() {{\n  other = W {{ n: 2 }};\n  other.items += [T {{ k: 5 }}];\n  w = W {{ n: 1 }};\n  w.r = other.items[0];\n  println(\"saved {{store_persist_copy(w, \\\"a.store\\\")}} {{other.n}}\");\n}}\n"
+        "{REF_TYPES}fn main() {{\n  other = W {{ n: 2 }};\n  other.items += [T {{ k: 5 }}];\n  w = W {{ n: 1 }};\n  w.r = other.items[0];\n  println(\"saved {{store_persist_copy(w, \\\"a.store\\\")}} {{file(\\\"a.store\\\").size}}\");\n}}\n"
     );
-    let dir = write_store("ref_foreign", &writer);
-    let reader = format!(
-        "{REF_TYPES}fn main() {{\n  w = W {{ n: 0 }};\n  ok = store_load(w, \"a.store\");\n  println(\"{{ok}} {{w.n}}\");\n}}\n"
+    let dir = cell_dir("ref_foreign");
+    loft::file_access::write(dir.join("a.loft"), &writer).unwrap();
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("a.loft")
+        .current_dir(&dir)
+        .env("LOFT_TIMEOUT", "120")
+        .env("LOFT_LOADER_STATS", "1")
+        .output()
+        .expect("loft runs");
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
     );
-    loft::file_access::write(dir.join("b.loft"), &reader).unwrap();
-    let (code, out, err) = run_loft(&dir, &["b.loft"]);
-    assert_eq!((code, out.as_str()), (0, "false 0\n"), "{err}");
-    assert!(err.contains("a reference into another store"), "{err}");
+    assert_eq!(stdout, "saved false 0\n", "{stderr}");
+    assert!(
+        stderr.contains("a reference into another store"),
+        "{stderr}"
+    );
     let _ = loft::file_access::remove_dir_all(&dir);
 }
 

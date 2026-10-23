@@ -1603,7 +1603,7 @@ impl Stores {
     /// # Errors
     /// An I/O failure; the store at `path` is the old one until the first rename succeeds.
     pub fn upgrade_file_finish(&mut self, job: FileUpgradeJob) -> Result<FileUpgrade, String> {
-        let image = self.store_image(job.new_slot);
+        let image = self.store_image(job.new_slot).map(|(_, img)| img);
         self.upgrade_file_abandon(&job);
         let image = image.ok_or_else(|| "the upgraded store did not form an image".to_string())?;
         let kept = swap_in_upgrade(&job.path, &image, &job.current)?;
@@ -1644,11 +1644,11 @@ impl Stores {
         if tp == u16::MAX {
             return Err("the store records no type".to_string());
         }
-        let image = self
+        let (named, image) = self
             .store_image(slot)
             .ok_or_else(|| "the store did not form an image".to_string())?;
         crate::file_access::write(path, &image).map_err(|e| e.to_string())?;
-        crate::schema_sidecar::LayoutIdentity::of_store(self, slot, tp)
+        crate::schema_sidecar::LayoutIdentity::of_store(self, named, tp)
             .write_beside(path)
             .map_err(|e| e.to_string())
     }
@@ -1657,28 +1657,43 @@ impl Stores {
 #[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 impl Stores {
     /// The byte image of the store in `slot`, ending at its last live record.
-    pub(crate) fn store_image(&mut self, slot: u16) -> Option<Vec<u8>> {
+    /// The image of the store in `slot`, and the slot the references inside it name (what its
+    /// sidecar records as `slot=`).  A DEFINED store is imaged as it is; any other is first
+    /// rebuilt into a defined scratch store ([`Stores::image_rebuild`]), so no byte nobody
+    /// wrote reaches the image (@C153).
+    pub(crate) fn store_image(&mut self, slot: u16) -> Option<(u16, Vec<u8>)> {
         if self.allocations[slot as usize].defined {
-            return defined_image(&self.allocations[slot as usize]);
+            return defined_image(&self.allocations[slot as usize]).map(|img| (slot, img));
         }
-        // Not DEFINED (`Store::defined`): its unwritten bytes must not reach an image, so it
-        // is rebuilt into a defined scratch store first, as `store_persist_copy` writes.  The
-        // root keeps its place; the rest is laid out anew.
-        let (tp, root_words) = {
-            let s = &self.allocations[slot as usize];
-            let header = s.read::<i32>(crate::store::PRIMARY, 0);
-            if s.known_type == u16::MAX || header <= 0 {
-                return None;
-            }
-            (s.known_type, header as u32)
-        };
-        if !self.type_is_compactable(tp, &mut Vec::new()) {
-            return None;
-        }
-        let dst = self.rebuild_into_scratch(slot, tp, root_words).ok()?;
+        let tp = self.allocations[slot as usize].known_type;
+        let dst = self.image_rebuild(slot, tp).ok()?;
         let rebuilt = self.take_store(dst);
         self.release_slot(dst);
-        defined_image(&rebuilt)
+        defined_image(&rebuilt).map(|img| (dst, img))
+    }
+
+    /// Rebuild the store in `slot`, rooted at type `tp`, into a fresh DEFINED store whose
+    /// raw bytes may become an image, and answer that store's slot (the caller takes it).
+    /// The deep copy where the type allows it ([`Stores::rebuild_into_scratch`]: the root
+    /// keeps its place, the rest is laid out anew); otherwise the converter at this
+    /// program's own layout, which carries what the copy cannot — a reference to a record
+    /// in the same store, re-pointed through the old-to-new record map (`@FR-L-Ref-Slot`).
+    /// A reference into ANOTHER store is refused either way: an image cannot carry it.
+    ///
+    /// # Errors
+    /// The reason the store cannot be rebuilt.
+    pub(crate) fn image_rebuild(&mut self, slot: u16, tp: u16) -> Result<u16, String> {
+        let header = self.allocations[slot as usize].read::<i32>(crate::store::PRIMARY, 0);
+        if tp == u16::MAX || header <= 0 {
+            return Err("the store records no root".to_string());
+        }
+        if self.type_is_compactable(tp, &mut Vec::new()) {
+            return self
+                .rebuild_into_scratch(slot, tp, header as u32)
+                .map_err(str::to_string);
+        }
+        let desc = self.layout_descriptor(&[tp]);
+        self.upgrade_store(slot, &desc, tp, tp, Some(slot), false)
     }
 
     /// @PLN18 08-S6 — the world record `w` of type `tp` as the browser swap hands it over: its
@@ -1689,9 +1704,8 @@ impl Stores {
         if store.known_type != tp || w.rec != crate::store::PRIMARY {
             return None;
         }
-        let image = self.store_image(w.store_nr)?;
-        let sidecar =
-            crate::schema_sidecar::LayoutIdentity::of_store(self, w.store_nr, tp).to_sidecar();
+        let (named, image) = self.store_image(w.store_nr)?;
+        let sidecar = crate::schema_sidecar::LayoutIdentity::of_store(self, named, tp).to_sidecar();
         Some((sidecar, image))
     }
 }

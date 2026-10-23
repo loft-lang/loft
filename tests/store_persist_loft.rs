@@ -2283,13 +2283,15 @@ fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
             );
         }
 
-        // REFUSAL — a `reference<T>` is a position the rebuild does not rewrite, so
-        // the image write declines and leaves no file.
-        let refused = run(backend, &scratch(&format!("b2ref_{tag}")), "refuse", true);
+        // A `reference<T>` into the same store: the image is rebuilt by the converter,
+        // which re-points each reference; the load reads every link back (hand-computed
+        // in the script: 30 nodes, links summing to 406).
+        let refs = run(backend, &scratch(&format!("b2ref_{tag}")), "refuse", true);
         assert!(
-            refused.contains("refuse write false file 0"),
-            "{backend}: a collection holding a reference must not be written as an \
-             image the rebuild got wrong:\n{refused}"
+            refs.contains("refuse write true")
+                && refs.contains("refuse count 30 links 406 sound true"),
+            "{backend}: a collection holding references into its own store is written \
+             and read back with every link:\n{refs}"
         );
 
         // A reference into a store outside the collection: the same decline.

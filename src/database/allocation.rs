@@ -5163,29 +5163,20 @@ impl Stores {
     /// store builtin.
     #[cfg(feature = "mmap")]
     pub fn persist_copy(&mut self, slot: u16, path: &std::path::Path) -> bool {
-        use crate::store::PRIMARY;
         let idx = slot as usize;
-        if idx >= self.allocations.len() {
+        if idx >= self.allocations.len() || self.allocations[idx].free {
             return false;
         }
-        let (tp, root_words) = {
-            let s = &self.allocations[idx];
-            if s.free || s.known_type == u16::MAX {
+        let tp = self.allocations[idx].known_type;
+        // A shape no rebuild can carry is refused: wrong is worse than refused.
+        let dst_slot = match self.image_rebuild(slot, tp) {
+            Ok(d) => d,
+            Err(why) => {
+                if std::env::var_os("LOFT_LOADER_STATS").is_some() {
+                    crate::loft_eprintln!("store_persist_copy: not written — {why}");
+                }
                 return false;
             }
-            let header = s.read::<i32>(PRIMARY, 0);
-            if header <= 0 {
-                return false;
-            }
-            (s.known_type, header as u32)
-        };
-        // A shape the rebuild cannot carry would come out of the copy wrong, and
-        // wrong is worse than refused — the same gate compaction applies.
-        if !self.type_is_compactable(tp, &mut Vec::new()) {
-            return false;
-        }
-        let Ok(dst_slot) = self.rebuild_into_scratch(slot, tp, root_words) else {
-            return false;
         };
         // On the COPY: this is the image a reader pages, and the live tree keeps
         // the numbering its own references were handed out against.
@@ -5213,7 +5204,8 @@ impl Stores {
         }
         // The layout sidecar: a paged or remote loader gates on it BEFORE
         // range-reading foreign bytes.
-        let id = crate::schema_sidecar::LayoutIdentity::of_store(self, slot, tp);
+        // The slot the image's references name is the rebuilt store's (`@FR-L-Ref-Slot`).
+        let id = crate::schema_sidecar::LayoutIdentity::of_store(self, dst_slot, tp);
         if id.write_beside(path).is_err() && std::env::var_os("LOFT_LOADER_STATS").is_some() {
             crate::loft_eprintln!(
                 "store_persist_copy: could not write layout sidecar beside {}",
