@@ -3243,7 +3243,10 @@ small grid helpers (`nb_q`, `eg_index`, `eg_dir_from`) from folding: hex_field's
 from a window walk, `for wr in r0..r0 + hq { for wqq in q0..q0 + wq { … edge_mat(…) } }`
 (hex_shape's `chain_marks`), whose bounds are parameters rather than record fields: plain
 arithmetic in the helpers alone is −4 %, with the window's two range ends too −23 %, because
-LLVM inlines and folds the walk only once no operator on it carries the overflow report.  `(R-Range)` cannot range a parameter or a field by
+LLVM inlines and folds the walk only once no operator on it carries the overflow report.
+The variable clause's own switch is `LOFT_NO_RANGED_CALL_VARS=1`; cell
+`tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft`, pins
+`tests/ranged_call_vars.rs`.  `(R-Range)` cannot range a parameter or a field by
 shape (@C80), so the bound comes from the caller, tested once per loop entry, and flows
 into the helpers through variants.  With the byte read of `(R-Base)` the chain is free of
 store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
