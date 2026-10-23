@@ -20,7 +20,7 @@ before it moves them.
   [B3 the compiled-target base](#b3--the-compiled-target-base-plans-apart-from-the-rust-writer) ·
   [B4 crates](#b4--the-crates) · [B5 acceptance](#b5--acceptance-a-second-emitter-beside-the-rust-one) ·
   [B6 a minimal binary](#b6--optional-a-minimal-binary)
-- [Order](#order) · [Risks](#risks) · [Open questions](#open-questions-for-the-owner)
+- [Order](#order) · [Dependencies](#dependencies) · [Risks](#risks) · [Open questions](#open-questions-for-the-owner)
 
 ## Goal
 
@@ -233,6 +233,21 @@ Measured: the shipped binary is 25.2 MB (21.1 stripped), the generator ~12 % of 
 
 B0 → B1 → B2 → B3 → B5 (the probe, from @PLN91) → B4 when @PLN191 is ready; B6 whenever wanted.
 B1 and B2 make the interpreter a defined part on their own; B3 is what the C backend needs.
+
+## Dependencies
+
+- **This plan's base is unmerged:** B2 moves @PLN199's adoption code (keys by name, the host
+  table, the release-bundle identity), which is on `firewall02-scripting` with the fixes
+  #2128–#2135; the work starts there or after that branch merges.
+- **@PLN191:** B0 lands before its P3 (the first crate), so P3 cuts along `opt < interp`,
+  `opt < lower < rust`; B4 waits for its `core` and `front` crates.
+- **@PLN91:** B5's probe (P-cemit) and the C runtime decision are its.
+- **The checks' inputs:** `../loft-suite` at `tests/loft-suite.pin` (for `introspect_diff.sh`),
+  the bench library checkouts (the rewrite census, keyed by their resolved dependencies), the
+  bench lanes (`make interp-gap`).
+- **Not a dependency — owner ruling, 2026-10-23:** branches that change `src/generation/`,
+  `native_lib.rs` or `src/state/` concurrently (the native-4x arc and others) adapt their code
+  to the moves when they merge; the moves are not scheduled around them.
 
 ## Risks
 
