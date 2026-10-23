@@ -421,9 +421,11 @@ pub fn mtime(path: text) -> integer fs#read;
 ///   store_persist_copy(words, "vocab.store")   // ship this file
 ///   // a reader pages it: store_load_prefix(local, "vocab.store", "kerk", 20)
 ///
-/// Returns `false` on an I/O or format error, and for a collection whose shape the
-/// rebuild cannot carry. The image is sized to its content, with none of the
-/// growth slack the live store keeps.
+/// A `reference<T>` to a record in the same collection is carried: it names the
+/// same record in the image.  Returns `false` on an I/O or format error, and for a
+/// collection the image cannot carry — one holding a reference into another store.
+/// The image is sized to its content, with none of the growth slack the live store
+/// keeps.
 pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update;
 #rust"stores.persist_copy((@r).store_nr, std::path::Path::new(@path))"
 #impure(io)
