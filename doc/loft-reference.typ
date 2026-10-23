@@ -8532,7 +8532,7 @@ Number of elements in a hash collection.
 pub fn size(self: const hash) -> integer
 ```
 
-The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
+The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  A slot is 8 bytes; a hash that owns its records keeps each in its slot too, so a slot then costs 8 bytes plus the record.  Records kept in separate allocations are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
 
 ```rust
 pub fn size(self: const index) -> integer
