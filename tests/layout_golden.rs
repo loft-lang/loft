@@ -607,10 +607,6 @@ fn a_changed_placement_token_refuses_the_store() {
         "a store whose hash placement this binary would compute differently must not be \
          read raw — it would be misread, not merely mismatched"
     );
-    assert!(
-        verdict.as_corrupt_reason().is_some(),
-        "the refusal must route through the store's corruption path so the reader is told"
-    );
 }
 
 /// @C152 — the other half of a placement bump: a store whose hashes carry an OLDER token this

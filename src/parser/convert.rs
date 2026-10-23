@@ -1160,9 +1160,9 @@ impl Parser {
             check_type = &r;
         } else if crate::parser::vectors::is_keyed(is_type) {
             // A keyed-collection handle IS a `DbRef`, so it satisfies a bare
-            // `reference` parameter unchanged — no conversion op.  Used by
-            // `store_persist_bind`, whose `bind_path` snapshots the whole
-            // dedicated Store regardless of the collection kind.
+            // `reference` parameter unchanged — no conversion op.  Used by the
+            // store builtins (`store_persist_copy`, `store_load*`), which act on the
+            // whole dedicated Store regardless of the collection kind.
             if let Type::Reference(rd, _) = should
                 && *rd == self.data.def_nr("reference")
             {
@@ -1555,8 +1555,7 @@ impl Parser {
             }
             // A keyed-collection argument (hash / sorted / index / spatial)
             // also satisfies a bare `reference` parameter — its handle is a
-            // `DbRef`.  Mirrors the `convert` branch; used by
-            // `store_persist_bind`.
+            // `DbRef`.  Mirrors the `convert` branch; used by the store builtins.
             if let Type::Reference(r, _) = should
                 && *r == self.data.def_nr("reference")
                 && crate::parser::vectors::is_keyed(test_type)

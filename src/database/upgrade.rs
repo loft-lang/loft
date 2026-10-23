@@ -319,7 +319,8 @@ impl Stores {
         use crate::store::PRIMARY;
         let size = u32::from(self.size(new_root));
         let words = (8 + size).div_ceil(8).max(2);
-        let mut dst = crate::store::Store::new_in_use(words + PRIMARY + 1);
+        // DEFINED: the upgraded store is written back as an image (`Store::defined`).
+        let mut dst = crate::store::Store::new_in_use_defined(words + PRIMARY + 1);
         let root = dst.claim(words);
         if root != PRIMARY {
             return Err("a fresh store did not hand out its first record".to_string());
@@ -1121,19 +1122,6 @@ pub(crate) struct Owed {
     scratch: Option<u16>,
     /// How many of `fills` the drain has taken.
     at: usize,
-    /// A bind waiting for the fills before its file is upgraded.
-    bind: Option<OwedBind>,
-}
-
-/// A `store_persist_bind` of a file written under an older layout: the converted store is
-/// in `slot`, in memory, and the file is written only after every owed fill ran.
-pub(crate) struct OwedBind {
-    slot: u16,
-    path: std::path::PathBuf,
-    /// The new layout, recording `slot`.
-    current: crate::schema_sidecar::LayoutIdentity,
-    /// What `slot` held before the bind, put back if the bind cannot finish.
-    before: crate::store::Store,
 }
 
 impl Stores {
@@ -1415,37 +1403,6 @@ impl Stores {
         Ok(())
     }
 
-    /// `store_persist_bind` of a file written under an older layout: convert it in memory
-    /// into `slot`, and leave the file to [`Stores::owed_finish`], which upgrades it in place
-    /// once the drain has filled every owed field.
-    ///
-    /// # Errors
-    /// As [`Stores::load_upgraded`].
-    pub(crate) fn bind_upgraded(
-        &mut self,
-        slot: u16,
-        path: &std::path::Path,
-    ) -> Result<(), String> {
-        self.reset_owed();
-        let root = self.allocations[slot as usize].known_type;
-        let routines = self.upgrade_routines.clone();
-        let converted = self
-            .upgrade_image(path, Some(root), &Fills::new(), true, &routines)
-            .and_then(|c| c.ok_or_else(|| "its recorded layout could not be compared".to_string()));
-        let c = converted.inspect_err(|_| self.reset_owed())?;
-        self.owed.scratch = c.scratch;
-        let before = self.place_converted(slot, c.new_slot)?;
-        let mut current = c.current;
-        current.slot = Some(slot);
-        self.owed.bind = Some(OwedBind {
-            slot,
-            path: path.to_path_buf(),
-            current,
-            before,
-        });
-        Ok(())
-    }
-
     /// Move the converted store in `new_slot` into `slot`, keeping `slot`'s bookkeeping, and
     /// make every reference and owed record that named `new_slot` name `slot`; answer what
     /// `slot` held.
@@ -1545,53 +1502,15 @@ impl Stores {
         }
     }
 
-    /// End a drain: forget the owed fills, and finish a waiting bind by upgrading its file
-    /// in place.  Answers whether the call the drain follows still succeeds — false only
-    /// when a bind could not write its file, which leaves the file and `slot` as they were
-    /// before the call.
+    /// End a drain: forget the owed fills and release the routines' scratch store.
+    /// Answers whether the call the drain follows still succeeds, which a load always does
+    /// once its fills ran.
     pub fn owed_finish(&mut self) -> bool {
         let owed = std::mem::take(&mut self.owed);
         if let Some(sc) = owed.scratch {
             self.release_scratch(sc);
         }
-        let bind = owed.bind;
-        let Some(bind) = bind else {
-            return true;
-        };
-        self.finish_bind(bind)
-    }
-
-    #[cfg(feature = "mmap")]
-    fn finish_bind(&mut self, bind: OwedBind) -> bool {
-        let OwedBind {
-            slot,
-            path,
-            current,
-            before,
-        } = bind;
-        let written = self
-            .store_image(slot)
-            .ok_or_else(|| "the upgraded store did not form an image".to_string())
-            .and_then(|image| swap_in_upgrade(&path, &image, &current));
-        if let Err(why) = written {
-            let converted = std::mem::replace(&mut self.allocations[slot as usize], before);
-            drop(converted);
-            crate::loft_eprintln!(
-                "store_persist_bind: could not upgrade {} — {why}.",
-                path.display()
-            );
-            return false;
-        }
-        drop(before);
-        // The file now has this program's layout, so this binds it as any current file.
-        self.bind_path(slot, &path)
-    }
-
-    #[cfg(not(feature = "mmap"))]
-    fn finish_bind(&mut self, bind: OwedBind) -> bool {
-        let converted = std::mem::replace(&mut self.allocations[bind.slot as usize], bind.before);
-        drop(converted);
-        false
+        true
     }
 }
 
@@ -1716,7 +1635,11 @@ impl Stores {
     ///
     /// # Errors
     /// An untyped store, or an I/O failure.
-    pub fn write_store_snapshot(&self, slot: u16, path: &std::path::Path) -> Result<(), String> {
+    pub fn write_store_snapshot(
+        &mut self,
+        slot: u16,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
         let tp = self.allocations[slot as usize].known_type;
         if tp == u16::MAX {
             return Err("the store records no type".to_string());
@@ -1734,22 +1657,34 @@ impl Stores {
 #[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 impl Stores {
     /// The byte image of the store in `slot`, ending at its last live record.
-    pub(crate) fn store_image(&self, slot: u16) -> Option<Vec<u8>> {
-        let s = &self.allocations[slot as usize];
-        let words = s.capacity_words();
-        let raw = unsafe { std::slice::from_raw_parts(s.base_ptr(), (words as usize) * 8) };
-        let live_end = super::allocation::store_image_live_end(raw, words).unwrap_or(words);
-        super::allocation::build_padded_store_image(
-            raw,
-            words,
-            live_end.max(crate::store::MIN_BOUND_WORDS),
-        )
+    pub(crate) fn store_image(&mut self, slot: u16) -> Option<Vec<u8>> {
+        if self.allocations[slot as usize].defined {
+            return defined_image(&self.allocations[slot as usize]);
+        }
+        // Not DEFINED (`Store::defined`): its unwritten bytes must not reach an image, so it
+        // is rebuilt into a defined scratch store first, as `store_persist_copy` writes.  The
+        // root keeps its place; the rest is laid out anew.
+        let (tp, root_words) = {
+            let s = &self.allocations[slot as usize];
+            let header = s.read::<i32>(crate::store::PRIMARY, 0);
+            if s.known_type == u16::MAX || header <= 0 {
+                return None;
+            }
+            (s.known_type, header as u32)
+        };
+        if !self.type_is_compactable(tp, &mut Vec::new()) {
+            return None;
+        }
+        let dst = self.rebuild_into_scratch(slot, tp, root_words).ok()?;
+        let rebuilt = self.take_store(dst);
+        self.release_slot(dst);
+        defined_image(&rebuilt)
     }
 
     /// @PLN18 08-S6 — the world record `w` of type `tp` as the browser swap hands it over: its
     /// store's layout sidecar and image, when `w` is the root of a store of its own; `None`
     /// for a world that shares its store, which goes over as JSON.
-    pub(crate) fn world_image(&self, w: &DbRef, tp: u16) -> Option<(String, Vec<u8>)> {
+    pub(crate) fn world_image(&mut self, w: &DbRef, tp: u16) -> Option<(String, Vec<u8>)> {
         let store = &self.allocations[w.store_nr as usize];
         if store.known_type != tp || w.rec != crate::store::PRIMARY {
             return None;
@@ -1824,4 +1759,16 @@ enum Container {
     At(DbRef, u16),
     /// Field `.2` of the record `.0`, whose type is `.1`.
     Field(DbRef, u16, u16),
+}
+
+/// The byte image of a DEFINED store, ending at its last live record.
+fn defined_image(s: &crate::store::Store) -> Option<Vec<u8>> {
+    let words = s.capacity_words();
+    let raw = s.raw_bytes();
+    let live_end = super::allocation::store_image_live_end(raw, words).unwrap_or(words);
+    super::allocation::build_padded_store_image(
+        raw,
+        words,
+        live_end.max(crate::store::MIN_BOUND_WORDS),
+    )
 }

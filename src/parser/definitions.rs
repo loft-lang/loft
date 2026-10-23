@@ -8617,22 +8617,21 @@ impl Parser {
         f_nr
     }
 
-    /// @PLN196 step 8 — a `store_load` or `store_persist_bind` of a file written under an
-    /// older layout converts it (open question 3) — as do `store_load_untrusted` and the
-    /// two URL loaders — and an added field whose default the program must compute is left
-    /// owed (`Stores::owed_next`).  So every call of one of them is wrapped in `__upgrade_drain(call)`, which fills each owed field through its fill
-    /// function ([`Self::synth_upgrade_fills`]) and then finishes the call
-    /// (`Stores::owed_finish`): a bind upgrades its file only after every field holds its
-    /// default.  A program that calls neither gets no drain.
+    /// @PLN196 step 8 — a `store_load` of a file written under an older layout converts it
+    /// (open question 3) — as do `store_load_untrusted` and the two URL loaders — and an
+    /// added field whose default the program must compute is left owed
+    /// (`Stores::owed_next`).  So every call of one of them is wrapped in
+    /// `__upgrade_drain(call)`, which fills each owed field through its fill function
+    /// ([`Self::synth_upgrade_fills`]) and then finishes the call (`Stores::owed_finish`).
+    /// A program that calls none of them gets no drain.
     fn synth_upgrade_drain(&mut self) {
         // By name in every source: `swap_world` is declared by the `engine_host` library, which
         // `def_nr` (this source and the stdlib) does not search.
-        const LOADS: [&str; 6] = [
+        const LOADS: [&str; 5] = [
             "n_store_load",
             "n_store_load_untrusted",
             "n_store_load_url",
             "n_store_load_url_trusted",
-            "n_store_persist_bind",
             "n_swap_world",
         ];
         let loads: Vec<u32> = (0..self.data.definitions())

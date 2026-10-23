@@ -2302,56 +2302,6 @@ pub fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
 
 // ── memory: pages and residency ────────────────────────────────────────────
 
-/// The kernel's page size in bytes — the granularity a residency hint drops at, asked of the
-/// host rather than assumed (16 KB on aarch64 macOS).  Windows: 4096; approved exemption:
-/// nothing there drops pages ([`release_resident_pages`]), so nothing reads it.
-#[must_use]
-pub fn page_bytes() -> u64 {
-    #[cfg(unix)]
-    {
-        static PAGE: OnceLock<u64> = OnceLock::new();
-        #[allow(clippy::cast_sign_loss)]
-        *PAGE.get_or_init(|| unsafe { libc::sysconf(libc::_SC_PAGESIZE).max(4096) as u64 })
-    }
-    #[cfg(not(unix))]
-    {
-        4096
-    }
-}
-
-/// Can [`release_resident_pages`] drop pages on this host?  Windows: `false`; see there.
-#[must_use]
-pub fn releases_resident_pages() -> bool {
-    cfg!(unix)
-}
-
-/// Start the write-back of `len` bytes of a SHARED file mapping at `at` and drop them from
-/// this process's resident set (`msync(MS_ASYNC)` then `madvise(MADV_DONTNEED)`).  The bytes
-/// stay in the page cache and the file, so an access afterwards re-faults the same content.
-/// Answers whether both calls succeeded.
-///
-/// # Safety
-/// `at` is page-aligned and `at..at + len` lies inside one live `MAP_SHARED` mapping.
-///
-/// Windows: does nothing and answers `false` — a residency hint not honoured; exemption
-/// candidate: the substitute is `FlushViewOfFile` + `OfferVirtualMemory`, unwritten.
-#[must_use]
-pub unsafe fn release_resident_pages(at: *mut u8, len: usize) -> bool {
-    #[cfg(unix)]
-    {
-        // SAFETY: the caller's contract — a page-aligned range inside a live shared mapping.
-        unsafe {
-            libc::msync(at.cast(), len, libc::MS_ASYNC) == 0
-                && libc::madvise(at.cast(), len, libc::MADV_DONTNEED) == 0
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (at, len);
-        false
-    }
-}
-
 /// This process's resident set in KB, or `None` where it cannot be read.  Linux reads field
 /// 2 of `/proc/self/statm` (resident pages, taken as 4 KB).  Elsewhere `None`; exemption
 /// candidate: a design measurement's instrument only (`database::spans`).

@@ -362,19 +362,6 @@ impl SchemaVerdict {
     pub fn is_raw_safe(&self) -> bool {
         matches!(self, SchemaVerdict::Fresh | SchemaVerdict::Match)
     }
-
-    /// Map a non-raw-safe verdict to the durable-store corruption reason, so a
-    /// consumer routes it through the SAME `on_corruption` rebuild path an
-    /// integrity failure uses. `None` for the raw-safe verdicts.
-    #[must_use]
-    pub fn as_corrupt_reason(&self) -> Option<crate::store::CorruptReason> {
-        match self {
-            SchemaVerdict::Fresh | SchemaVerdict::Match => None,
-            SchemaVerdict::Changed(_) | SchemaVerdict::Unreadable | SchemaVerdict::Refused(_) => {
-                Some(crate::store::CorruptReason::SchemaMismatch)
-            }
-        }
-    }
 }
 
 /// Classify an already-read sidecar TEXT against the running program's identity
@@ -689,10 +676,9 @@ mod tests {
 
     /// The full `.dschema` lifecycle: write beside a store path, then re-check —
     /// matching identity → raw-safe; a changed layout → detected (not a silent
-    /// raw handoff), mapping to `CorruptReason::SchemaMismatch`.
+    /// raw handoff).
     #[test]
     fn dschema_lifecycle_beside_a_store() {
-        use crate::store::CorruptReason;
         let dir = std::env::temp_dir();
         let store = dir.join(format!("loft_dschema_test_{}.store", std::process::id()));
         let side = dschema_path(&store);
@@ -715,19 +701,17 @@ mod tests {
         // Same identity → raw-safe handoff.
         let v = check_beside(&store, &a, &crate::database::Release::default()).unwrap();
         assert_eq!(v, SchemaVerdict::Match);
-        assert!(v.is_raw_safe() && v.as_corrupt_reason().is_none());
+        assert!(v.is_raw_safe());
 
         // A changed layout (a field grew) → detected, NOT read raw.
         let b = id(222, "W\tsize=8\tstruct{x@0:long}\n");
         let v = check_beside(&store, &b, &crate::database::Release::default()).unwrap();
         assert!(matches!(v, SchemaVerdict::Changed(_)) && !v.is_raw_safe());
-        assert_eq!(v.as_corrupt_reason(), Some(CorruptReason::SchemaMismatch));
 
         // A garbage sidecar → Unreadable → reject (layout unknown).
         crate::file_access::write(&side, "corrupt").unwrap();
         let v = check_beside(&store, &a, &crate::database::Release::default()).unwrap();
         assert_eq!(v, SchemaVerdict::Unreadable);
-        assert_eq!(v.as_corrupt_reason(), Some(CorruptReason::SchemaMismatch));
 
         let _ = crate::file_access::remove_file(&side);
     }
