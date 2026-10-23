@@ -153,7 +153,7 @@ are *est.* −12 % together (≈ 3.7×); with the arithmetic ≈ 3.3×.  2.5× n
 
 | form (baseline 183.9 ms) | ms | |
 |---|--:|--:|
-| L7: `m_chunks`' header and base taken once in `slope_path_with_undo`, handed down to the four walks a step, re-derived after `map_ensure_chunk`'s append; BUILT as `(R-Header)`'s kept clause (header only, no base), −10.8 % in the lane (`resolve_move` −2.4 %) | 159.0 | −13.5 % |
+| L7: `m_chunks`' header and base taken once in `slope_path_with_undo`, handed down to the four walks a step, re-derived after `map_ensure_chunk`'s append; BUILT as `(R-Header)`'s kept clause (header only, no base), −11.0 % (`stats.py` A/B; `resolve_move` −2.5 %) | 159.0 | −13.5 % |
 | the matched chunk's `ck_hexes` record and length read through the held chunk address, not resolved again — in the callee, no L7; BUILT as `(R-RecPtr)`'s nested clause, −7.0 % in the lane (`resolve_move` −6.1 %) | 168.4 | −8.4 % |
 | both | 144.6 | −21.4 % |
 | L7 with every chunk's `ck_hexes` header in a caller table (a ceiling: a per-element header cache is no rule) | 136.0 | −26.4 % |
@@ -455,7 +455,7 @@ The levers, by reach — each a compiler or runtime rule, never a library rewrit
   native — a decision (@C entry) before it is built.  `request`.
 - **L6 — the keyed insert path.**  Unpriced; `field_add_cell` is the row to profile line by line.
 - **L7 — a callee's chunk walk set up once per caller loop.**  BUILT as `(R-Header)`'s kept
-  clause (`src/generation/kept.rs`): −10.8 % on `slope_path_with_undo` (priced −13.5 %).
+  clause (`src/generation/kept.rs`): −11.0 % on `slope_path_with_undo` (priced −13.5 %), 3.45×.
 - **L8 — a small append run through the caller's window.**  `(R-PushFill)`'s run clause across a
   call.  `encode_bytes`, cbor `encode`.
 
