@@ -157,6 +157,15 @@ impl OpEmitter for FusedElementReadEmitter {
             }
             return Ok(());
         }
+        // `@FR-E-Report` — the raising `OpGetVector` reports an index outside the header, as
+        // its unfused read does: the index is bound once, and only the out-of-range arm
+        // reaches the raise, which is the unfused read's own (`vec_get_or_raise_at_runtime`,
+        // with the statement's line).  `OpGetVectorNullable` answers the absent value silently.
+        if fused.raises {
+            write!(ctx.w, "{{ let __fi: i64 = ")?;
+            ctx.emit(fused.index)?;
+            write!(ctx.w, "; let __fv: {ty} = ")?;
+        }
         if let Some(base) = &base {
             write!(
                 ctx.w,
@@ -176,12 +185,30 @@ impl OpEmitter for FusedElementReadEmitter {
         write!(ctx.w, "), (")?;
         ctx.emit(fused.size)?;
         write!(ctx.w, ") as u32, ")?;
-        ctx.emit(fused.index)?;
+        if fused.raises {
+            write!(ctx.w, "__fi")?;
+        } else {
+            ctx.emit(fused.index)?;
+        }
         write!(ctx.w, ", (")?;
         ctx.emit(fused.fld)?;
         write!(ctx.w, ") as u32, {absent}, &stores.allocations)")?;
         if base.is_some() {
             write!(ctx.w, " }}")?;
+        }
+        if fused.raises {
+            let line = ctx.output.ckpt_cur_line;
+            write!(
+                ctx.w,
+                "; if vector::elem_index(__fi, {header}.len).is_none() {{ let _ = stores.vec_get_or_raise_at_runtime({line}, &("
+            )?;
+            match ctx.output.header_dbrefs.get(&header) {
+                Some(vd) => write!(ctx.w, "{vd}")?,
+                None => ctx.emit(fused.vector)?,
+            }
+            write!(ctx.w, "), (")?;
+            ctx.emit(fused.size)?;
+            write!(ctx.w, ") as u32, __fi); }} __fv }}")?;
         }
         Ok(())
     }
@@ -199,6 +226,18 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
         return Ok(false);
     };
     let (header, base, size, fld, min) = (b.header, b.base, b.size, b.fld, b.min);
+    // `@FR-E-Report` — the inline arms below answer an index outside the header themselves,
+    // so the raising `OpGetVector` reports it there through its template's own raise.
+    let fault = if ctx.output.data.def(b.elem_op).name() == "OpGetVector" {
+        let mut elem = b.elem_args.to_vec();
+        elem[2] = Value::RawExpr("__bi".to_string());
+        let raise = ctx
+            .output
+            .generate_expr_buf(&Value::Call(b.elem_op, elem))?;
+        format!("let _ = {raise}; ")
+    } else {
+        String::new()
+    };
     write!(ctx.w, "{{ let __bi: i64 = ")?;
     ctx.emit(b.index)?;
     if b.character && !ctx.output.hoist_verify {
@@ -207,7 +246,7 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
         // and `0` (`'\0'`) for an absent element — the template's `rec == 0` arm.
         return write!(
             ctx.w,
-            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ char::from_u32(unsafe {{ ({base}.add(__bf as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ 0_i32 }} }} /*@FR-R-Base byte read*/"
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ char::from_u32(unsafe {{ ({base}.add(__bf as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ {fault}0_i32 }} }} /*@FR-R-Base byte read*/"
         )
         .map(|()| true);
     }
@@ -229,7 +268,7 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
         // absent element — the template's `rec == 0` arm.
         return write!(
             ctx.w,
-            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }} }} else {{ 255u8 }} }} /*@FR-R-Base byte read*/"
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }} }} else {{ {fault}255u8 }} }} /*@FR-R-Base byte read*/"
         )
         .map(|()| true);
     }
@@ -254,7 +293,7 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
         // helpers around this read fold (hex_field's `edgeset_count`).
         return write!(
             ctx.w,
-            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ i64::MIN }} }} /*@FR-R-Base byte read*/"
+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ {fault}i64::MIN }} }} /*@FR-R-Base byte read*/"
         )
         .map(|()| true);
     }
@@ -656,9 +695,10 @@ impl OpEmitter for OpGetVectorEmitter {
         if let Some(h) = nested {
             write!(ctx.w, "; let __vh = {h}")?;
         }
+        let line = ctx.output.ckpt_cur_line;
         write!(
             ctx.w,
-            "; stores.vec_get_hoisted_or_raise_runtime::<{verify}>(&{header}, &__vr, ("
+            "; stores.vec_get_hoisted_or_raise_runtime::<{verify}>({line}, &{header}, &__vr, ("
         )?;
         ctx.emit(size_val)?;
         write!(ctx.w, ") as u32, __vi)}}")

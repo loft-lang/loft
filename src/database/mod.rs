@@ -2081,12 +2081,14 @@ impl Stores {
     /// by an already-derived [`crate::vector::VecHeader`] (loft#885).
     ///
     /// The in-range fast path is address arithmetic; every other index — negative,
-    /// out-of-range, `i64::MIN` — falls through to `vec_get_or_raise_runtime`, so the
-    /// raise it reports and the sentinel it answers have only one definition.
+    /// out-of-range, `i64::MIN` — falls through to [`Self::vec_get_or_raise_at_runtime`],
+    /// so the raise it reports, the statement `line` it names (`@FR-E-Report`) and the
+    /// sentinel it answers have only one definition.
     #[must_use]
     #[inline]
     pub fn vec_get_hoisted_or_raise_runtime<const VERIFY: bool>(
         &mut self,
+        line: u32,
         h: &crate::vector::VecHeader,
         db: &crate::keys::DbRef,
         size: u32,
@@ -2095,7 +2097,7 @@ impl Stores {
         if index >= 0 && index < i64::from(h.len) {
             crate::vector::get_vector_hoisted::<VERIFY>(h, db, size, index, &self.allocations)
         } else {
-            self.vec_get_or_raise_runtime(db, size, index)
+            self.vec_get_or_raise_at_runtime(line, db, size, index)
         }
     }
 

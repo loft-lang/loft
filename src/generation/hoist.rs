@@ -3868,6 +3868,9 @@ pub struct FusedRead<'a> {
     pub rust_type: &'static str,
     /// What the getter answers at an absent element, e.g. `"f32::NAN"`.
     pub absent: &'static str,
+    /// The element address is the RAISING `OpGetVector`: an index outside the vector reports
+    /// (`@FR-E-Report`) beside the absent value.  `OpGetVectorNullable` answers it silently.
+    pub raises: bool,
 }
 
 /// Recognise `OpGet<scalar>(OpGetVector*(Var(v), size, index), fld)`, given the outer
@@ -3907,6 +3910,7 @@ pub fn fused_element_read<'a>(
         fld,
         rust_type,
         absent,
+        raises: data.def(*elem_op).name() == "OpGetVector",
     })
 }
 

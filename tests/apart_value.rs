@@ -155,10 +155,9 @@ fn an_index_out_of_range_reports_as_the_store_path_does() {
             .arg(&src)
             .env("LOFT_DEV_SOFT_HALT", "1");
         if !apart {
-            // The STORE path: `(R-Header)`'s kept clause would hold `x.m` here, and a read
-            // through a held header reports no index fault yet (loft#2134).
-            cmd.env("LOFT_NO_APART", "1")
-                .env("LOFT_NO_KEPT_HEADER", "1");
+            // The STORE path, where `(R-Header)`'s kept clause holds `x.m`: a read through the
+            // held header reports as the twin does (loft#2134).
+            cmd.env("LOFT_NO_APART", "1");
         }
         let out = cmd.output().expect("spawn loft --native-release");
         (

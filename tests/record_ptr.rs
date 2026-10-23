@@ -256,7 +256,8 @@ fn a_vector_field_of_a_view_reads_its_header_through_the_address() {
         "the element write takes the field's record and length through the address"
     );
     assert!(
-        body(&rust, "n_n2").contains("stores.vec_get_hoisted_or_raise_runtime::<false>(&__vh"),
+        body(&rust, "n_n2").contains("stores.vec_get_hoisted_or_raise_runtime::<false>(")
+            && body(&rust, "n_n2").contains(", &__vh, &__vr,"),
         "the raising element read takes the nested header"
     );
     let off = emit_src(NESTED, "nested_off", &[("LOFT_NO_FIELD_HEADER", "1")]);

@@ -512,6 +512,101 @@ fn main() {
     }
 }
 
+/// `@FR-E-Report` × `@FR-R-Header` — an element read out of range logs its Warn line, at its
+/// own statement, when `--native` reads it through a HELD vector header: the function clause
+/// holds one for every `const` vector parameter below, and the reads take the fused scalar, field
+/// and byte forms.  `x[i] ?? d` is the guarded read and logs nothing (loft#2134).
+#[test]
+fn an_index_fault_through_a_held_header_logs_on_every_backend() {
+    let source = "\
+struct Pt { x: float, n: integer, b: boolean, c: character, u: u8 }
+fn oob(x: const vector<float>) -> float {
+  a = x[7];
+  b = x[-9];
+  (a ?? 1.0) + (b ?? 2.0)
+}
+fn oobf(p: const vector<Pt>) -> integer {
+  q = p[5].n;
+  r = p[-4].n;
+  (q ?? 10) + (r ?? 20)
+}
+fn oobb(p: const vector<Pt>) -> integer {
+  t = 0;
+  if p[6].b { t += 1; }
+  if p[6].c == 'z' { t += 2; }
+  w = p[6].u;
+  t + (w ?? 100)
+}
+fn oobl(x: const vector<integer>) -> integer {
+  s = 0;
+  for i in 0..5 { s += x[i] ?? 1000; }
+  s
+}
+fn quiet(x: const vector<float>) -> float {
+  if x[9] == null { 5.0 } else { 6.0 }
+}
+fn main() {
+  v = [1.0, 2.0, 3.0, 4.0];
+  println(\"{oob(v)}\");
+  ps = [Pt { x: 1.0, n: 3, b: true, c: 'a', u: 7 }, Pt { x: 2.0, n: 4, b: false, c: 'b', u: 8 }];
+  println(\"{oobf(ps)}\");
+  println(\"{oobb(ps)}\");
+  println(\"{oobl([1, 2, 3])}\");
+  println(\"{quiet(v)}\");
+}
+";
+    let mut legs = vec!["--interpret"];
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        legs.push("--native");
+    }
+    for leg in legs {
+        let (script_path, log_path) = setup_prod_run(&format!("held_oob{}", &leg[1..]), source);
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg(leg)
+            .arg(&script_path)
+            .env("LOFT_TIMEOUT", "300")
+            .current_dir(workspace_root())
+            .output()
+            .expect("invoke loft binary");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let log = fa::read_to_string(&log_path).unwrap_or_default();
+        let _ = fa::remove_dir_all(script_path.parent().unwrap());
+        assert_eq!(
+            stdout.split_whitespace().collect::<Vec<_>>(),
+            ["3", "30", "100", "2006", "5"],
+            "[{leg}] values; log {log:?}"
+        );
+        // Each Warn line as `<kind>@<line>`: the kind's `[tag]` and the line of its `.loft:` position.
+        let faults: Vec<String> = log
+            .lines()
+            .filter_map(|l| {
+                let kind = l.split('[').nth(1)?.split(']').next()?;
+                let at = l.split_whitespace().find(|w| w.contains(".loft:"))?;
+                let line = at.rsplit(':').next()?;
+                Some(format!("{kind}@{line}"))
+            })
+            .collect();
+        assert_eq!(
+            faults,
+            [
+                "index_out_of_bounds@3",
+                "negative_index@4",
+                "index_out_of_bounds@8",
+                "negative_index@9",
+                "index_out_of_bounds@14",
+                "index_out_of_bounds@15",
+                "index_out_of_bounds@16",
+                "index_out_of_bounds@25",
+            ],
+            "[{leg}] each fault at its own line: {log}"
+        );
+    }
+}
+
 /// Production: a clean run produces no runtime-event log entries.
 /// Guards against the production code emitting spurious log entries
 /// for normal program execution.
