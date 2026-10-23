@@ -5,9 +5,13 @@
 //
 // Admitted: c1 (the cursor shape — a call's result, its store a work buffer), c3 (exits before and after the literal),
 // c4 (repeated: the live record count holds once warm), c5 (two vector fields: the first
-// moved, the second copied into the store the first lives in), c7 (a slice match on the
-// cursor itself, whose arms bind views THROUGH the literal: they name the literal's elements,
-// which the copy and the move answer alike, loft#2135).  c2 needs no rewrite: a
+// moved, the second copied into the store the first lives in), c7 (a view of the LITERAL's
+// element taken after the move, written through either name), c8 (the cursor matched by
+// slice patterns, `Args::parse`'s shape: the match subject is a view of the literal, not of
+// the vector), c9 (the literal's field bound whole: a copy off an owned base,
+// `@FR-B-View-Base`), c10 (a slice match on the cursor whose arms bind views THROUGH the
+// literal: they name the literal's elements, which the copy and the move answer alike,
+// loft#2135).  c2 needs no rewrite: a
 // vector built in the body is built in the literal's field already.  Declined, the copy kept:
 // c6 (a later field of the same literal reads the source), d1 (the source read after the
 // literal), d2 (the source grown after it), d3 (the literal inside a loop), d4 (the source a
@@ -19,11 +23,15 @@
 //   A second plant, the literal's exit free left a store-level `OpFreeRef` (the owner's store
 //   then freed twice, the literal's free first), is INERT: a free of a store already free is
 //   a no-op and nothing is claimed between the two, so the distinct-free is the defensive form.
+// Which cells are admitted is pinned by `tests/literal_host.rs`: the values above hold whether
+// or not the clause fires, so they cannot see a gate that declines an admitted cell.
 
 enum Tok { A { n: integer }, B { w: text } }
 struct Cur { const src: vector<Tok>, pos: integer }
 struct Two { a: vector<Tok>, b: vector<Tok>, k: integer }
 struct Sized { src: vector<Tok>, n: integer }
+struct P { v: integer }
+struct Bag { src: vector<P>, pos: integer }
 
 fn live_records() -> integer {
   t = store_memory();
@@ -80,9 +88,51 @@ fn c3(n: integer) -> integer {
   len(cur.src)
 }
 
+fn ps(n: integer) -> vector<P> {
+  r: vector<P> = [];
+  for i in 0..n { r += [P { v: i + 1 }]; }
+  r
+}
+
+fn c7(n: integer) -> text {
+  t = ps(n);
+  b = Bag { src: t, pos: 0 };
+  e = b.src[1];
+  b.src[1].v = 70;
+  f = b.src[2];
+  f.v = 55;
+  "{e.v} {b.src[1].v} {b.src[2].v} {f.v} {len(b.src)}"
+}
+
+fn c8(n: integer) -> text {
+  t = toks(n);
+  cur = Cur { src: t, pos: 0 };
+  out = "";
+  guard = 0;
+  while cur.pos < cur.src.len() {
+    guard += 1;
+    if guard > 100 { break }
+    code = match cur {
+      [ A { n }, B { w } ] => { out += "<{n}{w}>"; "ok" },
+      [ A { n } ] => { out += "<{n}>"; "ok" },
+      _ => "stop",
+    };
+    if code == "stop" { break }
+  }
+  "{out} {cur.pos}"
+}
+
+fn c9(n: integer) -> text {
+  t = ps(n);
+  b = Bag { src: t, pos: 0 };
+  s = b.src;
+  b.src += [P { v: 9 }];
+  "{len(s)} {len(b.src)} {b.src[n].v}"
+}
+
 /// A slice match on the cursor itself (the arguments library's parse): each arm consumes a
 /// prefix and advances `pos`, and the names it binds are views through the literal.
-fn c7(n: integer) -> integer {
+fn c10(n: integer) -> integer {
   t = toks(n);
   cur = Cur { src: t, pos: 0 };
   s = 0;
@@ -172,11 +222,19 @@ fn main() {
   }
   // toks(7): A0 A2 A4 A6 = 12, B w1 w3 w5 = 600: 612 * 10 + 7 = 6127 per pass.
   assert(s == 40 * 6127 && r1 > 0 && r2 == r1 && len(keep) == 3, "c4 {s} records {r1} -> {r2}");
-  // c7 — toks(5) = A0 B"w1" A2 B"w3" A4: [A0 B"w1"] 0 + 200, [A2 B"w3"] 2 + 200, [A4] 4000:
+  // c10 — toks(5) = A0 B"w1" A2 B"w3" A4: [A0 B"w1"] 0 + 200, [A2 B"w3"] 2 + 200, [A4] 4000:
   // 4402, pos 5.  toks(4) ends after two pairs: 402, pos 4.
-  assert(c7(5) == 44025 && c7(4) == 4024, "c7 {c7(5)} {c7(4)}");
+  assert(c10(5) == 44025 && c10(4) == 4024, "c10 {c10(5)} {c10(4)}");
   // c5 — 4 and 5 tokens: 400 + 50 + 7.
   assert(c5(4) == 457, "c5 {c5(4)}");
+  // c7 — ps(3) = P1 P2 P3; e names element 1 after the write (70), f is element 2 written
+  // through the view (55), three elements.
+  assert(c7(3) == "70 70 55 55 3", "c7 {c7(3)}");
+  // c8 — toks(5): A0 B"w1" pair, A2 B"w3" pair, A4 alone; each arm advances the cursor.
+  assert(c8(5) == "<0w1><2w3><4> 5", "c8 {c8(5)}");
+  assert(c8(0) == " 0", "c8 empty {c8(0)}");
+  // c9 — `s = b.src` copies (owned base): s keeps 3, the field grows to 4 with 9 last.
+  assert(c9(3) == "3 4 9", "c9 {c9(3)}");
   // c6 — the later field reads the source's length: 3 * 100 + 3.
   assert(c6(3) == 303, "c6 {c6(3)}");
   // d1 — the source read after the literal: 5 * 100 + 406.
