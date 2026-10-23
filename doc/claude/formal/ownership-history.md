@@ -1415,6 +1415,17 @@ improvement. Falsified at `aed98943` — interpret leaked `SN×750` → clean, n
 clean. That native count is the second thing worth keeping: a small repro is clean on
 `--native`, which reads as "interpreter-only" until the loop counts show otherwise.
 
+**The admission was still one question too wide (2026-10-23, loft#2137).** `join_is_witnessed`
+asks whether the BLOCK is a witnessed `Join`, and a block is one in two different ways: the
+subject's callee may hand back its argument (the case above, where `(F-Ret)` makes the guard's
+copy right), or the subject is OWNED and the DEFAULT arm is a place of this frame
+(`set(find(p) ?? b.inner)`).  The second was lifted too, so the interpreter's `OpBindOrCopy`
+copied a place `(B-View)` and `(F-ParamHeap)` say the callee shares, and `--native` freed it
+at exit, under the caller when the place came through a parameter.  The lift now also asks the
+subject's own ownership; an owned subject is already owned by its `__ncc_N` temp, which the
+frame frees at exit, and the IR left is the `if` spelling's.  Guarded by
+`loft-suite/rules/calls/F-ParamHeap/2137-a-coalesce-argument-shares-the-place-it-chose.loft`.
+
 ### D-own-13 (second face) — CLOSED (2026-08-27, loft#1107): the ELEMENT position witnesses its ROOT
 
 `(O-Complete)` requires the ownership fact PER BINDING.  A nullable value in an ELEMENT position
