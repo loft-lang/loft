@@ -2175,8 +2175,8 @@ fn load_linked_packages(_data: &Data, _export_set: &HashSet<u32>) {}
 /// `.so`: `-L native=<dir>` + `-l dylib=<name>` + an RPATH (the build/prebuilt
 /// dir and `$ORIGIN` for an installed binary shipping the `.so` beside it).  On
 /// Windows a DLL links through its import library and there is no RPATH, so this
-/// bridges `<stem>.dll.lib` → `<stem>.lib` and the loader finds the staged DLL
-/// beside the binary instead.
+/// bridges `<stem>.dll.lib` → `<stem>.lib`; the host loads the package's DLL before the
+/// artifact ([`load_linked_packages`]), so the artifact's import resolves to it.
 ///
 /// Returns empty when the `.so` can't be resolved ([`crate::extensions::resolve_native_lib`]
 /// already printed why) — the link then fails loudly on the undefined symbol
