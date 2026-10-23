@@ -1982,31 +1982,18 @@ pub(crate) fn tuple_base(vars: &crate::variables::Function, var: u16) -> (String
     }
 }
 
-/// True when `var` is a `&`-bound tuple LOCAL, which native represents as a raw
-/// `*mut (…)` rather than the `&mut (…)` a `&(…)` PARAMETER gets.
+/// True when `var` is a `&`-bound tuple — a local link or a `&(…)` parameter — which native
+/// represents as a raw `*mut (…)`.
 ///
 /// Every position that hands such a variable to Rust asks this — the element base
-/// ([`tuple_base`]) and the call site that forwards it to a `&(…)` parameter — so the
-/// representation is decided once.  Two sites reading one predicate is the shape
+/// ([`tuple_base`]) and the read of the whole tuple — so the representation is decided once.  Two sites reading one predicate is the shape
 /// loft#1006 wanted and did not have: there, three copies of the admitted-element list
 /// disagreed and a program died at codegen because of it.
 #[must_use]
 pub(crate) fn is_raw_tuple_link(vars: &crate::variables::Function, var: u16) -> bool {
-    !vars.is_argument(var)
-        && matches!(vars.tp(var), Type::RefVar(inner) if matches!(inner.base(), Type::Tuple(_)))
+    matches!(vars.tp(var), Type::RefVar(inner) if matches!(inner.base(), Type::Tuple(_)))
 }
 
-/// True when a `&τ` of this type is a raw `*mut T` on native as a PARAMETER too, not only
-/// as a local link: `τ` is a scalar (`data::is_scalar`).
-///
-/// `(B-Ref-Write)` lets one place reach a call through two `&` parameters (`add2(x, x)`,
-/// `add2(p.n, p.n)`, `add2(v[i], v[j])` with `i == j`), and a `&mut T` parameter promises
-/// Rust the opposite: two of them to one place is a borrow error for a local and undefined
-/// behaviour for a store place, whose pointer comes from a raw address (loft#1605).  A raw
-/// pointer may alias, so a scalar `&` parameter is the `*mut T` a local link already is, and
-/// a local, a link and a forwarded parameter all pass as one pointer.  A heap `τ` keeps
-/// `&mut T`: its store place reaches the call through a temporary of its own, so two
-/// arguments never share the memory the reference names.
 /// What a read through a scalar `&` link to an ABSENT place answers on native — the Rust
 /// spelling of the value the interpreter's getter gives a `rec == 0` reference: `OpGetInt`'s
 /// `i64::MIN`, `OpGetFloat`'s / `OpGetSingle`'s NaN, `OpGetCharacter`'s codepoint 0,

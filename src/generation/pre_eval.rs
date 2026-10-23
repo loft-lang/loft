@@ -210,8 +210,9 @@ impl Output<'_> {
         None
     }
 
-    /// @P312 — the set of variables that some argument passes as a fresh
-    /// `&mut var_X` borrow (`create_stack_var`).  A by-value/Copy read of such a
+    /// @P312 — the set of variables that some argument passes to a RUNTIME function (one
+    /// written in Rust, whose signature takes `&mut T`) as a fresh `&mut var_X` borrow
+    /// (`create_stack_var`).  A by-value/Copy read of such a
     /// var in another argument trips rustc E0503 ("cannot use `var_X` because it
     /// was mutably borrowed"), so those reads are hoisted into `_pre_N` bindings
     /// before the call.  The `&`-param FORWARDING case (passing an existing
@@ -852,7 +853,14 @@ impl Output<'_> {
                 // arg passes as a fresh `&mut var_X` borrow; native otherwise emits
                 // `f(&mut var_x, g(var_x))` and the Copy-read of `var_x` while it is
                 // mutably borrowed trips rustc E0503.
-                let borrowed = self.borrowed_arg_vars(vals);
+                // A generated callee takes every `&` argument as a raw pointer, which borrows
+                // nothing (loft#2136): the read stays in place, and the `&` argument names the
+                // caller's variable itself rather than a copy a rebind would never reach.
+                let borrowed = if *def_fn.code() == Value::Null {
+                    self.borrowed_arg_vars(vals)
+                } else {
+                    HashSet::new()
+                };
                 let left = self.left_first(vals);
                 for (at, arg) in vals.iter().enumerate() {
                     let needs_pre = left[at]

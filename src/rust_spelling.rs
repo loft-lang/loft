@@ -23,11 +23,13 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         result += &rust_type(tp, &Context::Argument);
         return result;
     }
+    // Every `&τ` is a raw pointer (`is_raw_scalar_ref` says why); a scalar's names the
+    // storage width its field encoding uses.
     if let Type::RefVar(in_tp) = tp {
         if is_raw_scalar_ref(tp) {
             return format!("*mut {}", link_base_type(in_tp));
         }
-        return format!("&mut {}", rust_type(in_tp, &Context::Variable));
+        return format!("*mut {}", rust_type(in_tp, &Context::Variable));
     }
     match tp {
         // Narrow integer subtypes use their precise Rust type only in the function-return
@@ -129,6 +131,16 @@ pub(crate) fn link_base_type(inner: &Type) -> String {
     }
 }
 
+/// True when `τ` of a `&τ` is a scalar (`data::is_scalar`), whose link reads and writes the
+/// value behind the pointer in place.
+///
+/// Every `&τ` PARAMETER is a raw `*mut T` on native, as every local link is.  `(B-Ref-Alias)`
+/// lets one place reach a call through two `&` parameters (`add2(x, x)`, `twice(m, m)`,
+/// `add2(v[i], v[j])` with `i == j`), and a `&mut T` parameter promises Rust the opposite:
+/// two of them to one local is a borrow error (E0499), and to one store place undefined
+/// behaviour (loft#1605, loft#2136).  A raw pointer may alias, so a local, a link and a
+/// forwarded parameter all pass as one pointer, and a rebind through one parameter is seen
+/// through the other.
 #[must_use]
 pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
     matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))

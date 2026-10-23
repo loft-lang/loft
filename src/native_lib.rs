@@ -1553,7 +1553,7 @@ fn shared_bridge_wrapper(
             }
             // @PLN199 — `&T` to a record, vector, keyed collection or data enum: the slot the
             // caller's `DbRef` names holds that value's `DbRef`.  It is copied into a local,
-            // `--native`'s `&mut DbRef` parameter writes through or rebinds the local, and the
+            // `--native`'s `*mut DbRef` parameter writes through or rebinds the local, and the
             // local goes back to the slot after the call — re-resolved then, because a call
             // back into the interpreter may grow its stack, and the slot with it.
             crate::native_gate::BridgeAttrKind::Marshal if matches!(a.typedef.base(), Type::RefVar(inner) if crate::data::is_dbref(inner.base())) =>
