@@ -197,7 +197,7 @@ impl Shape {
         hash::find(
             &self.field(),
             &self.db.allocations,
-            self.db.keys(self.ttile),
+            self.db.keys(self.tiles_tp),
             &[Content::Long(i64::from(key))],
         )
     }
