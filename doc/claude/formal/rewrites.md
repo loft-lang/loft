@@ -3219,7 +3219,11 @@ read it.  Guard
                  invariant over the loop by the hoist's write set, or read only in the
                  block's prelude, which calls no user function — is emitted twice: under
                  a run-time guard `|x| <= G` for each such field (G = 2^20) with those
-                 field reads RANGED `[-G, G]`, and as before.  Inside the guarded copy a
+                 field reads RANGED `[-G, G]`, and as before.  THE VARIABLE CLAUSE: an
+                 integer VARIABLE the block reads but never assigns and never hands out
+                 by reference — a parameter or a local a counted range's ends or a
+                 call's arguments are built from — is a guard leaf the same way, ranged
+                 `[-G, G]` in the copy (a null fails the test: its magnitude is 2^63).  Inside the guarded copy a
                  local's derived range is kept only when every assignment of it in the
                  whole function lies in the block and it never escapes by reference.  A
                  call there — or inside a ranged variant — whose every integer argument
@@ -3235,7 +3239,11 @@ read it.  Guard
 
 **In words.** The checked operators' null and overflow branches are what keep a chain of
 small grid helpers (`nb_q`, `eg_index`, `eg_dir_from`) from folding: hex_field's
-`edgeset_count` was 18× its Rust twin.  `(R-Range)` cannot range a parameter or a field by
+`edgeset_count` was 18× its Rust twin.  The variable clause covers the same chain reached
+from a window walk, `for wr in r0..r0 + hq { for wqq in q0..q0 + wq { … edge_mat(…) } }`
+(hex_shape's `chain_marks`), whose bounds are parameters rather than record fields: plain
+arithmetic in the helpers alone is −4 %, with the window's two range ends too −23 %, because
+LLVM inlines and folds the walk only once no operator on it carries the overflow report.  `(R-Range)` cannot range a parameter or a field by
 shape (@C80), so the bound comes from the caller, tested once per loop entry, and flows
 into the helpers through variants.  With the byte read of `(R-Base)` the chain is free of
 store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch

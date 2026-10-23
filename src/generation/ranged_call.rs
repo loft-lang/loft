@@ -143,11 +143,13 @@ impl super::Output<'_> {
             }
         }
         self.prelude_fields(bl, &lp, &mut fields);
+        let block_code = Value::Block(Box::new(bl.clone()));
+        let leaves = self.variable_leaves(&block_code);
         let trace = std::env::var("LOFT_TRACE_RANGED_CALL").is_ok();
-        if fields.is_empty() {
+        if fields.is_empty() && leaves.is_empty() {
             if trace {
                 eprintln!(
-                    "ranged-call: {} For block {} declines: no hoisted integer field",
+                    "ranged-call: {} For block {} declines: no hoisted integer field or invariant integer variable",
                     self.data.def(self.def_nr).name(),
                     bl.scope
                 );
@@ -158,23 +160,12 @@ impl super::Output<'_> {
         for (key, _) in &fields {
             seeds.fields.insert(*key, (-G, G));
         }
-        // The copy's own facts, then only what is sound beside the function's.
+        for v in &leaves {
+            seeds.vars.insert(*v, (-G, G));
+        }
         let vars = self.data.def(self.def_nr).variables();
         let nn = self.nn_facts();
-        let block_code = Value::Block(Box::new(bl.clone()));
-        let copy = range::range_vars(self.data, vars, &block_code, &nn, &self.char_walks, &seeds);
-        let code = self.data.def(self.def_nr).code();
-        let mut outside: HashSet<u16> = HashSet::new();
-        sets_outside(code, std::ptr::from_ref(bl), &mut outside);
-        let mut escaped: HashSet<u16> = HashSet::new();
-        super::non_sentinel::collect_escapes(self.data, code, &mut escaped);
-        let mut merged = (*self.current_ranges()).clone();
-        for (v, r) in copy.vars {
-            if !outside.contains(&v) && !escaped.contains(&v) {
-                merged.vars.entry(v).or_insert(r);
-            }
-        }
-        merged.fields.extend(seeds.fields);
+        let merged = self.guarded_facts(bl, &block_code, &seeds, &leaves);
         // Worth it only when some call in the block would take a ranged variant.
         let mut gains = false;
         block_code.walk(&mut |n| {
@@ -203,12 +194,100 @@ impl super::Output<'_> {
             }
             return None;
         }
+        if trace && !leaves.is_empty() {
+            eprintln!(
+                "ranged-call: {} For block {} guards variables {:?}",
+                self.data.def(self.def_nr).name(),
+                bl.scope,
+                leaves.iter().map(|v| vars.name(*v)).collect::<Vec<_>>()
+            );
+        }
+        Some((self.guard_test(&fields, &leaves)?, merged))
+    }
+
+    /// The facts the guarded copy of `bl` runs under: the function's own, the copy's facts for
+    /// the locals it alone assigns (never handed out by reference), the seeded fields, and
+    /// each variable leaf at the guard's bound — which the block never changes, and which is
+    /// the tighter fact where a wider one was known.
+    fn guarded_facts(
+        &mut self,
+        bl: &Block,
+        block_code: &Value,
+        seeds: &Ranges,
+        leaves: &[u16],
+    ) -> Ranges {
+        let vars = self.data.def(self.def_nr).variables();
+        let nn = self.nn_facts();
+        let copy = range::range_vars(self.data, vars, block_code, &nn, &self.char_walks, seeds);
+        let code = self.data.def(self.def_nr).code();
+        let mut outside: HashSet<u16> = HashSet::new();
+        sets_outside(code, std::ptr::from_ref(bl), &mut outside);
+        let mut escaped: HashSet<u16> = HashSet::new();
+        super::non_sentinel::collect_escapes(self.data, code, &mut escaped);
+        let mut merged = (*self.current_ranges()).clone();
+        for (v, r) in copy.vars {
+            if !outside.contains(&v) && !escaped.contains(&v) {
+                merged.vars.entry(v).or_insert(r);
+            }
+        }
+        for (key, r) in copy.elems {
+            if !outside.contains(&key.0) && !escaped.contains(&key.0) {
+                merged.elems.entry(key).or_insert(r);
+            }
+        }
+        merged.fields.extend(seeds.fields.clone());
+        for v in leaves {
+            merged.vars.insert(*v, (-G, G));
+        }
+        merged
+    }
+
+    /// The guard's text: `|x| <= G` for each hoisted field read and each variable leaf.
+    fn guard_test(&mut self, fields: &[((u16, i64), Value)], leaves: &[u16]) -> Option<String> {
         let mut test: Vec<String> = Vec::new();
-        for (_, getter) in &fields {
+        for (_, getter) in fields {
             let read = self.expr_string(getter).ok()?;
             test.push(format!("({read}).unsigned_abs() <= {G}u64"));
         }
-        Some((test.join(" && "), merged))
+        for v in leaves {
+            let read = self.expr_string(&Value::Var(*v)).ok()?;
+            test.push(format!("({read}).unsigned_abs() <= {G}u64"));
+        }
+        Some(test.join(" && "))
+    }
+
+    /// `@FR-R-RangedCall`'s variable clause — the integer variables `block` reads but never
+    /// assigns and that the function never hands out by reference, and that the facts do not
+    /// already bound within `G` — a ranged variant's parameter is seeded only to `[-L, L]`,
+    /// whose sums are too wide to call a variant with, and the guard tightens it.  Each holds
+    /// one value for the whole block, so a guard at its entry bounds it everywhere inside.  A null one fails that guard (`i64::MIN`'s magnitude is 2^63), so
+    /// its nullability costs nothing.  Hidden parameters (a return buffer, an input) are not
+    /// integers and fall out by type.
+    fn variable_leaves(&mut self, block: &Value) -> Vec<u16> {
+        let def = self.data.def(self.def_nr);
+        let vars = def.variables();
+        let mut written: HashSet<u16> = HashSet::new();
+        block.walk(&mut |n| {
+            if let Value::Set(v, _) | Value::TuplePut(v, _, _) = n {
+                written.insert(*v);
+            }
+        });
+        let mut escaped: HashSet<u16> = HashSet::new();
+        super::non_sentinel::collect_escapes(self.data, def.code(), &mut escaped);
+        let known = self.current_ranges();
+        let mut leaves: Vec<u16> = Vec::new();
+        block.walk(&mut |n| {
+            if let Value::Var(v) = n
+                && is_integer(vars.tp(*v))
+                && !written.contains(v)
+                && !escaped.contains(v)
+                && known.vars.get(v).is_none_or(|r| !within(*r, G))
+                && !leaves.contains(v)
+            {
+                leaves.push(*v);
+            }
+        });
+        leaves
     }
 
     /// The block's PRELUDE reads too — a non-literal range end is taken into a local before

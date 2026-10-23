@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A WINDOW WALK GUARDS ITS BOUNDS ONCE AND CALLS PLAIN HELPERS (`@FR-R-RangedCall`'s variable
+// clause).  `walk` covers a window whose corners and size are PARAMETERS: the block tests
+// `q0`, `r0`, `w` and `h` against 2^20 once, and inside the guarded copy the counters, the
+// tuple `step` answers (`@FR-R-Range`'s tuple elements: each element of every exit, in
+// context) and so `score`'s arguments are bounded, so `score` runs as its ranged variant with
+// plain operators.  A window past the bound takes the checked copy, which is the only place
+// an overflow can happen and must answer the checked arithmetic's null.  `walk_put` writes an
+// element of the tuple from a vector element (`t.0 = vals[0] ?? 0`), which no guard tests, so
+// that element carries no fact and `score`'s arithmetic stays checked there.
+// `tests/ranged_call_vars.rs` pins what is emitted; these cells pin values.
+//
+// Expected values, computed by an independent model of null-on-overflow arithmetic:
+//   w1 window (1, 1) 4 × 3                       219
+//   w2 q0 = 2^20, exactly on the bound (guarded)  95
+//   w3 q0 = 2^20 + 1, one past it (checked copy)  106
+//   w4 q0 = i64::MAX / 3: the checked copy overflows inside `score`        null
+//   w5 walk_put with vals [9]                      38
+//   w6 walk_put with vals [i64::MAX / 7 + 1]: `qb * 7` overflows          null
+// Both backends; the same under LOFT_NO_RANGED_CALLS=1 and LOFT_HOIST_VERIFY=1.
+//
+// @falsified-at: hand-measured (2026-10-23) — with the element fact kept for a tuple local that
+//   is written element by element (the escape test in `range::seed_elems` and in the guarded
+//   copy's merge both removed), `walk_put`'s guarded copy calls `n_score__rg` on the
+//   overwritten element and w6 answers -27 on `--native` instead of null; the interpreter
+//   passes.  Each refusal alone was inert: the other one held.
+
+fn step(q: integer, r: integer, d: integer) -> (integer, integer) {
+  if d == 0 { return (q + 1, r); }
+  if d == 1 { return (q, r - 1); }
+  (q - 1, r + 1)
+}
+
+fn score(qa: integer, ra: integer, qb: integer, rb: integer) -> integer {
+  (qa * 3 + ra * 5 + qb * 7 + rb * 11) % 13
+}
+
+fn walk(q0: integer, r0: integer, w: integer, h: integer) -> integer {
+  s = 0;
+  for r in r0..r0 + h {
+    for q in q0..q0 + w {
+      for d in 0..3 {
+        (nq, nr) = step(q, r, d);
+        s += score(q, r, nq, nr);
+      }
+    }
+  }
+  s
+}
+
+fn walk_put(q0: integer, r0: integer, w: integer, h: integer, vals: vector<integer>) -> integer {
+  s = 0;
+  for r in r0..r0 + h {
+    for q in q0..q0 + w {
+      t = step(q, r, 0);
+      t.0 = vals[0] ?? 0;
+      s += score(q, r, t.0, t.1);
+    }
+  }
+  s
+}
+
+/// The value back through a vector element: no range proof reaches it, so `main`'s calls take
+/// the plain `walk` and `walk_put` whose guarded copies these cells are about, not their
+/// ranged variants (a literal argument would route to `walk__rg`).
+fn opaque(v: integer) -> integer {
+  xs: vector<integer> = [v];
+  xs[0] ?? 0
+}
+
+fn main() {
+  one = opaque(1);
+  assert(walk(one, opaque(1), opaque(4), opaque(3)) == 219, "w1");
+  assert(walk(opaque(1048576), opaque(5), opaque(3), opaque(2)) == 95, "w2");
+  assert(walk(opaque(1048577), opaque(5), opaque(3), opaque(2)) == 106, "w3");
+  w4 = walk(opaque(3074457345618258602), one, opaque(2), one);
+  assert(w4 == null, "w4 {w4}");
+  w5 = walk_put(one, one, opaque(3), opaque(2), [9]);
+  assert(w5 == 38, "w5 {w5}");
+  w6 = walk_put(one, one, opaque(3), opaque(2), [1317624576693539402]);
+  assert(w6 == null, "w6 {w6}");
+  println("ok");
+}
