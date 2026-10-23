@@ -20,10 +20,10 @@ time share; only `par` is priced here (`bench/portal/hand_price.sh`).  A routine
 |---|---|---|---|---|---|
 | keyed `grouped_fill_find` | 3.76× | −34 % | the group APPEND's generic record path | direct group append; fast find on a borrowing table (≈ −35 %) | no |
 | text2d `draw_quads` | 3.64× | −31 % | per-pixel bounds of the inlined `get_pixel`/`set_pixel` | split the `px` range once per row (≈ −45 %) | no |
-| hex_terrain `terrain_relief_pass` | 3.60× | −31 % | `hex_neighbor` not inlined; checked float reads; null-int | inline the early-return leaf; reads under the proven guard (≈ −25 %); null-int for the rest | null-int |
+| hex_terrain `terrain_relief_pass` | 3.60× | −31 % | `hex_neighbor` not inlined; checked float reads; null-int | inline the early-return leaf; reads under the proven guard (≈ −25 %); range proofs for the rest | no |
 | hex_recover `forms_upto` | 3.57× | −30 % | runtime: store checks, per-iteration vector literals, clears | apart literals, store checks per record (≈ −30 %, three arcs) | lean rlib |
 | graphics `draw_bezier` | 3.55× | −30 % | the two subdivision stacks: `v = v[0..k]` as a runtime call, checked pushes and reads | the stacks held apart (`(R-Apart)`, priced 2.3× in `over-9x.md`); or the prefix truncate as a length store (≈ −12 %) | no |
-| hex_shape `wall_chain_walk` | 3.55× | −30 % | the emitted lines themselves (3.07× the twin) | null-int, which lets LLVM fold `eg_dir_from` as it does the twin's (≈ −40 %) | null-int |
+| hex_shape `wall_chain_walk` | 3.55× | −30 % | the emitted lines themselves (3.07× the twin) | range proofs over the integer arithmetic, which let LLVM fold `eg_dir_from` as it does the twin's (≈ −40 %) | no |
 | server `header` | 3.54× | −29 % | the walked header text copied per element | borrow `h` where the body writes a store only on its exit path (≈ −30 %) | no |
 | par `par` | 3.52× | −29 % | the per-item kernel, not the threads | the 50-round loop unrolled despite its NaN test (PRICED −39 % → 2.15×) | no |
 
@@ -31,11 +31,14 @@ Just under the cut, and the next to cross it on a bad day: `graphics/fill_polygo
 `slope_path_with_undo` 3.46×, `arguments/parse` 3.46×, `random/rand_indices` 3.43×,
 `cbor/encode_bytes` 3.40×.
 
-**Five of the eight need no owner decision** (`grouped_fill_find`, `draw_quads`, `draw_bezier`,
-`header`, `par`).
-**Two reach 2.5× only with the null-integer arithmetic** (`wall_chain_walk`,
-`terrain_relief_pass`), the family the owner set aside "for later".  With a 3.5 cut, each of them
-gets below 3.5 on its non-null-int lever alone, and 2.5 needs the family.
+**Only `forms_upto`'s deepest store-check cut needs an owner decision.**  Two rows reach 2.5×
+only by removing null-integer checks (`wall_chain_walk`, `terrain_relief_pass`).  That is PROOF
+work, not a semantic change: C120 and C129 already settle that the checks are the semantics and
+are dropped only where a fact before the operation shows they cannot fire (a counted range, a
+declared `integer(lo, hi)`, a mask, a tested guard), so every value, null and overflow report
+stays as it is.  The rewrites that do it are `(R-Range)`, `(R-GuardedChain)` and
+`(R-BoundedNest)`; the work is widening what they can prove.  Dropping the checks outright
+(wrapping arithmetic) would change what users see and is declined.
 
 ## Per routine
 
@@ -76,7 +79,7 @@ in range.  Every integer step pays the null-int checks.
 
 Levers: inline a leaf whose body is a chain of guarded returns (≈ −12 %); read through the held
 header without the per-element test where a guard dominates the read (≈ −13 %).  This gives
-≈ 2.7×, and the rest is null-int.
+≈ 2.7×, and the rest is range proofs over its integer arithmetic.
 
 ### hex_recover `forms_upto` — 3.57×
 
@@ -113,10 +116,10 @@ This is the one routine whose emitted lines are themselves the gap: 87.4 M own i
 null-int checks (≈ 26 M directly: `unlikely`, `overflowing_add/sub`, `op_add_long`, `op_min_long`),
 and they also stop that fold.
 
-Lever: the null-integer family, nothing smaller (≈ −40 % → ≈ 2.1×).  A narrower form that stays
-inside today's semantics: integers proven non-null (loop indices, literals, results of a compare
-already tested) emitted as plain `i64` arithmetic.  That would reach `eg_dir_from` (`i` from
-`0..6`, `qa`/`ra` parameters still nullable), so it is partial.
+Lever: range proofs over the integer arithmetic (≈ −40 % → ≈ 2.1× if they reach all of it).
+Inside one function they reach the direction index (`i` from `0..6`) and literals; the
+coordinates `qa`/`ra` are parameters a caller may pass null, so closing those needs a fact about
+the callers' arguments (across calls), which no rule proves yet.
 
 ### server `header` — 3.54×
 
@@ -157,8 +160,8 @@ across rows).
    `draw_bezier`'s apart stacks.  Each is one rule clause with its guard.
 2. `par`: price the emitter-side unroll before building anything.
 3. `forms_upto`: the apart literals, then the per-record store checks.
-4. **Null-int** (`wall_chain_walk`, then the remainder of `terrain_relief_pass`): first the non-null integer inference inside today's semantics, then the
-   owner's decision on the family.
+4. **Range proofs** (`wall_chain_walk`, then the remainder of `terrain_relief_pass`): first
+   what one function can prove (counted ranges, guards, literals), then facts across calls.
 
 Each lever is hand-priced before it is built (`feedback: hand-price and falsify`), and this
 table is re-measured with `make perf-portal` after each.
