@@ -510,6 +510,13 @@ struct Uses {
     ineligible: HashSet<u16>,
     /// Number of `Set(v, _)` for each var (a reassignment is > 1).
     def_count: HashMap<u16, u32>,
+    /// The vars a `Set` hands a VALUE — any right-hand side but a null.  A record built in
+    /// place (`OpDatabase(v)` + field writes) has none; one that also takes a value got its
+    /// store from that value on some path (loft#2148).
+    value_defs: HashSet<u16>,
+    /// The null-producing calls a `Set` may name — the reference null sentinel and the null
+    /// conversion — which hand the var no value.
+    null_ops: [u32; 2],
     /// Vars allocated a fresh store by `OpDatabase(vdb, …)`.
     database_vars: HashSet<u16>,
     /// For `Set(v, OpGetField(Var(vdb), …))`: the backing buffer `vdb`.
@@ -698,6 +705,14 @@ impl Uses {
             Value::Drop(_) => {}
             Value::Set(v, rhs) => {
                 *self.def_count.entry(*v).or_insert(0) += 1;
+                let null_rhs = match rhs.unspan() {
+                    Value::Null => true,
+                    Value::Call(d, a) => a.is_empty() && self.null_ops.contains(d),
+                    _ => false,
+                };
+                if !null_rhs {
+                    self.value_defs.insert(*v);
+                }
                 // @PLN90 item 3 — a `Set` writes `v` (its def is before any copy of it; a
                 // reassign after a copy is the mutation that forces the copy to be independent).
                 self.mark_write(Some(*v), pos);
@@ -867,6 +882,11 @@ fn collect_uses(code: &Value, data: &Data, survival_on: bool) -> Uses {
         write_first_arg: std::sync::Arc::clone(&ops.write_first_arg),
         ineligible: HashSet::default(),
         def_count: HashMap::default(),
+        value_defs: HashSet::default(),
+        null_ops: [
+            data.def_nr("OpNullRefSentinel"),
+            data.def_nr("OpConvRefFromNull"),
+        ],
         database_vars: HashSet::default(),
         def_vdb: HashMap::default(),
         append_src: HashMap::default(),
@@ -1682,8 +1702,20 @@ fn move_elidable_source(
     if survives || loop_surv {
         return None;
     }
-    // Owns a transferable store.
-    if u.def_vdb.contains_key(&s) || u.database_vars.contains(&s) {
+    // Owns a transferable store.  A record built in place transfers only when that build is
+    // the store the copy reads: a var that is ALSO handed a value (`x = h.t` then `x = mk()`,
+    // whose store is a view or a callee's buffer) has no build to retarget there, and the
+    // rewrite would drop the copy with nothing in its place (loft#2148).
+    if u.database_vars.contains(&s) && u.value_defs.contains(&s) {
+        return None;
+    }
+    // The vector-copy idiom's handle (`v = OpGetField(__vdb_N, …)`) names a compiler buffer the
+    // copy owns.  The same shape over a USER record — `x = h.t`, a view of a field (`(B-View)`)
+    // — owns nothing: moving it dropped the copy and stored nothing (loft#2148).
+    if let Some(&vdb) = u.def_vdb.get(&s) {
+        return function.is_compiler_generated(vdb).then_some(s);
+    }
+    if u.database_vars.contains(&s) {
         Some(s)
     } else {
         None
