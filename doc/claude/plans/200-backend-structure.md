@@ -156,6 +156,11 @@ What a clean build does not catch, and B1 met each:
   connected component, so every commit is closed over the commits before it.
 - **An item carries what sits above it:** a plain `//` comment between its doc and the item,
   and a multi-line `#[expect(…)]`.  Left behind, they attach to whatever follows.
+- **An item ends where its syntax ends.**  A `const` or `static` ends at its first `;`: a
+  string constant continued over two lines does not end at the next column-0 `}`, and
+  reading it that way takes the items after it along.  `unsafe extern "C" fn` is an item too.
+- **A `cfg`-gated item needs its gate wherever it is re-exported.**  Check the wasm targets
+  and `--all-features`, where the gated paths are compiled.
 - **Visibility widens inside the item too:** the private methods of a moved `impl` and the
   private fields of a moved struct.
 - **`cargo doc --no-deps --lib`** names the intra-doc links that no longer resolve.  An `opt`
