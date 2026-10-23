@@ -296,6 +296,7 @@ pub mod ffi_deliver;
 pub mod fix_apply;
 pub mod fxhash;
 pub mod hash;
+pub mod host_abi;
 pub mod ir_node;
 pub mod ir_read;
 pub mod ir_schema;

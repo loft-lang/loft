@@ -1006,7 +1006,7 @@ mod impl_symbol_tests {
 #[cfg(feature = "native-extensions")]
 fn init_library_cdylibs(state: &crate::state::State, data: &crate::data::Data) {
     type InitFn =
-        unsafe extern "C" fn(*const crate::native_lib::HostTable, *const std::ffi::c_void) -> u32;
+        unsafe extern "C" fn(*const crate::host_abi::HostTable, *const std::ffi::c_void) -> u32;
     let ids = crate::lib_ids::HostIds::new(data, &state.database);
     let mut refused = Vec::new();
     for (lib, init) in crate::c_libs::dlsym_in_each("loft_shared_init") {
@@ -1231,8 +1231,8 @@ fn shared_store_dispatch_raw(
     stores_raw: *mut crate::database::Stores,
     stack: &mut crate::keys::DbRef,
 ) {
+    use crate::host_abi::LibArg;
     use crate::keys::DbRef;
-    use crate::native_lib::LibArg;
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
 
     crate::state::SHARED_DISPATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

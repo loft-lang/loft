@@ -252,7 +252,7 @@ impl<'a> HostIds<'a> {
     }
 }
 
-/// [`HostTable::type_id`](crate::native_lib::HostTable::type_id): `ctx` is the [`HostIds`]
+/// [`HostTable::type_id`](crate::host_abi::HostTable::type_id): `ctx` is the [`HostIds`]
 /// the host passed to the artifact's `loft_shared_init`.
 ///
 /// # Safety
@@ -267,7 +267,7 @@ pub unsafe extern "C" fn host_type_id(
     ids.type_id(key)
 }
 
-/// [`HostTable::fn_id`](crate::native_lib::HostTable::fn_id), as [`host_type_id`].
+/// [`HostTable::fn_id`](crate::host_abi::HostTable::fn_id), as [`host_type_id`].
 ///
 /// # Safety
 /// As [`host_type_id`].

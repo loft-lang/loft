@@ -8551,7 +8551,7 @@ impl State {
     /// (`generation::fnref::upcall_carries`): scalar, text and reference parameters, and a
     /// scalar or void return, so the callee has no hidden buffer.
     ///
-    /// [`LibArg`]: crate::native_lib::LibArg
+    /// [`LibArg`]: crate::host_abi::LibArg
     /// `n` empty `String` slots above every live frame, for a call back's text result: below
     /// the frame `reenter_ret` builds, each named by the `DbRef` `OpCreateStack` makes for a
     /// local, which is the form a callee's hidden `&text` work buffer takes.
@@ -8579,8 +8579,8 @@ impl State {
         &mut self,
         d_nr: u32,
         closure: DbRef,
-        args: &[crate::native_lib::LibArg],
-    ) -> crate::native_lib::LibArg {
+        args: &[crate::host_abi::LibArg],
+    ) -> crate::host_abi::LibArg {
         use crate::data::Type;
         let handle = self.data_ptr.clone();
         let data = handle
@@ -8643,7 +8643,7 @@ impl State {
                 }
             }
         };
-        let mut ret = crate::native_lib::LibArg::ZERO;
+        let mut ret = crate::host_abi::LibArg::ZERO;
         match def.returned().base() {
             Type::Void | Type::Null => self.reenter(d_nr, pos, push),
             Type::Text(_) => {

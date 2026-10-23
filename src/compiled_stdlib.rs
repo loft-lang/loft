@@ -152,12 +152,8 @@ pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> S
 }
 
 /// A shared-store bridge's signature, as `native_lib::shared_bridge_wrapper` emits it.
-pub(crate) type Bridge = extern "C" fn(
-    *mut Stores,
-    *const crate::native_lib::LibArg,
-    usize,
-    *mut crate::native_lib::LibArg,
-);
+pub(crate) type Bridge =
+    extern "C" fn(*mut Stores, *const crate::host_abi::LibArg, usize, *mut crate::host_abi::LibArg);
 
 /// Is the compiled standard library switched off (`LOFT_NO_COMPILED_STDLIB=1`)?
 fn disabled() -> bool {
