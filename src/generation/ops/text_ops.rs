@@ -110,12 +110,18 @@ impl OpEmitter for TextDispatchEmitter {
                 // OpFormatDatabase takes a &mut String as the output buffer.
                 if let [work_val, record_val, tp_val, fmt_val] = args {
                     write!(ctx.w, "OpFormatDatabase(cell,&mut ")?;
-                    // work_val is Var(nr) — strip the leading & that emit() adds.
+                    // work_val is Var(nr) — strip the leading & that emit() adds.  A `&text`
+                    // link or parameter is a raw `*mut String`, re-borrowed inside the `unsafe`
+                    // opened above.
                     if let Value::Var(nr) = work_val {
-                        let nm = super::super::sanitize(
-                            ctx.output.data.def(ctx.output.def_nr).variables().name(*nr),
-                        );
-                        write!(ctx.w, "var_{nm}")?;
+                        let vars = ctx.output.data.def(ctx.output.def_nr).variables();
+                        let nm = super::super::sanitize(vars.name(*nr));
+                        let deref = if matches!(vars.tp(*nr).base(), Type::RefVar(_)) {
+                            "*"
+                        } else {
+                            ""
+                        };
+                        write!(ctx.w, "{deref}var_{nm}")?;
                     } else {
                         ctx.emit(work_val)?;
                     }

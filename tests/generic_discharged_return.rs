@@ -109,7 +109,7 @@ fn a_discharged_generic_return_delivers_through_the_caller_buffer() {
         "the interpreter monomorph must take the hidden `&text` caller buffer, got:\n{sigs:#?}"
     );
     assert!(
-        sigs.iter().any(|s| s.contains("var____acc_1: &mut String")),
+        sigs.iter().any(|s| s.contains("var____acc_1: *mut String")),
         "the native monomorph must take the same buffer — a fix on one backend only is not \
          a fix, got:\n{sigs:#?}"
     );

@@ -199,7 +199,7 @@ fn a_discharged_element_read_borrows_its_slice() {
         !at.contains("var___ncc_1")
             && count(at, "(loft::codegen_runtime::split_table_get(&__st_") == 1
             && count(at, ".to_string()") == 2
-            && at.contains("var____acc_1.clear();")
+            && at.contains("(*var____acc_1).clear()")
             && !at.contains(".clone()"),
         "at: the slice is read straight into the local, one copy:\n{at}"
     );

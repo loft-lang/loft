@@ -2309,14 +2309,10 @@ impl Output<'_> {
                 // Without the peel it fell through to `&var.to_string()` (E0308: `&String`).
                 let text_local_clone =
                     needs_to_string && matches!(to.unspan(), Value::Var(v) if self.text_owned(*v));
-                // @P283 — source is a `RefVar(Text)` argument (`&mut String`).
-                // `output_code_inner` for `Value::Var` in this case emits
-                // `&*var_X` (emit.rs:141); appending `.to_string()` then parses
-                // as `&*(var_X.to_string())` per Rust method-call precedence,
-                // which evaluates to `&str` and breaks the `String`-typed
-                // assignment with E0308.  Emit `var_X.to_string()` directly —
-                // auto-deref through `&mut String` produces a fresh owned
-                // `String` of the correct type.
+                // The source is a `RefVar(Text)` argument, a raw `*mut String`: the owned
+                // copy is the `String` behind it, cloned.  The ordinary read would hand
+                // `.to_string()` a borrow, and the precedence of `&*(…).to_string()` would
+                // leave a `&str` in a `String` slot (E0308).
                 let refvar_text_clone = needs_to_string
                     && matches!(to.unspan(), Value::Var(v) if {
                         let vars = self.data.def(self.def_nr).variables();
@@ -2448,7 +2444,7 @@ impl Output<'_> {
                 } else if refvar_text_clone {
                     if let Value::Var(v) = to.unspan() {
                         let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.to_string()")?;
+                        write!(w, "unsafe {{ (*var_{src_name}).clone() }}")?;
                     }
                 } else if tuple_text_elem_clone {
                     // P228: read through the same unspan as the detection above.

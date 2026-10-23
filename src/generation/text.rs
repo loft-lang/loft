@@ -42,7 +42,16 @@ impl Output<'_> {
             return write!(w, "()");
         }
         if let [Value::Var(nr)] = vals {
-            let v_nr = self.var_place(*nr);
+            // A `&vector` parameter is a raw `*mut DbRef`: the vector is the value behind it,
+            // as the variable's ordinary read spells it.
+            let v_nr = if matches!(
+                self.data.def(self.def_nr).variables().tp(*nr).base(),
+                crate::data::Type::RefVar(_)
+            ) {
+                format!("({})", self.generate_expr_buf(&Value::Var(*nr))?)
+            } else {
+                self.var_place(*nr)
+            };
             // `@FR-R-RefillBuffer` — the entry clear of a refilling buffer resets the length
             // and keeps the record: the refill keeps a live buffer's store, and the group
             // refills the same vector record.  Released here, every call re-claimed it.
@@ -255,7 +264,7 @@ impl Output<'_> {
             // A `&text` parameter or local link holds a raw `*mut String`, which neither a
             // method call nor an assignment dereferences on its own (loft#1371).  Its `unsafe`
             // block is opened by the op dispatch.
-            let s_nr = if matches!(variables.tp(*nr), Type::RefVar(_)) {
+            let s_nr = if matches!(variables.tp(*nr).base(), Type::RefVar(_)) {
                 format!("(*{})", self.var_place(*nr))
             } else {
                 self.var_place(*nr)
@@ -290,7 +299,7 @@ impl Output<'_> {
             // A `&text` parameter or link is a raw `*mut String`, dereferenced inside the
             // `unsafe` the op dispatch opens.
             let s_nr = if matches!(
-                self.data.def(self.def_nr).variables().tp(*nr),
+                self.data.def(self.def_nr).variables().tp(*nr).base(),
                 Type::RefVar(_)
             ) {
                 format!("(*{})", self.var_place(*nr))

@@ -685,7 +685,7 @@ impl Output<'_> {
         let pass_raw = raw_param
             || (*def_fn.code() != Value::Null
                 && idx < def_fn.attributes().len()
-                && matches!(def_fn.attributes()[idx].typedef, Type::RefVar(_)));
+                && matches!(def_fn.attributes()[idx].typedef.base(), Type::RefVar(_)));
         if let Some(vr) = self.create_stack_var(v) {
             // The variable's PLACE: a generator's local is its struct field (loft#1899).  Its
             // address, never a `&mut`: two `&` parameters may name the one local.
