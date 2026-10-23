@@ -342,7 +342,27 @@ read answer exactly what a read off the null record answers, with no test of its
 a REPORTED null, which this tuple does not spell — or the interpreter's IR value record
 (@PLN180) takes the nullable road and needs a presence spelling of its own.  Decided 2026-10-09
 (loft#1952) — [record](DESIGN_DECISIONS-history.md#c144--a-nullable-value-record-carries-a-presence-word-an-absent-one-holds-its-fields-nulls).
-**Holds at:** `@C144` — `hoist::ValueTuple::absent` / `presence` and `hoist::NULLABLE_LAYOUT`
-(`src/generation/hoist.rs`), `ref_ops::PresenceEmitter`, `formal/rewrites.md` `(R-ValueRecord)`
+**Holds at:** `@C144` — `ValueTuple::absent` / `presence` and `NULLABLE_LAYOUT`
+(`src/opt/value_records/layout.rs`), `ref_ops::PresenceEmitter`, `formal/rewrites.md` `(R-ValueRecord)`
 nullable clause, guard `tests/scripts/a-nullable-record-returns-its-fields-in-registers.loft`.
 **Catalogue:** `formal/types.md` `(N-Road)` · NATIVE_SWITCHES.md `LOFT_NO_NULLABLE_VALUE_RECORD`.
+
+## C153 — What the interpreter can use lives in `opt`, a compiled target's decisions in `lower`; a backend only spells
+
+**Decision.** Code that analyses or rewrites the IR is placed by who can use it.  An analysis or
+a rewrite the interpreter can use, and every analysis more than one backend asks, lives in `opt`,
+the layer below the interpreter and every compiled target.  A decision only a compiled target
+makes (which records travel as values, which loops hoist a vector header, which walks stream)
+lives in `lower`, as data.  A backend (`rust`, later `c`) holds only how those decisions are
+spelled.  The interpreter and the compiled targets are siblings: neither names the other.
+**Why.** A second code generator (ANSI C, @PLN91 strand 5) must share the decisions without
+reaching into the Rust writer, and every optimisation the interpreter can use must still reach
+it.  An analysis kept inside one writer is either copied by the next writer or pulls the next
+writer into the first.
+**Revisit when.** A compiled target needs an analysis whose answer differs per target in a way
+data cannot carry; or the split costs measured speed at a boundary that an opt-in `#inline`
+cannot win back.  Decided 2026-10-23 (@PLN200) — [record](DESIGN_DECISIONS-history.md#c153--what-the-interpreter-can-use-lives-in-opt-a-compiled-targets-decisions-in-lower-a-backend-only-spells).
+**Holds at:** `@C153` — `scripts/crate_layers.py` (`LAYERS`, `SIBLINGS`, `BUDGET`),
+`src/opt/mod.rs`, [CODEGEN_METHOD.md § Where an analysis lives](CODEGEN_METHOD.md#where-an-analysis-lives);
+guard `tests/extraction_hygiene.rs` `library_modules_keep_their_layers`.
+**Catalogue:** @I64 (the bytecode compiler, whose analyses `opt` holds).

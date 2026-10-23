@@ -5015,3 +5015,20 @@ had updated it (its sidecar rewritten to `placement=3`), were refused by `main` 
 *"the store's a hash was written by a build that lays it out differently (placement 3), which
 this build cannot read"*.
 
+## C153 — What the interpreter can use lives in `opt`, a compiled target's decisions in `lower`; a backend only spells
+
+Asked 2026-10-23 while planning a minimal interpreter (@PLN200).  The owner set the aim: *"this is
+far more about internal modularity than it is about really wanting a minimal interpreter.  I want
+the interpreter to be a clearly defined part of loft.  Soon I want a second codegen target
+(ansi-c) and for that I need a well structured base to work off"*, with *"I still want
+optimizations possible for the interpreter"*.  Measured then: the IR passes `ctor_literal`,
+`leaf_inline`, `self_replace`, `value_record` and `zero_count` sat in the generator's layer
+because they asked analyses that lived in `src/generation/hoist.rs`, and the interpreter sat
+ABOVE the generator.  Considered: keep the analyses in the Rust writer and let a C writer call
+into it (the C writer then depends on Rust spelling), or copy them per writer (two answers to
+one question).  Decided: place by user — `opt` for what the interpreter can use or several
+backends ask, `lower` for a compiled target's decisions, a backend for spelling — with the
+interpreter and the compiled targets as siblings.  Cross-unit inlining stays opt-in
+(`#inline`), so the layer line holds by default.  The first phase (B1) moved the shared analyses
+into `src/opt/` one item set at a time, each move checked byte-identical over every program's
+IR and bytecode; it brought the references from `opt` to the Rust writer to zero.

@@ -76,9 +76,9 @@ C116	code	src/parser/vectors.rs::fn refuse_capturing_closure_in_collection	ok	-	
 C117	code	src/parser/definitions.rs::fn refuse_mixed_nullability_group	ok	-	
 C118	code	src/parser/expressions.rs; src/scopes/args.rs	ok	-	
 C119	code	src/parser/definitions.rs::?` is not allowed — a tuple is its members' bytes	ok	-	
-C120	code	src/generation/non_sentinel.rs::NOT closed, deliberately	ok	-	tests/release_pass_probe.rs names it only in a doc comment; 1534-by-ref-arg-escapes-the-proof.loft exercises it
+C120	code	src/opt/non_sentinel.rs::NOT closed, deliberately	ok	-	tests/release_pass_probe.rs names it only in a doc comment; 1534-by-ref-arg-escapes-the-proof.loft exercises it
 C121	code	src/use_analysis.rs::fn raise_copy_refusals; src/lease.rs::fn written_verdict	ok	-	entry worded as (H-Copy-Refuse) / (H-Spent) state it: an owned value moves, a copy of what the function does not own is refused
-C122	code	src/generation/hoist.rs::(R-Escape)	ok	-	
+C122	code	src/opt/value_records/mod.rs::(R-Escape)	ok	-	
 C123	code	src/data.rs::let shadowed_free; src/parser/definitions.rs::both-receiver-deprecated	ok	-	shares its refusal with C95
 C124	code	src/parser/hints.rs	ok	-	
 C125	code	src/data.rs::every heap value is one `DbRef` on the stack; src/rust_spelling.rs::every heap value is one `DbRef` in native code	ok	-	
@@ -100,7 +100,7 @@ C140	code	src/api_surface.rs; src/parser/definitions.rs	ok	-
 C141	code	src/generation/decode_view.rs::@FR-R-DecodeView	ok	-	
 C142	code	src/parser/objects.rs::formatting never traps: a fault in the hole yields; src/parser/collections.rs::a hole whose value is null renders `null`	ok	-	
 C143	code	src/database/format.rs::a record renders EVERY field it declares	ok	-	
-C144	code	src/generation/hoist.rs::NULLABLE_LAYOUT	ok	-	
+C144	code	src/opt/value_records/layout.rs::NULLABLE_LAYOUT	ok	-	
 C145	code	src/database/types.rs::pub fn is_linked(&self; src/store.rs::fn entomb(&mut self	ok	-	
 C146	code	src/hash.rs::pub fn home_bucket(digest: u64, count: u32); src/hash.rs::fn room_for_buckets(elms: u64, sb: u32)	ok	-	
 C147	code	src/btree.rs; src/placement.rs::the B+tree in `crate::btree`	ok	-	
@@ -109,3 +109,4 @@ C149	code	src/limits.rs::pub const LIMIT: u32 = 300	ok	-
 C150	code	src/generation/mod.rs::fn hash_reserve(&mut self	ok	-	
 C151	code	src/hash.rs::pub fn records_by_slot	ok	-	
 C152	code	src/hash.rs::pub fn hash_inline	ok	-	the layouts coexist and both backends read and write them (store_persist_loft every_hash_layout_lives_beside_the_others_in_one_store); placement::HASH 3 reads 2 (layout_golden an_older_hash_token_this_build_reads_hands_the_store_over_raw)
+C153	code	scripts/crate_layers.py::SIBLINGS: list[tuple[str, str]]	ok	-	crate_layers check holds opt -> rust/lower and interp <-> rust/lower at their budgets (extraction_hygiene library_modules_keep_their_layers, with the sibling-rule selftest)

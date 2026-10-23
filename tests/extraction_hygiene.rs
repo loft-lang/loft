@@ -729,7 +729,9 @@ fn native_libraries_follow_clean_binding_pattern() {
 /// UP held to a budget that may only fall — and must be lowered the moment it does, so the
 /// budget is always the tree's count.  The same holds for the RUNTIME set (R1): the modules a
 /// compiled program links, whose references out of the set are counted against their own
-/// ratchet on the way to a minimised `loft-runtime` crate.  The same command a person runs, so the gate and the
+/// ratchet on the way to a minimised `loft-runtime` crate.  It keeps `@C153`: `opt` names no
+/// compiled target, and the interpreter and the compiled targets never name each other (the
+/// `selftest` proves the sibling rule can fail).  The same command a person runs, so the gate and the
 /// tool cannot drift; skipped (not failed) where `python3` is unavailable.
 #[test]
 fn library_modules_keep_their_layers() {

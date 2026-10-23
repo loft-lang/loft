@@ -163,6 +163,31 @@ opt → rust 8, interp → rust 22, rust → interp 25 as the ratchet B1 and B2 
 
 Smallest closure first.
 
+**Done (2026-10-23):** `src/opt/` holds `attrs`, `char_walk`, `iteration`, `range`,
+`non_sentinel`, `loop_records`, `writes`, `body_writes`, `text_borrow`, `names` and
+`value_records/` (`layout`, `sites`, `leaves`, `mod`), about 10,000 lines in all; `hoist.rs`
+fell from 19,500 lines to 11,500.  Every step was checked IDENTICAL 2830/2830 by
+`scripts/introspect_diff.sh`, so the `make interp-gap` report at B1.6 and B1.11 could not
+move and was not rerun.  opt → rust is 0, and interp → rust fell from 22 to 14: B1.1–B1.6
+removed five crossings, and `compiled_stdlib` and `extensions` asking `opt::names`
+removed three more.  Where the code differs from the
+table:
+
+- B1.2 moved `projection_container_var` to `use_analysis` (front), where its one
+  question already lived.
+- B1.8's writer closure was 46 items, not the table's list: `view_field` and `sub_record`
+  belong to the body write set.
+- B1.10 also took `rust_fn_ident` and the call collectors.  The identifier is the contract
+  between the library writer and the symbol loader, so B2.1's key items can ask it from
+  `interp`.
+- B1.11 was cut leaves-first by the call graph, not by the line ranges.  Its first cut,
+  `body_writes`, sits beside `writes` rather than under `value_records/`, because the scalar
+  hoist asks it too.
+- B1.13 is @C153.  It is cited by `crate_layers.py`, `src/opt/mod.rs`,
+  CODEGEN_METHOD.md § Where an analysis lives, and the guard
+  `extraction_hygiene::library_modules_keep_their_layers`.  No `src/lower/` exists yet; B3
+  cites it there.
+
 | step | change | check |
 |---|---|---|
 | B1.1 | `state/codegen.rs:4989` calls `crate::text_calls::refvar_text_stack_variant` directly (as `parser/objects.rs:3675` already does) | protocol |

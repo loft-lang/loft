@@ -129,3 +129,4 @@ a guard that does not exercise it — is its line in
 - [C133](DESIGN_DECISIONS_PLATFORM.md#c133--a-development-build-uses-the-startup-cache-loft_no_cache1-turns-it-off) — A development build uses the startup cache; `LOFT_NO_CACHE=1` turns it off
 - [C138](DESIGN_DECISIONS_PLATFORM.md#c138--every-scalar-in-a-store-sits-on-its-natural-boundary-the-bytecode-stays-byte-packed) — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
 - [C144](DESIGN_DECISIONS_PLATFORM.md#c144--a-nullable-value-record-carries-a-presence-word-an-absent-one-holds-its-fields-nulls) — A nullable value record carries a presence word; an absent one holds its fields' nulls
+- [C153](DESIGN_DECISIONS_PLATFORM.md#c153--what-the-interpreter-can-use-lives-in-opt-a-compiled-targets-decisions-in-lower-a-backend-only-spells) — What the interpreter can use lives in `opt`, a compiled target's decisions in `lower`; a backend only spells

@@ -433,6 +433,21 @@ at each site (the anti-pattern this doc replaces); the fix is to carry it on the
 type. The same shape recurs for nullability, vector/keyed layout, and capture
 ownership — each is a type fact that should drive codegen mechanically.
 
+## Where an analysis lives
+
+`@C153`: code that analyses or rewrites the IR is placed by who can use it.
+
+| it is | it lives in |
+|---|---|
+| an analysis or a rewrite the interpreter can use, or one several backends ask | `opt` (`src/opt/`, and the IR passes beside it) |
+| a decision only a compiled target makes (value records, header hoists, streamed walks) | `lower`, as data |
+| how a decision is written in the target language | the backend (`src/generation/` for Rust) |
+
+The interpreter and the compiled targets are siblings: neither names the other.
+`python3 scripts/crate_layers.py check` holds the layering, and its budget of references that
+still cross may only fall.  A new analysis written inside the Rust writer is the wrong home even
+when only the Rust writer asks it today, if the interpreter could use it.
+
 ---
 
 ## See also

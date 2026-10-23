@@ -45,7 +45,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 
-# The layers, bottom up.  A module may reference its own layer and any layer below, except a
+# The layers, bottom up (@C153: placed by who can use the code).  A module may reference its own
+# layer and any layer below, except a
 # layer SIBLINGS names beside it.  core: the IR types, keys, stores, database, and the runtime
 # compiled programs call (@PLN191's RUNTIME set); front: lexer-to-IR; opt: what every backend
 # asks and the IR-phase rewrites; interp: the bytecode compiler and the interpreter; lower: a
