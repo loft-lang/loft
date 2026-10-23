@@ -753,4 +753,17 @@ fn library_modules_keep_their_layers() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );
+    // The rule itself, on a made-up layering: a sibling pair forbidden in both directions
+    // (@PLN200), so the check above cannot pass by no longer asking.
+    let selftest = loft::platform::process::harness_command("python3")
+        .current_dir(workspace_root())
+        .arg("scripts/crate_layers.py")
+        .arg("selftest")
+        .output()
+        .expect("python3 ran above");
+    assert!(
+        selftest.status.success(),
+        "crate_layers.py's back-edge rule is wrong:\n{}",
+        String::from_utf8_lossy(&selftest.stdout)
+    );
 }

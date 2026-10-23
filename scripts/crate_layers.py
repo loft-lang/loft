@@ -12,9 +12,11 @@ the exported macros by name — and answers:
   scc             the strongly connected components with more than one module: a cycle
                   cannot be split across crates, so each is cut or kept in one crate
   check [-v]      every module assigned to exactly one layer in LAYERS below, and every
-                  BACK-EDGE (a reference from a lower layer to a higher one) by file:line;
+                  BACK-EDGE (a reference from a lower layer to a higher one, or between two
+                  SIBLINGS layers in either direction) by file:line;
                   exit 1 when a module is unassigned or a back-edge count exceeds BUDGET
   sites A B       every reference from module A to module B, by file:line
+  selftest        the back-edge rule on a made-up layering (upward, downward, sibling)
   runtime [-v]    the references out of the RUNTIME set, by module pair (every site with -v);
                   `check` holds their count to RUNTIME_BUDGET
   runtime-add MOD / runtime-drop MOD
@@ -93,6 +95,13 @@ LAYERS: list[tuple[str, list[str]]] = [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "rpc", "script", "serve",
         "startup_cache", "wasm_debug", "wasm_entry", "wasm_threads",
     ]),
+]
+
+# Layer pairs that may not name each other in EITHER direction (@PLN200): the interpreter and
+# the compiled targets' layers are siblings above `opt`, so a reference from one to the other is
+# forbidden like an upward one, whichever way it points in the list order, and is budgeted in
+# BUDGET the same way.
+SIBLINGS: list[tuple[str, str]] = [
 ]
 
 # Back-edges allowed per (from-layer, to-layer) while P2 of @PLN191 cuts them: a ratchet.
@@ -432,11 +441,18 @@ def set_runtime_budget(n: int) -> None:
     me.write_text(src, encoding="utf-8")
 
 
+def forbidden(lo, a: str, b: str) -> bool:
+    """Is a reference from module `a` to module `b` one the layering forbids: upward in the list
+    order, or between two SIBLINGS layers in either direction."""
+    (ia, la), (ib, lb) = lo[a], lo[b]
+    return ib > ia or (la, lb) in SIBLINGS or (lb, la) in SIBLINGS
+
+
 def back_counts(mods) -> dict[tuple[str, str], int]:
     lo = layer_of()
     counts: dict[tuple[str, str], int] = defaultdict(int)
     for a, b, _p, _l in references(mods):
-        if a in lo and b in lo and lo[b][0] > lo[a][0]:
+        if a in lo and b in lo and forbidden(lo, a, b):
             counts[(lo[a][1], lo[b][1])] += 1
     return counts
 
@@ -536,6 +552,19 @@ def main(argv):
             if x == a and y == b:
                 print(f"{p.relative_to(ROOT)}:{l}")
         return 0
+    if cmd == "selftest":
+        global SIBLINGS
+        saved = SIBLINGS
+        SIBLINGS = [("x", "y")]
+        lo = {"a": (0, "low"), "b": (1, "x"), "c": (2, "y"), "d": (3, "top")}
+        # A lower layer naming a higher one is forbidden; a higher naming a lower is not,
+        # except between siblings, where neither direction is allowed.
+        cases = [("a", "b", True), ("b", "a", False), ("c", "a", False), ("b", "c", True),
+                 ("c", "b", True), ("d", "a", False), ("b", "d", True)]
+        bad = [(a, b) for a, b, want in cases if forbidden(lo, a, b) != want]
+        SIBLINGS = saved
+        print("selftest:", "ok" if not bad else f"WRONG for {bad}")
+        return 1 if bad else 0
     if cmd == "check":
         lo = layer_of()
         bad = 0
@@ -551,15 +580,15 @@ def main(argv):
             bad = 1
         back = defaultdict(list)
         for a, b, p, l in references(mods):
-            if a in lo and b in lo and lo[b][0] > lo[a][0]:
+            if a in lo and b in lo and forbidden(lo, a, b):
                 back[(lo[a][1], lo[b][1])].append(f"{p.relative_to(ROOT)}:{l} {a} -> {b}")
         for key in sorted(set(back) | set(BUDGET)):
             sites = back.get(key, [])
             allowed = BUDGET.get(key, 0)
             if len(sites) > allowed:
                 bad = 1
-                print(f"{key[0]} -> {key[1]}: {len(sites)} upward reference(s), budget {allowed}: "
-                      "a lower layer may not name a higher one")
+                print(f"{key[0]} -> {key[1]}: {len(sites)} forbidden reference(s), budget {allowed}: "
+                      "a lower layer may not name a higher one, nor a layer its sibling")
                 for s in sites:
                     print(f"    {s}")
             elif len(sites) < allowed:
