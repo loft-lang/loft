@@ -712,8 +712,13 @@ plain body binds only a holder it hands down, counted as emitted (`Output::kept_
 a callee `kept_of` declines, or a loop's call that takes the `__inv` twin, serves nothing) —
 own reads alone are what the loop's and the function clause's headers already serve lazily,
 and an eager holder of a field read on one branch cost hex_body's `bone_shape_has` 7.7 %.  A held read reports no index fault yet (loft#2134), as for every
-held header.  Lane 17 A/B, 7 rounds, every hash equal:
-`slope_path_with_undo` −10.8 %, `resolve_move` −2.4 %.
+held header.  A loop that changes no kept field copies the holder into its own header local
+for its extent (`Output::kept_loop_copy`): read through the `&mut`, the header stayed in memory
+across the loop's calls (zttext's `materialise`, +11 % until it did).  Measured with
+`bench/stats.py` against `LOFT_NO_KEPT_HEADER=1` (7 samples, every hash equal):
+`slope_path_with_undo` −11.0 %, zttext `materialise` −8.9 % and `seg` −4.4 %, stage
+`pack_instances` −4.1 %, `resolve_move` −2.5 %; over the 47 routines of the lanes it reaches
+most, geomean −0.6 %.
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
 it), with @PLN157 P4d's path key (`lay.px` is `(lay, [32])`) and the hoisted loop
