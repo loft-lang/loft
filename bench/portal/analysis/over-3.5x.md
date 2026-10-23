@@ -6,10 +6,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # The routines over 3.5×, and what each needs to reach about 2.5× (2026-10-23)
 
 The owner is considering a cut at 3.5× Rust: a routine above it is handled as a bug, and the bar
-comes down when that becomes feasible.  This is the work list for that cut on this laptop.
+comes down when that becomes feasible.  The cut takes effect only once the rows below are fixed:
+until then they are this work list, not bugs.  This is that list on this laptop.
 
 **Ratios** are `bench/stats.py` on the final L7 build (`df40d04a8`), production runtime, fastest
-cores; `arguments/parse` (3.93×) is no longer on the list: loft#2141 took it to 3.46× (`335386bc0`).
+cores; `arguments/parse` (3.93×) is no longer on the list: loft#2135 (in the #2139 join) took it to 3.46×.
 **Where the gap lives** is `scripts/gap_report.py --lean` for each routine (instructions,
 callgrind; the reports were in `/var/tmp/loft-gap35/`).  An instruction share is an ESTIMATE of a
 time share; only `par` is priced here (`bench/portal/hand_price.sh`).  A routine at R× needs
