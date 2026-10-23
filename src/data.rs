@@ -6368,6 +6368,14 @@ thread_local! {
 }
 
 impl Data {
+    /// Refuse definition `d_nr`'s frame as past [`crate::limits::Limits`]'s frame cap — at its
+    /// position, by its name (`crate::limits::frame_too_large`, which names no `Data`: the
+    /// runtime set stays free of the IR, @PLN191 R2).
+    pub fn frame_too_large(&self, d_nr: u32) -> ! {
+        let d = self.def(d_nr);
+        crate::limits::frame_too_large(d.position(), d.display_name(), self.limits)
+    }
+
     /// map a vector's content `Type` to a narrow
     /// database element type-nr when the content is a `Type::Integer`
     /// (@FR-H-Stride — the width is read off the TYPE, never off the def it resolves to)

@@ -143,7 +143,7 @@ RUNTIME: list[str] = [
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
-RUNTIME_BUDGET: int = 1
+RUNTIME_BUDGET: int = 0
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 
