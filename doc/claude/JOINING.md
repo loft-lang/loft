@@ -73,7 +73,10 @@ named, and `apply` resumes after your `git cherry-pick --continue`.  `rederive` 
 from `scripts/derived_artefacts.json` — each artefact's paths, the inputs that make it stale,
 its writer and its check — and refuses to re-pin a count that GREW beyond the growth each
 source pinned on its own tree, naming the source or, for the `@FR-N-Shape` ratchet, the new
-opaque shape tests.  A new derived artefact is one entry in that file.
+opaque shape tests.  One pass names every decision the cheap artefacts can and commits
+nothing when any stopped; an artefact marked `"heavy": true` (the ownership drop gate) is
+skipped once one has, since its cure is a code change that runs it again.  A new derived
+artefact is one entry in that file.
 
 ## Derived artefacts on a runner
 

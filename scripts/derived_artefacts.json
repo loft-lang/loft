@@ -198,6 +198,7 @@
       ],
       "check": "cargo test -q --test ownership_drop_gate -- --include-ignored --test-threads=6",
       "check_first": true,
+      "heavy": true,
       "regen": [
         "LOFT_BLESS_DROP_GATE=1 cargo test -q --test ownership_drop_gate -- --include-ignored --test-threads=6"
       ],

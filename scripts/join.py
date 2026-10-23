@@ -612,6 +612,14 @@ def cmd_rederive(args):
         if not inputs_changed(plan, art):
             print(f"  --    {name:22} its inputs did not move in the join")
             continue
+        # Nothing is committed once an artefact has stopped, and its cure is a code change that
+        # re-runs every check anyway: a heavy one (the ownership drop gate, the best part of an
+        # hour) run now is spent for nothing.  The cheap ones still run, so one pass names
+        # every decision they can.
+        if stopped and art.get("heavy"):
+            print(f"  --    {name:22} skipped: {', '.join(stopped)} stopped first, and its "
+                  "cure re-runs this")
+            continue
         if art.get("check_first") and art.get("check"):
             ok, out = sh(art["check"], quiet=True)
             if not ok:
