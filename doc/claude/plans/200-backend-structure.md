@@ -19,7 +19,8 @@ before it moves them.
   [B2 the interpreter](#b2--the-interpreter-as-a-defined-part) ·
   [B3 the compiled-target base](#b3--the-compiled-target-base-plans-apart-from-the-rust-writer) ·
   [B4 crates](#b4--the-crates) · [B5 acceptance](#b5--acceptance-a-second-emitter-beside-the-rust-one) ·
-  [B6 a minimal binary](#b6--optional-a-minimal-binary)
+  [B6 a minimal binary](#b6--optional-a-minimal-binary) ·
+  [B7 testing: reuse compiled blocks](#b7--testing-reuse-compiled-blocks)
 - [Order](#order) · [Dependencies](#dependencies) · [Risks](#risks) · [Open questions](#open-questions-for-the-owner)
 
 ## Goal
@@ -229,9 +230,53 @@ layout, `keys.rs:2836`) — B6 adds a test that every `[features]` name (`Cargo.
 classified as identity-relevant or not, and a CI comparison of both builds' corpus output.
 Measured: the shipped binary is 25.2 MB (21.1 stripped), the generator ~12 % of its machine code.
 
+## B7 — testing: reuse compiled blocks
+
+The split's second payoff: a compiled block — a test program's binary, a library artifact, the
+standard library's compiled code — can be keyed on what it actually depends on (its generated
+source and the runtime it links) instead of on the whole loft build, so an edit that changes
+neither reuses it.
+
+**Measured (2026-10-23, macOS arm64):**
+
+| fact | value |
+|---|---|
+| a test-tier `--native` compile (cache off) | ~0.7 s: ~0.4 s fixed (rustc start, the runtime's metadata, the link) + ~0.09 s per 1,000 generated lines |
+| the standard library in a program's generated Rust (five corpus programs) | the same **3,303 lines** in each, ~70 %; the program's own code 300–1,350 lines; ~600 lines of preamble |
+| programs a native corpus run can compile | 492 `tests/scripts` + 2,638 suite programs; plus `native`, `n2_cdylib`, `n3_*`, the drop gate's native cells |
+| test binaries, each linking all of `libloft` | 451 |
+| a library artifact at the shipped tier | ~7 s each (42 libraries in 4 min 54 s) |
+| the last 400 commits touching `src/` | 62 % touch a module of @PLN191's runtime set (61 modules), 51 % `generation/`, 53 % the interpreter |
+
+**Why every rebuild of loft throws compiled blocks away today:**
+
+- the native program cache (`native_source_key_fingerprint`, `src/main.rs:4304`) folds in every
+  runtime rlib a build could link (`native_utils::runtime_rlib_candidates`,
+  `src/native_utils.rs:110`) — the rlib is all of `libloft`, so an edit to the parser, the
+  interpreter or the generator invalidates every cached program, its generated Rust unchanged;
+- a library artifact on a development build is keyed on `loft_build_fingerprint` (the rlib's
+  content) and the executable's file time (`cache.rs:223`, `native_lib.rs:3008`), so every loft
+  rebuild rebuilds every library artifact a test uses;
+- every test program carries the standard library's 3.3k lines through `rustc` again.
+
+| step | change | check |
+|---|---|---|
+| B7.1 | the baseline: per full gate, the number of `rustc` launches, their CPU time, and the native cache's hit rate after (a) a parser-only edit, (b) a generator-only edit, (c) a runtime edit — a report script, run before and after each of B7.3–B7.5 | the report |
+| B7.2 | `cache::runtime_fingerprint()`: the content of the runtime a compiled block links — the `loft-runtime` crate's rlib once @PLN191 R makes it a crate; before that, a source stamp over the RUNTIME set's files (`scripts/crate_layers.py`) with the features, rustflags and `rustc` that shape it | a test: an edit outside the set leaves it, one inside moves it |
+| B7.3 | the native program cache keyed on the generated Rust ⊕ `runtime_fingerprint()` instead of every rlib candidate.  **Precondition:** emitted Rust names nothing outside the runtime — today it names `loft::state::` (`generation/mod.rs:513-519`, `calls.rs:1350`) and `loft::native_lib::` (`emit.rs:2100-2118`); B3.5's census lists every such name and each is moved into the runtime or the key covers it | B7.1's hit rate after a parser-only edit; the corpus on both backends |
+| B7.4 | a library artifact on a development build keyed on its generated source's hash ⊕ `runtime_fingerprint()` (a release bundle keeps its identity, B6).  @PLN199 G1 already made the generated source a function of the library alone, so the key is exact; loft#1776's stale-rlib case stays covered because the fingerprint is the runtime's content | `n3_use_native`, `registry_e2e`; B7.1 after a parser-only edit: no artifact rebuilt |
+| B7.5 | the standard library compiled ONCE for the test tier: its functions emitted as one block (ids by key, as @PLN199 G0b made library code), keyed like B7.4, and a test-tier program calls into it instead of carrying 3.3k lines — ~40 % of each test compile by the measurement above.  `--native-release` and the library cdylibs keep whole-program compilation: there the optimiser's view across functions is what ships | the corpus's output identical; B7.1's CPU time |
+| B7.6 | narrow the runtime set (@PLN191 R2): every module that leaves it is an edit that no longer invalidates compiled blocks — the report names the runtime modules the most commits touch | B7.1 over the history |
+| B7.7 | test selection from the crate graph (after B4): `find_problems.sh --changed` maps a diff's crates to the subjects that can observe them | a diff confined to `rust` selects no interpreter-only subject |
+
+Not addressed by this plan: the 451 test binaries each linking all of `libloft` — a link cost
+the split does not remove (the corpus leaving the crate is @PLN193).
+
 ## Order
 
 B0 → B1 → B2 → B3 → B5 (the probe, from @PLN91) → B4 when @PLN191 is ready; B6 whenever wanted.
+B7.1 can run any time (the baseline); B7.2–B7.4 follow @PLN191's runtime crate and B3.5's census;
+B7.5 needs only @PLN199's keyed ids and can come earlier.
 B1 and B2 make the interpreter a defined part on their own; B3 is what the C backend needs.
 
 ## Dependencies
