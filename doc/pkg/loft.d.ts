@@ -62,8 +62,27 @@ export function debug_start(source: string): string;
 export function resume_frame(): string;
 
 /**
- * Export the registered world of the PARKED (frame-yielded) run as the
- * snapshot JSON; "" when no run is parked or no world was registered.
+ * @PLN196 step 8 — may the program in `files_json` take over the PARKED run's world?  The
+ * browser's form of a live rebuild's compile-time check (`LOFT_CHECK_WORLD`): the page asks
+ * it BEFORE `compile_and_start`, which disposes the running instance, so a refused change
+ * leaves the running build serving.  The program is parsed and scope-checked, not run, and
+ * the parked run is not touched.
+ *
+ * Answers JSON: `{"ok":true,"changes":[…]}` (the conversion the swap will do, empty when
+ * the layout is the same or no world is registered), `{"ok":false,"error":"…"}` for a
+ * program that does not compile or a world it cannot take over.
+ */
+export function swap_check(files_json: string): string;
+
+/**
+ * Export the registered world of the PARKED (frame-yielded) run; "" when no run is parked
+ * or no world was registered.
+ *
+ * @PLN196 step 8 in the browser — a world that is the root of its own store goes over as
+ * that store's image with its layout sidecar (`crate::wasm::SWAP_IMAGE_MARKER`), which the
+ * next run's `swap_world` reads through the converter: keyed collections and references
+ * survive, and a changed struct converts.  A world sharing its store goes over as JSON, as
+ * before.
  */
 export function swap_export(): string;
 
@@ -82,6 +101,7 @@ export interface InitOutput {
     readonly debug_command: (a: number, b: number) => [number, number];
     readonly debug_start: (a: number, b: number) => [number, number];
     readonly resume_frame: () => [number, number];
+    readonly swap_check: (a: number, b: number) => [number, number];
     readonly swap_export: () => [number, number];
     readonly swap_stage: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

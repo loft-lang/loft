@@ -133,8 +133,42 @@ export function resume_frame() {
 }
 
 /**
- * Export the registered world of the PARKED (frame-yielded) run as the
- * snapshot JSON; "" when no run is parked or no world was registered.
+ * @PLN196 step 8 — may the program in `files_json` take over the PARKED run's world?  The
+ * browser's form of a live rebuild's compile-time check (`LOFT_CHECK_WORLD`): the page asks
+ * it BEFORE `compile_and_start`, which disposes the running instance, so a refused change
+ * leaves the running build serving.  The program is parsed and scope-checked, not run, and
+ * the parked run is not touched.
+ *
+ * Answers JSON: `{"ok":true,"changes":[…]}` (the conversion the swap will do, empty when
+ * the layout is the same or no world is registered), `{"ok":false,"error":"…"}` for a
+ * program that does not compile or a world it cannot take over.
+ * @param {string} files_json
+ * @returns {string}
+ */
+export function swap_check(files_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.swap_check(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Export the registered world of the PARKED (frame-yielded) run; "" when no run is parked
+ * or no world was registered.
+ *
+ * @PLN196 step 8 in the browser — a world that is the root of its own store goes over as
+ * that store's image with its layout sidecar (`crate::wasm::SWAP_IMAGE_MARKER`), which the
+ * next run's `swap_world` reads through the converter: keyed collections and references
+ * survive, and a changed struct converts.  A world sharing its store goes over as JSON, as
+ * before.
  * @returns {string}
  */
 export function swap_export() {
