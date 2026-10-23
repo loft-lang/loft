@@ -1,13 +1,13 @@
 diff --git a/src/hash.rs b/src/hash.rs
-index 0976990db..df3e2e098 100644
+index 5754bbf4f..ae1b41251 100644
 --- a/src/hash.rs
 +++ b/src/hash.rs
-@@ -1074,7 +1074,7 @@ pub fn find_ints(hash_ref: &DbRef, stores: &[Store], keys: &[Key], values: &[i64
-         return Some(found);
+@@ -1691,7 +1691,7 @@ pub fn find_ints(
      }
-     let count = elms(store, claim);
--    let home = home_bucket(keys::ints_hash(values, read_seed(store, claim)), count);
-+    let home = home_bucket(keys::ints_hash(values, read_seed(store, claim) ^ 1), count);
-     let entries = Entries::of(store, claim, hash_ref.store_nr);
-     (found.rec, found.pos) = probe(store, claim, count, home, &entries, |r, b| {
-         keys.iter()
+     let h = hdr(store, claim);
+     let (count, sb) = (h.count, h.sb);
+-    let digest = keys::ints_hash(values, read_seed(store, claim));
++    let digest = keys::ints_hash(values, read_seed(store, claim) ^ 1);
+     let home = home_bucket(digest, count);
+     let entries = Entries::from_hdr(store, claim, hash_ref.store_nr, &h);
+     (found.rec, found.pos) = probe(

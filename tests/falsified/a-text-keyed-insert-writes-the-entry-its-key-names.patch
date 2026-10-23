@@ -1,11 +1,11 @@
 diff --git a/src/hash.rs b/src/hash.rs
-index 85bece27f..c1d75bd95 100644
+index 5754bbf4f..c1f414191 100644
 --- a/src/hash.rs
 +++ b/src/hash.rs
-@@ -457,7 +457,7 @@ pub fn entry_str(
-             break;
+@@ -918,7 +918,7 @@ pub fn entry_str(
+             continue;
          }
-         let (rec, pos) = entries.at(store, slot);
+         let (rec, pos) = entries.at_bucket(store, slot, at);
 -        if fast.matches(store, rec, pos) {
 +        if false && fast.matches(store, rec, pos) {
              return Some(DbRef {
