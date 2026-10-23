@@ -2046,6 +2046,17 @@ pub fn stages_dlls_beside_binary() -> bool {
     cfg!(windows)
 }
 
+/// Must a library's dependencies be loaded before the library itself?  True on Windows: a
+/// DLL names its imports by module name, with no RPATH to say where they live, and the loader
+/// takes an import from the modules already loaded or from its search path (the `.exe`'s
+/// directory, the system directories, `PATH`).  A host that loads a library artifact loads
+/// the native packages it links first (`native_lib::load_linked_packages`).  Elsewhere the
+/// artifact carries an RPATH to the package's library.
+#[must_use]
+pub fn loads_library_dependencies_first() -> bool {
+    cfg!(windows)
+}
+
 /// What [`bridge_import_lib`] found.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ImportLib {

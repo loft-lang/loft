@@ -2130,6 +2130,47 @@ fn native_cabi_link_enabled() -> bool {
     crate::platform::native_cabi_link()
 }
 
+/// The `[library] native` stem of the package at `pkg_dir` and its resolved cdylib — the file
+/// a library artifact that calls the package links ([`native_pkg_cabi_link_args`]) and needs
+/// loaded first where there is no RPATH ([`load_linked_packages`]).  The stem can differ from
+/// the crate name; it is read from the manifest (the SAME stem the interpreter resolves with),
+/// falling back to the crate name.  `None` when the cdylib cannot be resolved
+/// ([`crate::extensions::resolve_native_lib`] already printed why).
+fn native_pkg_lib(crate_name: &str, pkg_dir: &str) -> Option<(String, std::path::PathBuf)> {
+    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+        .and_then(|m| m.native)
+        .unwrap_or_else(|| crate_name.replace('-', "_"));
+    let so = crate::native_build::resolve_native_lib(pkg_dir, &stem)?;
+    Some((stem, std::path::PathBuf::from(so)))
+}
+
+/// Load, into this process, the cdylib of every `[native] crate` package the artifact for
+/// `export_set` links, before anything opens that artifact.  Windows has no RPATH: the
+/// artifact names `<package>.dll` as an import, and the loader resolves an import from the
+/// modules already loaded or from its search path (the `.exe`'s directory, the system
+/// directories, `PATH`) — never from the package's build directory, where the DLL is.  A
+/// package loaded first is resolved by its module name.  Without it the artifact did not
+/// load, its layout probe answered "unopenable", and every run rebuilt it and interpreted
+/// the library anyway (loft#2147).  The host loads these packages for their own functions
+/// regardless; this only moves that load ahead of the artifact's.
+#[cfg(feature = "native-extensions")]
+fn load_linked_packages(data: &Data, export_set: &HashSet<u32>) {
+    if !crate::platform::loads_library_dependencies_first()
+        || data.native_packages.is_empty()
+        || !native_cabi_link_enabled()
+    {
+        return;
+    }
+    for (crate_name, pkg_dir) in &linked_packages(data, export_set) {
+        if let Some((_, so)) = native_pkg_lib(crate_name, pkg_dir) {
+            crate::c_libs::load_one(&so.to_string_lossy());
+        }
+    }
+}
+
+#[cfg(not(feature = "native-extensions"))]
+fn load_linked_packages(_data: &Data, _export_set: &HashSet<u32>) {}
+
 /// @PLN26 phase 2 — the rustc link flags for ONE native package's resolved cdylib
 /// `.so`: `-L native=<dir>` + `-l dylib=<name>` + an RPATH (the build/prebuilt
 /// dir and `$ORIGIN` for an installed binary shipping the `.so` beside it).  On
@@ -2148,16 +2189,9 @@ fn native_cabi_link_enabled() -> bool {
 /// executable path); kept separate because that helper lives in the binary crate
 /// and this builder lives in the library crate.
 fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
-    // The cdylib is named after the `[library] native` stem, which can differ
-    // from the crate name; read it from the manifest (the SAME stem the
-    // interpreter resolves with), falling back to the crate name when absent.
-    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-        .and_then(|m| m.native)
-        .unwrap_or_else(|| crate_name.replace('-', "_"));
-    let Some(so) = crate::native_build::resolve_native_lib(pkg_dir, &stem) else {
+    let Some((stem, so_path)) = native_pkg_lib(crate_name, pkg_dir) else {
         return Vec::new();
     };
-    let so_path = std::path::PathBuf::from(&so);
     let Some(so_dir) = so_path.parent() else {
         return Vec::new();
     };
@@ -3050,6 +3084,8 @@ pub fn cached_or_build_shared_cdylib(
     // is worth more than the argument.  A mismatch falls through to REBUILD,
     // which is the same thing a name miss already does — and REBUILD is why this
     // probe, too, must not load `so` itself (loft#999).
+    // The probe OPENS the artifact, so whatever it links must be loadable first.
+    load_linked_packages(data, export_set);
     if crate::file_access::exists(&so)
         && !source_newer_than(contributing, &so)
         && artifact_matches_layout(&so, fp)
