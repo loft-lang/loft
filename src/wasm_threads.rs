@@ -139,7 +139,7 @@ pub extern "C" fn loft_pool_build() -> i32 {
 /// `?loftTrace=1`; it is also what the in-browser threading gates read.
 #[unsafe(no_mangle)]
 pub extern "C" fn loft_set_par_trace(on: u32) {
-    crate::parallel::set_par_trace(on != 0);
+    crate::par_pool::set_par_trace(on != 0);
 }
 
 /// A Web Worker's entry point: claim one rayon thread and run it.  Never

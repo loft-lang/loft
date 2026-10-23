@@ -472,7 +472,7 @@ pub fn warm_load_program(
     // whole thing as a cache miss and let the cold path report it.
     let mut native_libs = Vec::new();
     for (stem, pkg_dir) in &state.native_lib_regs {
-        let Some(path) = crate::extensions::resolve_native_lib(pkg_dir, stem) else {
+        let Some(path) = crate::interp::extensions::resolve_native_lib(pkg_dir, stem) else {
             return warm_miss(&format!(
                 "native library {stem} in {pkg_dir} does not resolve"
             ));

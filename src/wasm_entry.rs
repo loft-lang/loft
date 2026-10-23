@@ -183,7 +183,7 @@ pub fn compile_and_run(files_json: &str) -> String {
 /// the pattern `live_dispatch::bootstrap_core` already follows.  The definition table needs
 /// no such care: the `State` co-owns it.
 struct GameSession {
-    state: Box<crate::state::State>,
+    state: Box<crate::interp::state::State>,
 }
 
 thread_local! {
@@ -231,11 +231,11 @@ pub fn compile_and_start(files_json: &str) -> String {
     let _ = output_take();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        use crate::compile::byte_code;
         use crate::diagnostics::Level;
+        use crate::interp::compile::byte_code;
+        use crate::interp::state::State;
         use crate::parser::Parser;
         use crate::scopes;
-        use crate::state::State;
 
         let mut p = Parser::new();
         for (name, _) in DEFAULT_FILES {
@@ -269,7 +269,7 @@ pub fn compile_and_start(files_json: &str) -> String {
         let mut state = Box::new(State::new(p.database));
         let mut data = p.data;
         byte_code(&mut state, &mut data);
-        crate::wasm_gl::register_wgl_natives(&mut state);
+        crate::interp::wasm_gl::register_wgl_natives(&mut state);
         // The State co-owns the table, so the session may move freely.
         state.execute_argv("main", std::sync::Arc::new(data), &[]);
         // execute_argv returns either because the program finished or because
@@ -468,11 +468,11 @@ fn json_str(s: &str) -> String {
 type AssertResult = (bool, String, String, u32);
 
 fn run_pipeline() -> (String, bool, Vec<AssertResult>) {
-    use crate::compile::byte_code;
     use crate::diagnostics::Level;
+    use crate::interp::compile::byte_code;
+    use crate::interp::state::State;
     use crate::parser::Parser;
     use crate::scopes;
-    use crate::state::State;
 
     let mut p = Parser::new();
     for (name, _) in DEFAULT_FILES {
@@ -508,7 +508,7 @@ fn run_pipeline() -> (String, bool, Vec<AssertResult>) {
     let mut state = State::new(p.database);
     byte_code(&mut state, &mut p.data);
     // GL6.1–GL6.3: register WebGL bridge functions for graphics library.
-    crate::wasm_gl::register_wgl_natives(&mut state);
+    crate::interp::wasm_gl::register_wgl_natives(&mut state);
     // Enable assert reporting for the playground.
     state.database.report_asserts = true;
     state.execute_argv("main", &p.data, &[]);
@@ -533,7 +533,7 @@ fn run_pipeline() -> (String, bool, Vec<AssertResult>) {
 #[cfg(feature = "wasm-threads")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn set_par_trace_workers(on: bool) {
-    crate::parallel::set_par_trace(on);
+    crate::par_pool::set_par_trace(on);
 }
 
 // @PLN117 step 4 — the hand-rolled `worker_entry` stub (a never-implemented

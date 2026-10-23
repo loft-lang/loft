@@ -92,7 +92,7 @@ LAYERS: list[tuple[str, list[str]]] = [
     ]),
     ("interp", [
         "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",
-        "fuzz_oracle", "introspect", "live_dispatch", "live_reload", "native_adopt", "parallel",
+        "fuzz_oracle", "interp", "introspect", "live_dispatch", "live_reload", "native_adopt", "parallel",
         "parallel_natives", "profiler", "stack", "state", "wasm_gl",
     ]),
     ("lower", [
@@ -144,6 +144,15 @@ RUNTIME: list[str] = [
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
 RUNTIME_BUDGET: int = 0
+
+# The interpreter's ENTRY (@PLN200 B2.6): outside the `interp` layer, code reaches an
+# interpreter module only through `interp` (src/interp.rs), the one place its surface is
+# stated.  Counted over the library's modules and over the driver binaries, which name the
+# library as `loft::` (src/main.rs and its modules, src/bin/).  A ratchet like the others.
+ENTRY_MODULE: str = "interp"
+ENTRY_BUDGET: int = 0
+DRIVER_FILES: list[str] = ["main.rs", "native_utils.rs", "test_runner.rs", "android.rs", "bin"]
+LOFT_PATH = re.compile(r"loft::([A-Za-z_0-9]+)")
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 
@@ -429,6 +438,34 @@ def runtime_crossings(mods) -> list[tuple[str, str, str]]:
     return out
 
 
+def entry_crossings(mods) -> list[str]:
+    """Every reference from outside the interp layer to an interp module other than its entry."""
+    lo = layer_of()
+    inside = {m for m, (_, layer) in lo.items() if layer == "interp"} - {ENTRY_MODULE}
+    out = []
+    for a, b, path, line in references(mods):
+        if b in inside and lo.get(a, (0, ""))[1] != "interp":
+            out.append(f"{path.relative_to(ROOT)}:{line} {a} -> {b}")
+    files = []
+    for d in DRIVER_FILES:
+        f = SRC / d
+        files += sorted(f.rglob("*.rs")) if f.is_dir() else [f] if f.exists() else []
+    for f in files:
+        text = blank_noise(f.read_text(encoding="utf-8"))
+        for m in LOFT_PATH.finditer(text):
+            if m.group(1) in inside:
+                line = text.count("\n", 0, m.start()) + 1
+                out.append(f"{f.relative_to(ROOT)}:{line} driver -> {m.group(1)}")
+    return out
+
+
+def set_entry_budget(n: int) -> None:
+    path = Path(__file__)
+    src = path.read_text(encoding="utf-8")
+    src = re.sub(r"^ENTRY_BUDGET: int = \d+$", f"ENTRY_BUDGET: int = {n}", src, count=1, flags=re.M)
+    path.write_text(src, encoding="utf-8")
+
+
 def rewrite_runtime(members: list[str]) -> None:
     me = Path(__file__)
     src = me.read_text(encoding="utf-8")
@@ -533,6 +570,12 @@ def main(argv):
             set_runtime_budget(have)
         elif have > RUNTIME_BUDGET:
             raised.append(f"runtime: {have} reference(s) out of the runtime set, budget {RUNTIME_BUDGET}")
+        have = len(entry_crossings(mods))
+        if have < ENTRY_BUDGET:
+            print(f"entry: budget {ENTRY_BUDGET} -> {have}")
+            set_entry_budget(have)
+        elif have > ENTRY_BUDGET:
+            raised.append(f"entry: {have} reference(s) past `{ENTRY_MODULE}`, budget {ENTRY_BUDGET}")
         for r in raised:
             print(f"NOT raised — cut these instead: {r}")
         return 1 if raised else 0
@@ -626,6 +669,24 @@ def main(argv):
             bad = 1
             print(f"runtime: {len(cross)} reference(s) out of the runtime set, budget "
                   f"{RUNTIME_BUDGET}: lower RUNTIME_BUDGET to {len(cross)} (`lower`)")
+        if ENTRY_MODULE not in mods:
+            print(f"ENTRY_MODULE {ENTRY_MODULE!r} is not a module lib.rs declares")
+            bad = 1
+        entry = entry_crossings(mods)
+        if len(entry) > ENTRY_BUDGET:
+            bad = 1
+            print(f"entry: {len(entry)} reference(s) reach an interpreter module past "
+                  f"`{ENTRY_MODULE}`, budget {ENTRY_BUDGET}: name `{ENTRY_MODULE}::…` instead")
+            for site in entry:
+                print(f"    {site}")
+        elif len(entry) < ENTRY_BUDGET:
+            bad = 1
+            print(f"entry: {len(entry)} reference(s) past `{ENTRY_MODULE}`, budget {ENTRY_BUDGET}: "
+                  f"lower ENTRY_BUDGET to {len(entry)} (`lower`)")
+        elif verbose and entry:
+            print(f"entry: {len(entry)} reference(s) past `{ENTRY_MODULE}`")
+            for site in entry:
+                print(f"    {site}")
         return bad
     print(__doc__)
     return 2

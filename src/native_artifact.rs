@@ -9,7 +9,7 @@
 
 use crate::data::Data;
 use crate::database::Stores;
-use crate::native_adopt::Adopt;
+use crate::interp::native_adopt::Adopt;
 use std::collections::HashSet;
 
 /// @PLN11 Arc N / N3 (Step 4 — **dev-interpret-on-edit**) — decide how the library
@@ -48,7 +48,9 @@ pub fn cached_or_build_shared_cdylib(
     pkg_dir: &str,
     pending: &[String],
 ) -> Result<Option<std::path::PathBuf>, String> {
-    match crate::native_adopt::adopt_shared_cdylib(data, stores, export_set, pkg_dir, pending)? {
+    match crate::interp::native_adopt::adopt_shared_cdylib(
+        data, stores, export_set, pkg_dir, pending,
+    )? {
         Adopt::Fresh(so) => Ok(Some(so)),
         Adopt::Interpret => Ok(None),
         Adopt::Build(key) => crate::native_lib::build_shared_artifact(

@@ -20,14 +20,14 @@
 //! `plans/12-repl-and-introspection/03-state-reset-and-append.md`.  That
 //! refinement sits behind this same `ReplSession` API.
 
-use crate::compile;
 use crate::data::{DefType, Type};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::database::Parts;
 use crate::diagnostics::{DiagEntry, Level};
-use crate::introspect::{Options, Section};
+use crate::interp::compile;
+use crate::interp::introspect::{Options, Section};
+use crate::interp::state::State;
 use crate::parser::Parser;
-use crate::state::State;
 #[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
 use std::fs::File;
@@ -1004,7 +1004,7 @@ fn handle_paused<W: Write>(
     session: &mut ReplSession,
     chrome: &mut W,
 ) -> std::io::Result<bool> {
-    use crate::debugger::StepMode;
+    use crate::interp::debugger::StepMode;
     let t = trimmed.trim();
     let cmd = t.strip_prefix(':').unwrap_or(t);
     // A colon-less verb is a convenience, but the verb names collide with ordinary
@@ -1187,7 +1187,7 @@ fn print_pause_filtered<W: Write>(
 /// run finished and the sub-mode is left.
 fn step_and_report<W: Write>(
     session: &mut ReplSession,
-    mode: crate::debugger::StepMode,
+    mode: crate::interp::debugger::StepMode,
     chrome: &mut W,
 ) -> std::io::Result<()> {
     let paused = session.debug_step(mode);
@@ -1287,18 +1287,18 @@ fn base_type_name(show: &str) -> String {
 /// Render an `f64` as a loft `float` literal — always with a decimal point so a
 /// whole number like `3` re-parses as `float`, not `integer`.  The f64-typed
 /// adapter over the shared round-trip rule
-/// ([`crate::state::loft_float_literal`]); the frame renderer uses the same rule.
+/// ([`crate::interp::state::loft_float_literal`]); the frame renderer uses the same rule.
 fn float_literal(v: f64) -> String {
-    crate::state::loft_float_literal(&v.to_string())
+    crate::interp::state::loft_float_literal(&v.to_string())
 }
 
 /// Render `raw` as a quoted, escaped loft `text` literal — the form the parser
 /// re-reads.  Used by the REPL.X value-snapshot to store a captured text binding
 /// as `name = "…"`.  Delegates to the shared
-/// [`state::loft_text_literal`](crate::state::loft_text_literal) so the snapshot
+/// [`state::loft_text_literal`](crate::interp::state::loft_text_literal) so the snapshot
 /// and the breakpoint frame renderer escape identically.
 fn escape_loft_text(raw: &str) -> String {
-    crate::state::loft_text_literal(raw)
+    crate::interp::state::loft_text_literal(raw)
 }
 
 /// Render the return value (read off `state`'s stack top) of type `ret_ty` as an
@@ -1410,7 +1410,7 @@ fn render_capture(
         // one-character string — worse than declining, because it claims a value.
         Type::Text(_) => {
             let s = state.get_stack::<crate::keys::Str>().str().to_string();
-            if s == crate::state::STRING_NULL {
+            if s == crate::interp::state::STRING_NULL {
                 *captured = Some(Captured::Scalar(ScalarValue::Text(s)));
                 return Some("null".to_string());
             }
@@ -1807,7 +1807,7 @@ pub struct ReplSession {
     cond_unevaluable: std::collections::HashSet<u32>,
     /// Frames captured at breakpoints during the most recent observing run
     /// (record-and-continue mode — when `stepping` is off).
-    last_hits: Vec<crate::debugger::BreakHit>,
+    last_hits: Vec<crate::interp::debugger::BreakHit>,
     /// @PLN16 G1 — **interactive stepping**: when on, an observing run that
     /// reaches a breakpoint *suspends* into the paused sub-mode (held in `paused`)
     /// instead of recording all hits and continuing.  The interactive driver turns
@@ -2017,8 +2017,8 @@ impl ReplSession {
 
     fn wire_natives(&self, state: &mut State) {
         let pending = self.parser.pending_native_libs.clone();
-        crate::extensions::load_all(state, pending);
-        crate::extensions::wire_native_fns(state, &self.parser.data);
+        crate::interp::extensions::load_all(state, pending);
+        crate::interp::extensions::wire_native_fns(state, &self.parser.data);
     }
 
     /// Build a session over an existing `parser` already loaded with a program's
@@ -2062,7 +2062,7 @@ impl ReplSession {
     }
 
     /// Seed this session with a paused frame's variables (a @PLN16
-    /// [`BreakHit`](crate::debugger::BreakHit)): each captured
+    /// [`BreakHit`](crate::interp::debugger::BreakHit)): each captured
     /// `(name, own-format literal)` becomes a binding `name = <literal>`, so
     /// expressions evaluated afterwards run against the frame's live values — the
     /// **REPL-at-frame** bridge.  It reuses the literal each value already renders
@@ -2070,7 +2070,7 @@ impl ReplSession {
     /// with frame mutation is the @PLN14 upgrade).  Returns the number of variables
     /// bound; a value whose type isn't in scope (seeding a struct on a stdlib-only
     /// session) is skipped, not fatal.
-    pub fn seed_frame(&mut self, hit: &crate::debugger::BreakHit) -> usize {
+    pub fn seed_frame(&mut self, hit: &crate::interp::debugger::BreakHit) -> usize {
         let mut bound = 0;
         for (name, literal) in hit.held_locals() {
             if matches!(self.eval(&format!("{name} = {literal}")), Eval::Ran) {
@@ -2090,7 +2090,11 @@ impl ReplSession {
     /// types are in scope.  This filters *recorded* hits post-run; skipping the
     /// capture in-loop (so a non-matching breakpoint never even pauses) would need
     /// the condition pre-compiled against the frame — a later refinement.
-    pub fn frame_holds(&mut self, hit: &crate::debugger::BreakHit, condition: &str) -> bool {
+    pub fn frame_holds(
+        &mut self,
+        hit: &crate::interp::debugger::BreakHit,
+        condition: &str,
+    ) -> bool {
         self.seed_frame(hit);
         matches!(
             self.eval(&format!("assert({condition}, \"cond\")")),
@@ -2402,8 +2406,8 @@ impl ReplSession {
             let mut data = parser.data.clone();
             let mut state = State::new(parser.database.clone());
             compile::byte_code(&mut state, &mut data);
-            crate::extensions::load_all(&mut state, pending_native.clone());
-            crate::extensions::wire_native_fns(&mut state, &data);
+            crate::interp::extensions::load_all(&mut state, pending_native.clone());
+            crate::interp::extensions::wire_native_fns(&mut state, &data);
             // `execute_argv` prepends `n_` itself — pass the bare user name (`name`), not an
             // already-prefixed one, or it looks up `n_n_<name>` → "Unknown definition".
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2717,7 +2721,7 @@ impl ReplSession {
 
     /// Frames captured at breakpoints during the most recent observing run.
     #[must_use]
-    pub fn last_hits(&self) -> &[crate::debugger::BreakHit] {
+    pub fn last_hits(&self) -> &[crate::interp::debugger::BreakHit] {
         &self.last_hits
     }
 
@@ -2742,7 +2746,7 @@ impl ReplSession {
 
     /// The frame at the current suspension, or `None` if not paused.
     #[must_use]
-    pub fn paused_frame(&self) -> Option<&crate::debugger::BreakHit> {
+    pub fn paused_frame(&self) -> Option<&crate::interp::debugger::BreakHit> {
         self.paused.as_deref().and_then(State::paused_frame)
     }
 
@@ -2750,7 +2754,7 @@ impl ReplSession {
     /// frame carrying its function, source line, and live locals — the multi-frame
     /// `stackTrace` source (@PLN63 SF).  Empty when not paused.
     #[must_use]
-    pub fn paused_stack(&self) -> Vec<crate::debugger::BreakHit> {
+    pub fn paused_stack(&self) -> Vec<crate::interp::debugger::BreakHit> {
         self.paused
             .as_deref()
             .map(|s| s.break_stack(&self.parser.data))
@@ -2916,7 +2920,7 @@ impl ReplSession {
     /// @PLN16 M3 — the watchpoint that fired during the most recent resume (label +
     /// old → new), taken so the driver reports it once.
     #[must_use]
-    pub fn take_watch_hit(&mut self) -> Option<crate::debugger::WatchHit> {
+    pub fn take_watch_hit(&mut self) -> Option<crate::interp::debugger::WatchHit> {
         self.paused.as_deref_mut().and_then(State::take_watch_hit)
     }
 
@@ -2984,11 +2988,11 @@ impl ReplSession {
     }
 
     /// Resume the suspended run, stopping per `mode` (the step verbs —
-    /// [`StepMode`](crate::debugger::StepMode)).  Returns `true` if it paused again
+    /// [`StepMode`](crate::interp::debugger::StepMode)).  Returns `true` if it paused again
     /// (the new frame is in [`paused_frame`](Self::paused_frame)), `false` if the
     /// run finished — in which case the paused sub-mode is left
     /// ([`is_debugging`](Self::is_debugging) becomes `false`).
-    pub fn debug_step(&mut self, mode: crate::debugger::StepMode) -> bool {
+    pub fn debug_step(&mut self, mode: crate::interp::debugger::StepMode) -> bool {
         self.trace_output.clear();
         if self.paused.is_none() {
             return false;
@@ -3018,7 +3022,7 @@ impl ReplSession {
     /// Raw resume by `mode` (the engine `debug_step`, no condition/tracepoint
     /// resolution — that is [`resolve_pause`](Self::resolve_pause)'s job).  Returns
     /// whether still paused.
-    fn resume_continue_with(&mut self, mode: crate::debugger::StepMode) -> bool {
+    fn resume_continue_with(&mut self, mode: crate::interp::debugger::StepMode) -> bool {
         let armed = self.reverse_armed;
         let Some(state) = self.paused.as_deref_mut() else {
             return false;
@@ -3084,7 +3088,7 @@ impl ReplSession {
                 match self.debug_eval(&cond).as_deref() {
                     Some("true") => {}
                     Some(_) => {
-                        if !self.resume_continue_with(crate::debugger::StepMode::Continue) {
+                        if !self.resume_continue_with(crate::interp::debugger::StepMode::Continue) {
                             return;
                         }
                         continue;
@@ -3106,7 +3110,7 @@ impl ReplSession {
                     let v = self.debug_eval(a).unwrap_or_else(|| "?".to_string());
                     self.trace_output.push(format!("{a} = {v}"));
                 }
-                if !self.resume_continue_with(crate::debugger::StepMode::Continue) {
+                if !self.resume_continue_with(crate::interp::debugger::StepMode::Continue) {
                     return;
                 }
                 continue;
@@ -3120,7 +3124,7 @@ impl ReplSession {
     pub fn dropped_undo_here(&self) -> Vec<(String, String)> {
         self.paused
             .as_deref()
-            .map(crate::state::State::dropped_undo)
+            .map(crate::interp::state::State::dropped_undo)
             .unwrap_or_default()
     }
 
@@ -3133,9 +3137,9 @@ impl ReplSession {
 
     /// Continue to the next breakpoint or the end of the run (the `:continue`
     /// verb) — [`debug_step`](Self::debug_step) with
-    /// [`StepMode::Continue`](crate::debugger::StepMode::Continue).
+    /// [`StepMode::Continue`](crate::interp::debugger::StepMode::Continue).
     pub fn debug_continue(&mut self) -> bool {
-        self.debug_step(crate::debugger::StepMode::Continue)
+        self.debug_step(crate::interp::debugger::StepMode::Continue)
     }
 
     /// Evaluate `expr` against the **current paused frame** and render its value as
@@ -3177,20 +3181,20 @@ impl ReplSession {
         match state {
             // Held: the failure has another cause, so the caller's generic message is
             // the right one.
-            crate::state::LocalState::Held => None,
+            crate::interp::state::LocalState::Held => None,
             // @PLN120 A follow-up — a name that IS a local of this function but is not
             // in scope on this line used to get the same "couldn't evaluate" as a typo,
             // which is what made the consumer read a working debugger as broken (their
             // case: the loop iterator, read while stopped on the `for` line).
-            crate::state::LocalState::OutOfScope => Some(format!(
+            crate::interp::state::LocalState::OutOfScope => Some(format!(
                 "`{name}` is a local of this function but is not in scope at this line \
                  — break inside the block that declares it"
             )),
-            crate::state::LocalState::Unset => Some(format!(
+            crate::interp::state::LocalState::Unset => Some(format!(
                 "`{name}` is in scope but has no value yet at this line — \
                  its first assignment has not run"
             )),
-            crate::state::LocalState::Reused(by) => Some(format!(
+            crate::interp::state::LocalState::Reused(by) => Some(format!(
                 "`{name}` is in scope but the frame no longer holds it — \
                  its stack slot was reused by `{by}`; break earlier in the \
                  function to read it"
@@ -5235,7 +5239,8 @@ impl ReplSession {
             rust: Some(crate::generation::introspect_rust),
             ..Options::new()
         };
-        let _ = crate::introspect::emit_all(&mut self.parser.data, &mut state, end_def, &opts);
+        let _ =
+            crate::interp::introspect::emit_all(&mut self.parser.data, &mut state, end_def, &opts);
     }
 
     /// `:ops <Type>` (@PLN183) — what a type can be written with: each operator and the

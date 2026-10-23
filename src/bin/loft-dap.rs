@@ -83,7 +83,7 @@ fn main() {
                 continue; // a malformed frame is dropped — DAP has no error reply for it
             };
             if field_str(&msg, "command").as_deref() == Some("pause") {
-                loft::debugger::INTERRUPT.store(true, std::sync::atomic::Ordering::Relaxed);
+                loft::interp::debugger::INTERRUPT.store(true, std::sync::atomic::Ordering::Relaxed);
                 let request_seq = field_i64(&msg, "seq").unwrap_or(0);
                 send_response(&stdout, request_seq, "pause", true, None, None);
             }
@@ -546,7 +546,8 @@ impl Adapter {
                 // here the run that could consume it has returned, so a pending interrupt is
                 // one nothing took — the program was stopped or had ended — and it must not
                 // stop the NEXT run.
-                loft::debugger::INTERRUPT.store(false, std::sync::atomic::Ordering::Relaxed);
+                loft::interp::debugger::INTERRUPT
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
             }
             "disconnect" | "terminate" => {
                 let _ = driver.drive(&format!("{{\"id\":{request_seq},\"req\":\"disconnect\"}}"));

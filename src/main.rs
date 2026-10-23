@@ -31,11 +31,11 @@
 )]
 
 use loft::base64;
-use loft::compile;
 use loft::data;
-use loft::extensions;
 use loft::file_access as fa;
 use loft::generation;
+use loft::interp::compile;
+use loft::interp::extensions;
 use loft::log_config;
 use loft::logger;
 use loft::manifest;
@@ -46,7 +46,6 @@ use loft::parser;
 use loft::platform;
 use loft::platform::process::{Program, Spawn, Tree};
 use loft::scopes;
-use loft::state;
 mod test_runner;
 
 use crate::native_utils::{
@@ -55,7 +54,7 @@ use crate::native_utils::{
 };
 use crate::test_runner::run_tests;
 use loft::diagnostics::Level;
-use loft::state::State;
+use loft::interp::state::State;
 use std::env;
 
 /// loft#680 — print the per-target builtin surface: which stdlib builtins are NOT
@@ -4814,7 +4813,8 @@ fn cache_warm(argv: &[String], from: usize) {
             continue; // a build tree whose package is gone; `loft cache prune` owns that
         }
         let stem = format!("loft_{pkg}");
-        if loft::extensions::resolve_native_lib(&pkg_dir.to_string_lossy(), &stem).is_some() {
+        if loft::interp::extensions::resolve_native_lib(&pkg_dir.to_string_lossy(), &stem).is_some()
+        {
             built += 1;
         } else {
             println!("  warn  {name} — could not rebuild {stem}");
@@ -7446,7 +7446,7 @@ fn main() {
     // but the env value is the floor.  MUST be `loft::timeout` (this
     // binary's module instance), not `loft::timeout` (the lib crate's
     // separate copy) — the binary runs its own `crate::` modules
-    // (`loft::state::State` etc.), and the `checkpoint_*` call sites in
+    // (`loft::interp::state::State` etc.), and the `checkpoint_*` call sites in
     // them resolve to `loft::timeout`, so the watchdog + breadcrumb must
     // share that same instance.  Arming `loft::timeout` set a different
     // set of statics the running code never reads.
@@ -7558,7 +7558,7 @@ fn main() {
     // Admitted / Rejected + diagnostics, NEVER execute.  The modder's "will this be
     // allowed?" loop; the policy comes from `loft.toml` like a normal run.
     let mut sandbox_check_mode = false;
-    let mut introspect_sections: Vec<loft::introspect::Section> = Vec::new();
+    let mut introspect_sections: Vec<loft::interp::introspect::Section> = Vec::new();
     let mut introspect_why: Option<String> = None;
     let mut introspect_bytecode_out: Option<String> = None;
     let mut introspect_rust_out: Option<String> = None;
@@ -7733,23 +7733,23 @@ fn main() {
             introspect_mode = true;
             native_mode = false;
         } else if a == "--show-bytecode" {
-            introspect_sections.push(loft::introspect::Section::Bytecode);
+            introspect_sections.push(loft::interp::introspect::Section::Bytecode);
         } else if a == "--bc-roundtrip" {
-            introspect_sections.push(loft::introspect::Section::Roundtrip);
+            introspect_sections.push(loft::interp::introspect::Section::Roundtrip);
         } else if a == "--show-rust" {
-            introspect_sections.push(loft::introspect::Section::Rust);
+            introspect_sections.push(loft::interp::introspect::Section::Rust);
         } else if a == "--show-slots" {
-            introspect_sections.push(loft::introspect::Section::Slots);
+            introspect_sections.push(loft::interp::introspect::Section::Slots);
         } else if a == "--show-types" {
-            introspect_sections.push(loft::introspect::Section::Types);
+            introspect_sections.push(loft::interp::introspect::Section::Types);
         } else if a == "--show-ownership" {
-            introspect_sections.push(loft::introspect::Section::Ownership);
+            introspect_sections.push(loft::interp::introspect::Section::Ownership);
         } else if a == "--show-resolution" {
-            introspect_sections.push(loft::introspect::Section::Resolution);
+            introspect_sections.push(loft::interp::introspect::Section::Resolution);
         } else if a == "--why" {
             // `--why <name>`: the resolution section, narrowed to one name.  Implies
             // the section, since asking the question is asking for it.
-            introspect_sections.push(loft::introspect::Section::Resolution);
+            introspect_sections.push(loft::interp::introspect::Section::Resolution);
             // `argv[i]` is already the flag's VALUE here — the arg loop advanced past
             // the flag itself — so read before consuming, as `--path` does.
             introspect_why = argv.get(i).cloned();
@@ -8199,11 +8199,12 @@ fn main() {
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
-                    let lib_file = loft::extensions::platform_lib_name(stem);
+                    let lib_file = loft::interp::extensions::platform_lib_name(stem);
                     let prebuilt = format!("{pkg_dir}/native/{lib_file}");
                     if fa::exists(std::path::Path::new(&prebuilt)) {
                         native_lib_paths.push(prebuilt);
-                    } else if let Some(built) = loft::extensions::auto_build_native(&pkg_dir, stem)
+                    } else if let Some(built) =
+                        loft::interp::extensions::auto_build_native(&pkg_dir, stem)
                     {
                         native_lib_paths.push(built);
                     }
@@ -8231,7 +8232,7 @@ fn main() {
         } else if a == "--prebuild-natives" {
             #[cfg(feature = "registry")]
             {
-                let (attempted, built) = loft::extensions::prebuild_installed_natives();
+                let (attempted, built) = loft::interp::extensions::prebuild_installed_natives();
                 println!("loft: pre-built {built} of {attempted} installed native package(s)");
             }
             #[cfg(not(feature = "registry"))]
@@ -8920,7 +8921,7 @@ fn main() {
                         "loft_ffi_fp: {}",
                         loft::cache::loft_ffi_fingerprint()
                     )];
-                    match loft::extensions::auto_build_native(&pkg_str, &stem) {
+                    match loft::interp::extensions::auto_build_native(&pkg_str, &stem) {
                         Some(cdylib) => report(cdylib, stem, &keys),
                         None => {
                             eprintln!(
@@ -9365,7 +9366,7 @@ fn main() {
     // @PLN199 A2 — the functions `compiled_stdlib::mark` will route below, under the same
     // condition, named to the parser before it reads a call to one.
     if !native_mode && html_out.is_none() {
-        p.compiled_bridges = loft::compiled_stdlib::names();
+        p.compiled_bridges = loft::interp::compiled_stdlib::names();
     }
     p.library_bridges =
         !native_mode && html_out.is_none() && std::env::var_os("LOFT_NO_NATIVE_LIBS").is_none();
@@ -9554,7 +9555,7 @@ fn main() {
     };
     let mut warm_store: Option<(loft::database::Stores, loft::keys::DbRef)> = None;
     if html_out.is_some() {
-        loft::extensions::set_browser_target();
+        loft::interp::extensions::set_browser_target();
     }
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
@@ -9839,7 +9840,7 @@ fn main() {
         .unwrap_or(false);
     // A browser build compiles every library into the page's wasm: a default-native host
     // cdylib would be built and never linked (`extensions::browser_target`).
-    let mut pending_native = if native_libs_off || loft::extensions::browser_target() {
+    let mut pending_native = if native_libs_off || loft::interp::extensions::browser_target() {
         p.pending_native_compile.clear();
         Vec::new()
     } else {
@@ -9926,7 +9927,7 @@ fn main() {
                 // BEFORE marking, so a symbol that will not resolve leaves its
                 // function interpreting instead of compiling into an
                 // `OpStaticCall` that panics at the first call.
-                let probe = loft::native_adopt::probe_and_mark_exports(
+                let probe = loft::interp::native_adopt::probe_and_mark_exports(
                     &mut p.data,
                     &p.database,
                     &export,
@@ -10055,7 +10056,7 @@ fn main() {
     // table does not start with the standard library's (`compiled_stdlib::mark`).
     if !native_mode && html_out.is_none() {
         let t = std::time::Instant::now();
-        let n = loft::compiled_stdlib::mark(&mut p.data, &p.database, &default_str);
+        let n = loft::interp::compiled_stdlib::mark(&mut p.data, &p.database, &default_str);
         if loft::keys::env_set("LOFT_TIMING") {
             eprintln!(
                 "compiled stdlib: {n} function(s) dispatched to their compiled bodies ({} us)",
@@ -12554,7 +12555,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // Bypass execution; emit bytecode + Rust + slots and exit.
     if introspect_mode {
         let trace_lines = std::mem::take(&mut p.trace_types_lines);
-        let opts = loft::introspect::Options {
+        let opts = loft::interp::introspect::Options {
             sections: introspect_sections.clone(),
             bytecode_out: introspect_bytecode_out.clone(),
             rust_out: introspect_rust_out.clone(),
@@ -12581,7 +12582,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             rust: Some(loft::generation::introspect_rust),
         };
         let end_def = p.data.definitions();
-        if let Err(e) = loft::introspect::emit_all(&mut p.data, &mut state, end_def, &opts) {
+        if let Err(e) = loft::interp::introspect::emit_all(&mut p.data, &mut state, end_def, &opts)
+        {
             eprintln!("loft: introspect failed: {e}");
             std::process::exit(1);
         }
@@ -12729,7 +12731,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // session inherits the RESOLVED stdlib dir — a relative "default"
         // only exists when the cwd happens to be a loft checkout (#346).
         if std::env::var_os("LOFT_LIVE_RELOAD").is_some() {
-            loft::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
+            loft::interp::live_reload::install(&abs_file, &default_str, &p.lib_dirs, &data);
         }
         // @PLN140 arc B/C — arm the loft-level sampler before the program starts, so
         // the interval the first sample credits is the program's, not start-up's.

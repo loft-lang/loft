@@ -472,6 +472,7 @@ pub mod fuzz_oracle;
 #[cfg(feature = "registry")]
 pub mod install;
 pub mod integrity;
+pub mod interp;
 pub mod introspect;
 pub mod layout_schema;
 pub mod lib_ids;

@@ -50,7 +50,7 @@
 //! writes into that record and pushes nothing.
 //!
 //! Nothing had to be added for a placed call to use it. That routing keys on
-//! [`crate::state::codegen::is_cdylib_text_call`] — a non-empty `def.native`
+//! [`crate::interp::state::codegen::is_cdylib_text_call`] — a non-empty `def.native`
 //! symbol plus a text return — which is exactly the shape [`mark_exports`]
 //! leaves behind, so the two calls emit already. What remains is this side of
 //! the contract: take the stashed destination, write the worker's answer into
@@ -61,8 +61,8 @@ use super::wire::Worker;
 use crate::data::{Data, DefType, Type};
 use crate::database::Stores;
 use crate::host::Value;
+use crate::interp::state::State;
 use crate::keys::DbRef;
-use crate::state::State;
 use crate::type_schema::StoreTypeOf;
 use crate::use_analysis::HeapDelivery;
 use std::collections::HashMap;
@@ -514,7 +514,7 @@ fn same_record(a: &DbRef, b: &DbRef) -> bool {
 /// cross, write the answer back.
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn placed_dispatch(stores: &mut Stores, stack: &mut DbRef) {
-    let lib_idx = crate::extensions::current_lib_idx();
+    let lib_idx = crate::interp::extensions::current_lib_idx();
     let mut guard = PLACEMENT
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

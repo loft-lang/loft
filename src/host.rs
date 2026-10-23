@@ -22,11 +22,11 @@
 
 // @I85 — Engine-host kernel natives (the controlled loft ↔ host boundary; this is
 // the Rust-host side of it: a host program calling into a loaded loft program).
-use crate::compile;
 use crate::data::{Data, Type};
+use crate::interp::compile;
+use crate::interp::state::{HostRetKind, HostReturn, State, WorkerArg};
 use crate::parser;
 use crate::scopes;
-use crate::state::{HostRetKind, HostReturn, State, WorkerArg};
 use crate::type_schema::StoreTypeOf;
 
 /// A typed value passed to, or returned from, a loft function.
