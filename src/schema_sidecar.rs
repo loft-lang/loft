@@ -245,7 +245,13 @@ pub enum Handoff {
 /// to make sound — never a silent raw handoff across a changed layout.
 #[must_use]
 pub fn classify(old: &LayoutIdentity, new: &LayoutIdentity) -> Handoff {
-    if old.layout_hash == new.layout_hash && old.dump == new.dump {
+    // @C152 — a store whose hashes were written under a placement this build reads
+    // (`placement::HASH_READS`) is the same layout once those tokens are read as this build's:
+    // its tables say their own layout, so it is handed over raw, never converted.
+    let read = crate::placement::read_as_own(&old.dump);
+    let same = (old.layout_hash == new.layout_hash && old.dump == new.dump)
+        || (matches!(read, std::borrow::Cow::Owned(_)) && *read == new.dump);
+    if same {
         // @PLN102 arc-E F9 — the byte layout matches, but a full-width `τ` vs `τ?`
         // reshape is byte-identical yet reinterpretation-UNSAFE. The `schema`
         // (nullability signature, from `Data`) catches it. Grandfather: if EITHER

@@ -343,8 +343,15 @@ impl Deriver<'_> {
             self.refuse(path, "the layout does not describe this type".to_string());
             return None;
         };
-        // A keyed collection this build lays out differently cannot even be walked.
-        if let Some(token) = self.old.placements.get(&old) {
+        // A keyed collection this build lays out differently cannot even be walked — unless it
+        // is a hash under a placement this build reads as written (@C152).
+        let readable = |token: &str| {
+            matches!(on, LayoutNode::Iterated(Iterated::Hash { .. }))
+                && crate::placement::hash_reads(token)
+        };
+        if let Some(token) = self.old.placements.get(&old)
+            && !readable(token)
+        {
             self.refuse(
                 path,
                 format!(
