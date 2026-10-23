@@ -93,6 +93,10 @@ const BASELINE: &str = "1";
 /// by a post-H loft would take a record number for an arena index and find an entry at
 /// a byte offset nothing put one at, so it must REFUSE rather than answer — which is
 /// what this token buys, and the reason it shipped before H rather than with it.
+///
+/// The tagged and inline tables (`(Col-Tag)`, `(Col-Inline)`) record their layout in their own
+/// header and are written under this token, which a build older than them reads as untagged:
+/// @C152 owes the bump that makes such a build refuse them ("3 reads 2").
 pub const HASH: &str = "2";
 
 /// `index<T[k]>` — the B+tree in `crate::btree` (@C147): the collection's slot names

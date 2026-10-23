@@ -3023,6 +3023,21 @@ the loop is two cache misses and those reads are hot. Reverted rather than shipp
 
 ---
 
+
+### Revised 2026-10-23 (owner, @C152)
+
+The decision as it stood: *"A hash lookup reads the bucket slot, then the entry; both stay random
+reads.  A hash cached in the slot and entries in the bucket table are both declined;
+`reserve(h, n)` answers a fill of known size."*  Its revisit trigger fired: a like-for-like
+measurement still showed a large gap (gridmesh `field_add_cell` 4.25× against a hashbrown-table
+ceiling of about 1.55×).  `(Col-Tag)` and `(Col-Inline)` were built on `157-native-4x` and
+measured there: `field_add_cell` 4.21× → 2.30×, `hash_walk` 4.14× → 1.62×, the keyed class
+median 2.93× → 2.10× (`bench/portal/analysis/keyed.md`).  The owner ruled that several
+implementations of a data structure are acceptable as long as they live beside each other and the
+interpreter reads and writes them too (@C152), which answers the format-break objection.  Testing
+that ruling (`every_hash_layout_lives_beside_the_others_in_one_store`) found that a struct copy
+copied a linked group's hash as a table of its own; the copy now indexes the copied records
+(`@FR-Col-Group`).
 ## C106 — `#c` has ONE arity ceiling for both backends, and it was raised rather than lowered
 
 **Catalogue:** @F92 (direct C binding), @F53 (native backend)
@@ -4978,3 +4993,19 @@ order should become the default with key order as the option, the analysis advis
 for this cycle (a breaking change, and slot order is not insertion order under removals); the
 owner agreed and asked for `unordered(h)`.  Building it found loft#2019: a format string's
 `{for e in h}` never took the snapshot and crashed the store.
+
+## C152 — A data structure may have several layouts side by side, and every build reads and writes them all
+
+Decided 2026-10-23 by the owner, when the hash's tagged and inline layouts (@C105) were ready
+and the push was held on the format change.  The owner: *"I am not against multiple
+implementations of data structures as long as they can live beside each other.  And the
+interpreter should also be able to read/write them."*  The layouts already recorded themselves
+per table (`STRIDE_FLD`'s `TAGGED` and `INLINE` flags) and lived in the runtime both backends
+call (`src/hash.rs`).  What was missing was a test of the claim: a store written under one
+layout policy, then read, grown, shrunk and extended under another, with the backends crossed.
+That test is `tests/store_persist_loft.rs` `every_hash_layout_lives_beside_the_others_in_one_store`
+(nine writer/updater pairs, both backend orders).  Its first run failed under the inline layout
+— `by_k=100/100/55550` where 250 records were written — which led to the group-copy defect
+(`a-copied-group-indexes-its-own-records.loft`).  Still owed when decided: the placement token,
+since an older build would misread a tagged or inline table instead of refusing it.
+

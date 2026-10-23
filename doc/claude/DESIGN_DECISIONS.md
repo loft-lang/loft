@@ -87,7 +87,7 @@ a guard that does not exercise it — is its line in
 - [C68](DESIGN_DECISIONS_COLLECTIONS.md#c68--keyed-collections-dedup-on-insert--and-collkeyvalue) — Keyed collections dedup on insert (`+=` AND `coll[key]=value`)
 - [C99](DESIGN_DECISIONS_COLLECTIONS.md#c99--a-keyed-collections-subscript-is-uniformly-key-addressed-lookup--range--removal-never-positional) — A keyed collection's subscript is uniformly KEY-addressed (lookup / range / removal), never positional
 - [C104](DESIGN_DECISIONS_COLLECTIONS.md#c104--a-slice-on-a-lazily-bound-collection-never-fetches-a-range-is-an-explicit-call) — a slice on a lazily-bound collection never fetches; a range is an explicit call
-- [C105](DESIGN_DECISIONS_COLLECTIONS.md#c105--a-hash-lookup-keeps-its-two-random-reads-no-hash-in-slot-no-entries-in-the-bucket-table) — a hash lookup keeps its TWO random reads (no hash-in-slot, no entries in the bucket table)
+- [C105](DESIGN_DECISIONS_COLLECTIONS.md#c105--a-hash-that-owns-its-entries-keeps-them-in-its-bucket-table-a-shared-one-keeps-tagged-slots) — a hash that owns its entries keeps them in its bucket table; a shared one keeps tagged slots
 - [C113](DESIGN_DECISIONS_COLLECTIONS.md#c113--two-index-collections-over-one-element-type-and-key-are-refused-not-made-to-work) — two `index` collections over one element type and key are refused, not made to work
 - [C114](DESIGN_DECISIONS_COLLECTIONS.md#c114--a-keyed-collection-is-refused-as-a-vector-element-not-given-an-element-form) — a keyed collection is refused as a vector ELEMENT, not given an element form
 - [C117](DESIGN_DECISIONS_COLLECTIONS.md#c117--a-linked-groups-members-must-share-one-element-layout-the-tag-aware-dense-read-is-declined) — a linked group's members must share one element LAYOUT; the tag-aware dense read is declined
@@ -95,6 +95,7 @@ a guard that does not exercise it — is its line in
 - [C146](DESIGN_DECISIONS_COLLECTIONS.md#c146--a-hash-tables-bucket-count-is-a-power-of-two) — A hash table's bucket count is a power of two
 - [C147](DESIGN_DECISIONS_COLLECTIONS.md#c147--an-index-is-a-btree-of-key-parts-and-record-numbers-kept-apart-from-the-records) — An `index` is a B+tree of key parts and record numbers, kept apart from the records
 - [C151](DESIGN_DECISIONS_COLLECTIONS.md#c151--a-hash-walks-in-key-order-a-walk-that-needs-no-order-says-unorderedh) — A hash walks in key order; a walk that needs no order says `unordered(h)`
+- [C152](DESIGN_DECISIONS_COLLECTIONS.md#c152--a-data-structure-may-have-several-layouts-side-by-side-and-every-build-reads-and-writes-them-all) — A data structure may have several layouts side by side, and every build reads and writes them all
 
 ## Failure — [DESIGN_DECISIONS_FAILURE.md](DESIGN_DECISIONS_FAILURE.md)
 

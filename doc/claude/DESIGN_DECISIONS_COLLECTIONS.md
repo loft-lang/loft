@@ -51,19 +51,26 @@ declaration).  Decided 2026-08-06 — [record](DESIGN_DECISIONS-history.md#c104-
 **Holds at:** `tests/lazy_sql_source.rs::a_slice_reads_what_is_resident_and_fetches_nothing`.
 **Catalogue:** @F108 (lazy store binding)
 
-## C105 — a hash lookup keeps its TWO random reads (no hash-in-slot, no entries in the bucket table)
+## C105 — a hash that owns its entries keeps them in its bucket table; a shared one keeps tagged slots
 
-**Decision.** A hash lookup reads the bucket slot, then the entry; both stay random reads.  A hash
-cached in the slot and entries in the bucket table are both declined; `reserve(h, n)` answers a fill
-of known size.  **Why.** The cache saves at most ~12 % of a grown insert (none with `reserve`) for a
-doubled table and a persisted-format break; in-table entries move on growth and make outstanding
-`DbRef`s read wrong data ([COMPATIBILITY.md](COMPATIBILITY.md)).
+**Decision.** A bucket slot carries a TAG, the low half of the key's digest, beside the entry it
+names (`formal/collections.md` `(Col-Tag)`), so a probe reads only the entry it answers.  A hash
+whose element type owns its entries keeps them IN the bucket table, one per bucket
+(`(Col-Inline)`), so a hit is one random read.  A hash whose records a group member or a stored
+`reference<T>` shares keeps them where they are and names them from tagged slots: those entries
+never move.  `reserve(h, n)` answers a fill of known size.  **Why.** Measured like for like, the
+two-read table left the keyed class a large gap that only the layout closed (the ledger:
+`bench/portal/analysis/keyed.md`).  The objection to entries in the table — they move on growth,
+so an outstanding `DbRef` reads the wrong data — holds only for a type something can name, and
+such a type is never inline; a growth is a keyed add, which ends every view already
+(`binding.md` B-Disturb).  The persisted-format cost is carried by @C152: the layouts live side
+by side, so no store is converted.
 
-**Revisit when.** A like-for-like measurement (same access order, same working set on both sides)
-still shows a large gap; or reference stability into a keyed collection is given up; or the bucket
-table's width changes for another reason.  **Being revisited:** the keyed class's
-like-for-like gap (gridmesh `field_add_cell` 4.25×, its hashbrown-table ceiling ≈ 1.55×) is
-measured against `formal/collections.md` (Col-Tag) and (Col-Inline), both PROPOSED.  Decided 2026-08-10 — [record](DESIGN_DECISIONS-history.md#c105--a-hash-lookup-keeps-its-two-random-reads-no-hash-in-slot-no-entries-in-the-bucket-table).
+**Revisit when.** Reference stability into an owned hash is promised; or a measured shape loses
+with its entries in the table (a wide entry whose moves on growth outweigh the read saved).
+Decided 2026-08-10, revised by @C152 2026-10-23 — [record](DESIGN_DECISIONS-history.md#c105--a-hash-lookup-keeps-its-two-random-reads-no-hash-in-slot-no-entries-in-the-bucket-table).
+**Holds at:** `@C105` — `hash::SLOT_BYTES`, `TAGGED`, `INLINE` (`src/hash.rs`), guards
+`tests/layout_golden.rs` `layout_golden` and `placement_contract_is_pinned`.
 **Catalogue:** @F7 (`hash<T[keys]>` keyed collection).
 
 ## C113 — two `index` collections over one element type and key are refused, not made to work
@@ -185,4 +192,30 @@ walk, with key order as the opt-in, can be weighed then against how often progra
 (`src/parser/objects.rs`), `Parser::keyed_snapshot` (`src/parser/collections.rs`),
 `formal/collections.md` `(Col-Unordered)`, guard
 `tests/scripts/a-hash-walked-unordered-repeats-its-order.loft`.
+**Catalogue:** @F7 (`hash<T[keys]>` keyed collection).
+
+## C152 — A data structure may have several layouts side by side, and every build reads and writes them all
+
+**Decision.** One collection kind may be implemented by more than one layout, provided the
+layouts live BESIDE each other: each instance records its own layout in its header, one store
+holds instances of every layout, and every build — the interpreter and `--native` — reads and
+writes every layout.  Which layout a new instance takes is the writing build's policy, and a
+value never depends on it.  A build that cannot read a layout REFUSES the store rather than
+misreading it.  The hash is the first such kind: untagged, tagged and inline tables, owning
+or borrowing (`formal/collections.md` `(Col-Layouts)`).
+**Why.** A layout is chosen per shape for speed (@C105), and a store already written in an
+older layout stays readable without a conversion: the format grows instead of breaking.  The
+interpreter is held to the same layouts so a store moves between backends, and the
+interpreter remains the reference that checks the native build's values.
+**Owed.** The refusal: `placement::HASH` is still `"2"`, so a build older than the tagged and
+inline tables reads one as untagged and misreads it.  The token changes to `"3"`, with a rule
+that a build accepts an older token it can read ("3 reads 2"), before these layouts are
+pushed.
+**Revisit when.** A layout cannot record itself in its instance (it needs an outside schema to
+be read); or keeping every layout readable costs a measured read on the common one.
+Decided 2026-10-23 (owner) — [record](DESIGN_DECISIONS-history.md#c152--a-data-structure-may-have-several-layouts-side-by-side-and-every-build-reads-and-writes-them-all).
+**Holds at:** `@C152` — `hash::hash_inline` and the `STRIDE_FLD` flags (`src/hash.rs`),
+`formal/collections.md` `(Col-Layouts)`, guard `tests/store_persist_loft.rs`
+`every_hash_layout_lives_beside_the_others_in_one_store` with
+`tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft`.
 **Catalogue:** @F7 (`hash<T[keys]>` keyed collection).
