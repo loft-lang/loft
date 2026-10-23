@@ -151,9 +151,9 @@ impl super::Output<'_> {
         }
         self.prelude_fields(bl, &lp, &mut fields);
         let block_code = Value::Block(Box::new(bl.clone()));
-        let leaves = self.variable_leaves(&block_code);
+        let all_leaves = self.variable_leaves(&block_code);
         let trace = std::env::var("LOFT_TRACE_RANGED_CALL").is_ok();
-        if fields.is_empty() && leaves.is_empty() {
+        if fields.is_empty() && all_leaves.is_empty() {
             if trace {
                 eprintln!(
                     "ranged-call: {} For block {} declines: no hoisted integer field or invariant integer variable",
@@ -163,44 +163,49 @@ impl super::Output<'_> {
             }
             return None;
         }
-        let mut seeds = Ranges::default();
-        for (key, _) in &fields {
-            seeds.fields.insert(*key, (-G, G));
-        }
-        for v in &leaves {
-            seeds.vars.insert(*v, (-G, G));
+        // The fewest leaves that make a call NEWLY ranged.  Each leaf is a test that can fail
+        // at run time and send every pass to the checked copy, and a copy whose calls already
+        // take their ranged variants unguarded only duplicates the loop: fields alone first,
+        // then the variables with no range, and only then the ones a wider fact bounds.
+        let known = self.current_ranges();
+        let unranged: Vec<u16> = all_leaves
+            .iter()
+            .copied()
+            .filter(|v| known.vars.get(v).is_none())
+            .collect();
+        let nn = self.nn_facts();
+        let tiers: [&[u16]; 3] = [&[], &unranged, &all_leaves];
+        let mut chosen: Option<(Vec<u16>, Ranges)> = None;
+        for (t, leaves) in tiers.iter().enumerate() {
+            if (t == 0 && fields.is_empty()) || (t > 0 && leaves.len() == tiers[t - 1].len()) {
+                continue;
+            }
+            let mut seeds = Ranges::default();
+            for (key, _) in &fields {
+                seeds.fields.insert(*key, (-G, G));
+            }
+            for v in *leaves {
+                seeds.vars.insert(*v, (-G, G));
+            }
+            let merged = self.guarded_facts(bl, &block_code, &seeds, leaves);
+            if self.copy_gains(&block_code, &merged, &known, &nn) {
+                chosen = Some((leaves.to_vec(), merged));
+                break;
+            }
         }
         let vars = self.data.def(self.def_nr).variables();
-        let nn = self.nn_facts();
-        let merged = self.guarded_facts(bl, &block_code, &seeds, &leaves);
-        // Worth it only when some call in the block would take a ranged variant.
-        let mut gains = false;
-        block_code.walk(&mut |n| {
-            if !gains
-                && let Value::Call(d, args) = n
-                && benefits(self.data, *d, 0)
-                && self.args_ranged(*d, args, &merged, &nn)
-            {
-                gains = true;
-            }
-        });
-        if !gains {
+        let Some((leaves, merged)) = chosen else {
             if trace {
-                let ranged: Vec<String> = merged
-                    .vars
-                    .iter()
-                    .map(|(v, r)| format!("{}={r:?}", vars.name(*v)))
-                    .collect();
                 eprintln!(
-                    "ranged-call: {} For block {} declines: no call gains (fields {:?}; vars {})",
+                    "ranged-call: {} For block {} declines: no call gains (fields {:?}; variables {:?})",
                     self.data.def(self.def_nr).name(),
                     bl.scope,
                     fields.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
-                    ranged.join(" ")
+                    all_leaves.iter().map(|v| vars.name(*v)).collect::<Vec<_>>()
                 );
             }
             return None;
-        }
+        };
         if trace && !leaves.is_empty() {
             eprintln!(
                 "ranged-call: {} For block {} guards variables {:?}",
@@ -210,6 +215,81 @@ impl super::Output<'_> {
             );
         }
         Some((self.guard_test(&fields, &leaves)?, merged))
+    }
+
+    /// Does the guarded copy gain: some call in `block` takes a ranged variant under the
+    /// copy's facts `copy` and would not under the facts the block runs under unguarded?
+    fn copy_gains(
+        &mut self,
+        block: &Value,
+        copy: &Ranges,
+        unguarded: &Ranges,
+        nn: &std::collections::HashMap<u16, bool>,
+    ) -> bool {
+        let mut candidates: Vec<u32> = Vec::new();
+        block.walk(&mut |n| {
+            if let Value::Call(d, args) = n
+                && benefits(self.data, *d, 0)
+                && self.args_ranged(*d, args, copy, nn)
+                && !self.args_ranged(*d, args, unguarded, nn)
+            {
+                candidates.push(*d);
+            }
+        });
+        candidates.into_iter().any(|d| self.variant_gains(d, 0))
+    }
+
+    /// Does `d`'s ranged variant turn any operator plain that its plain body keeps checked —
+    /// one of its own, under its parameters seeded `[-L, L]`, or one of a callee whose call it
+    /// newly ranges and whose variant gains in turn?  A variant equal to its plain body only
+    /// duplicates code: a function whose arithmetic is all in the apart variants it calls
+    /// (`__apv`) has nothing for the ranges to change.  Memoised; a recursive function meets
+    /// itself as no gain.
+    pub(super) fn variant_gains(&mut self, d: u32, depth: u8) -> bool {
+        if depth > 3 || !benefits(self.data, d, 0) {
+            return false;
+        }
+        if let Some(g) = self.rg_gains.get(&d) {
+            return *g;
+        }
+        self.rg_gains.insert(d, false);
+        let data = self.data;
+        let def = data.def(d);
+        let code = def.code();
+        let seeded = self.variant_ranges(d, false);
+        let nn = super::non_sentinel::non_sentinel_vars(data, code);
+        let plain = range::range_vars(
+            data,
+            def.variables(),
+            code,
+            &nn,
+            &std::collections::BTreeMap::new(),
+            &Ranges::default(),
+        );
+        let mut gain = false;
+        let mut calls: Vec<u32> = Vec::new();
+        code.walk(&mut |n| {
+            let Value::Call(c, args) = n else { return };
+            if gain || (*c as usize) >= data.definitions.len() {
+                return;
+            }
+            let name = data.def(*c).name();
+            if range::plain_form(name, args.len()).is_some() {
+                gain = range::op_range(data, &nn, &seeded, name, args, 0).is_some()
+                    && range::op_range(data, &nn, &plain, name, args, 0).is_none();
+            } else if *c != d
+                && data.def(*c).is_loft_defined()
+                && self.args_ranged(*c, args, &seeded, &nn)
+                && !self.args_ranged(*c, args, &plain, &nn)
+            {
+                calls.push(*c);
+            }
+        });
+        if !gain {
+            gain = calls.into_iter().any(|c| self.variant_gains(c, depth + 1));
+        }
+        self.rg_gains.insert(d, gain);
+        gain
     }
 
     /// The facts the guarded copy of `bl` runs under: the function's own, the copy's facts for
@@ -394,7 +474,7 @@ impl super::Output<'_> {
             || self.range_arith_disabled
             || self.in_coroutine_body
             || (d as usize) >= self.data.definitions.len()
-            || !benefits(self.data, d, 0)
+            || !self.variant_gains(d, 0)
         {
             return false;
         }

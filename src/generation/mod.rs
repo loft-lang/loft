@@ -584,9 +584,15 @@ pub struct Output<'a> {
     /// Set while a guarded `For` copy (or the plain arm beside it) is emitted, so the block
     /// is not asked again.
     pub in_range_copy: bool,
+    /// `@FR-R-Range`'s while-counter clause — the loops (by scope) being emitted under the
+    /// narrowed counter range, so the dispatch does not narrow them a second time.
+    pub while_narrowed: std::collections::HashSet<u16>,
     /// `@FR-R-RangedCall` — the ranged variants calls have asked for, `(function, twin)`,
     /// and the ones already emitted.
     pub rg_requests: Vec<(u32, bool)>,
+    /// `@FR-R-RangedCall` — whether a function's ranged variant turns any operator plain that
+    /// its plain body keeps checked (`variant_gains`), memoised per function.
+    pub rg_gains: HashMap<u32, bool>,
     pub rg_emitted: HashSet<(u32, bool)>,
     /// Set while a ranged variant's body is emitted: its name takes `__rg`.
     pub emitting_ranged: bool,
@@ -2077,7 +2083,9 @@ impl<'a> Output<'a> {
             assumed_distinct: Vec::new(),
             range_override: Vec::new(),
             in_range_copy: false,
+            while_narrowed: std::collections::HashSet::new(),
             rg_requests: Vec::new(),
+            rg_gains: HashMap::new(),
             rg_emitted: HashSet::new(),
             emitting_ranged: false,
             distinct_version_disabled: std::env::var("LOFT_NO_DISTINCT_VERSION")
@@ -7161,6 +7169,28 @@ impl Output<'_> {
             Some(a) => range::blocker(self.data, &nn, &*rv, def.variables(), def.code(), a, 0),
             None => "ranged operands whose result may overflow",
         }
+    }
+
+    /// `@FR-R-Range`'s while-counter clause — the facts a `while i < E { …; i += 1 }` loop's
+    /// statements run under: the function's, with the counter narrowed from `[lo, i64::MAX]`
+    /// to `[lo, i64::MAX - 1]`, since every statement of the loop runs after its test passed
+    /// and before its step.  `None` for any other loop, or one already narrowed.
+    pub fn while_counter_facts(&mut self, lp: &crate::data::Block) -> Option<range::Ranges> {
+        if self.range_arith_disabled
+            || !range::while_counters_enabled()
+            || self.while_narrowed.contains(&lp.scope)
+        {
+            return None;
+        }
+        let i = range::while_counter_shape(self.data, lp)?;
+        let facts = self.current_ranges();
+        let (lo, hi) = facts.vars.get(&i).copied()?;
+        if hi != i64::MAX {
+            return None;
+        }
+        let mut narrowed = (*facts).clone();
+        narrowed.vars.insert(i, (lo, i64::MAX - 1));
+        Some(narrowed)
     }
 
     /// The facts the code being emitted runs under: the innermost override, or the

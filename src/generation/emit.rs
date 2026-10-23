@@ -965,6 +965,16 @@ impl Output<'_> {
                     r?;
                 }
             }
+            // `@FR-R-Range`'s while-counter clause — the loop is emitted as usual, under the
+            // narrowed counter: its step, and every other use before it, is proven in range.
+            Value::Loop(lp) if let Some(facts) = self.while_counter_facts(lp) => {
+                self.while_narrowed.insert(lp.scope);
+                self.range_override.push(std::rc::Rc::new(facts));
+                let r = self.output_code_node(w, IrNode::Native(code));
+                self.range_override.pop();
+                self.while_narrowed.remove(&lp.scope);
+                return r;
+            }
             Value::Loop(lp) => {
                 // A loop nested inside this one is asked anew (`distinct_version`).
                 self.in_distinct_copy = false;

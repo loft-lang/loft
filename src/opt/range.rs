@@ -577,6 +577,148 @@ fn seed_elems(
     }
 }
 
+/// `LOFT_NO_WHILE_COUNTER=1` — `@FR-R-Range`'s while-counter clause off.
+#[must_use]
+pub fn while_counters_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_NO_WHILE_COUNTER").map_or(true, |v| v == "0"))
+}
+
+fn is_op(data: &Data, v: &Value, name: &str) -> Option<Vec<Value>> {
+    match v.unspan() {
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len() && data.def(*d).name() == name =>
+        {
+            Some(args.clone())
+        }
+        _ => None,
+    }
+}
+
+fn mentions_var(v: &Value, i: u16) -> bool {
+    v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == i))
+}
+
+/// `@FR-R-Range`'s while-counter clause — the counter `i` of a loop shaped
+/// `while i < E { …; i += 1 }`: the loop's first statement is the test's break
+/// (`if !(i < E) break`, `E` naming no `i`), its last is the step `i = i + 1`, and the step is
+/// the loop's one write of `i`.  Every statement of the loop then runs after the test passed
+/// and before the step, where `i < E <= i64::MAX` — and a null `E` (`i64::MIN`) ends the loop,
+/// since native compares the raw words.  `None` for every other loop.
+#[must_use]
+pub fn while_counter_shape(data: &Data, lp: &crate::data::Block) -> Option<u16> {
+    let mut ops = lp
+        .operators
+        .iter()
+        .filter(|op| !matches!(op, Value::Line(_)));
+    let Value::If(cond, _, _) = ops.next()?.unspan() else {
+        return None;
+    };
+    let not = is_op(data, cond, "OpNot")?;
+    let lt = is_op(data, not.first()?, "OpLtInt")?;
+    let (Value::Var(i), bound) = (lt.first()?.unspan(), lt.get(1)?) else {
+        return None;
+    };
+    if mentions_var(bound, *i) {
+        return None;
+    }
+    let Value::Block(body) = lp
+        .operators
+        .iter()
+        .rev()
+        .find(|op| !matches!(op, Value::Line(_)))?
+        .unspan()
+    else {
+        return None;
+    };
+    let Value::Set(x, step) = body
+        .operators
+        .iter()
+        .rev()
+        .find(|op| !matches!(op, Value::Line(_)))?
+        .unspan()
+    else {
+        return None;
+    };
+    let add = is_op(data, step, "OpAddInt")?;
+    let one = matches!(
+        add.get(1).map(Value::unspan),
+        Some(Value::Int(1) | Value::Long(1))
+    );
+    if *x != *i || !matches!(add.first().map(Value::unspan), Some(Value::Var(v)) if v == i) || !one
+    {
+        return None;
+    }
+    let mut writes = 0;
+    Value::Loop(Box::new(lp.clone())).walk(&mut |n| {
+        if let Value::Set(v, _) | Value::TuplePut(v, _, _) = n
+            && *v == *i
+        {
+            writes += 1;
+        }
+    });
+    (writes == 1).then_some(*i)
+}
+
+/// One round of the while counters: a local whose every self-step is the step of a loop
+/// [`while_counter_shape`] admits for it, and whose every other assignment is ranged and
+/// names it not, lies in `[lowest seed, i64::MAX]` — it only grows, by one, while below a
+/// bound no larger than `i64::MAX`.
+fn seed_while_counters(
+    data: &Data,
+    code: &Value,
+    nn: &HashMap<u16, bool>,
+    escaped: &std::collections::HashSet<u16>,
+    rv: &mut Ranges,
+    counters: &mut std::collections::HashSet<u16>,
+) {
+    if !while_counters_enabled() {
+        return;
+    }
+    let mut shaped: HashMap<u16, usize> = HashMap::new();
+    code.walk(&mut |n| {
+        if let Value::Loop(lp) = n
+            && let Some(i) = while_counter_shape(data, lp)
+        {
+            *shaped.entry(i).or_default() += 1;
+        }
+    });
+    for (i, loops) in shaped {
+        if counters.contains(&i) || escaped.contains(&i) || rv.vars.contains_key(&i) {
+            continue;
+        }
+        let mut steps = 0;
+        let mut lo: Option<i64> = None;
+        let mut ok = true;
+        code.walk(&mut |n| {
+            if !ok {
+                return;
+            }
+            match n.unspan() {
+                Value::Set(v, e) if *v == i => {
+                    if mentions_var(e, i) {
+                        steps += 1;
+                    } else if let Some(r) = range(data, nn, &*rv, e, 0) {
+                        lo = Some(lo.map_or(r.0, |l| l.min(r.0)));
+                    } else {
+                        ok = false;
+                    }
+                }
+                Value::TuplePut(v, _, _) if *v == i => ok = false,
+                _ => {}
+            }
+        });
+        // Each self-step is one shaped loop's step: a step anywhere else is a second write.
+        if ok
+            && steps == loops
+            && let Some(lo) = lo
+        {
+            rv.vars.insert(i, (lo, i64::MAX));
+            counters.insert(i);
+        }
+    }
+}
+
 /// Forget every memoised call range: a new run is about a new program.  Called by
 /// [`super::begin_program`], beside `non_sentinel::begin_generation`.
 pub(crate) fn begin_generation() {
@@ -642,6 +784,7 @@ pub fn range_vars(
     seed_counters(data, code, code, nn, &mut rv, &mut counters);
     // Then the walks' accumulators — the second self-stepping shape read off a loop.
     seed_accumulators(data, code, nn, &escaped, walks, &mut rv, &mut counters);
+    seed_while_counters(data, code, nn, &escaped, &mut rv, &mut counters);
     loop {
         let mut round: HashMap<u16, Option<Range>> = HashMap::new();
         let elems_before = rv.elems.len();
@@ -677,6 +820,7 @@ pub fn range_vars(
             let before = rv.vars.len();
             seed_counters(data, code, code, nn, &mut rv, &mut counters);
             seed_accumulators(data, code, nn, &escaped, walks, &mut rv, &mut counters);
+            seed_while_counters(data, code, nn, &escaped, &mut rv, &mut counters);
             if rv.vars.len() == before {
                 return rv;
             }
