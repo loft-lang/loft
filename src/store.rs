@@ -7333,20 +7333,25 @@ mod tests {
             }
         }
         assert!(
-            found > 50 && grown_free > 20,
-            "both answer kinds reached: {found} first fits, {grown_free} free tails"
+            found > 50 && grown_free > 20 && grown_claimed > 0,
+            "every answer kind reached: {found} first fits, {grown_free} free tails, \
+             {grown_claimed} claimed tails"
         );
-        // A claimed tail — the sequence above always leaves a free remainder — on a store
-        // filled to its last word: nothing is free, and growth appends.
+        // A claimed tail on a store filled to its last word: nothing is free, and growth
+        // appends.
         let mut full = Store::new(64);
         full.free = false;
         let whole = full.claim(full.size - super::PRIMARY);
         assert_eq!((full.wild, full.free_root), (0, 0), "nothing is free");
         // The record's last payload word still spells the old free block's footer (a claim
-        // does not have to zero it): unconfirmed by any index, it is not trusted.
-        assert!(
-            full.indexed_scan(5).is_none(),
-            "a payload that spells a footer goes to the walk"
+        // does not have to zero it).  The claims say a claimed block ends the store, so the
+        // scan answers what the walk would — growth appends — without reading that word
+        // (@C153).
+        let size = full.size;
+        assert_eq!(
+            full.indexed_scan(5),
+            Some((size, size, 1)),
+            "a claimed tail is known from the claims, whatever its payload spells"
         );
         let last_word = (full.size - 1 - whole) * 8 + 4;
         full.write::<i32>(whole, last_word, 7);
@@ -7361,7 +7366,6 @@ mod tests {
             claim >= 0 && wclaim >= 0 && wlast == whole,
             "on the claimed tail"
         );
-        assert_eq!(grown_claimed, 0);
     }
 
     #[test]

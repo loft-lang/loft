@@ -481,7 +481,7 @@ fn a_capped_box_stops_fetching_at_the_cap() {
 fn every_axis_width_decodes_to_what_was_written() {
     for w in WIDTHS {
         let keys = keys_for(w);
-        let mut store = Store::new_in_use(1 << 12);
+        let mut store = Store::new_in_use_defined(1 << 12);
         let words = 1 + u32::from(w.stride * 2).div_ceil(8);
         let (lo, hi) = w.span;
         let probes = [lo, lo + 1, -1, 0, 1, hi - 1, hi];
