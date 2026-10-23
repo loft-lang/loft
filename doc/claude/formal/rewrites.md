@@ -671,8 +671,9 @@ also grows; falsifiers `LOFT_HOIST_VERIFY=1` and `LOFT_POISON=1`.  Sites: `hoist
                  store (the header carries the lock).  A kept field the body
                  READS — a walk, an element, a length, or a call that hands p to
                  a function keeping the field at that position — has ONE holder:
-                 bound at entry where the body reads it twice or more, received
-                 from the caller by `&mut` in the body's KEPT TWIN.  Every read
+                 bound at entry where the body HANDS IT DOWN to a callee's kept
+                 twin and the reads it serves, as emitted, are two or more;
+                 received from the caller by `&mut` in the body's KEPT TWIN.  Every read
                  serves from the holder; after each op of (a) and each call of
                  (b) the holder is derived again, except a call to the callee's
                  kept twin, which hands the holder down and so keeps it current
@@ -704,10 +705,13 @@ returns).  Guard `tests/scripts/a-kept-vector-field-follows-its-appends-across-c
 (falsified twice: no refresh after the append group, no refresh after a plain call that may
 append); pin `tests/kept_header.rs`.  `Output::kept_check_taken` stops the generation when a
 statement that changes a held field was taken by another rewrite — the net under the run-emitting
-list, which caught the element-first build.  A holder is an enclosing frame to `(R-Alias)`'s
-versioned copy, so that copy is no longer emitted for a kept path (its measured rule: a base
-alone does not pay for the duplicated loop); `(R-Header)`'s loop count falls where a body's
-holder serves the loop.  A held read reports no index fault yet (loft#2134), as for every
+list, which caught the element-first build.  The versioned copy of `(R-Alias)` does not count a
+path held only by a kept holder as held: the copy buys more than a base there (crawler's
+`build_vis_texture` keeps its push window in it; withheld, 1.14× → 2.94× of its twin).  A
+plain body binds only a holder it hands down, counted as emitted (`Output::kept_effective_uses`:
+a callee `kept_of` declines, or a loop's call that takes the `__inv` twin, serves nothing) —
+own reads alone are what the loop's and the function clause's headers already serve lazily,
+and an eager holder of a field read on one branch cost hex_body's `bone_shape_has` 7.7 %.  A held read reports no index fault yet (loft#2134), as for every
 held header.  Lane 17 A/B, 7 rounds, every hash equal:
 `slope_path_with_undo` −10.8 %, `resolve_move` −2.4 %.
 

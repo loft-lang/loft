@@ -946,13 +946,37 @@ impl super::Output<'_> {
     }
 
     /// Is the header an enclosing frame holds for `path` this body's kept holder — no loop's
-    /// and no view's?
+    /// and no view's?  A `for` walk's hidden vector served from the holder counts too.
     pub(super) fn kept_holds_only(&self, path: &super::hoist::PathKey) -> bool {
-        self.active_vec_header(path).is_some_and(|held| {
-            self.kept_holders
-                .iter()
-                .any(|h| h.key == *path && h.read == held)
-        })
+        self.active_vec_header(path)
+            .is_some_and(|held| self.kept_holders.iter().any(|h| h.read == held))
+    }
+
+    /// The holder a loop over `lp` may copy into a local for its extent: the one serving
+    /// `path`, when nothing in the loop can change its field — no append to it and no call
+    /// that may (a kept twin's call included, which changes it through the holder).
+    pub(super) fn kept_loop_copy(
+        &self,
+        lp: &Block,
+        path: &super::hoist::PathKey,
+    ) -> Option<String> {
+        let held = self.active_vec_header(path)?;
+        let h = self.kept_holders.iter().find(|h| h.read == held)?;
+        let changes = lp.operators.iter().any(|op| {
+            op.any_node(&mut |n| {
+                matches!(n, Value::Set(..) | Value::Call(..))
+                    && refreshes(
+                        n,
+                        self.data,
+                        self.stores,
+                        self.def_nr,
+                        h.param,
+                        h.off,
+                        &|_| false,
+                    )
+            })
+        });
+        (!changes).then(|| h.read.clone())
     }
 
     pub(super) fn end_kept_headers(&mut self, opened: bool) {
