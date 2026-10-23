@@ -145,6 +145,24 @@ Every step is ONE commit:
 A step that is not byte-identical is not a move: it is split, or it becomes its own change with
 its own guard.
 
+What a clean build does not catch, and B1 met each:
+
+- **The census compares two binaries, not the baseline.**  Run
+  `LOFT_BIN=<before> scripts/rewrite_census.py --verbose` and the same without `LOFT_BIN`, then
+  diff the two outputs.  The committed baseline can lag the tree, and its rises are not the step's.
+- **The item set is a closure.**  Take every top-level item the root reaches by name, but not
+  through a field access (`.x`) or a field declaration (`x:`).  Otherwise a field named like a
+  function pulls a whole subsystem along.  Cut a large closure leaves-first, by strongly
+  connected component, so every commit is closed over the commits before it.
+- **An item carries what sits above it:** a plain `//` comment between its doc and the item,
+  and a multi-line `#[expect(…)]`.  Left behind, they attach to whatever follows.
+- **Visibility widens inside the item too:** the private methods of a moved `impl` and the
+  private fields of a moved struct.
+- **`cargo doc --no-deps --lib`** names the intra-doc links that no longer resolve.  An `opt`
+  target gets its path; a target still in a backend becomes a plain code span.
+- **`python3 scripts/decisions.py check`** (after `make index`) names a design decision whose
+  recorded site moved.
+
 ## B0 — the layers
 
 **Done (2026-10-23):** B0.1 fixed loft#2142 (`generation::begin_program`, guard
