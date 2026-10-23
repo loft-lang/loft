@@ -2554,6 +2554,16 @@ extern "C" fn profile_handler(sig: libc::c_int) {
 
 // ── sockets: the hot-swap handover ───────────────────────────────────────────
 
+/// Can a server's next build bind its port while this one still serves — the overlap a
+/// build swap hands over through ([`bind_tcp_handover`])?  `false` on Windows, and under the
+/// emulated Windows host: there the new build cannot bind until the old listener closes, the
+/// old one keeps serving until the new one is ready, and so the swap times out and rolls
+/// back.  Approved exemption, the one [`bind_tcp_handover`] states.
+#[must_use]
+pub fn tcp_port_handover() -> bool {
+    cfg!(unix) && !crate::file_access::Flavor::emulating()
+}
+
 /// Bind a TCP listener on `0.0.0.0:port` for a server that may be HANDED OVER to its next
 /// build: `SO_REUSEADDR` (a restarted server rebinds through `TIME_WAIT`) and `SO_REUSEPORT`
 /// (the new build binds the same port while the old one still serves), close-on-exec so a

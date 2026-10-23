@@ -1447,7 +1447,9 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
     // The producer: the release job's step, then its entry.
     let lib_index = index_of("libraries", &libraries);
     let leg = tmp.join("dist-lib");
-    let produced = loft::platform::process::harness_command("bash")
+    // `bash_program`: the release's Windows leg runs this script under Git Bash, and a bare
+    // `bash` on a Windows runner is the WSL launcher, which runs nothing.
+    let produced = loft::platform::process::harness_command(loft::platform::bash_program())
         .arg(root.join("scripts/release-lib-artifacts.sh"))
         .arg("--loft")
         .arg(loft_bin)
