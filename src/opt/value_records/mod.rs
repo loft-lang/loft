@@ -7,3 +7,4 @@
 //! record.  The IR pass `value_record` and the native generator both read the answer.
 
 pub mod layout;
+pub mod sites;
