@@ -92,7 +92,7 @@
 // - **@F101** — The build phase — `loft build`, declared targets, zero-config defaults
 // - **@F102** — Android target — `--native-android`, APK packaging, GL surface and touch input
 // - **@F103** — `deliver` / `expose` — hand a loft value to JavaScript with no copy
-// - **@F104** — `store_reclaim()` — give a store's unused file space back
+// - **@F104** — `store_reclaim()` — give a store's unused space back
 // - **@F105** — Custom `to_text` format hook — a type owns how it prints
 // - **@F106** — Copy and move semantics — when two names share data, and when they do not
 // - **@F107** — Type reflection — the declared shape of a type, as data

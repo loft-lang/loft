@@ -5,9 +5,9 @@ struct Part { const id: integer, name: text }
 
 fn main() {
     all: hash<Part[id]> = [];
-    store_persist_bind(all, "parts.store");
     all += Part { id: 7, name: "bolt" };
     all += Part { id: 91, name: "washer" };
+    store_persist_copy(all, "parts.store");
 
     // Read back ONE entry — over HTTP this fetches only the pages it needs.
     one: hash<Part[id]> = [];
