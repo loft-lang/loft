@@ -601,7 +601,7 @@ fn t_4text_size(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64
 
 // loft:default/02_files.loft:161
 #[inline]
-fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_result: &mut String) -> Str { //block_1: text["result"]?
+fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_result: *mut String) -> Str { //block_1: text["result"]?
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   // loft:default/02_files.loft:164
   let _pre_1 = {{let db = (var_self); if db.rec == 0 { 0u8 } else { let r = stores.store(&db).get_byte(db.rec, db.pos + (32_i64) as u32, 0); if r < 0 { 255u8 } else { r as u8 } }}};
@@ -614,21 +614,21 @@ fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mu
     return Str::new(loft::state::STRING_NULL)
     } /*block_3: never*/ else {()};
   // loft:default/02_files.loft:167
-  var_result.clear();
+  unsafe { (*var_result).clear() };
   // loft:default/02_files.loft:168
   let mut var_txt: String = "".to_string();
   // loft:default/02_files.loft:169
   OpGetFileText(cell, var_self, &mut var_txt);
   // loft:default/02_files.loft:170
-  ops::append_text(&mut (*var_result), &*(&var_txt));
+  unsafe { ops::append_text(&mut (*var_result), &*(&var_txt)) };
   // loft:default/02_files.loft:175
-  if ((if ((((t_4text_size(cell, &*var_result)) as i64) == ((0_i64) as i64)) as u8) == 1 {({((0_i64) as i64) < (({{let db = (var_self); if db.rec == 0 { i64::MIN } else { stores.store(&db).get_int(db.rec, db.pos + (0_i64) as u32)} }}) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 { //block_4: never
+  if ((if ((((t_4text_size(cell, unsafe { &*var_result })) as i64) == ((0_i64) as i64)) as u8) == 1 {({((0_i64) as i64) < (({{let db = (var_self); if db.rec == 0 { i64::MIN } else { stores.store(&db).get_int(db.rec, db.pos + (0_i64) as u32)} }}) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 { //block_4: never
     ;
     return Str::new(loft::state::STRING_NULL)
     } /*block_4: never*/ else {()};
   // loft:default/02_files.loft:178
   ;
-  return Str::new(&*var_result)
+  return Str::new(unsafe { &*var_result })
   } /*block_1: text["result"]?*/
 
 // loft:default/02_files.loft:185
@@ -913,32 +913,32 @@ fn t_4text_basename(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) ->
   } /*block_1: text["self"]*/
 
 // loft:default/02_files.loft:1392
-fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_target: &str, mut var_t: &mut String, mut var___work_4: &mut String, mut var___work_2: &mut String) -> Str { //block_1: text["base", "t"]
+fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_target: &str, mut var_t: *mut String, mut var___work_4: *mut String, mut var___work_2: *mut String) -> Str { //block_1: text["base", "t"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var___work_p2_2: String = "".to_string();
   let mut var___work_p2_1: String = "".to_string();
-  var___work_2.clear();
+  unsafe { (*var___work_2).clear() };
   let mut var___work_1: String = "".to_string();
   // loft:default/02_files.loft:1393
   let mut var_base: String = var_self.to_string();
   // loft:default/02_files.loft:1394
-  *var_t = (var_target).to_string();
+  unsafe { *var_t = (var_target).to_string() };
   // loft:default/02_files.loft:1396
   'l2: loop { //while_2
-    if (({{ let _ha0 = if ((if ((((2_i64) as i64) <= ((t_4text_size(cell, &*var_t)) as i64)) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1396, (&*var_t), (0_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1396, (&*var_t), (1_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)} as u8)} else {({false} as u8)}; ((_ha0) as u8) != 1 }}) as u8) == 1 { //break_3: void
+    if (({{ let _ha0 = if ((if ((((2_i64) as i64) <= ((t_4text_size(cell, unsafe { &*var_t })) as i64)) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1396, (unsafe { &*var_t }), (0_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1396, (unsafe { &*var_t }), (1_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)} as u8)} else {({false} as u8)}; ((_ha0) as u8) != 1 }}) as u8) == 1 { //break_3: void
       break;
       } /*break_3: void*/ else {()};
     { //block_4: void
       var___work_p2_1.clear();
-      let _pre_4 = t_4text_size(cell, &*var_t);
-      let _pre_3 = OpGetTextSub(&*var_t, 2_i64, _pre_4);
+      let _pre_4 = t_4text_size(cell, unsafe { &*var_t });
+      let _pre_3 = OpGetTextSub(unsafe { &*var_t }, 2_i64, _pre_4);
       ops::append_text(&mut var___work_p2_1, &*(_pre_3));
-      *var_t = (&var___work_p2_1).to_string();
+      unsafe { *var_t = (&var___work_p2_1).to_string() };
       } /*block_4: void*/;
     } /*while_2*/;
   // loft:default/02_files.loft:1398
   'l5: loop { //while_5
-    if (({{ let _ha0 = if ((if ((if ((((3_i64) as i64) <= ((t_4text_size(cell, &*var_t)) as i64)) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1398, (&*var_t), (0_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1398, (&*var_t), (1_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1398, (&*var_t), (2_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)} as u8)} else {({false} as u8)}; ((_ha0) as u8) != 1 }}) as u8) == 1 { //break_6: void
+    if (({{ let _ha0 = if ((if ((if ((((3_i64) as i64) <= ((t_4text_size(cell, unsafe { &*var_t })) as i64)) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1398, (unsafe { &*var_t }), (0_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1398, (unsafe { &*var_t }), (1_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((46_i64) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 {({(({{ let _ha0 = (stores.text_char_or_raise_at_runtime(1398, (unsafe { &*var_t }), (2_i64))) as u32 as i32; { let _v_v1 = (ops::to_char(_ha0)); if _v_v1 == char::from(0) { i64::MIN } else { i64::from(_v_v1 as u32) } } }}) as i64) == ((47_i64) as i64)} as u8)} else {({false} as u8)}; ((_ha0) as u8) != 1 }}) as u8) == 1 { //break_6: void
       break;
       } /*break_6: void*/ else {()};
     { //block_7: void
@@ -977,10 +977,10 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
         } /*block_13: void*/;
       // loft:default/02_files.loft:1411
       var___work_p2_2.clear();
-      let _pre_4 = t_4text_size(cell, &*var_t);
-      let _pre_3 = OpGetTextSub(&*var_t, 3_i64, _pre_4);
+      let _pre_4 = t_4text_size(cell, unsafe { &*var_t });
+      let _pre_3 = OpGetTextSub(unsafe { &*var_t }, 3_i64, _pre_4);
       ops::append_text(&mut var___work_p2_2, &*(_pre_3));
-      *var_t = (&var___work_p2_2).to_string();
+      unsafe { *var_t = (&var___work_p2_2).to_string() };
       } /*block_7: void*/;
     } /*while_5*/;
   // loft:default/02_files.loft:1413
@@ -989,24 +989,24 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
     ;
     ;
     ;
-    return Str::new(&*var_t)
+    return Str::new(unsafe { &*var_t })
     } /*block_14: never*/ else {()};
   // loft:default/02_files.loft:1414
   { //Formatted string_15: text["__work_2"]
-    var___work_2.clear();
-    ops::format_text(&mut var___work_2, &var_base, 0_i64, 2, 32);
-    ops::append_text(&mut (*var___work_2), &*("/"));
-    ops::format_text(&mut var___work_2, &*var_t, 0_i64, 2, 32);
+    unsafe { (*var___work_2).clear() };
+    unsafe { ops::format_text(&mut *var___work_2, &var_base, 0_i64, 2, 32) };
+    unsafe { ops::append_text(&mut (*var___work_2), &*("/")) };
+    unsafe { ops::format_text(&mut *var___work_2, unsafe { &*var_t }, 0_i64, 2, 32) };
     ;
     ;
     ;
     ;
-    return Str::new(&*var___work_2)
+    return Str::new(unsafe { &*var___work_2 })
     } /*Formatted string_15: text["__work_2"]*/
   } /*block_1: text["base", "t"]*/
 
 // loft:default/03_text.loft:44
-fn t_4text_char_slice(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_from: i64, mut var_to: i64, mut var_cs_out: &mut String) -> Str { //block_1: text["cs_n"]
+fn t_4text_char_slice(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut var_from: i64, mut var_to: i64, mut var_cs_out: *mut String) -> Str { //block_1: text["cs_n"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var___work_1: String = "".to_string();
   // loft:default/03_text.loft:45
@@ -1033,7 +1033,7 @@ fn t_4text_char_slice(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
     return Str::new("")
     } /*block_4: never*/ else {()};
   // loft:default/03_text.loft:53
-  var_cs_out.clear();
+  unsafe { (*var_cs_out).clear() };
   // loft:default/03_text.loft:54
   let mut var_cs_k: i64 = 0_i64;
   // loft:default/03_text.loft:55
@@ -1060,7 +1060,7 @@ fn t_4text_char_slice(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
           } /*block_11: never*/ else {()};
         // loft:default/03_text.loft:57
         if ((((var_cs_lo) as i64) <= ((var_cs_k) as i64)) as u8) == 1 { //block_12: void
-          {let c = var_cs_c; if c != 0 { var_cs_out.push(ops::to_char(c)); } };
+          unsafe { {let c = var_cs_c; if c != 0 { (*var_cs_out).push(ops::to_char(c)); } } };
           } /*block_12: void*/ else {()};
         // loft:default/03_text.loft:58
         var_cs_k = ((var_cs_k).wrapping_add(1_i64));
@@ -1071,7 +1071,7 @@ fn t_4text_char_slice(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
     } /*For block_5: void*/;
   // loft:default/03_text.loft:60
   ;
-  return Str::new(&*var_cs_out)
+  return Str::new(unsafe { &*var_cs_out })
   } /*block_1: text["cs_n"]*/
 
 // loft:default/03_text.loft:110
@@ -1404,10 +1404,10 @@ fn t_9character_is_control(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i
 
 
 // loft:default/03_text.loft:210
-fn t_6vector_join(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_sep: &str, mut var_result: &mut String) -> Str { //block_1: text["result"]
+fn t_6vector_join(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_sep: &str, mut var_result: *mut String) -> Str { //block_1: text["result"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   // loft:default/03_text.loft:211
-  var_result.clear();
+  unsafe { (*var_result).clear() };
   // loft:default/03_text.loft:212
   { //For block_2: void
     let mut var_p__count: i64 = 0_i64;
@@ -1433,24 +1433,24 @@ fn t_6vector_join(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut
       { //block_7: void
         // loft:default/03_text.loft:213
         if ((((((var_p__count) as i64) == ((0_i64) as i64)) as u8) != 1) as u8) == 1 { //block_8: void
-          ops::append_text(&mut (*var_result), &*(var_sep));
+          unsafe { ops::append_text(&mut (*var_result), &*(var_sep)) };
           } /*block_8: void*/ else {()};
         // loft:default/03_text.loft:214
-        ops::append_text(&mut (*var_result), &*(var_p));
+        unsafe { ops::append_text(&mut (*var_result), &*(var_p)) };
         } /*block_7: void*/;
       var_p__count = ops::op_add_int((var_p__count), (1_i64));
       ;
       } /*For loop_3*/ };
     } /*For block_2: void*/;
   // loft:default/03_text.loft:216
-  return Str::new(&*var_result)
+  return Str::new(unsafe { &*var_result })
   } /*block_1: text["result"]*/
 
 // loft:default/03_text.loft:210
-fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_sep: &str, mut var_result: &mut String, __ih_0: vector::VecHeader, __ib_0: *const u8) -> Str { //block_1: text["result"]
+fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_sep: &str, mut var_result: *mut String, __ih_0: vector::VecHeader, __ib_0: *const u8) -> Str { //block_1: text["result"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   // loft:default/03_text.loft:211
-  var_result.clear();
+  unsafe { (*var_result).clear() };
   // loft:default/03_text.loft:212
   { //For block_2: void
     let mut var_p__count: i64 = 0_i64;
@@ -1475,17 +1475,17 @@ fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef
       { //block_7: void
         // loft:default/03_text.loft:213
         if ((((((var_p__count) as i64) == ((0_i64) as i64)) as u8) != 1) as u8) == 1 { //block_8: void
-          ops::append_text(&mut (*var_result), &*(var_sep));
+          unsafe { ops::append_text(&mut (*var_result), &*(var_sep)) };
           } /*block_8: void*/ else {()};
         // loft:default/03_text.loft:214
-        ops::append_text(&mut (*var_result), &*(var_p));
+        unsafe { ops::append_text(&mut (*var_result), &*(var_p)) };
         } /*block_7: void*/;
       var_p__count = ops::op_add_int((var_p__count), (1_i64));
       ;
       } /*For loop_3*/;
     } /*For block_2: void*/;
   // loft:default/03_text.loft:216
-  return Str::new(&*var_result)
+  return Str::new(unsafe { &*var_result })
   } /*block_1: text["result"]*/
 
 
