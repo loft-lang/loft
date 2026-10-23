@@ -236,7 +236,7 @@ Every edit it would need is a defect of this plan, fixed here before strand 5 st
 
 ## B6 — optional: a minimal binary
 
-A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
+**Later, not now (owner, 2026-10-23).**  A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
 `--native` / `--native-release` / `--native-emit` / `--native-wasm` / `--html` /
 `--native-android` / `build-native` arms (`main.rs:7835/7838/7915/7924/7945/~7934/8922`), which
 answer one line without it; `make minimal` via `scripts/lean_build.sh --minimal`.  Its artifact
@@ -338,7 +338,7 @@ the split does not remove (the corpus leaving the crate is @PLN193).
 
 ## Order
 
-B0 → B1 → B2 → B3 → B5 (the probe, from @PLN91) → B4 when @PLN191 is ready; B6 whenever wanted.
+B0 → B1 → B2 → B3 → B5 (the probe, from @PLN91) → B4 when @PLN191 is ready; B6 later, not scheduled.
 B7.1 can run any time (the baseline); B7.5 needs only @PLN199's keyed ids and can come early;
 B7.8–B7.10 (the versioned runtime interface and the reuse guard) follow B3.5's census and come
 before B7.2–B7.4 rely on them; B7.11–B7.12 follow B4; B7.14's report comes before B7.12 holds the
@@ -372,4 +372,6 @@ B1 and B2 make the interpreter a defined part on their own; B3 is what the C bac
 
 ## Open questions for the owner
 
-1. B6: wanted now, later, or not at all?
+None open.  Settled 2026-10-23: concurrent branches adapt on merge; inlining across units is
+opt-in, marked `#inline`; the C backend starts plain (B3.4); B6 is LATER — not scheduled with
+this plan's phases, taken up when wanted.
