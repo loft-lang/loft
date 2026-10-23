@@ -244,8 +244,14 @@ from and what it must agree with, never "which loft binary":
 
 | unit | key | rebuilt when |
 |---|---|---|
-| a package compiled for a native target | hash of its GENERATED code ⊕ the runtime INTERFACE version ⊕ the toolchain (`rustc` version, target, flags) | its source changed, or a pass changed its output, or the interface or the toolchain moved |
+| a package compiled for a native target | hash of its GENERATED code ⊕ each dependency's API fingerprint ⊕ the runtime INTERFACE version ⊕ the toolchain (`rustc` version, target, flags) | its source changed, or a pass changed its output, or a dependency's API changed, or the interface or the toolchain moved |
 | a package's IR for the interpreter (B7.11) | its source ⊕ the `front` and `opt` fingerprints ⊕ the IR schema version | its source changed, or a front-end or optimisation pass changed |
+
+So a compiled object is invalidated only by a change to its own code — an API change or a bug
+fix in it — or to an API it uses, and the event that makes that change is the one that builds
+the new object: a local edit rebuilds the edited unit, a library's publish builds that library's
+object (the registry's CI, G2c's open half), a loft release whose passes change a unit's output
+rebuilds it (G2c).  A dependency's bug fix, its API unchanged, rebuilds only the dependency.
 
 Keying on the generated code is what makes the rule exact without versioning passes by hand:
 generating is milliseconds, compiling is the cost, and a pass that does not change a unit's
@@ -293,6 +299,8 @@ layout or to a signature moves the version.  It is also the interface an ANSI-C 
 | B7.6 | narrow the runtime set (@PLN191 R2): every module that leaves it is an edit that no longer invalidates compiled blocks — the report names the runtime modules the most commits touch | B7.1 over the history |
 | B7.7 | test selection from the crate graph (after B4): `find_problems.sh --changed` maps a diff's crates to the subjects that can observe them | a diff confined to `rust` selects no interpreter-only subject |
 
+| B7.7a | a unit carries ONLY its own code: today a library artifact compiles in every library it reaches (`native_lib.rs`, `cached_or_build_shared_cdylib`) and its key folds each dependency's name and version (`contributing_fingerprint`, `native_lib.rs:2908`), so a dependency's bug fix rebuilds every user.  A unit calls its dependencies' units (B7.12's linking) and folds each one's API FINGERPRINT — its exported signatures and the layouts of the types it exports, by key (`lib_ids`) — not its version or its code | a test: a dependency's body changes, its users are reused; its exported signature changes, they are rebuilt |
+| B7.7b | the event builds the object: a library's publish builds its unit for every released loft whose interface it meets (the registry's CI; @PLN199 G2c builds them only at a loft release); a loft release builds only the units whose generated code its passes changed, and reuses the rest from the previous release by their keys | the release job's report: units rebuilt vs reused |
 | B7.8 | the runtime INTERFACE defined and versioned: the store layout (`Store`, `DbRef`, the record header — offsets and sizes computed, not written by hand) and the signature of every runtime function a unit calls (`runtime_abi`'s table, the `HostTable`); `runtime_interface_version()` hashes both | a test: changing a layout or a signature moves the version; changing a function's BODY does not |
 | B7.9 | units stop embedding the runtime: a unit's calls into the runtime go through the versioned table; the hot accessors that need only the layout (a field read or write at a `DbRef`) stay inline.  A performance trade — measured on the bench lanes (`make perf-check`) before it is taken, per accessor family | the bench rows; the corpus on both backends |
 | B7.10 | the reuse guard, both directions: build a unit; rebuild loft with an unrelated change (a parser comment, an interpreter fix) and assert the unit is REUSED; change an optimisation pass so the unit's output changes and assert it is REBUILT; change a runtime function's body and assert it is reused and runs the new body | the test, falsified by keying on the loft build again |
