@@ -10,7 +10,7 @@ index b2ee71871..3c36570b6 100644
 -                    && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
 +                    && let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
                      && !stash_old_for_post_free
-                     && crate::generation::container_element_base(stack.data, value).is_some()
+                     && crate::use_analysis::projection_container_var(stack.data, value).is_some()
                  {
 @@ -3295,13 +3294,7 @@ impl State {
              // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
