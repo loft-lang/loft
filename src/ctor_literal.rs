@@ -223,7 +223,7 @@ fn admit(data: &Data, d: u32) -> Result<Ctor, &'static str> {
     let Value::Block(body) = def.code() else {
         return Err("no loft body");
     };
-    let Some(bi) = crate::generation::hoist::ret_buffer_attr(def) else {
+    let Some(bi) = crate::opt::attrs::ret_buffer_attr(def) else {
         return Err("no record result");
     };
     if bi + 1 != def.attributes.len() {

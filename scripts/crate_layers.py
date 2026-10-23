@@ -85,7 +85,7 @@ LAYERS: list[tuple[str, list[str]]] = [
         "single_use", "spent", "typedef", "use_analysis",
     ]),
     ("opt", [
-        "ctor_literal", "leaf_inline", "self_replace", "value_record", "zero_count",
+        "ctor_literal", "leaf_inline", "opt", "self_replace", "value_record", "zero_count",
     ]),
     ("interp", [
         "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",
@@ -118,7 +118,7 @@ SIBLINGS: list[tuple[str, str]] = [
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
     ("interp", "rust"): 19,
-    ("opt", "rust"): 8,
+    ("opt", "rust"): 7,
     ("rust", "interp"): 25,
 }
 

@@ -404,6 +404,7 @@ pub mod native_build;
 pub mod op_layout;
 pub mod op_sets;
 pub mod ops;
+pub mod opt;
 #[cfg(test)]
 mod page_metrics;
 pub mod parser;

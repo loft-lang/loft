@@ -15690,23 +15690,7 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
     out
 }
 
-/// The hidden RETURN-BUFFER attribute of a record-returning function — the parameter
-/// `ref_return` appends, a `Reference` or struct-enum marked hidden — by position, or
-/// `None` for a function that has none.  ONE predicate for the four sites that drop it:
-/// its NAME is `__retbuf` when the parser minted the buffer and the promoted LOCAL's own
-/// name (`__ref_3`, `p`) when the buffer IS that local, so a name test sees half of them
-/// (measured: `half_chord`'s buffer is `__ref_3`, and the call site kept passing it to a
-/// signature that had dropped it).
-#[must_use]
-pub fn ret_buffer_attr(def: &crate::data::Definition) -> Option<usize> {
-    def.attributes().iter().rposition(|a| {
-        a.hidden
-            && matches!(
-                a.typedef.base(),
-                Type::Reference(_, _) | Type::Enum(_, true, _)
-            )
-    })
-}
+pub use crate::opt::attrs::ret_buffer_attr;
 
 /// The getter op that reads a value-record field of Rust type `rt` out of a record — what
 /// a VIEW leaf's tuple is built from.  Mirrors the parser's `get_val`: the four scalar
