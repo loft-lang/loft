@@ -210,7 +210,7 @@ impl Output<'_> {
         None
     }
 
-    /// @P312 — the set of variables that some argument passes to a RUNTIME function (one
+    /// The set of variables that some argument passes to a RUNTIME function (one
     /// written in Rust, whose signature takes `&mut T`) as a fresh `&mut var_X` borrow
     /// (`create_stack_var`).  A by-value/Copy read of such a
     /// var in another argument trips rustc E0503 ("cannot use `var_X` because it
