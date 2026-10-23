@@ -1211,7 +1211,11 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             &mut n,
         );
         if n > 0 {
-            let nn = crate::generation::non_sentinel::non_sentinel_vars(data, &code);
+            let nn = crate::generation::non_sentinel::non_sentinel_vars(
+                data,
+                &data.definitions[caller as usize].variables,
+                &code,
+            );
             let base = range_vars(
                 data,
                 &data.definitions[caller as usize].variables,

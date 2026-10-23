@@ -387,7 +387,7 @@ impl super::Output<'_> {
                 seeds.fields.insert((*p, *fld), (-L, L));
             }
         }
-        let nn = super::non_sentinel::non_sentinel_vars(self.data, def.code());
+        let nn = super::non_sentinel::non_sentinel_vars(self.data, def.variables(), def.code());
         range::range_vars(
             self.data,
             vars,

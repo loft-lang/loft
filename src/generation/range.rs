@@ -415,7 +415,7 @@ fn call_range<F: RangeFacts + ?Sized>(
     LONG_DEPTH.with(|d| d.set(d.get() + 1));
     // The longer body: its own facts under the parameters' seeds.
     let code = def.code();
-    let callee_nn = super::non_sentinel::non_sentinel_vars(data, code);
+    let callee_nn = super::non_sentinel::non_sentinel_vars(data, def.variables(), code);
     let seeded = Ranges {
         vars: rv2.vars,
         ..Ranges::default()
@@ -540,9 +540,13 @@ pub fn range_vars(
         scan_sets(code, data, nn, &rv, &counters, &mut round);
         let mut changed = false;
         for (nr, r) in round {
+            // A parameter is never ranged by its assignments (`@FR-R-Range`, loft#2143): the
+            // caller's argument is one the body does not show.  Its stated seeds — the type
+            // clause, a ranged variant's — were entered above and are not this fixpoint's.
             if let Some(r) = r
                 && !escaped.contains(&nr)
                 && !counters.contains(&nr)
+                && !vars.is_argument(nr)
                 && !rv.vars.contains_key(&nr)
             {
                 rv.vars.insert(nr, r);

@@ -154,7 +154,7 @@ fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
     }
     // Pessimistic entry: a recursive callee reads itself as unproven.
     RETURNS.with(|m| m.borrow_mut().insert(d_nr, false));
-    let vars = non_sentinel_vars(data, def.code());
+    let vars = non_sentinel_vars(data, def.variables(), def.code());
     let mut every_exit = non_sentinel(data, &vars, def.code().tail());
     def.code().any_node(&mut |n| {
         if let Value::Return(inner) = n
@@ -207,6 +207,11 @@ fn non_negative_literal(v: &Value) -> bool {
 /// parser's write analysis is a deny-list this pass deliberately does not
 /// lean on.)
 ///
+/// A PARAMETER is never such a local (`@FR-R-Range`: a parameter is never proven by
+/// shape, @C80): the caller's argument is an assignment the body does not show, so a
+/// parameter the body assigns only literals still holds whatever was passed until the
+/// first of them runs (loft#2143).
+///
 /// NO self-step induction, deliberately.  An earlier cut admitted
 /// `v = v ± <proven>` (the counted-for counter's shape) on the argument
 /// that overflow-minting-MIN is @C85's decided edge — and the corpus
@@ -220,7 +225,11 @@ fn non_negative_literal(v: &Value) -> bool {
 /// `Set` against the current map, so facts only turn true as their inputs
 /// do, the map grows monotonically, and it settles in at most `vars` rounds.
 #[must_use]
-pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
+pub fn non_sentinel_vars(
+    data: &Data,
+    function: &crate::variables::Function,
+    code: &Value,
+) -> HashMap<u16, bool> {
     let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
     collect_escapes(data, code, &mut escaped);
     let mut vars: HashMap<u16, bool> = HashMap::new();
@@ -238,7 +247,11 @@ pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
         scan_sets(code, data, &vars, &mut round);
         let mut changed = false;
         for (nr, all_ok) in round {
-            if all_ok && !escaped.contains(&nr) && !vars.get(&nr).copied().unwrap_or(false) {
+            if all_ok
+                && !escaped.contains(&nr)
+                && !function.is_argument(nr)
+                && !vars.get(&nr).copied().unwrap_or(false)
+            {
                 vars.insert(nr, true);
                 changed = true;
             }

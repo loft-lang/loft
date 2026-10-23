@@ -7504,6 +7504,7 @@ impl Output<'_> {
         }
         let map = std::rc::Rc::new(non_sentinel::non_sentinel_vars(
             self.data,
+            self.data.def(self.def_nr).variables(),
             self.data.def(self.def_nr).code(),
         ));
         self.nn_cache.insert(self.def_nr, map.clone());
