@@ -377,7 +377,16 @@ pub(super) fn owner_witness_locals(
     // ONCE: what a rebind displaces before the build is the frame's to release, and what the
     // local holds at the build is the record's.  Only store identity tells those apart once
     // the binding is captured, so it is witnessed even where every assignment mints.
-    let reassigned_captures: Vec<u16> = super::phase::multi_assigned_in(code)
+    // Counted only where a local is captured at all: the walk allocates a map per function, and
+    // the stdlib and most programs have no closure in most functions (the front end's pinned
+    // allocation count, tests/frontend_counts.rs).
+    let any_capture = (0..function.count()).any(|v| function.is_captured(v));
+    let multi = if any_capture {
+        super::phase::multi_assigned_in(code)
+    } else {
+        HashSet::default()
+    };
+    let reassigned_captures: Vec<u16> = multi
         .into_iter()
         .filter(|&v| {
             v < function.count()
