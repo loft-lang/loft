@@ -5274,7 +5274,7 @@ impl State {
         true
     }
 
-    /// `c = {for text next …}` of a character walk (`hoist::char_walks`) as one
+    /// `c = {for text next …}` of a character walk (`opt::char_walk::char_walks`) as one
     /// `OpTextWalkStep`.  The index, next and text variables already hold their slots; `c`
     /// may be taking its first assignment, which does what `generate_set`'s first-assignment
     /// branch does for a character — mark the slot allocated, write the value at its planned
@@ -5286,7 +5286,7 @@ impl State {
             return false;
         }
         let walks = self.walk_steps.get_or_insert_with(|| {
-            crate::generation::hoist::char_walks(stack.data, stack.def_nr)
+            crate::opt::char_walk::char_walks(stack.data, stack.def_nr)
                 .into_values()
                 .collect()
         });

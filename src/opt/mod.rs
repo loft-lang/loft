@@ -9,3 +9,4 @@
 //! from `generation/` keeps a re-export at its old path.
 
 pub mod attrs;
+pub mod char_walk;

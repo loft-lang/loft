@@ -686,7 +686,7 @@ impl State {
     }
 
     /// `OpTextWalkStep` — one step of a `for c in T` walk: the parser's `for text next` block
-    /// (the shape `hoist::char_walks` matches for `--native`'s `(R-CharWalk)`) in one op.
+    /// (the shape `opt::char_walk::char_walks` matches for `--native`'s `(R-CharWalk)`) in one op.
     /// `index = next`; the character at `next`; `next`
     /// advanced by the character's UTF-8 width; `next = index + 1` when that did not move it;
     /// `c` bound to the character.  The same functions as the unfused ops, in the same order.

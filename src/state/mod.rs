@@ -523,9 +523,9 @@ pub struct State {
     /// build, so each keeps its own path.
     pub(crate) fast_stack: bool,
     /// Codegen only: the character walks of the function being generated
-    /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep` — found on the
+    /// (`opt::char_walk::char_walks`), whose step is emitted as one `OpTextWalkStep` — found on the
     /// first character local a block assigns, since most functions have none.
-    pub(crate) walk_steps: Option<Vec<crate::generation::hoist::CharWalk>>,
+    pub(crate) walk_steps: Option<Vec<crate::opt::char_walk::CharWalk>>,
     /// Locals whose only write a fused op of the function being generated took over, so
     /// the slot they were given is never written (a character walk's result temp, which
     /// `OpTextWalkStep` writes straight into the loop variable).  Read by the @PLN120 A
