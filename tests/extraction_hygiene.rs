@@ -721,8 +721,9 @@ fn native_libraries_follow_clean_binding_pattern() {
     );
 }
 
-/// @PLN191 — the library crate is split into layers (core, front, gen, runtime, facade) that
-/// will become crates, and a crate can only name the crates below it.  `scripts/crate_layers.py
+/// @PLN191, @PLN200 — the library crate is split into layers (core, front, opt, interp, lower,
+/// rust, facade) that can become crates, and a crate can only name the crates below it —
+/// interp and lower/rust are siblings, naming neither the other.  `scripts/crate_layers.py
 /// check` reads every `crate::` reference between top-level modules from the tree and holds
 /// it to the layering: every module assigned to one layer, and the references that still point
 /// UP held to a budget that may only fall — and must be lowered the moment it does, so the

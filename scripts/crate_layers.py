@@ -45,51 +45,58 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 
-# The layers, bottom up.  A module may reference its own layer and any layer below.
-# The big modules were placed by subject (core: the IR types, keys, stores, database;
-# front: lexer-to-IR; gen: the native generator; runtime: the interpreter and what
-# emitted programs call; facade: the tools); every other module sits where the fewest
-# references cross a layer upward.  A new module is added to the layer it belongs in.
-# `lib` is lib.rs's own items — its macros and host imports, which every layer uses.
+# The layers, bottom up.  A module may reference its own layer and any layer below, except a
+# layer SIBLINGS names beside it.  core: the IR types, keys, stores, database, and the runtime
+# compiled programs call (@PLN191's RUNTIME set); front: lexer-to-IR; opt: what every backend
+# asks and the IR-phase rewrites; interp: the bytecode compiler and the interpreter; lower: a
+# compiled target's decisions as data; rust: the Rust writer and artifact building; facade:
+# the tools (@PLN200).  Every other module sits where the fewest references cross a layer
+# upward.  A new module is added to the layer it belongs in.  `lib` is lib.rs's own items —
+# its macros and host imports, which every layer uses.
 LAYERS: list[tuple[str, list[str]]] = [
     ("core", [
-        "api_diff", "api_surface", "arena", "base64", "btree", "build_phase", "byte_copy",
-        "c_libs", "c_shim", "c_signature", "cache", "cache_gc", "calc", "call_frames", "compact",
-        "const_eval", "coroutine_layout", "crash_report", "data", "data_ref", "data_store",
-        "database", "diagnostic_render", "diagnostics", "doc_catalogue", "doc_construct",
-        "doc_render", "documentation", "exit_record", "exit_vector", "ffi_deliver", "file_access",
-        "fnref", "forward_result", "fxhash", "git_query", "hash", "html_embed", "html_fonts",
-        "install", "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys",
-        "layout_schema", "lexer", "lib", "libscan", "limits", "literal_append", "lockfile",
-        "log_config", "logger", "loop_kernel_rewrite", "loop_kernels", "loop_shape", "manifest",
-        "migrate_long", "narrow", "native_bind", "native_build", "net", "net_profile", "null_census",
-        "op_census", "op_layout", "op_sets", "ops", "package", "package_layout", "page_metrics",
-        "paged_reader", "par_pool", "placement", "platform", "platform_census", "png_store",
-        "process_run", "pure_reuse", "radix_db", "shared_call", "bound_append", "radix_tree", "registry", "registry_advisories",
-        "registry_index", "registry_keys", "registry_signing", "repeat_run", "repl_doc",
-        "resolution", "resolution_scope", "return_field", "rewrite_census", "runtime_abi",
-        "runtime_error", "rust_spelling", "sandbox", "schema_sidecar", "self_update", "siphash",
-        "slot_alias", "spatial", "stack_census", "stack_verify", "stdlib_ops", "stdlib_sources",
-        "store", "store_budget", "store_census", "take_local", "text_calls", "text_run",
-        "timeout", "tls", "trace", "trie_db", "triggers", "tuple_links", "type_schema",
-        "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets", "ws_handshake",
+        "api_diff", "api_surface", "arena", "base64", "bound_append", "btree", "build_phase",
+        "byte_copy", "c_libs", "c_shim", "c_signature", "cache", "cache_gc", "calc",
+        "call_frames", "codegen_runtime", "compact", "const_eval", "coroutine_layout",
+        "crash_report", "data", "data_ref", "data_store", "database", "diagnostic_render",
+        "diagnostics", "doc_catalogue", "doc_construct", "doc_render", "documentation",
+        "engine_host", "exit_record", "exit_vector", "ffi_deliver", "file_access", "fnref",
+        "forward_result", "fxhash", "git_query", "hash", "html_embed", "html_fonts", "install",
+        "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys", "layout_schema",
+        "lexer", "lib", "libscan", "limits", "literal_append", "live_control", "live_rebuild",
+        "lockfile", "log_config", "logger", "loop_kernel_rewrite", "loop_kernels", "loop_shape",
+        "manifest", "migrate_long", "narrow", "native", "native_bind", "native_build", "net",
+        "net_profile", "null_census", "op_census", "op_layout", "op_sets", "ops", "package",
+        "package_layout", "page_metrics", "paged_reader", "par_pool", "placement", "platform",
+        "platform_census", "png_store", "process_run", "pure_reuse", "radix_db", "radix_tree",
+        "registry", "registry_advisories", "registry_index", "registry_keys", "registry_signing",
+        "repeat_run", "repl_doc", "resolution", "resolution_scope", "return_field",
+        "rewrite_census", "runtime_abi", "runtime_error", "rust_spelling", "sandbox",
+        "schema_sidecar", "self_update", "shared_call", "siphash", "slot_alias", "spatial",
+        "stack_census", "stack_verify", "stdlib_ops", "stdlib_sources", "store", "store_budget",
+        "store_census", "take_local", "text_calls", "text_run", "timeout", "tls", "trace",
+        "trie_db", "triggers", "tuple_links", "type_schema", "variables", "vec_copy", "vector",
+        "verify_self", "wasm", "wasm_assets", "ws_handshake",
     ]),
     ("front", [
         "const_fn", "const_literal", "copy_manifest", "copy_view", "discharge_into",
-        "forward_walk", "in_range", "ir_node", "ir_read", "ir_store", "lease", "ownership_cfg",
-        "literal_host", "parser", "place_result", "rebind_place", "same_read", "scopes",
+        "forward_walk", "in_range", "ir_node", "ir_read", "ir_store", "lease", "literal_host",
+        "ownership_cfg", "parser", "place_result", "rebind_place", "same_read", "scopes",
         "single_use", "spent", "typedef", "use_analysis",
     ]),
-    ("gen", [
-        "ctor_literal", "generation", "leaf_inline", "self_replace", "value_record",
-        "zero_count",
+    ("opt", [
+        "ctor_literal", "leaf_inline", "self_replace", "value_record", "zero_count",
     ]),
-    ("runtime", [
-        "c_call", "codegen_runtime", "compile", "compiled_stdlib", "create", "debugger",
-        "lib_ids",
-        "engine_host", "extensions", "fill", "fuzz_keyed", "fuzz_oracle", "introspect",
-        "live_control", "live_dispatch", "live_rebuild", "live_reload", "native", "native_gate",
-        "native_lib", "parallel", "parallel_natives", "profiler", "stack", "state", "wasm_gl",
+    ("interp", [
+        "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",
+        "fuzz_oracle", "lib_ids", "live_dispatch", "live_reload", "native_gate", "parallel",
+        "parallel_natives", "profiler", "stack", "state", "wasm_gl",
+    ]),
+    ("lower", [
+       
+    ]),
+    ("rust", [
+        "create", "generation", "introspect", "native_lib",
     ]),
     ("facade", [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "rpc", "script", "serve",
@@ -102,12 +109,17 @@ LAYERS: list[tuple[str, list[str]]] = [
 # forbidden like an upward one, whichever way it points in the list order, and is budgeted in
 # BUDGET the same way.
 SIBLINGS: list[tuple[str, str]] = [
+    ("interp", "lower"),
+    ("interp", "rust"),
 ]
 
-# Back-edges allowed per (from-layer, to-layer) while P2 of @PLN191 cuts them: a ratchet.
+# Back-edges allowed per (from-layer, to-layer) while @PLN200's B1 and B2 cut them: a ratchet.
 # A count may only fall; `check` fails when one rises, and when one has fallen below its
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
+    ("interp", "rust"): 22,
+    ("opt", "rust"): 8,
+    ("rust", "interp"): 25,
 }
 
 # The RUNTIME (@PLN191 R1): the modules a compiled program links — what the generator names
