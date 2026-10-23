@@ -3345,7 +3345,7 @@ impl State {
                     // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
                     && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
                     && !stash_old_for_post_free
-                    && crate::generation::container_element_base(stack.data, value).is_some()
+                    && crate::use_analysis::projection_container_var(stack.data, value).is_some()
                 {
                     self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
                     return;
@@ -3586,7 +3586,7 @@ impl State {
             // emits.  Its projections stay views on both backends, so the witness — which
             // classifies a projection as a view — cannot lose the store this would mint.
             && stack.function.owner_witness(v).is_none()
-            && crate::generation::container_element_base(stack.data, value).is_some()
+            && crate::use_analysis::projection_container_var(stack.data, value).is_some()
         {
             // @PLN130 F1 — MATERIALISE an element read into a store `v` owns.
             //

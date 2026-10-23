@@ -117,7 +117,7 @@ SIBLINGS: list[tuple[str, str]] = [
 # A count may only fall; `check` fails when one rises, and when one has fallen below its
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
-    ("interp", "rust"): 21,
+    ("interp", "rust"): 19,
     ("opt", "rust"): 8,
     ("rust", "interp"): 25,
 }
