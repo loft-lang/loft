@@ -4802,7 +4802,7 @@ fn layouts_updated(tag: &str) -> String {
     )
 }
 
-/// @FR-Col-Tag @FR-Col-Inline — every hash layout lives beside the others in one store, and
+/// @FR-Col-Layouts @C152 — every hash layout lives beside the others in one store, and
 /// the interpreter and the native build each read and write all of them.  For every writer
 /// layout against every updater layout, with the backends crossed: the world is written
 /// under one, loaded, grown, shrunk and given a new table under the other, and read back by

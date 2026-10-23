@@ -154,7 +154,8 @@ fn golden_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/layout/corpus.txt")
 }
 
-/// @C105 — a hash keeps its two reads — its persisted layout is pinned here.
+/// @C105 — a hash table's persisted layout (its slot width and where its entries live) is
+/// pinned here.
 #[test]
 fn layout_golden() {
     let (data, db) = cached_default();
@@ -475,7 +476,8 @@ fn program_roots_are_the_user_types() {
 /// that would notice, which is why its failure message asks WHICH cause it is before
 /// anyone re-blesses it.
 ///
-/// @C105 — the bucket slot it pins holds an entry index only: no cached hash, no entries.
+/// @C105 — the untagged bucket slot it pins holds an entry index only; the tagged and inline
+/// layouts are told apart by the table's own header flags (`(Col-Layouts)`).
 #[test]
 fn placement_contract_is_pinned() {
     use loft::keys::{Content, Str};

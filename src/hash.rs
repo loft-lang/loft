@@ -21,7 +21,8 @@ use std::cmp::Ordering;
 //   fld 20 : `NEXT_FLD`   — the arena's append cursor
 //   fld 24 : `FREE_FLD`   — head of the arena's free list
 //   fld 28 : `STRIDE_FLD` — bytes per entry slot
-//   fld 32 : `BUCKET0`    — first bucket slot (u32 entry INDICES, 2 per word)
+//   fld 32 : `BUCKET0`    — first bucket slot: a u32 entry INDEX (2 per word), or with the
+//            `TAGGED` flag that index and the key digest's low 32 bits (`(Col-Tag)`)
 //
 // An INLINE table (`(Col-Inline)`, the `INLINE` flag) keeps the same seed, insertion cursor
 // and tombstone count, and differs in three words: field 4 names the record that owns the
@@ -34,7 +35,7 @@ use std::cmp::Ordering;
 // so a reader re-derives the same bucket for every key (see
 // `keys::seeded_hasher`).  `elms = (room - RESERVED_WORDS) * 2`.
 //
-// A bucket slot holds a 1-based ARENA INDEX, not a record number (@PLN135 arc H).
+// An arena table's bucket slot holds a 1-based ARENA INDEX, not a record number.
 // Entries live packed at a fixed stride inside the arena's chunks rather than one
 // store record each: a record costs a header word plus `Store::claim`'s rounding —
 // 27.67 B measured for a 16 B entry — and the cost that matters is not the bytes but
@@ -52,9 +53,8 @@ pub const STRIDE_FLD: u32 = 28;
 pub const BUCKET0: u32 = 32;
 /// Words reserved before the bucket array: header, seed, and the arena's four fields.
 pub const RESERVED_WORDS: u32 = 4;
-/// Bytes per bucket slot — a `u32` entry index, 2 to a word.
-///
-/// @C105 — a slot holds the entry index only: no cached hash, no entries in the bucket table.
+/// Bytes per UNTAGGED bucket slot — a `u32` entry index, 2 to a word — the width a table
+/// without the [`TAGGED`] flag has; a tagged slot is 8 (`(Col-Tag)`, @C105).
 pub const SLOT_BYTES: u32 = 4;
 
 /// `(Col-Tag)` — `STRIDE_FLD`'s high bit: this table's slots are TAGGED, 8 bytes each — the
@@ -115,7 +115,8 @@ fn len_fld_of(flags: u32) -> u32 {
 }
 
 /// `LOFT_NO_HASH_INLINE=1` — `(Col-Inline)` off: tables that own their entries keep them in
-/// the arena.  A writer's policy, read once: a reader reads either layout.
+/// the arena.  A writer's policy, read once: a reader reads either layout (`@FR-Col-Layouts`,
+/// @C152).
 pub fn hash_inline() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !keys::env_set("LOFT_NO_HASH_INLINE") && hash_tag())

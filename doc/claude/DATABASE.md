@@ -705,7 +705,7 @@ loft runtime value
                             └── Key comparison  → src/keys.rs
 ```
 
-- A `hash<MyStruct>` is a hash-table record in one `Store` pointing to element records in another (or the same) `Store`.
+- A `hash<MyStruct>` is a bucket-table record in the collection's `Store`.  Its entries sit in a chunked arena, IN the table (an element type no group or reference shares), or are the records a group member holds; each table records its layout and they live side by side ([DATABASE_INDEXES.md § Record Layout](DATABASE_INDEXES.md#record-layout), @C152).
 - An `index<MyStruct>` is a B+tree whose nodes are one arena record in the collection's store, holding key parts and the numbers of the element records: O(log n) lookup by key, range queries and ordered iteration.
 - A `vector<T>` is a single record with inline elements; a `sorted<T>` by value uses the same layout but maintains sort order via insertion sort on add.
 - All cross-record pointers are `u32` rec offsets within the same `Store`; cross-store references use the full `DbRef`.

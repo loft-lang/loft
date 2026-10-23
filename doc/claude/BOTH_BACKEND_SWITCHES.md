@@ -680,6 +680,15 @@ reserves a `hash` table to the sizes it had before — a count that is not a pow
 places every key by division.  The placement formula is `digest mod count` either way, so
 stores written under either read under both; it is the A/B for the rule and the way to write a
 table whose count the mask does not serve.
+**`LOFT_NO_HASH_TAG=1`** (`@FR-Col-Tag`; runtime, BOTH backends) makes and rebuilds every
+`hash` table with untagged 4-byte slots, the layout a store written before the tag carries;
+it implies **`LOFT_NO_HASH_INLINE=1`** (`@FR-Col-Inline`), which keeps the entries of a table
+that owns them in the arena instead of in the table.  Both are a WRITER's policy (@C152): each table
+records its layout in its header, so one store holds tables of every layout side by side and
+every build reads and writes all of them (`tests/store_persist_loft.rs`
+`every_hash_layout_lives_beside_the_others_in_one_store`).  **`LOFT_TRACE_HASH_LAYOUT=1`**
+names each table made, grown or demoted, its layout before and after and the field that holds
+it — what a store holds is otherwise visible only in its bytes.
 **`LOFT_NO_TYPED_KEYED=1`** (`@FR-R-TypedKeyed`, generation time, `--native` only) emits a
 lookup in a `hash` with ONE integer or `text` key, or two to four integer parts, as the
 general `OpGetRecord` again — with it off it is `OpGetHashLong` (or `OpGetHashText`, the key
