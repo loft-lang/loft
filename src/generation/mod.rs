@@ -396,6 +396,16 @@ fn collect_fn_ref_literals(
     val.for_each_child(&mut |c| collect_fn_ref_literals(c, data, variables, calls, returns_fn));
 }
 
+/// Forget every analysis memo: the range analysis's call memo (keyed by a definition's
+/// address) and the non-null analysis's answers (keyed by its number) are facts about ONE
+/// program, and the next program a process compiles names other functions by the same
+/// addresses and numbers (loft#2122, loft#2142).  Called by the first pass of a program that
+/// asks them, `leaf_inline::rewrite_program`, and by [`Output::new`].
+pub(crate) fn begin_program() {
+    non_sentinel::begin_generation();
+    range::begin_generation();
+}
+
 /// Compute the set of function definitions reachable from `entry_defs` via
 /// transitive calls and fn-ref literals.  Returns the full reachable set
 /// including `entry_defs`.
@@ -2401,8 +2411,7 @@ impl<'a> Output<'a> {
     pub fn new(data: &'a Data, stores: &'a Stores) -> Self {
         // A generation run is about ONE program; per-definition facts from the previous
         // run name other functions by the same numbers.
-        non_sentinel::begin_generation();
-        range::begin_generation();
+        begin_program();
         Output {
             data,
             stores,

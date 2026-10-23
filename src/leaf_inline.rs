@@ -1153,8 +1153,8 @@ pub fn rewrite_program(data: &mut Data) -> usize {
     if off_all() || data.open_world || data.observes_entries || profiled() {
         return 0;
     }
-    // The range memo is about one program, and this pass is the first to ask it.
-    crate::generation::range::begin_generation();
+    // The analysis memos are about one program, and this pass is the first to ask them.
+    crate::generation::begin_program();
     let mut leaves: HashMap<u32, Leaf> = HashMap::new();
     for d in 0..data.definitions() {
         if data.def(d).def_type != DefType::Function {
