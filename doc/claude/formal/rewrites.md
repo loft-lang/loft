@@ -2075,6 +2075,18 @@ parameter seed or `n` handed out by reference declines.  `LOFT_HOIST_VERIFY=1` c
 plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a18 (a16/a17
 the boundary pair across i64::MAX, a18 a step that really overflows), pins
 `tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
+**The while-counter clause.**  A loop shaped `while i < E { …; i += 1 }` — its first statement
+the test's break, `E` naming no `i`, its last the step `i = i + 1`, which is the loop's one
+write of `i` — bounds its counter without bounding `E`.  Every statement of the loop runs after
+the test passed and before the step, where `i < E <= i64::MAX`, so there `i` lies in
+`[lo, i64::MAX - 1]` and the step, with every other use that fits from it, is plain.  A null
+`E` is `i64::MIN` to the native compare, so the test fails and the loop ends.  Outside such
+loops a local whose every self-step is one of their steps, and whose every other assignment is
+ranged, lies in `[lo, i64::MAX]`, `lo` its lowest seed.  The decreasing form waits for a
+non-null `E`: `i > E` holds for every `i` when `E` is null.  Switch `LOFT_NO_WHILE_COUNTER`;
+sites `range::{while_counter_shape, seed_while_counters}`, `Output::while_counter_facts`, the
+narrowing arm before the `Loop` arm in `emit.rs`.  Cell
+`tests/scripts/a-while-counter-steps-plain-below-its-bound.loft`, pins `tests/while_counter.rs`.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
 
