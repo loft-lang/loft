@@ -122,6 +122,11 @@ fn decline_target() -> Option<&'static str> {
         .as_deref()
 }
 
+/// Is a decline census being written?  A reason that costs work to compute is asked only then.
+pub fn declines_wanted() -> bool {
+    PAUSED.load(Ordering::Relaxed) == 0 && decline_target().is_some()
+}
+
 /// Rewrite `rule` refused `site` — a loop, a local, a function the rule is shaped for —
 /// because `why`.  One count per `(rule, site)`, under the first reason given; the site is
 /// read inside the body being generated (`InBody`), so a loop's scope number, which every

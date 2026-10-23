@@ -7551,6 +7551,21 @@ impl Output<'_> {
         range::op_range(self.data, &nn, &*rv, name, args, 0)
     }
 
+    /// `@FR-R-Range`'s decline reason for the op `name` over `args`, under the same facts
+    /// [`Self::op_range`] reads — the first operand leaf it could not range, by kind.
+    pub fn range_blocker(&mut self, args: &[Value]) -> &'static str {
+        let nn = self.nn_facts();
+        let rv = self.current_ranges();
+        let def = self.data.def(self.def_nr);
+        match args
+            .iter()
+            .find(|a| range::range(self.data, &nn, &*rv, a, 0).is_none())
+        {
+            Some(a) => range::blocker(self.data, &nn, &*rv, def.variables(), def.code(), a, 0),
+            None => "ranged operands whose result may overflow",
+        }
+    }
+
     /// The facts the code being emitted runs under: the innermost override, or the
     /// function's own (computed once).
     fn current_ranges(&mut self) -> std::rc::Rc<range::Ranges> {

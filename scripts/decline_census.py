@@ -60,6 +60,7 @@ REPORTED = {
     "R-PushFill/loop": ("the counted push loop itself (reserve and fill)", "declines only"),
     "R-Header": ("a loop's vector headers held across the body", "partial"),
     "R-Header/scalars": ("the scalar hoists of a loop", "declines only"),
+    "R-Range": ("an integer operator emitted plain because its result provably fits", "complete"),
     "R-RecPtr": ("a held record address for a view", "complete"),
     "R-ValueRecord": ("a record type kept as a value", "partial"),
 }
