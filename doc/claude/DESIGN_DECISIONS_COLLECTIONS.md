@@ -207,15 +207,16 @@ or borrowing (`formal/collections.md` `(Col-Layouts)`).
 older layout stays readable without a conversion: the format grows instead of breaking.  The
 interpreter is held to the same layouts so a store moves between backends, and the
 interpreter remains the reference that checks the native build's values.
-**Owed.** The refusal: `placement::HASH` is still `"2"`, so a build older than the tagged and
-inline tables reads one as untagged and misreads it.  The token changes to `"3"`, with a rule
-that a build accepts an older token it can read ("3 reads 2"), before these layouts are
-pushed.
+A new layout changes the kind's placement token, and the build lists the older tokens it
+reads as written (`placement::HASH` `"3"`, `HASH_READS` `["2"]`): a store under one of those is
+handed over raw, and an older build meets a token it does not know and refuses.
 **Revisit when.** A layout cannot record itself in its instance (it needs an outside schema to
 be read); or keeping every layout readable costs a measured read on the common one.
 Decided 2026-10-23 (owner) — [record](DESIGN_DECISIONS-history.md#c152--a-data-structure-may-have-several-layouts-side-by-side-and-every-build-reads-and-writes-them-all).
 **Holds at:** `@C152` — `hash::hash_inline` and the `STRIDE_FLD` flags (`src/hash.rs`),
-`formal/collections.md` `(Col-Layouts)`, guard `tests/store_persist_loft.rs`
+`placement::HASH_READS` and `read_as_own` (`src/placement.rs`), `schema_sidecar::classify`,
+`formal/collections.md` `(Col-Layouts)`; guards `tests/store_persist_loft.rs`
 `every_hash_layout_lives_beside_the_others_in_one_store` with
-`tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft`.
+`tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft`, and `tests/layout_golden.rs`
+`an_older_hash_token_this_build_reads_hands_the_store_over_raw`.
 **Catalogue:** @F7 (`hash<T[keys]>` keyed collection).

@@ -34,6 +34,10 @@
 //! program reads it with, so its records would be read at the wrong stride …
 //! ```
 //!
+//! A bump need not refuse the stores a build CAN read: [`HASH_READS`] lists the older hash
+//! tokens this build reads as written, and `schema_sidecar::classify` hands such a store over
+//! raw (@C152).
+//!
 //! Only stores that CONTAIN the changed kind are affected: the token is rendered per
 //! collection, so bumping [`HASH`] leaves a store of plain structs and vectors loading
 //! exactly as before. That is why this is a token per kind rather than a bump of

@@ -5007,5 +5007,11 @@ That test is `tests/store_persist_loft.rs` `every_hash_layout_lives_beside_the_o
 (nine writer/updater pairs, both backend orders).  Its first run failed under the inline layout
 — `by_k=100/100/55550` where 250 records were written — which led to the group-copy defect
 (`a-copied-group-indexes-its-own-records.loft`).  Still owed when decided: the placement token,
-since an older build would misread a tagged or inline table instead of refusing it.
+since an older build would misread a tagged or inline table instead of refusing it.  It became
+`"3"` reading `"2"` the same day, measured against a build of `main` @ c333142d5 in both
+directions: a store `main` wrote was loaded, updated on `--native` and read by this build with
+every hand-computed value right; a store this build wrote, and the `main` store once this build
+had updated it (its sidecar rewritten to `placement=3`), were refused by `main` —
+*"the store's a hash was written by a build that lays it out differently (placement 3), which
+this build cannot read"*.
 
