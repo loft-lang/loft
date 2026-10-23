@@ -632,6 +632,7 @@ arguments	bd4932067	R-LitDiv	1
 arguments	bd4932067	R-LiteralWalk	1
 arguments	bd4932067	R-MaskRange	2
 arguments	bd4932067	R-Mint	18
+arguments	bd4932067	R-MoveLast/host	1
 arguments	bd4932067	R-PushRec	2
 arguments	bd4932067	R-Range	29
 arguments	bd4932067	R-RangedCall	2

@@ -305,8 +305,10 @@ fn check(
     // A VIEW of the vector — a local whose deps reach `src` or its owner (`e = v[1]`, `r:
     // reference<T> = v[2]`, a view of such a view) — names the vector's records under another
     // name, so naming it after the move reads the literal's element where `@FR-B-Copy` owes
-    // the vector's own (loft#2118).
-    let views = views_of(function, &[p.src, p.owner, p.cur]);
+    // the vector's own (loft#2118).  A view of the LITERAL is not one: `cur` is bound only by
+    // its null init and its mint, so every view of it names the literal's own field, which is
+    // what it names under the copy too — the cursor's `match cur { … }` subject is such a view.
+    let views = views_of(function, &[p.src, p.owner]);
     if list[p.mv + 1..]
         .iter()
         .any(|s| views.iter().any(|&w| mentions(s, w) > 0))
