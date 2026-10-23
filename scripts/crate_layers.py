@@ -99,7 +99,7 @@ LAYERS: list[tuple[str, list[str]]] = [
        
     ]),
     ("rust", [
-        "create", "generation", "introspect", "native_lib",
+        "create", "generation", "introspect", "native_lib", "stdlib_codegen",
     ]),
     ("facade", [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "native_artifact", "repl", "rpc",
@@ -120,7 +120,6 @@ SIBLINGS: list[tuple[str, str]] = [
 # A count may only fall; `check` fails when one rises, and when one has fallen below its
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
-    ("interp", "rust"): 3,
     ("rust", "interp"): 6,
 }
 

@@ -503,6 +503,7 @@ pub mod schema_sidecar;
 #[cfg(feature = "registry")]
 pub mod self_update;
 mod stack;
+pub mod stdlib_codegen;
 pub mod timeout;
 pub mod toolchain;
 pub mod triggers;

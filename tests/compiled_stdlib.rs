@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! @PLN181 — the compiled standard library: `src/compiled_stdlib_gen.rs` is the standard
-//! library's compiled loft bodies, generated with loft itself (`src/compiled_stdlib.rs`).
+//! library's compiled loft bodies, generated with loft itself (`src/stdlib_codegen.rs`).
 use loft::file_access as fa;
 use loft::parser::Parser;
 use loft::scopes;
@@ -12,7 +12,7 @@ fn generated() -> String {
     // regeneration exists to repair.
     p.parse_dir_unchecked("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
-    loft::compiled_stdlib::generate(
+    loft::stdlib_codegen::generate(
         &p.data,
         &p.database,
         &loft::cache::collect_stdlib_sources("default"),

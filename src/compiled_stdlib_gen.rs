@@ -1,7 +1,7 @@
 // @generated — DO NOT EDIT BY HAND.
 //
-// The standard library's compiled loft bodies (@PLN181, `src/compiled_stdlib.rs`): the
-// functions `compiled_stdlib::export_set` picks, as the native backend emits them, with
+// The standard library's compiled loft bodies (@PLN181, `src/stdlib_codegen.rs`): the
+// functions `stdlib_codegen::export_set` picks, as the native backend emits them, with
 // one shared-store bridge each.  Regenerate after changing default/*.loft:
 //     make compiled-stdlib
 // `tests/compiled_stdlib.rs::compiled_stdlib_up_to_date` fails when this file is stale.
