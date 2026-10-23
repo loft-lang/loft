@@ -4955,6 +4955,50 @@ fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
     Ok(())
 }
 
+/// loft#2147 — a library whose loft functions call its own `[native] crate` package compiles
+/// to an artifact that LINKS the package's library, and the interpreter must be able to load
+/// it.  Windows has no RPATH: the artifact's import of `loft_native_scalar.dll` resolved only
+/// once the package was loaded first, so the artifact did not load, was rebuilt every run and
+/// the library ran interpreted.  `LOFT_REQUIRE_NATIVE=1` turns "runs interpreted" into a
+/// failing exit, and 43 = `native_answer()` (42) + 1 is the oracle that the call went through.
+#[test]
+fn a_library_calling_its_native_package_loads_compiled() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if find_loft_rlib().is_none() {
+        println!(
+            "a_library_calling_its_native_package_loads_compiled: skipped (no libloft.rlib / rustc)"
+        );
+        return Ok(());
+    }
+    let lib_dir = std::env::current_dir()?.join("tests/lib");
+    let dir = std::env::temp_dir().join(format!("loft_lib_links_pkg_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir)?;
+    let program = dir.join("p.loft");
+    fa::write(
+        &program,
+        "use native_scalar_pkg::*;\nfn main() { println(\"{answer_plus(1)}\"); }\n",
+    )?;
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .args(["--interpret", "--lib"])
+        .arg(&lib_dir)
+        .arg(&program)
+        .current_dir(&dir)
+        .env("LOFT_REQUIRE_NATIVE", "1")
+        .env("LOFT_TIMEOUT", "600")
+        .output()?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "43",
+        "the library's artifact must load and answer 43:\nstdout: {}\nstderr: {stderr}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = fa::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// A program that says `#link static` ships as ONE file: its native package's Rust is linked
 /// into the binary, which names no library file and runs alone in an empty directory.  The
 /// control is the same program under `#link dynamic`, whose binary must name the package's
