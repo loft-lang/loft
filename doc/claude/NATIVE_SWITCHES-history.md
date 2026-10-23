@@ -61,3 +61,7 @@ resolution it removes costs more than the arithmetic it saves.
   1.01× and `parse_num` 1.46× → 0.98×.
 - **The character walk's ASCII arm** took `char_walk` 4.62× → 2.48× of Rust, and the stdlib
   `split`, built on such a walk, 12.5× → 7.8×.
+- **The small-record parameter clause** took mesh3d `mat4_transform` 9.9 → 2.64 ms (5.0× → 1.32×
+  of Rust) and `sphere` −38 %.
+- **`LOFT_NO_NULL_BUFFER_HOIST`'s setter fix** took stage's `pack_instances` 24.3× → 8.4×.
+- **The bounded-sum blocks** took the stdlib `sum` 11.9 → 3.7 µs, 6.45× → 2.06× of Rust, pinned.

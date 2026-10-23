@@ -171,7 +171,7 @@ impl super::Output<'_> {
         let unranged: Vec<u16> = all_leaves
             .iter()
             .copied()
-            .filter(|v| known.vars.get(v).is_none())
+            .filter(|v| !known.vars.contains_key(v))
             .collect();
         let nn = self.nn_facts();
         let tiers: [&[u16]; 3] = [&[], &unranged, &all_leaves];

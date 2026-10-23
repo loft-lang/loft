@@ -16,9 +16,12 @@
 //   c4 a null bound: no pass                                                          0 0
 //   c5 a negative seed: -5 + … + 2                                                    -12 3
 //   c6 two steps in one pass (declines): 1 + 3 + 5 + 7 + 9                            25 10
-//   c7 an unranged seed at i64::MIN + 1 (declines): `i - 2` overflows to null         null -9223372036854775805
+//   c7 an unranged seed at i64::MIN + 1, one pass (declines): `i - 2` overflows to null  null -9223372036854775806
 //
-// @falsified-at: hand-measured (2026-10-23) — see this cell's commit for the plant.
+// @falsified-at: hand-measured (2026-10-23) — with `range::seed_while_counters` taking an unranged
+//   seed as 0 instead of declining, c7's `i - 2` is emitted plain and answers
+//   9223372036854775807 on `--native` instead of null; the interpreter passes.  (With two passes
+//   the plant was inert: the second `i - 2` lands on i64::MIN, the null value, and hid it.)
 
 /// The value back through a vector element: no range proof reaches it.
 fn opaque(v: integer) -> integer {
@@ -91,7 +94,7 @@ fn c6() -> text {
 
 fn c7() -> text {
   i = opaque(-9223372036854775807);
-  n = opaque(-9223372036854775805);
+  n = opaque(-9223372036854775806);
   s = 0;
   while i < n {
     s += i - 2;
@@ -108,6 +111,6 @@ fn main() {
   assert(c4() == "0 0", "c4 {c4()}");
   assert(c5() == "-12 3", "c5 {c5()}");
   assert(c6() == "25 10", "c6 {c6()}");
-  assert(c7() == "null -9223372036854775805", "c7 {c7()}");
+  assert(c7() == "null -9223372036854775806", "c7 {c7()}");
   println("ok");
 }
