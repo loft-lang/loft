@@ -926,6 +926,13 @@ pub struct Parser {
     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+    /// loft#2146 — statements an argument conversion needs run around the call it is an
+    /// argument of: a nullable struct SLOT passed to a `&S?` parameter is copied into an
+    /// owned temp BEFORE the call and stored back into the slot AFTER it, while the argument
+    /// itself stays the bare `OpCreateStack(temp)` both backends pass as a link.  Cleared by
+    /// `process_call_args`, taken by `call_nr` once the call is built.
+    pending_arg_pres: Vec<Value>,
+    pending_arg_posts: Vec<Value>,
     /// Pass 1's tuple-local call arguments, `(function, callee def name, argument index,
     /// local)`, judged against the callee's signature between the passes
     /// (`record_forward_ref_tuple_links`).
@@ -1947,6 +1954,8 @@ impl Parser {
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
+            pending_arg_pres: Vec::new(),
+            pending_arg_posts: Vec::new(),
             pending_tuple_args: Vec::new(),
             tuple_place_wanted: false,
             loop_sources_replaced: std::collections::HashSet::new(),

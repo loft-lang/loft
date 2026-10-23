@@ -24,6 +24,10 @@ impl Parser {
         arg_pos: &[Position],
     ) -> Vec<Value> {
         let mut actual = Vec::new();
+        // loft#2146 — an overload trial converts arguments too; only the call built from THIS
+        // conversion takes its store-backs.
+        self.pending_arg_pres.clear();
+        self.pending_arg_posts.clear();
         if types.is_empty() {
             return actual;
         }

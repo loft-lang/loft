@@ -865,6 +865,59 @@ impl Parser {
         {
             return true;
         }
+        // loft#2146, `@FR-B-Ref-Lvalue` — a nullable struct SLOT (a field `b.s`, an element of
+        // a `vector<S?>`, stored inline as `__nullable<S>`) handed to a `&S?` parameter.  The
+        // slot holds a four-byte record pointer, `0` when absent (loft#1071), which no `&S?`
+        // link can name: the link reads and writes a handle.  So the slot is linked through an
+        // OWNED temp — null when the slot is absent, else its own copy of the payload, so a
+        // whole-value write-back in the callee releases the copy and never the holder's store —
+        // and the temp is stored back with the slot's own write once the call returns
+        // (`call_nr` places both halves around the call).  The argument stays the bare
+        // `OpCreateStack(temp)` both backends pass as a link.
+        if let Type::RefVar(ref_tp) = should
+            && let Type::Optional(inner) = &**ref_tp
+            && let Type::Reference(struct_d, _) = &**inner
+            && let Type::Enum(enum_d, true, _) = is_type
+            && self.data.def(*enum_d).name
+                == format!("__nullable<{}>", self.data.def(*struct_d).name())
+        {
+            if !self.first_pass {
+                let (struct_d, syn) = (*struct_d, *enum_d);
+                let kt = Value::Int(i32::from(self.data.def(struct_d).known_type()));
+                let held = Type::Optional(Box::new(Type::Reference(struct_d, Deps::none())));
+                let slot = code.clone();
+                let read = self.emit_nullable_slot_read(syn, slot.clone(), is_type);
+                // The view BORROWS the holder's store — typed with its deps, as the slot read's
+                // own name is — so neither backend copies the payload into it; the one copy is
+                // the temp's below.
+                let viewed = Type::Optional(Box::new(
+                    Type::Reference(struct_d, Deps::none()).with_deps_of(is_type),
+                ));
+                let view = self.vars.work_refs(&viewed, &mut self.lexer);
+                self.vars.set_skip_free(view);
+                self.vars.mark_inline_ref(view);
+                let tmp = self.vars.work_refs(&held, &mut self.lexer);
+                let absent = self.cl("OpRefIsNull", &[Value::Var(view)]);
+                let present = self.cl("OpNot", &[absent]);
+                let mint = self.cl("OpDatabase", &[Value::Var(tmp), kt.clone()]);
+                let copy = self.cl("OpCopyRecord", &[Value::Var(view), Value::Var(tmp), kt]);
+                let sentinel = self.cl("OpNullRefSentinel", &[]);
+                self.pending_arg_pres.extend([
+                    v_set(view, read),
+                    v_set(tmp, sentinel.clone()),
+                    v_if(present, Value::Insert(vec![mint, copy]), Value::Null),
+                ]);
+                let mut post = vec![self.nullable_slot_write_from(syn, &slot, tmp, false)];
+                // The slot took its own copy of whatever the temp holds — the payload copy,
+                // or the store a write-back installed — so the temp releases it here and is
+                // left at the sentinel, which a loop's next pass and the scope exit find empty.
+                post.push(self.cl("OpFreeRef", &[Value::Var(tmp)]));
+                post.push(v_set(tmp, sentinel));
+                self.pending_arg_posts.extend(post);
+                *code = self.cl("OpCreateStack", &[Value::Var(tmp)]);
+            }
+            return true;
+        }
         // @PLN25 single-payload — a `__nullable<S>` value flows into a `&S` (`RefVar(Reference
         // (S))`) parameter (`fn f(r: &S)` that may MUTATE through `r`).  Unwrap to the payload
         // sub-ref, then pass it BY-REFERENCE via a work-ref + `OpCreateStack` (with `skip_free`,
