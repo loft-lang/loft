@@ -53,7 +53,7 @@
 
 use super::{Parts, Stores};
 use crate::hash;
-use crate::keys::DbRef;
+use crate::keys::{Content, DbRef};
 use crate::store::PRIMARY;
 use crate::vector;
 
@@ -187,7 +187,17 @@ impl Shape {
             .store_mut(&tile)
             .set_long(tile.rec, tile.pos + self.off_tkey, key);
         self.db.record_finish(&self.root, &tile, self.main, 0);
-        tile
+        // Under the inline layout (`@FR-Col-Inline`) the finish moves the entry into the
+        // table, so the staging record is not the tile any more: answer where the hash
+        // put it, as a program reaches it — by its key.
+        let found = self
+            .db
+            .find(&self.field(), self.tiles_tp, &[Content::Long(key)]);
+        assert!(
+            found.rec != 0,
+            "tile {key} is not in the hash after its finish"
+        );
+        found
     }
 
     /// `t.steps += [TStep{…}]; t.roads += [TRoad{…}]` — one way binned into one tile,
