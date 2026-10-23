@@ -5109,6 +5109,33 @@ impl Output<'_> {
             push_frame.insert(path, name);
         }
         for (path, expr) in candidates {
+            // `(R-Header)`'s kept clause — a body's holder read through a `&mut` stays in memory
+            // across every call the loop makes; a loop that changes nothing it holds takes a
+            // local copy, as it would derive its own header (zttext's `materialise` read
+            // `(*__kh_0).len` per pass, +11 %).
+            if let Some(held) = self.kept_loop_copy(lp, &path) {
+                self.hoist_counter += 1;
+                let name = format!("__vh_{}", self.hoist_counter);
+                lines.push(format!(
+                    "let {name} = {held}; //@FR-R-Header kept clause: the loop's copy of the holder"
+                ));
+                frame.insert(path.clone(), name.clone());
+                if base_paths.contains(&path)
+                    && self.active_vec_base(&path).is_none()
+                    && !self.coroutine_persistent_fields.contains_key(&path.0)
+                {
+                    let base = format!("__vb_{}", self.hoist_counter);
+                    lines.push(format!(
+                        "let {base}: *const u8 = vector::vec_base(&{name}, &stores.allocations); //@PLN157 § V-ak element base of the held header"
+                    ));
+                    lines.push(format!(
+                        "let {}: (*const u8, u32) = vector::text_span_of(&{name}, &stores.allocations);",
+                        base.replacen("__vb_", "__ts_", 1)
+                    ));
+                    base_frame.insert(path.clone(), base);
+                }
+                continue;
+            }
             if self.vec_headers.iter().any(|f| f.contains_key(&path)) {
                 // `@FR-R-Base` — an enclosing frame holds the header (a plain one, or a
                 // push header's `.h` where the enclosing loop pushes the path).  This loop

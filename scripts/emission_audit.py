@@ -45,6 +45,7 @@ import sys
 BIND_HEADER = re.compile(r"^\s*let (__vh_\d+) = vector::vec_header\(&\((.*)\), &stores\.allocations\);")
 # (R-Header)'s kept clause: a body's holder of a kept vector field, bound once at entry and
 # refreshed in place (`__kh_N = vector::vec_header(…)`), or a `__kh` twin's `&mut` input.
+BIND_KEPT_COPY = re.compile(r"^\s*let (__vh_\d+) = .*//@FR-R-Header kept clause: the loop's copy of the holder")
 BIND_KEPT = re.compile(r"^\s*let mut (__kh_\d+) = vector::vec_header\(&\((.*)\), &stores\.allocations\); //@FR-R-Header kept clause")
 BIND_PUSH = re.compile(r"^\s*let mut (__ph_\d+) = vector::push_header\(&\((.*)\), &stores\.allocations\);")
 BIND_VIEW = re.compile(r"^\s*let (__vh_\d+) = .*//@PLN157 § V-n view header for (\S+?)(?:,| |$)")
@@ -152,6 +153,7 @@ def audit(text, quiet=False):
         bound = None
         mh = BIND_HEADER.match(line)
         mk = BIND_KEPT.match(line)
+        mkc = BIND_KEPT_COPY.match(line)
         mp = BIND_PUSH.match(line)
         mv = BIND_VIEW.match(line)
         ms = BIND_SCALAR.match(line)
@@ -247,6 +249,8 @@ def audit(text, quiet=False):
             continue
         if mk:
             bound = Holder(mk.group(1), "kept", mk.group(2), depth, nr)
+        elif mkc:
+            bound = Holder(mkc.group(1), "kept", None, depth, nr)
         elif mp:
             bound = Holder(mp.group(1), "push", mp.group(2), depth, nr)
         elif mv:
