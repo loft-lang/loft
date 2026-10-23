@@ -18,7 +18,9 @@
 //! reallocation: the hash keeps its entries in a chunked arena claimed EARLY while a
 //! record's vectors are claimed at the frontier LATE, so a record's own bytes sit
 //! either side of the whole store. `one_tile_footprint_is_the_blocks_it_owns` shows it
-//! with a single record and nothing else alive.
+//! with a single record and nothing else alive.  Those numbers are the ARENA layout's: a
+//! hash that owns its entries now keeps them in its table (`(Col-Inline)`, @C152), and
+//! `LOFT_NO_HASH_INLINE=1` writes the layout they were measured on.
 //!
 //! What survived is the other claim: 87–99% of the pages below a record's finish
 //! frontier hold nothing written afterwards. That needs no per-record contiguity, and
@@ -846,16 +848,20 @@ fn one_tile_footprint_is_the_blocks_it_owns() {
         l.live[0]
     );
 
-    // The finding this cell exists to make un-ignorable: with ONE tile in the store and
-    // nothing else alive, the tile is already NOT contiguous. Its arena slot and its
-    // vectors sit either side of the hash's own spine, so the interval between its
-    // corners is several times the bytes it owns — before a second tile exists to
-    // interleave with.
-    assert!(
-        l.foreign_in_span(0) > l.live[0],
-        "a lone tile's span holds {} foreign words against its own {}",
-        l.foreign_in_span(0),
-        l.live[0]
-    );
+    // The finding this cell exists to make un-ignorable, on the ARENA layout: with ONE tile
+    // in the store and nothing else alive, the tile is already NOT contiguous. Its arena slot
+    // and its vectors sit either side of the hash's own spine, so the interval between its
+    // corners is several times the bytes it owns — before a second tile exists to interleave
+    // with.  An inline table (`(Col-Inline)`, @C152) keeps the tile IN the spine, so there the
+    // span is only where the store placed the vectors, which a poisoning or quarantining mode
+    // moves: asserted where it is a fact of the layout, `LOFT_NO_HASH_INLINE=1`.
+    if !hash::hash_inline() {
+        assert!(
+            l.foreign_in_span(0) > l.live[0],
+            "a lone tile's span holds {} foreign words against its own {}",
+            l.foreign_in_span(0),
+            l.live[0]
+        );
+    }
     println!("{}", l.runs());
 }
