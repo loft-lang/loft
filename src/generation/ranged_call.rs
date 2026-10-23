@@ -275,7 +275,7 @@ impl super::Output<'_> {
         let def = data.def(d);
         let code = def.code();
         let seeded = self.variant_ranges(d, false);
-        let nn = super::non_sentinel::non_sentinel_vars(data, code);
+        let nn = super::non_sentinel::non_sentinel_vars(data, def.variables(), code);
         let plain = range::range_vars(
             data,
             def.variables(),
