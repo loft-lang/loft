@@ -1745,7 +1745,7 @@ impl State {
     /// @PLN198 (`@FR-R-TextBorrow`) — mark this function's text loop variables that BORROW
     /// their element: `for p in words` whose rest reads `p` only as a text value and writes
     /// no store.  The admission is the native generator's own
-    /// ([`crate::generation::hoist::borrowed_text_walks`]), asked without the walks only the
+    /// ([`crate::opt::text_borrow::borrowed_text_walks`]), asked without the walks only the
     /// native generator lowers (a lazy split's pieces, a split table), so both backends
     /// borrow the same walks of a real vector.  The element's bytes live in the vector's
     /// store, which an admitted body never writes, so the `Str` stays valid for the
@@ -1755,7 +1755,7 @@ impl State {
         if *OFF.get_or_init(|| std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0")) {
             return;
         }
-        let views = crate::generation::hoist::borrowed_text_walks(
+        let views = crate::opt::text_borrow::borrowed_text_walks(
             data,
             def_nr,
             &std::collections::BTreeSet::new(),
