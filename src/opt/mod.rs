@@ -11,3 +11,15 @@
 pub mod attrs;
 pub mod char_walk;
 pub mod iteration;
+pub mod non_sentinel;
+pub mod range;
+
+/// Forget every analysis memo: the range analysis's call memo (keyed by a definition's
+/// address) and the non-null analysis's answers (keyed by its number) are facts about ONE
+/// program, and the next program a process compiles names other functions by the same
+/// addresses and numbers (loft#2122, loft#2142).  Called by the first pass of a program that
+/// asks them, `leaf_inline::rewrite_program`, and by `generation::Output::new`.
+pub(crate) fn begin_program() {
+    non_sentinel::begin_generation();
+    range::begin_generation();
+}

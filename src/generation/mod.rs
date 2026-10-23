@@ -35,10 +35,10 @@ pub mod hoist;
 pub mod kept;
 pub mod keyed_entry;
 pub mod keyed_place;
-pub mod non_sentinel;
+pub use crate::opt::non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
-pub mod range;
+pub use crate::opt::range;
 mod ranged_call;
 pub mod stream_walk;
 mod stream_walk_emit;
@@ -396,15 +396,7 @@ fn collect_fn_ref_literals(
     val.for_each_child(&mut |c| collect_fn_ref_literals(c, data, variables, calls, returns_fn));
 }
 
-/// Forget every analysis memo: the range analysis's call memo (keyed by a definition's
-/// address) and the non-null analysis's answers (keyed by its number) are facts about ONE
-/// program, and the next program a process compiles names other functions by the same
-/// addresses and numbers (loft#2122, loft#2142).  Called by the first pass of a program that
-/// asks them, `leaf_inline::rewrite_program`, and by [`Output::new`].
-pub(crate) fn begin_program() {
-    non_sentinel::begin_generation();
-    range::begin_generation();
-}
+pub(crate) use crate::opt::begin_program;
 
 /// Compute the set of function definitions reachable from `entry_defs` via
 /// transitive calls and fn-ref literals.  Returns the full reachable set

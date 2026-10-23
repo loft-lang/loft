@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! @PLN157 P3 (loft#1426 M3) — the "provably non-sentinel" fact, and the float
 //! compares it lets the emitter simplify.
@@ -133,7 +133,7 @@ thread_local! {
 }
 
 /// Forget every per-definition answer: a new generation run is about a new program.
-/// Called by [`crate::generation::Output::new`].
+/// Called by `crate::generation::Output::new`.
 pub(crate) fn begin_generation() {
     RETURNS.with(|m| m.borrow_mut().clear());
 }
@@ -266,7 +266,7 @@ pub fn non_sentinel_vars(
 /// the loop's bound proves the step cannot overflow (see `non_sentinel_vars`).
 fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
     if let Value::Loop(lp) = v.unspan()
-        && let Ok(rc) = super::hoist::range_counters(lp, data)
+        && let Ok(rc) = crate::loop_shape::range_counters(lp, data)
     {
         let bounded = !rc.inclusive
             || matches!(rc.hi.unspan(), Value::Int(k) if *k < i32::MAX)
@@ -284,7 +284,7 @@ fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
 }
 
 /// `@FR-R-Counter`'s iteration clause — seed the `#index` of every `for e in v` loop whose
-/// own bound proves its step cannot overflow ([`super::hoist::bounded_iteration_index`]),
+/// own bound proves its step cannot overflow ([`crate::opt::iteration::bounded_iteration_index`]),
 /// when every OTHER assignment to it in the function is a literal (the parser's `-1` seed)
 /// and its address is never taken.  The step names itself, so the fixpoint below could
 /// never show it; the bound is the fact.
@@ -297,7 +297,7 @@ fn seed_iteration_indexes(
     let mut bounded: Vec<u16> = Vec::new();
     fn collect(data: &Data, v: &Value, out: &mut Vec<u16>) {
         if let Value::Loop(lp) = v.unspan()
-            && let Some(ix) = super::hoist::bounded_iteration_index(lp, data)
+            && let Some(ix) = crate::opt::iteration::bounded_iteration_index(lp, data)
         {
             out.push(ix);
         }
@@ -350,7 +350,7 @@ fn scan_sets(v: &Value, data: &Data, vars: &HashMap<u16, bool>, acc: &mut HashMa
 /// exhaustive child iterator, so no site can be missed by a variant this match
 /// forgot.  The non-sentinel proof and the invariant-chain memo
 /// (`hoist::invariant_chains`, @PLN157 § V-ao) both read this one set.
-pub(super) fn collect_escapes(
+pub(crate) fn collect_escapes(
     data: &Data,
     v: &Value,
     escaped: &mut std::collections::HashSet<u16>,

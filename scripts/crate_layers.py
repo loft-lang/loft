@@ -118,7 +118,7 @@ SIBLINGS: list[tuple[str, str]] = [
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
     ("interp", "rust"): 17,
-    ("opt", "rust"): 7,
+    ("opt", "rust"): 3,
     ("rust", "interp"): 25,
 }
 

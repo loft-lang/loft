@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! `@FR-R-Range` — the RANGE an integer expression provably lies in, and the plain
 //! operator it therefore may emit.
@@ -471,7 +471,7 @@ thread_local! {
 }
 
 /// Forget every memoised call range: a new run is about a new program.  Called by
-/// [`crate::generation::Output::new`], beside `non_sentinel::begin_generation`, and by
+/// `crate::generation::Output::new`, beside `non_sentinel::begin_generation`, and by
 /// `leaf_inline::rewrite_program`, which asks the memo before generation does.
 pub(crate) fn begin_generation() {
     CALL_MEMO.with(|m| m.borrow_mut().clear());
@@ -500,7 +500,7 @@ pub fn range_vars(
     vars: &crate::variables::Function,
     code: &Value,
     nn: &HashMap<u16, bool>,
-    walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+    walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
     seeds: &Ranges,
 ) -> Ranges {
     let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
@@ -627,7 +627,7 @@ fn seed_counters(
     counters: &mut std::collections::HashSet<u16>,
 ) {
     if let Value::Loop(lp) = v.unspan()
-        && let Ok(rc) = super::hoist::range_counters(lp, data)
+        && let Ok(rc) = crate::loop_shape::range_counters(lp, data)
     {
         counters.insert(rc.index);
         counters.insert(rc.loop_var);
@@ -686,7 +686,7 @@ fn seed_accumulators(
     code: &Value,
     nn: &HashMap<u16, bool>,
     escaped: &std::collections::HashSet<u16>,
-    walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+    walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
     rv: &mut Ranges,
     counters: &mut std::collections::HashSet<u16>,
 ) {
@@ -719,14 +719,14 @@ fn seed_accumulators(
     /// `while`, a counted loop whose seed or end is unranged) is unbounded here.
     fn trips(
         data: &Data,
-        walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+        walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
         rv: &Ranges,
         lp: &crate::data::Block,
     ) -> Option<i128> {
         if walks.get(&lp.scope).is_some_and(|w| w.hoist_null) {
             return Some(i128::from(U32_MAX));
         }
-        let rc = super::hoist::range_counters(lp, data).ok()?;
+        let rc = crate::loop_shape::range_counters(lp, data).ok()?;
         let (lo, hi) = *rv.vars.get(&rc.next.unwrap_or(rc.index))?;
         Some((i128::from(hi) - i128::from(lo) + 1).max(0))
     }
@@ -736,7 +736,7 @@ fn seed_accumulators(
     /// once one of them is unbounded: a step under such a loop declines.
     fn movement(
         data: &Data,
-        walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+        walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
         rv: &Ranges,
         node: &Value,
         acc: u16,
