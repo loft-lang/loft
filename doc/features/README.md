@@ -84,7 +84,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F101](F101.md) | The build phase — `loft build`, declared targets, zero-config defaults |
 | [@F102](F102.md) | Android target — `--native-android`, APK packaging, GL surface and touch input |
 | [@F103](F103.md) | `deliver` / `expose` — hand a loft value to JavaScript with no copy |
-| [@F104](F104.md) | `store_reclaim()` — give a store's unused file space back |
+| [@F104](F104.md) | `store_reclaim()` — give a store's unused space back |
 | [@F105](F105.md) | Custom `to_text` format hook — a type owns how it prints |
 | [@F106](F106.md) | Copy and move semantics — when two names share data, and when they do not |
 | [@F107](F107.md) | Type reflection — the declared shape of a type, as data |

@@ -6,9 +6,9 @@ struct Part { const id: integer, name: text }
 fn main() {
     // Stand in for a dataset you shipped earlier: a plain `.store` image.
     src: hash<Part[id]> = [];
-    store_persist_bind(src, "inventory.store");
     src += Part { id: 7, name: "bolt" };
     src += Part { id: 91, name: "washer" };
+    store_persist_copy(src, "inventory.store");
 
     // Bind an EMPTY collection to that image. Nothing is loaded yet.
     parts: hash<Part[id]> = [];
