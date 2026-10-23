@@ -218,7 +218,8 @@ impl super::Output<'_> {
     }
 
     /// Does the guarded copy gain: some call in `block` takes a ranged variant under the
-    /// copy's facts `copy` and would not under the facts the block runs under unguarded?
+    /// copy's facts `copy` and would not under the facts the block runs under unguarded, and
+    /// no call doing checked integer work is left checked in the copy?
     fn copy_gains(
         &mut self,
         block: &Value,
@@ -227,16 +228,33 @@ impl super::Output<'_> {
         nn: &std::collections::HashMap<u16, bool>,
     ) -> bool {
         let mut candidates: Vec<u32> = Vec::new();
+        let mut left_checked: Option<u32> = None;
         block.walk(&mut |n| {
             if let Value::Call(d, args) = n
                 && benefits(self.data, *d, 0)
-                && self.args_ranged(*d, args, copy, nn)
-                && !self.args_ranged(*d, args, unguarded, nn)
             {
-                candidates.push(*d);
+                if !self.args_ranged(*d, args, copy, nn) {
+                    left_checked.get_or_insert(*d);
+                } else if !self.args_ranged(*d, args, unguarded, nn) {
+                    candidates.push(*d);
+                }
             }
         });
-        candidates.into_iter().any(|d| self.variant_gains(d, 0))
+        if let Some(d) = left_checked
+            && std::env::var("LOFT_TRACE_RANGED_CALL").is_ok()
+        {
+            eprintln!(
+                "ranged-call: {} copy leaves {} checked",
+                self.data.def(self.def_nr).name(),
+                self.data.def(d).name()
+            );
+        }
+        let left_checked = left_checked.is_some();
+        // A call doing checked work that the copy leaves checked is duplicated for nothing,
+        // and the doubled body is what costs a hot function its inlining: the copy must range
+        // the chain whole (`slope_path_with_undo` lost 7 % to a copy that ranged three small
+        // `lerp_int` calls beside an unranged `set_height_with_undo`).
+        !left_checked && candidates.into_iter().any(|d| self.variant_gains(d, 0))
     }
 
     /// Does `d`'s ranged variant turn any operator plain that its plain body keeps checked —
@@ -312,14 +330,26 @@ impl super::Output<'_> {
         let mut escaped: HashSet<u16> = HashSet::new();
         super::non_sentinel::collect_escapes(self.data, code, &mut escaped);
         let mut merged = (*self.current_ranges()).clone();
+        // Both facts hold in the copy — the function's and the copy's own, derived under the
+        // guard — so a variable both range keeps their INTERSECTION: inside a ranged variant
+        // the function's counters are only `[-L, 2L]` wide, and the copy's are what it is for.
+        let meet = |a: (i64, i64), b: (i64, i64)| (a.0.max(b.0), a.1.min(b.1));
         for (v, r) in copy.vars {
             if !outside.contains(&v) && !escaped.contains(&v) {
-                merged.vars.entry(v).or_insert(r);
+                merged
+                    .vars
+                    .entry(v)
+                    .and_modify(|k| *k = meet(*k, r))
+                    .or_insert(r);
             }
         }
         for (key, r) in copy.elems {
             if !outside.contains(&key.0) && !escaped.contains(&key.0) {
-                merged.elems.entry(key).or_insert(r);
+                merged
+                    .elems
+                    .entry(key)
+                    .and_modify(|k| *k = meet(*k, r))
+                    .or_insert(r);
             }
         }
         merged.fields.extend(seeds.fields.clone());
@@ -365,18 +395,33 @@ impl super::Output<'_> {
         let mut escaped: HashSet<u16> = HashSet::new();
         super::non_sentinel::collect_escapes(self.data, def.code(), &mut escaped);
         let known = self.current_ranges();
-        let mut leaves: Vec<u16> = Vec::new();
+        // Only a variable a counted range's start or end is built from: a window walk's
+        // bounds, which is what the guard pays for itself on.  A variable used elsewhere in
+        // the block (a salt, a height) bounds no loop, and a copy guarded on it duplicates
+        // the whole body for the few operators it ranges (`c_slope_path` lost 7 % that way).
+        let mut bounds: Vec<&Value> = Vec::new();
         block.walk(&mut |n| {
-            if let Value::Var(v) = n
-                && is_integer(vars.tp(*v))
-                && !written.contains(v)
-                && !escaped.contains(v)
-                && known.vars.get(v).is_none_or(|r| !within(*r, G))
-                && !leaves.contains(v)
+            if let Value::Set(t, e) = n
+                && (vars.name(*t).starts_with("_range_start")
+                    || vars.name(*t).starts_with("_range_end"))
             {
-                leaves.push(*v);
+                bounds.push(e);
             }
         });
+        let mut leaves: Vec<u16> = Vec::new();
+        for e in bounds {
+            e.walk(&mut |n| {
+                if let Value::Var(v) = n
+                    && is_integer(vars.tp(*v))
+                    && !written.contains(v)
+                    && !escaped.contains(v)
+                    && known.vars.get(v).is_none_or(|r| !within(*r, G))
+                    && !leaves.contains(v)
+                {
+                    leaves.push(*v);
+                }
+            });
+        }
         leaves
     }
 
