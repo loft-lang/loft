@@ -4214,8 +4214,12 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  frees; the literal is bound only by its null init and its mint, never
                  aliased, returned or handed to an op that takes it as an owner.  A
                  later field of the same literal that reads the vector, a literal in
-                 a loop, a parameter's vector, and a reference homed in either
-                 store (H-RefHome) keep the copy.
+                 a loop, a parameter's vector, a reference naming a record of either
+                 store (H-RefHome), and a VIEW of the vector named after the move
+                 keep the copy: each would name the literal's element where B-Copy
+                 owes the vector's own.  A view of the LITERAL does not — it names
+                 the literal's own field under the move and under the copy alike,
+                 so a cursor matched after the move (`match cur { … }`) is admitted.
   (R-ExitVector) a LOCAL VECTOR whose wrapper is minted once and that reaches the
                  function's exit only inside the literal built into the return
                  buffer — `xs: vector<T> = []; …; return Out { xs: xs, … }` — has its
