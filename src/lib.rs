@@ -501,6 +501,7 @@ pub mod schema_sidecar;
 pub mod self_update;
 mod stack;
 pub mod timeout;
+pub mod toolchain;
 pub mod triggers;
 pub mod verify_self;
 
