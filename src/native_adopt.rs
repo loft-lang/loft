@@ -567,7 +567,7 @@ pub struct ArtifactKey {
     /// The fingerprint the artifact is built for and records.
     pub fp: u64,
     /// The build lock, released when the key drops.
-    _lock: std::fs::File,
+    _lock: crate::file_access::File,
 }
 
 /// The adopting half of [`cached_or_build_shared_cdylib`]: the artifact's key, whether one on

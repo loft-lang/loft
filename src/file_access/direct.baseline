@@ -22,8 +22,9 @@
 2 src/migrate_long.rs
 2 src/native.rs
 3 src/native_build.rs
-7 src/native_lib.rs
+2 src/native_lib.rs
 8 src/native_utils.rs
+4 src/opt/native_key.rs
 6 src/package.rs
 3 src/package_layout.rs
 2 src/paged_reader.rs
@@ -39,4 +40,5 @@
 23 src/store.rs
 1 src/store_census.rs
 1 src/timeout.rs
+1 src/toolchain.rs
 1 src/verify_self.rs
