@@ -97,7 +97,7 @@ toolchain ships through it — signed, with checksums a user can verify offline.
   matrix row to add when it is needed.
 - **The Linux bundle is dynamically linked and built against glibc 2.28**, inside the
   manylinux image `release.yml` pins by digest.  Dynamic, because a static binary cannot
-  load a library's native code (loft#2127); glibc 2.28, the version RHEL 8 and Debian 10
+  load a library's native code; glibc 2.28, the version RHEL 8 and Debian 10
   ship, so it starts on those and on every newer distribution.  The bundle smoke checks
   both: an ELF interpreter, and no glibc symbol newer than the floor.  A musl system builds
   from source; `scripts/install.sh` says so.

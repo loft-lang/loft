@@ -711,8 +711,9 @@ path held only by a kept holder as held: the copy buys more than a base there (c
 plain body binds only a holder it hands down, counted as emitted (`Output::kept_effective_uses`:
 a callee `kept_of` declines, or a loop's call that takes the `__inv` twin, serves nothing) —
 own reads alone are what the loop's and the function clause's headers already serve lazily,
-and an eager holder of a field read on one branch cost hex_body's `bone_shape_has` 7.7 %.  A held read reports no index fault yet (loft#2134), as for every
-held header.  A loop that changes no kept field copies the holder into its own header local
+and an eager holder of a field read on one branch cost hex_body's `bone_shape_has` 7.7 %.
+A held read reports no index fault, as no held header does: loft#2134, open. <!-- doc-lint: ok -->
+A loop that changes no kept field copies the holder into its own header local
 for its extent (`Output::kept_loop_copy`): read through the `&mut`, the header stayed in memory
 across the loop's calls (zttext's `materialise`, +11 % until it did).  Measured with
 `bench/stats.py` against `LOFT_NO_KEPT_HEADER=1` (7 samples, every hash equal):
@@ -6253,7 +6254,7 @@ in the emitted binary (`src/generation/emit.rs` writes the `match`), so the admi
 `(R-ValueRecord)` proves per function lifts to the signature.  A library artifact is the
 exception: a value the script hands in names a callee the artifact does not carry, and the
 `_ =>` arm calls it back in the interpreter (`HostTable::call_ref`), which takes and answers
-records — so there the group is open, and its arms keep their records (loft#2129).  Sound where every arm is
+records — so there the group is open, and its arms keep their records.  Sound where every arm is
 admitted; a null fn-ref answers the null tuple exactly as the buffer road answers a null
 record.  The parameter half is what makes the result half reach `flow_layout_full`: its
 `measure(r.str, resolve(r.style))` hands the resolved record straight to a second dispatch,

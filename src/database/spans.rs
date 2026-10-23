@@ -53,7 +53,7 @@
 
 use super::{Parts, Stores};
 use crate::hash;
-use crate::keys::DbRef;
+use crate::keys::{Content, DbRef};
 use crate::store::PRIMARY;
 use crate::vector;
 
@@ -180,14 +180,26 @@ impl Shape {
     /// `idx += TTile { tkey: key, … }` — allocate the entry, write the key the hash
     /// will place it by, then insert. Same order the interpreter emits
     /// (`OpNewRecord` → fields → `OpFinishRecord`), because the key must be readable
-    /// before `hash::add` decides a bucket.
+    /// before `hash::add` decides a bucket.  Answers the entry as FILED: an inline table
+    /// (`(Col-Inline)`) copies the staged record into its bucket and frees the stage.
     fn add_tile(&mut self, key: i64) -> DbRef {
         let tile = self.db.record_new(&self.root, self.main, 0);
         self.db
             .store_mut(&tile)
             .set_long(tile.rec, tile.pos + self.off_tkey, key);
         self.db.record_finish(&self.root, &tile, self.main, 0);
-        tile
+        self.db.filed(&tile)
+    }
+
+    /// The tile filed under `key`, where it lives NOW: an inline table moves its entries
+    /// when it grows, so a reference taken before a later insert can name a freed table.
+    fn tile(&self, key: u32) -> DbRef {
+        hash::find(
+            &self.field(),
+            &self.db.allocations,
+            self.db.keys(self.ttile),
+            &[Content::Long(i64::from(key))],
+        )
     }
 
     /// `t.steps += [TStep{…}]; t.roads += [TRoad{…}]` — one way binned into one tile,
@@ -394,30 +406,34 @@ fn paint_owned(shape: &Shape, owner: &mut [u32], at: &DbRef, tp: u16, who: u32) 
 /// Run the generator and paint what it built.
 fn measure(run: Run) -> Layout {
     let mut shape = Shape::new();
-    let mut tiles: Vec<DbRef> = Vec::with_capacity(run.tiles as usize);
     let mut frontier: Vec<u32> = Vec::with_capacity(run.tiles as usize);
 
     let mut next = 0;
     while next < run.tiles {
         let end = (next + run.window).min(run.tiles);
-        let group: Vec<DbRef> = (next..end).map(|k| shape.add_tile(i64::from(k))).collect();
+        for k in next..end {
+            shape.add_tile(i64::from(k));
+        }
         // The ways of a group arrive interleaved: that is what an open window MEANS —
         // one tile's vector cannot grow into the free tail because another tile's block
         // now follows it.
         for w in 0..run.ways {
-            for (i, t) in group.iter().enumerate() {
-                let seed = i64::from(next + i as u32) * 1_000 + i64::from(w);
-                shape.add_way(t, run.steps, seed);
+            for k in next..end {
+                let seed = i64::from(k) * 1_000 + i64::from(w);
+                let t = shape.tile(k);
+                shape.add_way(&t, run.steps, seed);
             }
         }
         // Every tile in the group is finished here, at one frontier.
         let mark = shape.frontier();
-        for t in group {
-            tiles.push(t);
+        for _ in next..end {
             frontier.push(mark);
         }
         next = end;
     }
+    // Where each tile lives once every insert is done: a later group's inserts may have
+    // moved an earlier group's entries.
+    let tiles: Vec<DbRef> = (0..run.tiles).map(|k| shape.tile(k)).collect();
 
     let store_nr = shape.root.store_nr;
     let words = shape.db.allocations[store_nr as usize].capacity_words();
