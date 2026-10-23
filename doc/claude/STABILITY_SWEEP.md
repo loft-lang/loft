@@ -105,7 +105,7 @@ gets probed wherever its homes can drift apart.
 | `src/lexer.rs` | 1759 | position/link invariants under `revert` | ➖ low-risk |
 | `src/repl.rs` | 3141 | F9 `rollback_to` | ▶ error-recovery cell held; counter/caches-after-rollback cells DEFERRED |
 | `src/state/text.rs` + `debug.rs` | ~2500 | F10; dumper deref-safety | ✅ re-probed post-#328: dumper clean on reference-field + walk programs (the crash was the fixed frame corruption) |
-| `src/database/format.rs` + `journal.rs` | ~3000 | F9 persistence | ▶ covered by store_durable/persist suites; new-shape persistence cells DEFERRED |
+| `src/database/format.rs` + `journal.rs` | ~3000 | F9 persistence | ▶ covered by the persist suites; new-shape persistence cells DEFERRED |
 | `src/keys.rs`, `src/log_config.rs`, misc leaf files | ~2000 | — | ➖ low-risk |
 | `default/01_code.loft` (+02,03…) | ~3000 | `#rust` twin bodies | ▶ #333 IS this dual for float-div; systematic twin-audit = the F4 sentinel (DEFERRED) |
 | `tools/indexer`, `lib/*` consumers | — | dogfood surface; run, don't sweep | ➖ low-risk |

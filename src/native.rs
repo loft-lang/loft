@@ -1220,8 +1220,7 @@ fn n_write_bytes(stores: &mut Stores, stack: &mut DbRef) {
 /// and a reference (DbRef), then writes a REBUILT image of that slot, laid out so
 /// a paged reader touches few pages, without re-rooting the live slot.  Args pop
 /// in reverse, as everywhere: path, then the reference.  See
-/// `Stores::persist_copy` for why the rebuild is legal here and not in
-/// `bind_path`.
+/// `Stores::persist_copy`.
 #[cfg(feature = "mmap")]
 fn n_store_persist_copy(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);

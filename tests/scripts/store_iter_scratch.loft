@@ -9,20 +9,13 @@
 // `for r in h` walks a snapshot of rec-nrs claimed INSIDE the hash's store, and
 // the loop epilogue's release used to skip exactly that case (it freed only a
 // scratch that had a store of its own).  So every pass left two records behind:
-// 4 bytes per element, permanently.  In memory that grows a live store for as
-// long as the program iterates; for a BOUND collection the store is a file, so
-// the leak survives the process and each run starts from a bigger file.
-//
-// `store_reclaim` is not the cause and never was — it removes the free tail
-// that was hiding the leak, so what took sixteen runs to show up shows up in
-// one.  Both modes are driven here for that reason.
+// 4 bytes per element, permanently, growing a live store for as long as the
+// program iterates.
 //
 // Env in:
-//   MODE   "memory" (default) | "exits" | "build" | "read"
+//   MODE   "memory" (default) | "exits"
 //   N      records (default 2000)
 //   PASSES iterations in memory mode (default 40)
-//   LOFT_PERSIST_TEST_PATH   the store file (build / read modes)
-//   RECLAIM                  "1" to call `store_reclaim` after binding (read mode)
 
 struct Rec { const id: integer, const n: integer, const label: text }
 struct Cell { const cx: integer, const cy: integer, const w: integer }
@@ -73,7 +66,6 @@ fn fill(h: hash<Rec[id]>, n: integer) {
 fn main() {
   mode = env_variable("MODE") ?? "memory";
   n = (env_variable("N") ?? "") as integer ?? 2000;
-  path = env_variable("LOFT_PERSIST_TEST_PATH") ?? "";
 
   if mode == "memory" {
     passes = (env_variable("PASSES") ?? "") as integer ?? 40;
@@ -114,23 +106,5 @@ fn main() {
     println(store_memory());
     return
   }
-
-  if path == "" { println("FAIL no path"); return }
-  h: hash<Rec[id]> = [];
-
-  if mode == "build" {
-    // Bind EMPTY and grow after: the file then carries the arena's own 7/3
-    // over-allocation, which is the shape the leak hides in.
-    if !store_persist_bind(h, path) { println("FAIL bind"); return }
-    fill(h, n);
-    println("built file {file(path).size}");
-    return
-  }
-
-  // mode == "read" — a fresh process against the file the last one left.
-  if !store_persist_bind(h, path) { println("FAIL bind"); return }
-  if (env_variable("RECLAIM") ?? "") == "1" { store_reclaim(h); }
-  // Stat AFTER the read: the read is what used to grow the file.
-  d = digest(h);
-  println("read digest {d} file {file(path).size}");
+  println("FAIL unknown mode {mode}");
 }

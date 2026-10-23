@@ -10,6 +10,24 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Store memory is not filled; the bound-store family is removed (@C153)
+
+`Store::new` allocates without zeroing and growth zeroes nothing.  A store whose raw bytes
+leave the process is DEFINED (`Store::defined`, `Store::new_defined`,
+`Stores::database_defined`): the destination of `rebuild_into_scratch` and of the upgrade, the
+REPL session store, the stack stores, loaded and mapped stores; `Store::raw_bytes` asserts it,
+and `Stores::store_image` rebuilds a store that is not defined before imaging it (snapshots,
+world images).  Delete's backward merge, the parked-predecessor test, the lazy delete and the
+indexed scan's tail check ask the claims (`Claims::prev_start`,
+`Store::claimed_block_ends_at`) whether a claimed block ends at the edge before reading its
+last word.  `Stores::live_digest` reads live bytes only.  Removed: `store_persist_bind`,
+`store_release`, `store_durable_check`, `store_durable_seal`; `Stores::bind_path`, `rebind`,
+`compact_bound_store`, `release_store`; the upgrade-on-bind path; `Store::open_durable`,
+`DurabilityMode` and the `.dmeta` sidecar; `Store::release_resident` and the platform
+page-release helpers.  The `persist-bind-through-field` advice is `persist-through-field` and
+covers `store_persist_copy`.  `LOFT_STORE_LIVE_DIGEST` is printed by `store_persist_copy`, over
+the rebuilt store it writes.
+
 ### Compositions in the formal rules, and the pairs check reads them
 
 - A composition — which rule applies where two do — is stated as prose under the rule that

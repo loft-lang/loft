@@ -834,9 +834,8 @@ fn find_rec(key: u8, before: bool, s: u16, v: u16, data: &DbRef, stores: &Stores
 /// into it and repoint the field. Neither returned the old claim — `hash.rs` never called
 /// `Store::delete` at all — so every doubling stranded its predecessor as a block that is
 /// CLAIMED and unreachable. `store_reclaim` cannot recover such a block (it is not free),
-/// and `store_persist_bind` snapshots the store verbatim, so the dead tables went to disk:
-/// a grown 1M-entry hash persisted 49.3 MB where the identical content pre-sized persisted
-/// 33.0 MB.
+/// and an image written from the store as it stood carried the dead tables to disk: a grown
+/// 1M-entry hash persisted 49.3 MB where the identical content pre-sized persisted 33.0 MB.
 ///
 /// The assertion is a COUNT, not a size, because a count cannot be argued with: the store's
 /// claimed-record total must not depend on how many times the table was rebuilt. Comparing

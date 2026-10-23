@@ -830,9 +830,6 @@ src/manifest.rs	── @PLN102 arc B-semantic — the compatibility `contract` a
 src/native.rs	**JObject walk (2026-04-14):** for each JsonField, copies the
 src/native.rs	@P290 — clear the soft free-protection set by `n_protect_store_frees`.
 src/native.rs	@P290 — soft "don't free" marker for the fn-call deep-copy bracket.
-src/native.rs	@PLAN38 phase 01b — interpreter handler for `store_durable_check`.
-src/native.rs	@PLAN38 phase 01b — interpreter handler for `store_durable_seal`.
-src/native.rs	@PLAN38 — interpreter handler for `store_persist_bind`. Pops a
 src/native.rs	@PLAN59: classify worker attrs by TYPE, not name prefix. The
 src/native.rs	@PLN119 arc F — the single native behind `lib/git`. Native targets only:
 src/native.rs	@PLN127 arc B: build a `TypeInfo` for one type id.

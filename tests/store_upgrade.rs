@@ -851,7 +851,7 @@ const REF_TYPES: &str =
 #[test]
 fn a_stored_reference_survives_a_load_into_another_slot() {
     let writer = format!(
-        "{REF_TYPES}fn main() {{\n  w = W {{ n: 1 }};\n  for i in 0..3 {{ w.items += [T {{ k: (i + 1) * 10 }}]; }}\n  w.r = w.items[1];\n  println(\"saved {{store_persist_bind(w, \\\"a.store\\\")}}\");\n}}\n"
+        "{REF_TYPES}fn main() {{\n  w = W {{ n: 1 }};\n  for i in 0..3 {{ w.items += [T {{ k: (i + 1) * 10 }}]; }}\n  w.r = w.items[1];\n  println(\"saved {{store_persist_copy(w, \\\"a.store\\\")}}\");\n}}\n"
     );
     let dir = write_store("ref_slot", &writer);
     let reader = format!(
@@ -876,7 +876,7 @@ fn a_stored_reference_survives_a_load_into_another_slot() {
 #[test]
 fn a_reference_into_another_store_refuses_the_load() {
     let writer = format!(
-        "{REF_TYPES}fn main() {{\n  other = W {{ n: 2 }};\n  other.items += [T {{ k: 5 }}];\n  w = W {{ n: 1 }};\n  w.r = other.items[0];\n  println(\"saved {{store_persist_bind(w, \\\"a.store\\\")}} {{other.n}}\");\n}}\n"
+        "{REF_TYPES}fn main() {{\n  other = W {{ n: 2 }};\n  other.items += [T {{ k: 5 }}];\n  w = W {{ n: 1 }};\n  w.r = other.items[0];\n  println(\"saved {{store_persist_copy(w, \\\"a.store\\\")}} {{other.n}}\");\n}}\n"
     );
     let dir = write_store("ref_foreign", &writer);
     let reader = format!(
@@ -893,7 +893,7 @@ fn a_reference_into_another_store_refuses_the_load() {
 
 fn ref_writer(types: &str) -> String {
     format!(
-        "{types}fn main() {{\n  w = W {{ n: 1 }};\n  for i in 0..3 {{ w.items += [T {{ k: (i + 1) * 10 }}]; }}\n  w.r = w.items[1];\n  println(\"saved {{store_persist_bind(w, \\\"a.store\\\")}}\");\n}}\n"
+        "{types}fn main() {{\n  w = W {{ n: 1 }};\n  for i in 0..3 {{ w.items += [T {{ k: (i + 1) * 10 }}]; }}\n  w.r = w.items[1];\n  println(\"saved {{store_persist_copy(w, \\\"a.store\\\")}}\");\n}}\n"
     )
 }
 
@@ -1107,82 +1107,12 @@ fn cell_expression_defaults_fill_hash_entries() {
 
 const ITEM_V1: &str = "struct Item { id: integer, name: text }\n";
 const ITEM_V2: &str = "struct Item { id: integer, name: text, price: integer = 10, title: text = \"{$.id}: {$.name}\" }\n";
-const ITEM_V3: &str = "struct Item { id: integer, name: text, price: integer = 10, title: text = \"{$.id}: {$.name}\", stock: integer = $.price * 3 }\n";
 
-/// Version 1 binds `a.store` with four items, `id = 1..4`, `name = "n1".."n4"`.
+/// Version 1 writes `a.store` with four items, `id = 1..4`, `name = "n1".."n4"`.
 fn item_writer() -> String {
     format!(
-        "{ITEM_V1}fn main() {{\n  h: hash<Item[id]> = [];\n  for i in 1..5 {{ h += [Item {{ id: i, name: \"n{{i}}\" }}]; }}\n  println(\"saved {{store_persist_bind(h, \\\"a.store\\\")}}\");\n}}\n"
+        "{ITEM_V1}fn main() {{\n  h: hash<Item[id]> = [];\n  for i in 1..5 {{ h += [Item {{ id: i, name: \"n{{i}}\" }}]; }}\n  println(\"saved {{store_persist_copy(h, \\\"a.store\\\")}}\");\n}}\n"
     )
-}
-
-/// `store_persist_bind` of an older file upgrades the FILE in place: the call answers true with
-/// every field filled (a constant, a format string over `$`, an expression over another
-/// default), the original is kept as `a.store.old`, and what the program writes afterwards is
-/// in the file.  A second upgrade replaces that `.old` with the file it upgraded, so one
-/// upgrade back stays on disk.  Interpreter for the first upgrade, native for the second.
-#[test]
-fn cell_bind_upgrades_the_file_in_place_and_keeps_one_old() {
-    let dir = write_store("bind_in_place", &item_writer());
-    let v1 = store_bytes(&dir);
-    let binder = |types: &str, show: &str| {
-        format!(
-            "{types}fn main() {{\n  h: hash<Item[id]> = [];\n  if !store_persist_bind(h, \"a.store\") {{ println(\"not bound\"); return; }}\n  for e in h {{ println({show}); }}\n  h += [Item {{ id: 9, name: \"late\" }}];\n}}\n"
-        )
-    };
-    loft::file_access::write(
-        dir.join("b.loft"),
-        binder(ITEM_V2, "\"{e.id} {e.price} [{e.title}]\""),
-    )
-    .unwrap();
-    let (code, out, err) = run_loft(&dir, &["b.loft"]);
-    assert_eq!(
-        (code, out.as_str()),
-        (
-            0,
-            "1 10 [1: n1]\n2 10 [2: n2]\n3 10 [3: n3]\n4 10 [4: n4]\n"
-        ),
-        "the first bind upgrades:\n{out}\n{err}"
-    );
-    let old = (
-        loft::file_access::read(dir.join("a.store.old")).unwrap(),
-        loft::file_access::read(dir.join("a.store.old.dschema")).unwrap(),
-    );
-    assert!(
-        old == v1,
-        "a.store.old is the version-1 file, byte for byte"
-    );
-    let v2 = store_bytes(&dir);
-    loft::file_access::write(
-        dir.join("c.loft"),
-        binder(ITEM_V3, "\"{e.id} {e.price} [{e.title}] {e.stock}\""),
-    )
-    .unwrap();
-    let (code, out, err) = run_loft(&dir, &["--native", "c.loft"]);
-    assert_eq!(
-        (code, out.as_str()),
-        (
-            0,
-            "1 10 [1: n1] 30\n2 10 [2: n2] 30\n3 10 [3: n3] 30\n4 10 [4: n4] 30\n9 10 [9: late] 30\n"
-        ),
-        "the second bind upgrades the first one's file, with the record it added:\n{out}\n{err}"
-    );
-    let old = (
-        loft::file_access::read(dir.join("a.store.old")).unwrap(),
-        loft::file_access::read(dir.join("a.store.old.dschema")).unwrap(),
-    );
-    assert!(old == v2, "a.store.old is now the version-2 file: one .old");
-    for gone in [
-        "a.store.upgrade",
-        "a.store.upgrade.dschema",
-        "a.store.old.old",
-    ] {
-        assert!(
-            !loft::file_access::exists(dir.join(gone)),
-            "{gone}: no half-swapped file and no second .old"
-        );
-    }
-    let _ = loft::file_access::remove_dir_all(&dir);
 }
 
 /// Two converting loads in one program: each fills its own records, and the second starts
@@ -1262,11 +1192,11 @@ fn cell_every_whole_image_loader_converts() {
 /// build's types.  The world holds a hash and a REFERENCE into it, which survive the load into
 /// another slot (`@FR-L-Ref-Slot`); both structs grew a field whose default is computed from
 /// the record (`size = len($.name)` per item, `bonus = len($.items) * 10` on the world), filled
-/// by the drain the parser puts after `swap_world`.  Both backends.  The writer binds its
+/// by the drain the parser puts after `swap_world`.  Both backends.  The writer writes its
 /// world, which writes the live bytes and the slot exactly as the swap's snapshot does.
 #[test]
 fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
-    let writer = "struct Item { id: integer, name: text }\nstruct World { items: hash<Item[id]>, best: reference<Item>? }\nfn main() {\n  w = World {};\n  w.items += [Item { id: 1, name: \"a\" }, Item { id: 2, name: \"bb\" }, Item { id: 3, name: \"ccc\" }];\n  w.best = w.items[2];\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let writer = "struct Item { id: integer, name: text }\nstruct World { items: hash<Item[id]>, best: reference<Item>? }\nfn main() {\n  w = World {};\n  w.items += [Item { id: 1, name: \"a\" }, Item { id: 2, name: \"bb\" }, Item { id: 3, name: \"ccc\" }];\n  w.best = w.items[2];\n  println(\"saved {store_persist_copy(w, \\\"a.store\\\")}\");\n}\n";
     let reader = "use engine_host;\nstruct Item { id: integer, name: text, size: integer = len($.name) }\nstruct World { items: hash<Item[id]>, best: reference<Item>?, bonus: integer = len($.items) * 10 }\nfn main() {\n  w = World {};\n  r = engine_host::swap_world(w);\n  println(\"{r} {len(w.items)} {w.best.id} {w.best.name} {w.best.size} {w.bonus} {w.items[3].size}\");\n}\n";
     let dir = write_store("swap_world_restore", writer);
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
@@ -1300,7 +1230,7 @@ fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
 /// any code is generated.
 #[test]
 fn cell_a_rebuild_checks_the_running_world_before_it_compiles() {
-    let writer = "struct W { events: integer, name: text }\nfn main() {\n  w = W { events: 3, name: \"a\" };\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let writer = "struct W { events: integer, name: text }\nfn main() {\n  w = W { events: 3, name: \"a\" };\n  println(\"saved {store_persist_copy(w, \\\"a.store\\\")}\");\n}\n";
     let dir = write_store("rebuild_check", writer);
     let check = |name: &str, src: &str, native: bool| -> (i32, String, String) {
         loft::file_access::write(dir.join(format!("{name}.loft")), src).unwrap();
@@ -1682,7 +1612,7 @@ fn cell_a_conversion_refused_part_way_leaves_nothing_owed() {
 /// routine does not run, and the one-step rule stands.  `--check` on both backends.
 #[test]
 fn cell_a_rebuild_decides_the_routine_by_the_worlds_release() {
-    let writer = "struct W { events: integer, name: text }\nfn main() {\n  w = W { events: 3, name: \"abcd\" };\n  println(\"saved {store_persist_bind(w, \\\"a.store\\\")}\");\n}\n";
+    let writer = "struct W { events: integer, name: text }\nfn main() {\n  w = W { events: 3, name: \"abcd\" };\n  println(\"saved {store_persist_copy(w, \\\"a.store\\\")}\");\n}\n";
     let dir = write_store_as("rebuild_release", "1.0", writer);
     let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
     assert!(

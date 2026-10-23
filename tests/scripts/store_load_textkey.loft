@@ -26,7 +26,7 @@ fn main() {
     p += Place { name: "Amsterdam", pop: 900000 };
     p += Place { name: "Berlin", pop: 3700000 };
     p += Place { name: "Cairo", pop: 10000000 };
-    if !store_persist_bind(p, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(p, path) { println("FAIL write-bind"); return }
     println("write ok");
   } else if mode == "loadkey" {
     ok = store_load_key_text(p, path, "Berlin");

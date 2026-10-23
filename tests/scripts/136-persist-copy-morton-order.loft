@@ -11,8 +11,8 @@
 // that plan's tail.
 //
 // The two halves are inseparable. A rebuilt image is only useful if it answers
-// exactly what the bound one answers, and it is only LEGAL if the collection the
-// caller still holds keeps every reference it handed out.
+// exactly what the live collection answers, and it is only LEGAL if the collection
+// the caller still holds keeps every reference it handed out.
 //
 // So this asserts, on both backends:
 //   * a reference taken BEFORE the call still reads correctly after it,
@@ -22,8 +22,8 @@
 // a query fetches is not visible from inside the program.
 //
 // Env in:
-//   LOFT_PERSIST_TEST_PATH   the bound image (as built)
-//   LOFT_PERSIST_TEST_COPY   the rebuilt image (Morton order)
+//   LOFT_PERSIST_TEST_PATH   a first image, written before the reference is taken
+//   LOFT_PERSIST_TEST_COPY   a second image, written while it is held (Morton order)
 //   LOFT_PERSIST_TEST_MODE   "write" | "read"
 
 struct Pin {
@@ -108,7 +108,7 @@ fn main() {
 
   if mode == "write" {
     for p in shuffled(scene()) { s += [p]; }
-    if !store_persist_bind(s, path) { println("FAIL bind"); return }
+    if !store_persist_copy(s, path) { println("FAIL write"); return }
 
     // The reference the guarantee is ABOUT, taken before the call. A rebuild that
     // moved these records would leave this naming someone else's bytes — and it

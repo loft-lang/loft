@@ -249,7 +249,7 @@ fn build(w: &Width, relayout: bool) -> (Store, DbRef, Vec<Key>, usize) {
         );
     }
     if relayout {
-        // What `store_persist_bind` does before it writes the image, so this is the
+        // What `store_persist_copy` does before it writes the image, so this is the
         // layout a reader actually pages.
         let tree = store.get_u32_raw(coll.rec, coll.pos);
         assert!(crate::radix_tree::rtree_relayout(&mut store, tree));

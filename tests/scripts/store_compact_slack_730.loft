@@ -5,14 +5,16 @@
 //
 // A vector that grows in place is left at 7/4 of the size that triggered the
 // growth (`Store::resize`), and that amortisation is never given back, so it is
-// written into the image. It is a fully claimed, entirely live record, so the
-// interior-free-space measure compaction gated on reported such a store as
-// DENSE — the shape a rebuild pays best on was the one shape it refused.
+// written into an image that copies the live bytes. It is a fully claimed,
+// entirely live record, so the interior-free-space measure compaction gated on
+// reported such a store as DENSE — the shape a rebuild pays best on was the one
+// shape it refused.
 //
 // `write` appends into each entry's OWN vector, in place, which is what acquires
-// the slack and what a streaming generator does. `rebind` is the compaction
-// moment: a fresh process binds the same path, and the store must come back
-// smaller while holding exactly the same data.
+// the slack and what a streaming generator does, then writes the image with
+// `store_persist_copy`, which rebuilds the collection: the file must be near the
+// content. `reload` reads it back in a fresh process, which must hold exactly
+// the same data.
 //
 // Growing the vector in a LOCAL and handing the finished thing to the entry —
 // which this fixture used to do — does not acquire what the test is named for:
@@ -56,17 +58,13 @@ fn main() {
     for i in 0..N {
       for j in 0..W { h[i].data += [i * W + j]; }
     }
-    if !store_persist_bind(h, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(h, path) { println("FAIL write"); return }
     println("slack content={N * W * 8} file={file(path).size} digest={digest_of(h)}");
-  } else if mode == "rebind" {
+  } else if mode == "reload" {
     h: hash<SRec[k]> = [];
-    if !store_persist_bind(h, path) { println("FAIL rebind"); return }
+    if !store_load(h, path) { println("FAIL reload"); return }
     n = 0;
     for r in h { n += 1; }
-    // Read the size AFTER the walk: compaction happens at bind, and a store
-    // that shed its slack only to re-grow it on the first read has not fixed
-    // anything (the loft#710 / loft#727 shape — iterating a keyed collection
-    // claims a snapshot inside it).
-    println("slack rebound={n} file={file(path).size} digest={digest_of(h)}");
+    println("slack reloaded={n} digest={digest_of(h)}");
   } else { println("FAIL unknown-mode") }
 }

@@ -57,7 +57,7 @@ fn main() {
       for hi in 0..n { ch += [Rec { id: hi, n: hi % 97, label: "label-{hi}-xxxxxxxx" }] }
       for hd in keep..n { ch[hd] = null }
       store_reclaim(ch);
-      if !store_persist_bind(ch, path) { println("FAIL bind"); return }
+      if !store_persist_copy(ch, path) { println("FAIL bind"); return }
     } else if !store_load(ch, path) { println("FAIL load"); return }
     s = 0; c = 0;
     for hr in ch { s = (s + h_rec(hr.id, hr.n, hr.label)) % 1000000007; c += 1 }
@@ -72,7 +72,7 @@ fn main() {
       for si in 0..n { cs += [Rec { id: si, n: si % 97, label: "label-{si}-xxxxxxxx" }] }
       for sd in keep..n { cs[sd] = null }
       store_reclaim(cs);
-      if !store_persist_bind(cs, path) { println("FAIL bind"); return }
+      if !store_persist_copy(cs, path) { println("FAIL bind"); return }
     } else if !store_load(cs, path) { println("FAIL load"); return }
     s = 0; c = 0;
     for sr in cs { s = (s + h_rec(sr.id, sr.n, sr.label)) % 1000000007; c += 1 }
@@ -99,7 +99,7 @@ fn main() {
       // nothing.  Keeping every fifth leaves inner 80%.
       for id2 in 0..(n * 4) { if id2 % 5 != 0 { ci[id2, id2] = null } }
       store_reclaim(ci);
-      if !store_persist_bind(ci, path) { println("FAIL bind"); return }
+      if !store_persist_copy(ci, path) { println("FAIL bind"); return }
     } else if !store_load(ci, path) { println("FAIL load"); return }
     s = 0; c = 0;
     for xr in ci { s = (s + h_rec(xr.id, xr.n, xr.label)) % 1000000007; c += 1 }
@@ -118,7 +118,7 @@ fn main() {
     ct: trie<Rec[label]> = [];
     if !reload {
       for ti in 0..n { ct += [Rec { id: ti, n: ti % 97, label: "label-{ti}-xxxxxxxx" }] }
-      if !store_persist_bind(ct, path) { println("FAIL bind"); return }
+      if !store_persist_copy(ct, path) { println("FAIL bind"); return }
     } else if !store_load(ct, path) { println("FAIL load"); return }
     s = 0; c = 0;
     for tr in ct { s = (s + h_rec(tr.id, tr.n, tr.label)) % 1000000007; c += 1 }
@@ -131,7 +131,7 @@ fn main() {
     cp: spatial<Pt[x, y]> = [];
     if !reload {
       for pi in 0..n { cp += [Pt { id: pi, x: pi % 40, y: pi / 40 }] }
-      if !store_persist_bind(cp, path) { println("FAIL bind"); return }
+      if !store_persist_copy(cp, path) { println("FAIL bind"); return }
     } else if !store_load(cp, path) { println("FAIL load"); return }
     s = 0; c = 0;
     for pr in cp { s = (s + h_rec(pr.id, pr.x, "{pr.y}")) % 1000000007; c += 1 }
@@ -150,7 +150,7 @@ fn main() {
       }
       for nd in keep..n { cn[nd] = null }
       store_reclaim(cn);
-      if !store_persist_bind(cn, path) { println("FAIL bind"); return }
+      if !store_persist_copy(cn, path) { println("FAIL bind"); return }
     } else if !store_load(cn, path) { println("FAIL load"); return }
     s = 0; c = 0;
     for nr in cn {

@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN97 arc G Phase 0.5b — `store_persist_bind` on a `sorted<T[k]>`.
+// @PLN97 arc G Phase 0.5b — a `sorted<T[k]>` image: `store_persist_copy` writes it,
+// `store_load` reads it back.
 //
 // Driven by `tests/store_persist_loft.rs` twice (fresh, then reload in a
 // SEPARATE process) against the same path.  A `sorted` is comparison-based
@@ -41,13 +42,13 @@ fn main() {
     s += SortedEntry { key: 7, value: 700 };
     s += SortedEntry { key: 13, value: 1300 };
 
-    ok = store_persist_bind(s, path);
-    if !ok { println("FAIL fresh-bind-returned-false"); return }
+    ok = store_persist_copy(s, path);
+    if !ok { println("FAIL fresh-write-returned-false"); return }
     println("fresh keys={sorted_keys(s)}");
     println("fresh lookup s[13]={sorted_lookup(s)}");
   } else if mode == "reload" {
-    ok = store_persist_bind(s, path);
-    if !ok { println("FAIL reload-bind-returned-false"); return }
+    ok = store_load(s, path);
+    if !ok { println("FAIL reload-load-returned-false"); return }
     println("reload keys={sorted_keys(s)}");
     // The portability claim: a lookup succeeds in this SEPARATE process.
     println("reload lookup s[13]={sorted_lookup(s)}");

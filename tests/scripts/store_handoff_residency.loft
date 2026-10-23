@@ -3,8 +3,7 @@
 //
 // @PLN119 Q1 — TEXT RESIDENCY across a process handoff. One task writes a
 // store file; a SEPARATE PROCESS reads it back. Nothing but the file crosses,
-// so a cell passes only if the bytes live in the store itself — which is what
-// makes the store shareable as an mmap arena between tasks.
+// so a cell passes only if the bytes live in the store itself.
 //
 // The text shapes are the point: a short literal, a literal over the 256-byte
 // CONST_STORE threshold (where a long constant stops being inlined in
@@ -13,12 +12,13 @@
 //
 // Complements `store_load_vectext_refuse.loft`: the PAGED working-set loader
 // refuses `vector<text>` because relocating an entry into a DIFFERENT store
-// would dangle each element pointer. Whole-store transfer never relocates, so
-// the same field crosses intact here. Both facts are true; they are different
-// paths, and conflating them is the mistake this pair pins.
+// would dangle each element pointer. The whole-store image is rebuilt with every
+// pointer rewritten into it, so the same field crosses intact here. Both facts
+// are true; they are different paths, and conflating them is the mistake this
+// pair pins.
 //
-// Driven by `store_persist_loft.rs` (write, then readimage / readmmap, each a
-// fresh process).
+// Driven by `store_persist_loft.rs` (write, then readimage, each a fresh
+// process).
 
 // 10 x 30 chars = 300, deliberately over the 256-byte inline threshold.
 LONG_LIT = "Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.Q1LONGTEXTRESIDENCYPROBE-0123.";
@@ -81,17 +81,11 @@ fn main() {
       b: 217 as u8,
       w: -31000 as i16,
     };
-    if !store_persist_bind(h, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(h, path) { println("FAIL write"); return }
     println("write ok");
   } else if mode == "readimage" {
-    // Portable heap-copy path — no mmap, works on every backend.
     ok = store_load(h, path);
     println("readimage load={ok}");
-    report(h);
-  } else if mode == "readmmap" {
-    // Durable mmap path — the reader ADOPTS the on-disk image.
-    ok = store_persist_bind(h, path);
-    println("readmmap bind={ok}");
     report(h);
   } else {
     println("FAIL unknown-mode")

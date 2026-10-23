@@ -26,12 +26,12 @@ fn main() {
 
   if mode == "write" {
     src: hash<P783Cell[id]> = [];
-    if !store_persist_bind(src, path) { println("FAIL write-bind"); return }
     for c in 0..20 {
       its: vector<P783Named> = [];
       for i in 0..50 { its += [P783Named { x: i, y: c, name: "n{i}" }] }
       src += [P783Cell { id: c, items: its }];
     }
+    if !store_persist_copy(src, path) { println("FAIL write"); return }
     println("seeded={src.len()}");
     return
   }

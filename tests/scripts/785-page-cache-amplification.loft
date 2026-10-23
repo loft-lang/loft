@@ -30,12 +30,12 @@ fn main() {
 
   if (env_variable("P785_MODE") ?? "") == "write" {
     src: hash<P785Tile[tkey]> = [];
-    if !store_persist_bind(src, path) { println("FAIL write-bind"); return }
     i = 0;
     while i < entries {
       src += [P785Tile { tkey: i, name: "tile-{i}-padding-padding-padding-to-give-it-real-size" }];
       i += 1;
     }
+    if !store_persist_copy(src, path) { println("FAIL write"); return }
     println("seeded={len(src)}");
     return
   }

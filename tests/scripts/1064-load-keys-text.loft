@@ -45,12 +45,12 @@ fn main() {
 
   if mode == "write" {
     src: hash<Blob1064[bkey]> = [];
-    if !store_persist_bind(src, path) { println("FAIL write-bind"); return }
     i = 0;
     while i < 4000 {
       src += [Blob1064 { bkey: "asset/{i}/blob", payload: "payload-{i}-padded-padded-padded-to-give-it-real-size" }];
       i += 1;
     }
+    if !store_persist_copy(src, path) { println("FAIL write"); return }
     println("seeded={len(src)}");
     return
   }
@@ -71,11 +71,11 @@ fn main() {
     // instead of once per key. Correctness is the assertion here; the saving is
     // the harness's.
     tw: trie<Blob1064[bkey]> = [];
-    if !store_persist_bind(tw, "{path}.trie") { println("FAIL trie-bind"); return }
     tw += [Blob1064 { bkey: "kerk", payload: "eleven" }];
     tw += [Blob1064 { bkey: "kerkweg", payload: "five" }];
     tw += [Blob1064 { bkey: "kerklaan", payload: "nine" }];
     tw += [Blob1064 { bkey: "lonneker", payload: "seven" }];
+    if !store_persist_copy(tw, "{path}.trie") { println("FAIL trie-write"); return }
     tr: trie<Blob1064[bkey]> = [];
     want: vector<text> = ["kerkweg", "lonneker", "kerks"];
     got = store_load_keys_text(tr, "{path}.trie", want);

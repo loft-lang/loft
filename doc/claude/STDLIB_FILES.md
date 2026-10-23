@@ -1,6 +1,6 @@
 # Standard Library: File System
 
-Paths, files, directories, binary I/O, durable and path-backed stores, lazy store binding and images.  Part of the standard library reference: [STDLIB.md](STDLIB.md).
+Paths, files, directories, binary I/O, store images, lazy store binding and imaging.  Part of the standard library reference: [STDLIB.md](STDLIB.md).
 
 ---
 
@@ -212,175 +212,33 @@ loft-level existence check.
 | `write_bytes(path: text, bytes: vector<u8>) -> boolean` | Writes raw bytes to a file, truncating existing content; `true` on success. |
 | `set_file_size(self: File, size: integer) -> FileResult` | Truncates or extends a file to exactly `size` bytes. |
 
-### Durable stores (`@PLN43`)
+### Store images
 
-A "durable store" is a regular on-disk file plus a 40-byte `.dmeta`
-sidecar holding signature + tier + CRC32 over the main file + a
-clean-close timestamp.  After a successful write session, call
-`store_durable_seal(path)` to record the current state; on next
-startup, call `store_durable_check(path)` to verify integrity.  A
-failing check means the file is missing, corrupt, or the sidecar is
-stale — the caller is expected to rebuild from authoritative sources.
+A store-rooted collection — a `hash`, `sorted`, `index`, `trie`, `spatial` or a struct that
+holds one — is saved as an IMAGE: the store's bytes, with a `<path>.dschema` sidecar that
+records the layout they were written under.  `store_persist_copy` writes one and
+`store_load` reads one back into an empty collection of the same type; the paged readers
+(`store_load_key*`, `store_load_prefix`, lazy binding below) read part of one.
 
 | Function | Description |
 |----------|-------------|
-| `store_durable_check(path: text) -> boolean` | Returns `true` iff the `.dmeta` sidecar at `<path>.dmeta` validates against the main file at `path` (signature, header CRC, payload length, payload CRC, tier_id all OK).  Returns `false` on any failure or missing file.  Phase-01b Tier-1 only (no msync discipline). |
-| `store_durable_seal(path: text) -> boolean` | Writes a fresh `.dmeta` sidecar capturing the current main-file's byte length + CRC32 + a clean-close timestamp.  Returns `false` on any I/O error.  Pair with `store_durable_check` to bracket each write session. |
-
-**Both are desktop-only, and say so by answering `false`** (loft#1063).  The sidecar
-machinery is built over memory-mapped files, which the wasm targets have no equivalent
-for, so on `--native-wasm` and `--html` each call compiles and returns `false` — the same
-route `store_persist_bind` takes.  `false` is the honest answer on that target and the safe
-one: it means *the seal did not happen* and *nothing validates*, which is exactly the state
-that sends a caller down its rebuild branch.  Seal where the store is WRITTEN (a desktop
-build) and use the portable readers — `store_load`, `store_load_key*` — in the browser; an
-image sealed by `--native` loads byte-identically on wasm.
-
-Usage pattern:
-
-<!-- from tests/reference/durable-stores.loft -->
-```loft
-path = "{temp_dir()}/loft-reference-data.bin";
-if !store_durable_check(path) {
-  rebuild_from_source(path);  // consumer-defined
-}
-// ... use the database that lives in `path` ...
-
-// graceful shutdown
-flush_database();
-store_durable_seal(path);
-```
-
-If the program crashes between the last write and the seal, the
-sidecar stays stale relative to the file → next start's
-`store_durable_check` returns `false` → caller rebuilds.  This is
-**by design** — Tier 1 trades durability for cheap writes (no
-`msync` on the hot path) and recovers via rebuild from a
-re-derivable source.  **Do not use** for data that cannot be
-re-derived; Tiers 2 (snapshots) and 3 (WAL) are planned for that
-case but not yet shipped.
-
-Full design + format spec:
-[`doc/claude/plans/43-loft-store-durable/`](plans/43-loft-store-durable/README.md).
-
-### Path-backed hash storage (`@PLN43`)
-
-`store_persist_bind(h, path)` re-roots the Store backing a hash at a
-file path so mutations are durable via mmap without an explicit save
-loop — "the hash IS the file."  Dryopea's persistence destination ask
-([`QUESTIONS_FOR_LOFT.md` § Path-backed user-data Store binding](https://github.com/jjstwerff/dryopea)),
-also the canonical pattern for any single-collection on-disk state.
-
-| Function | Description |
-|----------|-------------|
-| `store_persist_bind(h: hash, path: text) -> boolean` | Re-roots the Store backing `h` at a file at `path`.  Fresh-path branch: snapshots the current bytes (padded to ≥1024 words with a valid tail-free block), writes them, and mmaps the file.  Existing-path branch: opens the file via mmap and adopts its contents (discarding the in-memory state at that slot).  A file whose `.dschema` records an older layout than `h`'s type is upgraded in place first: converted, every added field filled by its default, written beside the old file and swapped in, with the original kept as `<path>.old` (a later upgrade replaces that `.old`).  A change the upgrade cannot carry is refused, as `store_load` refuses it.  Returns `false` on any I/O / format / layout error — no panic; callers fall back to JSON or rebuild. |
-| `store_persist_copy(r: reference, path: text) -> boolean` | Writes an image of `r` laid out for PAGING and leaves the live collection where it is — nothing moves, so every reference stays valid, and the file is NOT bound.  The image is REBUILT, so each record sits in its collection's own order (key order for a `trie`), which is what makes a paged prefix query cheap: measured 4.9 requests / 0.32 MB against a bound image's 19.9 / 1.28 MB on a 74,692-word vocabulary.  Sized to its content, with none of the growth slack a bound file keeps.  Use it for a file another program or a browser will READ; use `store_persist_bind` for a store you go on writing to. @PLN134 |
+| `store_persist_copy(r: reference, path: text) -> boolean` | Writes an image of `r` and leaves the live collection where it is — nothing moves, so every reference stays valid, and writes after the call do not reach the file.  The image is REBUILT, each record in its collection's own order (key order for a `trie`), which is what makes a paged prefix query cheap: 4.9 requests / 0.32 MB against 19.9 / 1.28 MB for the store's bytes as they stood, on a 74,692-word vocabulary.  Sized to its content.  Returns `false` on an I/O error and for a shape the rebuild cannot carry. @PLN134 |
+| `store_load(r: reference, path: text) -> boolean` | Copies the image at `path` into the empty collection `r`; works on every backend, wasm included.  A file whose `.dschema` records an older layout is converted in memory — every added field takes its default, which may read the record through `$` — and the file is left as it is.  Returns `false` on a missing, truncated or wrong-format file and on a change the conversion cannot carry (the reason on stderr). |
 | `Release` | A release number, `major.minor.patch`, ordered by number (`10.0` after `9.0`); `Release { major: 2, minor: 1 }` builds one, and `v < "2.0"` compares against the release a text spells.  What an `upgrade(from: Release, old: O, item: T)` routine is told the stored data came from — DATABASE.md § A store that skipped releases. |
 
-Usage pattern:
-
-<!-- from tests/reference/durable-stores.loft -->
+<!-- from tests/reference/store-images.loft -->
 ```loft
+path = "{temp_dir()}/loft-reference-world.store";
 h: hash<Entry[key]> = [];
-
-// Bind first — on a fresh path the empty hash is serialised; on an
-// existing path the on-disk contents are loaded into this slot.
-store_persist_bind(h, "{temp_dir()}/loft-reference-world.store");
-
-// Subsequent mutations hit the mmap'd buffer.  No explicit save.
 h += Entry { key: 7, value: 700 };
-// ... OS msyncs on idle / clean exit ...
+store_persist_copy(h, path);          // the image, rebuilt in key order
+
+back: hash<Entry[key]> = [];
+store_load(back, path);               // an empty collection of the same type
 ```
 
-**Semantics in detail:**
-
-- When `path` does not exist at call time, `store_persist_bind`
-  captures the current in-memory bytes of the hash's Store, pads
-  them out to a valid ≥8192-byte image, writes them to disk, and
-  swaps the slot's allocator over to the mmap'd file.  The caller's
-  `h` is unchanged from a record-layout perspective — the DbRef
-  shape `(store_nr, rec, pos)` stays valid, only the underlying
-  buffer moves from anonymous heap to mmap.
-- When `path` exists, the call first compares the layout recorded
-  in `<path>.dschema` with `h`'s type.  An older layout — a struct
-  that gained, lost or widened a field — is upgraded in place: the
-  store is converted, every added field takes its default (which may
-  read the record through `$`), the new image and its `.dschema` are
-  written beside the old pair and swapped in, and the old pair is
-  kept as `<path>.old` / `<path>.old.dschema`, replacing an earlier
-  `.old`.  The file is replaced only after every field holds its
-  value.  A change the upgrade cannot carry (one that looks like a
-  rename, a narrowed number, a changed key with duplicates) is
-  refused: the call returns `false`, says why on stderr, and leaves
-  the file, its `.dschema` and `h` untouched.  A file without a
-  `.dschema` is not checked.  Otherwise the call invokes
-  `Store::open(path)`, which validates the loft Store signature and
-  rebuilds the free-list.
-  The caller's prior in-memory state at that slot is discarded.
-  The caller's existing `DbRef`s into the hash remain valid IFF the
-  on-disk layout describes the same type — the standard pattern is
-  to allocate an empty hash and immediately bind, so the empty
-  in-memory state is harmlessly discarded in favour of the on-disk
-  view.
-- Pair with `store_durable_check` / `store_durable_seal` (above)
-  when you also want Tier-1 integrity assurance — the bracket
-  pattern is unchanged, only "what's between check and seal"
-  becomes "nothing — the hash mutations ARE the writes."
-
-**Persisted size = the store's *peak* arena, not its live size — a trap
-worth planning for.** The fresh-path snapshot writes the hash's whole
-Store arena at the capacity it has ever reached, free slack included; it
-is not compacted down to the live records (minimum ~8 KB image). Three
-facts combine to make this bite:
-
-- the snapshot copies the arena's current capacity verbatim — no repack;
-- a Store arena only ever grows — it never shrinks;
-- freeing or clearing records returns their slots to a free list but does
-  **not** hand the arena bytes back.
-
-So the file is the high-water mark the bound Store reached during its
-life. Build a large structure *in place* in the same Store you then bind
-— inserting then pruning, or rebuilding as you go — and the file freezes
-that peak: one consumer saw a 264 MB file for 3.5 MB of live data (~90×).
-
-**Keep the scratch out of the Store you bind: build the result in a
-helper and return it.** A helper's transient containers are scope-local
-Stores, freed at the return boundary (see [LIFETIME.md](LIFETIME.md)), so
-their growth never lands in the Store that survives as the return value.
-Bind *that* returned hash:
-
-<!-- from tests/reference/durable-stores.loft -->
-```loft
-fn build_world() -> hash<Hex[q, r]> {
-  w: hash<Hex[q, r]> = [];
-  // fill w; any transient collections here are freed on return
-  w += Hex { q: 0, r: 0, kind: "plain" };
-  return w;
-```
-
-and bind the result once it is built:
-
-<!-- from tests/reference/durable-stores.loft -->
-```loft
-world = build_world();                 // carries only the live result
-store_persist_bind(world, "{temp_dir()}/loft-reference-hexes.store");
-```
-
-Whether a top-level build actually bloats depends on the pattern
-(in-place insert-then-prune is the classic case); the reliable rule is to
-keep transient growth out of the Store you bind.
-
-**Failure modes (returns `false`):**
-
-- Path is empty or not valid UTF-8.
-- Existing file's signature doesn't match the loft Store format
-  (caught via `catch_unwind`; no panic propagates).
-- I/O error writing the fresh-path snapshot.
-- `mmap` feature disabled in this build.
-
-Off when the `mmap` Cargo feature is disabled at build time:
-returns `false` so consumers branch into a JSON fallback (or
-rebuild-from-source).
+To keep a file current, write it again when the state is worth saving: a write is one
+rebuild of what the collection holds, so the file never carries the store's growth slack.
 
 ### Lazy store binding (`@F108`)
 
