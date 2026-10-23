@@ -1013,11 +1013,11 @@ fn init_library_cdylibs(state: &crate::state::State, data: &crate::data::Data) {
         let init: InitFn = unsafe { std::mem::transmute(init) };
         let accepted = unsafe {
             init(
-                &raw const crate::native_lib::HOST_TABLE,
+                &raw const crate::native_adopt::HOST_TABLE,
                 (&raw const ids).cast::<std::ffi::c_void>(),
             )
         };
-        // Said already: `native_lib::probe_and_mark_exports` asked the same question of a
+        // Said already: `native_adopt::probe_and_mark_exports` asked the same question of a
         // library before marking its functions, and those interpret.
         if accepted != 1 {
             refused.push(lib);

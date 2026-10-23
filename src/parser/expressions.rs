@@ -629,7 +629,7 @@ impl Parser {
     /// the caller hands over, so in value position it needs a temporary to write into.
     ///
     /// @PLN199 A2 — a `use`d library's functions are marked for the bridge after the whole
-    /// program is parsed (`native_lib::probe_and_mark_exports`), and so are the standard
+    /// program is parsed (`native_adopt::probe_and_mark_exports`), and so are the standard
     /// library's compiled bodies (`compiled_stdlib::mark`, named in [`Self::compiled_bridges`]),
     /// so `def.native` is still empty
     /// when the calls to them are parsed: [`text_calls::is_cdylib_text_call`] alone answered

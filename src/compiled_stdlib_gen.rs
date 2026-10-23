@@ -1491,7 +1491,7 @@ fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef
 
 #[allow(dead_code)]
 fn __host() -> &'static loft::native_lib::HostTable {
-    &loft::native_lib::HOST_TABLE
+    &loft::native_adopt::HOST_TABLE
 }
 
 #[allow(dead_code, unused_imports)]

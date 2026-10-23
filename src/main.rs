@@ -8973,7 +8973,7 @@ fn main() {
                     if !pending.iter().any(|d| d == &pkg_str) {
                         pending.push(pkg_str.clone());
                     }
-                    match loft::native_lib::cached_or_build_shared_cdylib(
+                    match loft::native_artifact::cached_or_build_shared_cdylib(
                         &p.data,
                         &p.database,
                         &export,
@@ -9911,7 +9911,7 @@ fn main() {
         let built = if force_build_fail {
             Err("LOFT_FORCE_NATIVE_BUILD_FAIL".to_string())
         } else {
-            loft::native_lib::cached_or_build_shared_cdylib(
+            loft::native_artifact::cached_or_build_shared_cdylib(
                 &p.data,
                 &p.database,
                 &export,
@@ -9926,7 +9926,7 @@ fn main() {
                 // BEFORE marking, so a symbol that will not resolve leaves its
                 // function interpreting instead of compiling into an
                 // `OpStaticCall` that panics at the first call.
-                let probe = loft::native_lib::probe_and_mark_exports(
+                let probe = loft::native_adopt::probe_and_mark_exports(
                     &mut p.data,
                     &p.database,
                     &export,

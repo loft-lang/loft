@@ -7,7 +7,7 @@
 //! A `use`d library is compiled for an interpreted program (@C71, "libraries compile, scripts
 //! interpret") and called over the shared-store bridge: `native_gate::shared_store_dispatchable`
 //! picks the functions, `native_lib::generate_shared_cdylib_lib_rs` emits their compiled loft
-//! bodies with one `loft_shared_<fn>` bridge each, `native_lib::mark_exports` routes the calls
+//! bodies with one `loft_shared_<fn>` bridge each, `native_adopt::mark_exports` routes the calls
 //! through `OpStaticCall`, and `extensions::wire_shared_native_fns` hands them to
 //! `shared_store_dispatch`.  The standard library takes that same path, with two differences:
 //!
@@ -161,7 +161,7 @@ fn disabled() -> bool {
 }
 
 /// Route the compiled standard-library functions of an INTERPRETED program through their
-/// bridges, before `byte_code`: sets `def.native` as `native_lib::mark_exports` does for a
+/// bridges, before `byte_code`: sets `def.native` as `native_adopt::mark_exports` does for a
 /// library.  Declines — and returns 0 — when switched off, when the bridge dispatcher is not
 /// built in, when `stores` does not start with the standard library's types exactly as the
 /// generated code expects them, or when the standard library in `default_dir` is not the source

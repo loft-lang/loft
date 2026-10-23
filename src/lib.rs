@@ -480,6 +480,8 @@ pub mod lockfile;
 pub mod log_config;
 pub mod logger;
 pub mod manifest;
+pub mod native_adopt;
+pub mod native_artifact;
 pub mod native_gate;
 pub mod native_lib;
 #[cfg(feature = "registry")]
