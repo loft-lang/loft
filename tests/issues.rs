@@ -10047,13 +10047,17 @@ fn p144_ref_param_forward_native() {
     // The call to box_ensure should pass var_b directly, not *var_b.
     // P199 ABI change: native fns take `cell` (`&UnsafeCell<Stores>`),
     // not `stores` (`&mut Stores`).
+    // `@FR-R-Header`'s kept clause may call the `__kh` twin, which takes the held header
+    // after the ordinary arguments: the parameter is forwarded the same way in both.
     assert!(
-        !source.contains("n_box_ensure(cell, *var_b)"),
+        !source.contains("n_box_ensure(cell, *var_b)")
+            && !source.contains("n_box_ensure__kh(cell, *var_b,"),
         "P144 regression: native codegen still emits *var_b for & param forward.\nGenerated: {}",
         rs_path.display()
     );
     assert!(
-        source.contains("n_box_ensure(cell, var_b)"),
+        source.contains("n_box_ensure(cell, var_b)")
+            || source.contains("n_box_ensure__kh(cell, var_b,"),
         "P144 regression: expected direct var_b pass-through for & param.\nGenerated: {}",
         rs_path.display()
     );
