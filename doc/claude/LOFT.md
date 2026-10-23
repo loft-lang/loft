@@ -387,7 +387,7 @@ Fields are declared as `name: type` with optional modifiers **after** the type:
   `= if $.price > 10 { Big } else { Small }`, `= describe($.label)`. Such a default is
   lowered into a function of the record and called with the record as it stands.
   The same default fills the field when a store written before the field existed is
-  upgraded (`loft layout upgrade`, [plans/196-store-upgrade.md](plans/196-store-upgrade.md)).
+  upgraded (`loft layout upgrade`, [DATABASE.md § the store upgrade](DATABASE.md#a-changed-definition-the-store-upgrade)).
 
   **Where a default reaches depends on whether it is a constant** (loft#876). A default
   that is a LITERAL — `= 1.5`, `= 7`, `= "hi"`, `= true` — is part of the type: it is

@@ -294,7 +294,7 @@ loft's native serialization):
 | add / remove / reorder a field | ✅ — missing→default, unknown→ignored, name-keyed |
 | add / remove / reorder an enum variant | ✅ — a removed variant → **null sentinel**, never a wrong variant |
 | widen a field's numeric type | ✅ — coercion |
-| **rename** a field or variant | ❌ today — reads as delete+create; planned as a **two-step upgrade**: the new name is added and filled from the old while both exist, the old one dropped in a later upgrade ([@PLN196](plans/196-store-upgrade.md)) |
+| **rename** a field | ✅ in **two upgrades**: the new name is added and filled from the old while both exist (`name: text = $.label`), the old one dropped in a later release; a one-step rename is refused, never lost ([DATABASE.md § the store upgrade](DATABASE.md#a-changed-definition-the-store-upgrade)) |
 | scalar ↔ struct / incompatible type | ⚠️ — defaults |
 
 The principle that governs every extension: **leniency is the feature, not a

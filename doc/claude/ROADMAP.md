@@ -96,7 +96,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN72](https://github.com/loft-lang/plans/issues/72) | future | Renderer backend boundary |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
 | [@PLN199](https://github.com/loft-lang/plans/issues/199) | next | A `use`d library compiles whole — only a generic keeps a loft function interpreted; a published library arrives compiled without `rustc` (`LOFT_TRACE_NATIVE_GATE=1` shows what is left; [plan](plans/199-library-compiles-whole.md)) |
-| [@PLN196](https://github.com/loft-lang/plans/issues/196) | future | Store upgrade — a changed definition converts its data store to store, on disk, in memory and in wasm, or says why it cannot ([plan](plans/196-store-upgrade.md)) |
 
 ### U — Ease of use
 

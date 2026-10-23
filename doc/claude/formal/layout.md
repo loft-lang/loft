@@ -437,7 +437,7 @@ that gate, now applied across a network boundary.
 
 A layout change (`(L-Align)` was one) changes the identity, so a store written by an older
 build is refused by this rule or converted by the upgrade map
-([@PLN196](../plans/196-store-upgrade.md)); it is never read under the new offsets.
+([DATABASE.md § the store upgrade](../DATABASE.md#a-changed-definition-the-store-upgrade)); it is never read under the new offsets.
 
 ### Releases a store skipped
 
