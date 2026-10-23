@@ -12,7 +12,7 @@ index b439b5dab..9634c2e6f 100644
          arena => Some(Arena(arena)),
      }
 diff --git a/src/database/allocation.rs b/src/database/allocation.rs
-index 9fed92591..d14b455dd 100644
+index 9fed92591..276856766 100644
 --- a/src/database/allocation.rs
 +++ b/src/database/allocation.rs
 @@ -249,34 +249,6 @@ impl Stores {
@@ -112,7 +112,18 @@ index 9fed92591..d14b455dd 100644
          {
              return;
          }
-@@ -6420,7 +6364,7 @@ impl Stores {
+@@ -4415,9 +4359,7 @@ impl Stores {
+             // which a write through the owner does not reach; so it starts empty and
+             // is indexed over the copied owner below.
+             if self.is_group_view(tp, i) {
+-                if !self.copy_absent_collection(&from, &into, f.content) {
+-                    self.store_mut(&into).set_u32_raw(into.rec, into.pos, 0);
+-                }
++                self.store_mut(&into).set_u32_raw(into.rec, into.pos, 0);
+                 continue;
+             }
+             self.copy_claims(&from, &into, f.content);
+@@ -6420,7 +6362,7 @@ impl Stores {
                  | Parts::Sorted(..)
                  | Parts::Ordered(..)
                  | Parts::Hash(..)
