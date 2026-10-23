@@ -3533,9 +3533,11 @@ impl Store {
 
     fn fl_insert_node(&mut self, h: u32, rec: u32) -> u32 {
         if h == 0 {
+            // A fresh node: both link words written WHOLE.  The right word also carries the
+            // colour, and the setters keep the half they are not given — a read of a word
+            // nobody has written yet on a block just freed (@C153).
             self.fl_set_left(rec, 0);
-            self.fl_set_right(rec, 0);
-            self.fl_set_red(rec, true);
+            self.write::<u32>(rec, FL_RIGHT, FL_RED_BIT);
             return rec;
         }
         match self.fl_cmp(rec, h) {
