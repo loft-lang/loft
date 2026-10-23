@@ -12578,6 +12578,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             all_fns: introspect_all_fns,
             lib_dirs: Vec::new(),
             install_dir: String::new(),
+            rust: Some(loft::generation::introspect_rust),
         };
         let end_def = p.data.definitions();
         if let Err(e) = loft::introspect::emit_all(&mut p.data, &mut state, end_def, &opts) {

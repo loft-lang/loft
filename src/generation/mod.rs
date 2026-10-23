@@ -139,6 +139,21 @@ pub use crate::opt::names::{disambiguated_fn_ident, duplicate_fn_names, reachabl
 
 pub(crate) use crate::opt::begin_program;
 
+/// `loft --introspect`'s Rust section: what the native generator writes for definitions
+/// `0..end_def` (handed to `introspect::Options::rust` by the driver).
+///
+/// # Errors
+/// A write to `w` that fails.
+pub fn introspect_rust(
+    w: &mut dyn Write,
+    data: &Data,
+    stores: &Stores,
+    end_def: u32,
+) -> std::io::Result<()> {
+    let mut out = Output::new(data, stores);
+    out.output_native(w, 0, end_def)
+}
+
 /// Final invariant scrub over a COMPLETE generated native source: rewrite the
 /// loft-internal module references `crate::rpc::` / `crate::store::` to
 /// `loft::…`.  In the interpreter's own crate `crate == loft`, so a `#rust`

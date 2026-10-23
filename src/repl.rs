@@ -5232,6 +5232,7 @@ impl ReplSession {
         let opts = Options {
             sections: vec![section],
             fn_filter,
+            rust: Some(crate::generation::introspect_rust),
             ..Options::new()
         };
         let _ = crate::introspect::emit_all(&mut self.parser.data, &mut state, end_def, &opts);

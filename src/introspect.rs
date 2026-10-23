@@ -16,7 +16,6 @@
 use crate::compile;
 use crate::data::{Data, DefType, Value};
 use crate::diagnostics::Level;
-use crate::generation;
 use crate::log_config::LogConfig;
 use crate::parser::Parser;
 use crate::scopes;
@@ -102,7 +101,15 @@ pub struct Options {
     /// Path prefix to the loft installation (`--path` flag).  Empty
     /// means "binary directory" — same default as `loft <file>`.
     pub install_dir: String,
+    /// Writes the Rust section.  The driver hands in the native generator's
+    /// (`generation::introspect_rust`), so this module names no backend; `None` leaves the
+    /// section empty.
+    pub rust: Option<RustSection>,
 }
+
+/// Writes the Rust a compiled target emits for definitions `0..end_def`.
+pub type RustSection =
+    fn(&mut dyn Write, &Data, &crate::database::Stores, u32) -> std::io::Result<()>;
 
 impl Options {
     /// Default introspect options — all three sections, no filter,
@@ -124,6 +131,7 @@ impl Options {
             all_fns: false,
             lib_dirs: Vec::new(),
             install_dir: String::new(),
+            rust: None,
         }
     }
 
@@ -233,16 +241,16 @@ pub fn emit_all(
     if opts.includes(Section::Rust) {
         if let Some(path) = opts.rust_out.as_deref() {
             let mut writer = BufWriter::new(crate::file_access::create(path)?);
-            emit_rust(&mut writer, data, &state.database, end_def)?;
+            emit_rust(opts, &mut writer, data, &state.database, end_def)?;
         } else if diff_mode {
             writeln!(buffer)?;
             writeln!(buffer, "=== rust ===")?;
-            emit_rust(&mut buffer, data, &state.database, end_def)?;
+            emit_rust(opts, &mut buffer, data, &state.database, end_def)?;
         } else {
             let mut writer = stdout.lock();
             writeln!(writer)?;
             writeln!(writer, "=== rust ===")?;
-            emit_rust(&mut writer, data, &state.database, end_def)?;
+            emit_rust(opts, &mut writer, data, &state.database, end_def)?;
         }
     }
     if opts.includes(Section::Slots) {
@@ -335,7 +343,7 @@ fn emit_json(
     }
     if opts.includes(Section::Rust) {
         let mut buf = Vec::new();
-        emit_rust(&mut buf, data, &state.database, end_def)?;
+        emit_rust(opts, &mut buf, data, &state.database, end_def)?;
         fields.push(("rust".to_string(), 0, as_str(buf)));
     }
     if opts.includes(Section::Slots) {
@@ -502,13 +510,14 @@ fn emit_bytecode(
 }
 
 fn emit_rust(
+    opts: &Options,
     w: &mut dyn Write,
     data: &Data,
     stores: &crate::database::Stores,
     end_def: u32,
 ) -> std::io::Result<()> {
-    let mut out = generation::Output::new(data, stores);
-    out.output_native(w, 0, end_def)
+    opts.rust
+        .map_or(Ok(()), |section| section(w, data, stores, end_def))
 }
 
 fn emit_slots(w: &mut dyn Write, data: &Data, end_def: u32, opts: &Options) -> std::io::Result<()> {

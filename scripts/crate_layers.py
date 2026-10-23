@@ -92,14 +92,14 @@ LAYERS: list[tuple[str, list[str]]] = [
     ]),
     ("interp", [
         "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",
-        "fuzz_oracle", "live_dispatch", "live_reload", "native_adopt", "parallel",
+        "fuzz_oracle", "introspect", "live_dispatch", "live_reload", "native_adopt", "parallel",
         "parallel_natives", "profiler", "stack", "state", "wasm_gl",
     ]),
     ("lower", [
        
     ]),
     ("rust", [
-        "create", "generation", "introspect", "native_lib", "stdlib_codegen",
+        "create", "generation", "native_lib", "stdlib_codegen",
     ]),
     ("facade", [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "native_artifact", "repl", "rpc",
@@ -120,7 +120,6 @@ SIBLINGS: list[tuple[str, str]] = [
 # A count may only fall; `check` fails when one rises, and when one has fallen below its
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
-    ("rust", "interp"): 6,
 }
 
 # The RUNTIME (@PLN191 R1): the modules a compiled program links — what the generator names
