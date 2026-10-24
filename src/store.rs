@@ -539,6 +539,12 @@ pub struct Store {
     park: bool,
     /// `@FR-H-Park` — the parked blocks, by exact size.  Empty when `park` is off.
     parked: Parked,
+    /// `@FR-H-RootExtent` — the live records `OpPlaceRecord` put in this store that are NOT
+    /// elements of its root collection (`Stores::place_record_prefilled`): an `R-ExitVector`
+    /// wrapper claimed in a one-field return buffer's store is one.  While any is live the
+    /// root's extent is not the store's extent, so the store is neither reset by a clear
+    /// nor exchanged with another (loft#2157).  [`Self::delete`] drops each as it goes.
+    placed_foreign: Vec<u32>,
     /// CO1.9/S28: monotonic counter incremented on every `claim`, `resize`, and `delete`.
     /// Saved into `CoroutineFrame` at yield; compared at resume to detect store mutations
     /// that may have invalidated `DbRef` locals held by the generator.  Always compiled in
@@ -1177,6 +1183,7 @@ impl Store {
             park: park_enabled(),
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined,
             generation: 0,
@@ -1346,6 +1353,7 @@ impl Store {
             park: false,
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: true,
             generation: 0,
@@ -1457,6 +1465,7 @@ impl Store {
             park: false,
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: true,
             generation: 0,
@@ -1574,6 +1583,7 @@ impl Store {
             park: park_enabled(),
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: true,
             generation: 0,
@@ -1625,6 +1635,7 @@ impl Store {
         self.lazy_free.clear();
         // `@FR-H-Park` — the whole store is one free block again: nothing is parked.
         self.parked.clear();
+        self.placed_foreign.clear();
         // NOT `claims.insert(PRIMARY)`.  `set_free_header(1, …)` above makes word 1 the
         // store's one FREE block, so naming it in the live-record set records a block that
         // is free.  `claims_rebuild` answers the same question off the store's own bytes for
@@ -2459,6 +2470,9 @@ impl Store {
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
         self.valid(rec, 4);
+        if !self.placed_foreign.is_empty() {
+            self.placed_foreign.retain(|&r| r != rec);
+        }
         // `@FR-H-Removed` — a record a stored reference named keeps its position: every
         // removal of one (a vector's, a keyed collection's, its parent's release) ends here.
         if self.referenced.remove(rec) && tombstones_enabled() {
@@ -3116,7 +3130,8 @@ impl Store {
 
     /// `@FR-H-SwapIn` — may this store's CONTENT be exchanged with another's: an ordinary
     /// in-memory store nothing pins to its slot (no file, no foreign bytes, no recording,
-    /// no lock, no borrow, not the interpreter's stack).  A free protection (a call's
+    /// no lock, no borrow, not the interpreter's stack, no record placed in it from outside
+    /// its root collection — `@FR-H-RootExtent`).  A free protection (a call's
     /// deep-copy bracket) guards the slot against a FREE, so it refuses only the side the
     /// exchange then frees: `released` is that side.
     pub(crate) fn content_swappable(&self, released: bool) -> bool {
@@ -3131,6 +3146,18 @@ impl Store {
             && self.foreign.is_none()
             && self.recording.is_none()
             && self.tag == 0
+            && self.placed_foreign.is_empty()
+    }
+
+    /// `@FR-H-RootExtent` — record `rec` was placed here from outside the root collection.
+    pub(crate) fn note_placed_foreign(&mut self, rec: u32) {
+        self.placed_foreign.push(rec);
+    }
+
+    /// `@FR-H-RootExtent` — does every live record of this store belong to its root
+    /// collection, as far as placement can tell?  A clear may reset the store only then.
+    pub(crate) fn root_owns_extent(&self) -> bool {
+        self.placed_foreign.is_empty()
     }
 
     /// Does this store hold exactly one live record, its root at record 1 — the shape a
@@ -3161,6 +3188,7 @@ impl Store {
         std::mem::swap(&mut a.lazy, &mut b.lazy);
         std::mem::swap(&mut a.dead_words, &mut b.dead_words);
         std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
+        std::mem::swap(&mut a.placed_foreign, &mut b.placed_foreign);
         // `@FR-H-Park` — the parked blocks are positions in the memory that moves, so the
         // lists and the set move with it (loft#2031: left behind, a store's set named live
         // records of the content it received, a delete parked one of them twice, and the
@@ -3286,6 +3314,7 @@ impl Store {
             park: false,
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,
@@ -3356,6 +3385,7 @@ impl Store {
             park: self.park,
             move_on_grow: self.move_on_grow,
             parked: self.parked.clone(),
+            placed_foreign: self.placed_foreign.clone(),
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,
@@ -3407,6 +3437,7 @@ impl Store {
             park: false,
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,

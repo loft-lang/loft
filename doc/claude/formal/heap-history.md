@@ -2936,3 +2936,19 @@ confirmation exists for; it is pinned there.
   copy was already sound (one handle, a position per copy, loft#2005; a lease per copy), measured
   `a: 3 lines | b: 3 lines` on both backends with no leak.
 
+## 2026-10-24 — `(H-RootExtent)` held only for the one placer it named (loft#2157)
+
+Reported by zero-trust-shared-files: `fn rm(b: Board) -> Board { d: vector<text> = ["A"];
+out: vector<text> = []; out += ["x"]; return Board { notes: out }; }` answered a corrupt
+`Board`, on both backends.  `(R-ExitVector)` admitted `d` and claimed its wrapper in the return
+buffer's store; `out` was declined, so the exit literal replaced the buffer's field
+(`OpReplaceVector`), and the replace's clear (`H-ClearRelease`) read the store's one-field
+`Board` root as a vector wrapper and reset the store.  The reset dropped the live wrapper, the
+copy of `out` was claimed on its record, and the exit's `OpFreeRecordIn` of the wrapper then
+freed the returned vector.  The rule text named `(R-MoveAppend)` as the only placer; two
+others place non-elements, and the shape gate cannot tell a user one-field struct from the
+wrapper `OpDatabase` mints.  Closed at the runtime chokepoint: `place_record_prefilled` records
+each non-element it places in a store whose root has that shape (`Store::placed_foreign`),
+`Store::delete` drops it, and the clear's reset and `content_swappable` both refuse while any
+is live.  The `(R-ExitVector)` path that moves the vector frees its wrapper at the exit, before
+any caller-side clear, so the reset is kept there.
