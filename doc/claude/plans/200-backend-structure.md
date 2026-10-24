@@ -274,6 +274,35 @@ contract](../INTERMEDIATE.md#the-interpreters-contract).  Where the code differs
 
 ## B3 — the compiled-target base: plans apart from the Rust writer
 
+**State (2026-10-24):** B3.1, B3.2, B3.3, B3.5 and B3.6 are done.  B3.4 waits for the first
+emitter that wants a family (B5).  Every step was checked against main's binary: `--show-rust`
+is identical on all 511 programs of `bench/` and `tests/scripts/`, and the rewrite census is
+identical (103641 admissions).  Where the code differs from the table:
+
+- **B3.1** holds seven plans, not eight: the value records, their dead buffers, and the
+  apart, record-apart, decode-view, structure and stream plans
+  (`lower::plan::ProgramPlan`, `plan_program`).  `reachable` and `dup_fn_names` stay the
+  emitter's input, because which roots it starts from is its own choice.  `dead_buffers` moved
+  to `opt::value_records` first.
+- **B3.2** moved 64 switches to `lower::switches::Switches`.  `hoist_disabled` stays on
+  `Output`, because the emitter also toggles it per function.  Eight switches set one at a
+  time change the Rust exactly as they do on main.
+- **B3.3** moved `stream_walk`, `decode_view`, `apart_value` with `apart_records`,
+  `decode_structure` with its scan, `view_return`, `hand_over`, `keyed_entry`, `keyed_place`,
+  `file_hold` and `destination` whole, each re-exported at its old path.  `destination`'s
+  two helpers went to `opt` first.
+- **`ranged_call` stays in the Rust writer.**  Its decisions read the emitter's state for the
+  loop being written (the hoisted scalars, the variants already asked for), so it is a B3.4
+  family and not a whole-program plan.
+- **B3.5** is `scripts/runtime_surface.py` (`make runtime-surface`), committed as
+  [RUNTIME_SURFACE.md](../RUNTIME_SURFACE.md).  It finds four modules outside the runtime
+  set that emitted code names, and these are B7.3's work list:
+  - `live_dispatch` (the live tier, in every default `--native` program);
+  - `state::STRING_NULL`;
+  - `native_lib::HostTable` and `native_lib::LibArg`, both `host_abi` items named through
+    `native_lib`'s re-export;
+  - `native_adopt::HOST_TABLE`, in the compiled standard library.
+
 | step | change | check |
 |---|---|---|
 | B3.1 | `src/lower/mod.rs`: `pub struct ProgramPlan { reachable, dup_fn_names, dead_by_fn, value_records, apart, dv, ps, sw }` and `pub fn plan_program(data, stores, opts) -> ProgramPlan` — the computation of `output_functions` (`mod.rs:10878-10950`) and of 9161–9217, moved; `Output` holds `plan: Rc<ProgramPlan>` and its eight fields become reads of it | protocol |
