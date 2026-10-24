@@ -30,6 +30,9 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     ));
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
+    // admits twice (a fast copy and the exact one).
+    cmd.env("LOFT_NO_FAULT_FLAG", "1");
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -79,6 +82,9 @@ fn run_native(tag: &str, src: &str, env: &[(&str, &str)]) -> (String, String) {
     fa::write(&file, src).expect("write the probe");
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
+    // admits twice (a fast copy and the exact one).
+    cmd.env("LOFT_NO_FAULT_FLAG", "1");
     cmd.arg("--native")
         .arg(&file)
         .env("LOFT_TIMEOUT", "120")
