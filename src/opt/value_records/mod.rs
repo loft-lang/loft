@@ -276,6 +276,29 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             )
         })
         .collect();
+    // The functions each body calls directly, read once.  A round's site gate declines only
+    // an ADMITTED callee a caller calls ([`site_walk`], [`view_sites_declined`]), an arm of
+    // one of the caller's own listed fn-ref sites ([`site_walk_callref`]), or a tuple
+    // parameter of the caller itself — so a caller that calls no admitted function, is
+    // neither admitted nor a parameter holder, and owns no listed site has nothing to
+    // decline, and the round skips it.  Most of a program is such callers, and walking
+    // them every round was nearly the whole cost of this analysis.
+    let callees: Vec<HashSet<u32>> = (0..data.definitions.len() as u32)
+        .map(|d| {
+            let mut called = HashSet::new();
+            data.def(d).code().any_node(&mut |n| {
+                if let Value::Call(c, _) = n {
+                    called.insert(*c);
+                }
+                false
+            });
+            called
+        })
+        .collect();
+    let site_owners: HashSet<u32> = sites.keys().map(|(caller, _)| *caller).collect();
+    // `LOFT_NO_VR_SKIP=1` walks every caller every round, as before: the control half of
+    // the A/B that shows the skip changes no decision.
+    let skip = std::env::var_os("LOFT_NO_VR_SKIP").is_none();
     // Admission is a FIXPOINT.  A body's tail may FORWARD another candidate's result and a
     // site may bind a BRANCH of candidate calls, so declining one function can decline
     // another; every round only removes, so it ends.  The body gate and the site gate read
@@ -373,6 +396,16 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
         for caller in 0..data.definitions.len() as u32 {
             let cdef = data.def(caller);
             if matches!(cdef.code(), Value::Null) {
+                continue;
+            }
+            if skip
+                && !admitted.contains_key(&caller)
+                && !params.contains_key(&caller)
+                && !site_owners.contains(&caller)
+                && !callees[caller as usize]
+                    .iter()
+                    .any(|c| admitted.contains_key(c))
+            {
                 continue;
             }
             let locals = value_locals_in(data, caller, &admitted, &params, &view_offs, &sites, &sp);
