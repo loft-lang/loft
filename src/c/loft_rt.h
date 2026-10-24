@@ -13,6 +13,8 @@
  *
  * C99: <stdint.h>, declarations where they are used.  No allocation failure is survivable
  * here: one aborts the program, as the Rust runtime's does. */
+/* clock_gettime is POSIX, not C99. */
+#define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -20,8 +22,17 @@
 #include <string.h>
 #include <setjmp.h>
 #include <math.h>
+#include <time.h>
 
 #define LOFT_NULL INT64_MIN
+
+/* The accessors every element and field read goes through: inlined, so a reference passed
+ * and returned by value never travels through memory. */
+#if defined(__GNUC__) || defined(__clang__)
+#define LOFT_HOT static inline __attribute__((always_inline))
+#else
+#define LOFT_HOT static inline
+#endif
 #define LOFT_BOOL_NULL 255
 
 typedef struct { const char *p; size_t len; } loft_str;
@@ -245,20 +256,33 @@ static void loft_print(loft_str s) {
 }
 
 /* The integer operators: null in, null out; an overflow or a division by zero is null. */
-static int64_t loft_add(int64_t a, int64_t b) {
+/* The checked multiply of two computed operands uses the compiler's overflow builtin where
+ * it has one: a flag test, where the portable check divides.  With a constant operand the
+ * portable check folds to one compare, which is cheaper still; addition and subtraction keep
+ * the portable comparison, which the compiler folds into a loop's induction (measured: the
+ * builtin made a summing loop 2.7x slower).  A result that lands on INT64_MIN is null. */
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(LOFT_PORTABLE_CHECKS)
+#define LOFT_CHECKED(op, a, b) \
+    do { int64_t r_; if (__builtin_##op##_overflow(a, b, &r_)) return LOFT_NULL; return r_; } while (0)
+#endif
+
+LOFT_HOT int64_t loft_add(int64_t a, int64_t b) {
     if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
     if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) return LOFT_NULL;
     return a + b;
 }
 
-static int64_t loft_sub(int64_t a, int64_t b) {
+LOFT_HOT int64_t loft_sub(int64_t a, int64_t b) {
     if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
     if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) return LOFT_NULL;
     return a - b;
 }
 
-static int64_t loft_mul(int64_t a, int64_t b) {
+LOFT_HOT int64_t loft_mul(int64_t a, int64_t b) {
     if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
+#ifdef LOFT_CHECKED
+    if (!__builtin_constant_p(a) && !__builtin_constant_p(b)) LOFT_CHECKED(mul, a, b);
+#endif
     if (a > 0) {
         if (b > 0) { if (a > INT64_MAX / b) return LOFT_NULL; }
         else if (b < INT64_MIN / a) return LOFT_NULL;
@@ -269,12 +293,12 @@ static int64_t loft_mul(int64_t a, int64_t b) {
     return a * b;
 }
 
-static int64_t loft_div(int64_t a, int64_t b) {
+LOFT_HOT int64_t loft_div(int64_t a, int64_t b) {
     if (a == LOFT_NULL || b == LOFT_NULL || b == 0) return LOFT_NULL;
     return a / b;
 }
 
-static int64_t loft_rem(int64_t a, int64_t b) {
+LOFT_HOT int64_t loft_rem(int64_t a, int64_t b) {
     if (a == LOFT_NULL || b == LOFT_NULL || b == 0) return LOFT_NULL;
     return a % b;
 }
@@ -522,7 +546,7 @@ typedef struct { uint8_t *buf; uint32_t words; uint32_t top; int live; uint16_t 
 static loft_store_t *loft_stores = 0;
 static uint32_t loft_nstores = 0;
 
-static loft_ref loft_ref_null(void) {
+LOFT_HOT loft_ref loft_ref_null(void) {
     loft_ref r;
     r.store_nr = 0xFFFF;
     r.rec = 0;
@@ -530,7 +554,7 @@ static loft_ref loft_ref_null(void) {
     return r;
 }
 
-static loft_store_t *loft_store_of(loft_ref r) {
+LOFT_HOT loft_store_t *loft_store_of(loft_ref r) {
     return &loft_stores[r.store_nr];
 }
 
@@ -577,17 +601,17 @@ static uint32_t loft_claim(loft_store_t *s, uint32_t words) {
     return rec;
 }
 
-static uint8_t *loft_at(loft_store_t *s, uint32_t rec, uint32_t byte) {
+LOFT_HOT uint8_t *loft_at(loft_store_t *s, uint32_t rec, uint32_t byte) {
     return s->buf + (size_t) rec * 8 + byte;
 }
 
-static uint32_t loft_u32(loft_store_t *s, uint32_t rec, uint32_t byte) {
+LOFT_HOT uint32_t loft_u32(loft_store_t *s, uint32_t rec, uint32_t byte) {
     uint32_t v;
     memcpy(&v, loft_at(s, rec, byte), 4);
     return v;
 }
 
-static void loft_set_u32(loft_store_t *s, uint32_t rec, uint32_t byte, uint32_t v) {
+LOFT_HOT void loft_set_u32(loft_store_t *s, uint32_t rec, uint32_t byte, uint32_t v) {
     memcpy(loft_at(s, rec, byte), &v, 4);
 }
 
@@ -672,19 +696,19 @@ static int loft_store_live(loft_ref r) {
     return r.rec != 0 && r.store_nr != 0xFFFF && r.store_nr < loft_nstores && loft_stores[r.store_nr].live;
 }
 
-static loft_ref loft_field(loft_ref r, uint32_t fld) {
+LOFT_HOT loft_ref loft_field(loft_ref r, uint32_t fld) {
     r.pos += fld;
     return r;
 }
 
-static int64_t loft_get_int(loft_ref r, uint32_t fld) {
+LOFT_HOT int64_t loft_get_int(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return LOFT_NULL;
     int64_t v;
     memcpy(&v, loft_at(loft_store_of(r), r.rec, r.pos + fld), 8);
     return v;
 }
 
-static void loft_set_int(loft_ref r, uint32_t fld, int64_t v) {
+LOFT_HOT void loft_set_int(loft_ref r, uint32_t fld, int64_t v) {
     if (r.rec == 0) return;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 8);
 }
@@ -800,7 +824,7 @@ static void loft_set_dbref(loft_ref r, uint32_t fld, loft_ref x) {
 
 /* ── Vectors (src/vector.rs) ───────────────────────────────────────────────────────────── */
 
-static uint32_t loft_collection_rec(loft_store_t *s, uint32_t rec, uint32_t pos) {
+LOFT_HOT uint32_t loft_collection_rec(loft_store_t *s, uint32_t rec, uint32_t pos) {
     uint32_t v = loft_u32(s, rec, pos);
     return v == 0xFFFFFFFFu ? 0 : v;
 }
@@ -809,7 +833,7 @@ static uint32_t loft_vec_cap_words(uint32_t count, uint32_t size) {
     return (uint32_t) (((uint64_t) count * size + 15) / 8);
 }
 
-static int64_t loft_vec_len(loft_ref v) {
+LOFT_HOT int64_t loft_vec_len(loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return 0;
     loft_store_t *s = loft_store_of(v);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
@@ -858,7 +882,7 @@ static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
 }
 
 /* vector_finish: the element `loft_vec_append` made counts. */
-static void loft_vec_finish(loft_ref v) {
+LOFT_HOT void loft_vec_finish(loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return;
     loft_store_t *s = loft_store_of(v);
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
@@ -880,7 +904,7 @@ static void loft_fill(loft_ref r, const uint8_t *image, uint32_t n) {
 }
 
 /* get_vector: the element at `from` (negative counts from the end), or the null reference. */
-static loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
+LOFT_HOT loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
     if (v.store_nr == 0xFFFF) return loft_ref_null();
     int64_t len = loft_vec_len(v);
     int64_t f = from < 0 ? from + len : from;
@@ -893,8 +917,73 @@ static loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
 }
 
 
+/* A vector held for a loop (@FR-R-Header, opt::header): its store, record, length and element
+ * base, read once before a loop that writes no store but in place — no record moves and no
+ * length changes inside it — so an element read is one bounds test and one load. */
+typedef struct { uint16_t store_nr; uint32_t rec; int64_t len; uint8_t *base; } loft_vh;
+
+LOFT_HOT loft_vh loft_vh_of(loft_ref v) {
+    loft_vh h;
+    h.store_nr = v.store_nr;
+    h.rec = 0;
+    h.len = 0;
+    h.base = 0;
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return h;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return h;
+    h.rec = r;
+    h.len = loft_u32(s, r, 4);
+    h.base = loft_at(s, r, 0);
+    return h;
+}
+
+/* The element index `from` names (negative from the end), or -1 outside, as loft_vec_get. */
+LOFT_HOT int64_t loft_vh_index(loft_vh h, int64_t from) {
+    int64_t f = from < 0 ? from + h.len : from;
+    return f < 0 || f >= h.len ? -1 : f;
+}
+
+LOFT_HOT loft_ref loft_vh_get(loft_vh h, uint32_t size, int64_t from) {
+    int64_t f = loft_vh_index(h, from);
+    if (f < 0) return loft_ref_null();
+    loft_ref e;
+    e.store_nr = h.store_nr;
+    e.rec = h.rec;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+
+LOFT_HOT int64_t loft_vh_get_int(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
+    int64_t f = loft_vh_index(h, from);
+    if (f < 0) return LOFT_NULL;
+    int64_t v;
+    memcpy(&v, h.base + 8 + (size_t) f * size + fld, 8);
+    return v;
+}
+
+LOFT_HOT void loft_vh_set_int(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
+    int64_t f = loft_vh_index(h, from);
+    if (f < 0) return;
+    memcpy(h.base + 8 + (size_t) f * size + fld, &v, 8);
+}
+
+LOFT_HOT double loft_vh_get_float(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
+    int64_t f = loft_vh_index(h, from);
+    if (f < 0) return (double) NAN;
+    double v;
+    memcpy(&v, h.base + 8 + (size_t) f * size + fld, 8);
+    return v;
+}
+
+LOFT_HOT void loft_vh_set_float(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v) {
+    int64_t f = loft_vh_index(h, from);
+    if (f < 0) return;
+    memcpy(h.base + 8 + (size_t) f * size + fld, &v, 8);
+}
+
 /* ops::op_negate_long: null stays null. */
-static int64_t loft_neg(int64_t a) {
+LOFT_HOT int64_t loft_neg(int64_t a) {
     return a == LOFT_NULL ? a : -a;
 }
 
@@ -1284,14 +1373,14 @@ static float loft_math2s(int id, float a, float b) {
     return (float) NAN;
 }
 
-static double loft_get_float(loft_ref r, uint32_t fld) {
+LOFT_HOT double loft_get_float(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return (double) NAN;
     double v;
     memcpy(&v, loft_at(loft_store_of(r), r.rec, r.pos + fld), 8);
     return v;
 }
 
-static void loft_set_float(loft_ref r, uint32_t fld, double v) {
+LOFT_HOT void loft_set_float(loft_ref r, uint32_t fld, double v) {
     if (r.rec == 0) return;
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 8);
 }
@@ -1615,4 +1704,75 @@ static void loft_show_list(loft_text *s, loft_ref r, int fmt, int ind, uint32_t 
     }
     if (pretty) loft_push_char(s, ' ');
     loft_push_char(s, ']');
+}
+
+/* ── The host: arguments and the clock ─────────────────────────────────────────────────── */
+
+/* The program's own arguments, after its name (Stores::os_arguments). */
+static int loft_argc = 0;
+static char **loft_argv = 0;
+
+/* arguments(): a fresh `vector<text>` of them. */
+static loft_ref loft_arguments(void) {
+    loft_ref r = loft_ref_null();
+    loft_database(&r, 8);
+    for (int i = 1; i < loft_argc; i++) {
+        loft_ref e = loft_vec_append(r, 4);
+        loft_set_text(e, 0, loft_lit(loft_argv[i], strlen(loft_argv[i])));
+        loft_vec_finish(r);
+    }
+    return r;
+}
+
+/* ticks(): microseconds since the program started, monotonic; LOFT_FAKE_TICKS_US pins it. */
+static int64_t loft_start_us = -1;
+
+static int64_t loft_now_us(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (int64_t) t.tv_sec * 1000000 + t.tv_nsec / 1000;
+}
+
+static int64_t loft_ticks(void) {
+    static int fake_read = 0;
+    static int64_t fake = LOFT_NULL;
+    if (!fake_read) {
+        fake_read = 1;
+        const char *f = getenv("LOFT_FAKE_TICKS_US");
+        if (f && *f) {
+            char *end;
+            long long v = strtoll(f, &end, 10);
+            if (*end == 0) fake = (int64_t) v;
+        }
+    }
+    if (fake != LOFT_NULL) return fake;
+    return loft_now_us() - loft_start_us;
+}
+
+/* OpCastIntFromText: Rust's `str::parse::<i64>` — an optional sign and decimal digits, nothing
+ * else; anything that does not parse, or overflows, is null. */
+static int64_t loft_int_of_text(loft_str t) {
+    size_t i = 0;
+    int neg = 0;
+    if (t.len == 0) return LOFT_NULL;
+    if (t.p[0] == '+' || t.p[0] == '-') { neg = t.p[0] == '-'; i = 1; }
+    if (i == t.len) return LOFT_NULL;
+    uint64_t v = 0;
+    for (; i < t.len; i++) {
+        unsigned char c = (unsigned char) t.p[i];
+        if (c < '0' || c > '9') return LOFT_NULL;
+        if (v > (UINT64_MAX - (c - '0')) / 10) return LOFT_NULL;
+        v = v * 10 + (c - '0');
+    }
+    if (neg) return v > (uint64_t) INT64_MAX + 1 ? LOFT_NULL : (int64_t) (0 - v);
+    return v > (uint64_t) INT64_MAX ? LOFT_NULL : (int64_t) v;
+}
+
+/* Called first by `main`: the arguments, the clock's start, the constants. */
+static void loft_init(void);
+static void loft_start(int argc, char **argv) {
+    loft_argc = argc;
+    loft_argv = argv;
+    loft_start_us = loft_now_us();
+    loft_init();
 }

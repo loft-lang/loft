@@ -107,6 +107,12 @@ pub(crate) struct FnWriter<'a> {
     /// The label number of each enclosing loop, innermost last.
     loops: Vec<u32>,
     labels: u32,
+    /// The vectors each enclosing loop holds (`loft_vh`), innermost last (@FR-R-Header).
+    headers: Vec<Vec<(crate::opt::writes::PathKey, String)>>,
+    /// The header gate's memo of which callees write a store.
+    hoist_cache: std::collections::HashMap<u32, bool>,
+    /// Declarations beside the temporaries: the held vectors.
+    decls: Vec<String>,
     /// Which variables a statement written so far has bound: a later `Set` is a rebind.
     bound: Vec<bool>,
 }
@@ -137,6 +143,9 @@ impl<'a> FnWriter<'a> {
             pending: Vec::new(),
             loops: Vec::new(),
             labels: 0,
+            headers: Vec::new(),
+            hoist_cache: std::collections::HashMap::new(),
+            decls: Vec::new(),
             // A parameter arrives bound: its first `Set` is a rebind.
             bound: {
                 let vars = def.variables();
@@ -171,6 +180,9 @@ impl<'a> FnWriter<'a> {
         }
         for (t, c) in &self.temps {
             let _ = writeln!(out, "    {} {t} = {};", held(*c), self.cx.initial(*c));
+        }
+        for d in &self.decls {
+            let _ = writeln!(out, "    {d}");
         }
         out.push_str(&self.body);
         Ok(out)
@@ -233,6 +245,116 @@ impl<'a> FnWriter<'a> {
         );
         for t in texts {
             self.line(ind, &format!("loft_text_free(&{t});"));
+        }
+    }
+
+    /// Before loop `b`: each vector the header gate admits (`opt::header::hoistable_vectors`)
+    /// held in a `loft_vh` — the frame the loop's element accesses read.
+    /// `LOFT_NO_VECTOR_HOIST=1` holds none, `LOFT_NO_WRITE_HOIST=1` none in a loop that writes.
+    fn hold_vectors(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
+        let mut frame = Vec::new();
+        if !env_on("LOFT_NO_VECTOR_HOIST") {
+            let paths = crate::opt::header::hoistable_vectors(
+                b,
+                self.cx.data,
+                self.d,
+                &mut self.hoist_cache,
+                !env_on("LOFT_NO_WRITE_HOIST"),
+            );
+            for (path, expr) in paths {
+                let e = self.nested(|w| w.expr(&expr, ind))?;
+                let h = format!("h{}", self.decls.len() + 1);
+                self.decls
+                    .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
+                self.line(ind, &format!("{h} = loft_vh_of({});", as_ref(e)?));
+                frame.push((path, h));
+            }
+        }
+        self.headers.push(frame);
+        Ok(())
+    }
+
+    /// The `loft_vh` an enclosing loop holds for vector expression `v`, if any.
+    fn held_vector(&self, v: &Value) -> Option<String> {
+        let path = crate::opt::writes::vector_path(self.cx.data, v)?;
+        self.headers
+            .iter()
+            .rev()
+            .flat_map(|f| f.iter())
+            .find(|(p, _)| *p == path)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// An element access of a held vector: `OpGetVector(v, size, i)` itself, or a scalar read
+    /// or in-place write of a field of one — through the held base.  `None` for any other.
+    fn held_access(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        let elem = |v: &Value| -> Option<(Value, Value, Value)> {
+            match v.unspan() {
+                Value::Call(d, a) if a.len() == 3 => {
+                    let n = self.cx.data.def(*d).name();
+                    (n == "OpGetVector" || n == "OpGetVectorNullable")
+                        .then(|| (a[0].clone(), a[1].clone(), a[2].clone()))
+                }
+                _ => None,
+            }
+        };
+        match (name, args) {
+            ("OpGetVector" | "OpGetVectorNullable", [v, size, idx]) => {
+                let Some(h) = self.held_vector(v) else {
+                    return Ok(None);
+                };
+                let size = Self::literal(size, "element size")?;
+                let i = self.expr(idx, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_vh_get({h}, {size}, {})", as_int(i)?),
+                    K::Ref,
+                )))
+            }
+            ("OpLengthVector", [v]) => Ok(self
+                .held_vector(v)
+                .map(|h| E::new(format!("{h}.len"), K::Int))),
+            ("OpGetInt" | "OpGetFloat", [inner, fld]) => {
+                let Some((vec, size, idx)) = elem(inner) else {
+                    return Ok(None);
+                };
+                let Some(held) = self.held_vector(&vec) else {
+                    return Ok(None);
+                };
+                let size = Self::literal(&size, "element size")?;
+                let fld = Self::literal(fld, "field")?;
+                let index = self.expr(&idx, ind)?;
+                let (f, k) = if name == "OpGetInt" {
+                    ("loft_vh_get_int", K::Int)
+                } else {
+                    ("loft_vh_get_float", K::Float)
+                };
+                Ok(Some(E::new(
+                    format!("{f}({held}, {size}, {}, {fld})", as_int(index)?),
+                    k,
+                )))
+            }
+            ("OpSetInt" | "OpSetFloat", [inner, fld, val]) => {
+                let Some((vec, size, idx)) = elem(inner) else {
+                    return Ok(None);
+                };
+                let Some(held) = self.held_vector(&vec) else {
+                    return Ok(None);
+                };
+                let size = Self::literal(&size, "element size")?;
+                let fld = Self::literal(fld, "field")?;
+                let (index, value) = self.two(name, &[idx, val.clone()], ind)?;
+                let (f, value) = if name == "OpSetInt" {
+                    ("loft_vh_set_int", as_int(value)?)
+                } else {
+                    ("loft_vh_set_float", as_float(value)?)
+                };
+                Ok(Some(E::new(
+                    format!("{f}({held}, {size}, {}, {fld}, {value})", as_int(index)?),
+                    K::Void,
+                )))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -400,6 +522,7 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
             Value::Loop(b) => {
+                self.hold_vectors(b, ind)?;
                 self.labels += 1;
                 let l = self.labels;
                 self.loops.push(l);
@@ -409,6 +532,7 @@ impl<'a> FnWriter<'a> {
                 self.line(ind, "}");
                 self.line(ind, &format!("brk_{l}:;"));
                 self.loops.pop();
+                self.headers.pop();
                 Ok(())
             }
             Value::Break(n) => {
@@ -1217,6 +1341,11 @@ impl<'a> FnWriter<'a> {
             "OpFormatStackDatabase" => "OpFormatDatabase",
             n => n,
         };
+        if !self.headers.is_empty()
+            && let Some(e) = self.held_access(name, args, ind)?
+        {
+            return Ok(e);
+        }
         let arith = match name {
             // The `Nullable` forms answer the same values; only the overflow report differs.
             "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
@@ -2229,6 +2358,10 @@ impl<'a> FnWriter<'a> {
             }
             ("OpConvTextFromNull", []) => Ok(E::new("loft_null_text()", K::View)),
             ("OpConvBoolFromNull", []) => Ok(E::new("LOFT_BOOL_NULL", K::Bool)),
+            ("OpCastIntFromText" | "OpCastLongFromText", [t]) => {
+                let t = self.expr(t, ind)?;
+                Ok(E::new(format!("loft_int_of_text({})", as_view(t)?), K::Int))
+            }
             ("OpGetTextSub", [_, _, _]) => {
                 let es = self.args(args, ind)?;
                 let [t, from, till] = <[E; 3]>::try_from(es)
@@ -2412,6 +2545,8 @@ const OP_INT: &[&str] = &[
     "OpMulIntNullable",
     "OpDivIntNullable",
     "OpRemIntNullable",
+    "OpCastIntFromText",
+    "OpCastLongFromText",
 ];
 const OP_BOOL: &[&str] = &[
     "OpEqInt",
