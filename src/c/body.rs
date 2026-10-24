@@ -1785,6 +1785,19 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
+            // A reference equality: two absent references are equal, an absent one equals no
+            // present one, two present ones when they name the same place.
+            ("OpStoreLive", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(format!("loft_store_live({})", as_ref(r)?), K::Cond))
+            }
+            ("OpDistinctStore", [_, _]) => {
+                let (a, b) = self.two(name, args, ind)?;
+                Ok(E::new(
+                    format!("({}.store_nr != {}.store_nr)", as_ref(a)?, as_ref(b)?),
+                    K::Cond,
+                ))
+            }
             _ => self.field_operator(name, args, ind),
         }
     }
@@ -2192,24 +2205,11 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
             }
-            // A reference equality: two absent references are equal, an absent one equals no
-            // present one, two present ones when they name the same place.
             ("OpEqRef" | "OpNeRef", [_, _]) => {
                 let (a, b) = self.two(name, args, ind)?;
                 let neg = if name == "OpNeRef" { "!" } else { "" };
                 Ok(E::new(
                     format!("{neg}loft_ref_eq({}, {})", as_ref(a)?, as_ref(b)?),
-                    K::Cond,
-                ))
-            }
-            ("OpStoreLive", [r]) => {
-                let r = self.expr(r, ind)?;
-                Ok(E::new(format!("loft_store_live({})", as_ref(r)?), K::Cond))
-            }
-            ("OpDistinctStore", [_, _]) => {
-                let (a, b) = self.two(name, args, ind)?;
-                Ok(E::new(
-                    format!("({}.store_nr != {}.store_nr)", as_ref(a)?, as_ref(b)?),
                     K::Cond,
                 ))
             }
