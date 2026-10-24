@@ -999,39 +999,7 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            "OpFormatInt" | "OpFormatLong" => {
-                let [dest, val, radix, width, token, plus, note, dir] = args else {
-                    return Err(format!("{name} with an unexpected operand list"));
-                };
-                let dest = self.text_dest(dest)?;
-                let (
-                    Value::Int(radix),
-                    Value::Int(token),
-                    Value::Boolean(plus),
-                    Value::Boolean(note),
-                    Value::Int(dir),
-                ) = (
-                    radix.unspan(),
-                    token.unspan(),
-                    plus.unspan(),
-                    note.unspan(),
-                    dir.unspan(),
-                )
-                else {
-                    return Err(format!("{name} with a computed format"));
-                };
-                let (val, width) = self.two(name, &[(*val).clone(), (*width).clone()], ind)?;
-                Ok(E::new(
-                    format!(
-                        "loft_format_long(&{dest}, {}, {radix}, {}, {token}, {}, {}, {dir})",
-                        as_int(val)?,
-                        as_int(width)?,
-                        u8::from(*plus),
-                        u8::from(*note)
-                    ),
-                    K::Void,
-                ))
-            }
+            "OpFormatInt" | "OpFormatLong" => self.format_long(name, args, ind),
             "OpFormatText" => {
                 let [dest, val, width, dir, token] = args else {
                     return Err("OpFormatText with an unexpected operand list".into());
@@ -1050,6 +1018,7 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
+            "OpFormatDatabase" => self.format_database(args, ind),
             "OpFreeText" => {
                 let [dest] = args else {
                     return Err("OpFreeText without one operand".into());
@@ -1065,6 +1034,61 @@ impl<'a> FnWriter<'a> {
             }
             _ => self.scalar_operator(name, args, ind),
         }
+    }
+
+    /// An integer into a format string: `ops::format_long`.
+    fn format_long(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        let [dest, val, radix, width, token, plus, note, dir] = args else {
+            return Err(format!("{name} with an unexpected operand list"));
+        };
+        let dest = self.text_dest(dest)?;
+        let (
+            Value::Int(radix),
+            Value::Int(token),
+            Value::Boolean(plus),
+            Value::Boolean(note),
+            Value::Int(dir),
+        ) = (
+            radix.unspan(),
+            token.unspan(),
+            plus.unspan(),
+            note.unspan(),
+            dir.unspan(),
+        )
+        else {
+            return Err(format!("{name} with a computed format"));
+        };
+        let (val, width) = self.two(name, &[(*val).clone(), (*width).clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_format_long(&{dest}, {}, {radix}, {}, {token}, {}, {}, {dir})",
+                as_int(val)?,
+                as_int(width)?,
+                u8::from(*plus),
+                u8::from(*note)
+            ),
+            K::Void,
+        ))
+    }
+
+    /// `{v}` of a record or a vector: the type's render function (`show.rs`).
+    fn format_database(&mut self, args: &[Value], ind: usize) -> Result<E, String> {
+        let [dest, val, tp, fmt] = args else {
+            return Err("OpFormatDatabase with an unexpected operand list".into());
+        };
+        let dest = self.text_dest(dest)?;
+        let tp = u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+        let fmt = Self::literal(fmt, "format")?;
+        self.cx.show_type(tp)?;
+        let val = self.expr(val, ind)?;
+        Ok(E::new(
+            format!(
+                "{}(&{dest}, {}, {fmt}, 0)",
+                super::Cx::show_fn(tp),
+                as_ref(val)?
+            ),
+            K::Void,
+        ))
     }
 
     /// The conversions and the text measures.
@@ -1483,6 +1507,13 @@ impl<'a> FnWriter<'a> {
                 };
                 Ok(E::new(format!("{f}({}, {fld}, {v})", as_ref(r)?), K::Void))
             }
+            ("OpPushBoolean", [v, val]) => {
+                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_vec_push_byte({}, {})", as_ref(v)?, as_bool(val)?),
+                    K::Void,
+                ))
+            }
             ("OpPushFloat" | "OpPushSingle", [v, val]) => {
                 let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
                 let (f, x) = if name == "OpPushFloat" {
@@ -1491,6 +1522,59 @@ impl<'a> FnWriter<'a> {
                     ("loft_vec_push_single", as_single(val)?)
                 };
                 Ok(E::new(format!("{f}({}, {x})", as_ref(v)?), K::Void))
+            }
+            _ => self.narrow_operator(name, args, ind),
+        }
+    }
+
+    /// The narrow integer fields: bytes, shorts and 4-byte integers, each in its encoding.
+    fn narrow_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match (name, args) {
+            ("OpGetByte" | "OpGetByteNullable" | "OpGetShort" | "OpGetShortRaw", [r, fld, min]) => {
+                let fld = Self::literal(fld, "field")?;
+                let min = Self::literal(min, "minimum")?;
+                let f = match name {
+                    "OpGetByte" => "loft_get_byte",
+                    "OpGetByteNullable" => "loft_get_byte_nullable",
+                    "OpGetShort" => "loft_get_short",
+                    _ => "loft_get_short_raw",
+                };
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("{f}({}, {fld}, {})", as_ref(r)?, c_long(min)),
+                    K::Int,
+                ))
+            }
+            (
+                "OpSetByte" | "OpSetByteNullable" | "OpSetShort" | "OpSetShortRaw",
+                [r, fld, min, val],
+            ) => {
+                let fld = Self::literal(fld, "field")?;
+                let min = Self::literal(min, "minimum")?;
+                let f = match name {
+                    "OpSetByte" => "loft_set_byte_v",
+                    "OpSetByteNullable" => "loft_set_byte_nullable",
+                    "OpSetShort" => "loft_set_short",
+                    _ => "loft_set_short_raw",
+                };
+                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "{f}({}, {fld}, {}, {})",
+                        as_ref(r)?,
+                        c_long(min),
+                        as_int(val)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpGetInt4", [r, fld]) => {
+                let fld = Self::literal(fld, "field")?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_get_int4({}, {fld})", as_ref(r)?),
+                    K::Int,
+                ))
             }
             _ => self.vector_operator(name, args, ind),
         }
@@ -1793,6 +1877,11 @@ const OP_INT: &[&str] = &[
     "OpConvIntFromEnum",
     "OpLengthSorted",
     "OpRangeDefault",
+    "OpGetByte",
+    "OpGetByteNullable",
+    "OpGetShort",
+    "OpGetShortRaw",
+    "OpGetInt4",
 ];
 const OP_BOOL: &[&str] = &[
     "OpEqInt",

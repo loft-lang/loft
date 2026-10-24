@@ -17,6 +17,7 @@
 //! reaches loft's runtime is @PLN91's decision.
 
 mod body;
+mod show;
 
 use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
@@ -100,6 +101,8 @@ pub(crate) struct Cx<'a> {
     scratch: std::cell::RefCell<Option<Stores>>,
     /// Every record type's default bytes the unit names, by type number.
     defaults: std::cell::RefCell<std::collections::BTreeMap<u16, Vec<u8>>>,
+    /// Every type the unit renders as text (`loft_show{tp}`), by type number.
+    show_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
 }
 
 impl<'a> Cx<'a> {
@@ -112,6 +115,7 @@ impl<'a> Cx<'a> {
             enum_names: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             scratch: std::cell::RefCell::new(None),
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            show_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -355,6 +359,7 @@ impl<'a> Cx<'a> {
                 fields.join(" ")
             );
         }
+        out.push_str(&self.show_code());
         out
     }
 }
