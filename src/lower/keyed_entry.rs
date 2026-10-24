@@ -291,7 +291,7 @@ pub fn site<'a>(
     let mut key: Vec<Option<&Value>> = vec![None; key_pos.len()];
     // The collection is evaluated once for the entry: a pure path, the place the plain form's
     // claim and finish both name.
-    super::hoist::vector_path(data, coll)?;
+    crate::opt::writes::vector_path(data, coll)?;
     let mut roots: Vec<u16> = Vec::new();
     coll.walk(&mut |m| {
         if let Value::Var(x) = m.unspan() {
