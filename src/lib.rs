@@ -480,6 +480,7 @@ pub mod libscan;
 pub mod lockfile;
 pub mod log_config;
 pub mod logger;
+pub mod lower;
 pub mod manifest;
 pub mod native_adopt;
 pub mod native_artifact;
