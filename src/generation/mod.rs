@@ -42,7 +42,7 @@ mod ranged_call;
 pub use crate::lower::stream_walk;
 mod stream_walk_emit;
 mod text;
-pub mod view_return;
+pub use crate::lower::view_return;
 
 /// One hoisted binding produced by `collect_pre_evals`:
 /// `(name, match_code, bind_code, counter, replace_all)` — `name` is the
