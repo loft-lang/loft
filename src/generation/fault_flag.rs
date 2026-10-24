@@ -15,7 +15,8 @@
 
 use super::{Output, sanitize};
 use crate::data::{Block, Data, Type, Value};
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
 /// The longest constant range the fast copy unrolls.
@@ -57,7 +58,8 @@ pub(super) fn int_form(name: &str, arity: usize) -> Option<&'static str> {
 fn touches_state(template: &str) -> bool {
     let t = template
         .replace("s.raise_recoverable(", "")
-        .replace("crate::runtime_error::", "");
+        .replace("crate::runtime_error::", "")
+        .replace("crate::state::STRING_NULL", "");
     if t.contains("stores") || t.contains("cell") || t.contains("crate::") {
         return true;
     }
@@ -66,16 +68,72 @@ fn touches_state(template: &str) -> bool {
         .any(|(at, _)| at == 0 || !(b[at - 1].is_ascii_alphanumeric() || b[at - 1] == b'_'))
 }
 
-/// The admission walk over one `for` statement.
+/// The operators that READ a store and change nothing, by name: their templates reach the
+/// store the same way a write does (`stores.store(&db)`), so the text cannot tell them apart.
+/// A statement that writes no store reads the same values in its fast copy and its rerun.  The
+/// file readers (`OpGetFile`, `OpGetDir`, `OpSizeFile`) are not here: a file can change between
+/// the two runs.
+const READS: &[&str] = &[
+    "OpGetBoolean",
+    "OpGetByte",
+    "OpGetByteNullable",
+    "OpGetCharacter",
+    "OpGetDbRef",
+    "OpGetEnum",
+    "OpGetField",
+    "OpGetFloat",
+    "OpGetInt",
+    "OpGetRecord",
+    "OpGetRef",
+    "OpGetShort",
+    "OpGetShortFull",
+    "OpGetShortRaw",
+    "OpGetShortSpare",
+    "OpGetSingle",
+    "OpGetText",
+    "OpGetVector",
+    "OpGetVectorNullable",
+    "OpLengthCharacter",
+    "OpLengthHash",
+    "OpLengthIndex",
+    "OpLengthSorted",
+    "OpLengthSpatial",
+    "OpLengthText",
+    "OpLengthTrie",
+    "OpLengthVector",
+    "OpSizeHash",
+    "OpSizeIndex",
+    "OpSizeofRef",
+    "OpSizeScalar",
+    "OpSizeSpatial",
+    "OpSizeStruct",
+    "OpSizeText",
+    "OpSizeTrie",
+    "OpSizeVector",
+];
+
+/// How deep the pure-call clause follows calls before it declines.
+const CALL_DEPTH: u8 = 4;
+
+/// The admission walk over one `for` statement, or over the body of a function it calls.
 struct Walk<'a> {
     data: &'a Data,
     writes: HashSet<u16>,
     fault_forms: usize,
+    /// Walking a CALLEE: its raise would report from inside the fast copy, so a raising
+    /// template declines; its `return` ends only its own frame.
+    callee: bool,
+    /// The calls followed to reach this body.
+    calls: u8,
+    /// Each function already asked: `None` pure, `Some(why)` not.
+    pure: &'a RefCell<HashMap<u32, Option<String>>>,
 }
 
 impl Walk<'_> {
     /// `depth` counts the loops of the statement around `v`, so a `break` / `continue` whose
-    /// level reaches past them leaves the statement and declines.
+    /// level reaches past them leaves the statement and declines.  The fallback declines: a
+    /// node this does not name is one whose effect it has not proven local, and a fast copy's
+    /// effect must be undone by restoring locals alone.
     fn node(&mut self, v: &Value, depth: u16) -> Result<(), String> {
         match v.unspan() {
             Value::Null
@@ -86,6 +144,7 @@ impl Walk<'_> {
             | Value::Single(_)
             | Value::Boolean(_)
             | Value::Enum(..)
+            | Value::Text(_)
             | Value::Var(_) => Ok(()),
             Value::Set(x, e) => {
                 self.writes.insert(*x);
@@ -103,7 +162,7 @@ impl Walk<'_> {
                 }
             }
             Value::If(t, a, b) => {
-                if is_discharge(self.data, t, a) {
+                if !self.callee && is_discharge(self.data, t, a) {
                     self.fault_forms += 1;
                 }
                 self.node(t, depth)?;
@@ -111,24 +170,82 @@ impl Walk<'_> {
                 self.node(b, depth)
             }
             Value::Call(d, args) => {
-                let def = self.data.def(*d);
-                let name = def.name();
-                if def.rust.is_empty() {
-                    return Err(format!("`{name}` is a call, not an operator template"));
-                }
-                if touches_state(&def.rust) {
-                    return Err(format!("`{name}` touches state outside its operands"));
-                }
-                if def.rust.contains("s.raise_recoverable(") || int_form(name, args.len()).is_some()
-                {
-                    self.fault_forms += 1;
-                }
+                self.call(*d, args.len())?;
                 self.all(args, depth)
             }
+            Value::Return(e) if self.callee => self.node(e, depth),
             Value::Return(_) => Err("a `return` leaves the statement".to_string()),
-            Value::Text(_) => Err("a text is not a scalar".to_string()),
             _ => Err("a node whose effect is not local to the statement".to_string()),
         }
+    }
+
+    /// A call: a store READ by name, an operator whose template touches nothing but its
+    /// operands, or a loft function whose own body passes this walk.
+    fn call(&mut self, d: u32, arity: usize) -> Result<(), String> {
+        let def = self.data.def(d);
+        let name = def.name();
+        if READS.contains(&name) {
+            return Ok(());
+        }
+        if !def.rust.is_empty() {
+            if touches_state(&def.rust) {
+                return Err(format!("`{name}` touches state outside its operands"));
+            }
+            let raises = def.rust.contains("s.raise_recoverable(");
+            if raises && self.callee {
+                return Err(format!("`{name}` raises inside a called function"));
+            }
+            if !self.callee && (raises || int_form(name, arity).is_some()) {
+                self.fault_forms += 1;
+            }
+            return Ok(());
+        }
+        if !def.is_loft_defined() || !def.native.is_empty() {
+            return Err(format!("`{name}` is not a loft function"));
+        }
+        if let Some(known) = self.pure.borrow().get(&d) {
+            return match known {
+                None => Ok(()),
+                Some(why) => Err(why.clone()),
+            };
+        }
+        if self.calls >= CALL_DEPTH {
+            return Err(format!("`{name}` is more than {CALL_DEPTH} calls deep"));
+        }
+        // Provisionally impure, so a recursive call declines instead of looping.
+        self.pure
+            .borrow_mut()
+            .insert(d, Some(format!("`{name}` is recursive")));
+        let verdict = self.callee_body(d);
+        let entry = verdict.clone().err();
+        self.pure.borrow_mut().insert(d, entry);
+        verdict
+    }
+
+    /// A called function is pure when it takes no hidden or by-reference parameter (each
+    /// writes the caller's state) and its body passes the walk as a callee.
+    fn callee_body(&self, d: u32) -> Result<(), String> {
+        let def = self.data.def(d);
+        let name = def.name();
+        for a in def.attributes() {
+            if a.hidden || matches!(a.typedef, Type::RefVar(_)) {
+                return Err(format!(
+                    "`{name}` writes through its parameter `{}`",
+                    a.name
+                ));
+            }
+        }
+        let mut inner = Walk {
+            data: self.data,
+            writes: HashSet::new(),
+            fault_forms: 0,
+            callee: true,
+            calls: self.calls + 1,
+            pure: self.pure,
+        };
+        inner
+            .node(def.code(), 0)
+            .map_err(|why| format!("`{name}` is not pure: {why}"))
     }
 
     fn all(&mut self, ops: &[Value], depth: u16) -> Result<(), String> {
@@ -247,6 +364,9 @@ impl Output<'_> {
             data,
             writes: HashSet::new(),
             fault_forms: 0,
+            callee: false,
+            calls: 0,
+            pure: &self.fault_flag_pure,
         };
         if let Err(why) = walk.all(&bl.operators, 0) {
             return decline(&why);
@@ -259,7 +379,11 @@ impl Output<'_> {
         super::non_sentinel::collect_escapes(data, data.def(self.def_nr).code(), &mut escaped);
         let mut saved: Vec<u16> = Vec::new();
         for &v in &walk.writes {
-            if !is_scalar(variables.tp(v)) {
+            // A local declared inside the statement lives and dies in each copy, so it needs no
+            // restore whatever it holds: a value made by an operator the walk admitted (a view
+            // into a store, a text) owns nothing.  One declared before is restored by copy, so
+            // it must be a scalar.
+            if !is_scalar(variables.tp(v)) && self.declared.contains(&v) {
                 return decline(&format!("it writes `{}`, not a scalar", variables.name(v)));
             }
             if escaped.contains(&v) {
@@ -373,10 +497,20 @@ impl Output<'_> {
         for k in 0..u.rounds {
             let declared_before = self.declared.clone();
             self.indent(w)?;
+            // The counter as well as the loop variable: the body may read `#index`, which is
+            // the counter's value in this round (single-counter form: the two are equal).
             if self.declared.contains(&u.loop_var) {
-                writeln!(w, "{{ {lv} = {}_i64;", u.first + k)?;
+                writeln!(
+                    w,
+                    "{{ {index} = {k1}_i64; {lv} = {k1}_i64;",
+                    k1 = u.first + k
+                )?;
             } else {
-                writeln!(w, "{{ let mut {lv}: i64 = {}_i64;", u.first + k)?;
+                writeln!(
+                    w,
+                    "{{ {index} = {k1}_i64; let mut {lv}: i64 = {k1}_i64;",
+                    k1 = u.first + k
+                )?;
             }
             for op in u.body {
                 self.indent(w)?;
