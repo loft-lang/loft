@@ -7,8 +7,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Open — future epic, design discussion captured, no implementation.** Multi-phase,
-design-before-build, gated on cheap de-risking probes before any large work. **Not
+**Open — future epic; strand 5 under way, strand 1 split and re-gated (owner,
+2026-10-24).** Multi-phase, design-before-build, gated on cheap de-risking probes before
+any large work. **The owner's near-term aim is the COMPILER in loft, for its compile
+time:** a `--native` program pays rustc about 16 s on a development box where the same
+loop through C compiles in well under a second, and the gate, the test runner and every
+library cdylib pay that once per program. So strand 1 is split below: **1a**, the front
+end in loft, judged by an IR diff and needing no probe; **1b**, the runtime in loft, which
+P-perf still gates. **Not
 unrealistic:** the foundations already exist — see [Why this is reachable
 today](#why-this-is-reachable-today). The small-board reach (strands 6–7) turns on
 reshaping the **store *profile*, not the language** — which reframes the standing
@@ -30,7 +36,7 @@ integer width — so loft targets small single-board computers.
 
 - **Effort:** VH (an epic; each strand is its own M–H plan once split out).
 - **Design:** ~ (strands + ordering + falsification probes defined; per-strand detail pending).
-- **Last touched:** 2026-06-30.
+- **Last touched:** 2026-10-24.
 
 ## Composition matrix — Stage A
 
@@ -49,16 +55,33 @@ de-risking probes below are the Stage-A spec for the spine.
 - **Self-host-friendly by intent:** the `IrNode` handle was retained "for self-hosting value" (DESIGN_DECISIONS.md:931).
 - **Bundle pattern proven downstream:** the crawler's bundle system; the library/registry system is the same pattern for the loft-code layer.
 - **Embedded idiom already writable:** fixed-capacity collections (pre-sized array + count + index-write, the loft#320 pattern) are proven in crawler loft today.
+- **The C backend exists (P-cemit is past):** `src/c/` on the @PLN200 B5 branch emits
+  ANSI C beside the Rust writer, checked by `scripts/c_sweep.py` on three macro modes with
+  ASan and UBSan; 1648 of 2817 corpus programs match on all three (2026-10-24), the
+  refusals concentrated in file and system I/O, generators, `&` locals, `par`, native
+  library calls, spatial and trie.
+- **The IR is already written in loft:** `tools/ir_schema/ir.loft` transcribes the complete
+  IR as loft `struct`/`enum` declarations (hand-mirrored from `src/data.rs`), and the IR
+  codec round-trips the stdlib, every corpus file and the language suite
+  (`cargo test --release --test ir_schema_roundtrip`) — so a front end written in loft has
+  a defined thing to produce and an exact oracle to be judged by.
+- **The front end has been written in loft before, at small scale:** `tools/fmt` is a
+  surface lexer and parser in loft (1.6k lines), the indexer and the viewer are 2k lines
+  each, and @PLN179 ports the repo's scripts with a findings register of what the language
+  lacked each time.
+- **A second emitter now has a defined input:** @PLN200 separates `opt` (what every backend
+  asks) from the writers, and its B3 makes `lower` produce data with no Rust text in it.
 
 ## Sub-arcs
 
 | Item | Status | Notes |
 |---|---|---|
-| **1 — Self-host loft in loft** | Open | The spine. Compiler + runtime in loft, compiled by the stage-0 native backend. |
+| **1a — The compiler in loft** | Open — **the trunk, first** | Lexer, parser, scopes and types in loft, emitting the codec IR (`tools/ir_schema/ir.loft` is the type vocabulary), compiled by the stage-0 backend. Gate: a byte-identical IR diff against the Rust parser over the corpus and the language suite, the same instrument as `scripts/introspect_diff.sh`; the measurement is HOW MANY programs agree. The existing backends stay as they are, so no runtime question is opened. |
+| **1b — The runtime in loft** | Open — after 1a, gated by P-perf | The interpreter loop, the stores and the opcode bodies in loft. Pulls strands 2–4 with it; the only part of strand 1 the P-perf probe speaks to. |
 | **2 — Bundle/mod system for the core** | Open | Convert central switches (`fill.rs` opcode match, parser operator/precedence table, native registry) into additive scanner-wired registration seams. No `src/` edits to extend. |
 | **3 — Migrate types/structures into bundles** | Open | Base language = the default bundle set; no privileged core path; enables subsettable / "limited" loft builds. |
 | **4 — Opcodes-as-bundles** | Open | A *consequence* of (1): once the VM loop is loft, an opcode = name + native body + loft body, all bundle data. `regen_fill_rs` is the seam. |
-| **5 — ANSI-C backend beside rustc** | Open | Minimal portable bootstrap floor; auditable output (no Rust supply chain in the artifact); reach. Most powerful *after* (1) — runtime becomes emittable, no `#rust`/`#c` double-authoring. |
+| **5 — ANSI-C backend beside rustc** | **Under way** — @PLN200 B5 | Minimal portable bootstrap floor; auditable output (no Rust supply chain in the artifact); reach — and the fast compile 1a wants for itself. Measured 2026-10-24: on a hoisted loop the emitted C and the emitted Rust do the same work per element, and the remaining gap between them is the compiler (gcc absorbs loft's negative-index fold, LLVM pays 2× for it), cured once in the shared decisions, never per backend. Still owed: the stdlib's 350 `#rust` bodies have no `#c` twin, and wasm/html/android are Rust-only — the double-authoring 1b removes. |
 | **6 — Configurable default int width** | Open | Build-time width knob (incl. `DbRef` field widths). Co-design with @PLN88 (i64 unification) — see open questions. |
 | **7 — Bounded/freestanding store profile** | Open | **The real SBC door — *and* a mainline native-perf refactor.** Fixed static arena (no grow), freestanding/`no_std` runtime, and the narrowed-`DbRef` static-store binding below (narrower refs + static store resolution speed up generated code on *every* target — justified independent of C54.F). C backend + widths are its *enablers*, not the door. |
 
@@ -119,9 +142,15 @@ on the flagship native target even if C54.F never re-opens and no MCU is ever a 
 ## Phase ordering
 
 1. **De-risking probes first (cheapest falsification before commitment):**
-   - **P-perf (existential gate for self-host):** opcode interpreter inner loop in loft,
-     compiled native, vs hand-Rust. Viable if within ~1.5×; ~3× kills the epic. Run first.
-   - **P-cemit:** emit one loft fn + minimal store runtime as ANSI-C, `cc` it, diff vs the rustc backend (@PLN89).
+   - **P-front (the gate for 1a, run first):** a lexer and parser in loft that emit the
+     codec IR for the programs they accept, diffed against the Rust parser over the
+     corpus. Viable when the agreeing set grows with each construct added and no program
+     needs a loft feature the language lacks; what it lacks is filed on @PLN179's register
+     and fixed in the language (the dogfood rule), never worked around in the compiler.
+   - **P-perf (the gate for 1b only):** opcode interpreter inner loop in loft, compiled
+     native, vs hand-Rust. Viable if within ~1.5×; ~3× kills 1b, not 1a.
+   - **P-cemit — DONE** as @PLN200 B5: the C backend, `scripts/c_sweep.py` the diff
+     (@PLN89's role).
    - **P-footprint (the SBC gate / C54.F re-open evidence):** compile the actual `Store`
      `no_std` with a static backing buffer + no-grow, run a trivial compiled program,
      prove **zero `malloc`/grow** and measure flash/RAM on a 32-bit target. The number
@@ -131,8 +160,13 @@ on the flagship native target even if C54.F never re-opens and no MCU is ever a 
      runtime + binary size + compile time vs the 12-byte baseline. Confirms the
      common-case speedup independent of the SBC footprint number — and justifies strand 7
      on its own.
-2. **Strand 1 (self-host)** is the trunk; **2/3/4** ride it (4 falls out for free).
-3. **Strand 7 (store profile)** is the SBC lead; **5 (ANSI-C)** and **6 (widths)** enable it.
+2. **Strand 1a (the compiler in loft)** is the trunk, in the order each step can be
+   diffed: lexer and parser → scopes and types → the IR passes of `opt` → a writer.
+   Each stage has a byte-identical gate before it has a behavioural one; stage 2 of the
+   bootstrap (below) is reached when the loft-written compiler emits C for itself.
+3. **Strand 1b (the runtime in loft)** follows 1a and P-perf; **2/3/4** ride it (4 falls
+   out for free).
+4. **Strand 7 (store profile)** is the SBC lead; **5 (ANSI-C)** and **6 (widths)** enable it.
 
 ## Bootstrap staging
 
@@ -145,7 +179,8 @@ host with a C compiler.** The Rust implementation degrades to the bootstrap comp
 - **Irreducible bootstrap floor remains** — something runs stage-0 (native backend minimizes it; never zero).
 - **Special types keep a kernel impl** — `text`/`vector`/`integer` move their *declaration* to bundles; impls touch opcodes/IR until self-host pulls them up.
 - **4th-backend parity is ongoing cost** — interp / rustc-native / wasm / ANSI-C must match (Goal D; @PLN89 polices it).
-- **Without self-host, strand 5 is a slog** — hand-port `loft-ffi` to C *and* author parallel `#c` stdlib bodies. Self-host removes both.
+- **Without 1b, strand 5 keeps two stdlibs** — the 350 `#rust` bodies need `#c` twins until the runtime is emitted; 1a alone does not remove that.
+- **A compiler is the heaviest consumer of what the bars score lowest** — the OCaml bar reads closures 2/6, nullability 0/2, pattern depth 6/8, and @PLN179's register lists what tooling in loft hit (a character loop to tokenise, no set of scalars, no membership test, no `exit(code)`). 1a will surface these faster than any consumer; each is a language fix, not a compiler workaround.
 - **@C89 vs @C99 is a real fork** — @C99 (`stdint.h`, `long long`) maps i64/UTF-8 cleanly; true @C89 forces width typedefs + config. Decide before strand 5.
 - **ANSI-C is not a perf play** — the case is reach + trust + bootstrap.
 - **`DbRef` is used everywhere** (keys, store, `deps`/lifetime, fn-ref slots, vector/text addressing) — the narrowed profile must keep the `deps` system working at 8 bytes; it is a parameterization of an existing abstraction, but a broad one.
@@ -173,9 +208,16 @@ host with a C compiler.** The Rust implementation degrades to the bootstrap comp
 7. **C54.F re-open (model vs profile).** Frame the re-open of "store model is the wrong
    shape for bare-metal" as *the hosted/growable profile is unfit, the model is not* —
    with P-footprint as the new evidence the design register requires.
+8. **What 1a emits (owner).** The codec IR as the Rust parser produces it today, so the
+   diff is exact — or the `lower` data of @PLN200 B3 once that exists, which is smaller
+   and backend-neutral but moves the oracle. Start on the codec IR; the diff is the whole
+   case for the stage.
 
 ## Cross-arc dependencies
 
+- **@PLN200** (the interpreter and the code generators as defined parts) — strand 5's home (B5) and the seam 1a writes into (B3's `lower`); B6 is the minimal binary.
+- **@PLN179** (scripts in loft) — the findings register 1a files its language gaps on; its measured weights of the collection kinds are strand 3's input.
+- **@PLN11** (IR as stores) — `tools/ir_schema/ir.loft`, 1a's type vocabulary.
 - **@PLN35** (PEG match patterns) — self-host *enabler* (the compiler's front end).
 - **@PLN52** (stdlib fast-start cache) — perf prerequisite for a bundle-ized stdlib; **MET** — delivered via @PLN11 arc D/D2b (opt-in `LOFT_STDLIB_CACHE`); @PLN52 closed 2026-07-09.
 - **@PLN86** (sandbox-subset-flag) — enabled by subsettable type bundles (strand 3).
