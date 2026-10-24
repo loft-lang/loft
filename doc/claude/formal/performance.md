@@ -79,7 +79,10 @@ is filed once per CLASS of problem, the shared cause the routines in it pay for,
 once per routine.  The issue names the routines its fix must improve, and those routines are
 its acceptance check.  A fix is measured on every one of them (`stats.py --routine …`), and one
 that moves only the routine it was written against has treated a symptom, not the class.  The
-issue closes when the class is under the line.
+issue closes when the class is under the line.  The line is a ratchet DOWN: 3.5× is where it
+starts, and it ends at 3×, the per-routine bar above.  Each step down adds the routines that
+cross it, to the open issue of their class or to a new one; an issue already filed stays the
+home of its class.
 The checked build's own excess over the ship time is what the guarantees cost.  It is worked
 too, by making those checks cheaper (range proofs, fault-flag rewrites), and is not a bug of
 its own.
