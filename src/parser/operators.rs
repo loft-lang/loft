@@ -5861,7 +5861,7 @@ impl Parser {
             // Borrowed, not cloned: this runs for every `==` the parser sees.
             fn unlink(tp: &Type) -> &Type {
                 let mut t = tp;
-                while let Type::RefVar(inner) = t {
+                while let Type::RefVar(inner) = t.base() {
                     t = inner;
                 }
                 t
