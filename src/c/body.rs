@@ -1951,6 +1951,22 @@ impl<'a> FnWriter<'a> {
             }
             // A reference equality: two absent references are equal, an absent one equals no
             // present one, two present ones when they name the same place.
+            ("OpEqContent" | "OpNeContent", [_, _, tp]) => {
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                self.cx.eq_type(tp)?;
+                let (a, b) = self.two(name, &args[..2], ind)?;
+                let neg = if name == "OpNeContent" { "!" } else { "" };
+                Ok(E::new(
+                    format!(
+                        "{neg}loft_eq_content({}, {}, {})",
+                        super::Cx::eq_fn(tp),
+                        as_ref(a)?,
+                        as_ref(b)?
+                    ),
+                    K::Cond,
+                ))
+            }
             ("OpStoreLive", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("loft_store_live({})", as_ref(r)?), K::Cond))
@@ -2610,6 +2626,8 @@ const OP_BOOL: &[&str] = &[
     "OpConvBoolFromNull",
     "OpRemoveVector",
     "OpStoreLive",
+    "OpEqContent",
+    "OpNeContent",
     "OpEqRef",
     "OpNeRef",
 ];

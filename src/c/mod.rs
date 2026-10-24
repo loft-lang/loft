@@ -17,6 +17,7 @@
 //! reaches loft's runtime is @PLN91's decision.
 
 mod body;
+mod eq;
 mod fnval;
 mod show;
 
@@ -116,6 +117,8 @@ pub(crate) struct Cx<'a> {
     fn_sigs: std::cell::RefCell<Vec<(Vec<CType>, CType)>>,
     /// Every function the unit uses as a value, by definition number.
     fn_values: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+    /// Every type the unit compares by content (`loft_eq{tp}`), by type number.
+    eq_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
 }
 
 impl<'a> Cx<'a> {
@@ -132,6 +135,7 @@ impl<'a> Cx<'a> {
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_sigs: std::cell::RefCell::new(Vec::new()),
             fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -385,6 +389,7 @@ impl<'a> Cx<'a> {
             );
         }
         out.push_str(&self.show_code());
+        out.push_str(&self.eq_code());
         out.push_str(&self.const_code());
         out
     }

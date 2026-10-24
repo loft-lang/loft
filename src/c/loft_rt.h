@@ -1771,3 +1771,119 @@ static void loft_start(int argc, char **argv) {
     loft_start_us = loft_now_us();
     loft_init();
 }
+
+/* ── Content equality (Stores::eq_content, @FR-E-Eq) ──────────────────────────────────── */
+
+typedef int (*loft_eq_fn)(loft_ref a, loft_ref b);
+
+static int loft_same_place(loft_ref a, loft_ref b) {
+    return a.store_nr == b.store_nr && a.rec == b.rec && a.pos == b.pos;
+}
+
+/* The start every comparison shares: the same place is equal, two absences are equal, an
+ * absence differs from a present value.  -1 when both are present. */
+static int loft_eq_start(loft_ref a, loft_ref b) {
+    if (loft_same_place(a, b)) return 1;
+    if (a.rec == 0 || b.rec == 0) return a.rec == 0 && b.rec == 0;
+    return -1;
+}
+
+static int loft_eq_long(loft_ref a, loft_ref b) {
+    int s = loft_eq_start(a, b);
+    return s >= 0 ? s : loft_get_int(a, 0) == loft_get_int(b, 0);
+}
+
+static int loft_eq_float(loft_ref a, loft_ref b) {
+    int s = loft_eq_start(a, b);
+    if (s >= 0) return s;
+    double x = loft_get_float(a, 0), y = loft_get_float(b, 0);
+    if (isnan(x) || isnan(y)) return isnan(x) && isnan(y);
+    return x == y;
+}
+
+static int loft_eq_single(loft_ref a, loft_ref b) {
+    int s = loft_eq_start(a, b);
+    if (s >= 0) return s;
+    float x = loft_get_single(a, 0), y = loft_get_single(b, 0);
+    if (isnan(x) || isnan(y)) return isnan(x) && isnan(y);
+    return x == y;
+}
+
+static int loft_eq_byte(loft_ref a, loft_ref b) {
+    int s = loft_eq_start(a, b);
+    return s >= 0 ? s : *loft_at(loft_store_of(a), a.rec, a.pos) == *loft_at(loft_store_of(b), b.rec, b.pos);
+}
+
+static int loft_eq_u16(loft_ref a, loft_ref b) {
+    int s = loft_eq_start(a, b);
+    return s >= 0 ? s : memcmp(loft_at(loft_store_of(a), a.rec, a.pos), loft_at(loft_store_of(b), b.rec, b.pos), 2) == 0;
+}
+
+static int loft_eq_u32(loft_ref a, loft_ref b) {
+    int s = loft_eq_start(a, b);
+    return s >= 0 ? s : loft_u32(loft_store_of(a), a.rec, a.pos) == loft_u32(loft_store_of(b), b.rec, b.pos);
+}
+
+static int loft_eq_dbref(loft_ref a, loft_ref b) {
+    int s = loft_eq_start(a, b);
+    return s >= 0 ? s : memcmp(loft_at(loft_store_of(a), a.rec, a.pos), loft_at(loft_store_of(b), b.rec, b.pos), 12) == 0;
+}
+
+static int loft_eq_text(loft_ref a, loft_ref b) {
+    int s = loft_eq_start(a, b);
+    if (s >= 0) return s;
+    loft_str x = loft_get_text(a, 0), y = loft_get_text(b, 0);
+    if (loft_str_is_null(x) || loft_str_is_null(y)) return loft_str_is_null(x) && loft_str_is_null(y);
+    return loft_str_eq(x, y);
+}
+
+/* A vector: two absent ones are equal, an absent one differs; then element by element. */
+static int loft_eq_vector(loft_ref a, loft_ref b, uint32_t size, loft_eq_fn f) {
+    int s = loft_eq_start(a, b);
+    if (s >= 0) return s;
+    int na = loft_vec_absent(a), nb = loft_vec_absent(b);
+    if (na || nb) return na && nb;
+    int64_t n = loft_vec_len(a);
+    if (n != loft_vec_len(b)) return 0;
+    for (int64_t i = 0; i < n; i++) {
+        if (!f(loft_vec_get(a, size, i), loft_vec_get(b, size, i))) return 0;
+    }
+    return 1;
+}
+
+static int loft_eq_child(loft_ref a, loft_ref b, loft_eq_fn f) {
+    int s = loft_eq_start(a, b);
+    if (s >= 0) return s;
+    loft_ref ca = { a.store_nr, loft_u32(loft_store_of(a), a.rec, a.pos), 8 };
+    loft_ref cb = { b.store_nr, loft_u32(loft_store_of(b), b.rec, b.pos), 8 };
+    return f(ca, cb);
+}
+
+/* The record pairs under comparison: a pair met again is equal, which is where a cycle ends. */
+static loft_ref *loft_eq_seen = 0;
+static size_t loft_eq_seen_n = 0, loft_eq_seen_cap = 0;
+
+static int loft_eq_reference(loft_ref fa, loft_ref fb, uint16_t target, loft_eq_fn f) {
+    loft_ref ra = loft_get_dbref(fa, 0), rb = loft_get_dbref(fb, 0);
+    if (ra.rec == 0 || rb.rec == 0) return ra.rec == 0 && rb.rec == 0;
+    for (size_t i = 0; i < loft_eq_seen_n; i += 3) {
+        if (loft_same_place(loft_eq_seen[i], ra) && loft_same_place(loft_eq_seen[i + 1], rb)
+            && loft_eq_seen[i + 2].rec == target) return 1;
+    }
+    if (loft_eq_seen_n + 3 > loft_eq_seen_cap) {
+        loft_eq_seen_cap = loft_eq_seen_cap ? loft_eq_seen_cap * 2 : 48;
+        loft_eq_seen = (loft_ref *) realloc(loft_eq_seen, loft_eq_seen_cap * sizeof *loft_eq_seen);
+        if (!loft_eq_seen) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_ref t = { 0, target, 0 };
+    loft_eq_seen[loft_eq_seen_n++] = ra;
+    loft_eq_seen[loft_eq_seen_n++] = rb;
+    loft_eq_seen[loft_eq_seen_n++] = t;
+    return f(ra, rb);
+}
+
+/* OpEqContent: one comparison, with a list of pairs of its own. */
+static int loft_eq_content(loft_eq_fn f, loft_ref a, loft_ref b) {
+    loft_eq_seen_n = 0;
+    return f(a, b);
+}
