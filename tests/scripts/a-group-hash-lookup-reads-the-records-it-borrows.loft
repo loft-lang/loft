@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A GROUP'S HASH ANSWERS A LOOKUP FROM THE RECORDS IT BORROWS (`@FR-Col-Group`).  The hash
+// member of a `vector` + `hash` group holds no entries of its own: each slot names a record
+// the vector holds, and an integer-keyed lookup on `--native` walks those slots directly
+// (`hash::borrowed_find_int`).  The cells cover a hit, a miss, a removal that re-files the run
+// behind it, and a table that grew through several sizes with keys colliding in their home
+// buckets.  Every value is hand-computed.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct G { id: integer, val: integer }
+struct Grouped { all: vector<G>, by_id: hash<G[id]> }
+
+// 400 keys k = (i * 7919) % 1000003, val = i: every key found answers its own i, so the sum of
+// the vals found for i in 0..400 is 0 + … + 399 = 79800, and 400 found.
+fn c1() -> text {
+  db = Grouped { all: [], by_id: [] };
+  for i in 0..400 { db.all += [G { id: (i * 7919) % 1000003, val: i }]; }
+  n = 0; s = 0;
+  for i in 0..400 {
+    e = db.by_id[(i * 7919) % 1000003];
+    if e != null { n += 1; s += e.val; }
+  }
+  "{n} {s}"
+}
+
+// Keys that are not there — between the stored ones and far past them — find nothing.
+fn c2() -> integer {
+  db = Grouped { all: [], by_id: [] };
+  for i in 0..100 { db.all += [G { id: i * 10, val: i }]; }
+  missed = 0;
+  for k in [5, 15, 999, -1, 1000003, 95] { if db.by_id[k] == null { missed += 1; } }
+  missed
+}
+
+// Keys 0, 64, 128, …: one home bucket's worth of collisions at small table sizes.  Removing
+// every third through the hash re-files the run behind it; the rest are still found, the
+// removed are not.  Kept: 30 - 10 = 20 keys, vals i for i not divisible by 3 in 0..30, whose
+// sum is 435 - (0 + 3 + … + 27) = 435 - 135 = 300.
+fn c3() -> text {
+  db = Grouped { all: [], by_id: [] };
+  for i in 0..30 { db.all += [G { id: i * 64, val: i }]; }
+  for i in 0..30 { if i % 3 == 0 { db.by_id[i * 64] = null; } }
+  n = 0; s = 0; gone = 0;
+  for i in 0..30 {
+    e = db.by_id[i * 64];
+    if e != null { n += 1; s += e.val; } else { gone += 1; }
+  }
+  "{n} {s} {gone}"
+}
+
+fn main() {
+  assert(c1() == "400 79800", "c1 {c1()}");
+  assert(c2() == 6, "c2 {c2()}");
+  assert(c3() == "20 300 10", "c3 {c3()}");
+  println("ok");
+}
