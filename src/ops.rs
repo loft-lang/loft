@@ -38,8 +38,10 @@ mod number_text;
 // `stores` lands inside another `stores.` call's argument list (E0502).
 static OVERFLOW_SURFACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `--dev-soft-halt` / `LOFT_DEV_SOFT_HALT=1`, read once per process.
-fn dev_soft_halt() -> bool {
+/// `--dev-soft-halt` / `LOFT_DEV_SOFT_HALT=1`, read once per process.  Off, an overflow reports
+/// nothing and the reporting operators answer what their silent `…_nullable` twins answer —
+/// the condition `n_parallel_rows_native`'s fast path runs on.
+pub(crate) fn dev_soft_halt() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| std::env::var("LOFT_DEV_SOFT_HALT").is_ok_and(|v| v == "1" || v == "true"))
 }
