@@ -506,16 +506,6 @@ static loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
     return e;
 }
 
-/* OpCopyRecord, for a record that owns nothing past its own bytes: copy them, and free the
- * source's store when the copy says so and it is another store (state/io.rs do_copy_record).
- * A copy onto itself and a copy from or into a null reference do nothing. */
-static void loft_copy_record(loft_ref src, loft_ref dst, uint32_t bytes, int free_source) {
-    if (src.store_nr == dst.store_nr && src.rec == dst.rec && src.pos == dst.pos) return;
-    if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0) return;
-    memmove(loft_at(loft_store_of(dst), dst.rec, dst.pos), loft_at(loft_store_of(src), src.rec, src.pos),
-            bytes);
-    if (free_source && src.store_nr != dst.store_nr) loft_free_ref(src);
-}
 
 /* ops::op_negate_long: null stays null. */
 static int64_t loft_neg(int64_t a) {
@@ -546,21 +536,165 @@ static void loft_vec_clear(loft_ref v) {
     if (r != 0) loft_set_u32(s, r, 4, 0);
 }
 
-/* A whole-value bind `dst = src` of a record that owns nothing past its bytes (@C86): an
- * independent copy of a present source, and the null of an absent one, releasing what `dst`
- * held.  The bytes go through a buffer: refilling `dst`'s store in place could clear the
- * source when both live in it. */
-static void loft_bind_copy(loft_ref *dst, loft_ref src, uint32_t bytes) {
+
+/* ── Bytes, enums and text in records ──────────────────────────────────────────────────── */
+
+static void loft_set_byte(loft_ref r, uint32_t fld, uint8_t v) {
+    if (r.rec == 0) return;
+    *loft_at(loft_store_of(r), r.rec, r.pos + fld) = v;
+}
+
+/* OpGetEnum: 0 for the null reference, the stored byte otherwise. */
+static uint8_t loft_get_enum(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return 0;
+    return *loft_at(loft_store_of(r), r.rec, r.pos + fld);
+}
+
+static void loft_vec_push_byte(loft_ref v, uint8_t x) {
+    loft_ref e = loft_vec_append(v, 1);
+    if (e.rec == 0) return;
+    *loft_at(loft_store_of(e), e.rec, e.pos) = x;
+    loft_vec_finish(v);
+}
+
+/* OpGetText (Store::get_str): the field holds a string record — its length at byte 4, its
+ * bytes from byte 8 — and 0 for the null text. */
+static loft_str loft_get_text(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return loft_null_text();
+    loft_store_t *s = loft_store_of(r);
+    uint32_t srec = loft_u32(s, r.rec, r.pos + fld);
+    if (srec == 0 || srec > 0x7FFFFFFFu) return loft_null_text();
+    return loft_lit((const char *) loft_at(s, srec, 8), loft_u32(s, srec, 4));
+}
+
+/* OpSetText (Store::set_str): a new string record in the record's store.  A value that lives
+ * in that store is copied out first, because the claim may move the buffer. */
+static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
+    if (r.rec == 0) return;
+    loft_store_t *s = loft_store_of(r);
+    loft_text copy = { 0, 0, 0 };
+    if (v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->words * 8) {
+        copy = loft_text_own(v);
+        v = loft_view(&copy);
+    }
+    uint32_t srec = loft_claim(s, (uint32_t) ((v.len + 15) / 8));
+    loft_set_u32(s, srec, 4, (uint32_t) v.len);
+    if (v.len) memcpy(loft_at(s, srec, 8), v.p, v.len);
+    loft_set_u32(s, r.rec, r.pos + fld, srec);
+    loft_text_free(&copy);
+}
+
+/* ── Deep copies (Stores::copy_claims) ─────────────────────────────────────────────────────
+ * A record's bytes are copied first; then every part it owns is copied into the destination's
+ * store, walking a table of the program's types the emitter writes (`loft_types`). */
+#define LOFT_T_SCALAR 0
+#define LOFT_T_TEXT 1
+#define LOFT_T_STRUCT 2
+#define LOFT_T_VECTOR 3
+#define LOFT_T_ENUM 4
+#define LOFT_T_CHILD 5
+
+typedef struct { uint16_t pos; uint16_t type; } loft_fld;
+typedef struct {
+    uint8_t kind;
+    uint16_t size;             /* the type's bytes */
+    uint16_t elem;             /* a vector's element type, a child record's content type */
+    uint16_t n;                /* fields, or variants */
+    const loft_fld *fields;    /* a struct's fields */
+    const uint16_t *variants;  /* a struct-enum's variant types, 0xFFFF for a unit variant */
+} loft_tdesc;
+
+/* Copy `n` bytes between two places that may share a buffer a claim could move. */
+static void loft_copy_bytes(loft_ref to, uint32_t to_off, loft_ref from, uint32_t from_off, size_t n) {
+    if (n == 0) return;
+    memmove(loft_at(loft_store_of(to), to.rec, to.pos + to_off),
+            loft_at(loft_store_of(from), from.rec, from.pos + from_off), n);
+}
+
+static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to) {
+    const loft_tdesc *d = &T[tp];
+    loft_store_t *fs = loft_store_of(from);
+    switch (d->kind) {
+    case LOFT_T_TEXT: {
+        uint32_t cur = loft_u32(fs, from.rec, from.pos);
+        if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
+        loft_text tmp = loft_text_own(loft_lit((const char *) loft_at(fs, cur, 8), loft_u32(fs, cur, 4)));
+        loft_store_t *ts = loft_store_of(to);
+        uint32_t srec = loft_claim(ts, (uint32_t) ((tmp.len + 15) / 8));
+        loft_set_u32(ts, srec, 4, (uint32_t) tmp.len);
+        if (tmp.len) memcpy(loft_at(ts, srec, 8), tmp.p, tmp.len);
+        loft_set_u32(ts, to.rec, to.pos, srec);
+        loft_text_free(&tmp);
+        return;
+    }
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++) {
+            loft_copy_claims(T, d->fields[i].type, loft_field(from, d->fields[i].pos), loft_field(to, d->fields[i].pos));
+        }
+        return;
+    case LOFT_T_VECTOR: {
+        uint32_t cur = loft_u32(fs, from.rec, from.pos);
+        if (cur == 0 || cur == 0xFFFFFFFFu) { loft_set_u32(loft_store_of(to), to.rec, to.pos, cur); return; }
+        uint32_t len = loft_u32(fs, cur, 4);
+        uint32_t size = T[d->elem].size;
+        uint32_t into = loft_claim(loft_store_of(to), 1 + (uint32_t) (((uint64_t) size * len + 7) / 8));
+        loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
+        loft_ref src_v = { from.store_nr, cur, 0 };
+        loft_ref dst_v = { to.store_nr, into, 0 };
+        loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);
+        if (T[d->elem].kind == LOFT_T_SCALAR) return;
+        for (uint32_t i = 0; i < len; i++) {
+            loft_ref a = { from.store_nr, cur, 8 + i * size };
+            loft_ref b = { to.store_nr, into, 8 + i * size };
+            loft_copy_claims(T, d->elem, a, b);
+        }
+        return;
+    }
+    case LOFT_T_ENUM: {
+        int e = (int) *loft_at(fs, from.rec, from.pos) - 1;
+        if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_copy_claims(T, d->variants[e], from, to);
+        return;
+    }
+    case LOFT_T_CHILD: {
+        uint32_t cur = loft_u32(fs, from.rec, from.pos);
+        if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
+        uint32_t size = T[d->elem].size;
+        uint32_t into = loft_claim(loft_store_of(to), size);
+        loft_ref a = { from.store_nr, cur, 8 };
+        loft_ref b = { to.store_nr, into, 8 };
+        loft_copy_bytes(b, 0, a, 0, size);
+        loft_copy_claims(T, d->elem, a, b);
+        loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+/* OpCopyRecord: the record's bytes and everything it owns, into the destination; the source's
+ * store freed when the copy says so and it is another store (state/io.rs do_copy_record).  A
+ * copy onto itself and a copy from or into a null reference do nothing. */
+static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst, int free_source) {
+    if (src.store_nr == dst.store_nr && src.rec == dst.rec && src.pos == dst.pos) return;
+    if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0) return;
+    loft_copy_bytes(dst, 0, src, 0, T[tp].size);
+    loft_copy_claims(T, tp, src, dst);
+    if (free_source && src.store_nr != dst.store_nr) loft_free_ref(src);
+}
+
+/* A whole-value bind `dst = src` (@C86): an independent copy of a present source, the null of
+ * an absent one, releasing what `dst` held.  The copy takes a fresh store when the source
+ * lives in `dst`'s: refilling that store in place would destroy what the source owns. */
+static void loft_bind_copy(const loft_tdesc *T, uint16_t tp, loft_ref *dst, loft_ref src) {
     if (src.store_nr == 0xFFFF || src.rec == 0) {
         loft_free_ref(*dst);
         *dst = loft_ref_null();
         return;
     }
     if (src.store_nr == dst->store_nr && src.rec == dst->rec && src.pos == dst->pos) return;
-    uint8_t *tmp = (uint8_t *) malloc(bytes ? bytes : 1);
-    if (!tmp) { fputs("loft: out of memory\n", stderr); abort(); }
-    memcpy(tmp, loft_at(loft_store_of(src), src.rec, src.pos), bytes);
-    loft_database(dst, bytes);
-    memcpy(loft_at(loft_store_of(*dst), dst->rec, dst->pos), tmp, bytes);
-    free(tmp);
+    if (src.store_nr == dst->store_nr) *dst = loft_ref_null();
+    loft_database(dst, T[tp].size);
+    loft_copy_bytes(*dst, 0, src, 0, T[tp].size);
+    loft_copy_claims(T, tp, src, *dst);
 }

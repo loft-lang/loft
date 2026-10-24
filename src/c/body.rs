@@ -36,6 +36,8 @@ enum K {
     View,
     /// A `loft_ref`.
     Ref,
+    /// A plain enum value, `uint8_t`.
+    Enum,
     /// A tuple struct, by its number.
     Tup(u32),
     /// No value.
@@ -64,6 +66,7 @@ fn kind_of(c: CType) -> K {
         CType::Bool => K::Bool,
         CType::Text => K::View,
         CType::Ref => K::Ref,
+        CType::Enum => K::Enum,
         CType::Tuple(id) => K::Tup(id),
         CType::Void => K::Void,
     }
@@ -78,7 +81,8 @@ pub(crate) struct FnWriter<'a> {
     code: &'a Value,
     /// The C shape of every variable, parameters first.
     shapes: Vec<CType>,
-    nparams: usize,
+    /// Which variables are the function's parameters (`Function::arguments`).
+    params: Vec<bool>,
     ret: CType,
     body: String,
     /// Every temporary: its name and shape, declared at the top.
@@ -99,7 +103,14 @@ impl<'a> FnWriter<'a> {
             vars: def.variables(),
             code: def.code(),
             shapes,
-            nparams: def.attributes().len(),
+            params: {
+                let vars = def.variables();
+                let mut p = vec![false; vars.count() as usize];
+                for a in vars.arguments() {
+                    p[a as usize] = true;
+                }
+                p
+            },
             ret,
             body: String::new(),
             temps: Vec::new(),
@@ -119,7 +130,7 @@ impl<'a> FnWriter<'a> {
             self.ret_value(Some(code), 1)?;
         }
         let mut out = String::new();
-        for v in self.nparams..self.shapes.len() {
+        for v in (0..self.shapes.len()).filter(|v| !self.params[*v]) {
             let c = self.shapes[v];
             let _ = writeln!(
                 out,
@@ -159,8 +170,8 @@ impl<'a> FnWriter<'a> {
 
     /// Free every text the function holds: its locals and its temporaries.
     fn epilogue(&mut self, ind: usize) {
-        let mut texts: Vec<String> = (self.nparams..self.shapes.len())
-            .filter(|&v| self.shapes[v] == CType::Text)
+        let mut texts: Vec<String> = (0..self.shapes.len())
+            .filter(|&v| !self.params[v] && self.shapes[v] == CType::Text)
             .map(|v| self.var(v as u16))
             .collect();
         texts.extend(
@@ -225,6 +236,7 @@ impl<'a> FnWriter<'a> {
             CType::Bool => format!("{target} = LOFT_BOOL_NULL;"),
             CType::Text => format!("loft_text_set(&{target}, loft_null_text());"),
             CType::Ref => format!("{target} = loft_ref_null();"),
+            CType::Enum => format!("{target} = 255;"),
             CType::Tuple(id) => {
                 for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     self.null_into(&format!("{target}.f{i}"), e, ind);
@@ -376,18 +388,32 @@ impl<'a> FnWriter<'a> {
         .then(|| self.cx.data.def(d).known_type())
     }
 
-    /// The byte size of record type `tp`, when copying its bytes copies all of it.
-    fn copyable(&self, tp: u16) -> Result<u32, String> {
-        if let Some(kind) = self.cx.record_owns(tp) {
-            return Err(format!("a copy of a record that owns a {kind}"));
-        }
-        Ok(u32::from(self.cx.stores.size(tp)))
+    /// Register record type `tp` for the deep copy, or refuse a kind it does not walk yet.
+    fn copyable(&self, tp: u16) -> Result<u16, String> {
+        self.cx.copy_type(tp)?;
+        Ok(tp)
     }
 
     /// `var = x`: a copy where loft copies a record, else the plain assignment.
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        // An owned vector variable bound to null gets a store of its own whose record holds
+        // the (empty) vector — the bytecode writer's `gen_set_first_vector_null`: the variable
+        // then names that field.  A skip-free, inline or lazy-buffer one, and a view of another
+        // variable (bound to its target later), keep the sentinel.
+        if matches!(x.unspan(), Value::Null)
+            && let crate::data::Type::Vector(_, dep) = self.vars.tp(var)
+            && dep.is_empty()
+            && !(self.vars.is_skip_free(var)
+                || self.vars.is_inline_ref(var)
+                || self.vars.is_lazy_buffer(var))
+        {
+            let name = self.var(var);
+            self.line(ind, &format!("{name} = loft_ref_null();"));
+            self.line(ind, &format!("loft_database(&{name}, 8);"));
+            return Ok(());
+        }
         let c = self.shapes[var as usize];
-        if (var as usize) < self.nparams && c == CType::Text {
+        if self.params[var as usize] && c == CType::Text {
             return Err("assigns a text parameter".into());
         }
         let name = self.var(var);
@@ -396,11 +422,21 @@ impl<'a> FnWriter<'a> {
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
-            self.line(ind, &format!("loft_bind_copy(&{name}, {r}, {bytes});"));
+            self.line(
+                ind,
+                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+            );
             if frees {
+                // The stores of the call's reference arguments are protected, as the bytecode
+                // writer protects them (`protectable_ref_args`): a result that is a view into
+                // one of them is not the callee's to give away.
+                let mut keep = vec![format!("{r}.store_nr != {name}.store_nr")];
+                for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
+                    keep.push(format!("{r}.store_nr != {}.store_nr", self.var(a)));
+                }
                 self.line(
                     ind,
-                    &format!("if ({r}.store_nr != {name}.store_nr) loft_free_ref({r});"),
+                    &format!("if ({}) loft_free_ref({r});", keep.join(" && ")),
                 );
             }
             self.flush(ind);
@@ -411,14 +447,20 @@ impl<'a> FnWriter<'a> {
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
-            self.line(ind, &format!("loft_bind_copy(&{name}, {r}, {bytes});"));
+            self.line(
+                ind,
+                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+            );
             self.flush(ind);
             return Ok(());
         }
         if let Some((src, tp)) = self.whole_value_bind(var, x) {
             let bytes = self.copyable(tp)?;
             let src = self.var(src);
-            self.line(ind, &format!("loft_bind_copy(&{name}, {src}, {bytes});"));
+            self.line(
+                ind,
+                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {src});"),
+            );
             return Ok(());
         }
         self.assign(x, &name, c, ind)?;
@@ -503,6 +545,7 @@ impl<'a> FnWriter<'a> {
                 ok => ok,
             },
             Value::Int(_) | Value::Long(_) => Ok(CType::Int),
+            Value::Enum(..) => Ok(CType::Enum),
             Value::Boolean(_) => Ok(CType::Bool),
             Value::Text(_) => Ok(CType::Text),
             Value::Var(v) => Ok(self.shapes[*v as usize]),
@@ -541,6 +584,7 @@ impl<'a> FnWriter<'a> {
             Value::Long(l) if *l == i64::MIN => Ok(E::new("LOFT_NULL", K::Int)),
             Value::Long(l) => Ok(E::new(format!("INT64_C({l})"), K::Int)),
             Value::Boolean(b) => Ok(E::new(if *b { "1" } else { "0" }, K::Cond)),
+            Value::Enum(v, _) => Ok(E::new(format!("(uint8_t) {v}"), K::Enum)),
             Value::Text(s) => Ok(E::new(
                 format!("loft_lit({}, {})", c_string(s), s.len()),
                 K::View,
@@ -548,7 +592,7 @@ impl<'a> FnWriter<'a> {
             Value::Var(var) => {
                 let name = self.var(*var);
                 Ok(match self.shapes[*var as usize] {
-                    CType::Text if (*var as usize) >= self.nparams => {
+                    CType::Text if !self.params[*var as usize] => {
                         E::new(format!("loft_view(&{name})"), K::View)
                     }
                     CType::Void => return Err("a void variable".into()),
@@ -591,7 +635,7 @@ impl<'a> FnWriter<'a> {
     fn text_dest(&self, v: &Value) -> Result<String, String> {
         match v.unspan() {
             Value::Var(var)
-                if self.shapes[*var as usize] == CType::Text && (*var as usize) >= self.nparams =>
+                if self.shapes[*var as usize] == CType::Text && !self.params[*var as usize] =>
             {
                 Ok(self.var(*var))
             }
@@ -617,6 +661,7 @@ impl<'a> FnWriter<'a> {
                 K::Int => (CType::Int, e.code),
                 K::Ref => (CType::Ref, e.code),
                 K::Tup(id) => (CType::Tuple(id), e.code),
+                K::Enum => (CType::Enum, e.code),
                 _ => (CType::Bool, as_bool(e)?),
             };
             let t = self.temp(c);
@@ -667,6 +712,12 @@ impl<'a> FnWriter<'a> {
             }
             c => E::new(call, kind_of(c)),
         })
+    }
+
+    fn one(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        let es = self.args(args, ind)?;
+        let [a] = <[E; 1]>::try_from(es).map_err(|_| format!("{name} without one operand"))?;
+        Ok(a)
     }
 
     fn two(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
@@ -839,6 +890,46 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("({} != LOFT_NULL)", as_int(a)?), K::Cond))
             }
             "OpConvIntFromNull" | "OpConvLongFromNull" => Ok(E::new("LOFT_NULL", K::Int)),
+            "OpConvEnumFromNull" => Ok(E::new("(uint8_t) 255", K::Enum)),
+            "OpConstEnum" => self.expr(args.first().ok_or("OpConstEnum without a value")?, ind),
+            "OpConvIntFromEnum" => {
+                let a = self.one(name, args, ind)?;
+                let a = as_enum(a)?;
+                Ok(E::new(
+                    format!("({a} == 255 ? LOFT_NULL : (int64_t) {a})"),
+                    K::Int,
+                ))
+            }
+            "OpCastEnumFromInt" => {
+                let a = self.one(name, args, ind)?;
+                let a = as_int(a)?;
+                Ok(E::new(
+                    format!("({a} == LOFT_NULL ? (uint8_t) 255 : (uint8_t) {a})"),
+                    K::Enum,
+                ))
+            }
+            "OpConvBoolFromEnum" => {
+                let a = self.one(name, args, ind)?;
+                let a = as_enum(a)?;
+                Ok(E::new(format!("({a} != 255 && {a} != 0)"), K::Cond))
+            }
+            "OpCastTextFromEnum" => {
+                let [v, tp] = args else {
+                    return Err("OpCastTextFromEnum with an unexpected operand list".into());
+                };
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type out of range".to_string())?;
+                let names = self.cx.enum_names(tp);
+                let v = self.expr(v, ind)?;
+                let t = self.temp(CType::Enum);
+                self.line(ind, &format!("{t} = {};", as_enum(v)?));
+                Ok(E::new(
+                    format!(
+                        "({t} == 0 || {t} == 255 ? loft_null_text() : loft_lit({names}[{t}], strlen({names}[{t}])))"
+                    ),
+                    K::View,
+                ))
+            }
             _ => self.store_operator(name, args, ind),
         }
     }
@@ -874,6 +965,10 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpNullRefSentinel", []) => Ok(E::new("loft_ref_null()", K::Ref)),
+            ("OpConvBoolFromRef", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(format!("({}.rec != 0)", as_ref(r)?), K::Cond))
+            }
             ("OpRefAlias", [r]) => self.expr(r, ind),
             ("OpFreeRefIfDistinct", [_, _]) => {
                 let (p, w) = self.two(name, args, ind)?;
@@ -907,12 +1002,12 @@ impl<'a> FnWriter<'a> {
                 let raw = Self::literal(tp, "type")?;
                 let raw =
                     u16::try_from(raw).map_err(|_| "a type number out of range".to_string())?;
-                let bytes = self.copyable(raw & crate::keys::COPY_TP_MASK)?;
+                let tp = self.copyable(raw & crate::keys::COPY_TP_MASK)?;
                 let free = u8::from(raw & crate::keys::COPY_FREE_SOURCE != 0);
                 let (src, dst) = self.two(name, &[(*src).clone(), (*dst).clone()], ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_copy_record({}, {}, {bytes}, {free})",
+                        "loft_copy_record(loft_types, {tp}, {}, {}, {free})",
                         as_ref(src)?,
                         as_ref(dst)?
                     ),
@@ -923,6 +1018,48 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("loft_field({}, {fld})", as_ref(r)?), K::Ref))
+            }
+            _ => self.field_operator(name, args, ind),
+        }
+    }
+
+    /// The enum and text fields of a record.
+    fn field_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match (name, args) {
+            ("OpGetEnum", [r, fld]) => {
+                let fld = Self::literal(fld, "field")?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_get_enum({}, {fld})", as_ref(r)?),
+                    K::Enum,
+                ))
+            }
+            ("OpSetEnum", [r, fld, val]) => {
+                let fld = Self::literal(fld, "field")?;
+                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_set_byte({}, {fld}, {})", as_ref(r)?, as_enum(val)?),
+                    K::Void,
+                ))
+            }
+            ("OpGetText", [r, fld]) => {
+                let fld = Self::literal(fld, "field")?;
+                let r = self.expr(r, ind)?;
+                let t = self.temp(CType::Text);
+                self.line(ind, &format!("loft_text_free(&{t});"));
+                self.line(
+                    ind,
+                    &format!("{t} = loft_text_own(loft_get_text({}, {fld}));", as_ref(r)?),
+                );
+                Ok(self.held(t, CType::Text))
+            }
+            ("OpSetText", [r, fld, val]) => {
+                let fld = Self::literal(fld, "field")?;
+                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_set_text({}, {fld}, {})", as_ref(r)?, as_view(val)?),
+                    K::Void,
+                ))
             }
             _ => self.vector_operator(name, args, ind),
         }
@@ -996,6 +1133,13 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
+            ("OpPushEnum", [v, val]) => {
+                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_vec_push_byte({}, {})", as_ref(v)?, as_enum(val)?),
+                    K::Void,
+                ))
+            }
             ("OpPushInt", [v, val]) => {
                 let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
                 Ok(E::new(
@@ -1053,6 +1197,13 @@ fn as_tuple(e: E, id: u32) -> Result<String, String> {
     }
 }
 
+fn as_enum(e: E) -> Result<String, String> {
+    match e.kind {
+        K::Enum => Ok(e.code),
+        k => Err(format!("an enum value expected, a {k:?} found")),
+    }
+}
+
 fn as_view(e: E) -> Result<String, String> {
     match e.kind {
         K::View => Ok(e.code),
@@ -1068,6 +1219,7 @@ fn as_shape(e: E, c: CType) -> Result<String, String> {
         CType::Text => as_view(e),
         CType::Ref => as_ref(e),
         CType::Tuple(id) => as_tuple(e, id),
+        CType::Enum => as_enum(e),
         CType::Void => Err("a void value".into()),
     }
 }
@@ -1093,6 +1245,7 @@ fn op_shape(name: &str) -> Option<CType> {
         "OpMinSingleLong",
         "OpConvIntFromNull",
         "OpConvLongFromNull",
+        "OpConvIntFromEnum",
     ];
     const BOOL: &[&str] = &[
         "OpEqInt",
@@ -1111,6 +1264,8 @@ fn op_shape(name: &str) -> Option<CType> {
         "OpRefIsNull",
         "OpConvBoolFromInt",
         "OpConvBoolFromLong",
+        "OpConvBoolFromEnum",
+        "OpConvBoolFromRef",
     ];
     const REF: &[&str] = &[
         "OpGetField",
@@ -1118,20 +1273,29 @@ fn op_shape(name: &str) -> Option<CType> {
         "OpGetVectorNullable",
         "OpNullRefSentinel",
     ];
-    if INT.contains(&name) {
-        Some(CType::Int)
-    } else if BOOL.contains(&name) {
-        Some(CType::Bool)
-    } else if REF.contains(&name) {
-        Some(CType::Ref)
-    } else {
-        None
-    }
+    const ENUM: &[&str] = &[
+        "OpGetEnum",
+        "OpCastEnumFromInt",
+        "OpConvEnumFromNull",
+        "OpConstEnum",
+    ];
+    const TEXT: &[&str] = &["OpGetText", "OpCastTextFromEnum"];
+    let shapes = [
+        (INT, CType::Int),
+        (BOOL, CType::Bool),
+        (REF, CType::Ref),
+        (ENUM, CType::Enum),
+        (TEXT, CType::Text),
+    ];
+    shapes
+        .iter()
+        .find(|(names, _)| names.contains(&name))
+        .map(|(_, c)| *c)
 }
 
 /// `s` as a C string literal: printable ASCII as itself, every other byte as an octal escape
 /// (three digits, so the next character can never extend it), `?` escaped against trigraphs.
-fn c_string(s: &str) -> String {
+pub(crate) fn c_string(s: &str) -> String {
     let mut out = String::from("\"");
     for b in s.bytes() {
         match b {

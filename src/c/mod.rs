@@ -51,6 +51,8 @@ pub(crate) enum CType {
     Text,
     /// A reference into a store — a struct, a vector — as `loft_ref`; null has `rec == 0`.
     Ref,
+    /// A plain enum value, `uint8_t`; 255 is null, and so is 0 where a value is read.
+    Enum,
     /// A tuple: the C struct [`Cx::tuple_shapes`] numbers, held and passed by value.
     Tuple(u32),
     /// No value.
@@ -64,6 +66,7 @@ pub(crate) fn held(c: CType) -> String {
         CType::Bool => "uint8_t".into(),
         CType::Text => "loft_text".into(),
         CType::Ref => "loft_ref".into(),
+        CType::Enum => "uint8_t".into(),
         CType::Tuple(id) => format!("loft_tup{id}"),
         CType::Void => "void".into(),
     }
@@ -83,6 +86,10 @@ pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
+    /// Every type the unit's deep copies walk, by type number (`loft_types`).
+    copy_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// Every plain enum type whose value names the unit spells, by type number.
+    enum_names: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// A copy of the stores the default walk runs in, made on first use.
     scratch: std::cell::RefCell<Option<Stores>>,
     /// Every record type's default bytes the unit names, by type number.
@@ -95,9 +102,17 @@ impl<'a> Cx<'a> {
             data,
             stores,
             tuples: std::cell::RefCell::new(Vec::new()),
+            copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            enum_names: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             scratch: std::cell::RefCell::new(None),
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         }
+    }
+
+    /// The C name of plain enum type `tp`'s value names, indexed by value (1-based).
+    pub(crate) fn enum_names(&self, tp: u16) -> String {
+        self.enum_names.borrow_mut().insert(tp);
+        format!("loft_enum{tp}")
     }
 
     /// The C name of record type `tp`'s default bytes — what the interpreter's default walk
@@ -133,7 +148,8 @@ impl<'a> Cx<'a> {
             }
             Type::Boolean => Some(CType::Bool),
             Type::Text(_) => Some(CType::Text),
-            Type::Reference(..) | Type::Vector(..) => Some(CType::Ref),
+            Type::Reference(..) | Type::Vector(..) | Type::Enum(_, true, _) => Some(CType::Ref),
+            Type::Enum(_, false, _) => Some(CType::Enum),
             Type::Tuple(elems) => {
                 // A text inside a tuple would be copied with the tuple and freed twice.
                 let shapes = elems
@@ -172,6 +188,7 @@ impl<'a> Cx<'a> {
             CType::Bool => "LOFT_BOOL_NULL".into(),
             CType::Text => "{ 0, 0, 0 }".into(),
             CType::Ref => "{ 0xFFFF, 0, 0 }".into(),
+            CType::Enum => "255".into(),
             CType::Tuple(id) => {
                 let fields: Vec<String> = self
                     .tuple_shapes(id)
@@ -184,37 +201,129 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// What record type `tp` owns past its own bytes — a text, a collection — named for a
-    /// refusal, or `None` when copying its bytes copies all of it.
-    pub(crate) fn record_owns(&self, tp: u16) -> Option<String> {
+    /// Register type `tp`, and every type it reaches, in the unit's copy table — or the
+    /// kind of collection the C copy does not walk yet, for a refusal.
+    pub(crate) fn copy_type(&self, tp: u16) -> Result<(), String> {
         use crate::database::Parts;
-        let t = self.stores.types.get(tp as usize)?;
-        let fields = match &t.parts {
-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields,
-            Parts::Base if t.name == "text" => return Some("text".into()),
+        if self.copy_types.borrow().contains(&tp) {
+            return Ok(());
+        }
+        let t = self
+            .stores
+            .types
+            .get(tp as usize)
+            .ok_or("an unknown type")?;
+        self.copy_types.borrow_mut().insert(tp);
+        match &t.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                fields.iter().try_for_each(|f| self.copy_type(f.content))
+            }
+            Parts::Vector(c) | Parts::ChildRec(c) => self.copy_type(*c),
+            Parts::Enum(values) => values
+                .iter()
+                .filter(|(v, _)| *v != u16::MAX)
+                .try_for_each(|(v, _)| self.copy_type(*v)),
             Parts::Base
             | Parts::Byte(..)
             | Parts::Short(..)
             | Parts::Int(..)
             | Parts::IntRaw(..)
             | Parts::ShortRaw(..)
-            | Parts::Enum(_) => return None,
+            | Parts::DbRef => Ok(()),
             other => {
+                self.copy_types.borrow_mut().remove(&tp);
                 let kind = format!("{other:?}");
-                return Some(
+                Err(format!(
+                    "a copy of a record that owns a {}",
                     kind.split(['(', ' '])
                         .next()
                         .unwrap_or("collection")
-                        .to_lowercase(),
-                );
+                        .to_lowercase()
+                ))
             }
-        };
-        fields.iter().find_map(|f| self.record_owns(f.content))
+        }
+    }
+
+    /// The copy table: one `loft_tdesc` per registered type, at its type number.
+    fn copy_table(&self) -> String {
+        use crate::database::Parts;
+        let types = self.copy_types.borrow();
+        if types.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        let mut rows = Vec::new();
+        for &tp in types.iter() {
+            let t = &self.stores.types[tp as usize];
+            let size = self.stores.size(tp);
+            let row = match &t.parts {
+                Parts::Base if tp == 5 || t.name == "text" => {
+                    format!("{{ LOFT_T_TEXT, {size}, 0, 0, 0, 0 }}")
+                }
+                Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                    let list: Vec<String> = fields
+                        .iter()
+                        .map(|f| format!("{{ {}, {} }}", f.position, f.content))
+                        .collect();
+                    let _ = writeln!(
+                        out,
+                        "static const loft_fld loft_f{tp}[] = {{ {} }};",
+                        if list.is_empty() {
+                            "{ 0, 0 }".into()
+                        } else {
+                            list.join(", ")
+                        }
+                    );
+                    format!(
+                        "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_f{tp}, 0 }}",
+                        fields.len()
+                    )
+                }
+                Parts::Vector(c) => format!("{{ LOFT_T_VECTOR, {size}, {c}, 0, 0, 0 }}"),
+                Parts::ChildRec(c) => format!("{{ LOFT_T_CHILD, {size}, {c}, 0, 0, 0 }}"),
+                Parts::Enum(values) if values.iter().any(|(v, _)| *v != u16::MAX) => {
+                    let list: Vec<String> = values.iter().map(|(v, _)| v.to_string()).collect();
+                    let _ = writeln!(
+                        out,
+                        "static const uint16_t loft_v{tp}[] = {{ {} }};",
+                        list.join(", ")
+                    );
+                    format!(
+                        "{{ LOFT_T_ENUM, {size}, 0, {}, 0, loft_v{tp} }}",
+                        values.len()
+                    )
+                }
+                _ => format!("{{ LOFT_T_SCALAR, {size}, 0, 0, 0, 0 }}"),
+            };
+            rows.push(format!("    [{tp}] = {row},"));
+        }
+        let max = types.iter().max().copied().unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "static const loft_tdesc loft_types[{}] = {{\n{}\n}};",
+            u32::from(max) + 1,
+            rows.join("\n")
+        );
+        out
     }
 
     /// The tuple structs, each after the ones it holds, and the default images.
     fn typedefs(&self) -> String {
-        let mut out = String::new();
+        let mut out = self.copy_table();
+        for tp in self.enum_names.borrow().iter() {
+            let count = match &self.stores.types[*tp as usize].parts {
+                crate::database::Parts::Enum(values) => values.len(),
+                _ => 0,
+            };
+            let names: Vec<String> = (1..=count)
+                .map(|v| body::c_string(self.stores.enum_val(*tp, v as u8)))
+                .collect();
+            let _ = writeln!(
+                out,
+                "static const char *const loft_enum{tp}[] = {{ \"\", {} }};",
+                names.join(", ")
+            );
+        }
         for (tp, bytes) in self.defaults.borrow().iter() {
             let list: Vec<String> = bytes.iter().map(u8::to_string).collect();
             let _ = writeln!(
@@ -343,33 +452,41 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
         .ctype(def.returned())
         .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
     let vars = def.variables();
-    let mut params = Vec::new();
-    let mut shapes = Vec::new();
-    for (i, a) in def.attributes().iter().enumerate() {
-        let c = cx
-            .ctype(&a.typedef)
-            .filter(|c| *c != CType::Void)
-            .ok_or_else(|| format!("parameter of type {}", type_word(&a.typedef)))?;
-        shapes.push(c);
-        params.push(format!(
-            "{} {}",
-            passed(c),
-            body::var_name(vars.name(i as u16), i as u16)
-        ));
+    // The parameters are the argument variables, in number order: `ref_return` can promote a
+    // local into the return buffer's place, so parameter i is not always variable i.
+    let args = vars.arguments();
+    if args.len() != def.attributes().len() {
+        return Err("parameters that do not match their arguments".into());
     }
+    let mut shapes = Vec::with_capacity(vars.count() as usize);
+    for v in 0..vars.count() {
+        let tp = vars.tp(v);
+        let c = cx.ctype(tp).filter(|c| *c != CType::Void).ok_or_else(|| {
+            let what = if args.contains(&v) {
+                "parameter"
+            } else {
+                "local"
+            };
+            format!("{what} of type {}", type_word(tp))
+        })?;
+        shapes.push(c);
+    }
+    let params: Vec<String> = args
+        .iter()
+        .map(|&a| {
+            format!(
+                "{} {}",
+                passed(shapes[a as usize]),
+                body::var_name(vars.name(a), a)
+            )
+        })
+        .collect();
     let params = if params.is_empty() {
         "void".to_string()
     } else {
         params.join(", ")
     };
     let sig = format!("static {} {}({params})", held(ret), c_name(data, d));
-    for v in def.attributes().len() as u16..vars.count() {
-        let c = cx
-            .ctype(vars.tp(v))
-            .filter(|c| *c != CType::Void)
-            .ok_or_else(|| format!("local of type {}", type_word(vars.tp(v))))?;
-        shapes.push(c);
-    }
     let body = body::FnWriter::new(cx, d, shapes, ret).write()?;
     Ok((sig, body))
 }
@@ -412,8 +529,9 @@ fn emit_tests(data: &Data, stores: &Stores) -> Result<String, Refusal> {
     for &d in &tests {
         let _ = writeln!(
             out,
-            "    if (setjmp(loft_test_jmp) == 0) {}(); else failed++;",
-            c_name(data, d)
+            "    if (setjmp(loft_test_jmp) == 0) {}(); else {{ failed++; fputs(\"FAIL {}\\n\", stderr); }}",
+            c_name(data, d),
+            data.def(d).original_name()
         );
     }
     out.push_str("    return failed ? 1 : 0;\n}\n");
