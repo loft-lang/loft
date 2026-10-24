@@ -37,7 +37,6 @@ pub mod keyed_entry;
 pub mod keyed_place;
 pub mod non_sentinel;
 pub(crate) mod ops;
-pub mod par_rows;
 mod pre_eval;
 pub mod range;
 mod ranged_call;

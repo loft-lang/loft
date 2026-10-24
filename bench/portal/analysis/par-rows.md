@@ -5,14 +5,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # A `par` worker that maps its rows at once (design, 2026-10-24)
 
-**Built 2026-10-24** as `(R-ParRows)` (`formal/rewrites.md`): `11_par/par` 3.49× → 1.80× of
-Rust, pinned to one core, hash unchanged — the priced 1.78×.  Two things the design below did
-not foresee: the row variants are translated from the IR by a covering subset
-(`generation/par_rows.rs`) rather than by a mode threaded through the main emitter, and `+` /
-`-` need their overflow found by sign bits — the built form first ran at 433 µs, not
-vectorised, because `checked_add` lowers to an overflow intrinsic no loop vectoriser widens.
-The report flag turned out to matter only for `OpDivFloat`'s raise: an integer overflow
-reports only under `--dev-soft-halt`, where the runtime takes the per-row worker for every row.
+**Built 2026-10-24 as `(R-ParRows)`, then removed the same day** (owner: an optimisation must be
+general, never specific to `par`; a general loop unroll is the one part admissible).  Built, it took
+`11_par/par` from 3.49× to 1.80× of Rust, the priced 1.78×.  The record below stays as the
+measurement; § Reach says why it did not generalise.
 
 Priced in [over-3.5x.md](over-3.5x.md) § par: a worker that maps its contiguous slice of rows,
 with the inner constant-count loop unrolled, takes `11_par/par` from 3.49× to 1.78× of Rust with
