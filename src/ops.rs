@@ -38,10 +38,8 @@ mod number_text;
 // `stores` lands inside another `stores.` call's argument list (E0502).
 static OVERFLOW_SURFACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `--dev-soft-halt` / `LOFT_DEV_SOFT_HALT=1`, read once per process.  Off, an overflow reports
-/// nothing and the reporting operators answer what their silent `…_nullable` twins answer —
-/// the condition `n_parallel_rows_native`'s fast path runs on.
-pub(crate) fn dev_soft_halt() -> bool {
+/// `--dev-soft-halt` / `LOFT_DEV_SOFT_HALT=1`, read once per process.
+fn dev_soft_halt() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| std::env::var("LOFT_DEV_SOFT_HALT").is_ok_and(|v| v == "1" || v == "true"))
 }
@@ -389,32 +387,6 @@ pub fn op_rem_long(v1: i64, v2: i64) -> i64 {
         checked_long!(v1.checked_rem(v2), "%", v1, v2)
     } else {
         i64::MIN
-    }
-}
-
-/// [`op_add_long_nullable`] with the overflow found by sign bits, not by `checked_add`: the
-/// same value for every input, in a form the compiler can vectorise — `checked_add` lowers to
-/// an overflow intrinsic no loop vectoriser widens.  The row variants of `@FR-R-ParRows` use it.
-#[inline]
-#[must_use]
-pub fn op_add_long_bitwise(v1: i64, v2: i64) -> i64 {
-    let r = v1.wrapping_add(v2);
-    if v1 == i64::MIN || v2 == i64::MIN || ((v1 ^ r) & (v2 ^ r)) < 0 {
-        i64::MIN
-    } else {
-        r
-    }
-}
-
-/// [`op_min_long_nullable`] by sign bits, as [`op_add_long_bitwise`].
-#[inline]
-#[must_use]
-pub fn op_min_long_bitwise(v1: i64, v2: i64) -> i64 {
-    let r = v1.wrapping_sub(v2);
-    if v1 == i64::MIN || v2 == i64::MIN || ((v1 ^ v2) & (v1 ^ r)) < 0 {
-        i64::MIN
-    } else {
-        r
     }
 }
 
@@ -1231,40 +1203,6 @@ pub fn fix_till(till: i32, from: usize, s: &str) -> usize {
 #[cfg(test)]
 mod test {
     use super::*;
-    /// `@FR-R-ParRows` — the bitwise forms answer what the nullable ops answer, on every pair
-    /// of boundary values: the null, the extremes and their neighbours, zero, ±1, mid values.
-    #[test]
-    fn bitwise_add_and_sub_answer_the_nullable_ops() {
-        let vals = [
-            i64::MIN,
-            i64::MIN + 1,
-            i64::MIN + 2,
-            -4_611_686_018_427_387_904,
-            -1000,
-            -1,
-            0,
-            1,
-            1000,
-            4_611_686_018_427_387_904,
-            i64::MAX - 1,
-            i64::MAX,
-        ];
-        for &a in &vals {
-            for &b in &vals {
-                assert_eq!(
-                    op_add_long_bitwise(a, b),
-                    op_add_long_nullable(a, b),
-                    "{a} + {b}"
-                );
-                assert_eq!(
-                    op_min_long_bitwise(a, b),
-                    op_min_long_nullable(a, b),
-                    "{a} - {b}"
-                );
-            }
-        }
-    }
-
     /// A number is rendered in place behind what the text already holds, and only a field
     /// wider than it is padded — every value below computed by hand.
     #[test]

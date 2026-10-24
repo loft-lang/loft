@@ -566,44 +566,23 @@ impl OpEmitter for ParallelQueueEmitter {
         } else {
             queue_helper_name(shape)
         };
-        // `@FR-R-ParRows` — a worker the row translation covers maps each batch of rows at
-        // once; the per-row closure below stays the exact path for a batch it declines.
-        let rows = par_rows_items(ctx, fn_d_nr, par_fn, shape, n_extra, &worker_ret, args);
-        if let Some((items, encode)) = &rows {
-            let es = match args.get(1).map(Value::unspan) {
-                Some(Value::Int(s)) => *s,
-                _ => 8,
-            };
-            write!(ctx.w, "{{ {items} n_parallel_rows_native(cell, ")?;
-            ctx.emit(&args[0])?;
-            write!(ctx.w, ", {es}_i32, ")?;
-            ctx.emit_param_slot(3, &args[3])?;
-            write!(
-                ctx.w,
-                ", |__base: *const u8, __n: usize, __out: &mut [i64]| -> bool {{ let mut __bad = false; for __k in 0..__n {{ let __row = unsafe {{ __base.add(__k * {es}_usize) }}; __out[__k] = {encode}; }} !__bad }}"
-            )?;
+        write!(ctx.w, "{par_fn}(cell, ")?;
+        ctx.emit(&args[0])?;
+        write!(ctx.w, ", ")?;
+        ctx.emit_param_slot(1, &args[1])?;
+        write!(ctx.w, ", ")?;
+        if shape == ClosureShape::HeapRef {
+            let (struct_size, known_type) = heap_ref_kt(ctx, &worker_ret);
+            let known_type = u16::try_from(known_type).map_or_else(
+                |_| known_type.to_string(),
+                |t| ctx.output.type_lit_bare(t, "i32"),
+            );
+            write!(ctx.w, "{struct_size}, {known_type}, ")?;
         } else {
-            write!(ctx.w, "{par_fn}(cell, ")?;
-            ctx.emit(&args[0])?;
-            write!(ctx.w, ", ")?;
-            ctx.emit_param_slot(1, &args[1])?;
+            ctx.emit_param_slot(2, &args[2])?;
             write!(ctx.w, ", ")?;
         }
-        // The rows call carries its element size and threads already (above).
-        if rows.is_none() {
-            if shape == ClosureShape::HeapRef {
-                let (struct_size, known_type) = heap_ref_kt(ctx, &worker_ret);
-                let known_type = u16::try_from(known_type).map_or_else(
-                    |_| known_type.to_string(),
-                    |t| ctx.output.type_lit_bare(t, "i32"),
-                );
-                write!(ctx.w, "{struct_size}, {known_type}, ")?;
-            } else {
-                ctx.emit_param_slot(2, &args[2])?;
-                write!(ctx.w, ", ")?;
-            }
-            ctx.emit_param_slot(3, &args[3])?;
-        }
+        ctx.emit_param_slot(3, &args[3])?;
 
         let extras = {
             use std::fmt::Write as _;
@@ -688,62 +667,10 @@ impl OpEmitter for ParallelQueueEmitter {
             }
         }
 
-        if rows.is_some() {
-            write!(ctx.w, " }}")?;
-        }
         for _ in 0..n_extra {
             write!(ctx.w, " }}")?;
         }
         Ok(())
-    }
-}
-
-/// `@FR-R-ParRows` — the row variant items for a `par` on the wide scalar lane with no extra
-/// arguments, and the expression that encodes one row's answer as the lane does; `None` (the
-/// reason under `LOFT_TRACE_PAR_ROWS`) for any other `par`.
-fn par_rows_items(
-    ctx: &EmitCtx<'_, '_>,
-    fn_d_nr: u32,
-    par_fn: &str,
-    shape: ClosureShape,
-    n_extra: usize,
-    worker_ret: &Type,
-    args: &[Value],
-) -> Option<(String, String)> {
-    let data = ctx.output.data;
-    let name = data.def(fn_d_nr).name().to_string();
-    let decline = |why: &str| {
-        crate::generation::par_rows::trace(&format!("{name} declines: {why}"));
-        None
-    };
-    if !crate::generation::par_rows::enabled() {
-        return None;
-    }
-    if par_fn != "n_parallel_queue_native" {
-        return decline("not the wide scalar lane");
-    }
-    if n_extra != 0 {
-        return decline("extra arguments");
-    }
-    if !matches!(args.get(1).map(Value::unspan), Some(Value::Int(s)) if *s > 0) {
-        return decline("no literal element size");
-    }
-    let encode = match (shape, worker_ret.base()) {
-        (ClosureShape::Float, _) => format!("{name}__row(__row, &mut __bad).to_bits() as i64"),
-        (ClosureShape::Scalar, Type::Boolean) => {
-            format!("{name}__row(__row, &mut __bad) as u8 as i64")
-        }
-        (ClosureShape::Scalar, Type::Integer(_)) => {
-            format!("{name}__row(__row, &mut __bad) as i64")
-        }
-        _ => return decline("a result the row lane does not encode"),
-    };
-    match crate::generation::par_rows::row_variants(data, fn_d_nr) {
-        Ok(items) => {
-            crate::generation::par_rows::trace(&format!("{name} maps its rows"));
-            Some((items, encode))
-        }
-        Err(why) => decline(&why),
     }
 }
 
