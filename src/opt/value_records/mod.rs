@@ -296,8 +296,34 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
         })
         .collect();
     let site_owners: HashSet<u32> = sites.keys().map(|(caller, _)| *caller).collect();
-    // `LOFT_NO_VR_SKIP=1` walks every caller every round, as before: the control half of
-    // the A/B that shows the skip changes no decision.
+    // A caller's value locals read the verdicts of only the functions its body names — its
+    // direct callees, the arms of its own listed fn-ref sites — and its own, so a round whose
+    // verdicts for those are the ones the last round saw finds the same locals.  They are
+    // remembered per caller with that slice of the verdicts as the key: a large body costs
+    // its walk once instead of once a round (dryopea's `script_command` was 0.8 s a round).
+    let mut site_arms: HashMap<u32, Vec<u32>> = HashMap::new();
+    for ((caller, _), (arms, _)) in &sites {
+        site_arms
+            .entry(*caller)
+            .or_default()
+            .extend(arms.iter().copied());
+    }
+    let reads: Vec<Vec<u32>> = (0..data.definitions.len() as u32)
+        .map(|d| {
+            let mut r: Vec<u32> = callees[d as usize].iter().copied().collect();
+            r.push(d);
+            if let Some(arms) = site_arms.get(&d) {
+                r.extend(arms.iter().copied());
+            }
+            r.sort_unstable();
+            r.dedup();
+            r
+        })
+        .collect();
+    let mut locals_memo: HashMap<u32, (LocalsKey, HashMap<u16, u16>)> = HashMap::new();
+    // `LOFT_NO_VR_SKIP=1` walks every caller every round and recomputes its locals, as
+    // before: the control half of the A/B that shows neither the skip nor the memo changes
+    // a decision.
     let skip = std::env::var_os("LOFT_NO_VR_SKIP").is_none();
     // Admission is a FIXPOINT.  A body's tail may FORWARD another candidate's result and a
     // site may bind a BRANCH of candidate calls, so declining one function can decline
@@ -410,7 +436,16 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             }
             let caller_clock = clock.last.map(|_| std::time::Instant::now());
             clock.walked += 1;
-            let locals = value_locals_in(data, caller, &admitted, &params, &view_offs, &sites, &sp);
+            let key = locals_key(&reads[caller as usize], &admitted, &params, &sp);
+            let locals = match locals_memo.get(&caller) {
+                Some((seen, locals)) if skip && *seen == key => locals.clone(),
+                _ => {
+                    let locals =
+                        value_locals_in(data, caller, &admitted, &params, &view_offs, &sites, &sp);
+                    locals_memo.insert(caller, (key, locals.clone()));
+                    locals
+                }
+            };
             if let Some(t) = caller_clock {
                 clock.locals_ms += t.elapsed().as_secs_f64() * 1000.0;
             }
@@ -1576,6 +1611,30 @@ pub(crate) fn local_uses_ok(
         crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
     }
     mentions == accounted
+}
+
+/// The verdicts a caller's value locals can read: per function its body names (and the
+/// caller itself), whether it is admitted and with which key, its tuple parameters, and
+/// whether its tuple is surely present.
+type LocalsKey = Vec<(u32, Option<u16>, Vec<(usize, u16)>, bool)>;
+
+fn locals_key(
+    reads: &[u32],
+    admitted: &HashMap<u32, u16>,
+    params: &TupleParams,
+    sp: &HashSet<u32>,
+) -> LocalsKey {
+    reads
+        .iter()
+        .map(|d| {
+            let mut ps: Vec<(usize, u16)> = params
+                .get(d)
+                .map(|ps| ps.iter().map(|(i, k)| (*i, *k)).collect())
+                .unwrap_or_default();
+            ps.sort_unstable();
+            (*d, admitted.get(d).copied(), ps, sp.contains(d))
+        })
+        .collect()
 }
 
 /// `LOFT_TIMING` — what each step of [`value_records`] cost, summed over the fixpoint's
