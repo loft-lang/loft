@@ -32,7 +32,7 @@ pub use crate::fnref;
 pub use crate::lower::hand_over;
 pub mod hoist;
 pub mod kept;
-pub mod keyed_entry;
+pub use crate::lower::keyed_entry;
 pub mod keyed_place;
 pub use crate::opt::non_sentinel;
 pub(crate) mod ops;
