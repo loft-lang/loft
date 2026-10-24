@@ -181,6 +181,33 @@ such step.  No general rewrite removes it; a proof that the quotient is never Na
 algorithm-specific (`x > 0` finite keeps `guess > 0` by induction).  **An owner question**:
 what a float division owes a non-null float.
 
+**What the rest is, and the general lever (priced 2026-10-24).**  The twin VECTORISES: its
+`chunk` is a pure map over a contiguous range, and LLVM runs two items' chains in one `divpd`
+(50 in the binary); the twin with vectorising switched off is 1.95× slower.  Loft's worker loop
+is one row at a time — an out-of-line `get_vector`, the field read through the store with a
+null branch, a checked `+ 1`, the conversion, `push` — and no row loop around a call
+vectorises.  Priced with a worker that maps its contiguous slice of rows at once (a probe entry
+point in the runtime, the field read directly, a null or overflowing `value` taken branch-free
+to NaN as `op_add_long` and `op_conv_float_from_long` do), one pinned core, hash `141af99`
+unchanged throughout:
+
+| form | µs | vs twin |
+|---|---:|---:|
+| twin (`rustc -O`) | 132 | 1.00× |
+| row map, NaN test removed | 145 | 1.10× |
+| **row map, the 50 rounds unrolled, every NaN test kept** | **235** | **1.78×** |
+| per-row worker, NaN test removed | 279 | 2.11× |
+| row map, the rounds as a loop, NaN test kept | 435 | 3.29× |
+| today | 460 | 3.49× |
+
+So the lever that keeps loft's semantics is the two together: a `par` (later a `for` map) over
+a vector of plain records hands each worker its row slice, the element's field reads become
+direct loads, and a constant-count inner loop with a small float body is unrolled by the emitter
+so LLVM can vectorise the row loop around it — −49 %, 3.49× → 1.78×.  General in mechanism; the
+SIMD part reaches only bodies that are pure arithmetic on the element's scalars, a body that
+touches the store keeps only the per-row saving.  The NaN test is then worth 1.78× → 1.10×, the
+owner question above.
+
 ### hex_roof `roof_match` — 3.60× (new on 2026-10-24)
 
 `gap_report.py --fn match_op` (the bench's wrapper; `roof_match` itself is inlined into it):
