@@ -44,6 +44,8 @@ enum K {
     Single,
     /// A character's code point, `uint32_t`; 0 is null.
     Char,
+    /// A function value, `loft_fn`.
+    Fn,
     /// A tuple struct, by its number.
     Tup(u32),
     /// No value.
@@ -76,6 +78,7 @@ fn kind_of(c: CType) -> K {
         CType::Float => K::Float,
         CType::Single => K::Single,
         CType::Char => K::Char,
+        CType::Fn => K::Fn,
         CType::Tuple(id) => K::Tup(id),
         CType::Void => K::Void,
     }
@@ -325,6 +328,7 @@ impl<'a> FnWriter<'a> {
             CType::Float => format!("{target} = (double) NAN;"),
             CType::Single => format!("{target} = (float) NAN;"),
             CType::Char => format!("{target} = 0;"),
+            CType::Fn => format!("{target} = loft_fn_of(LOFT_NULL);"),
             CType::Tuple(id) => {
                 for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     self.null_into(&format!("{target}.f{i}"), e, ind);
@@ -402,7 +406,7 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
             Value::Return(x) => self.ret_value(Some(x), ind),
-            Value::Drop(_) | Value::Call(..) => {
+            Value::Drop(_) | Value::Call(..) | Value::CallRef(..) => {
                 let x = if let Value::Drop(x) = v { &**x } else { v };
                 let e = self.expr(x, ind)?;
                 if e.kind == K::Void {
@@ -603,6 +607,12 @@ impl<'a> FnWriter<'a> {
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
     fn assign(&mut self, v: &Value, target: &str, c: CType, ind: usize) -> Result<(), String> {
         match v.unspan() {
+            // A function named as a value: its definition number.
+            Value::Int(d) if c == CType::Fn && self.cx.is_function(*d) => {
+                let f = self.cx.fn_value(d.unsigned_abs());
+                self.line(ind, &format!("{target} = {f};"));
+                Ok(())
+            }
             Value::Null => {
                 self.null_into(target, c, ind);
                 Ok(())
@@ -682,6 +692,13 @@ impl<'a> FnWriter<'a> {
             Value::Boolean(_) => Ok(CType::Bool),
             Value::Text(_) => Ok(CType::Text),
             Value::Var(v) => Ok(self.shapes[*v as usize]),
+            Value::FnRef(..) => Ok(CType::Fn),
+            Value::CallRef(v, _) => match self.vars.tp(*v).base() {
+                crate::data::Type::Function(_, ret, ..) => cx
+                    .ctype(ret)
+                    .ok_or_else(|| format!("a function value returning {}", type_word(ret))),
+                _ => Err("a call through a value that is not a function".into()),
+            },
             Value::TupleGet(v, i) => match self.shapes[*v as usize] {
                 CType::Tuple(id) => cx
                     .tuple_shapes(id)
@@ -745,6 +762,18 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("{}.f{i}", self.var(*var)), kind_of(c)))
             }
             Value::Call(d, args) => self.call(*d, args, ind),
+            Value::CallRef(v, args) => self.call_ref(*v, args, ind),
+            Value::FnRef(d, clos, _) => {
+                let f = self.cx.fn_value(d.unsigned_abs());
+                if *clos == u16::MAX {
+                    Ok(E::new(f, K::Fn))
+                } else {
+                    Ok(E::new(
+                        format!("loft_fn_make(INT64_C({d}), {})", self.var(*clos)),
+                        K::Fn,
+                    ))
+                }
+            }
             compound @ (Value::Block(_) | Value::Insert(_) | Value::If(..) | Value::Tuple(_)) => {
                 let c = self.shape_of(compound)?;
                 self.nested(|w| {
@@ -795,14 +824,25 @@ impl<'a> FnWriter<'a> {
 
     /// Evaluate `args` in order: anything but a variable or a literal goes into a temporary
     /// first, because C leaves the order of a call's arguments open and loft does not.
+    ///
+    /// A variable is read in place unless a later operand may write it (@FR-E-Left: an
+    /// operand is read before a later operand writes) — then it is read into a temporary too.
     fn args(&mut self, args: &[Value], ind: usize) -> Result<Vec<E>, String> {
         let mut out = Vec::with_capacity(args.len());
-        for a in args {
+        for (i, a) in args.iter().enumerate() {
             let e = self.expr(a, ind)?;
-            let simple = matches!(
-                a.unspan(),
-                Value::Var(_) | Value::Int(_) | Value::Long(_) | Value::Boolean(_) | Value::Text(_)
-            );
+            let later_writes = args[i + 1..].iter().any(|b| self.may_write(b));
+            if later_writes && matches!(a.unspan(), Value::Var(_)) && e.kind == K::View {
+                let t = self.temp(CType::Text);
+                self.line(ind, &format!("loft_text_set(&{t}, {});", e.code));
+                out.push(self.held(t, CType::Text));
+                continue;
+            }
+            let simple = match a.unspan() {
+                Value::Var(_) => !later_writes,
+                Value::Int(_) | Value::Long(_) | Value::Boolean(_) | Value::Text(_) => true,
+                _ => false,
+            };
             if simple || matches!(e.kind, K::View | K::Void) {
                 out.push(e);
                 continue;
@@ -815,6 +855,7 @@ impl<'a> FnWriter<'a> {
                 K::Float => (CType::Float, e.code),
                 K::Single => (CType::Single, e.code),
                 K::Char => (CType::Char, e.code),
+                K::Fn => (CType::Fn, e.code),
                 _ => (CType::Bool, as_bool(e)?),
             };
             let t = self.temp(c);
@@ -822,6 +863,28 @@ impl<'a> FnWriter<'a> {
             out.push(E::new(t, kind_of(c)));
         }
         Ok(out)
+    }
+
+    /// May evaluating `v` write a variable?  A statement, a block or a call that is not a
+    /// pure operator may; a conservative answer only costs a temporary.
+    fn may_write(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Var(_)
+            | Value::Int(_)
+            | Value::Long(_)
+            | Value::Boolean(_)
+            | Value::Text(_)
+            | Value::Float(_)
+            | Value::Single(_)
+            | Value::Enum(..)
+            | Value::Null
+            | Value::TupleGet(..)
+            | Value::FnRef(..) => false,
+            Value::Call(d, xs) if is_operator(self.cx.data, *d) => {
+                xs.iter().any(|x| self.may_write(x))
+            }
+            _ => true,
+        }
     }
 
     fn call(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
@@ -870,12 +933,74 @@ impl<'a> FnWriter<'a> {
                 values.push(i);
             }
         }
-        let vals: Vec<Value> = values.iter().map(|&i| args[i].clone()).collect();
+        self.value_args(args, &shapes, &values, &mut xs, ind)?;
+        let call = format!("{name}({})", xs.join(", "));
+        Ok(match ret {
+            CType::Text => {
+                let t = self.temp(CType::Text);
+                self.line(ind, &format!("loft_text_free(&{t});"));
+                self.line(ind, &format!("{t} = {call};"));
+                self.held(t, CType::Text)
+            }
+            c => E::new(call, kind_of(c)),
+        })
+    }
+
+    /// Evaluate the arguments at `values` into `xs`, in order; a function named where a
+    /// function value is passed becomes that value.
+    fn value_args(
+        &mut self,
+        args: &[Value],
+        shapes: &[CType],
+        values: &[usize],
+        xs: &mut [String],
+        ind: usize,
+    ) -> Result<(), String> {
+        let mut rest = Vec::new();
+        for &i in values {
+            match args[i].unspan() {
+                Value::Int(d) if shapes[i] == CType::Fn && self.cx.is_function(*d) => {
+                    xs[i] = self.cx.fn_value(d.unsigned_abs());
+                }
+                _ => rest.push(i),
+            }
+        }
+        let vals: Vec<Value> = rest.iter().map(|&i| args[i].clone()).collect();
         let es = self.args(&vals, ind)?;
-        for (e, &i) in es.into_iter().zip(&values) {
+        for (e, &i) in es.into_iter().zip(&rest) {
             xs[i] = as_shape(e, shapes[i])?;
         }
-        let call = format!("{name}({})", xs.join(", "));
+        Ok(())
+    }
+
+    /// A call through function value `v`: its signature's dispatcher.  A text result's work
+    /// buffers the IR appends after the visible arguments are the dispatcher's to make.
+    fn call_ref(&mut self, v: u16, args: &[Value], ind: usize) -> Result<E, String> {
+        let crate::data::Type::Function(params, ret, ..) = self.vars.tp(v).base().clone() else {
+            return Err("a call through a value that is not a function".into());
+        };
+        let cx = self.cx;
+        let shapes = params
+            .iter()
+            .map(|p| match p {
+                crate::data::Type::RefVar(_) => None,
+                p => cx.ctype(p).filter(|c| *c != CType::Void),
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or("a function value with a & parameter")?;
+        let ret = cx
+            .ctype(&ret)
+            .ok_or_else(|| format!("a function value returning {}", type_word(&ret)))?;
+        if args.len() < shapes.len() {
+            return Err("a call through a function value with arguments left out".into());
+        }
+        let sig = cx.fn_sig(shapes.clone(), ret);
+        let mut xs = vec![String::new(); shapes.len()];
+        let all: Vec<usize> = (0..shapes.len()).collect();
+        self.value_args(&args[..shapes.len()], &shapes, &all, &mut xs, ind)?;
+        let mut list = vec![self.var(v)];
+        list.extend(xs);
+        let call = format!("loft_call{sig}({})", list.join(", "));
         Ok(match ret {
             CType::Text => {
                 let t = self.temp(CType::Text);
@@ -1402,6 +1527,11 @@ impl<'a> FnWriter<'a> {
                     ));
                 }
                 Ok(E::new(format!("loft_database(&{var}, {size})"), K::Void))
+            }
+            // A function variable's scope-exit free reads its definition number as a
+            // reference and releases nothing: its closure record is freed through its own.
+            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Fn => {
+                Ok(E::new("(void) 0", K::Void))
             }
             ("OpFreeRef", [r]) => {
                 let r = self.expr(r, ind)?;
@@ -2017,6 +2147,13 @@ fn as_char(e: E) -> Result<String, String> {
     }
 }
 
+fn as_fn(e: E) -> Result<String, String> {
+    match e.kind {
+        K::Fn => Ok(e.code),
+        k => Err(format!("a function value expected, a {k:?} found")),
+    }
+}
+
 fn as_view(e: E) -> Result<String, String> {
     match e.kind {
         K::View => Ok(e.code),
@@ -2036,6 +2173,7 @@ fn as_shape(e: E, c: CType) -> Result<String, String> {
         CType::Float => as_float(e),
         CType::Single => as_single(e),
         CType::Char => as_char(e),
+        CType::Fn => as_fn(e),
         CType::Void => Err("a void value".into()),
     }
 }

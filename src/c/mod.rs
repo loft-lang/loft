@@ -17,6 +17,7 @@
 //! reaches loft's runtime is @PLN91's decision.
 
 mod body;
+mod fnval;
 mod show;
 
 use crate::data::{Data, DefType, Type, Value};
@@ -60,6 +61,8 @@ pub(crate) enum CType {
     Single,
     /// A character, its code point as `uint32_t`; 0 is null.
     Char,
+    /// A function value, `loft_fn`: a definition number and a closure record.
+    Fn,
     /// A tuple: the C struct [`Cx::tuple_shapes`] numbers, held and passed by value.
     Tuple(u32),
     /// No value.
@@ -77,6 +80,7 @@ pub(crate) fn held(c: CType) -> String {
         CType::Float => "double".into(),
         CType::Single => "float".into(),
         CType::Char => "uint32_t".into(),
+        CType::Fn => "loft_fn".into(),
         CType::Tuple(id) => format!("loft_tup{id}"),
         CType::Void => "void".into(),
     }
@@ -108,6 +112,10 @@ pub(crate) struct Cx<'a> {
     show_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
     consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
+    /// The signatures the unit calls function values through: `loft_call{n}`.
+    fn_sigs: std::cell::RefCell<Vec<(Vec<CType>, CType)>>,
+    /// Every function the unit uses as a value, by definition number.
+    fn_values: std::cell::RefCell<std::collections::BTreeSet<u32>>,
 }
 
 impl<'a> Cx<'a> {
@@ -122,6 +130,8 @@ impl<'a> Cx<'a> {
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             show_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            fn_sigs: std::cell::RefCell::new(Vec::new()),
+            fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -162,6 +172,7 @@ impl<'a> Cx<'a> {
             Type::Float => Some(CType::Float),
             Type::Single => Some(CType::Single),
             Type::Character => Some(CType::Char),
+            Type::Function(..) => Some(CType::Fn),
             Type::Text(_) => Some(CType::Text),
             Type::Reference(..) | Type::Vector(..) | Type::Enum(_, true, _) => Some(CType::Ref),
             Type::Enum(_, false, _) => Some(CType::Enum),
@@ -171,7 +182,7 @@ impl<'a> Cx<'a> {
                     .iter()
                     .map(|e| {
                         self.ctype(e)
-                            .filter(|c| !matches!(c, CType::Void | CType::Text))
+                            .filter(|c| !matches!(c, CType::Void | CType::Text | CType::Fn))
                     })
                     .collect::<Option<Vec<_>>>()?;
                 Some(CType::Tuple(self.tuple_id(shapes)))
@@ -207,6 +218,7 @@ impl<'a> Cx<'a> {
             CType::Float => "(double) NAN".into(),
             CType::Single => "(float) NAN".into(),
             CType::Char => "0".into(),
+            CType::Fn => "{ LOFT_NULL, { 0xFFFF, 0, 0 } }".into(),
             CType::Tuple(id) => {
                 let fields: Vec<String> = self
                     .tuple_shapes(id)
@@ -470,10 +482,15 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         let _ = writeln!(protos, "{sig};");
         let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
     }
+    let dispatch = cx.dispatch_code(&fns).map_err(|why| Refusal {
+        function: data.def(roots[0]).original_name().clone(),
+        why,
+    })?;
     let mut out = String::from(RUNTIME);
     out.push('\n');
     out.push_str(&cx.typedefs());
     out.push_str(&protos);
+    out.push_str(&dispatch);
     out.push_str(&bodies);
     Ok(out)
 }
