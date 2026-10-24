@@ -124,7 +124,7 @@ fn copying_getter(n: &str) -> bool {
 /// minted and calls no user function.
 pub fn callee(data: &Data, d: u32) -> bool {
     let def = data.def(d);
-    let Some(ai) = super::hoist::ret_buffer_attr(def) else {
+    let Some(ai) = crate::opt::attrs::ret_buffer_attr(def) else {
         return false;
     };
     if matches!(def.returned().base(), crate::data::Type::Iterator(_, _)) {

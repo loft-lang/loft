@@ -15,3 +15,4 @@ pub mod decode_view;
 pub mod plan;
 pub mod stream_walk;
 pub mod switches;
+pub mod view_return;
