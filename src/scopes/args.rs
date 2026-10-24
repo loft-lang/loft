@@ -309,6 +309,21 @@ impl Scopes<'_> {
             {
                 amp_foreign.push(orig);
             }
+            // loft#2145 — the same mark for a VIEW local: the store the write-back displaces is
+            // the one it views, owned elsewhere (`Scopes::view_rebind`).
+            if outer_call != u32::MAX
+                && let Value::Call(cs, cargs) = scanned.unspan()
+                && *cs == create_stack_nr
+                && let Some(Value::Var(v)) = cargs.first().map(Value::unspan)
+                && let Some(&w) = self.view_rebind.get(v)
+                && data
+                    .def(outer_call)
+                    .attributes()
+                    .get(arg_idx)
+                    .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
+            {
+                amp_foreign.push(w);
+            }
             if let Value::Insert(ops) = scanned {
                 // Existing A5.6 hoisting: lift Set(w, Null) for owned Reference.
                 let is_a56_hoisted = Self::is_null_init_preamble(&ops, function);
@@ -1024,16 +1039,24 @@ impl Scopes<'_> {
         if !writes_back {
             return None;
         }
-        let struct_d = match function.tp(wv) {
-            Type::RefVar(inner) => match &**inner {
-                Type::Reference(d, _) => *d,
-                _ => return None,
-            },
-            Type::Reference(d, _) => *d,
+        // loft#2149 — a struct-ENUM place is a record in the holder's bytes exactly as a struct
+        // field is, so it takes the same owned copy; read through `base()` so a nullable one
+        // (`Shape?`, discriminant 0 when absent) does too.
+        let shape = match function.tp(wv) {
+            Type::RefVar(inner) => inner.base().clone(),
+            other => other.base().clone(),
+        };
+        let (struct_d, is_enum) = match shape {
+            Type::Reference(d, _) => (d, false),
+            Type::Enum(d, true, _) => (d, true),
             _ => return None,
         };
         let type_val = Value::Int(i32::from(data.def(struct_d).known_type()));
-        let inner_tp = Type::Reference(struct_d, Deps::none());
+        let inner_tp = if is_enum {
+            Type::Enum(struct_d, true, Deps::none())
+        } else {
+            Type::Reference(struct_d, Deps::none())
+        };
         // A fresh OWNED temp via `new_lift_var` — registers the slot + scope-exit `OpFreeRef`
         // (var_scope / var_order / lift_vars) and an inline-ref entry init (no alloc); the
         // `OpDatabase` below allocates its store, freed at scope exit.
@@ -1046,7 +1069,22 @@ impl Scopes<'_> {
             Value::Call(cp, vec![orig.clone(), Value::Var(tmp), type_val.clone()]),
         ];
         let arg = Value::Call(cs, vec![Value::Var(tmp)]);
-        let postamble = Value::Call(cp, vec![Value::Var(tmp), orig, type_val]);
+        let copy_back = Value::Call(cp, vec![Value::Var(tmp), orig.clone(), type_val]);
+        // A struct-enum the callee set to null comes back as the null sentinel, and a record
+        // copy FROM null writes nothing: the place takes its null as an assignment of `null`
+        // writes it — discriminant word 0 (`(L-Null)`).
+        let postamble = if is_enum {
+            crate::data::v_if(
+                Value::Call(data.def_nr("OpRefIsNull"), vec![Value::Var(tmp)]),
+                Value::Call(
+                    data.def_nr("OpSetInt4"),
+                    vec![orig, Value::Int(0), Value::Int(0)],
+                ),
+                copy_back,
+            )
+        } else {
+            copy_back
+        };
         Some((preamble, arg, postamble))
     }
 

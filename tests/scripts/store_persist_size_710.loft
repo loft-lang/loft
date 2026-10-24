@@ -10,18 +10,14 @@
 //   LOFT_PERSIST_TEST_PER    coordinates per record
 //   LOFT_PERSIST_TEST_MODE   "whole" = fill each vector then insert
 //                            "interleaved" = insert empty, then grow round-robin
-//                            "rebind" = bind an EXISTING path and re-measure
+//                            "reload" = load an EXISTING image and digest it
 //
 // The two build modes hold the SAME records and differ only in the order the arena
 // saw the growth.  Interleaved is not a contrived shape: it is what a streaming
 // generator does, appending each incoming feature to whichever record owns it.
-//
-// `rebind` is the compaction moment, and it is what makes the order comparison
-// meaningful.  The two orders leave DIFFERENT interior free space — the header
-// below says so, and says compaction is what reclaims it — so comparing them
-// as-built measures the allocator's luck, not the format.  Compare them after a
-// rebind and the question becomes the one loft#710 asks: does the file follow the
-// CONTENT?
+// The two orders leave DIFFERENT interior free space in the live store;
+// `store_persist_copy` writes the collection rebuilt, so the question the files
+// answer is the one loft#710 asks: does the file follow the CONTENT?
 #cwd
 
 struct Pt  { const x: i32, const y: i32 }
@@ -35,10 +31,9 @@ fn main() {
   if path == "" { println("no path"); return }
 
   idx: hash<Rec[id]> = [];
-  if mode == "rebind" {
-    // A fresh process binding the same path: the store is rebuilt from what it
-    // HOLDS, so whatever each construction order left behind is gone.
-    ok2 = store_persist_bind(idx, path);
+  if mode == "reload" {
+    // A fresh process reading the image back: it must hold what was written.
+    ok2 = store_load(idx, path);
     h2 = 0; recs2 = 0; coords2 = 0;
     for r in idx {
       recs2 += 1;
@@ -73,7 +68,7 @@ fn main() {
     }
   }
 
-  ok = store_persist_bind(idx, path);
+  ok = store_persist_copy(idx, path);
   // A digest over every stored value, so a file that got SMALLER by losing data
   // cannot pass the size assertions: the driver compares this across modes.
   h = 0; recs = 0; coords = 0;

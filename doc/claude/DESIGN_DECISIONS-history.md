@@ -5015,3 +5015,42 @@ had updated it (its sidecar rewritten to `placement=3`), were refused by `main` 
 *"the store's a hash was written by a build that lays it out differently (placement 3), which
 this build cannot read"*.
 
+## C153 — What the interpreter can use lives in `opt`, a compiled target's decisions in `lower`; a backend only spells
+
+Asked 2026-10-23 while planning a minimal interpreter (@PLN200).  The owner set the aim: *"this is
+far more about internal modularity than it is about really wanting a minimal interpreter.  I want
+the interpreter to be a clearly defined part of loft.  Soon I want a second codegen target
+(ansi-c) and for that I need a well structured base to work off"*, with *"I still want
+optimizations possible for the interpreter"*.  Measured then: the IR passes `ctor_literal`,
+`leaf_inline`, `self_replace`, `value_record` and `zero_count` sat in the generator's layer
+because they asked analyses that lived in `src/generation/hoist.rs`, and the interpreter sat
+ABOVE the generator.  Considered: keep the analyses in the Rust writer and let a C writer call
+into it (the C writer then depends on Rust spelling), or copy them per writer (two answers to
+one question).  Decided: place by user — `opt` for what the interpreter can use or several
+backends ask, `lower` for a compiled target's decisions, a backend for spelling — with the
+interpreter and the compiled targets as siblings.  Cross-unit inlining stays opt-in
+(`#inline`), so the layer line holds by default.  The first phase (B1) moved the shared analyses
+into `src/opt/` one item set at a time, each move checked byte-identical over every program's
+IR and bytecode; it brought the references from `opt` to the Rust writer to zero.
+
+## C154 — Store memory is not filled; only a store whose bytes leave the process is written whole
+
+Decided 2026-10-24 by the owner: *"I still want to remove any zero fill when possible, even if
+we get rid of functions"*, then *"yes, remove the bound-store family"*.  The zero fill had been
+removed once before and restored after regressions; measuring them showed the timing
+differences were code layout, not the fill (`grouped_fill_find` at 876 µs without the fill
+against 862 µs with it, and 883–888 µs under forced alignment alone).  What kept the fill was
+correctness, not speed: delete's backward merge read the last word of the block before it,
+which may be a claimed block's unwritten payload, and every raw-byte image (a bound file, a
+snapshot, the world image, the REPL resume image, a placement arena) wrote the whole buffer.
+The merge now asks the claims first, the images are written from a rebuilt defined store, and
+the bound-store family — `store_persist_bind`, `store_release`, `store_durable_check`,
+`store_durable_seal`, bound-file compaction and upgrade-on-bind — was removed: no library or
+consumer used it, only loft's own tests and four `loft-suite` attic cells.
+
+Measured after the change, 2026-10-24 (`bench/stats.py`, lean builds, A/B against the same
+tree with every store zeroed): no measurable difference — `panel_build` 3.20x against 3.23x
+of Rust, `map_json` 2.61x against 2.58x, `truncate_to` 1.76x against 1.71x, each inside the
+other's sample range.  The fill was never these routines' cost; what the decision buys is the
+rule — no byte nobody wrote is read or leaves the process — made checkable (Miri,
+`Store::raw_bytes`).

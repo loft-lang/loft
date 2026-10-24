@@ -1,8 +1,8 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 204c587a..3d7fb2ce 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -10303,7 +10303,7 @@ fn group_covers_type(
+diff --git a/src/opt/loop_records.rs b/src/opt/loop_records.rs
+index 198fb3c5a..6f722ed70 100644
+--- a/src/opt/loop_records.rs
++++ b/src/opt/loop_records.rs
+@@ -150,7 +150,7 @@ pub(crate) fn group_covers_type(
                      Some(Value::Int(n)) if u16::try_from(*n).is_ok_and(|n|
                          n & crate::keys::COPY_FRESH_DEST != 0
                              && n & crate::keys::COPY_TP_MASK == tp));
@@ -12,10 +12,10 @@ index 204c587a..3d7fb2ce 100644
              // A record copy into one of the element's FIELDS writes that field whole: its
              // null arm writes the field's default (`CompleteWrites::fresh_fields`, the same
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 475ce7e3..85f18b7c 100644
+index 8713b0ea8..473924a39 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -6939,7 +6939,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -7068,7 +7068,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                                  (n & i32::from(crate::keys::COPY_TP_MASK)) == (n & 0x7FFF),
                                  "type id {n} collides with the OpCopyRecord flag bits"
                              );

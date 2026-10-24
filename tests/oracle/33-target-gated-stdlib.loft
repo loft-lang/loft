@@ -1,31 +1,31 @@
 // A stdlib entry whose Rust body is cfg-gated out of a target (loft#1063).
 //
-// `store_durable_seal` / `store_durable_check` are implemented over the `mmap`
-// feature, which the wasm runtime rlib is NOT built with (`--no-default-features
-// --features random`, WasmRuntimeShape::features).  The generator emits the same
-// template for every target, so the missing Rust body used to surface as a raw
-// `error[E0599]: no associated function named durable_seal` against loft's own
-// crate — a wasm-compile-fail on a program the interpreter accepts and runs.
+// `store_persist_copy` is implemented over the `mmap` feature, which the wasm runtime rlib
+// is NOT built with (`--no-default-features --features random`,
+// WasmRuntimeShape::features).  The generator emits the same template for every target, so
+// a missing Rust body surfaces as a raw `error[E0599]` against loft's own crate — a
+// wasm-compile-fail on a program the interpreter accepts and runs.
 //
-// The contract this guards: a target without the feature ANSWERS rather than
-// fails to link, the way `store_persist_bind` already did.  `false` is the honest
-// answer on both sides here — no sidecar was written, and none validates — so the
-// three backends agree on a path that does not exist.  The desktop TRUE case (a
-// real seal that then checks clean) is `tests/store_durable_loft.rs`; it cannot
+// The contract this guards: a target without the feature ANSWERS rather than fails to
+// link.  `false` is the honest answer on every side here — the image goes into a directory
+// that does not exist, so no target writes it — and the three backends agree.  The desktop
+// TRUE case (an image written and loaded back) is `tests/store_persist_loft.rs`; it cannot
 // live here, because a target with no mmap can never agree with it.
+struct Part { const id: integer }
+
 fn main() {
-    // A path no test creates: seal fails (no main file), check fails (no sidecar).
-    absent = "tests/oracle/.no-such-store";
-    sealed = store_durable_seal(absent);
-    checked = store_durable_check(absent);
-    // `false` is the ANSWER the contract requires, and it is the whole point: a target
-    // without the mmap feature must answer rather than fail to link.  Asserting it says
-    // the call really ran, where printing it cannot distinguish an answer from a stub.
-    assert(!sealed, "sealing a store with no main file fails honestly; got {sealed}");
-    assert(!checked, "checking a store with no sidecar fails honestly; got {checked}");
-    println("seal={sealed} check={checked}");
+    parts: hash<Part[id]> = [];
+    parts += Part { id: 7 };
+    // A directory no test creates: the write fails on a desktop, and the call answers
+    // `false` where the feature is absent.
+    absent = "tests/oracle/.no-such-dir/parts.store";
+    written = store_persist_copy(parts, absent);
+    // Asserting it says the call really ran, where printing it cannot distinguish an
+    // answer from a stub.
+    assert(!written, "an image into a missing directory is not written; got {written}");
+    println("written={written}");
     // The gated call inside a branch the program does not take still has to
     // COMPILE — emission is per call site, not per taken path.
-    if false { println("unreachable={store_durable_seal(absent)}"); }
+    if false { println("unreachable={store_persist_copy(parts, absent)}"); }
     println("done");
 }

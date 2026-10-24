@@ -33,8 +33,8 @@
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
-use crate::keys::DbRef;
 pub(crate) use crate::native_gate::is_text_work_buffer;
+use crate::opt::native_key::{linked_packages, native_pkg_lib};
 use crate::platform::process::{Program, Spawn};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -75,7 +75,7 @@ pub fn generate_interface(data: &Data, export_set: &HashSet<u32>) -> String {
     }
     let mut fns: Vec<u32> = export_set.iter().copied().collect();
     fns.sort_unstable();
-    let decl_dups = crate::generation::duplicate_fn_names(data);
+    let decl_dups = crate::opt::names::duplicate_fn_names(data);
     for d in fns {
         let def = data.def(d);
         let name = def.name().strip_prefix("n_").unwrap_or(def.name());
@@ -95,7 +95,7 @@ pub fn generate_interface(data: &Data, export_set: &HashSet<u32>) -> String {
         let _ = writeln!(
             src,
             "#native \"loft_shared_{}\"",
-            crate::generation::disambiguated_fn_ident(&decl_dups, def)
+            crate::opt::names::disambiguated_fn_ident(&decl_dups, def)
         );
     }
     src
@@ -395,193 +395,10 @@ pub fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
     }
 }
 
-/// @PLN11 Arc N / N3 — mark a library's functions for native dispatch.  Of the
-/// `candidates` (a library's functions — e.g. all functions from a `use`d
-/// library's source), the **shared-store-dispatchable** subset has its
-/// `def.native` set to the bridge symbol `loft_shared_<name>`.  Returns that
-/// subset (the cdylib export set).
-///
-/// This is the hook that turns a *normal* library function (a body, no
-/// hand-written `#native`) into a native-dispatched one: once `def.native` is set,
-/// `byte_code` routes every call to it through `OpStaticCall` (codegen.rs), the
-/// stub is registered by `register_native_stubs`, and `wire_shared_native_fns`
-/// wires the real bridge after the cdylib loads.  **Call before `byte_code`.**
-pub fn mark_native_exports(data: &mut Data, candidates: &HashSet<u32>) -> HashSet<u32> {
-    let exportable: HashSet<u32> = crate::native_gate::shared_store_dispatchable(data)
-        .intersection(candidates)
-        .copied()
-        .collect();
-    mark_exports(data, &exportable);
-    exportable
-}
-
-/// @PLN11 Arc N / N3 (Step 2) — set `def.native = "loft_shared_<name>"` on each
-/// function in `export` (which `byte_code` then routes through `OpStaticCall`).
-/// Split out from [`mark_native_exports`] so the **build-before-mark** flow can
-/// mark *only after* the cdylib compiles — a build failure simply never marks, so
-/// the library interprets (Step 2's invariant: a library that can't compile native
-/// silently interprets, no `exit`, no `OpStaticCall` to an unbuilt symbol).
-pub fn mark_exports(data: &mut Data, export: &HashSet<u32>) {
-    let dups = crate::generation::duplicate_fn_names(data);
-    for &d in export {
-        // The disambiguated ident (#305) — must equal the cdylib wrapper's
-        // exported symbol, or `wire_shared_native_fns`' dlsym misses it.
-        let sym = format!(
-            "loft_shared_{}",
-            crate::generation::disambiguated_fn_ident(&dups, data.def(d))
-        );
-        data.def_mut(d).native = sym;
-    }
-}
-
-/// What proving a built cdylib against the process turned up.
-#[derive(Debug, Default, Clone)]
-pub struct BridgeProbe {
-    /// Functions whose bridge symbol resolved — the ones actually marked.
-    pub marked: usize,
-    /// Original names of the functions left interpreting, sorted.  Empty when
-    /// every export resolved.
-    pub unresolved: Vec<String>,
-    /// True when the artifact itself could not be `dlopen`ed, so none of its
-    /// exports resolve.
-    pub not_loaded: bool,
-    /// @PLN199 G0b-2 — the key of a type or function the artifact names and this program
-    /// does not have: it is refused, and none of its exports is marked.
-    pub refused: Option<String>,
-}
-
-impl BridgeProbe {
-    /// True when the whole export set is dispatching natively — nothing fell
-    /// back to the interpreter.
-    #[must_use]
-    pub fn complete(&self) -> bool {
-        !self.not_loaded && self.unresolved.is_empty()
-    }
-}
-
-/// Load the cdylib at `so`, and mark for native dispatch exactly those functions
-/// of `export` whose bridge symbol it really exports.
-///
-/// [`mark_exports`] marks the whole set on the strength of the BUILD having
-/// succeeded.  That is a proxy, and it fails in both directions (loft#831): a
-/// cdylib can build cleanly and still not load — linked against a different
-/// `libloft.rlib`, missing a system library, or replaced by a concurrent build
-/// between the freshness check and the load.  `byte_code` has by then emitted
-/// `OpStaticCall` to a symbol that will never be wired, and the panic stub in
-/// `compile.rs` takes the program down at the first call — even though the loft
-/// body it was compiled from is sitting right there in the same process.
-///
-/// So ask the question whose answer is the one that matters, at the moment the
-/// answer is still actionable: load the artifact and `dlsym` each bridge.  A
-/// symbol that does not resolve leaves its function unmarked, which is precisely
-/// the documented fallback for a library that cannot compile native — it
-/// interprets, byte-identically.  Loading here also PINS the image for the
-/// process, so pruning or rebuilding by a concurrent `loft` cannot invalidate
-/// the decision after it is made.
-pub fn probe_and_mark_exports(
-    data: &mut Data,
-    stores: &Stores,
-    export: &HashSet<u32>,
-    so: &std::path::Path,
-) -> BridgeProbe {
-    let mut probe = BridgeProbe::default();
-    let all = |data: &Data| -> Vec<String> {
-        let mut v: Vec<String> = export
-            .iter()
-            .map(|&d| data.def(d).original_name().clone())
-            .collect();
-        v.sort_unstable();
-        v
-    };
-    if !crate::c_libs::load_cdylib(&so.to_string_lossy()) {
-        // `load_cdylib` has already printed the classified dlopen diagnostic.
-        probe.not_loaded = true;
-        probe.unresolved = all(data);
-        return probe;
-    }
-    // @PLN199 G0b-2 — an artifact names its types and functions by key; one that names a key
-    // this program lacks is never marked, so its functions interpret rather than reach a
-    // bridge that cannot run.
-    let ids = crate::lib_ids::HostIds::new(data, stores);
-    if init_one(so, (&raw const ids).cast()) == Some(0) {
-        probe.refused = Some(ids.take_missing().unwrap_or_default());
-        probe.unresolved = all(data);
-        return probe;
-    }
-    let dups = crate::generation::duplicate_fn_names(data);
-    let mut resolvable: HashSet<u32> = HashSet::new();
-    for &d in export {
-        let sym = format!(
-            "loft_shared_{}",
-            crate::generation::disambiguated_fn_ident(&dups, data.def(d))
-        );
-        if crate::c_libs::bridge_symbol_resolves(&sym) {
-            resolvable.insert(d);
-        } else {
-            probe.unresolved.push(data.def(d).original_name().clone());
-        }
-    }
-    probe.unresolved.sort_unstable();
-    probe.marked = resolvable.len();
-    mark_exports(data, &resolvable);
-    probe
-}
-
-/// @PLN199 G0b-2 — hand the library cdylib at `path` this host's table and `ids` (its
-/// `loft_shared_init`), and answer what it says: 1 accepted, 0 refused, `None` when it
-/// cannot be opened or has no such entry.  Opens it by path — a handle on an image already
-/// loaded, which `c_libs::load_cdylib` keeps.
-#[cfg(feature = "native-extensions")]
-fn init_one(path: &std::path::Path, ids: *const std::ffi::c_void) -> Option<u32> {
-    type InitFn = unsafe extern "C" fn(*const HostTable, *const std::ffi::c_void) -> u32;
-    let lib = unsafe { crate::c_libs::open_library(&path.to_string_lossy()) }.ok()?;
-    let init: libloading::Symbol<InitFn> = unsafe { lib.get(b"loft_shared_init\0") }.ok()?;
-    Some(unsafe { init(&raw const HOST_TABLE, ids) })
-}
-
-#[cfg(not(feature = "native-extensions"))]
-fn init_one(_path: &std::path::Path, _ids: *const std::ffi::c_void) -> Option<u32> {
-    None
-}
-
-/// @PLN11 Arc N / N3 (Step 2) — the cdylib **export set** for the library at
-/// `pkg_dir`, computed **without marking** (`&Data`, not `&mut`): the library's
-/// top-level, user-named, `pub` functions (the dispatch-target invariant — see
-/// [`mark_library_native`]) intersected with the shared-store-dispatchable gate.
-/// The build-before-mark flow builds the cdylib from this set, then calls
-/// [`mark_exports`] only on success.
-#[must_use]
-pub fn library_export_set(data: &Data, pkg_dir: &str) -> HashSet<u32> {
-    let candidates = library_candidates(data, pkg_dir);
-    crate::native_gate::shared_store_dispatchable(data)
-        .intersection(&candidates)
-        .copied()
-        .collect()
-}
-
-/// The functions of the library at `pkg_dir` a script can name and call — the candidates
-/// [`library_export_set`] narrows to those that compile.
-///
-/// @PLN199 E1 — a function already bound to a native symbol is not one: a body-less
-/// `#native` declaration walks clean through the gate (its body is `Null`), and exporting a
-/// `loft_shared_` bridge for it would replace the binding with a bridge to a function that
-/// has no loft body — the @PLN24 hazard, for `#native` instead of `#c`.  A symbol that IS
-/// a `loft_shared_` bridge was set by an earlier marking of this same set.  A `#c`
-/// binding is left out for the same reason: its C symbol is its implementation, so it is
-/// neither compiled nor interpreted, and the trace does not list it as either.
-fn library_candidates(data: &Data, pkg_dir: &str) -> HashSet<u32> {
-    (0..data.definitions())
-        .filter(|&d| {
-            let def = data.def(d);
-            matches!(def.def_type(), DefType::Function)
-                && def.pub_visible
-                && !is_synthetic_name(def.name())
-                && (def.native().is_empty() || def.native().starts_with("loft_shared_"))
-                && def.c_sig.is_empty()
-                && crate::file_access::is_under(def.position().file.as_str(), pkg_dir)
-        })
-        .collect()
-}
+pub use crate::opt::native_key::{auto_cdylib_stem, library_export_set, platform_cdylib_name};
+pub(crate) use crate::opt::native_key::{
+    hidden_dest_type_name, library_candidates, type_layout_fingerprint,
+};
 
 /// `LOFT_TRACE_NATIVE_GATE=1` — how the library at `pkg_dir` splits: how many of the
 /// functions a script can call run compiled, and for each that stays interpreted, the rule
@@ -609,39 +426,6 @@ pub fn trace_partition(data: &Data, pkg_dir: &str) {
             eprintln!("[native-gate]   `{name}` interpreted — {why}");
         }
     }
-}
-
-/// @PLN11 Arc N / N3 — mark a `use`d library's **public API** functions native.
-///
-/// **Invariant:** a dispatch target is a function the consuming script can directly
-/// *name and `Call`* — a top-level, user-named, `pub` function owned by the package
-/// at `pkg_dir` (by `def.position().file` prefix — the same ownership guard the
-/// manifest path uses).  [`mark_native_exports`] then marks the
-/// shared-store-dispatchable subset.
-///
-/// The candidate filter must exclude **synthetic** functions, not just lambdas: a
-/// `pub fn`'s parse sprays `pub_visible` over every def it creates (`parser/mod.rs`),
-/// so a nested lambda (`__lambda_<fn>_<k>`) is also `pub_visible` — but it is a *fn-ref*
-/// target the script cannot name, never a direct-`Call` dispatch target.  The
-/// `__`-prefix is the codebase's synthetic-name convention (same marker
-/// `native_gate` uses for synthetic params), so excluding it covers the whole class
-/// of compiler-generated functions, not the lambda instance.  (Private helpers are
-/// already excluded by `pub_visible`; they ride into the cdylib as reachable deps.)
-pub fn mark_library_native(data: &mut Data, pkg_dir: &str) -> HashSet<u32> {
-    let export = library_export_set(data, pkg_dir);
-    mark_exports(data, &export);
-    export
-}
-
-/// Is `stored_name` (an `n_<name>` definition name) a compiler-generated
-/// (synthetic) function — i.e. its user-facing name starts with `__` (lambdas
-/// `__lambda_<fn>_<k>`, and any future synthetic kind)?  Such functions are never a
-/// script-callable public API, so they are not auto-native dispatch targets.
-fn is_synthetic_name(stored_name: &str) -> bool {
-    stored_name
-        .strip_prefix("n_")
-        .unwrap_or(stored_name)
-        .starts_with("__")
 }
 
 /// Add to `types` (transitively, in definition order) the struct/enum defs that
@@ -719,235 +503,8 @@ fn emit_type_def(data: &Data, d_nr: u32, src: &mut String) {
     }
 }
 
-/// @PLN11 Arc N — a uniform 16/24-byte argument/return slot for the
-/// **shared-store** native-library bridge ([`generate_shared_cdylib_lib_rs`]).
-///
-/// The bridge knows each slot's type from the function signature, so no tag is
-/// needed: a scalar reads/writes `.scalar` (an `i64`, or float bits, or `0/1` for
-/// bool), a `vector`/`reference` reads/writes `.dbref`.  `#[repr(C)]` so the
-/// interpreter and the generated cdylib — **both linking this exact type from
-/// libloft** — agree on layout with no marshalling.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct LibArg {
-    /// Scalar payload: an `i64`, `f64::to_bits() as i64`, `f32::to_bits() as i64`,
-    /// or a boolean as `0/1`.  Junk for non-scalar slots.
-    pub scalar: i64,
-    /// Reference payload: the raw stack `DbRef` for a `vector`/`reference` slot
-    /// (passed through unchanged — the `--native` body expects the same indirect
-    /// form the interpreter holds).  Junk for non-ref slots.
-    pub dbref: crate::keys::DbRef,
-    /// Text payload pointer: for a `text` arg, the UTF-8 bytes (borrowed from the
-    /// caller's store for the call's duration — `--native` takes `&str`).  Null
-    /// for non-text slots.
-    pub text_ptr: *const u8,
-    /// Text payload length (bytes), paired with `text_ptr`.
-    pub text_len: usize,
-}
-
-impl LibArg {
-    /// All-zero slot — the spread base so each `LibArg` literal sets only the one
-    /// field its type uses (`LibArg { scalar: x, ..LibArg::ZERO }`, etc.).
-    pub const ZERO: LibArg = LibArg {
-        scalar: 0,
-        dbref: crate::keys::DbRef {
-            store_nr: 0,
-            rec: 0,
-            pos: 0,
-        },
-        text_ptr: std::ptr::null(),
-        text_len: 0,
-    };
-}
-
-/// @PLN199 C0 — the one channel from the interpreter into a library cdylib it loaded.
-///
-/// The cdylib links its OWN copy of libloft: `Stores`, `DbRef` and [`LibArg`] have the same
-/// layout on both sides (the same rlib builds both), but every `static` and `thread_local!` in
-/// libloft exists twice, so the cdylib's coroutine table is not the interpreter's.  What both
-/// sides must agree on therefore crosses as a function of the HOST, reached through this
-/// table, which the host hands every generated cdylib once, at load (`c_libs::load_one`
-/// calls its `loft_shared_init`).
-#[repr(C)]
-pub struct HostTable {
-    /// [`HOST_ABI`] of the host that filled the table.
-    pub abi: u32,
-    /// Register a generator the cdylib built in the HOST's coroutine table and write its
-    /// handle into `ret.dbref`.  `coro` is a `Box<Box<dyn LoftCoroutine>>`, thinned.
-    pub coroutine_adopt:
-        unsafe extern "C" fn(stores: *mut Stores, coro: *mut std::ffi::c_void, ret: *mut LibArg),
-    /// @PLN199 C2 — call the function value `(d_nr, closure.dbref)` with the `n` visible
-    /// arguments at `args`, in the interpreter running this bridge call, writing its result
-    /// into `ret` (`State::call_back`).
-    /// @PLN199 D2 — the host's coroutine table, which a library cdylib's own copy of
-    /// `codegen_runtime` forwards to once installed, so a generator handle means the same
-    /// frame on both sides.
-    pub coroutines: crate::codegen_runtime::CoroutineHost,
-    pub call_ref: unsafe extern "C" fn(
-        stores: *mut Stores,
-        d_nr: u32,
-        closure: *const LibArg,
-        args: *const LibArg,
-        n: usize,
-        ret: *mut LibArg,
-    ),
-    /// @PLN199 G0b-2 — this program's id of the type named `key` (`lib_ids::TypeNames::key`),
-    /// or `u16::MAX`; `ids` is what the host passed to `loft_shared_init`.
-    pub type_id:
-        unsafe extern "C" fn(ids: *const std::ffi::c_void, key: *const u8, len: usize) -> u16,
-    /// @PLN199 G0b-2 — this program's number of the function named `key` (`lib_ids::fn_key`),
-    /// or `u32::MAX`.
-    pub fn_id:
-        unsafe extern "C" fn(ids: *const std::ffi::c_void, key: *const u8, len: usize) -> u32,
-}
-
-/// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 5;
-
-/// The table this process hands to every library cdylib it loads.
-pub static HOST_TABLE: HostTable = HostTable {
-    abi: HOST_ABI,
-    coroutine_adopt: host_coroutine_adopt,
-    coroutines: HOST_COROUTINES,
-    call_ref: host_call_ref,
-    type_id: crate::lib_ids::host_type_id,
-    fn_id: crate::lib_ids::host_fn_id,
-};
-
-/// @PLN199 D2 / D3 — the host's coroutine table as a library cdylib sees it: the runtime's
-/// own (`CoroutineHost::HERE`) for a compiled generator, and the interpreter running this
-/// thread's bridge call for one of the interpreter's (`COROUTINE_STORE`), which a library is
-/// handed only through such a call.
-const HOST_COROUTINES: crate::codegen_runtime::CoroutineHost =
-    crate::codegen_runtime::CoroutineHost {
-        alloc_held: crate::codegen_runtime::CoroutineHost::HERE.alloc_held,
-        alloc: crate::codegen_runtime::CoroutineHost::HERE.alloc,
-        retain: host_coroutine_retain,
-        free: host_coroutine_free,
-        next_i64: host_coroutine_next_i64,
-        next_into: crate::codegen_runtime::CoroutineHost::HERE.next_into,
-        next_dbref: host_coroutine_next_dbref,
-        next_text: host_coroutine_next_text,
-        exhausted: host_coroutine_exhausted,
-    };
-
-/// The interpreter an interpreted generator handle belongs to, or `None` for a compiled one.
-fn interpreter_for(gen_ref: DbRef) -> Option<&'static mut crate::state::State> {
-    if gen_ref.store_nr != crate::database::COROUTINE_STORE {
-        return None;
-    }
-    let state = crate::extensions::host_state();
-    assert!(
-        !state.is_null(),
-        "an interpreted generator was advanced from compiled code outside a call from the \
-         interpreter"
-    );
-    Some(unsafe { &mut *state })
-}
-
-fn host_coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
-    let Some(st) = interpreter_for(gen_ref) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_i64)(gen_ref, stores);
-    };
-    // A one-byte yield is a boolean's storage byte; anything else an `i64` image.
-    let yielded = st.advance_for_native(gen_ref);
-    let v = yielded.as_slice();
-    match v.len() {
-        0 => crate::codegen_runtime::COROUTINE_EXHAUSTED,
-        1 => i64::from(v[0]),
-        _ => i64::from_ne_bytes(v[..8].try_into().unwrap_or_default()),
-    }
-}
-
-fn host_coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
-    let Some(st) = interpreter_for(gen_ref) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_dbref)(gen_ref, stores);
-    };
-    let yielded = st.advance_for_native(gen_ref);
-    let v = yielded.as_slice();
-    if v.len() < std::mem::size_of::<DbRef>() {
-        DbRef::NULL
-    } else {
-        unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<DbRef>()) }
-    }
-}
-
-fn host_coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
-    let Some(st) = interpreter_for(gen_ref) else {
-        return (crate::codegen_runtime::CoroutineHost::HERE.next_text)(gen_ref, stores);
-    };
-    // The interpreter yields a `Str` into its own memory; the compiled consumer owns a copy.
-    let yielded = st.advance_for_native(gen_ref);
-    let v = yielded.as_slice();
-    if v.len() < std::mem::size_of::<crate::keys::Str>() {
-        return crate::store::STRING_NULL.to_string();
-    }
-    let s = unsafe { std::ptr::read_unaligned(v.as_ptr().cast::<crate::keys::Str>()) };
-    s.str().to_string()
-}
-
-fn host_coroutine_exhausted(gen_ref: DbRef) -> bool {
-    match interpreter_for(gen_ref) {
-        Some(st) => st.coroutine_exhausted(&gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.exhausted)(gen_ref),
-    }
-}
-
-fn host_coroutine_retain(gen_ref: DbRef) -> DbRef {
-    match interpreter_for(gen_ref) {
-        Some(st) => st.coroutine_retain(gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.retain)(gen_ref),
-    }
-}
-
-fn host_coroutine_free(gen_ref: DbRef, stores: &mut Stores) {
-    match interpreter_for(gen_ref) {
-        Some(st) => st.free_coroutine(&gen_ref),
-        None => (crate::codegen_runtime::CoroutineHost::HERE.free)(gen_ref, stores),
-    }
-}
-
-/// [`HostTable::call_ref`] — the interpreter is the one `State::invoke_native` recorded for
-/// this thread's bridge call, or, on a compiled library's own worker thread, one made over
-/// that worker's stores (`parallel::with_worker_state`).
-unsafe extern "C" fn host_call_ref(
-    stores: *mut Stores,
-    d_nr: u32,
-    closure: *const LibArg,
-    args: *const LibArg,
-    n: usize,
-    ret: *mut LibArg,
-) {
-    let args = unsafe { std::slice::from_raw_parts(args, n) };
-    let closure = unsafe { (*closure).dbref };
-    let state = crate::extensions::host_state();
-    let result = if state.is_null() {
-        // A compiled library's own `par` worker: no interpreter runs on this thread, so one
-        // is made over the worker's stores for the call.
-        crate::parallel::with_worker_state(unsafe { &mut *stores }, |st| {
-            st.call_back(d_nr, closure, args)
-        })
-    } else {
-        unsafe { (*state).call_back(d_nr, closure, args) }
-    };
-    unsafe { *ret = result };
-}
-
-/// [`HostTable::coroutine_adopt`] — the generator's frame takes holds on its argument stores
-/// in the host's table (`@FR-G-Arg-Rebind`), exactly as a `--native` caller's
-/// `alloc_coroutine_held` does in its own.  The box was allocated in the cdylib by the same
-/// system allocator this process frees with.
-unsafe extern "C" fn host_coroutine_adopt(
-    stores: *mut Stores,
-    coro: *mut std::ffi::c_void,
-    ret: *mut LibArg,
-) {
-    let coro: Box<Box<dyn crate::codegen_runtime::LoftCoroutine>> =
-        unsafe { Box::from_raw(coro.cast()) };
-    let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
-    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, *coro);
-    unsafe { (*ret).dbref = handle };
-}
+pub(crate) use crate::host_abi::LAYOUT_FP_SYMBOL;
+pub use crate::host_abi::{HOST_ABI, HostTable, IdTable, LibArg};
 
 /// The part of every library cdylib that receives the [`HostTable`]: `loft_shared_init`
 /// fills the artifact's id tables from it ([`id_tables_src`]), stores it, and `__host()`
@@ -992,7 +549,7 @@ mod __coro {
 pub(crate) const IN_HOST_TABLE_SRC: &str = "
 #[allow(dead_code)]
 fn __host() -> &'static loft::native_lib::HostTable {
-    &loft::native_lib::HOST_TABLE
+    &loft::native_adopt::HOST_TABLE
 }
 
 #[allow(dead_code, unused_imports)]
@@ -1052,27 +609,6 @@ fn emit_program(
         out.shared_ids.take().map(std::cell::RefCell::into_inner)
     };
     (String::from_utf8(buf).unwrap_or_default(), ids)
-}
-
-/// @PLN199 G1 — the `[native]` packages a library artifact links: those that declare a
-/// `#native` definition its exports reach.  The program around it may load others; linked
-/// too, their symbols shared the artifact's flat C-ABI namespace, and one exported by two of
-/// them refused a library that calls only its own.
-fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(String, String)> {
-    let roots: Vec<u32> = export_set.iter().copied().collect();
-    let reach = crate::generation::reachable_functions(data, &roots);
-    data.native_packages
-        .iter()
-        .filter(|(_, dir)| {
-            reach.iter().any(|&d| {
-                let def = data.def(d);
-                !def.native().is_empty()
-                    && *def.code() == crate::data::Value::Null
-                    && crate::file_access::is_under(def.position().file.as_str(), dir)
-            })
-        })
-        .cloned()
-        .collect()
 }
 
 /// The `#native` symbols two of `linked` packages declare: what [`linked_packages`]' link
@@ -1208,37 +744,9 @@ fn __fill_ids(table: &loft::native_lib::HostTable, ids: *const std::ffi::c_void)
     )
 }
 
-/// @PLN199 G0b-2 — a library artifact's table of ids (`__tid` / `__fid`): written by its
-/// `loft_shared_init` before any of its code runs, read by that code after.  The write-once
-/// discipline is what makes a plain read sound, and a plain read is what the optimiser can
-/// merge with another read of the same slot, where an atomic one it cannot.
-pub struct IdTable<T: Copy, const N: usize>(std::cell::UnsafeCell<[T; N]>);
-
 // SAFETY: written only by `loft_shared_init`, which the host runs once per artifact before
 // handing out any of the artifact's functions, on any thread.
 unsafe impl<T: Copy, const N: usize> Sync for IdTable<T, N> {}
-
-impl<T: Copy, const N: usize> IdTable<T, N> {
-    #[must_use]
-    pub const fn new(zero: T) -> Self {
-        IdTable(std::cell::UnsafeCell::new([zero; N]))
-    }
-
-    /// Slot `k`.
-    #[inline]
-    #[must_use]
-    pub fn get(&self, k: usize) -> T {
-        unsafe { (*self.0.get())[k] }
-    }
-
-    /// Fill slot `k`.
-    ///
-    /// # Safety
-    /// Only while no code that reads the table can run: from `loft_shared_init`.
-    pub unsafe fn set(&self, k: usize, v: T) {
-        unsafe { (*self.0.get())[k] = v };
-    }
-}
 
 /// Generate the cdylib `lib.rs` source for `data`'s **scalar** export set: the
 /// `--native` program for the functions in `export_set` **and their transitive
@@ -1255,7 +763,7 @@ impl<T: Copy, const N: usize> IdTable<T, N> {
 pub fn generate_cdylib_lib_rs(data: &Data, stores: &Stores, export_set: &HashSet<u32>) -> String {
     let entry: Vec<u32> = export_set.iter().copied().collect();
     let (mut src, _) = emit_program(data, stores, &entry, false);
-    let dups = crate::generation::duplicate_fn_names(data);
+    let dups = crate::opt::names::duplicate_fn_names(data);
     for &d in export_set {
         src.push('\n');
         src.push_str(&export_wrapper(data, &dups, d));
@@ -1304,7 +812,7 @@ pub(crate) fn shared_cdylib_source(
     entry.sort_unstable();
     let (mut src, mut ids) = emit_program(data, stores, &entry, own_ids);
     src.push_str(HOST_INIT_SRC);
-    let dups = crate::generation::duplicate_fn_names(data);
+    let dups = crate::opt::names::duplicate_fn_names(data);
     for &d in &entry {
         src.push('\n');
         src.push_str(&shared_bridge_wrapper(
@@ -1323,11 +831,6 @@ pub(crate) fn shared_cdylib_source(
     src.push_str(&layout_fp_export(artifact_fp));
     src
 }
-
-/// The name of the symbol a generated cdylib exports to declare the type layout
-/// it was built against.  Read by [`layout_fp_of_relocated`] before the artifact
-/// is adopted.
-pub(crate) const LAYOUT_FP_SYMBOL: &str = "loft_type_layout_fp_v1";
 
 /// The `#[no_mangle] pub extern "C"` export that makes an artifact **name its own
 /// type layout** (loft#717).
@@ -1360,7 +863,7 @@ fn export_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> String {
     let def = data.def(d_nr);
     // The emitted program disambiguates colliding fn names (#305) — the
     // wrapper must call (and be named after) the SAME identifier.
-    let inner = crate::generation::disambiguated_fn_ident(dups, def); // e.g. "n_double"
+    let inner = crate::opt::names::disambiguated_fn_ident(dups, def); // e.g. "n_double"
     let ret = rust_type(def.returned(), &Context::Result);
     // Positional params (`a0`, `a1`, …) so wrapper arg names never clash with
     // anything; types match the inner function's argument-context signature.
@@ -1432,7 +935,7 @@ fn shared_bridge_wrapper(
     use std::fmt::Write as _;
     let def = data.def(d_nr);
     // Same identifier the emitted program uses for this fn (#305).
-    let inner = crate::generation::disambiguated_fn_ident(dups, def); // e.g. "n_vec_sum"
+    let inner = crate::opt::names::disambiguated_fn_ident(dups, def); // e.g. "n_vec_sum"
 
     let mut body = String::new();
     let mut fwd = String::new();
@@ -1553,7 +1056,7 @@ fn shared_bridge_wrapper(
             }
             // @PLN199 — `&T` to a record, vector, keyed collection or data enum: the slot the
             // caller's `DbRef` names holds that value's `DbRef`.  It is copied into a local,
-            // `--native`'s `&mut DbRef` parameter writes through or rebinds the local, and the
+            // `--native`'s `*mut DbRef` parameter writes through or rebinds the local, and the
             // local goes back to the slot after the call — re-resolved then, because a call
             // back into the interpreter may grow its stack, and the slot with it.
             crate::native_gate::BridgeAttrKind::Marshal if matches!(a.typedef.base(), Type::RefVar(inner) if crate::data::is_dbref(inner.base())) =>
@@ -1682,37 +1185,6 @@ fn shared_bridge_wrapper(
          {free_orphans}\
          }}\n",
     )
-}
-
-/// The SHARED-STORE type NAME for a hidden destination attr of loft type `t` — resolved at
-/// BRIDGE RUNTIME via `Stores::name` in the caller's store, because the library's
-/// compile-time type IDS live in a different id space than the caller's (@PLAN59: a
-/// lib-side constant id produced `claim(size=0)` / "Incomplete record" aborts once struct
-/// dests became universal).  Vectors resolve via the `main_vector<elm>` schema name (the
-/// same key `--native`'s `output_alloc_heap` uses).
-///
-/// A record or data-enum answers the name its row was REGISTERED under in `stores`, not its
-/// definition's name.  The two differ when two definitions share a name: the first to
-/// register keeps it and the second is qualified (`input::InputState` beside a program's own
-/// `InputState`, `typedef::fill_database`).  Asked by the bare name, the caller's store
-/// answered the OTHER type, and the bridge minted a record of that type's size for this
-/// one's fields — a 6-boolean record for a 56-byte `InputState`, whose writes then ran into
-/// the recycled store's leftover bytes (loft#1706).  The cdylib is keyed on the caller's
-/// type-table layout (#461), so the row registered here is the row the caller has.
-pub(crate) fn hidden_dest_type_name(data: &Data, stores: &Stores, t: &Type) -> Option<String> {
-    match t.base() {
-        Type::Vector(elm, _) => Some(format!("main_vector<{}>", elm.name(data))),
-        Type::Reference(td, _) | Type::Enum(td, true, _) => {
-            let def = data.def(*td);
-            Some(
-                stores
-                    .types
-                    .get(usize::from(def.known_type))
-                    .map_or_else(|| def.name().to_string(), |row| row.name.clone()),
-            )
-        }
-        _ => None,
-    }
 }
 
 /// The leaves of the returned tuple `t`, each with its field path in the Rust tuple the inner
@@ -1884,88 +1356,10 @@ fn bridge_write_ret(t: &Type, expr: &str, inner_owned: bool, own_ids: bool) -> S
     }
 }
 
-/// Candidate `(rlib-lookup-dir, deps-dir)` pairs for a loft binary at `exe_dir`,
-/// most authoritative first.  The dev/test layout looks beside the exe (`deps/`,
-/// then the uplifted `<profile>/`); the INSTALLED layout (`<prefix>/bin/loft`)
-/// keeps `libloft.rlib` + its deps under `<prefix>/share/loft/` — where `make
-/// install` puts them, NOT next to the binary.  Without the share candidates the
-/// installed loft can fingerprint its rlib (`cache::loft_rlib_path` has the same
-/// fallback) but cannot LOCATE it to link a library's cdylib → "libloft.rlib not
-/// found for this build".  Keep aligned with `cache::loft_rlib_path` (#304).
-fn rlib_search_dirs(exe_dir: &std::path::Path) -> Vec<(std::path::PathBuf, std::path::PathBuf)> {
-    // Dependency rlibs live in `<profile>/deps/`.  Real binary run: `exe_dir` is
-    // `<profile>`, so `deps/` is its child.  Integration test: `exe_dir` already IS
-    // `.../deps`.  Either way the returned link-search dir is that `deps/`.
-    let dev_deps = if crate::file_access::file_name(exe_dir).is_some_and(|n| n == "deps") {
-        exe_dir.to_path_buf()
-    } else {
-        exe_dir.join("deps")
-    };
-    let mut out = vec![
-        (dev_deps.clone(), dev_deps.clone()),
-        (exe_dir.to_path_buf(), dev_deps.clone()),
-    ];
-    if crate::file_access::file_name(exe_dir).is_some_and(|n| n == "bin")
-        && let Some(prefix) = exe_dir.parent()
-    {
-        let share = prefix.join("share").join("loft");
-        out.push((share.join("deps"), share.join("deps")));
-        out.push((share.clone(), share.join("deps")));
-    }
-    out
-}
-
-/// @PLN11 Arc N / N3 — locate the running build's `libloft.rlib` + its sibling
-/// `deps/` directory, for linking an auto-generated cdylib against the **same**
-/// libloft this process links (so `Stores`/`DbRef`/`LibArg` are ABI-identical).
-///
-/// Works in both contexts the cdylib must build in: a real `cargo run --bin loft`
-/// (an unhashed `target/<prof>/libloft.rlib`, or `deps/`) and an integration test
-/// (a hashed `libloft-<hash>.rlib` in the test binary's `deps/`).  Returns the
-/// chosen rlib path and the `deps/` dir to add to the link search path.
-///
-/// The deps-first preference must stay aligned with `cache::rlib_candidates`
-/// (#304): the fingerprint that validates a built cdylib has to hash the same
-/// rlib this function links, or a cdylib gets validated against one loft and
-/// built against another.
-#[must_use]
-pub fn find_loft_rlib() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    // Find `libloft.rlib` (unhashed) or the newest hashed `libloft-<hash>.rlib`,
-    // returning the matching `deps/` dir as the link-search path.
-    for (dir, deps_dir) in &rlib_search_dirs(&exe_dir) {
-        if !crate::file_access::is_dir(dir) {
-            continue;
-        }
-        let exact = dir.join("libloft.rlib");
-        if crate::file_access::exists(&exact) {
-            return Some((exact, deps_dir.clone()));
-        }
-        let hashed = crate::file_access::read_dir(dir)
-            .ok()
-            .into_iter()
-            .flatten()
-            .filter(|e| {
-                let n = e.file_name().unwrap_or_default();
-                n.starts_with("libloft-") && has_rlib_ext(n)
-            })
-            .max_by_key(|e| {
-                crate::file_access::symlink_metadata(e)
-                    .and_then(|m| m.modified())
-                    .ok()
-            })
-            .map(|e| e.os_spelling());
-        if let Some(rlib) = hashed {
-            return Some((rlib, deps_dir.clone()));
-        }
-    }
-    None
-}
-
-/// Does filename `n` have a (case-insensitive) `.rlib` extension?
-fn has_rlib_ext(n: &str) -> bool {
-    crate::file_access::extension(n).is_some_and(|e| e.eq_ignore_ascii_case("rlib"))
-}
+pub(crate) use crate::toolchain::has_rlib_ext;
+pub use crate::toolchain::{
+    NO_RUSTC, find_loft_rlib, rustc_available, rustc_version, toolchain_failure_hint,
+};
 
 /// `--extern name=path` flags for the optional feature-dep rlibs (random/png/…) in
 /// `deps` that the generated stdlib code may reference — every `libX-<hash>.rlib`
@@ -2114,12 +1508,6 @@ fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
     crate::platform::import_lib_search_dirs(rlib)
 }
 
-/// Platform cdylib filename for `stem` (`lib<stem>.so` / `.dylib` / `<stem>.dll`).
-#[must_use]
-pub fn platform_cdylib_name(stem: &str) -> String {
-    crate::platform::cdylib_file_name(stem)
-}
-
 /// @PLN26 — whether a cdylib links `[native] crate` packages by C-ABI (their
 /// `.so`) rather than as Rust rlibs.  The library-crate twin of
 /// `native_utils::native_cabi_enabled` (the binary-crate copy the executable path
@@ -2134,8 +1522,8 @@ fn native_cabi_link_enabled() -> bool {
 /// `.so`: `-L native=<dir>` + `-l dylib=<name>` + an RPATH (the build/prebuilt
 /// dir and `$ORIGIN` for an installed binary shipping the `.so` beside it).  On
 /// Windows a DLL links through its import library and there is no RPATH, so this
-/// bridges `<stem>.dll.lib` → `<stem>.lib` and the loader finds the staged DLL
-/// beside the binary instead.
+/// bridges `<stem>.dll.lib` → `<stem>.lib`; the host loads the package's DLL before the
+/// artifact ([`load_linked_packages`]), so the artifact's import resolves to it.
 ///
 /// Returns empty when the `.so` can't be resolved ([`crate::extensions::resolve_native_lib`]
 /// already printed why) — the link then fails loudly on the undefined symbol
@@ -2148,16 +1536,9 @@ fn native_cabi_link_enabled() -> bool {
 /// executable path); kept separate because that helper lives in the binary crate
 /// and this builder lives in the library crate.
 fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
-    // The cdylib is named after the `[library] native` stem, which can differ
-    // from the crate name; read it from the manifest (the SAME stem the
-    // interpreter resolves with), falling back to the crate name when absent.
-    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-        .and_then(|m| m.native)
-        .unwrap_or_else(|| crate_name.replace('-', "_"));
-    let Some(so) = crate::native_build::resolve_native_lib(pkg_dir, &stem) else {
+    let Some((stem, so_path)) = native_pkg_lib(crate_name, pkg_dir) else {
         return Vec::new();
     };
-    let so_path = std::path::PathBuf::from(&so);
     let Some(so_dir) = so_path.parent() else {
         return Vec::new();
     };
@@ -2408,219 +1789,6 @@ fn build_keyed_cdylib(
     Ok(so)
 }
 
-/// Is a working `rustc` on `PATH`?  Cached for the process.
-///
-/// This is the line between a legitimate interpret-fallback and a real failure: with
-/// NO toolchain, loft cannot build native at all, so interpreting a library is the
-/// only option and is graceful.  With a toolchain PRESENT, a native build that fails
-/// is a genuine error — silently interpreting it would hand back a partly-interpreted
-/// binary (or one whose `#native` functions panic at runtime) while the user asked for
-/// native.  Callers gate the fallback on this.
-#[must_use]
-pub fn rustc_available() -> bool {
-    rustc_version().is_some()
-}
-
-/// The first line `rustc --version` answers on `PATH`, or `None` when there is no working
-/// `rustc` — [`crate::cache::rustc_version`], the one place loft asks it.
-#[must_use]
-pub fn rustc_version() -> Option<&'static str> {
-    crate::cache::rustc_version()
-}
-
-/// @C102 — what a developer is told when this machine has no `rustc`.  A program run says
-/// nothing (it succeeds on the interpreter); the moments that belong to the developer say
-/// this: `loft --version`, the `loft test` summary, and `loft new --native`'s next steps.
-pub const NO_RUSTC: &str = "no rustc on PATH, so native builds are unavailable \
-                            (install one from https://rustup.rs)";
-
-/// Detect ENVIRONMENT failures that masquerade as compiler/linker errors.
-///
-/// A `rustc`/`cc`/`ld` invocation that dies from a full temp dir or OOM emits a
-/// cryptic crash, not a clear diagnosis: a SIGBUS from `ld` writing to a full
-/// tmpfs (the common case — the linker mmaps object files into `TMPDIR`, and a
-/// write the tmpfs can no longer back faults with a Bus error) reads like a
-/// linker bug or a stale-artifact problem, when it is really "disk is full".
-/// Scan a failed invocation's captured stderr for those signatures and return a
-/// one-line, actionable hint to surface ABOVE the raw output; return `None` for
-/// a genuine compile error so the real diagnostics show through untouched.
-#[must_use]
-pub fn toolchain_failure_hint(stderr: &str) -> Option<String> {
-    let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
-    let env_fault = |what: &str| {
-        Some(format!(
-            "NOTE: the toolchain {what} — this is an ENVIRONMENT failure, not a \
-             code error. The build temp dir is almost certainly full (or out of \
-             memory). Free space on TMPDIR ({tmp}), or set TMPDIR to a larger \
-             filesystem, then retry."
-        ))
-    };
-    if stderr.contains("No space left on device") || stderr.contains("ENOSPC") {
-        return env_fault("ran out of disk space");
-    }
-    if stderr.contains("Bus error")
-        || stderr.contains("signal: 7")
-        || stderr.contains("signal 7")
-        || stderr.contains("SIGBUS")
-    {
-        return env_fault("crashed with a Bus error (SIGBUS), typically a full temp dir");
-    }
-    if stderr.contains("Cannot allocate memory")
-        || stderr.contains("signal: 9")
-        || stderr.contains("SIGKILL")
-    {
-        return env_fault("was killed (out of memory)");
-    }
-    // The known `loft_ffi` duplicate-crate collision: two copies of loft-ffi reach the
-    // same link carrying the same StableCrateId, which rustc refuses.  Name it
-    // explicitly so a consumer does not read the raw rustc dump as a bug in their own
-    // code or in the library — it is neither, and loft falls back to interpreting.
-    // loft#693 — the generated code calls a loft runtime method the linked
-    // `libloft.rlib` does not have, i.e. this BINARY and that RLIB are from different
-    // builds.  Left raw, the message blames the LIBRARY whose cdylib was being built
-    // ("library 'gridmesh-0.2.0' failed to build native", `no method named
-    // dbref_borrow`) — the one thing that is certainly not at fault, and a consumer
-    // reasonably reads it as the library being broken and starts bisecting versions.
-    // Naming the rlib in use is the fastest way to see the mismatch.
-    if stderr.contains("E0599") && stderr.contains("Stores") {
-        let rlib = find_loft_rlib().map_or_else(
-            || "none found".to_string(),
-            |(p, _)| p.display().to_string(),
-        );
-        return Some(format!(
-            "NOTE: the generated code calls a loft runtime method that the \
-             `libloft.rlib` being linked does NOT have, so this loft binary and that \
-             rlib come from different builds.  This is not a bug in the library being \
-             built, nor in your program.  Re-install the pair as one unit — `make all \
-             && make install` in the loft tree.  The rlib in use is: {rlib}"
-        ));
-    }
-    if stderr.contains("StableCrateId") {
-        return Some(
-            "NOTE: this is the known loft_ffi duplicate-crate collision — two copies of \
-             loft-ffi reach the same link with the same StableCrateId, which rustc \
-             refuses.  It is a BUILD/TOOLCHAIN limitation, NOT a bug in your code or in \
-             this library.  To clear it, rebuild the library's cdylib against the CURRENT \
-             loft — `make rebuild-native-cdylibs` in the loft tree, or `cargo build \
-             --release` in the library's native/ dir — then re-run.  If it persists after \
-             a clean rebuild, it is the tracked StableCrateId limitation, not your build."
-                .to_string(),
-        );
-    }
-    None
-}
-
-/// Derive the auto-native cdylib crate stem from a package directory.
-///
-/// The stem becomes the cdylib's crate name (rustc derives the crate name from the
-/// source-file stem when no `--crate-name` is given), so every character must be
-/// valid in a Rust identifier.  A registry dir carries a dotted version
-/// (`glb-0.1.0`): rustc maps `-`→`_` itself but rejects the surviving `.`, so map
-/// **every** non-`[A-Za-z0-9_]` char to `_` — enforcing the full invalid-character
-/// class, not just `-`/`.`.  The constant `loft_auto_` prefix guarantees the leading
-/// character is alphabetic (a crate name may not start with a digit).  (#294)
-///
-/// @PLN199 G2b — the package's NAME and VERSION from its `loft.toml` (`glb` 0.1.0 →
-/// `loft_auto_glb_0_1_0`), the directory's name only without one: a registry install and the
-/// checkout CI builds a prebuilt from lie in differently named directories, and both must
-/// name the artifact alike.
-#[must_use]
-pub fn auto_cdylib_stem(pkg_dir: &str) -> String {
-    let raw = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
-        .and_then(|m| {
-            let name = m.name?;
-            Some(match m.version {
-                Some(v) => format!("{name}_{v}"),
-                None => name,
-            })
-        })
-        .or_else(|| crate::file_access::file_name(pkg_dir))
-        .unwrap_or_else(|| "lib".to_string());
-    format!(
-        "loft_auto_{}",
-        raw.replace(|c: char| !(c.is_ascii_alphanumeric() || c == '_'), "_")
-    )
-}
-
-/// #461 — combine two fingerprints into one stable, order-sensitive digest.
-fn mix_fp(a: u64, b: u64) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    a.hash(&mut h);
-    b.hash(&mut h);
-    h.finish()
-}
-
-/// #461 — a digest of the type-table LAYOUT a cdylib would be built against:
-/// the index → (name, size, align) mapping, in order.  Two contexts with the
-/// same digest assign every type the same index, so a cdylib's hardcoded
-/// `db_tp` indices stay valid when reused across them; a different digest means
-/// the indices would resolve to the wrong type and the cdylib must be rebuilt.
-/// The type layout an already-built artifact declares, or `None` when it does not
-/// say (a hand-written `#native` cdylib, or one generated before loft#717).
-///
-/// Opening the library to ask is safe in a way that USING it is not: the symbol is
-/// a constant-returning `extern "C" fn() -> u64`, so nothing resolves a type index
-/// or touches a store. An artifact that cannot be opened answers `None` and is
-/// treated as unusable by the caller, which rebuilds — the same outcome dlopen
-/// failure would have produced later, minus the corruption in between.
-///
-/// `None` for an artifact with no symbol deliberately does NOT reject it: a
-/// hand-written cdylib is not generated against a type table and has nothing to
-/// declare. Only a generated artifact is held to the check, and every generated
-/// artifact now carries the symbol.
-///
-/// **Give this a RELOCATED path, never an artifact's own** — that is the whole of
-/// the name.  Loading a path this process may republish later is what loft#777 and
-/// loft#999 both were; [`layout_fp_off_path`] is the only caller and exists to
-/// guarantee it.
-#[cfg(feature = "native-extensions")]
-fn layout_fp_of_relocated(so: &std::path::Path) -> LayoutProbe {
-    unsafe {
-        let Ok(lib) = crate::file_access::load_library(so) else {
-            return LayoutProbe::Unopenable;
-        };
-        let sym = format!("{LAYOUT_FP_SYMBOL}\0");
-        match lib.get::<unsafe extern "C" fn() -> u64>(sym.as_bytes()) {
-            Ok(f) => LayoutProbe::Declares(f()),
-            Err(_) => LayoutProbe::Undeclared,
-        }
-    }
-}
-
-#[cfg(not(feature = "native-extensions"))]
-fn layout_fp_of_relocated(_so: &std::path::Path) -> LayoutProbe {
-    // No loader in this build, so nothing can be asked — the same answer a
-    // hand-written cdylib gives, which is what the caller already tolerates.
-    LayoutProbe::Undeclared
-}
-
-/// What asking an artifact for its layout produced.
-///
-/// Three outcomes, because two of them used to be one.  `layout_fp_of_relocated`
-/// answered `None` both when the artifact declared nothing (a hand-written
-/// cdylib, which is fine to adopt) and when it could not be OPENED at all — and
-/// the adopter read that as "fine to adopt", then handed the caller a path whose
-/// `dlopen` would fail.  Harmless while nothing removed artifacts; `prune_artifacts`
-/// does, and the fresh fast path adopts without taking the build lock, so the two
-/// must be told apart.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// A build without the loader has nothing that can OPEN an artifact, so its
-// `layout_fp_of_relocated` answers `Undeclared` unconditionally and these two are
-// never constructed there.  They are still matched by every reader, so the
-// variants stay — the outcome set is the type's contract, not a per-build fact.
-#[cfg_attr(not(feature = "native-extensions"), allow(dead_code))]
-enum LayoutProbe {
-    /// Could not be opened — torn, half-written, or deleted between the existence
-    /// check and the load.  Never adopt; rebuilding is always available.
-    Unopenable,
-    /// Opened, and names no layout: a hand-written cdylib, generated against no
-    /// type table and with nothing to declare.
-    Undeclared,
-    /// Opened, and names the layout it was generated for.
-    Declares(u64),
-}
-
 /// How many built artifacts a package's `native-auto/` keeps.
 ///
 /// The name carries the caller's type-layout fingerprint (#715), so a NEW file
@@ -2703,620 +1871,30 @@ fn artifact_stem(so: impl crate::file_access::HostPath) -> Option<String> {
     )
 }
 
-/// May the artifact at `so` be adopted by a context whose type layout is
-/// `layout_fp`?
-///
-/// True when it declares `layout_fp`, or declares nothing at all (a hand-written
-/// cdylib — see [`layout_fp_of_relocated`]).  False when it declares a DIFFERENT
-/// layout, which is the case that used to corrupt, and false when it cannot be
-/// asked at all — an artifact this process cannot load is not one it can adopt,
-/// and saying so here is what lets `prune_artifacts` delete concurrently.
-///
-/// The value compared is the key the filename carries (`cached_or_build_shared_cdylib`),
-/// so a file that reached the name another way — copied, or built for another program by a
-/// literal build — is refused for what it is, not for what its name says.
-///
-/// The question is always asked through [`layout_fp_off_path`], never at `so`
-/// itself, because a caller that hears "no" REBUILDS at that very path — see
-/// there for what a load of the real path costs on macOS.  There is deliberately
-/// no second entry point that probes in place: which variant a call site picked
-/// used to be the difference between a correct answer and a silently stale one
-/// (loft#999).
-fn artifact_matches_layout(so: &std::path::Path, layout_fp: u64) -> bool {
-    match layout_fp_off_path(so) {
-        LayoutProbe::Undeclared => true,
-        LayoutProbe::Declares(found) => found == layout_fp,
-        LayoutProbe::Unopenable => false,
-    }
-}
-
-/// Read an artifact's layout fingerprint WITHOUT handing its own path to
-/// `dlopen`: link (or copy) it to a throwaway name, ask that, and leave the real
-/// path untouched.
-///
-/// The path matters because a caller that hears "this artifact does not match"
-/// rebuilds at exactly that path, and macOS dyld caches a loaded image BY PATH
-/// for the life of the process while its `dlclose` is a no-op.  Probing the old
-/// artifact in place and then publishing a fresh one at the same path made the
-/// later load hand back the STALE image dyld had already cached: the settling run
-/// executed pre-edit code while writing the correct file for next time
-/// (loft#777's macOS tail).  Linux keys `dlopen` on `(dev, inode)` and loads the
-/// new file, which is why only macOS breaks.
-///
-/// Dropping the probe instead is what this replaces, and it cost the loft#717
-/// guard: the justification was that a rebuild always follows, and it does not —
-/// branch 3's edit-loop arm answers `Ok(None)` and leaves the artifact in place,
-/// so a foreign-layout cdylib stopped being rebuilt
-/// (`n3_use_native::a_foreign_context_artifact_is_rejected_not_adopted`).
-///
-/// **A relocation that fails answers `Unopenable`, never a probe in place.** The
-/// in-place fallback is what loft#999 was: one unlucky `copy` — a full disk, an
-/// exhausted file-descriptor limit, a concurrent prune — silently restored the
-/// pre-fix behaviour, so `n3_parity::a_dependency_edit_invalidates_its_dependents_cdylib`
-/// failed on macOS twice in a fortnight and passed the other eleven times.
-/// `Unopenable` means "do not adopt", so the caller rebuilds: a wasted `rustc`
-/// where the old file was in fact fine, against a wrong answer that no later run
-/// clears.  Rebuilding is always available; being right is not optional.
-///
-/// A HARD LINK first, and a byte copy only if that fails, is what keeps the
-/// honest answer cheap: the link is O(1) and consumes no space, so the conditions
-/// that made the copy fail no longer decide whether the artifact is adopted, and
-/// the probe is cheap enough for the fresh fast path to use the same one.  A link
-/// shares the artifact's inode, which is safe on both keying schemes — the
-/// rebuild publishes a NEW inode by rename, so nothing can match it, and where
-/// the caller ADOPTS instead the bytes are identical anyway.
-fn layout_fp_off_path(so: &std::path::Path) -> LayoutProbe {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-
-    let (Some(dir), Some(name)) = (so.parent(), crate::file_access::file_name(so)) else {
-        return LayoutProbe::Unopenable;
-    };
-    // A SUBDIRECTORY rather than a sibling file, and the relocated artifact keeps
-    // its own file NAME inside it.  `native-auto/` is enumerated by extension
-    // elsewhere — the parity tests count `so`/`dylib`/`dll` to assert how many
-    // artifacts a context built — so a probe beside the real one would be counted
-    // as a second artifact.  A dot-prefixed directory has no such extension, and
-    // the name inside stays the one `LoadLibrary` wants on Windows.
-    let probe_dir = dir.join(format!(
-        ".layout-probe-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    if let Err(e) = crate::file_access::create_dir_all(&probe_dir) {
-        report_unprobeable(so, &format!("create {e}"));
-        return LayoutProbe::Unopenable;
-    }
-    let probe = probe_dir.join(name);
-    let fp = match relocate_for_probe(so, &probe) {
-        Ok(()) => layout_fp_of_relocated(&probe),
-        Err(e) => {
-            report_unprobeable(so, &e);
-            LayoutProbe::Unopenable
-        }
-    };
-    // The probe has been read; the process may keep the image mapped (dlclose is a
-    // no-op on macOS), and unlinking a mapped file is fine on both unixes.
-    let _ = crate::file_access::remove_dir_all(&probe_dir);
-    fp
-}
-
-/// Put the artifact at `so` under the throwaway name `probe`: a hard link, or a
-/// byte copy where linking is not available (a filesystem without links, or a
-/// `probe` that somehow lands on another device).
-///
-/// `LOFT_FORCE_PROBE_RELOCATE_FAIL` makes both legs fail, which is how the tests
-/// reach the answer this used to get wrong on macOS alone.
-fn relocate_for_probe(so: &std::path::Path, probe: &std::path::Path) -> Result<(), String> {
-    if std::env::var_os("LOFT_FORCE_PROBE_RELOCATE_FAIL").is_some() {
-        return Err("LOFT_FORCE_PROBE_RELOCATE_FAIL".to_string());
-    }
-    if crate::file_access::hard_link(so, probe).is_ok() {
-        return Ok(());
-    }
-    crate::file_access::copy(so, probe)
-        .map(|_| ())
-        .map_err(|e| format!("link and copy both failed: {e}"))
-}
-
-/// Say once that an artifact could not be moved off its path to be asked about
-/// its type layout, so it was rebuilt rather than adopted.
-///
-/// Once per process, because the condition is a property of the machine (space,
-/// descriptors, permissions) rather than of one library: repeating it per library
-/// per run would bury the one line that matters.  It is worth saying at all
-/// because the alternative is what loft#999 was — an unexplained rebuild is
-/// noticeable and recoverable, an unexplained STALE ANSWER is neither.
-fn report_unprobeable(so: &std::path::Path, why: &str) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static SAID: AtomicBool = AtomicBool::new(false);
-    if SAID.swap(true, Ordering::Relaxed) {
-        return;
-    }
-    eprintln!(
-        "loft: cannot copy {} aside to read its type layout ({why}); rebuilding it \
-         instead of reusing it.  Check free space and the open-file limit if builds \
-         stay slow.",
-        so.display()
-    );
-}
-
-/// A digest of the package directories compiled into an auto-native artifact, in sorted
-/// order so the order they were resolved in does not name a second artifact.
-/// @PLN199 G0c — the libraries among `pending` whose code the artifact for `pkg_dir` can
-/// carry: `pkg_dir` itself, what it imports, transitively, and the home of every function
-/// its exports reach (a qualified `use dep;` binds no import).  The program around it may
-/// load others (`pending` is every library it compiles), and those are no part of what this
-/// artifact is — keyed on them, a second program that loads one more library rebuilt it.
-fn artifact_sources(
-    data: &Data,
-    pkg_dir: &str,
-    pending: &[String],
-    export_set: &HashSet<u32>,
-) -> Vec<String> {
-    let under = |file: &str, dir: &str| crate::file_access::is_under(file, dir);
-    let roots: Vec<u32> = export_set.iter().copied().collect();
-    let mut sources: HashSet<u16> = (0..data.definitions())
-        .map(|d| data.def(d))
-        .filter(|def| under(def.position().file.as_str(), pkg_dir))
-        .map(|def| def.source)
-        .chain(
-            crate::generation::reachable_functions(data, &roots)
-                .into_iter()
-                .map(|d| data.def(d).source),
-        )
-        // The program's source is no library's: an instance the program made of one of the
-        // library's generics lies in the library's file, and the program imports everything.
-        .filter(|&s| s != crate::data::MAIN_SOURCE)
-        .collect();
-    loop {
-        let before = sources.len();
-        for imp in data.applied_imports() {
-            if sources.contains(&imp.into_source) {
-                sources.insert(imp.lib_source);
-            }
-        }
-        if sources.len() == before {
-            break;
-        }
-    }
-    let mut out: Vec<String> = pending
-        .iter()
-        .filter(|dir| {
-            dir.as_str() == pkg_dir
-                || (0..data.definitions()).any(|d| {
-                    let def = data.def(d);
-                    // A stdlib definition can lie in a library's file — the wrapper type
-                    // `main_vector<T>` the library's `vector<T>` minted — and is no code of it.
-                    def.source != crate::data::STD_SOURCE
-                        && sources.contains(&def.source)
-                        && under(def.position().file.as_str(), dir)
-                })
-        })
-        .cloned()
-        .collect();
-    if !out.iter().any(|d| d == pkg_dir) {
-        out.push(pkg_dir.to_string());
-    }
-    out
-}
-
-/// @PLN199 G1b — which packages, by name and version (`loft.toml`), not by where they lie:
-/// the same library at two places is the same artifact.  A registry version is immutable; an
-/// edited local package is caught by the staleness check beside this key.  A directory with
-/// no manifest is named by its last component.
-fn contributing_fingerprint(contributing: &[String]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut ids: Vec<(String, String)> = contributing
-        .iter()
-        .map(|dir| {
-            let m = crate::manifest::read_manifest(&format!("{dir}/loft.toml"));
-            let name = m
-                .as_ref()
-                .and_then(|m| m.name.clone())
-                .or_else(|| crate::file_access::file_name(dir))
-                .unwrap_or_default();
-            (name, m.and_then(|m| m.version).unwrap_or_default())
-        })
-        .collect();
-    ids.sort_unstable();
-    ids.dedup();
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    ids.hash(&mut h);
-    crate::cache::host_triple().hash(&mut h);
-    h.finish()
-}
-
-pub(crate) fn type_layout_fingerprint(stores: &Stores) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    stores.types.len().hash(&mut h);
-    for t in &stores.types {
-        t.name.hash(&mut h);
-        t.size_bytes().hash(&mut h);
-        t.align_bytes().hash(&mut h);
-    }
-    h.finish()
-}
-
-/// @PLN11 Arc N / N3 (Step 4 — **dev-interpret-on-edit**) — decide how the library
-/// at `pkg_dir` should run this invocation, and build its cdylib only when warranted.
-///
-/// Returns:
-/// - `Ok(Some(so))` — dispatch native against the cdylib at `so` (fresh cached, or
-///   just built);
-/// - `Ok(None)` — **interpret this run** (the library is being actively edited);
-/// - `Err(_)` — a build was attempted and failed (the caller interprets + warns).
-///
-/// The policy reconciles "a library is always native" with "no `rustc` per save":
-/// 1. **Fresh artifact** (`.so` exists, fingerprint matches, source not newer) →
-///    native, no work.
-/// 2. **No artifact yet, or `loft` itself changed** (fingerprint mismatch) → **build
-///    eagerly** → native.  First use of a library, and a deployed/stable dep, pay the
-///    one-time build and run native from the start (this is also why the parity tests,
-///    which wipe `native-auto/` then run once, still dispatch native).
-/// 3. **Stale artifact** (an `.so` exists but the source is newer — the library was
-///    edited) → consult the last-run source hash:
-///    - *changed since the previous run* → the edit loop is live → **interpret this
-///      run** (`Ok(None)`); record the new hash.  No `rustc`.
-///    - *unchanged since the previous run* → editing has settled → **rebuild** → native.
-///
-/// So an edit-run-edit-run loop interprets each time (no `rustc`); the first run after
-/// you stop editing rebuilds and the library is native again.  (Polish: do that
-/// rebuild in the background so even the settling run never blocks — see the plan's
-/// Step 4 option 3.)
+/// The building half of `native_artifact::cached_or_build_shared_cdylib`: build the artifact `stem` for `fp`
+/// into `out_dir`, record `fp` beside it, and prune the package's older artifacts.  Called
+/// while the caller holds the package's build lock.
 ///
 /// # Errors
-/// Propagates a build failure from [`build_shared_cdylib`].
-pub fn cached_or_build_shared_cdylib(
+/// Propagates a build failure from `build_keyed_cdylib`.
+pub fn build_shared_artifact(
     data: &Data,
     stores: &Stores,
     export_set: &HashSet<u32>,
     pkg_dir: &str,
-    pending: &[String],
-) -> Result<Option<std::path::PathBuf>, String> {
-    let out_dir = std::path::Path::new(pkg_dir).join("native-auto");
-    let contributing = &artifact_sources(data, pkg_dir, pending, export_set)[..];
-    // #461 — type-table INDICES shift with which libraries are loaded (an `i32` write is
-    // `db_tp=64` standalone, `67` once `hex_grid` is parsed), and a cdylib that hardcoded
-    // them, reused by a consumer whose table differs, read the WRONG type and corrupted
-    // (the moros GLB header wrote 8-byte fields for `as i32` → version 0).  A literal build
-    // still folds the caller's layout into its key for that reason.
-    let layout_fp = type_layout_fingerprint(stores);
-    // @PLN199 G0c — an artifact that names its ids by key (`lib_ids`) runs in any program
-    // that has those keys, so neither the program's type table nor its function numbering is
-    // part of what it is built for: the loft that built it and the sources it carries are.
-    // A literal build (`LOFT_NO_LIB_IDS=1`) still serves one program, and keeps both.
-    let program_fp = if std::env::var_os("LOFT_NO_LIB_IDS").is_some() {
-        mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set))
-    } else {
-        0
-    };
-    // And WHICH packages were compiled in.  The artifact carries the code of every library
-    // it reaches, a dependency's included, so two runs that resolved `use probepkg` to
-    // different versions build different libraries — with the SAME layout when the versions
-    // declare the same types.  Keyed on layout alone, the second run adopted the first
-    // one's artifact and ran the other version's code without a word (a registry package's
-    // `native-auto/` is shared by every consumer on the box).  `contributing` is the set
-    // `source_newer_than` already reads as this artifact's sources, so one set answers both
-    // "is it current" and "is it this build"; a version is a different directory.
-    // …and WHICH loft executable: the artifact is this binary's generated code, called through
-    // this binary's store layout, so a different binary must rebuild rather than adopt it —
-    // the rlib's hash alone stays the same when an installed `loft` is upgraded without it
-    // (loft#1776).  A release bundle's binary names its build by itself: the release builds
-    // its artifacts beside an rlib that ships nowhere, and a user's copy has none to hash.
-    let loft_fp = if crate::cache::release_bundle() {
-        crate::cache::loft_exe_identity()
-    } else {
-        mix_fp(
-            crate::cache::loft_build_fingerprint(),
-            crate::cache::loft_exe_identity(),
-        )
-    };
-    let fp = mix_fp(
-        mix_fp(loft_fp, program_fp),
-        mix_fp(
-            contributing_fingerprint(contributing),
-            crate::cache::native_release_flags_fingerprint(),
-        ),
-    );
-    // loft#715 — and put that key in the artifact's NAME, so two contexts can
-    // never name the same file.  The fingerprint alone was not enough: the fast
-    // path below reads `so.exists()` and the sidecar WITHOUT the build lock, so a
-    // process whose context still matched the stamped fp could take the path
-    // while another process, mid-build for a DIFFERENT table, renamed its own
-    // artifact over it.  The publish is atomic, so the reader never saw a torn
-    // file — it saw a COMPLETE library built for someone else's type indices, and
-    // a garbage index reaching `Stores::add` aborts the process with "Cannot add
-    // to none-structure" (a non-unwinding panic: the whole run dies).  It needed
-    // two overlapping processes to show, which is why it read as 1 start in 12.
-    //
-    // Content-addressing removes the class rather than narrowing the window: a
-    // context only ever opens its own file, lock or no lock.
-    let stem = format!("{}_{fp:016x}", auto_cdylib_stem(pkg_dir));
-    let so = out_dir.join(platform_cdylib_name(&stem));
-
-    // 1. Fresh artifact → native, no hashing.  The FILENAME carries `fp`, so its
-    // existence is the fingerprint match — the shared `.loft-build-fp` sidecar is
-    // per-DIRECTORY and two contexts would otherwise invalidate each other's
-    // stamp on every run, rebuilding forever (loft#715).  The sidecar is still
-    // written below for the readers that report it.
-    // loft#717 — and ASK the artifact what layout it was built for, rather than
-    // inferring it from the name.  Content-addressing (#715) makes a collision
-    // unreachable by construction, but "by construction" is an argument, not a
-    // check: it holds only while the fingerprint keeps covering every layout
-    // difference and while nothing else can put a file at this path.  When it
-    // does not hold the failure is silent corruption, so the cheap verification
-    // is worth more than the argument.  A mismatch falls through to REBUILD,
-    // which is the same thing a name miss already does — and REBUILD is why this
-    // probe, too, must not load `so` itself (loft#999).
-    if crate::file_access::exists(&so)
-        && !source_newer_than(contributing, &so)
-        && artifact_matches_layout(&so, fp)
-    {
-        return Ok(Some(so));
-    }
-
-    // Concurrent `loft` processes (parallel tests are the common case)
-    // routinely load the same library at once; an unserialized double-build
-    // rewrites the generated `.rs` under a running rustc and tears the `.so`
-    // (mixed-object "dangerous relocation" link errors, "file too short" on
-    // load).  Take an exclusive advisory lock for the check+build, then
-    // RE-CHECK freshness: the waiter adopts the winner's artifact instead of
-    // rebuilding over it.  Released when `lock` drops, on every return path.
-    crate::file_access::create_dir_all(&out_dir).map_err(|e| format!("create {e}"))?;
-    let lock_path = out_dir.join(".build.lock");
-    let lock = crate::file_access::create(&lock_path).map_err(|e| format!("create {e}"))?;
-    lock.lock()
-        .map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
-    if crate::file_access::exists(&so)
-        && !source_newer_than(contributing, &so)
-        && artifact_matches_layout(&so, fp)
-    {
-        return Ok(Some(so));
-    }
-
-    let build = |out_dir: &std::path::Path| -> Result<Option<std::path::PathBuf>, String> {
-        let built = build_keyed_cdylib(data, stores, export_set, out_dir, &stem, fp)?;
-        crate::cache::write_native_artifact_fingerprint(out_dir, fp);
-        // Bound the directory, while the build lock is still held.  A new artifact
-        // appears per consumer type-layout (#715) and nothing collected the old
-        // ones — 25 GB across this repo's fixtures, 532 files in one package.
-        // Scoped to THIS package's auto-native family: a `[c] shim` cdylib shares
-        // the directory and is never rebuilt, so an unscoped sweep eats it.
-        prune_artifacts(out_dir, &auto_cdylib_stem(pkg_dir));
-        Ok(Some(built))
-    };
-
-    // 2. No artifact yet, or `loft` changed → build eagerly (native from the start).
-    // An artifact built for a DIFFERENT type layout counts as "no artifact"
-    // (loft#717): it can never be adopted, and letting it reach the edit-loop
-    // branch below would leave a foreign artifact sitting at this name — branch 3
-    // does NOT always rebuild, its edit-loop arm answers `Ok(None)` and leaves the
-    // file alone.
-    //
-    // The probe never touches this path — see [`layout_fp_off_path`].  This branch
-    // is about to REPLACE the file it is asking about, and on macOS dyld caches a
-    // loaded image by PATH for the process, so probing here and rebuilding at the
-    // same path made the later load return the stale image (loft#777, and loft#999
-    // for the one-unlucky-`copy` route back into it).
-    if !crate::file_access::exists(&so) || !artifact_matches_layout(&so, fp) {
-        crate::cache::write_run_source_hash(&out_dir, source_content_hash(contributing));
-        return build(&out_dir);
-    }
-
-    // 3. Stale artifact (the library was edited) → dev-interpret-on-edit.
-    let cur = source_content_hash(contributing);
-    let stable = crate::cache::read_run_source_hash(&out_dir) == Some(cur);
-    crate::cache::write_run_source_hash(&out_dir, cur);
-    if stable {
-        build(&out_dir) // editing settled → rebuild, native again
-    } else {
-        Ok(None) // still being edited → interpret this run, no rustc
-    }
-}
-
-/// @PLN199 C1 — the numbers the artifact's code gives the functions it can reach.  Generated
-/// code writes a function value's `d_nr` as a literal (a fn-ref dispatch arm, a `FnRef` it
-/// makes), and the interpreter hands it values of ITS numbering, so an artifact serves only
-/// a program that numbers those functions the same way.  A library's functions are numbered
-/// before the script's, so editing the script does not change this.
-fn fn_numbering_fingerprint(data: &Data, export_set: &HashSet<u32>) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let roots: Vec<u32> = export_set.iter().copied().collect();
-    let mut reach: Vec<u32> = crate::generation::reachable_functions(data, &roots)
-        .into_iter()
-        .collect();
-    reach.sort_unstable();
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for d in reach {
-        d.hash(&mut h);
-        data.def(d).name().hash(&mut h);
-    }
-    h.finish()
-}
-
-/// @PLN11 Arc N / N3 (Step 4) — a content hash of every `.loft` / `loft.toml` source
-/// under `pkg_dirs` (build/artifact dirs skipped, files visited in sorted order for a
-/// stable digest).  Used to detect "did this library's source change since the last
-/// run?" — content-based, not mtime, so it is deterministic (testable) and a no-op
-/// touch doesn't trigger a rebuild.
-///
-/// Spans every package that CONTRIBUTES to the artifact, not just the one that owns
-/// it, for the reason given on `source_newer_than` (loft#777).
-fn source_content_hash(pkg_dirs: &[String]) -> u64 {
-    use sha2::{Digest, Sha256};
-    let mut files: Vec<std::path::PathBuf> = Vec::new();
-    let mut stack: Vec<std::path::PathBuf> =
-        pkg_dirs.iter().map(std::path::PathBuf::from).collect();
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = crate::file_access::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries {
-            let name = e.file_name().unwrap_or_default();
-            if name == "native-auto" || name == "native" || name == "target" {
-                continue;
-            }
-            let Ok(ft) = crate::file_access::symlink_metadata(&e).map(|m| m.file_type()) else {
-                continue;
-            };
-            let p = e.os_spelling();
-            if ft.is_dir() {
-                stack.push(p);
-                continue;
-            }
-            let is_src = crate::file_access::extension(&p)
-                .is_some_and(|x| x.eq_ignore_ascii_case("loft"))
-                || name == "loft.toml";
-            if is_src {
-                files.push(p);
-            }
-        }
-    }
-    files.sort();
-    let mut h = Sha256::new();
-    for f in &files {
-        // The path relative to its OWN package keeps the digest stable across
-        // machines while still reacting to renames; content reacts to edits.
-        let rel = pkg_dirs
-            .iter()
-            .find_map(|d| f.strip_prefix(d).ok())
-            .unwrap_or(f);
-        h.update(rel.to_string_lossy().as_bytes());
-        if let Ok(bytes) = crate::file_access::read(f) {
-            h.update(&bytes);
-        }
-    }
-    let digest: [u8; 32] = h.finalize().into();
-    u64::from_le_bytes(digest[..8].try_into().unwrap_or([0; 8]))
-}
-
-/// Is any `.loft` / `loft.toml` source under `pkg_dirs` newer than the artifact at
-/// `artifact`?  (Build/artifact dirs are skipped.)  A missing/unreadable artifact
-/// mtime counts as stale.
-///
-/// `pkg_dirs` is every package that CONTRIBUTES code to the artifact, not just the
-/// one that owns it.  A cdylib carries its dependencies inlined — `emit_program`
-/// emits the export set *and its transitive deps*, so `hex_editor`'s cdylib holds a
-/// full copy of `hex_part::part_name_ok` — and it EXPORTS that copy under the same
-/// `loft_shared_<name>` symbol the dependency's own cdylib exports.  Whichever
-/// library loads first wins the lookup.
-///
-/// Asking only about the owning package therefore reported a dependent as fresh
-/// after its DEPENDENCY was edited: the edited library rebuilt correctly and the
-/// dependent kept serving its stale inlined copy, permanently — nothing about the
-/// dependent's own sources ever changes again (loft#777).  It read as a
-/// consumer-size effect only because you need a second library in the graph, loaded
-/// first, before anything can shadow the fresh one; the small consumer that loaded
-/// the edited library directly was always right.
-///
-/// The cost of the wider question is one `stat` walk over the loaded packages —
-/// under a millisecond for a ten-package tree, against a `rustc` invocation. It does
-/// mean a dependency edit makes every dependent stale, which is the honest answer:
-/// the dependent really does contain the edited code.  `dev-interpret-on-edit` still
-/// keeps `rustc` out of the loop until editing settles.
-fn source_newer_than(pkg_dirs: &[String], artifact: &std::path::Path) -> bool {
-    let Ok(art_mtime) = crate::file_access::metadata(artifact).and_then(|m| m.modified()) else {
-        return true;
-    };
-    let mut newest: Option<std::time::SystemTime> = None;
-    let mut stack: Vec<std::path::PathBuf> =
-        pkg_dirs.iter().map(std::path::PathBuf::from).collect();
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = crate::file_access::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries {
-            let name = e.file_name().unwrap_or_default();
-            if name == "native-auto" || name == "native" || name == "target" {
-                continue; // build/artifact dirs
-            }
-            let Ok(ft) = crate::file_access::symlink_metadata(&e).map(|m| m.file_type()) else {
-                continue;
-            };
-            let p = e.os_spelling();
-            if ft.is_dir() {
-                stack.push(p);
-                continue;
-            }
-            let is_src = crate::file_access::extension(&p)
-                .is_some_and(|x| x.eq_ignore_ascii_case("loft"))
-                || name == "loft.toml";
-            if is_src
-                && let Ok(mt) = crate::file_access::symlink_metadata(&e).and_then(|m| m.modified())
-                && newest.is_none_or(|n| mt > n)
-            {
-                newest = Some(mt);
-            }
-        }
-    }
-    newest.is_some_and(|src| src > art_mtime)
-}
-
-#[cfg(test)]
-mod toolchain_hint_tests {
-    use super::toolchain_failure_hint;
-
-    #[test]
-    fn flags_sigbus_as_environment_failure() {
-        // The real shape that misled diagnosis: ld dies with a Bus error when
-        // TMPDIR's tmpfs is full.  Must be named an ENVIRONMENT failure.
-        let stderr = "collect2: fatal error: ld terminated with signal 7 [Bus error], core dumped\n\
-                      error: aborting due to 1 previous error";
-        let hint = toolchain_failure_hint(stderr).expect("SIGBUS must produce a hint");
-        assert!(hint.contains("ENVIRONMENT"), "hint: {hint}");
-        assert!(
-            hint.contains("TMPDIR"),
-            "hint should point at TMPDIR: {hint}"
-        );
-    }
-
-    #[test]
-    fn flags_enospc() {
-        assert!(toolchain_failure_hint("error: No space left on device (os error 28)").is_some());
-    }
-
-    #[test]
-    fn genuine_compile_error_gets_no_hint() {
-        // A real type error must pass through untouched so its diagnostics show.
-        let stderr = "error[E0308]: mismatched types\n  expected `i32`, found `&str`";
-        assert!(toolchain_failure_hint(stderr).is_none());
-    }
-
-    /// loft#693 — verbatim rustc output from the reported failure: the installed
-    /// `libloft.rlib` predated the borrowed-capture helper the binary emits calls to.
-    /// Raw, it names the LIBRARY whose cdylib was building, which is the one thing not
-    /// at fault, so the hint must say the binary and the rlib disagree.
-    #[test]
-    fn flags_a_runtime_method_the_linked_rlib_lacks() {
-        let stderr = "error[E0599]: no method named `dbref_borrow` found for mutable \
-                      reference `&mut Stores` in the current scope\n \
-                      429 |     let dbref_borrow_w = db.dbref_borrow();\n\
-                      error: aborting due to 1 previous error";
-        let hint = toolchain_failure_hint(stderr).expect("a missing runtime method must hint");
-        assert!(
-            hint.contains("libloft.rlib") && hint.contains("different builds"),
-            "the hint must name the rlib/binary mismatch: {hint}"
-        );
-        assert!(
-            hint.contains("make install"),
-            "the hint must name the fix: {hint}"
-        );
-        assert!(
-            hint.contains("not a bug in the library"),
-            "the hint must clear the library being built: {hint}"
-        );
-    }
-
-    /// The guard above keys on E0599 + `Stores`; an E0599 in a library's OWN code must
-    /// still pass through, or a real user error gets blamed on the install.
-    #[test]
-    fn unrelated_missing_method_gets_no_hint() {
-        let stderr = "error[E0599]: no method named `frobnicate` found for struct \
-                      `MyOwnType` in the current scope";
-        assert!(toolchain_failure_hint(stderr).is_none());
-    }
+    out_dir: &std::path::Path,
+    stem: &str,
+    fp: u64,
+) -> Result<std::path::PathBuf, String> {
+    let built = build_keyed_cdylib(data, stores, export_set, out_dir, stem, fp)?;
+    crate::cache::write_native_artifact_fingerprint(out_dir, fp);
+    // Bound the directory, while the build lock is still held.  A new artifact
+    // appears per consumer type-layout (#715) and nothing collected the old
+    // ones — 25 GB across this repo's fixtures, 532 files in one package.
+    // Scoped to THIS package's auto-native family: a `[c] shim` cdylib shares
+    // the directory and is never rebuilt, so an unscoped sweep eats it.
+    prune_artifacts(out_dir, &auto_cdylib_stem(pkg_dir));
+    Ok(built)
 }
 
 #[cfg(test)]
@@ -3335,61 +1913,6 @@ mod bridge_read_tests {
             bridge_read(&Type::Boolean, "a[0]"),
             "((a[0].scalar != 0) as u8)"
         );
-    }
-}
-
-#[cfg(test)]
-mod rlib_search_tests {
-    use super::rlib_search_dirs;
-    use std::path::{Path, PathBuf};
-
-    /// #398 follow-up — the INSTALLED layout (`<prefix>/bin/loft`) must search
-    /// `<prefix>/share/loft/` for libloft.rlib, else a normal library's cdylib link
-    /// fails "libloft.rlib not found for this build" (the bin/ dir holds no rlib).
-    #[test]
-    fn installed_bin_layout_searches_share_loft() {
-        let dirs = rlib_search_dirs(Path::new("/usr/local/bin"));
-        let share = PathBuf::from("/usr/local/share/loft");
-        assert!(
-            dirs.iter()
-                .any(|(d, deps)| *d == share && *deps == share.join("deps")),
-            "install layout must search <prefix>/share/loft with its deps/: {dirs:?}"
-        );
-        assert!(
-            dirs.iter().any(|(d, _)| *d == share.join("deps")),
-            "install layout must also search <prefix>/share/loft/deps: {dirs:?}"
-        );
-    }
-
-    /// The dev/test layout (exe in `<profile>/`) keeps the existing behaviour:
-    /// `deps/` first, then the uplifted `<profile>/`, and NO share/ candidate.
-    #[test]
-    fn dev_layout_unchanged_no_share() {
-        let dirs = rlib_search_dirs(Path::new("target/release"));
-        assert_eq!(dirs[0].0, PathBuf::from("target/release/deps"));
-        assert_eq!(dirs[1].0, PathBuf::from("target/release"));
-        assert!(
-            !dirs
-                .iter()
-                .any(|(d, _)| crate::file_access::PathText::from_os(d)
-                    .parts()
-                    .windows(2)
-                    .any(|w| w[0] == "share" && w[1] == "loft")),
-            "a dev exe must not gain a share/ candidate: {dirs:?}"
-        );
-        // every dev candidate links the same deps/ search dir
-        assert!(
-            dirs.iter()
-                .all(|(_, deps)| deps.as_path() == std::path::Path::new("target/release/deps"))
-        );
-    }
-
-    /// Integration-test layout: exe already in `.../deps` → deps dir is itself.
-    #[test]
-    fn deps_dir_exe_uses_itself() {
-        let dirs = rlib_search_dirs(Path::new("target/release/deps"));
-        assert_eq!(dirs[0].0, PathBuf::from("target/release/deps"));
-        assert_eq!(dirs[0].1, PathBuf::from("target/release/deps"));
     }
 }
 

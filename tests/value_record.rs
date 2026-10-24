@@ -532,12 +532,12 @@ const PARAM_EXPECTED: &[(&str, &str)] = &[
     ("n_q6", "(p: (i64, bool)) -> (i64, bool)"),
     (
         "n_q7",
-        "(p: (i64, f64, bool, i64, bool), __work_1: &mut String) -> Str",
+        "(p: (i64, f64, bool, i64, bool), __work_1: *mut String) -> Str",
     ),
     ("n_q8", "(p: (i64, bool), q: (i64, bool)) -> i64"),
     (
         "n_q9",
-        "(p: (i64, f64, i64, bool), __work_1: &mut String) -> Str",
+        "(p: (i64, f64, i64, bool), __work_1: *mut String) -> Str",
     ),
     ("t_1S_add", "(self: (i64,), o: (i64, bool)) -> i64"),
     // DECLINED since 932209dc4: its tail joins the parameter with a build (loft#2014)
@@ -550,7 +550,7 @@ const PARAM_EXPECTED: &[(&str, &str)] = &[
     // The body writes a record of the parameter's type.
     ("n_d1", "(p: DbRef, w: DbRef) -> i64"),
     // The record owns heap.
-    ("n_d2", "(p: DbRef, ___acc_1: &mut String) -> Str"),
+    ("n_d2", "(p: DbRef, ___acc_1: *mut String) -> Str"),
     // Arms of a fn-ref dispatch.
     ("n_d3a", "(p: DbRef, f: f64) -> f64"),
     ("n_d3b", "(p: DbRef, f: f64) -> f64"),

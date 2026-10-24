@@ -19,7 +19,8 @@ before it moves them.
   [B2 the interpreter](#b2--the-interpreter-as-a-defined-part) ·
   [B3 the compiled-target base](#b3--the-compiled-target-base-plans-apart-from-the-rust-writer) ·
   [B4 crates](#b4--the-crates) · [B5 acceptance](#b5--acceptance-a-second-emitter-beside-the-rust-one) ·
-  [B6 a minimal binary](#b6--optional-a-minimal-binary)
+  [B6 a minimal binary](#b6--optional-a-minimal-binary) ·
+  [B7 testing: reuse compiled blocks](#b7--testing-reuse-compiled-blocks)
 - [Order](#order) · [Dependencies](#dependencies) · [Risks](#risks) · [Open questions](#open-questions-for-the-owner)
 
 ## Goal
@@ -144,7 +145,36 @@ Every step is ONE commit:
 A step that is not byte-identical is not a move: it is split, or it becomes its own change with
 its own guard.
 
+What a clean build does not catch, and B1 met each:
+
+- **The census compares two binaries, not the baseline.**  Run
+  `LOFT_BIN=<before> scripts/rewrite_census.py --verbose` and the same without `LOFT_BIN`, then
+  diff the two outputs.  The committed baseline can lag the tree, and its rises are not the step's.
+- **The item set is a closure.**  Take every top-level item the root reaches by name, but not
+  through a field access (`.x`) or a field declaration (`x:`).  Otherwise a field named like a
+  function pulls a whole subsystem along.  Cut a large closure leaves-first, by strongly
+  connected component, so every commit is closed over the commits before it.
+- **An item carries what sits above it:** a plain `//` comment between its doc and the item,
+  and a multi-line `#[expect(…)]`.  Left behind, they attach to whatever follows.
+- **An item ends where its syntax ends.**  A `const` or `static` ends at its first `;`: a
+  string constant continued over two lines does not end at the next column-0 `}`, and
+  reading it that way takes the items after it along.  `unsafe extern "C" fn` is an item too.
+- **A `cfg`-gated item needs its gate wherever it is re-exported.**  Check the wasm targets
+  and `--all-features`, where the gated paths are compiled.
+- **Visibility widens inside the item too:** the private methods of a moved `impl` and the
+  private fields of a moved struct.
+- **`cargo doc --no-deps --lib`** names the intra-doc links that no longer resolve.  An `opt`
+  target gets its path; a target still in a backend becomes a plain code span.
+- **`python3 scripts/decisions.py check`** (after `make index`) names a design decision whose
+  recorded site moved.
+
 ## B0 — the layers
+
+**Done (2026-10-23):** B0.1 fixed loft#2142 (`generation::begin_program`, guard
+`leaf_inline::a_programs_non_null_facts_do_not_reach_the_next_program`); B0.2 added `SIBLINGS`
+and `selftest` to `crate_layers.py`; B0.3 set the layers — the five modules of @PLN191's
+RUNTIME set that sat in `runtime` went to `core`, below both siblings — with the crossings
+opt → rust 8, interp → rust 22, rust → interp 25 as the ratchet B1 and B2 cut.
 
 | step | change | check |
 |---|---|---|
@@ -155,6 +185,31 @@ its own guard.
 ## B1 — `opt`: what every backend asks
 
 Smallest closure first.
+
+**Done (2026-10-23):** `src/opt/` holds `attrs`, `char_walk`, `iteration`, `range`,
+`non_sentinel`, `loop_records`, `writes`, `body_writes`, `text_borrow`, `names` and
+`value_records/` (`layout`, `sites`, `leaves`, `mod`), about 10,000 lines in all; `hoist.rs`
+fell from 19,500 lines to 11,500.  Every step was checked IDENTICAL 2830/2830 by
+`scripts/introspect_diff.sh`, so the `make interp-gap` report at B1.6 and B1.11 could not
+move and was not rerun.  opt → rust is 0, and interp → rust fell from 22 to 14: B1.1–B1.6
+removed five crossings, and `compiled_stdlib` and `extensions` asking `opt::names`
+removed three more.  Where the code differs from the
+table:
+
+- B1.2 moved `projection_container_var` to `use_analysis` (front), where its one
+  question already lived.
+- B1.8's writer closure was 46 items, not the table's list: `view_field` and `sub_record`
+  belong to the body write set.
+- B1.10 also took `rust_fn_ident` and the call collectors.  The identifier is the contract
+  between the library writer and the symbol loader, so B2.1's key items can ask it from
+  `interp`.
+- B1.11 was cut leaves-first by the call graph, not by the line ranges.  Its first cut,
+  `body_writes`, sits beside `writes` rather than under `value_records/`, because the scalar
+  hoist asks it too.
+- B1.13 is @C153.  It is cited by `crate_layers.py`, `src/opt/mod.rs`,
+  CODEGEN_METHOD.md § Where an analysis lives, and the guard
+  `extraction_hygiene::library_modules_keep_their_layers`.  No `src/lower/` exists yet; B3
+  cites it there.
 
 | step | change | check |
 |---|---|---|
@@ -174,6 +229,38 @@ Smallest closure first.
 
 ## B2 — the interpreter as a defined part
 
+**Done (2026-10-23):** the interpreter and the Rust writer name each other nowhere (interp ↔
+rust 0, from 22 and 25), and every layer budget is empty.  Code outside the interpreter reaches
+it through `src/interp.rs` alone, which `crate_layers.py`'s ENTRY rule holds at 0 (83
+references moved).  The contract is [INTERMEDIATE.md § The interpreter's
+contract](../INTERMEDIATE.md#the-interpreters-contract).  Where the code differs from the table:
+
+- **B2.0** (added): `native_gate` and `lib_ids` moved to the `opt` layer.  Both sides ask
+  them, which functions compile and which number a key names, so `@C153` puts them below both
+  siblings.
+- **B2.1**: the key went to `opt::native_key`, not to `interp`.  The Rust writer builds under
+  the key and the interpreter adopts by it, and the sibling rule forbids both directions.
+- **B2.2**: `toolchain.rs` is in `core`, because only the driver and the Rust writer ask it.
+  It also took `find_loft_rlib`, which the toolchain hint names.
+- **B2.3** split in two.  The ABI types (`LibArg`, `HostTable`, `HOST_ABI`, `IdTable`,
+  `LAYOUT_FP_SYMBOL`) went to `host_abi.rs` in the runtime set.  `native_lib` re-exports them,
+  so emitted code is unchanged.  `HOST_TABLE`, the host callbacks, export marking and the
+  layout probe went to `native_adopt.rs`, with no re-export.  The compiled standard library
+  now names `loft::native_adopt::HOST_TABLE`.
+- **B2.4**: `adopt_shared_cdylib` answers `Fresh`, `Interpret`, or `Build` with a key that
+  holds the build lock, and `build_shared_artifact` builds.  Neither sibling may call the
+  other, so their composition went to the driver layer (`native_artifact.rs`) rather than
+  staying in `native_lib`.
+- **B2.5**: the Rust section is `Options::rust`, a function the driver hands in
+  (`generation::introspect_rust`).  `introspect` itself moved to `interp`.  The 19 benches'
+  `--show-rust` output matches B1's binary.
+- **B2.6** is a file, `src/interp.rs`, with one re-export module per part.  `generate` and
+  `export_set` left `compiled_stdlib` for `stdlib_codegen.rs` (rust).  The regenerated
+  `compiled_stdlib_gen.rs` differs only in two header lines.
+- **B2.8**: `lib_placement`'s marking stays in the driver layer.  That layer may name every
+  layer, so moving it changes no count.  It returns with B6 (a binary without the driver's
+  worker code), if that is taken up.
+
 | step | change | check |
 |---|---|---|
 | B2.1 | `native_lib` KEY items → `src/native_key.rs` (`interp`): `library_export_set` 554, `library_candidates` 572, `is_synthetic_name` 640, `hidden_dest_type_name` 1702, `platform_cdylib_name` 2119, `auto_cdylib_stem` 2528, `mix_fp` 2546, `artifact_sources` 2851, `contributing_fingerprint` 2908, `type_layout_fingerprint` 2930, `fn_numbering_fingerprint` 3124, `source_content_hash` 3147, `source_newer_than` 3219 | protocol; `n2_cdylib`, `n3_use_native` |
@@ -192,13 +279,31 @@ Smallest closure first.
 | B3.1 | `src/lower/mod.rs`: `pub struct ProgramPlan { reachable, dup_fn_names, dead_by_fn, value_records, apart, dv, ps, sw }` and `pub fn plan_program(data, stores, opts) -> ProgramPlan` — the computation of `output_functions` (`mod.rs:10878-10950`) and of 9161–9217, moved; `Output` holds `plan: Rc<ProgramPlan>` and its eight fields become reads of it | protocol |
 | B3.2 | the ~30 `*_disabled` switches on `Output` → `lower::Switches`, read once per program; a second emitter honours the same switches | protocol; `NATIVE_SWITCHES.md` unchanged |
 | B3.3 | the plan computations whose files write no Rust (`decode_view.rs`, `decode_structure_scan.rs`, `stream_walk.rs`, `apart_value.rs`, `apart_records.rs`, `destination.rs`, `view_return.rs`, `hand_over.rs`, `keyed_entry.rs`, `keyed_place.rs`, `file_hold.rs`, `ranged_call.rs`) → `src/lower/`, one per commit; where one is a method on `Output`, it becomes a free function over `(data, stores, &ProgramPlan, def_nr)` first, in the same commit | protocol each |
-| B3.4 | the PER-FUNCTION decisions computed during emission (`vec_headers`, `rec_ptrs`, `ptr_windows`, the hoist tiers, …): a `FnPlan` built before a function is written, for each decision that can be made before writing — measured one by one; a decision that depends on what was already written stays in `rust` and is listed | protocol; the list in this file |
+| B3.4 | the PER-FUNCTION decisions computed during emission (`vec_headers`, `vec_bases`, `rec_ptrs`, `ptr_windows`, the hoist tiers, …) move into a `FnPlan` built before a function is written — ONE DECISION FAMILY AT A TIME, in order of measured weight, each when the C backend wants it (decision below); a decision that depends on what was already written stays in `rust` and is listed | protocol per family; the family's bench rows on both emitters |
+| B3.4a | the first family: the vector header and element base held across a loop (`vec_headers`, `vec_bases`, the element pointer per iteration) — most of the measured 3.6× below | protocol; the example's loop on both emitters |
 | B3.5 | the runtime surface: a census of every runtime item emitted Rust names (beyond `CODEGEN_RUNTIME_FNS`: store methods, `loft::state::`, `loft::native_lib::`), generated from the corpus's emission; the input to the C backend's runtime decision (@PLN91) | the census, committed as a report |
 | B3.6 | `lower ↔ interp` forbidden at 0; `lower → rust` budget 0 | `check` |
 
+**Decision (owner, 2026-10-23): the C backend starts PLAIN.**  It reads the whole-program plans
+(B3.1) and emits the general form; the per-function decisions reach it family by family
+(B3.4, B3.4a first).  Measured on `total(ps: vector<P>) { for p in ps { s += p.x * p.y } }`,
+200 passes over a million records, `--native-release`:
+
+| emission | time |
+|---|---|
+| with the per-function decisions (Rust today: header and element base held, fields read at the element's address) | 186–191 ms |
+| without them (every element and field through the general store lookup) | 682–698 ms — 3.6× |
+| the interpreter | 8,169 ms |
+
+So a plain C backend is correct from its first function, ~12× the interpreter on this loop, and
+checkable against the interpreter over the whole corpus before any decision is shared; each
+family that moves is then one measured step on both emitters.
+
 ## B4 — the crates
 
-After @PLN191 has extracted `core` and `front`, in its manner (one crate per step, re-exports keep
+@PLN191 now targets ONE crate, `loft-runtime` (its R3; R2 is complete — the runtime set names
+nothing outside it), and marks its compiler crates (P3–P7) superseded.  So `core` and `front`
+become crates HERE, before B4.1, in @PLN191's manner (one crate per step, re-exports keep
 every path, emitted Rust names unchanged).  The root `Cargo.toml` has no `[workspace]` yet;
 `fuzz/Cargo.toml:14-17` and `tools/zt-c-web-staging/web/wasm/Cargo.toml:21` depend on `loft` and
 keep doing so through the facade.
@@ -219,7 +324,7 @@ Every edit it would need is a defect of this plan, fixed here before strand 5 st
 
 ## B6 — optional: a minimal binary
 
-A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
+**Later, not now (owner, 2026-10-23).**  A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
 `--native` / `--native-release` / `--native-emit` / `--native-wasm` / `--html` /
 `--native-android` / `build-native` arms (`main.rs:7835/7838/7915/7924/7945/~7934/8922`), which
 answer one line without it; `make minimal` via `scripts/lean_build.sh --minimal`.  Its artifact
@@ -229,16 +334,107 @@ layout, `keys.rs:2836`) — B6 adds a test that every `[features]` name (`Cargo.
 classified as identity-relevant or not, and a CI comparison of both builds' corpus output.
 Measured: the shipped binary is 25.2 MB (21.1 stripped), the generator ~12 % of its machine code.
 
+## B7 — testing: reuse compiled blocks
+
+The split's second payoff: a compiled block — a test program's binary, a library artifact, the
+standard library's compiled code — can be keyed on what it actually depends on (its generated
+source and the runtime it links) instead of on the whole loft build, so an edit that changes
+neither reuses it.
+
+**The principle (owner, 2026-10-23): a compiled unit is reused unless its loft code changed or
+an optimisation pass changed what loft makes of it.**  The unit is the PACKAGE — the standard
+library, each library, the program — as a crate is for `rustc`.  Its key is what it was made
+from and what it must agree with, never "which loft binary":
+
+| unit | key | rebuilt when |
+|---|---|---|
+| a package compiled for a native target | hash of its GENERATED code ⊕ each dependency's API fingerprint ⊕ the runtime INTERFACE version ⊕ the toolchain (`rustc` version, target, flags) | its source changed, or a pass changed its output, or a dependency's API changed, or the interface or the toolchain moved |
+| a package's IR for the interpreter (B7.11) | its source ⊕ the `front` and `opt` fingerprints ⊕ the IR schema version | its source changed, or a front-end or optimisation pass changed |
+
+So a compiled object is invalidated only by a change to its own code — an API change or a bug
+fix in it — or to an API it uses, and the event that makes that change is the one that builds
+the new object: a local edit rebuilds the edited unit, a library's publish builds that library's
+object (the registry's CI, G2c's open half), a loft release whose passes change a unit's output
+rebuilds it (G2c).  A dependency's bug fix, its API unchanged, rebuilds only the dependency.
+
+**Inlining across a unit boundary is opt-in (owner, 2026-10-23).**  By default the line holds: a
+call into another unit is a call, on every tier.  A function its author MARKS for inlining is
+copied into its callers' units, like Rust's `#[inline]`; its body then belongs to its unit's API
+fingerprint, so changing it rebuilds the units that inlined it.  Inside a unit nothing changes:
+today's automatic inlining — `#[inline]` on every loop-free function (`Output::fn_inline_attr`,
+[NATIVE_SWITCHES.md § Inlining hints](../NATIVE_SWITCHES.md#inlining-hints)) and the IR's
+`leaf_inline` — stays, and stops at the boundary unless the callee is marked.
+
+Keying on the generated code is what makes the rule exact without versioning passes by hand:
+generating is milliseconds, compiling is the cost, and a pass that does not change a unit's
+output leaves its hash — and its compiled form — alone.
+
+**What the principle requires of the runtime.**  Today a library artifact statically embeds a
+copy of `libloft` and shares the host's stores by memory (`main.rs`, `build-native`: "it
+statically embeds libloft").  A fix inside a runtime function then never reaches an old
+artifact, so ANY runtime change must rebuild every unit — the opposite of the principle.  A
+reusable unit reaches the runtime through a VERSIONED INTERFACE instead: the store layout it
+reads directly (field offsets, `DbRef`) and a table of the runtime functions it calls (the
+`HostTable` of @PLN199 already carries some: `call_ref`, type and function ids, coroutines).  A
+runtime function's body can then change without rebuilding a unit; only a change to the
+layout or to a signature moves the version.  It is also the interface an ANSI-C unit needs.
+
+**Measured (2026-10-23, macOS arm64):**
+
+| fact | value |
+|---|---|
+| a test-tier `--native` compile (cache off) | ~0.7 s: ~0.4 s fixed (rustc start, the runtime's metadata, the link) + ~0.09 s per 1,000 generated lines |
+| the standard library in a program's generated Rust (five corpus programs) | the same **3,303 lines** in each, ~70 %; the program's own code 300–1,350 lines; ~600 lines of preamble |
+| programs a native corpus run can compile | 492 `tests/scripts` + 2,638 suite programs; plus `native`, `n2_cdylib`, `n3_*`, the drop gate's native cells |
+| test binaries, each linking all of `libloft` | 451 |
+| a library artifact at the shipped tier | ~7 s each (42 libraries in 4 min 54 s) |
+| the last 400 commits touching `src/` | 62 % touch a module of @PLN191's runtime set (61 modules), 51 % `generation/`, 53 % the interpreter |
+
+**Why every rebuild of loft throws compiled blocks away today:**
+
+- the native program cache (`native_source_key_fingerprint`, `src/main.rs:4304`) folds in every
+  runtime rlib a build could link (`native_utils::runtime_rlib_candidates`,
+  `src/native_utils.rs:110`) — the rlib is all of `libloft`, so an edit to the parser, the
+  interpreter or the generator invalidates every cached program, its generated Rust unchanged;
+- a library artifact on a development build is keyed on `loft_build_fingerprint` (the rlib's
+  content) and the executable's file time (`cache.rs:223`, `native_lib.rs:3008`), so every loft
+  rebuild rebuilds every library artifact a test uses;
+- every test program carries the standard library's 3.3k lines through `rustc` again.
+
+| step | change | check |
+|---|---|---|
+| B7.1 | the baseline: per full gate, the number of `rustc` launches, their CPU time, and the native cache's hit rate after (a) a parser-only edit, (b) a generator-only edit, (c) a runtime edit — a report script, run before and after each of B7.3–B7.5 | the report |
+| B7.2 | `cache::runtime_fingerprint()`: the content of the runtime a compiled block links — the `loft-runtime` crate's rlib once @PLN191 R makes it a crate; before that, a source stamp over the RUNTIME set's files (`scripts/crate_layers.py`) with the features, rustflags and `rustc` that shape it | a test: an edit outside the set leaves it, one inside moves it |
+| B7.3 | the native program cache keyed on the generated Rust ⊕ `runtime_fingerprint()` instead of every rlib candidate.  **Precondition:** emitted Rust names nothing outside the runtime — today it names `loft::state::` (`generation/mod.rs:513-519`, `calls.rs:1350`) and `loft::native_lib::` (`emit.rs:2100-2118`); B3.5's census lists every such name and each is moved into the runtime or the key covers it | B7.1's hit rate after a parser-only edit; the corpus on both backends |
+| B7.4 | a library artifact on a development build keyed on its generated source's hash ⊕ `runtime_fingerprint()` (a release bundle keeps its identity, B6).  @PLN199 G1 already made the generated source a function of the library alone, so the key is exact; loft#1776's stale-rlib case stays covered because the fingerprint is the runtime's content | `n3_use_native`, `registry_e2e`; B7.1 after a parser-only edit: no artifact rebuilt |
+| B7.5 | the standard library compiled ONCE for the test tier: its functions emitted as one block (ids by key, as @PLN199 G0b made library code), keyed like B7.4, and a test-tier program calls into it instead of carrying 3.3k lines — ~40 % of each test compile by the measurement above.  `--native-release` and the library cdylibs keep whole-program compilation: there the optimiser's view across functions is what ships | the corpus's output identical; B7.1's CPU time |
+| B7.6 | narrow the runtime set (@PLN191 R2): every module that leaves it is an edit that no longer invalidates compiled blocks — the report names the runtime modules the most commits touch | B7.1 over the history |
+| B7.7 | test selection from the crate graph (after B4): `find_problems.sh --changed` maps a diff's crates to the subjects that can observe them | a diff confined to `rust` selects no interpreter-only subject |
+
+| B7.7a | a unit carries ONLY its own code: today a library artifact compiles in every library it reaches (`native_lib.rs`, `cached_or_build_shared_cdylib`) and its key folds each dependency's name and version (`contributing_fingerprint`, `native_lib.rs:2908`), so a dependency's bug fix rebuilds every user.  A unit calls its dependencies' units (B7.12's linking) and folds each one's API FINGERPRINT — its exported signatures and the layouts of the types it exports, by key (`lib_ids`) — not its version or its code | a test: a dependency's body changes, its users are reused; its exported signature changes, they are rebuilt |
+| B7.7b | the event builds the object: a library's publish builds its unit for every released loft whose interface it meets (the registry's CI; @PLN199 G2c builds them only at a loft release); a loft release builds only the units whose generated code its passes changed, and reuses the rest from the previous release by their keys | the release job's report: units rebuilt vs reused |
+| B7.8 | the runtime INTERFACE defined and versioned: the store layout (`Store`, `DbRef`, the record header — offsets and sizes computed, not written by hand) and the signature of every runtime function a unit calls (`runtime_abi`'s table, the `HostTable`); `runtime_interface_version()` hashes both | a test: changing a layout or a signature moves the version; changing a function's BODY does not |
+| B7.9 | units stop embedding the runtime: a unit's calls into the runtime go through the versioned table; the hot accessors that need only the layout (a field read or write at a `DbRef`) stay inline.  A performance trade — measured on the bench lanes (`make perf-check`) before it is taken, per accessor family | the bench rows; the corpus on both backends |
+| B7.10 | the reuse guard, both directions: build a unit; rebuild loft with an unrelated change (a parser comment, an interpreter fix) and assert the unit is REUSED; change an optimisation pass so the unit's output changes and assert it is REBUILT; change a runtime function's body and assert it is reused and runs the new body | the test, falsified by keying on the loft build again |
+| B7.11 | the interpreter's unit: a package's IR (parsed, scoped, optimised) cached per package and keyed as the table above says, after B4 gives `front` and `opt` fingerprints of their own; the IR codec and the start-up caches exist, keyed today on the whole program and the standard library | a program using three libraries starts with three cached images after one library's edit rebuilds only that one |
+| B7.12 | native builds link packages as units: a library compiled once as an rlib (or, after B7.9, an object behind the interface) and linked by every program that uses it, on every tier; a call across units is a call | B7.1's CPU time; the bench lanes, read with B7.14's report |
+| B7.13 | the inline mark: the loft annotation `#inline` on a `pub fn` (the spelling settled by the owner, 2026-10-23) that copies it into callers' units; `leaf_inline` and `fn_inline_attr` cross a unit boundary only for a marked callee, and a marked function's body hash joins its unit's API fingerprint | a test: a marked function inlined across units, its body changed, its callers rebuilt; an unmarked one called, its body changed, its callers reused |
+| B7.14 | where marks matter: a report of the inlines that cross a package boundary today (`leaf_inline`'s admissions and the `#[inline]` hints on calls into another package, per bench routine) and each one's effect when the boundary holds — the list a library author marks from | the report; the bench rows that moved, each marked or accepted |
+
+Not addressed by this plan: the 451 test binaries each linking all of `libloft` — a link cost
+the split does not remove (the corpus leaving the crate is @PLN193).
+
 ## Order
 
-B0 → B1 → B2 → B3 → B5 (the probe, from @PLN91) → B4 when @PLN191 is ready; B6 whenever wanted.
+B0 → B1 → B2 → B3 → B5 (the probe, from @PLN91) → B4 when @PLN191 is ready; B6 later, not scheduled.
+B7.1 can run any time (the baseline); B7.5 needs only @PLN199's keyed ids and can come early;
+B7.8–B7.10 (the versioned runtime interface and the reuse guard) follow B3.5's census and come
+before B7.2–B7.4 rely on them; B7.11–B7.12 follow B4; B7.14's report comes before B7.12 holds the
+line, so the marks B7.13 needs are known when it does.
 B1 and B2 make the interpreter a defined part on their own; B3 is what the C backend needs.
 
 ## Dependencies
 
-- **This plan's base is unmerged:** B2 moves @PLN199's adoption code (keys by name, the host
-  table, the release-bundle identity), which is on `firewall02-scripting` with the fixes
-  #2128–#2135; the work starts there or after that branch merges.
 - **@PLN191:** B0 lands before its P3 (the first crate), so P3 cuts along `opt < interp`,
   `opt < lower < rust`; B4 waits for its `core` and `front` crates.
 - **@PLN91:** B5's probe (P-cemit) and the C runtime decision are its.
@@ -261,6 +457,6 @@ B1 and B2 make the interpreter a defined part on their own; B3 is what the C bac
 
 ## Open questions for the owner
 
-1. B3.4's ambition: share the per-function hoisting decisions with the C backend, or start C
-   with the program-level plans only and a plainer emission?
-2. B6: wanted now, later, or not at all?
+None open.  Settled 2026-10-23: concurrent branches adapt on merge; inlining across units is
+opt-in, marked `#inline`; the C backend starts plain (B3.4); B6 is LATER — not scheduled with
+this plan's phases, taken up when wanted.

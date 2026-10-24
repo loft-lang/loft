@@ -393,6 +393,13 @@ fn classify_write_base(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)], coun
     }
 }
 
+/// One var's `Set`s, as [`Uses`]' `def_count` keeps them.
+#[derive(Default, Clone, Copy)]
+struct SetDefs {
+    count: u32,
+    valued: bool,
+}
+
 struct Uses {
     get_field: u32,
     op_append: u32,
@@ -508,8 +515,14 @@ struct Uses {
     /// copy-fill `OpAppendVector(v, src.f)` is *excluded* — it is the copy machinery,
     /// not a user mutation of `v`.
     ineligible: HashSet<u16>,
-    /// Number of `Set(v, _)` for each var (a reassignment is > 1).
-    def_count: HashMap<u16, u32>,
+    /// The `Set(v, _)`s of each var: how many (a reassignment is > 1), and whether one hands
+    /// it a VALUE — any right-hand side but a null.  A record built in place (`OpDatabase(v)`
+    /// and field writes) has none; one that also takes a value got its store from that value
+    /// on some path (loft#2148).  One entry per var, so the second question allocates nothing.
+    def_count: HashMap<u16, SetDefs>,
+    /// The null-producing calls a `Set` may name — the reference null sentinel and the null
+    /// conversion — which hand the var no value.
+    null_ops: [u32; 2],
     /// Vars allocated a fresh store by `OpDatabase(vdb, …)`.
     database_vars: HashSet<u16>,
     /// For `Set(v, OpGetField(Var(vdb), …))`: the backing buffer `vdb`.
@@ -569,6 +582,11 @@ pub enum MoveKind {
 }
 
 impl Uses {
+    /// How many `Set`s define `v`.
+    fn defs(&self, v: u16) -> u32 {
+        self.def_count.get(&v).map_or(0, |d| d.count)
+    }
+
     /// Is `v` a release through a type's hook — the hook call itself, or a hook behind a guard
     /// whose other arm does nothing (`if OpConvBoolFromRef(x) hook(x) else null`, a hand-off
     /// flag's `if __hoff_x null else hook`, and the record-identity guard a return puts around
@@ -697,7 +715,14 @@ impl Uses {
             Value::If(..) if self.is_hook_release(node) => {}
             Value::Drop(_) => {}
             Value::Set(v, rhs) => {
-                *self.def_count.entry(*v).or_insert(0) += 1;
+                let null_rhs = match rhs.unspan() {
+                    Value::Null => true,
+                    Value::Call(d, a) => a.is_empty() && self.null_ops.contains(d),
+                    _ => false,
+                };
+                let defs = self.def_count.entry(*v).or_default();
+                defs.count += 1;
+                defs.valued |= !null_rhs;
                 // @PLN90 item 3 — a `Set` writes `v` (its def is before any copy of it; a
                 // reassign after a copy is the mutation that forces the copy to be independent).
                 self.mark_write(Some(*v), pos);
@@ -867,6 +892,10 @@ fn collect_uses(code: &Value, data: &Data, survival_on: bool) -> Uses {
         write_first_arg: std::sync::Arc::clone(&ops.write_first_arg),
         ineligible: HashSet::default(),
         def_count: HashMap::default(),
+        null_ops: [
+            data.def_nr("OpNullRefSentinel"),
+            data.def_nr("OpConvRefFromNull"),
+        ],
         database_vars: HashSet::default(),
         def_vdb: HashMap::default(),
         append_src: HashMap::default(),
@@ -918,11 +947,11 @@ fn bind_link_safe(u: &Uses, function: &Function, v: u16, src: Option<u16>) -> bo
     if src == Some(v) {
         return false;
     }
-    let single_def = u.def_count.get(&v).copied().unwrap_or(0) == 1;
+    let single_def = u.defs(v) == 1;
     let v_non_escaping = !u.ineligible.contains(&v);
     let source_outlives = src.is_some_and(|s| {
         function.is_argument(s)
-            || (u.def_count.get(&s).copied().unwrap_or(0) <= 1
+            || (u.defs(s) <= 1
                 && u.last_use_pos.get(&s).copied().unwrap_or(0)
                     >= u.last_use_pos.get(&v).copied().unwrap_or(0))
     });
@@ -1250,7 +1279,7 @@ fn analyze_fn_survival(
             continue; // not a single-source local copy — not ours to elide
         }
         let src = appends[0];
-        let single_def = u.def_count.get(&v).copied().unwrap_or(0) == 1;
+        let single_def = u.defs(v) == 1;
         let v_readonly = !u.ineligible.contains(&v);
         // A PARAMETER is defined at entry, a definition the def count does not see: its
         // reads ahead of the copy-fill see the caller's value, and rewriting them onto the
@@ -1682,8 +1711,20 @@ fn move_elidable_source(
     if survives || loop_surv {
         return None;
     }
-    // Owns a transferable store.
-    if u.def_vdb.contains_key(&s) || u.database_vars.contains(&s) {
+    // Owns a transferable store.  A record built in place transfers only when that build is
+    // the store the copy reads: a var that is ALSO handed a value (`x = h.t` then `x = mk()`,
+    // whose store is a view or a callee's buffer) has no build to retarget there, and the
+    // rewrite would drop the copy with nothing in its place (loft#2148).
+    if u.database_vars.contains(&s) && u.def_count.get(&s).is_some_and(|d| d.valued) {
+        return None;
+    }
+    // The vector-copy idiom's handle (`v = OpGetField(__vdb_N, …)`) names a compiler buffer the
+    // copy owns.  The same shape over a USER record — `x = h.t`, a view of a field (`(B-View)`)
+    // — owns nothing: moving it dropped the copy and stored nothing (loft#2148).
+    if let Some(&vdb) = u.def_vdb.get(&s) {
+        return function.is_compiler_generated(vdb).then_some(s);
+    }
+    if u.database_vars.contains(&s) {
         Some(s)
     } else {
         None

@@ -1745,7 +1745,7 @@ impl State {
     /// @PLN198 (`@FR-R-TextBorrow`) — mark this function's text loop variables that BORROW
     /// their element: `for p in words` whose rest reads `p` only as a text value and writes
     /// no store.  The admission is the native generator's own
-    /// ([`crate::generation::hoist::borrowed_text_walks`]), asked without the walks only the
+    /// ([`crate::opt::text_borrow::borrowed_text_walks`]), asked without the walks only the
     /// native generator lowers (a lazy split's pieces, a split table), so both backends
     /// borrow the same walks of a real vector.  The element's bytes live in the vector's
     /// store, which an admitted body never writes, so the `Str` stays valid for the
@@ -1755,7 +1755,7 @@ impl State {
         if *OFF.get_or_init(|| std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0")) {
             return;
         }
-        let views = crate::generation::hoist::borrowed_text_walks(
+        let views = crate::opt::text_borrow::borrowed_text_walks(
             data,
             def_nr,
             &std::collections::BTreeSet::new(),
@@ -3345,7 +3345,7 @@ impl State {
                     // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
                     && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
                     && !stash_old_for_post_free
-                    && crate::generation::container_element_base(stack.data, value).is_some()
+                    && crate::use_analysis::projection_container_var(stack.data, value).is_some()
                 {
                     self.gen_set_first_ref_elem_copy(stack, v, value, d_nr);
                     return;
@@ -3586,7 +3586,7 @@ impl State {
             // emits.  Its projections stay views on both backends, so the witness — which
             // classifies a projection as a view — cannot lose the store this would mint.
             && stack.function.owner_witness(v).is_none()
-            && crate::generation::container_element_base(stack.data, value).is_some()
+            && crate::use_analysis::projection_container_var(stack.data, value).is_some()
         {
             // @PLN130 F1 — MATERIALISE an element read into a store `v` owns.
             //
@@ -4986,7 +4986,7 @@ impl State {
             let stack_variant = if let Some(Value::Var(v)) = parameters.first()
                 && matches!(stack.function.tp(*v), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
             {
-                crate::generation::ops::refvar_text_stack_variant(name.as_str())
+                crate::text_calls::refvar_text_stack_variant(name.as_str())
             } else {
                 None
             };
@@ -5274,7 +5274,7 @@ impl State {
         true
     }
 
-    /// `c = {for text next …}` of a character walk (`hoist::char_walks`) as one
+    /// `c = {for text next …}` of a character walk (`opt::char_walk::char_walks`) as one
     /// `OpTextWalkStep`.  The index, next and text variables already hold their slots; `c`
     /// may be taking its first assignment, which does what `generate_set`'s first-assignment
     /// branch does for a character — mark the slot allocated, write the value at its planned
@@ -5286,7 +5286,7 @@ impl State {
             return false;
         }
         let walks = self.walk_steps.get_or_insert_with(|| {
-            crate::generation::hoist::char_walks(stack.data, stack.def_nr)
+            crate::opt::char_walk::char_walks(stack.data, stack.def_nr)
                 .into_values()
                 .collect()
         });

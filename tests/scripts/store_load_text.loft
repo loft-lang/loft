@@ -25,7 +25,7 @@ fn main() {
   if mode == "write" {
     t += TextRec { id: 7, name: "seven" };
     t += TextRec { id: 13, name: "thirteen-longer-string-spanning" };
-    if !store_persist_bind(t, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(t, path) { println("FAIL write-bind"); return }
     println("write ok");
   } else if mode == "loadkey" {
     ok = store_load_key(t, path, 13);

@@ -93,7 +93,6 @@ impl Parser {
         let Some(struct_d) = self.nullable_payload_struct(syn) else {
             return Vec::new();
         };
-        let some_d = self.data.variant_of(syn, "Some");
         // The stash is typed by the PAYLOAD struct, not by the source expression: a bare
         // `null` member has type `Type::Null`, which names no storage to stash into.
         let src_tp = Type::Reference(struct_d, crate::data::Deps::none());
@@ -102,6 +101,23 @@ impl Parser {
             return Vec::new();
         }
         let mut list = vec![v_set(src_var, value)];
+        list.push(self.nullable_slot_write_from(syn, slot_ref, src_var, fresh));
+        list
+    }
+
+    /// [`Self::emit_nullable_slot_write`] from a value already held in `src_var`, a reference
+    /// local of the payload struct (or the sentinel): the slot takes its own copy of it, or
+    /// is emptied when it is null.  For a source that IS a variable, so no stash is needed —
+    /// a stash `Set` from a variable is a record copy on `--native`, which nothing releases
+    /// (loft#2146's store-back).
+    pub(crate) fn nullable_slot_write_from(
+        &mut self,
+        syn: u32,
+        slot_ref: &Value,
+        src_var: u16,
+        fresh: bool,
+    ) -> Value {
+        let some_d = self.data.variant_of(syn, "Some");
         let kt = self.data.def(syn).known_type();
         let mut present = Vec::with_capacity(3);
         // `@FR-H-Claim` — a FRESH slot, an element the construction just minted, holds no value yet, so
@@ -128,8 +144,7 @@ impl Parser {
         };
         let is_null = self.cl("OpRefIsNull", &[Value::Var(src_var)]);
         let not_null = self.cl("OpNot", &[is_null]);
-        list.push(v_if(not_null, Value::Insert(present), absent));
-        list
+        v_if(not_null, Value::Insert(present), absent)
     }
 
     /// Flag every record copy in `steps` as writing a FRESH destination

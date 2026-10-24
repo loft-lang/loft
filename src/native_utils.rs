@@ -341,7 +341,7 @@ impl WasmRuntimeShape {
 /// exists and is up to date, building it on demand, and return the directory that
 /// holds it (for `--extern loft=<dir>/libloft.rlib` + `-L dependency=<dir>/deps`).
 ///
-/// This is the runtime-rlib analogue of [`crate::extensions::auto_build_native_target`]
+/// This is the runtime-rlib analogue of [`loft::interp::extensions::auto_build_native_target`]
 /// (which does the same for a user PACKAGE's native crate): in a dev checkout it
 /// auto-builds the rlib into a per-shape directory keyed on the running loft
 /// build's content fingerprint, so `--html` / `--native-wasm` no longer need a
@@ -1836,7 +1836,7 @@ fn package_libraries_by_package(
             let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
                 .and_then(|m| m.native)
                 .unwrap_or_else(|| crate_name.replace('-', "_"));
-            if let Some(so) = crate::extensions::resolve_native_lib(pkg_dir, &stem) {
+            if let Some(so) = loft::interp::extensions::resolve_native_lib(pkg_dir, &stem) {
                 out.push((
                     pkg_dir.clone(),
                     crate_name.clone(),
@@ -2115,7 +2115,7 @@ pub(crate) fn add_native_extern_flags(
             // start (`loft::native_bind`) from a search order loft owns, so the binary names no
             // directory of this machine.  An unresolvable library was already reported by the
             // resolver; the program then stops at start naming the package.
-            let _ = crate::extensions::resolve_native_lib(pkg_dir, &stem);
+            let _ = loft::interp::extensions::resolve_native_lib(pkg_dir, &stem);
             continue;
         }
         // Look for the compiled rlib in the package's native crate output.
@@ -2150,7 +2150,7 @@ pub(crate) fn add_native_extern_flags(
             // monorepo lib/<pkg>/native/ keeps in-tree target/.  Must
             // match what `extensions::auto_build_native` writes so the
             // rlib is found at link time.
-            crate::extensions::native_target_root(std::path::Path::new(pkg_dir))
+            loft::interp::extensions::native_target_root(std::path::Path::new(pkg_dir))
                 .join("release")
                 .join(&rlib_name)
         };
@@ -2179,7 +2179,7 @@ pub(crate) fn add_native_extern_flags(
         );
         if target.is_none() && (!crate::file_access::exists(&rlib_path) || stale) {
             let stem = crate_name.replace('-', "_");
-            let _ = crate::extensions::auto_build_native(pkg_dir, &stem);
+            let _ = loft::interp::extensions::auto_build_native(pkg_dir, &stem);
         }
         // @PLN26 phase 3 — a wasm target needs the package's rlib (wasm links statically;
         // the C-ABI `.so` path is host-only).  When neither a shipped `prebuilt/` rlib nor a
@@ -2200,7 +2200,7 @@ pub(crate) fn add_native_extern_flags(
                 .join(&rlib_name);
             if !crate::file_access::exists(&prebuilt) {
                 let stem = crate_name.replace('-', "_");
-                crate::extensions::auto_build_native_target(pkg_dir, &stem, tgt);
+                loft::interp::extensions::auto_build_native_target(pkg_dir, &stem, tgt);
             }
             if !crate::file_access::exists(&rlib_path) {
                 eprintln!(

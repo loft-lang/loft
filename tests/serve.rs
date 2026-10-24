@@ -1069,6 +1069,16 @@ fn serve_apply_holds_saved_edits_and_carries_the_world() {
         "got 400 4 i1",
         "a ready build is not active"
     );
+    // The rest is the swap, and a swap hands the port over while the old build still
+    // serves; approved exemption: where that overlap does not exist (Windows,
+    // `platform::tcp_port_handover`) the swap rolls back and the old build never retires.
+    // The held edit and Apply above ran there all the same.
+    if !loft::platform::tcp_port_handover() {
+        ws_send(ctl.get_ref(), "D!:quit");
+        assert_eq!(ws_recv(&mut ctl), "D:quitting");
+        let _ = fa::remove_file(&path);
+        return;
+    }
     ws_send(ctl.get_ref(), "D!:swap auto");
     assert_eq!(ws_recv(&mut ctl), "D:swap true");
     drop(game);

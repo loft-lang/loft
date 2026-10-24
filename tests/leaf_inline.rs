@@ -7,6 +7,7 @@
 //! must not — is a red test rather than a quiet slowdown or a lucky value.  It also runs the
 //! cells under every switch, since the default run never reaches the paths a switch restores,
 //! and checks the drawing hash loop the rules were built for no longer calls its leaf.
+mod common;
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
@@ -247,4 +248,64 @@ fn the_hash_loop_no_longer_calls_its_leaf() {
     let (b, _, ok_b) = loft(&["--interpret"], &file, &[("LOFT_NO_INLINE_LEAF", "1")]);
     assert!(ok_a && ok_b && a == b, "same answer either way: {a} / {b}");
     let _ = fa::remove_file(&file);
+}
+
+/// `main`'s IR after the whole compile (the IR passes included) of `src`, parsed on THIS
+/// thread after whatever this thread compiled before.
+fn main_ir(src: &str) -> String {
+    let (data, db) = common::cached_default();
+    let mut p = loft::parser::Parser::new();
+    p.data = data;
+    p.database = db;
+    p.parse_str(src, "prog", false);
+    assert!(
+        !p.diagnostics.lines().iter().any(|l| l.starts_with("Error")),
+        "{:?}",
+        p.diagnostics.lines()
+    );
+    loft::scopes::check(&mut p.data, &mut p.database);
+    let mut state = loft::state::State::new(p.database);
+    loft::compile::byte_code(&mut state, &mut p.data);
+    let main = p.data.def_nr("n_main");
+    format!("{:?}", p.data.def(main).code())
+}
+
+/// The non-null facts `leaf_inline` reasons with are about ONE program: a callee's "every
+/// exit answers a value" is memoised per definition NUMBER, and the same number names another
+/// function in the next program a process compiles (the test harness, the REPL, the LSP).
+/// Program A's `get` never answers null, so `(x % 8)` over its result is ranged by that fact
+/// alone and `halfnull(get(10))` inlined in its `main` drops the `?? 0.0` fallback; program B's
+/// `get`, at the same number, can answer null, so B's must keep it — B compiles to the same IR whether or not A was compiled first on this thread.
+#[test]
+fn a_programs_non_null_facts_do_not_reach_the_next_program() {
+    let shape = |body: &str| {
+        format!(
+            "fn halfnull(x: integer) -> float {{\n  (((x % 8) as float) / 4.0 ?? 0.0) * 2.0 - 1.0\n}}\n\
+             fn get(x: integer) -> integer {{ for i in 0..x {{ {body} }} 7 }}\n\
+             fn main() {{ w = halfnull(get(10)); assert(w == -1.0 || w == 2.5, \"w {{w}}\"); }}\n"
+        )
+    };
+    let a = shape("");
+    let b = shape("if i > 5 { return null; }");
+    let (a_alone, b_alone) = {
+        let (a, b) = (a.clone(), b.clone());
+        (
+            std::thread::spawn(move || main_ir(&a)).join().unwrap(),
+            std::thread::spawn(move || main_ir(&b)).join().unwrap(),
+        )
+    };
+    assert_ne!(
+        a_alone, b_alone,
+        "CONTROL: A folds the fallback B keeps, so the two IRs differ"
+    );
+    let b_after_a = std::thread::spawn(move || {
+        main_ir(&a);
+        main_ir(&b)
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        b_after_a, b_alone,
+        "B compiled after A on one thread took A's non-null answer for the same definition number"
+    );
 }

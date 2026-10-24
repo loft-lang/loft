@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: STDLIB_FILES.md § Store images — a keyed collection is written to a path as an image
+// and read back into an empty collection of the same type.
+
+struct Entry { key: integer, value: integer }
+
+fn test_a_collection_is_written_and_read_back() {
+  path = "{temp_dir()}/loft-reference-world.store";
+  h: hash<Entry[key]> = [];
+  h += Entry { key: 7, value: 700 };
+  store_persist_copy(h, path);          // the image, rebuilt in key order
+
+  back: hash<Entry[key]> = [];
+  store_load(back, path);               // an empty collection of the same type
+  assert((back[7].value ?? -1) == 700, "the record came back from the file");
+  _ = delete(path); _ = delete("{path}.dschema");
+}

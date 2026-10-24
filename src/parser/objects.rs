@@ -3600,7 +3600,7 @@ impl Parser {
     /// A `for` hole (a loop, not a write), a part naming the work text anywhere but as its
     /// target, and a statement whose destination is not a text variable keep the buffer.
     /// A `&text` destination (`stack`) takes each write's STACK twin
-    /// (`generation::ops::refvar_text_stack_variant`, the one home), as every other write
+    /// (`text_calls::refvar_text_stack_variant`, the one home), as every other write
     /// the parser emits on such a target does — the store-text instance of the function
     /// (`store_text.rs`) recognises the stack spellings and turns them into store writes,
     /// so a plain op there would write the link's slot as a `String`.  A wrong decline is

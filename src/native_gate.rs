@@ -255,7 +255,7 @@ fn is_bridge_type(t: &Type) -> bool {
     // @PLN199 A4 — a `&T` to a scalar crosses as the `DbRef` of the caller's slot; the bridge
     // hands the inner fn a pointer into it (`*mut i64`), the form `--native` passes.  A `&T`
     // to a record, a vector, a keyed collection or a data enum the same: the slot holds that
-    // value's `DbRef`, and the inner fn takes `&mut DbRef` — it may write through it, and
+    // value's `DbRef`, and the inner fn takes a `*mut DbRef` — it may write through it, and
     // rebind it.
     if let Type::RefVar(inner) = t.base() {
         return is_ref_scalar(inner) || crate::data::is_dbref(inner.base());

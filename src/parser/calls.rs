@@ -1299,9 +1299,29 @@ impl Parser {
         if self.in_sandbox && !self.first_pass {
             self.record_param_lock_overrides(d_nr, &actual);
         }
+        let pres = std::mem::take(&mut self.pending_arg_pres);
+        let posts = std::mem::take(&mut self.pending_arg_posts);
         self.add_defaults(d_nr, &mut actual, &mut all_types);
         let tp = self.call_dependencies(d_nr, &all_types);
         *code = Value::Call(d_nr, actual);
+        // loft#2146 — an argument linked through a temp is stored back once the call returns.
+        if !posts.is_empty() {
+            let call = std::mem::replace(code, Value::Null);
+            if matches!(tp.base(), Type::Void) {
+                let mut ops = pres;
+                ops.push(call);
+                ops.extend(posts);
+                *code = crate::data::v_block(ops, Type::Void, "amp slot write-back");
+            } else {
+                let r = self.create_unique("amp_ret", &tp);
+                self.vars.defined(r);
+                let mut ops = pres;
+                ops.push(crate::data::v_set(r, call));
+                ops.extend(posts);
+                ops.push(Value::Var(r));
+                *code = crate::data::v_block(ops, tp.clone(), "amp slot write-back");
+            }
+        }
         self.warn_text_len_byte_index(d_nr, code);
         // @PLN102 arc C step 3 — the recommended-idiom STEER.  A resolved call FROM
         // OWNED source (the entry project) to a `#superseded "Y"` symbol warns the

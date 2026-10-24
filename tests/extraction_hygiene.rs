@@ -721,14 +721,17 @@ fn native_libraries_follow_clean_binding_pattern() {
     );
 }
 
-/// @PLN191 — the library crate is split into layers (core, front, gen, runtime, facade) that
-/// will become crates, and a crate can only name the crates below it.  `scripts/crate_layers.py
+/// @PLN191, @PLN200 — the library crate is split into layers (core, front, opt, interp, lower,
+/// rust, facade) that can become crates, and a crate can only name the crates below it —
+/// interp and lower/rust are siblings, naming neither the other.  `scripts/crate_layers.py
 /// check` reads every `crate::` reference between top-level modules from the tree and holds
 /// it to the layering: every module assigned to one layer, and the references that still point
 /// UP held to a budget that may only fall — and must be lowered the moment it does, so the
 /// budget is always the tree's count.  The same holds for the RUNTIME set (R1): the modules a
 /// compiled program links, whose references out of the set are counted against their own
-/// ratchet on the way to a minimised `loft-runtime` crate.  The same command a person runs, so the gate and the
+/// ratchet on the way to a minimised `loft-runtime` crate.  It keeps `@C153`: `opt` names no
+/// compiled target, and the interpreter and the compiled targets never name each other (the
+/// `selftest` proves the sibling rule can fail).  The same command a person runs, so the gate and the
 /// tool cannot drift; skipped (not failed) where `python3` is unavailable.
 #[test]
 fn library_modules_keep_their_layers() {
@@ -752,5 +755,18 @@ fn library_modules_keep_their_layers() {
          in; an upward reference is cut, never budgeted — @PLN191.",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
+    );
+    // The rule itself, on a made-up layering: a sibling pair forbidden in both directions
+    // (@PLN200), so the check above cannot pass by no longer asking.
+    let selftest = loft::platform::process::harness_command("python3")
+        .current_dir(workspace_root())
+        .arg("scripts/crate_layers.py")
+        .arg("selftest")
+        .output()
+        .expect("python3 ran above");
+    assert!(
+        selftest.status.success(),
+        "crate_layers.py's back-edge rule is wrong:\n{}",
+        String::from_utf8_lossy(&selftest.stdout)
     );
 }

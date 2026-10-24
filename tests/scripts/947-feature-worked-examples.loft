@@ -1267,78 +1267,6 @@ fn infield947(v: vector<integer>) { h = Hold947 { log: v }; h.log += [8]; }
 
 struct Tile947r { const key: integer, const points: vector<integer> }
 
-// @FTR-019 — `store_release()`: what it gives back, and the instrument that says it does not
-//
-// The deterministic half of @F112's contract, asserted below: `0` for a collection that is
-// not bound to a file, `0` when nothing new has been written since the last call, and
-// bytes > 0 once there is a region below the write frontier.  Content is untouched — a
-// reference taken BEFORE the release still reads its value, because the mapping is shared
-// and an access after the drop simply re-faults the same bytes from the file.
-//
-// The memory claim is the reason this entry exists, and it holds: 40 000 records of ~2.3 KB,
-// one call per record, sampled every 5 000 records DURING the build --
-//
-//   without   15.8 -> 22.1 -> 35.9 -> 47.1 -> 58.4 MB and still climbing
-//   with      15.9 -> 16.7 -> 17.0 -> 17.5 -> 18.2 MB, flat
-//
-// Above a ~15.8 MB interpreter baseline that is 42.6 MB resident against 2.3 MB, so ~18x --
-// the entry says 20x and 2.2 MB, and that is what this is.
-//
-// WHICH INSTRUMENT, though, because the obvious one says the opposite.  `/usr/bin/time -v`
-// reports Maximum resident set size UNCHANGED (104.0 MB vs 104.3 MB) across the same two
-// runs, in both write shapes, at every scale tried.  The peak is set by arena growth --
-// the store reports `cap 203 MB` holding `data 89 MB` -- and no residency hint can lower a
-// peak it does not cause.  The claim is about the WORKING SET while the build runs, so it
-// has to be sampled while the build runs; a peak-RSS reading will tell you the call does
-// nothing.  That cost several measurement rounds here, which is why it is written down.
-//
-// The wall clock is not hurt and is often helped: same 40 000 records, one call per record,
-// 6.09 s -> 3.13 s where each record is returned to and its vector grows in place, and
-// 2.74 s -> 2.76 s where the record is complete when inserted.
-fn test_store_release_answers_bytes_and_keeps_every_reference_valid() {
-  tmp947 = temp_dir();
-  assert(tmp947 != null, "temp_dir is where this test's store goes");
-  sp947 = "{tmp947 ?? ""}/loft947_release_{now()}_{ticks()}.store";
-  _ = delete(sp947); _ = delete("{sp947}.dschema");
-
-  // Not bound to a file: there is nothing to write out and nothing to drop.
-  loose947: hash<Tile947r[key]> = [];
-  for k in 0..50 { loose947 += Tile947r { key: k, points: [k, k + 1] } }
-  assert(store_release(loose947) == 0, "an unbound collection drops nothing, got {store_release(loose947)}");
-
-  held947: hash<Tile947r[key]> = [];
-  assert(store_persist_bind(held947, sp947), "the collection binds to a file");
-  assert(store_release(held947) == 0, "and an empty bound store drops nothing either");
-
-  for k in 0..2000 { held947 += Tile947r { key: k, points: [k * 10, k * 10 + 1, k * 10 + 2] } }
-
-  // A reference taken BEFORE the release -- the entry's "every reference stays valid".
-  before947 = held947[7];
-  first947 = store_release(held947);
-  // What it drops is bytes it WROTE, so the answer can never exceed the file.  The
-  // positive-release half is deliberately not asserted here and cannot be: `release_resident`
-  // has a body only where there is a file to flush to AND `madvise` to drop with
-  // (`#[cfg(all(feature = "mmap", unix))]`), and off unix it is a documented no-op answering
-  // 0 — a hint the platform cannot honour, not a program that is wrong.  A loft program has
-  // no way to ask which platform it is on, so the both-directions gate lives where `cfg!`
-  // does: `store_release_keeps_every_record_and_reference_both_backends` in
-  // `tests/store_persist_loft.rs` pins TRUE on unix and FALSE off it (loft#1127).
-  assert(first947 <= file(sp947).size, "it drops bytes it wrote, got {first947}");
-
-  // THE POINT of the return value: it is the bytes THIS call dropped, not the resident
-  // total.  Nothing new has been written, so the second call has nothing left to do.
-  assert(store_release(held947) == 0, "a second call with no new writes drops nothing");
-
-  // Content is unaffected: the same bytes, one page fault later.
-  assert(before947.points[2] == 72, "the reference taken before the release still reads, got {before947.points[2]}");
-  after947 = held947[7] ?? Tile947r { key: -1, points: [] };
-  assert(after947.points[2] == 72, "and so does a fresh lookup, got {after947.points[2]}");
-  assert(len(held947) == 2000, "with every record still there, got {len(held947)}");
-
-  _ = delete(sp947); _ = delete("{sp947}.dschema");
-}
-
-
 struct Part947z { const id: integer, name: text }
 struct Widget947z { const code: text, weight: integer }
 
@@ -1386,9 +1314,9 @@ fn test_lazy_faults_are_sticky_until_acknowledged_and_keep_the_first_reason() {
 
   // Make the source exist, holding 7 and 91.
   src947z: hash<Part947z[id]> = [];
-  assert(store_persist_bind(src947z, sp947z), "the image is written at that path");
   src947z += Part947z { id: 7, name: "bolt" };
   src947z += Part947z { id: 91, name: "washer" };
+  assert(store_persist_copy(src947z, sp947z), "the image is written at that path");
 
   // Reached, and the key is genuinely absent.  This is the cell the entry got wrong: it
   // does NOT clear, because reachability now says nothing about what was already lost.
@@ -1424,8 +1352,8 @@ fn test_lazy_faults_are_sticky_until_acknowledged_and_keep_the_first_reason() {
 
   // Cause B — a store at that path whose recorded layout is not this collection's.
   other947z: hash<Widget947z[code]> = [];
-  assert(store_persist_bind(other947z, sq947z), "a foreign-layout image lands at that path");
   other947z += Widget947z { code: "aa", weight: 5 };
+  assert(store_persist_copy(other947z, sq947z), "a foreign-layout image lands at that path");
   assert(parts947z[404] == null, "a foreign layout is refused rather than range-read");
   assert(store_lazy_faults(parts947z) == 2, "which counts as a second fault, got {store_lazy_faults(parts947z)}");
   assert(store_lazy_error(parts947z) == causeA947z, "and the FIRST reason is the one kept, got [{store_lazy_error(parts947z)}]");
@@ -1600,8 +1528,8 @@ fn test_a_paged_read_pays_for_the_walk_it_takes_not_for_the_rest() {
 
   // ONE entry, and a batch that skips what the image does not hold.
   all947p: hash<Part947p[id]> = [];
-  assert(store_persist_bind(all947p, hp947p), "the hash image is written");
   for i in 0..50 { all947p += Part947p { id: i, name: "p{i}" } }
+  assert(store_persist_copy(all947p, hp947p), "the hash image is written");
 
   one947p: hash<Part947p[id]> = [];
   assert(store_load_key(one947p, hp947p, 42), "a present key loads");
@@ -1619,8 +1547,8 @@ fn test_a_paged_read_pays_for_the_walk_it_takes_not_for_the_rest() {
 
   // A prefix run, and what `limit` bounds.
   words947p: trie<Word947p[w]> = [];
-  assert(store_persist_bind(words947p, tp947p), "the trie image is written");
   for i in 0..300 { words947p += Word947p { w: "kerk{i}", body: "x" } }
+  assert(store_persist_copy(words947p, tp947p), "the trie image is written");
 
   eight947p: trie<Word947p[w]> = [];
   assert(store_load_prefix(eight947p, tp947p, "kerk", 8) == 8, "the cap decides the count");
@@ -1638,8 +1566,8 @@ fn test_a_paged_read_pays_for_the_walk_it_takes_not_for_the_rest() {
 
   // A bounding box, and the corners written either way round.
   pins947p: spatial<Pin947p[x, y]> = [];
-  assert(store_persist_bind(pins947p, sp947p), "the spatial image is written");
   for gx in 0..40 { for gy in 0..40 { pins947p += Pin947p { x: gx, y: gy } } }
+  assert(store_persist_copy(pins947p, sp947p), "the spatial image is written");
 
   b1947p: spatial<Pin947p[x, y]> = [];
   assert(store_load_box(b1947p, sp947p, [10, 10], [19, 19], -1) == 100,

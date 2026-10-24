@@ -1,5 +1,5 @@
 diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
-index 7e338153b..7354c4dd4 100644
+index 20a493cb..a3aa938c 100644
 --- a/src/generation/coroutine.rs
 +++ b/src/generation/coroutine.rs
 @@ -1236,13 +1236,9 @@ fn coroutine_persistent_locals(
@@ -205,7 +205,7 @@ index 7e338153b..7354c4dd4 100644
          // Every remaining field type lowers to a Rust NUMBER, so the zero of whatever
          // `rust_type` decided is a value of exactly that type.  Asking it, rather than
          // listing the types a second time here, is the point: the second list had drifted
-@@ -2176,7 +2100,6 @@ impl Output<'_> {
+@@ -2177,7 +2101,6 @@ impl Output<'_> {
                  w,
                  attrs,
                  &self.coroutine_persistent_fields,
@@ -213,7 +213,7 @@ index 7e338153b..7354c4dd4 100644
                  "                ",
              )?;
              match segment {
-@@ -2228,7 +2151,6 @@ impl Output<'_> {
+@@ -2229,7 +2152,6 @@ impl Output<'_> {
                          w,
                          attrs,
                          &self.coroutine_persistent_fields,
@@ -221,7 +221,7 @@ index 7e338153b..7354c4dd4 100644
                          "                ",
                      )?;
                      writeln!(w, "                if self.sub_{sub}.is_none() {{")?;
-@@ -2323,7 +2245,6 @@ impl Output<'_> {
+@@ -2324,7 +2246,6 @@ impl Output<'_> {
                          w,
                          attrs,
                          &self.coroutine_persistent_fields,
@@ -229,7 +229,7 @@ index 7e338153b..7354c4dd4 100644
                          "                ",
                      )?;
                      writeln!(w, "                let mut __exhausted = true;")?;
-@@ -2394,7 +2315,6 @@ impl Output<'_> {
+@@ -2395,7 +2316,6 @@ impl Output<'_> {
                          w,
                          attrs,
                          &self.coroutine_persistent_fields,
@@ -237,7 +237,7 @@ index 7e338153b..7354c4dd4 100644
                          "                ",
                      )?;
                      writeln!(
-@@ -2468,7 +2388,6 @@ impl Output<'_> {
+@@ -2469,7 +2389,6 @@ impl Output<'_> {
                  w,
                  attrs,
                  &self.coroutine_persistent_fields,
@@ -245,7 +245,7 @@ index 7e338153b..7354c4dd4 100644
                  "                ",
              )?;
              for op in tail {
-@@ -2655,24 +2574,13 @@ impl Output<'_> {
+@@ -2656,24 +2575,13 @@ impl Output<'_> {
                  .tkinds
                  .as_ref()
                  .expect("chan.is_tuple_into ⇒ tuple_kinds");
@@ -271,7 +271,7 @@ index 7e338153b..7354c4dd4 100644
              }
              // `(G-Own)`: the members' temps are handed over with the tuple.
              for field in self.handed_yield_fields(val) {
-@@ -3072,37 +2980,18 @@ impl Output<'_> {
+@@ -3091,37 +2999,18 @@ impl Output<'_> {
                  fields.insert(p, sanitize(&attr.name));
              }
          }
@@ -321,7 +321,7 @@ index 7e338153b..7354c4dd4 100644
  
          // The outer `loop {}` in `next_*` is what lets a state hand over to the next one
          // without returning a value.  A lazily-lowered loop needs it for the same reason a
-@@ -3126,8 +3015,7 @@ impl Output<'_> {
+@@ -3145,8 +3034,7 @@ impl Output<'_> {
              &yield_tp,
              &persistent,
              &fields,
@@ -331,7 +331,7 @@ index 7e338153b..7354c4dd4 100644
          )?;
  
          // ── 2. impl LoftCoroutine ────────────────────────────────────────────
-@@ -3145,21 +3033,10 @@ impl Output<'_> {
+@@ -3164,21 +3052,10 @@ impl Output<'_> {
          let prev_persistent = std::mem::take(&mut self.coroutine_persistent_fields);
          let prev_allocated = std::mem::take(&mut self.coroutine_allocated_vars);
          self.coroutine_persistent_fields.clone_from(&fields);
@@ -357,7 +357,7 @@ index 7e338153b..7354c4dd4 100644
              }
          }
          writeln!(
-@@ -3210,7 +3087,6 @@ impl Output<'_> {
+@@ -3229,7 +3106,6 @@ impl Output<'_> {
          writeln!(w, "}}\n")?;
          self.in_coroutine_body = prev_in_coroutine;
          self.coroutine_persistent_fields = prev_persistent;
@@ -365,7 +365,7 @@ index 7e338153b..7354c4dd4 100644
          self.coroutine_allocated_vars = prev_allocated;
          for v in newly_declared {
              self.declared.remove(&v);
-@@ -3228,8 +3104,7 @@ impl Output<'_> {
+@@ -3247,8 +3123,7 @@ impl Output<'_> {
              &segments,
              &persistent,
              &fields,
@@ -376,7 +376,7 @@ index 7e338153b..7354c4dd4 100644
          if has_for_body {
              self.emit_for_body_factory(
 diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
-index b5aa45f91..011551fb3 100644
+index 5aed55f9..9e725bc0 100644
 --- a/src/generation/dispatch.rs
 +++ b/src/generation/dispatch.rs
 @@ -18,24 +18,8 @@ impl Output<'_> {
@@ -418,7 +418,7 @@ index b5aa45f91..011551fb3 100644
              // The struct's own spelling for this field, not the variable's name — two
              // `for i in …` loops in one generator put two `i`s on the struct (loft#928).
              let name = field.clone();
-@@ -2193,9 +2173,7 @@ impl Output<'_> {
+@@ -2182,9 +2162,7 @@ impl Output<'_> {
              self.narrow_local_enc(var)
          };
          if self.declared.contains(&var) && !discard_loop_var {
@@ -429,7 +429,7 @@ index b5aa45f91..011551fb3 100644
          } else {
              self.declared.insert(var);
              let var_tp = if discard_loop_var && let Value::Block(bl) = to.unspan() {
-@@ -2464,18 +2442,18 @@ impl Output<'_> {
+@@ -2449,18 +2427,18 @@ impl Output<'_> {
                  } else if tuple_text_elem_clone {
                      // P228: read through the same unspan as the detection above.
                      if let Value::TupleGet(v, idx) = to.unspan() {
@@ -452,13 +452,13 @@ index b5aa45f91..011551fb3 100644
 +                        let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
 +                        write!(w, "var_{src_name}.clone()")?;
                      }
-                 } else {
-                     self.output_code_inner(w, to)?;
+                 } else if wrap_fn_ref {
+                     self.emit_fn_number(w, to)?;
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index 4577e6e5a..449cc1514 100644
+index 6824fa9d..4e0b5f85 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -304,19 +304,6 @@ impl Output<'_> {
+@@ -331,19 +331,6 @@ impl Output<'_> {
                                  .expect("eager_tuple_kinds admits only single-slot kinds");
                              write!(w, "__values.push({img}); ")?;
                          }
@@ -478,7 +478,7 @@ index 4577e6e5a..449cc1514 100644
                      }
                      write!(w, "}}")?;
                  } else if self.yield_collect {
-@@ -493,11 +480,6 @@ impl Output<'_> {
+@@ -525,11 +512,6 @@ impl Output<'_> {
                      if let Some(slot) = variables.linked_narrow_slot(var) {
                          return write!(w, "{}", slot.decode_rust(&format!("self.var_{field}")));
                      }
@@ -490,7 +490,7 @@ index 4577e6e5a..449cc1514 100644
                      return write!(w, "self.var_{field}");
                  } else if self.text_borrowed(var) {
                      // A borrowed text reads as the `&str` it holds.
-@@ -695,8 +677,6 @@ impl Output<'_> {
+@@ -726,8 +708,6 @@ impl Output<'_> {
                  let idx = node.tupleget_idx();
                  let variables = self.data.def(self.def_nr).variables();
                  let (name, deref) = crate::generation::tuple_base(variables, var);
@@ -499,7 +499,7 @@ index 4577e6e5a..449cc1514 100644
                  if deref {
                      // A `&`-bound tuple LOCAL: the element sits behind a raw pointer.
                      // `T-Ref-El` admits only scalars here, so none of the text/borrow
-@@ -741,8 +721,6 @@ impl Output<'_> {
+@@ -772,8 +752,6 @@ impl Output<'_> {
                  let idx = node.tupleput_idx();
                  let variables = self.data.def(self.def_nr).variables();
                  let (name, deref) = crate::generation::tuple_base(variables, var);
@@ -509,10 +509,10 @@ index 4577e6e5a..449cc1514 100644
                  // the same rule the tuple LITERAL arm below obeys through this flag.
                  // Without it `t.0 = "X"` emitted `var_t.0 = "X";` and rustc refused the
 diff --git a/src/generation/mod.rs b/src/generation/mod.rs
-index 9717193f7..36b884ea4 100644
+index 9d619c2c..d91b29ac 100644
 --- a/src/generation/mod.rs
 +++ b/src/generation/mod.rs
-@@ -1514,12 +1514,6 @@ pub struct Output<'a> {
+@@ -1246,12 +1246,6 @@ pub struct Output<'a> {
      /// is derived — keeping membership and spelling in ONE lookup is what stops an emitter
      /// from reading a field under a name the struct definition never used.
      pub coroutine_persistent_fields: HashMap<u16, String>,
@@ -525,7 +525,7 @@ index 9717193f7..36b884ea4 100644
      /// Coroutine-persistent vars whose allocating initialiser has already been emitted inside
      /// the current `impl LoftCoroutine`.  A second `Set(v, Null)` on the same field is the
      /// @P302 in-place clear, which must NOT re-run `null_named` (that would orphan the store).
-@@ -2542,7 +2536,6 @@ impl<'a> Output<'a> {
+@@ -2287,7 +2281,6 @@ impl<'a> Output<'a> {
              yield_collect_refuse: None,
              yield_lazy_wrap: None,
              coroutine_persistent_fields: HashMap::new(),
@@ -533,7 +533,7 @@ index 9717193f7..36b884ea4 100644
              coroutine_allocated_vars: HashSet::new(),
              fn_ref_context: false,
              i32_literal_context: false,
-@@ -6421,32 +6414,6 @@ impl Output<'_> {
+@@ -6328,32 +6321,6 @@ impl Output<'_> {
          }
      }
  

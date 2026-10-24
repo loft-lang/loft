@@ -679,10 +679,18 @@ impl Output<'_> {
         // passes its address, and a link or a `&` parameter passes the pointer it holds.
         let raw_param = idx < def_fn.attributes().len()
             && crate::generation::is_raw_scalar_ref(&def_fn.attributes()[idx].typedef);
+        // Every generated function takes a heap `&` parameter as a raw pointer too (loft#2136);
+        // a callee with no loft body is a runtime function written in Rust, whose signature
+        // declares the `&mut T`.
+        let pass_raw = raw_param
+            || (*def_fn.code() != Value::Null
+                && idx < def_fn.attributes().len()
+                && matches!(def_fn.attributes()[idx].typedef.base(), Type::RefVar(_)));
         if let Some(vr) = self.create_stack_var(v) {
-            // The variable's PLACE: a generator's local is its struct field (loft#1899).
+            // The variable's PLACE: a generator's local is its struct field (loft#1899).  Its
+            // address, never a `&mut`: two `&` parameters may name the one local.
             let place = self.var_place(vr);
-            if raw_param {
+            if pass_raw {
                 write!(w, "std::ptr::addr_of_mut!({place})")?;
             } else {
                 write!(w, "&mut {place}")?;
@@ -709,7 +717,7 @@ impl Output<'_> {
             && let Value::TupleGet(t, i) = arg.unspan()
         {
             let place = self.tuple_member_place(*t, *i);
-            if raw_param {
+            if pass_raw {
                 write!(w, "unsafe {{ std::ptr::addr_of_mut!({place}) }}")?;
             } else {
                 write!(w, "unsafe {{ &mut *std::ptr::addr_of_mut!({place}) }}")?;
@@ -735,27 +743,23 @@ impl Output<'_> {
             // forwarding a & parameter to another & parameter.
             let caller_vars = self.data.def(self.def_nr).variables();
             let name = sanitize(caller_vars.name(*nr));
-            if raw_param {
-                // A scalar link and a scalar `&` parameter both hold the `*mut T` the callee takes.
-                write!(w, "var_{name}")?;
-            } else if caller_vars.is_argument(*nr) {
-                // An argument RefVar is already &mut DbRef — pass it
-                // directly instead of dereferencing with *var_name.
-                write!(w, "var_{name}")?;
-            } else if crate::generation::is_raw_tuple_link(caller_vars, *nr)
+            let holds_pointer = raw_param
+                || caller_vars.is_argument(*nr)
+                || crate::generation::is_raw_tuple_link(caller_vars, *nr)
                 || matches!(caller_vars.tp(*nr).base(), Type::RefVar(inner)
-                    if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)))
-            {
-                // A `&`-bound RECORD local (`b: &P = a`, and every `&(…)` since loft#1883) is
-                // the `*mut DbRef` its bind took of the source's slot, re-borrowed the same way.
-                // A `&`-bound tuple LOCAL holds a raw `*mut (…)`, so `&mut var_b` would
-                // hand the callee a reference to the POINTER.  Re-borrow through it to
-                // give the `&(…)` parameter the `&mut (…)` it declares — the caller's
-                // own tuple, which is what the callee is there to write.
+                    if matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _)));
+            if holds_pointer && pass_raw {
+                // A scalar link, a `&` parameter, a `&`-bound tuple local and a `&`-bound
+                // RECORD local (`b: &P = a`) all hold the `*mut T` the callee takes: the
+                // pointer is passed on, so a link forwarded twice is one place twice.
+                write!(w, "var_{name}")?;
+            } else if holds_pointer {
+                // A runtime function's `&mut T`, re-borrowed through the pointer.
                 write!(w, "unsafe {{ &mut *var_{name} }}")?;
+            } else if pass_raw {
+                // A local RefVar alias (#257) is a plain `DbRef` — its address.
+                write!(w, "std::ptr::addr_of_mut!(var_{name})")?;
             } else {
-                // A local RefVar alias (#257) is a plain `DbRef` — borrow
-                // it so the callee gets the &mut DbRef it expects.
                 write!(w, "&mut var_{name}")?;
             }
         } else if matches!(v.unspan(), Value::Null)

@@ -171,7 +171,7 @@ pub struct BinaryEntry {
     pub manifest_sha256: Option<String>,
     /// @PLN199 G2a — for a library's AUTO-compiled artifact (a release's `artifacts`): the
     /// `cache::loft_exe_identity` of the loft that built it (a string in the index, as
-    /// `loft_ffi_fp`), and its full stem (`native_lib::cached_or_build_shared_cdylib`'s name
+    /// `loft_ffi_fp`), and its full stem (`native_artifact::cached_or_build_shared_cdylib`'s name
     /// for it).  Such an artifact runs only in that same loft, which then adopts it under that
     /// name with no `rustc`.  `None` for a hand-written native crate's binary, which
     /// `loft_ffi_fp` gates.

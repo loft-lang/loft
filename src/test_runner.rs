@@ -6,7 +6,6 @@
 
 #![allow(unused_imports)] // Module used from main(), not from test builds.
 
-use crate::compile;
 use crate::data::{Data, DefType, Type};
 use crate::generation;
 use crate::log_config::LogConfig;
@@ -14,8 +13,9 @@ use crate::logger;
 use crate::native_utils;
 use crate::parser::Parser;
 use crate::scopes;
-use crate::state::State;
 use loft::file_access as fa;
+use loft::interp::compile;
+use loft::interp::state::State;
 use loft::platform::process::{Program, Spawn};
 use std::collections::HashSet;
 use std::io::Write;
@@ -887,7 +887,7 @@ pub(crate) fn run_tests(
     // samples are resolved to `(function, file:line)` per test and merged on those —
     // see `Totals`.  A `RefCell` because the arming and the folding both happen inside
     // the per-test `catch_unwind` closure.
-    let profile = std::cell::RefCell::new(loft::profiler::Totals::default());
+    let profile = std::cell::RefCell::new(loft::interp::profiler::Totals::default());
 
     // loft#925 — the library parse, shared across the test files that ask for
     // exactly the same libraries.
@@ -1539,8 +1539,8 @@ pub(crate) fn run_tests(
                 // interpreted branch below loads them for dispatch; the native
                 // branch needs them for the same reason one step earlier, or a
                 // remapped symbol compiles into a call to the wrong function.
-                crate::extensions::load_all(&mut native_state, pending_native.clone());
-                crate::extensions::resolve_native_impl_symbols(&mut native_data);
+                loft::interp::extensions::load_all(&mut native_state, pending_native.clone());
+                loft::interp::extensions::resolve_native_impl_symbols(&mut native_data);
                 let native_db = native_state.database;
                 // Filter to functions that can run natively (skip @IGNORE,
                 // @EXPECT_ERROR, and @EXPECT_FAIL — native can't catch panics).
@@ -2069,8 +2069,8 @@ pub(crate) fn run_tests(
                             let mut state = State::new(clean_db.clone());
                             data.observes_entries = true;
                             compile::byte_code(&mut state, &mut data);
-                            crate::extensions::load_all(&mut state, pending_native.clone());
-                            crate::extensions::wire_native_fns(&mut state, &data);
+                            loft::interp::extensions::load_all(&mut state, pending_native.clone());
+                            loft::interp::extensions::wire_native_fns(&mut state, &data);
                             (state, std::sync::Arc::new(data))
                         }))
                         .ok()
@@ -2124,9 +2124,9 @@ pub(crate) fn run_tests(
                             data_copy.observes_entries = true;
                             compile::byte_code(&mut state, &mut data_copy);
                             // Load native extensions for packages with #native functions.
-                            crate::extensions::load_all(&mut state, pending_native.clone());
+                            loft::interp::extensions::load_all(&mut state, pending_native.clone());
                             // PKG.5: wire auto-marshalled native functions.
-                            crate::extensions::wire_native_fns(&mut state, &data_copy);
+                            loft::interp::extensions::wire_native_fns(&mut state, &data_copy);
                             (state, std::sync::Arc::new(data_copy))
                         };
 
@@ -2535,7 +2535,7 @@ pub(crate) fn run_tests(
     // The text-buffer ledger (`LOFT_TEXT_TIMELINE`) reports here as it does at a program's
     // exit: a suite run used to end without the summary, so a leak in a `main`-less guard
     // was invisible to the one instrument built to see it (loft#1357).  No-op unarmed.
-    crate::state::text_timeline_summary();
+    loft::interp::state::text_timeline_summary();
     if total_fail == 0 {
         println!(
             "test result: ok. {total_pass} passed; {total_files} file{}  {scope}",

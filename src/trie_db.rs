@@ -687,7 +687,7 @@ mod paged {
     fn build(relayout: bool) -> (Store, DbRef, Vec<Key>, Vec<String>, usize) {
         let words = corpus();
         let keys = vec![w_key()];
-        let mut store = Store::new_in_use(1 << 20);
+        let mut store = Store::new_in_use_defined(1 << 20);
         let coll = crate::radix_tree::empty_collection(&mut store);
         let mut order: Vec<usize> = (0..words.len()).collect();
         for i in 0..words.len() {
@@ -717,7 +717,7 @@ mod paged {
             );
         }
         if relayout {
-            // What `store_persist_bind` does before it writes the image, so this is
+            // What `store_persist_copy` does before it writes the image, so this is
             // the layout a reader actually pages.
             let tree = store.get_u32_raw(coll.rec, coll.pos);
             assert!(crate::radix_tree::rtree_relayout(&mut store, tree));
@@ -880,7 +880,7 @@ mod paged {
             "kerklaan",
         ];
         let keys = vec![w_key()];
-        let mut store = Store::new_in_use(1 << 14);
+        let mut store = Store::new_in_use_defined(1 << 14);
         let coll = crate::radix_tree::empty_collection(&mut store);
         for w in SIX {
             let ptr = store.set_str(w);

@@ -540,22 +540,14 @@ impl Output<'_> {
                     // A scalar `&` parameter is a raw pointer, read below exactly as a local
                     // link is (`is_raw_scalar_ref`, loft#1605).
                     if let Type::RefVar(inner) = variables.tp(var) {
-                        // By-ref argument: holds &mut T — dereference to read.  Through
-                        // `base()`, as the local-link arm below reads it: a `&text?` parameter
-                        // is the same `&mut String`, and read bare it MOVED the string (E0507).
+                        // A `&` argument is a raw `*mut T` (`is_raw_scalar_ref`): dereference to
+                        // read.  Through `base()`, as the local-link arm below reads it: a
+                        // `&text?` parameter is the same `*mut String`, and read bare it would
+                        // MOVE the string (E0507).
                         if matches!(inner.base(), Type::Text(_)) {
-                            return write!(w, "&*var_{var_name}");
+                            return write!(w, "unsafe {{ &*var_{var_name} }}");
                         }
-                        // A `&boolean` slot is the tri-state STORAGE byte (0/1/255),
-                        // because locals are `u8`; every loft-level USE of it is a
-                        // two-state `bool`, exactly as a plain `boolean` parameter
-                        // already is.  Convert on read so consumers see the type they
-                        // expect (`if b`, `b && …`) rather than a `u8` (loft#655).
-                        // `== 1` deliberately: a null (255) reads as false.
-                        if matches!(**inner, Type::Boolean) {
-                            return write!(w, "(*var_{var_name} == 1)");
-                        }
-                        return write!(w, "*var_{var_name}");
+                        return write!(w, "unsafe {{ *var_{var_name} }}");
                     }
                     // @PLN167 decision 1 — a by-value narrow parameter something links is
                     // re-encoded at entry and reads as its decoded value from then on.
@@ -973,6 +965,16 @@ impl Output<'_> {
                     r?;
                 }
             }
+            // `@FR-R-Range`'s while-counter clause — the loop is emitted as usual, under the
+            // narrowed counter: its step, and every other use before it, is proven in range.
+            Value::Loop(lp) if let Some(facts) = self.while_counter_facts(lp) => {
+                self.while_narrowed.insert(lp.scope);
+                self.range_override.push(std::rc::Rc::new(facts));
+                let r = self.output_code_node(w, IrNode::Native(code));
+                self.range_override.pop();
+                self.while_narrowed.remove(&lp.scope);
+                return r;
+            }
             Value::Loop(lp) => {
                 // A loop nested inside this one is asked anew (`distinct_version`).
                 self.in_distinct_copy = false;
@@ -1269,7 +1271,7 @@ impl Output<'_> {
                         if let Some(buf) = self.return_buffer_name() {
                             write!(
                                 w,
-                                ").to_string(); *var_{buf} = _tmp; Str::new(&*var_{buf}) }}"
+                                ").to_string(); unsafe {{ *var_{buf} = _tmp; Str::new(&*var_{buf}) }} }}"
                             )?;
                         } else {
                             // @PLN10 D/G1 — dead branch: `needs_p205_scratch` here
@@ -1490,7 +1492,7 @@ impl Output<'_> {
                         if let Some(buf) = self.return_buffer_name() {
                             write!(
                                 w,
-                                ").to_string(); *var_{buf} = _tmp; Str::new(&*var_{buf}) }}"
+                                ").to_string(); unsafe {{ *var_{buf} = _tmp; Str::new(&*var_{buf}) }} }}"
                             )?;
                         } else {
                             // @PLN10 D/G1 — dead branch: `needs_p205_scratch` here
@@ -5173,7 +5175,7 @@ impl Output<'_> {
                         if let Some(buf) = self.return_buffer_name() {
                             write!(
                                 w,
-                                ").to_string(); *var_{buf} = _tmp; Str::new(&*var_{buf}) }}"
+                                ").to_string(); unsafe {{ *var_{buf} = _tmp; Str::new(&*var_{buf}) }} }}"
                             )?;
                         } else {
                             // @PLN10 D/G1 — dead branch: `needs_p205_scratch` here

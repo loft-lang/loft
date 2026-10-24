@@ -1,8 +1,8 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index cb47c1763..df0f7266e 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -1464,6 +1464,10 @@ fn body_writes(
+diff --git a/src/opt/body_writes.rs b/src/opt/body_writes.rs
+index e29ec2f31..e6679f928 100644
+--- a/src/opt/body_writes.rs
++++ b/src/opt/body_writes.rs
+@@ -649,6 +649,10 @@ pub(crate) fn body_writes(
                      return true;
                  };
                  set.own.insert(tp);

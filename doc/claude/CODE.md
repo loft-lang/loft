@@ -308,7 +308,10 @@ Four shapes that read as correct and are not, each measured in this repo's own s
   sibling checkout's run. Wait on an artefact or a pid file instead (`make ci` records its run
   in `.ci-running`), stop a run through the tool that started it
   (`scripts/find_problems.sh --stop`), and before acting on a "concurrent run" claim read
-  the candidates' `readlink /proc/<pid>/cwd`.
+  the candidates' `readlink /proc/<pid>/cwd`.  A PID is no safer than a name until you know
+  whose it is: before `kill <pid>`, walk `ps -o pid,ppid,args` up to a shell this session
+  started.  A build in a shared cache (`~/.cache/loft-falsify/<sha>-target`) looks the same
+  whichever checkout's script launched it.
 
   ⚠ **The `[m]ake` bracket works, and that is exactly why it is not a rule you can rely on.**
   Measured 2026-09-07: a bracketed waiter exits on the first poll, an unbracketed one loops

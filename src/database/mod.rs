@@ -449,9 +449,9 @@ pub struct Stores {
     /// in one store that named one record name one copy.  Forgotten when the copied record's
     /// store is freed, right after its evacuations.  Runtime-only: `clone` starts it empty.
     pub(crate) evacuated: Vec<((DbRef, u16), DbRef)>,
-    /// @PLN196 — what the last converting `store_load` / `store_persist_bind` still owes:
-    /// the records whose added field has a computed default, which the program's drain fills
-    /// right after the call, and a bind that is finished once they are.  Runtime-only:
+    /// @PLN196 — what the last converting `store_load` still owes: the records whose added
+    /// field has a computed default, which the program's drain fills right after the call.
+    /// Runtime-only:
     /// `clone` starts it empty.
     pub(crate) owed: upgrade::Owed,
     /// @PLN196 step 9 — the `upgrade` routine of each record type, registered by the drain's
@@ -499,6 +499,9 @@ pub struct Stores {
     /// elements → ~4 (near the scalar baseline). A `value struct` built in place allocates
     /// none. `LOFT_ALLOC_REPORT=1` prints it; the pub field is read in-process for assertions.
     pub stores_allocated: u64,
+    /// The next store [`Stores::database_named`] hands out is DEFINED (`Store::defined`):
+    /// set by [`Stores::database_defined`], consumed by the allocation.
+    pub(crate) want_defined: bool,
     /// @PLN105 leak provenance — the bytecode position of the currently-executing op,
     /// republished per-op by the interpreter's dispatch loop. `database_named` stamps it
     /// into each freshly-allocated store's `created_at` so a leaked store's allocation
@@ -796,6 +799,7 @@ impl Clone for Stores {
             peak: 0,
             records_created: 0,
             stores_allocated: 0,
+            want_defined: false,
             alloc_pc: 0,
             free_bits: Vec::new(),
             bridge_text_dest: None,
@@ -1580,6 +1584,7 @@ impl Stores {
             peak: 0,
             records_created: 0,
             stores_allocated: 0,
+            want_defined: false,
             alloc_pc: 0,
             free_bits: Vec::new(),
             bridge_text_dest: None,
@@ -2081,12 +2086,14 @@ impl Stores {
     /// by an already-derived [`crate::vector::VecHeader`] (loft#885).
     ///
     /// The in-range fast path is address arithmetic; every other index — negative,
-    /// out-of-range, `i64::MIN` — falls through to `vec_get_or_raise_runtime`, so the
-    /// raise it reports and the sentinel it answers have only one definition.
+    /// out-of-range, `i64::MIN` — falls through to [`Self::vec_get_or_raise_at_runtime`],
+    /// so the raise it reports, the statement `line` it names (`@FR-E-Report`) and the
+    /// sentinel it answers have only one definition.
     #[must_use]
     #[inline]
     pub fn vec_get_hoisted_or_raise_runtime<const VERIFY: bool>(
         &mut self,
+        line: u32,
         h: &crate::vector::VecHeader,
         db: &crate::keys::DbRef,
         size: u32,
@@ -2095,7 +2102,7 @@ impl Stores {
         if index >= 0 && index < i64::from(h.len) {
             crate::vector::get_vector_hoisted::<VERIFY>(h, db, size, index, &self.allocations)
         } else {
-            self.vec_get_or_raise_runtime(db, size, index)
+            self.vec_get_or_raise_at_runtime(line, db, size, index)
         }
     }
 

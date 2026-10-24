@@ -874,7 +874,7 @@ fn main() {
 }
 
 /// N3 core: a NORMAL library function (a body, NO hand-written `#native`) is
-/// auto-marked for native dispatch (`native_lib::mark_native_exports`),
+/// auto-marked for native dispatch (`native_adopt::mark_native_exports`),
 /// auto-compiled to a shared cdylib, and dispatched — the script calls it
 /// normally, with no `#native` decl anywhere.  This is the in-process shape of
 /// what `use <lib>` will do: parse the library into the `Data`, mark its
@@ -926,7 +926,7 @@ fn auto_native_marks_and_dispatches_normal_library_fn() {
     // byte_code, so calls route through OpStaticCall.
     let double_nr = p.data.def_nr("n_double");
     let candidates: std::collections::HashSet<u32> = std::iter::once(double_nr).collect();
-    let export = loft::native_lib::mark_native_exports(&mut p.data, &candidates);
+    let export = loft::native_adopt::mark_native_exports(&mut p.data, &candidates);
     assert!(
         export.contains(&double_nr),
         "double should be auto-marked native"
@@ -1023,7 +1023,7 @@ fn auto_native_text_return_shapes() {
 
     let greet_nr = p.data.def_nr("n_greet");
     let candidates: std::collections::HashSet<u32> = std::iter::once(greet_nr).collect();
-    let export = loft::native_lib::mark_native_exports(&mut p.data, &candidates);
+    let export = loft::native_adopt::mark_native_exports(&mut p.data, &candidates);
     assert!(export.contains(&greet_nr), "greet should be auto-marked");
 
     let mut state = State::new(p.database);
@@ -1122,7 +1122,7 @@ fn f3_body_bearing_marked_fn_dispatch_vs_interpret() {
             panic!("build_shared_cdylib failed: {e}");
         }
     };
-    loft::native_lib::mark_exports(&mut p.data, &export); // the default-native mark
+    loft::native_adopt::mark_exports(&mut p.data, &export); // the default-native mark
 
     let mut state = loft::state::State::new(p.database);
     loft::compile::byte_code(&mut state, &mut p.data);
@@ -1271,7 +1271,7 @@ fn p303_text_return_marked_fn_expression_and_dest_context() {
             panic!("build_shared_cdylib failed: {e}");
         }
     };
-    loft::native_lib::mark_exports(&mut p.data, &export);
+    loft::native_adopt::mark_exports(&mut p.data, &export);
 
     let mut state = loft::state::State::new(p.database);
     loft::compile::byte_code(&mut state, &mut p.data);

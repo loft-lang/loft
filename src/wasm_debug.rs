@@ -17,8 +17,8 @@
 
 use std::cell::RefCell;
 
-use crate::debugger::StepMode;
-use crate::state::State;
+use crate::interp::debugger::StepMode;
+use crate::interp::state::State;
 
 /// The parked interpreter + its owning parser, plus the run's lifecycle flags.
 struct Session {
@@ -87,7 +87,7 @@ pub fn start_reporting(program_src: &str) -> Result<(), String> {
     let program_source = p.data.source;
     crate::scopes::check(&mut p.data, &mut p.database);
     let mut state = Box::new(State::new(p.database.clone()));
-    crate::compile::byte_code(&mut state, &mut p.data);
+    crate::interp::compile::byte_code(&mut state, &mut p.data);
     // Stepping mode so a registered breakpoint SUSPENDS (returns) instead of
     // record-and-continue — the cooperative pause.
     state.enable_stepping();
@@ -222,7 +222,7 @@ fn apply(sess: &mut Session, cmd: &str) -> Vec<String> {
 
 /// @PLN98 P3.4 — full-expression eval over the paused frame.  Binds every
 /// referenced live local as a typed arg of a synthetic fn and evaluates it via
-/// [`State::eval_frame_reenter`](crate::state::State::eval_frame_reenter), reading
+/// [`State::eval_frame_reenter`](crate::interp::state::State::eval_frame_reenter), reading
 /// each local where it lives.  Handles arbitrary expressions (`2 + 2`, `n + 2`,
 /// `h["a"].v`, `len(v)`, `s.field`).  A bare heap ident is read live in place; every value
 /// shape answers, text and vector included, because a non-scalar result is boxed in a
@@ -563,7 +563,7 @@ pub fn pump() {
                 continue; // program input — not ours (the JS side re-queues it)
             };
             for reply in apply(sess, cmd.trim()) {
-                crate::live_dispatch::wasm_host_log(&format!("{reply}\n"));
+                crate::interp::live_dispatch::wasm_host_log(&format!("{reply}\n"));
             }
         }
     });

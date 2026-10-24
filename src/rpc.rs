@@ -301,9 +301,9 @@ pub(crate) fn handle(session: &mut ReplSession, line: &str) -> (Vec<String>, boo
         "stepIn" | "stepOver" | "stepOut" => {
             out.push(resp_ok(id, ""));
             let mode = match req {
-                "stepIn" => crate::debugger::StepMode::Into,
-                "stepOut" => crate::debugger::StepMode::Out,
-                _ => crate::debugger::StepMode::Over,
+                "stepIn" => crate::interp::debugger::StepMode::Into,
+                "stepOut" => crate::interp::debugger::StepMode::Out,
+                _ => crate::interp::debugger::StepMode::Over,
             };
             let halted = session.debug_step(mode);
             report(session, "step", halted, &mut out);
@@ -408,8 +408,8 @@ fn report(session: &mut ReplSession, step_reason: &str, paused: bool, out: &mut 
     }
     if paused {
         let watch = session.take_watch_hit();
-        let interrupted =
-            crate::debugger::STOPPED_BY_INTERRUPT.swap(false, std::sync::atomic::Ordering::Relaxed);
+        let interrupted = crate::interp::debugger::STOPPED_BY_INTERRUPT
+            .swap(false, std::sync::atomic::Ordering::Relaxed);
         let reason = if watch.is_some() {
             "watch"
         } else if interrupted {

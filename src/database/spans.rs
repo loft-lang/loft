@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
 
-//! @PLN126 — why `store_release` names a FRONTIER and not a record.
+//! @PLN126 — why a residency hint can name only a FRONTIER, not a record.
 //!
 //! The plan wanted a program to tell a bound store *"this record is finished"*, so a
 //! generator's resident set follows its working set instead of the kernel learning it
@@ -24,7 +24,8 @@
 //!
 //! What survived is the other claim: 87–99% of the pages below a record's finish
 //! frontier hold nothing written afterwards. That needs no per-record contiguity, and
-//! it is what `Store::release_resident` was built on.
+//! it is what the frontier release (`store_release`, removed with @C154 —
+//! DATABASE-history.md) was built on.
 //!
 //! **It reads the final layout, not a model of it.** Every word of the arena is painted
 //! with the record that owns it, through [`Stores::for_each_owned_child`] — the same
@@ -196,12 +197,14 @@ impl Shape {
     /// The tile filed under `key`, where it lives NOW: an inline table moves its entries
     /// when it grows, so a reference taken before a later insert can name a freed table.
     fn tile(&self, key: u32) -> DbRef {
-        hash::find(
+        let found = hash::find(
             &self.field(),
             &self.db.allocations,
             self.db.keys(self.tiles_tp),
             &[Content::Long(i64::from(key))],
-        )
+        );
+        assert!(found.rec != 0, "tile {key} is not in the hash");
+        found
     }
 
     /// `t.steps += [TStep{…}]; t.roads += [TRoad{…}]` — one way binned into one tile,
@@ -653,149 +656,6 @@ fn record_spans_across_the_generator_matrix() {
             window: 16,
             ..base
         });
-    }
-}
-
-/// This process's resident set, in KB — what a frontier hint is supposed to move.
-///
-/// Field 2 of `/proc/self/statm` is resident PAGES. Read from `/proc` rather than
-/// timed or modelled: the plan's cost is memory, and memory is the one thing here that
-/// can be observed exactly.
-#[cfg(feature = "mmap")]
-fn rss_kb() -> u64 {
-    crate::platform::resident_set_kb().unwrap_or(0)
-}
-
-/// Build the same shape into a store BOUND to a file — the mode @PLN126 is about —
-/// and report peak RSS with and without a release at each tile boundary.
-///
-/// The measurement that decides whether the call is worth having. A hint that ships
-/// without one reads well and buys nothing, and nothing about `MADV_DONTNEED`
-/// succeeding says the working set followed it.
-#[cfg(feature = "mmap")]
-fn payoff(run: Run, release: u32) -> (u64, u64, u128) {
-    let dir = std::env::temp_dir().join(format!("loft-pln126-{}-{}", std::process::id(), release));
-    let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join("tiles.store");
-    let _ = std::fs::remove_file(&path);
-
-    let mut shape = Shape::new();
-    // Bind FIRST: the file IS the arena, so what the generator writes lands in
-    // file-backed pages instead of anonymous heap. DATABASE.md § "Binding FIRST is the
-    // low-memory choice" is the measurement that makes this the only mode worth
-    // asking the question in.
-    assert!(
-        shape.db.bind_path(shape.root.store_nr, &path),
-        "bind_path failed — without a file there is nothing to flush to"
-    );
-    let base = rss_kb();
-    let faults0 = minor_faults();
-    let start = std::time::Instant::now();
-    let mut peak = base;
-    let mut next = 0;
-    while next < run.tiles {
-        let end = (next + run.window).min(run.tiles);
-        let group: Vec<DbRef> = (next..end).map(|k| shape.add_tile(i64::from(k))).collect();
-        for w in 0..run.ways {
-            for (i, t) in group.iter().enumerate() {
-                let seed = i64::from(next + i as u32) * 1_000 + i64::from(w);
-                shape.add_way(t, run.steps, seed);
-            }
-        }
-        if release > 0 && (next / run.window).is_multiple_of(release) {
-            shape.db.allocations[shape.root.store_nr as usize].release_resident();
-        }
-        peak = peak.max(rss_kb());
-        next = end;
-    }
-    let wall = start.elapsed().as_millis();
-    let file = std::fs::metadata(&path).map_or(0, |m| m.len());
-    // Read the collection back through the same walk the span measurement uses: a
-    // release that lost a byte would show up as a store the ownership walk cannot
-    // tile, and a peak RSS of nearly nothing is exactly what a corrupted arena also
-    // looks like.
-    let usage = shape.db.allocations[shape.root.store_nr as usize].usage();
-    assert!(
-        usage.walk_complete,
-        "the arena no longer tiles after {} releases",
-        run.tiles
-    );
-    assert_eq!(
-        crate::hash::count(&shape.field(), &shape.db.allocations),
-        run.tiles,
-        "the collection lost records"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-    // The two attributions that cost nothing to keep, and that are the whole reason an
-    // interleaved build gains nothing: FREE BLOCKS is how scattered the arena is, and
-    // the fault count separates "not dropped" from "dropped and read straight back".
-    println!(
-        "      [why] minor faults {:>8} | free blocks {:>6} | largest free {:>8} KB",
-        minor_faults() - faults0,
-        usage.free_count,
-        usage.largest_free_words / 128,
-    );
-    (peak.saturating_sub(base), file / 1024, wall)
-}
-
-/// Minor page faults this process has taken — field 10 of `/proc/self/stat`.
-///
-/// The instrument that tells a page NOT DROPPED from a page dropped and immediately
-/// read back. Both look identical in peak RSS, and they need opposite fixes.
-#[cfg(feature = "mmap")]
-fn minor_faults() -> u64 {
-    crate::platform::minor_page_faults().unwrap_or(0)
-}
-
-/// Does the hint move the resident set, and what does it cost?  Only where the host lets a
-/// process read its own resident set (`platform::resident_set_kb`); elsewhere it says so.
-#[cfg(feature = "mmap")]
-#[test]
-#[ignore = "a design measurement: builds ~90 MB of store and PRINTS peak RSS — run with --release --lib --ignored --nocapture"]
-fn a_frontier_release_moves_the_resident_set() {
-    if crate::platform::resident_set_kb().is_none() {
-        println!("no resident-set reading on this host: nothing to measure");
-        return;
-    }
-    for run in [
-        Run {
-            tiles: 4000,
-            window: 1,
-            ways: 8,
-            steps: 12,
-        },
-        Run {
-            tiles: 4000,
-            window: 16,
-            ways: 8,
-            steps: 12,
-        },
-        Run {
-            tiles: 20000,
-            window: 1,
-            ways: 8,
-            steps: 12,
-        },
-        Run {
-            tiles: 20000,
-            window: 16,
-            ways: 8,
-            steps: 12,
-        },
-    ] {
-        let (off, file, wall_off) = payoff(run, 0);
-        println!(
-            "{}  file {file:>7} KB | no release: peak RSS {off:>7} KB, wall {wall_off:>5} ms",
-            run.label()
-        );
-        for every in [1, 16, 256] {
-            let (on, _, wall_on) = payoff(run, every);
-            println!(
-                "    release every {every:>4} tiles | peak RSS {on:>7} KB ({:.2}x) | wall {wall_on:>6} ms ({:.1}x)",
-                off as f64 / on.max(1) as f64,
-                wall_on as f64 / wall_off.max(1) as f64,
-            );
-        }
     }
 }
 

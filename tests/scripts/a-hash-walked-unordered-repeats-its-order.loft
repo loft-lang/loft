@@ -45,6 +45,13 @@ fn main() {
   // u2 — a copy walks as its source.
   c = a;
   assert(walk(c) == walk(a), "u2 {walk(c)}");
+  // u2b — a copy into a field whose store holds freed blocks walks as its source too: the
+  // copy's entries are claimed in the source's order whatever space is free (here `E` is
+  // linked, so each entry is a record of its own and walks in record order).
+  d = filled();
+  for i in 0..64 { if i % 3 == 0 { d.h[i] = null } }
+  d.h = a.h;
+  assert(walk(d) == walk(a) && len(d.h) == 64, "u2b {walk(d)}");
   // u3 — the walk skips the key sort: the scrambled fill does not come back in key order.
   assert(walk(a) != ordered(a), "u3 {walk(a)}");
   // u4 — every entry once: 64 visits, keys summing to 0 + … + 63 = 2016, values the same.

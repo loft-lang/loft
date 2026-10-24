@@ -712,7 +712,8 @@ plain body binds only a holder it hands down, counted as emitted (`Output::kept_
 a callee `kept_of` declines, or a loop's call that takes the `__inv` twin, serves nothing) —
 own reads alone are what the loop's and the function clause's headers already serve lazily,
 and an eager holder of a field read on one branch cost hex_body's `bone_shape_has` 7.7 %.
-A held read reports no index fault, as no held header does: loft#2134, open. <!-- doc-lint: ok -->
+A held read of the raising `OpGetVector` reports an index outside the header as the unfused
+read does (`@FR-E-Report`, `FusedElementReadEmitter`); the nullable read answers it silently.
 A loop that changes no kept field copies the holder into its own header local
 for its extent (`Output::kept_loop_copy`): read through the `&mut`, the header stayed in memory
 across the loop's calls (zttext's `materialise`, +11 % until it did).  Measured with
@@ -2075,6 +2076,18 @@ parameter seed or `n` handed out by reference declines.  `LOFT_HOIST_VERIFY=1` c
 plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a18 (a16/a17
 the boundary pair across i64::MAX, a18 a step that really overflows), pins
 `tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
+**The while-counter clause.**  A loop shaped `while i < E { …; i += 1 }` — its first statement
+the test's break, `E` naming no `i`, its last the step `i = i + 1`, which is the loop's one
+write of `i` — bounds its counter without bounding `E`.  Every statement of the loop runs after
+the test passed and before the step, where `i < E <= i64::MAX`, so there `i` lies in
+`[lo, i64::MAX - 1]` and the step, with every other use that fits from it, is plain.  A null
+`E` is `i64::MIN` to the native compare, so the test fails and the loop ends.  Outside such
+loops a local whose every self-step is one of their steps, and whose every other assignment is
+ranged, lies in `[lo, i64::MAX]`, `lo` its lowest seed.  The decreasing form waits for a
+non-null `E`: `i > E` holds for every `i` when `E` is null.  Switch `LOFT_NO_WHILE_COUNTER`;
+sites `range::{while_counter_shape, seed_while_counters}`, `Output::while_counter_facts`, the
+narrowing arm before the `Loop` arm in `emit.rs`.  Cell
+`tests/scripts/a-while-counter-steps-plain-below-its-bound.loft`, pins `tests/while_counter.rs`.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
 
@@ -3219,7 +3232,18 @@ read it.  Guard
                  invariant over the loop by the hoist's write set, or read only in the
                  block's prelude, which calls no user function — is emitted twice: under
                  a run-time guard `|x| <= G` for each such field (G = 2^20) with those
-                 field reads RANGED `[-G, G]`, and as before.  Inside the guarded copy a
+                 field reads RANGED `[-G, G]`, and as before.  THE VARIABLE CLAUSE: an
+                 integer VARIABLE a counted range's start or end in the block is built
+                 from, which the block never assigns and the function never hands out
+                 by reference — a window walk's bounds — is a guard leaf the same way,
+                 ranged `[-G, G]` in the copy (a null fails the test: its magnitude is
+                 2^63); one the facts bound only wider is tightened by the test.  The
+                 copy is emitted only when it ranges some call the unguarded block
+                 does not, leaves no call doing checked integer work checked, and uses
+                 the fewest leaves that do (fields, then unranged variables, then wider
+                 ones); a variable ranged both by the function and by the copy keeps
+                 the intersection.  A variant counts as ranging a call only when it
+                 turns an operator plain that the plain body keeps checked.  Inside the guarded copy a
                  local's derived range is kept only when every assignment of it in the
                  whole function lies in the block and it never escapes by reference.  A
                  call there — or inside a ranged variant — whose every integer argument
@@ -3235,7 +3259,17 @@ read it.  Guard
 
 **In words.** The checked operators' null and overflow branches are what keep a chain of
 small grid helpers (`nb_q`, `eg_index`, `eg_dir_from`) from folding: hex_field's
-`edgeset_count` was 18× its Rust twin.  `(R-Range)` cannot range a parameter or a field by
+`edgeset_count` was 18× its Rust twin.  The variable clause covers the same chain reached
+from a window walk, `for wr in r0..r0 + hq { for wqq in q0..q0 + wq { … edge_mat(…) } }`
+(hex_shape's `chain_marks`), whose bounds are parameters rather than record fields: plain
+arithmetic in the helpers alone is −4 %, with the window's two range ends too −23 %, because
+LLVM inlines and folds the walk only once no operator on it carries the overflow report.
+Guarding any other variable, or a copy that leaves a checked call beside the ranged ones,
+duplicates the loop for a few operators and cost the inlining it was for (`slope_path_with_undo`
++7 %, `stencil_rotate` +10 %, `edgeset_count` +65 % before these conditions).
+The variable clause's own switch is `LOFT_NO_RANGED_CALL_VARS=1`; cell
+`tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft`, pins
+`tests/ranged_call_vars.rs`.  `(R-Range)` cannot range a parameter or a field by
 shape (@C80), so the bound comes from the caller, tested once per loop entry, and flows
 into the helpers through variants.  With the byte read of `(R-Base)` the chain is free of
 store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
@@ -3641,8 +3675,8 @@ reads such a `main` as a possible leak, and it is a working set.
 ### A leaf carries no frame
 
 ```
-  (R-Leaf)       a function whose body calls no user function and no fn-ref — a LEAF
-                 — is emitted without a shadow-stack frame push and without a fn-ref
+  (R-Leaf)       a function whose body calls no user function and no fn-ref (a store
+                 bracket, as in (R-LeafChain), is none) — a LEAF — is emitted without a shadow-stack frame push and without a fn-ref
                  buffer guard: it cannot recurse, cannot reach stack_trace / assert /
                  panic, and cannot sit between the frame that pushed a buffer and
                  the one that releases it.  The live-flip check stays.
@@ -3659,7 +3693,10 @@ both backends, is `(R-InlineLeaf)` (proposed).
                  emitted as a leaf is: every user function it reaches, transitively,
                  has a loft body, none of them lies on a cycle, and none calls a
                  fn-ref, runs `parallel` or yields.  A native user-level callee
-                 (no loft body) makes the tree opaque, so the caller keeps its frame.
+                 (no loft body) makes the tree opaque, so the caller keeps its frame —
+                 except a store BRACKET the compiler emits around an argument
+                 (`set_store_lock`, `protect_store_frees`, `unprotect_store_frees`),
+                 which sets a store flag and calls no loft code.
                  The named tiers keep every non-leaf frame.
 ```
 
@@ -4215,8 +4252,12 @@ the hand price), which is `insert_text`'s `np += [p]` per piece
                  frees; the literal is bound only by its null init and its mint, never
                  aliased, returned or handed to an op that takes it as an owner.  A
                  later field of the same literal that reads the vector, a literal in
-                 a loop, a parameter's vector, and a reference homed in either
-                 store (H-RefHome) keep the copy.
+                 a loop, a parameter's vector, a reference naming a record of either
+                 store (H-RefHome), and a VIEW of the vector named after the move
+                 keep the copy: each would name the literal's element where B-Copy
+                 owes the vector's own.  A view of the LITERAL does not — it names
+                 the literal's own field under the move and under the copy alike,
+                 so a cursor matched after the move (`match cur { … }`) is admitted.
   (R-ExitVector) a LOCAL VECTOR whose wrapper is minted once and that reaches the
                  function's exit only inside the literal built into the return
                  buffer — `xs: vector<T> = []; …; return Out { xs: xs, … }` — has its

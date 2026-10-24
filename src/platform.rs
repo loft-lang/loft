@@ -2046,6 +2046,17 @@ pub fn stages_dlls_beside_binary() -> bool {
     cfg!(windows)
 }
 
+/// Must a library's dependencies be loaded before the library itself?  True on Windows: a
+/// DLL names its imports by module name, with no RPATH to say where they live, and the loader
+/// takes an import from the modules already loaded or from its search path (the `.exe`'s
+/// directory, the system directories, `PATH`).  A host that loads a library artifact loads
+/// the native packages it links first (`native_lib::load_linked_packages`).  Elsewhere the
+/// artifact carries an RPATH to the package's library.
+#[must_use]
+pub fn loads_library_dependencies_first() -> bool {
+    cfg!(windows)
+}
+
 /// What [`bridge_import_lib`] found.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ImportLib {
@@ -2291,56 +2302,6 @@ pub fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
 
 // ── memory: pages and residency ────────────────────────────────────────────
 
-/// The kernel's page size in bytes — the granularity a residency hint drops at, asked of the
-/// host rather than assumed (16 KB on aarch64 macOS).  Windows: 4096; approved exemption:
-/// nothing there drops pages ([`release_resident_pages`]), so nothing reads it.
-#[must_use]
-pub fn page_bytes() -> u64 {
-    #[cfg(unix)]
-    {
-        static PAGE: OnceLock<u64> = OnceLock::new();
-        #[allow(clippy::cast_sign_loss)]
-        *PAGE.get_or_init(|| unsafe { libc::sysconf(libc::_SC_PAGESIZE).max(4096) as u64 })
-    }
-    #[cfg(not(unix))]
-    {
-        4096
-    }
-}
-
-/// Can [`release_resident_pages`] drop pages on this host?  Windows: `false`; see there.
-#[must_use]
-pub fn releases_resident_pages() -> bool {
-    cfg!(unix)
-}
-
-/// Start the write-back of `len` bytes of a SHARED file mapping at `at` and drop them from
-/// this process's resident set (`msync(MS_ASYNC)` then `madvise(MADV_DONTNEED)`).  The bytes
-/// stay in the page cache and the file, so an access afterwards re-faults the same content.
-/// Answers whether both calls succeeded.
-///
-/// # Safety
-/// `at` is page-aligned and `at..at + len` lies inside one live `MAP_SHARED` mapping.
-///
-/// Windows: does nothing and answers `false` — a residency hint not honoured; exemption
-/// candidate: the substitute is `FlushViewOfFile` + `OfferVirtualMemory`, unwritten.
-#[must_use]
-pub unsafe fn release_resident_pages(at: *mut u8, len: usize) -> bool {
-    #[cfg(unix)]
-    {
-        // SAFETY: the caller's contract — a page-aligned range inside a live shared mapping.
-        unsafe {
-            libc::msync(at.cast(), len, libc::MS_ASYNC) == 0
-                && libc::madvise(at.cast(), len, libc::MADV_DONTNEED) == 0
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (at, len);
-        false
-    }
-}
-
 /// This process's resident set in KB, or `None` where it cannot be read.  Linux reads field
 /// 2 of `/proc/self/statm` (resident pages, taken as 4 KB).  Elsewhere `None`; exemption
 /// candidate: a design measurement's instrument only (`database::spans`).
@@ -2553,6 +2514,16 @@ extern "C" fn profile_handler(sig: libc::c_int) {
 }
 
 // ── sockets: the hot-swap handover ───────────────────────────────────────────
+
+/// Can a server's next build bind its port while this one still serves — the overlap a
+/// build swap hands over through ([`bind_tcp_handover`])?  `false` on Windows, and under the
+/// emulated Windows host: there the new build cannot bind until the old listener closes, the
+/// old one keeps serving until the new one is ready, and so the swap times out and rolls
+/// back.  Approved exemption, the one [`bind_tcp_handover`] states.
+#[must_use]
+pub fn tcp_port_handover() -> bool {
+    cfg!(unix) && !crate::file_access::Flavor::emulating()
+}
 
 /// Bind a TCP listener on `0.0.0.0:port` for a server that may be HANDED OVER to its next
 /// build: `SO_REUSEADDR` (a restarted server rebinds through `TIME_WAIT`) and `SO_REUSEPORT`

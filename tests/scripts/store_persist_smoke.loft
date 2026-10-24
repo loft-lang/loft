@@ -1,16 +1,16 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLAN38 — smoke test for `store_persist_bind` ("the hash IS the file").
+// @PLAN38 — smoke test for a store image round trip: `store_persist_copy`
+// writes it, `store_load` reads it back in another process.
 //
 // Driven by `tests/store_persist_loft.rs`, which invokes this script
 // twice: once with $LOFT_PERSIST_TEST_MODE="fresh" against a path that
 // doesn't exist, then once with mode="reload" against the same path.
-// The fresh run creates a hash with three entries, binds it to the
-// path, prints the keys.  The reload run also creates an empty hash,
-// binds to the existing path (which loads the on-disk hash) and
-// prints the keys it sees.  Equality of the two outputs proves the
-// round-trip.
+// The fresh run creates a hash with three entries, writes it to the
+// path, prints the keys.  The reload run creates an empty hash, loads
+// the image into it and prints the keys it sees.  Equality of the two
+// outputs proves the round-trip.
 
 struct Entry {
   key: integer,
@@ -40,21 +40,19 @@ fn main() {
   h: hash<Entry[key]> = [];
 
   if mode == "fresh" {
-    // Populate BEFORE binding so the bytes get snapshotted to disk.
     h += Entry { key: 7, value: 700 };
     h += Entry { key: 13, value: 1300 };
     h += Entry { key: 42, value: 4200 };
 
-    ok = store_persist_bind(h, path);
-    if !ok { println("FAIL fresh-bind-returned-false"); return }
-    // After bind, the slot is mmap'd.  Read keys back to confirm the
-    // record layout survived the swap.
+    ok = store_persist_copy(h, path);
+    if !ok { println("FAIL fresh-write-returned-false"); return }
+    // The live hash is untouched by the write.
     println("fresh keys={record_keys(h)}");
     println("fresh lookup h[13]={lookup_value(h)}");
   } else if mode == "reload" {
-    // Empty hash; bind should overlay the on-disk contents.
-    ok = store_persist_bind(h, path);
-    if !ok { println("FAIL reload-bind-returned-false"); return }
+    // Empty hash; the load fills it with the image's contents.
+    ok = store_load(h, path);
+    if !ok { println("FAIL reload-load-returned-false"); return }
     println("reload keys={record_keys(h)}");
     // #523 — a KEY LOOKUP must succeed in this SEPARATE process, not just
     // iteration.  The hash stores its seed in its bucket record, so a fresh

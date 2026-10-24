@@ -88,7 +88,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
              \x20 t: hash<Tile[tkey]> = [];\n\
              \x20 i = 0;\n\
              \x20 while i < {ENTRIES} {{ t += Tile {{ tkey: i, name: \"tile-{{i}}-padding-to-give-the-image-some-size\" }}; i += 1 }}\n\
-             \x20 if !store_persist_bind(t, path) {{ println(\"FAIL write-bind\"); return }}\n\
+             \x20 if !store_persist_copy(t, path) {{ println(\"FAIL write-bind\"); return }}\n\
              \x20 println(\"write ok len={{len(t)}}\");\n\
              }}\n"
         ),
@@ -281,7 +281,7 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
              \x20 t: hash<Tile[tkey]> = [];\n\
              \x20 i = 0;\n\
              \x20 while i < {ENTRIES} {{ t += Tile {{ tkey: i, name: \"tile-{{i}}-padding-to-give-the-image-some-size\" }}; i += 1 }}\n\
-             \x20 if !store_persist_bind(t, path) {{ println(\"FAIL write-bind\"); return }}\n\
+             \x20 if !store_persist_copy(t, path) {{ println(\"FAIL write-bind\"); return }}\n\
              \x20 println(\"write ok len={{len(t)}}\");\n\
              }}\n"
         ),
@@ -460,7 +460,7 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
          \x20 h: hash<Rec[id]> = [];\n\
          \x20 h += Rec { id: 7, val: 700 };\n\
          \x20 h += Rec { id: 13, val: 1300 };\n\
-         \x20 if !store_persist_bind(h, path) { println(\"FAIL write-bind\"); return }\n\
+         \x20 if !store_persist_copy(h, path) { println(\"FAIL write-bind\"); return }\n\
          \x20 println(\"write ok\");\n\
          }\n",
     )

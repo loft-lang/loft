@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! @PLN157 P3 (loft#1426 M3) — the "provably non-sentinel" fact, and the float
 //! compares it lets the emitter simplify.
@@ -133,7 +133,7 @@ thread_local! {
 }
 
 /// Forget every per-definition answer: a new generation run is about a new program.
-/// Called by [`crate::generation::Output::new`].
+/// Called by [`super::begin_program`].
 pub(crate) fn begin_generation() {
     RETURNS.with(|m| m.borrow_mut().clear());
 }
@@ -154,7 +154,7 @@ fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
     }
     // Pessimistic entry: a recursive callee reads itself as unproven.
     RETURNS.with(|m| m.borrow_mut().insert(d_nr, false));
-    let vars = non_sentinel_vars(data, def.code());
+    let vars = non_sentinel_vars(data, def.variables(), def.code());
     let mut every_exit = non_sentinel(data, &vars, def.code().tail());
     def.code().any_node(&mut |n| {
         if let Value::Return(inner) = n
@@ -207,6 +207,11 @@ fn non_negative_literal(v: &Value) -> bool {
 /// parser's write analysis is a deny-list this pass deliberately does not
 /// lean on.)
 ///
+/// A PARAMETER is never such a local (`@FR-R-Range`: a parameter is never proven by
+/// shape, @C80): the caller's argument is an assignment the body does not show, so a
+/// parameter the body assigns only literals still holds whatever was passed until the
+/// first of them runs (loft#2143).
+///
 /// NO self-step induction, deliberately.  An earlier cut admitted
 /// `v = v ± <proven>` (the counted-for counter's shape) on the argument
 /// that overflow-minting-MIN is @C85's decided edge — and the corpus
@@ -220,7 +225,11 @@ fn non_negative_literal(v: &Value) -> bool {
 /// `Set` against the current map, so facts only turn true as their inputs
 /// do, the map grows monotonically, and it settles in at most `vars` rounds.
 #[must_use]
-pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
+pub fn non_sentinel_vars(
+    data: &Data,
+    function: &crate::variables::Function,
+    code: &Value,
+) -> HashMap<u16, bool> {
     let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
     collect_escapes(data, code, &mut escaped);
     let mut vars: HashMap<u16, bool> = HashMap::new();
@@ -238,7 +247,11 @@ pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
         scan_sets(code, data, &vars, &mut round);
         let mut changed = false;
         for (nr, all_ok) in round {
-            if all_ok && !escaped.contains(&nr) && !vars.get(&nr).copied().unwrap_or(false) {
+            if all_ok
+                && !escaped.contains(&nr)
+                && !function.is_argument(nr)
+                && !vars.get(&nr).copied().unwrap_or(false)
+            {
                 vars.insert(nr, true);
                 changed = true;
             }
@@ -253,7 +266,7 @@ pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
 /// the loop's bound proves the step cannot overflow (see `non_sentinel_vars`).
 fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
     if let Value::Loop(lp) = v.unspan()
-        && let Ok(rc) = super::hoist::range_counters(lp, data)
+        && let Ok(rc) = crate::loop_shape::range_counters(lp, data)
     {
         let bounded = !rc.inclusive
             || matches!(rc.hi.unspan(), Value::Int(k) if *k < i32::MAX)
@@ -271,7 +284,7 @@ fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
 }
 
 /// `@FR-R-Counter`'s iteration clause — seed the `#index` of every `for e in v` loop whose
-/// own bound proves its step cannot overflow ([`super::hoist::bounded_iteration_index`]),
+/// own bound proves its step cannot overflow ([`crate::opt::iteration::bounded_iteration_index`]),
 /// when every OTHER assignment to it in the function is a literal (the parser's `-1` seed)
 /// and its address is never taken.  The step names itself, so the fixpoint below could
 /// never show it; the bound is the fact.
@@ -284,7 +297,7 @@ fn seed_iteration_indexes(
     let mut bounded: Vec<u16> = Vec::new();
     fn collect(data: &Data, v: &Value, out: &mut Vec<u16>) {
         if let Value::Loop(lp) = v.unspan()
-            && let Some(ix) = super::hoist::bounded_iteration_index(lp, data)
+            && let Some(ix) = crate::opt::iteration::bounded_iteration_index(lp, data)
         {
             out.push(ix);
         }
@@ -337,7 +350,7 @@ fn scan_sets(v: &Value, data: &Data, vars: &HashMap<u16, bool>, acc: &mut HashMa
 /// exhaustive child iterator, so no site can be missed by a variant this match
 /// forgot.  The non-sentinel proof and the invariant-chain memo
 /// (`hoist::invariant_chains`, @PLN157 § V-ao) both read this one set.
-pub(super) fn collect_escapes(
+pub(crate) fn collect_escapes(
     data: &Data,
     v: &Value,
     escaped: &mut std::collections::HashSet<u16>,

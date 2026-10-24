@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I68 — Native Rust generator
+// @I64 — Bytecode compiler (IR to bytecode): the analyses every backend asks
 
 //! `@FR-R-Range` — the RANGE an integer expression provably lies in, and the plain
 //! operator it therefore may emit.
@@ -62,6 +62,9 @@ pub type Range = (i64, i64);
 pub struct Ranges {
     pub vars: HashMap<u16, Range>,
     pub fields: HashMap<(u16, i64), Range>,
+    /// Each ranged ELEMENT of a tuple local, by variable and element index: every
+    /// assignment of the local answers that element in range ([`elem_range`]).
+    pub elems: HashMap<(u16, u16), Range>,
 }
 
 /// What [`range`] reads its leaves from: a variable's range, and a guarded field's.  A plain
@@ -69,6 +72,10 @@ pub struct Ranges {
 pub trait RangeFacts {
     fn var(&self, v: u16) -> Option<Range>;
     fn field(&self, v: u16, off: i64) -> Option<Range>;
+    /// Element `i` of the tuple local `v`; a map that holds no tuple facts answers none.
+    fn elem(&self, _v: u16, _i: u16) -> Option<Range> {
+        None
+    }
 }
 
 impl RangeFacts for HashMap<u16, Range> {
@@ -86,6 +93,9 @@ impl RangeFacts for Ranges {
     }
     fn field(&self, v: u16, off: i64) -> Option<Range> {
         self.fields.get(&(v, off)).copied()
+    }
+    fn elem(&self, v: u16, i: u16) -> Option<Range> {
+        self.elems.get(&(v, i)).copied()
     }
 }
 
@@ -159,6 +169,7 @@ pub fn range<F: RangeFacts + ?Sized>(
         Value::Int(k) => Some((i64::from(*k), i64::from(*k))),
         Value::Long(l) if *l != i64::MIN => Some((*l, *l)),
         Value::Var(nr) => rv.var(*nr),
+        Value::TupleGet(t, i) => rv.elem(*t, *i),
         // An `if` merge is the union of its arms — the discharge `if bool(x) x else d`
         // included, whose then-arm is x itself, so an unranged x leaves the merge unranged.
         Value::If(_, then_arm, else_arm) => {
@@ -190,7 +201,7 @@ pub fn range<F: RangeFacts + ?Sized>(
                 return rv.field(*p, i64::from(*f));
             }
             op_range(data, nn, rv, def.name(), args, depth)
-                .or_else(|| call_range(data, nn, rv, def, args, depth))
+                .or_else(|| call_range(data, nn, rv, def, args, None, depth))
         }
         _ => None,
     }
@@ -359,8 +370,14 @@ fn call_range<F: RangeFacts + ?Sized>(
     rv: &F,
     def: &crate::data::Definition,
     args: &[Value],
+    elem: Option<u16>,
     depth: u8,
 ) -> Option<Range> {
+    // The value an exit answers, or its element `elem` when the call is read as a tuple.
+    let answer = |nn: &HashMap<u16, bool>, rv: &Ranges, e: &Value, depth: u8| match elem {
+        None => range(data, nn, rv, e, depth),
+        Some(i) => elem_range(data, nn, rv, e, i, depth),
+    };
     if depth >= CALL_DEPTH {
         return None;
     }
@@ -395,12 +412,12 @@ fn call_range<F: RangeFacts + ?Sized>(
         .filter(|op| !matches!(op, Value::Line(_)));
     let tail = stmts.next()?;
     if stmts.next().is_none() {
-        return range(data, &nn2, &rv2, tail, depth + 1);
+        return answer(&nn2, &rv2, tail, depth + 1);
     }
     if !ranged_calls_enabled() || rv2.vars.is_empty() {
         return None;
     }
-    let memo_key = (std::ptr::from_ref(def) as usize, key);
+    let memo_key = (std::ptr::from_ref(def) as usize, elem, key);
     if let Some(hit) = CALL_MEMO.with(|m| m.borrow().get(&memo_key).copied()) {
         return hit;
     }
@@ -415,7 +432,7 @@ fn call_range<F: RangeFacts + ?Sized>(
     LONG_DEPTH.with(|d| d.set(d.get() + 1));
     // The longer body: its own facts under the parameters' seeds.
     let code = def.code();
-    let callee_nn = super::non_sentinel::non_sentinel_vars(data, code);
+    let callee_nn = super::non_sentinel::non_sentinel_vars(data, def.variables(), code);
     let seeded = Ranges {
         vars: rv2.vars,
         ..Ranges::default()
@@ -432,7 +449,7 @@ fn call_range<F: RangeFacts + ?Sized>(
     let mut ok = true;
     code.walk(&mut |n| {
         if ok && let Value::Return(e) = n {
-            match range(data, &callee_nn, &callee_rv, e, depth + 1) {
+            match answer(&callee_nn, &callee_rv, e, depth + 1) {
                 Some(r) => out = Some(out.map_or(r, |o| union(o, r))),
                 None => ok = false,
             }
@@ -447,7 +464,7 @@ fn call_range<F: RangeFacts + ?Sized>(
         match tail.map(Value::unspan) {
             // A body ending in a `return` has no fall-through value.
             Some(Value::Return(_)) | None => {}
-            Some(t) => match range(data, &callee_nn, &callee_rv, t, depth + 1) {
+            Some(t) => match answer(&callee_nn, &callee_rv, t, depth + 1) {
                 Some(r) => out = Some(out.map_or(r, |o| union(o, r))),
                 None => ok = false,
             },
@@ -466,13 +483,247 @@ thread_local! {
     /// A fact about ONE program: once its `Data` is freed, another program's definition can
     /// take the same address, and kept, the memo handed it the first one's range — a proof
     /// for the wrong body, which can drop an overflow guard.  [`begin_generation`] clears it.
-    static CALL_MEMO: std::cell::RefCell<HashMap<(usize, Vec<Option<Range>>), Option<Range>>> =
+    #[allow(clippy::type_complexity)]
+    static CALL_MEMO: std::cell::RefCell<
+        HashMap<(usize, Option<u16>, Vec<Option<Range>>), Option<Range>>,
+    > =
         std::cell::RefCell::new(HashMap::new());
 }
 
+/// The range of element `i` of the tuple `v` answers: a tuple literal's own element, an `if`
+/// merge's union, a block's tail, or a user call's — its exits read the same way, in context
+/// ([`call_range`]).  Every other shape is unranged, which costs only the checked template.
+#[must_use]
+pub fn elem_range<F: RangeFacts + ?Sized>(
+    data: &Data,
+    nn: &HashMap<u16, bool>,
+    rv: &F,
+    v: &Value,
+    i: u16,
+    depth: u8,
+) -> Option<Range> {
+    match v.unspan() {
+        Value::Tuple(items) => range(data, nn, rv, items.get(usize::from(i))?, depth),
+        Value::If(_, then_arm, else_arm) => Some(union(
+            elem_range(data, nn, rv, then_arm, i, depth)?,
+            elem_range(data, nn, rv, else_arm, i, depth)?,
+        )),
+        Value::Block(b) => {
+            let tail = b
+                .operators
+                .iter()
+                .rev()
+                .find(|op| !matches!(op, Value::Line(_)))?;
+            elem_range(data, nn, rv, tail, i, depth)
+        }
+        Value::Return(inner) => elem_range(data, nn, rv, inner, i, depth),
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let def = data.def(*d);
+            if !def.is_loft_defined() {
+                return None;
+            }
+            call_range(data, nn, rv, def, args, Some(i), depth)
+        }
+        _ => None,
+    }
+}
+
+/// One round of the tuple facts: a tuple local whose every assignment answers element `i`
+/// in range and that is never handed out by reference carries that element's union.  A local
+/// written element by element (`t.0 = x`, a `TuplePut`) is such a hand-out
+/// ([`super::non_sentinel::collect_escapes`]), so its elements carry no fact.  Entries are only added, never replaced,
+/// so the facts grow monotonically with the variables' as `range_vars` iterates.
+fn seed_elems(
+    data: &Data,
+    vars: &crate::variables::Function,
+    code: &Value,
+    nn: &HashMap<u16, bool>,
+    escaped: &std::collections::HashSet<u16>,
+    rv: &mut Ranges,
+) {
+    let mut sets: HashMap<u16, Vec<&Value>> = HashMap::new();
+    // The type is read through `base()` (`@FR-N-Shape`): a tuple cannot be nullable — the
+    // language refuses `(…)?` — so no `Optional` reaches here, and none is mistaken for a
+    // non-tuple if one ever does.
+    code.walk(&mut |n| {
+        if let Value::Set(t, e) = n.unspan()
+            && matches!(vars.tp(*t).base(), crate::data::Type::Tuple(_))
+        {
+            sets.entry(*t).or_default().push(e);
+        }
+    });
+    for (t, exprs) in sets {
+        if escaped.contains(&t) {
+            continue;
+        }
+        let crate::data::Type::Tuple(items) = vars.tp(t).base() else {
+            continue;
+        };
+        for i in 0..items.len() {
+            let Ok(i) = u16::try_from(i) else { break };
+            if rv.elems.contains_key(&(t, i)) {
+                continue;
+            }
+            let mut acc: Option<Range> = None;
+            let mut ok = true;
+            for e in &exprs {
+                let Some(r) = elem_range(data, nn, &*rv, e, i, 0) else {
+                    ok = false;
+                    break;
+                };
+                acc = Some(acc.map_or(r, |a| union(a, r)));
+            }
+            if ok && let Some(r) = acc {
+                rv.elems.insert((t, i), r);
+            }
+        }
+    }
+}
+
+/// `LOFT_NO_WHILE_COUNTER=1` — `@FR-R-Range`'s while-counter clause off.
+#[must_use]
+pub fn while_counters_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_NO_WHILE_COUNTER").map_or(true, |v| v == "0"))
+}
+
+fn is_op(data: &Data, v: &Value, name: &str) -> Option<Vec<Value>> {
+    match v.unspan() {
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len() && data.def(*d).name() == name =>
+        {
+            Some(args.clone())
+        }
+        _ => None,
+    }
+}
+
+fn mentions_var(v: &Value, i: u16) -> bool {
+    v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == i))
+}
+
+/// `@FR-R-Range`'s while-counter clause — the counter `i` of a loop shaped
+/// `while i < E { …; i += 1 }`: the loop's first statement is the test's break
+/// (`if !(i < E) break`, `E` naming no `i`), its last is the step `i = i + 1`, and the step is
+/// the loop's one write of `i`.  Every statement of the loop then runs after the test passed
+/// and before the step, where `i < E <= i64::MAX` — and a null `E` (`i64::MIN`) ends the loop,
+/// since native compares the raw words.  `None` for every other loop.
+#[must_use]
+pub fn while_counter_shape(data: &Data, lp: &crate::data::Block) -> Option<u16> {
+    let mut ops = lp
+        .operators
+        .iter()
+        .filter(|op| !matches!(op, Value::Line(_)));
+    let Value::If(cond, _, _) = ops.next()?.unspan() else {
+        return None;
+    };
+    let not = is_op(data, cond, "OpNot")?;
+    let lt = is_op(data, not.first()?, "OpLtInt")?;
+    let (Value::Var(i), bound) = (lt.first()?.unspan(), lt.get(1)?) else {
+        return None;
+    };
+    if mentions_var(bound, *i) {
+        return None;
+    }
+    let Value::Block(body) = lp
+        .operators
+        .iter()
+        .rev()
+        .find(|op| !matches!(op, Value::Line(_)))?
+        .unspan()
+    else {
+        return None;
+    };
+    let Value::Set(x, step) = body
+        .operators
+        .iter()
+        .rev()
+        .find(|op| !matches!(op, Value::Line(_)))?
+        .unspan()
+    else {
+        return None;
+    };
+    let add = is_op(data, step, "OpAddInt")?;
+    let one = matches!(
+        add.get(1).map(Value::unspan),
+        Some(Value::Int(1) | Value::Long(1))
+    );
+    if *x != *i || !matches!(add.first().map(Value::unspan), Some(Value::Var(v)) if v == i) || !one
+    {
+        return None;
+    }
+    let mut writes = 0;
+    Value::Loop(Box::new(lp.clone())).walk(&mut |n| {
+        if let Value::Set(v, _) | Value::TuplePut(v, _, _) = n
+            && *v == *i
+        {
+            writes += 1;
+        }
+    });
+    (writes == 1).then_some(*i)
+}
+
+/// One round of the while counters: a local whose every self-step is the step of a loop
+/// [`while_counter_shape`] admits for it, and whose every other assignment is ranged and
+/// names it not, lies in `[lowest seed, i64::MAX]` — it only grows, by one, while below a
+/// bound no larger than `i64::MAX`.
+fn seed_while_counters(
+    data: &Data,
+    code: &Value,
+    nn: &HashMap<u16, bool>,
+    escaped: &std::collections::HashSet<u16>,
+    rv: &mut Ranges,
+    counters: &mut std::collections::HashSet<u16>,
+) {
+    if !while_counters_enabled() {
+        return;
+    }
+    let mut shaped: HashMap<u16, usize> = HashMap::new();
+    code.walk(&mut |n| {
+        if let Value::Loop(lp) = n
+            && let Some(i) = while_counter_shape(data, lp)
+        {
+            *shaped.entry(i).or_default() += 1;
+        }
+    });
+    for (i, loops) in shaped {
+        if counters.contains(&i) || escaped.contains(&i) || rv.vars.contains_key(&i) {
+            continue;
+        }
+        let mut steps = 0;
+        let mut lo: Option<i64> = None;
+        let mut ok = true;
+        code.walk(&mut |n| {
+            if !ok {
+                return;
+            }
+            match n.unspan() {
+                Value::Set(v, e) if *v == i => {
+                    if mentions_var(e, i) {
+                        steps += 1;
+                    } else if let Some(r) = range(data, nn, &*rv, e, 0) {
+                        lo = Some(lo.map_or(r.0, |l| l.min(r.0)));
+                    } else {
+                        ok = false;
+                    }
+                }
+                Value::TuplePut(v, _, _) if *v == i => ok = false,
+                _ => {}
+            }
+        });
+        // Each self-step is one shaped loop's step: a step anywhere else is a second write.
+        if ok
+            && steps == loops
+            && let Some(lo) = lo
+        {
+            rv.vars.insert(i, (lo, i64::MAX));
+            counters.insert(i);
+        }
+    }
+}
+
 /// Forget every memoised call range: a new run is about a new program.  Called by
-/// [`crate::generation::Output::new`], beside `non_sentinel::begin_generation`, and by
-/// `leaf_inline::rewrite_program`, which asks the memo before generation does.
+/// [`super::begin_program`], beside `non_sentinel::begin_generation`.
 pub(crate) fn begin_generation() {
     CALL_MEMO.with(|m| m.borrow_mut().clear());
 }
@@ -500,7 +751,7 @@ pub fn range_vars(
     vars: &crate::variables::Function,
     code: &Value,
     nn: &HashMap<u16, bool>,
-    walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+    walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
     seeds: &Ranges,
 ) -> Ranges {
     let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
@@ -508,6 +759,7 @@ pub fn range_vars(
     let mut rv = Ranges {
         vars: HashMap::new(),
         fields: seeds.fields.clone(),
+        elems: HashMap::new(),
     };
     // `@FR-R-RangedCall`'s seeds — a variable the caller vouches for (a ranged variant's
     // parameter) holds its seed only while nothing in the code can change it: the fixpoint
@@ -535,19 +787,29 @@ pub fn range_vars(
     seed_counters(data, code, code, nn, &mut rv, &mut counters);
     // Then the walks' accumulators — the second self-stepping shape read off a loop.
     seed_accumulators(data, code, nn, &escaped, walks, &mut rv, &mut counters);
+    seed_while_counters(data, code, nn, &escaped, &mut rv, &mut counters);
     loop {
         let mut round: HashMap<u16, Option<Range>> = HashMap::new();
+        let elems_before = rv.elems.len();
+        seed_elems(data, vars, code, nn, &escaped, &mut rv);
         scan_sets(code, data, nn, &rv, &counters, &mut round);
         let mut changed = false;
         for (nr, r) in round {
+            // A parameter is never ranged by its assignments (`@FR-R-Range`, loft#2143): the
+            // caller's argument is one the body does not show.  Its stated seeds — the type
+            // clause, a ranged variant's — were entered above and are not this fixpoint's.
             if let Some(r) = r
                 && !escaped.contains(&nr)
                 && !counters.contains(&nr)
+                && !vars.is_argument(nr)
                 && !rv.vars.contains_key(&nr)
             {
                 rv.vars.insert(nr, r);
                 changed = true;
             }
+        }
+        if !changed && rv.elems.len() != elems_before {
+            changed = true;
         }
         if !changed {
             // A counter whose END is a local the fixpoint has only now ranged — the hidden
@@ -561,6 +823,7 @@ pub fn range_vars(
             let before = rv.vars.len();
             seed_counters(data, code, code, nn, &mut rv, &mut counters);
             seed_accumulators(data, code, nn, &escaped, walks, &mut rv, &mut counters);
+            seed_while_counters(data, code, nn, &escaped, &mut rv, &mut counters);
             if rv.vars.len() == before {
                 return rv;
             }
@@ -623,7 +886,7 @@ fn seed_counters(
     counters: &mut std::collections::HashSet<u16>,
 ) {
     if let Value::Loop(lp) = v.unspan()
-        && let Ok(rc) = super::hoist::range_counters(lp, data)
+        && let Ok(rc) = crate::loop_shape::range_counters(lp, data)
     {
         counters.insert(rc.index);
         counters.insert(rc.loop_var);
@@ -682,7 +945,7 @@ fn seed_accumulators(
     code: &Value,
     nn: &HashMap<u16, bool>,
     escaped: &std::collections::HashSet<u16>,
-    walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+    walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
     rv: &mut Ranges,
     counters: &mut std::collections::HashSet<u16>,
 ) {
@@ -715,14 +978,14 @@ fn seed_accumulators(
     /// `while`, a counted loop whose seed or end is unranged) is unbounded here.
     fn trips(
         data: &Data,
-        walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+        walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
         rv: &Ranges,
         lp: &crate::data::Block,
     ) -> Option<i128> {
         if walks.get(&lp.scope).is_some_and(|w| w.hoist_null) {
             return Some(i128::from(U32_MAX));
         }
-        let rc = super::hoist::range_counters(lp, data).ok()?;
+        let rc = crate::loop_shape::range_counters(lp, data).ok()?;
         let (lo, hi) = *rv.vars.get(&rc.next.unwrap_or(rc.index))?;
         Some((i128::from(hi) - i128::from(lo) + 1).max(0))
     }
@@ -732,7 +995,7 @@ fn seed_accumulators(
     /// once one of them is unbounded: a step under such a loop declines.
     fn movement(
         data: &Data,
-        walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
+        walks: &std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
         rv: &Ranges,
         node: &Value,
         acc: u16,
@@ -859,5 +1122,148 @@ pub fn plain_form(op_name: &str, args: usize) -> Option<&'static str> {
         ("OpDivInt" | "OpDivIntNullable", 2) => Some("/"),
         ("OpRemInt" | "OpRemIntNullable", 2) => Some("%"),
         _ => None,
+    }
+}
+
+/// Why [`range`] answered `None` for `v`: the first leaf the proof could not range, named by
+/// KIND, or the operator whose ranged operands may still overflow.  `@FR-R-Range`'s decline
+/// reason for the decline census (`LOFT_DECLINE_CENSUS`), so the widening with the most
+/// checked operators behind it is a count, not a guess.  A report only: nothing is emitted
+/// from it.  The fallback names the node's shape rather than a cause, which a reader of the
+/// census takes as "not classified" — it can only under-report a kind, never admit a site.
+#[must_use]
+pub fn blocker<F: RangeFacts + ?Sized>(
+    data: &Data,
+    nn: &HashMap<u16, bool>,
+    rv: &F,
+    vars: &crate::variables::Function,
+    code: &Value,
+    v: &Value,
+    depth: u8,
+) -> &'static str {
+    let unranged = |x: &Value| range(data, nn, rv, x, 0).is_none();
+    let next = |x: &Value| blocker(data, nn, rv, vars, code, x, depth + 1);
+    if depth > 6 {
+        return "a chain of locals";
+    }
+    match v.unspan() {
+        Value::Long(l) if *l == i64::MIN => "a null literal",
+        Value::Var(nr) if vars.is_argument(*nr) => "a parameter",
+        // A local is charged to the ROOT of its first unranged assignment, so the census
+        // counts the leaf a widening would have to range, whatever locals carry it.
+        Value::Var(nr) => local_blocker(data, nn, rv, vars, code, *nr, depth),
+        Value::If(_, then_arm, else_arm) => {
+            if unranged(then_arm) {
+                next(then_arm)
+            } else {
+                next(else_arm)
+            }
+        }
+        Value::Block(b) => match b
+            .operators
+            .iter()
+            .rev()
+            .find(|op| !matches!(op, Value::Line(_)))
+        {
+            Some(tail) => next(tail),
+            None => "an empty block",
+        },
+        Value::Return(inner) => next(inner),
+        Value::Call(d_nr, args) => {
+            if (*d_nr as usize) >= data.definitions.len() {
+                return "a call of another shape";
+            }
+            let def = data.def(*d_nr);
+            let name = def.name();
+            if plain_form(name, args.len()).is_some()
+                || matches!(name, "OpLandInt" | "OpLorInt" | "OpEorInt" | "OpSRightInt")
+            {
+                return match args.iter().find(|a| unranged(a)) {
+                    Some(a) => next(a),
+                    None => "ranged operands whose result may overflow",
+                };
+            }
+            if name.starts_with("OpGet") {
+                let element = args.first().is_some_and(|b| {
+                    matches!(b.unspan(), Value::Call(e, _)
+                        if (*e as usize) < data.definitions.len()
+                            && data.def(*e).name().starts_with("OpGetVector"))
+                });
+                return if element {
+                    "a vector element"
+                } else {
+                    "a record field"
+                };
+            }
+            if name.starts_with("OpConv") || name.starts_with("OpCast") {
+                return "a conversion";
+            }
+            if def.is_loft_defined() {
+                return "a user call's result";
+            }
+            "a native call's result"
+        }
+        _ => "an expression of another shape",
+    }
+}
+
+/// [`blocker`] for a LOCAL: charged to the root of its first unranged assignment, so the
+/// census counts the leaf a widening would have to range, whatever locals carry it; a
+/// self-step, a reference hand-out and a tuple bind are kinds of their own.
+fn local_blocker<F: RangeFacts + ?Sized>(
+    data: &Data,
+    nn: &HashMap<u16, bool>,
+    rv: &F,
+    vars: &crate::variables::Function,
+    code: &Value,
+    nr: u16,
+    depth: u8,
+) -> &'static str {
+    let unranged = |x: &Value| range(data, nn, rv, x, 0).is_none();
+    let next = |x: &Value| blocker(data, nn, rv, vars, code, x, depth + 1);
+    let mut escaped = std::collections::HashSet::new();
+    super::non_sentinel::collect_escapes(data, code, &mut escaped);
+    if escaped.contains(&nr) {
+        return "a local handed out by reference";
+    }
+    let mut tuple = false;
+    let mut sets: Vec<&Value> = Vec::new();
+    code.walk(&mut |n| match n.unspan() {
+        Value::Set(x, e) if *x == nr => sets.push(e),
+        Value::TuplePut(x, _, _) if *x == nr => tuple = true,
+        _ => {}
+    });
+    if tuple {
+        return "a local bound from a tuple";
+    }
+    let steps: Vec<&&Value> = sets
+        .iter()
+        .filter(|e| e.any_node(&mut |n| matches!(n, Value::Var(x) if *x == nr)))
+        .collect();
+    if !steps.is_empty() {
+        let name = vars.name(nr);
+        if name.contains("#index") || name.starts_with("_index") {
+            return "a counter whose range has an unranged end";
+        }
+        // A step by literals only (`n += 1`) is bounded by its loop's trips; a step by
+        // anything else is the accumulator's own unranged value.
+        let literal = steps.iter().all(|e| {
+            !e.any_node(&mut |n| match n.unspan() {
+                Value::Var(x) => *x != nr,
+                Value::Call(..) => !matches!(n.unspan(), Value::Call(d, _)
+                        if (*d as usize) < data.definitions.len()
+                            && plain_form(data.def(*d).name(), 2).is_some()),
+                _ => false,
+            })
+        });
+        return if literal {
+            "an accumulator stepped by a literal under an unbounded loop"
+        } else {
+            "an accumulator stepped by a value"
+        };
+    }
+    match sets.into_iter().find(|e| unranged(e)) {
+        Some(e) => next(e),
+        None => "a local ranged only through another unranged local",
     }
 }

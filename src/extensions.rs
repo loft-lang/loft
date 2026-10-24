@@ -842,7 +842,7 @@ pub fn reachable_unimplemented_natives(
     let guard = NATIVE_REGISTRY
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut out: Vec<String> = crate::generation::reachable_functions(data, &[entry])
+    let mut out: Vec<String> = crate::opt::names::reachable_functions(data, &[entry])
         .into_iter()
         .filter(|&d| {
             let def = data.def(d);
@@ -1006,18 +1006,18 @@ mod impl_symbol_tests {
 #[cfg(feature = "native-extensions")]
 fn init_library_cdylibs(state: &crate::state::State, data: &crate::data::Data) {
     type InitFn =
-        unsafe extern "C" fn(*const crate::native_lib::HostTable, *const std::ffi::c_void) -> u32;
+        unsafe extern "C" fn(*const crate::host_abi::HostTable, *const std::ffi::c_void) -> u32;
     let ids = crate::lib_ids::HostIds::new(data, &state.database);
     let mut refused = Vec::new();
     for (lib, init) in crate::c_libs::dlsym_in_each("loft_shared_init") {
         let init: InitFn = unsafe { std::mem::transmute(init) };
         let accepted = unsafe {
             init(
-                &raw const crate::native_lib::HOST_TABLE,
+                &raw const crate::native_adopt::HOST_TABLE,
                 (&raw const ids).cast::<std::ffi::c_void>(),
             )
         };
-        // Said already: `native_lib::probe_and_mark_exports` asked the same question of a
+        // Said already: `native_adopt::probe_and_mark_exports` asked the same question of a
         // library before marking its functions, and those interpret.
         if accepted != 1 {
             refused.push(lib);
@@ -1231,8 +1231,8 @@ fn shared_store_dispatch_raw(
     stores_raw: *mut crate::database::Stores,
     stack: &mut crate::keys::DbRef,
 ) {
+    use crate::host_abi::LibArg;
     use crate::keys::DbRef;
-    use crate::native_lib::LibArg;
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
 
     crate::state::SHARED_DISPATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

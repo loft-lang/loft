@@ -33,7 +33,7 @@ fn main() {
     t += Word { w: "kerf", hits: 2 };
     t += Word { w: "kerkweg", hits: 5 };
     t += Word { w: "kerklaan", hits: 9 };
-    if !store_persist_bind(t, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(t, path) { println("FAIL write-bind"); return }
     println("write ok");
     return
   }

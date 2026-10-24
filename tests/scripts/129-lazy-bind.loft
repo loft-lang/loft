@@ -21,10 +21,10 @@ fn main() {
 
   if mode == "write" {
     src: hash<LzPerson[id]> = [];
-    if !store_persist_bind(src, path) { println("FAIL write-bind"); return }
     src += [LzPerson { id: 1, name: "ada" }];
     src += [LzPerson { id: 42, name: "grace" }];
     src += [LzPerson { id: 7, name: "alan" }];
+    if !store_persist_copy(src, path) { println("FAIL write"); return }
     println("seeded={src.len()}");
     return
   }

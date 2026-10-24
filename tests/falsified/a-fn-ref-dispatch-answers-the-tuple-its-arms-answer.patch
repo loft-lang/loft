@@ -1,10 +1,10 @@
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index cef439d54..12409973a 100644
+index 6824fa9d..b9d25872 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -2025,11 +2025,15 @@ impl Output<'_> {
-             // reaches the interpreter's own `@FR-L-FnAbsent` guard there.
-             Self::write_upcall_arm(w, &param_types, &ret_type, &place, &closure_expr)?;
+@@ -2061,11 +2061,15 @@ impl Output<'_> {
+             };
+             Self::write_upcall_arm(w, &param_types, &ret_type, &callee, &closure_expr)?;
          } else if let Some(fields) = &value_fields {
 -            write!(
 -                w,

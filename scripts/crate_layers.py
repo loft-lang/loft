@@ -12,9 +12,11 @@ the exported macros by name — and answers:
   scc             the strongly connected components with more than one module: a cycle
                   cannot be split across crates, so each is cut or kept in one crate
   check [-v]      every module assigned to exactly one layer in LAYERS below, and every
-                  BACK-EDGE (a reference from a lower layer to a higher one) by file:line;
+                  BACK-EDGE (a reference from a lower layer to a higher one, or between two
+                  SIBLINGS layers in either direction) by file:line;
                   exit 1 when a module is unassigned or a back-edge count exceeds BUDGET
   sites A B       every reference from module A to module B, by file:line
+  selftest        the back-edge rule on a made-up layering (upward, downward, sibling)
   runtime [-v]    the references out of the RUNTIME set, by module pair (every site with -v);
                   `check` holds their count to RUNTIME_BUDGET
   runtime-add MOD / runtime-drop MOD
@@ -43,59 +45,78 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 
-# The layers, bottom up.  A module may reference its own layer and any layer below.
-# The big modules were placed by subject (core: the IR types, keys, stores, database;
-# front: lexer-to-IR; gen: the native generator; runtime: the interpreter and what
-# emitted programs call; facade: the tools); every other module sits where the fewest
-# references cross a layer upward.  A new module is added to the layer it belongs in.
-# `lib` is lib.rs's own items — its macros and host imports, which every layer uses.
+# The layers, bottom up (@C153: placed by who can use the code).  A module may reference its own
+# layer and any layer below, except a
+# layer SIBLINGS names beside it.  core: the IR types, keys, stores, database, and the runtime
+# compiled programs call (@PLN191's RUNTIME set); front: lexer-to-IR; opt: what every backend
+# asks and the IR-phase rewrites; interp: the bytecode compiler and the interpreter; lower: a
+# compiled target's decisions as data; rust: the Rust writer and artifact building; facade:
+# the tools (@PLN200).  Every other module sits where the fewest references cross a layer
+# upward.  A new module is added to the layer it belongs in.  `lib` is lib.rs's own items —
+# its macros and host imports, which every layer uses.
 LAYERS: list[tuple[str, list[str]]] = [
     ("core", [
-        "api_diff", "api_surface", "arena", "base64", "btree", "build_phase", "byte_copy",
-        "c_libs", "c_shim", "c_signature", "cache", "cache_gc", "calc", "call_frames", "compact",
-        "const_eval", "coroutine_layout", "crash_report", "data", "data_ref", "data_store",
-        "database", "diagnostic_render", "diagnostics", "doc_catalogue", "doc_construct",
-        "doc_render", "documentation", "exit_record", "exit_vector", "ffi_deliver", "file_access",
-        "fnref", "forward_result", "fxhash", "git_query", "hash", "html_embed", "html_fonts",
+        "api_diff", "api_surface", "arena", "base64", "bound_append", "btree", "build_phase",
+        "byte_copy", "c_libs", "c_shim", "c_signature", "cache", "cache_gc", "calc",
+        "call_frames", "codegen_runtime", "compact", "const_eval", "coroutine_layout",
+        "crash_report", "data", "data_ref", "data_store", "database", "diagnostic_render",
+        "diagnostics", "doc_catalogue", "doc_construct", "doc_render", "documentation",
+        "engine_host", "exit_record", "exit_vector", "ffi_deliver", "file_access", "fnref",
+        "forward_result", "fxhash", "git_query", "hash", "host_abi", "html_embed", "html_fonts",
         "install", "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys",
-        "layout_schema", "lexer", "lib", "libscan", "limits", "literal_append", "lockfile",
-        "log_config", "logger", "loop_kernel_rewrite", "loop_kernels", "loop_shape", "manifest",
-        "migrate_long", "narrow", "native_bind", "native_build", "net", "net_profile", "null_census",
-        "op_census", "op_layout", "op_sets", "ops", "package", "package_layout", "page_metrics",
-        "paged_reader", "par_pool", "placement", "platform", "platform_census", "png_store",
-        "process_run", "pure_reuse", "radix_db", "shared_call", "bound_append", "radix_tree", "registry", "registry_advisories",
-        "registry_index", "registry_keys", "registry_signing", "repeat_run", "repl_doc",
-        "resolution", "resolution_scope", "return_field", "rewrite_census", "runtime_abi",
-        "runtime_error", "rust_spelling", "sandbox", "schema_sidecar", "self_update", "siphash",
+        "layout_schema", "lexer", "lib", "libscan", "limits", "literal_append", "live_control",
+        "live_rebuild", "lockfile", "log_config", "logger", "loop_kernel_rewrite", "loop_kernels",
+        "loop_shape", "manifest", "migrate_long", "narrow", "native", "native_bind",
+        "native_build", "net", "net_profile", "null_census", "op_census", "op_layout", "op_sets",
+        "ops", "package", "package_layout", "page_metrics", "paged_reader", "par_pool",
+        "placement", "platform", "platform_census", "png_store", "process_run", "pure_reuse",
+        "radix_db", "radix_tree", "registry", "registry_advisories", "registry_index",
+        "registry_keys", "registry_signing", "repeat_run", "repl_doc", "resolution",
+        "resolution_scope", "return_field", "rewrite_census", "runtime_abi", "runtime_error",
+        "rust_spelling", "sandbox", "schema_sidecar", "self_update", "shared_call", "siphash",
         "slot_alias", "spatial", "stack_census", "stack_verify", "stdlib_ops", "stdlib_sources",
         "store", "store_budget", "store_census", "take_local", "text_calls", "text_run",
-        "timeout", "tls", "trace", "trie_db", "triggers", "tuple_links", "type_schema",
-        "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets", "ws_handshake",
+        "timeout", "tls", "toolchain", "trace", "trie_db", "triggers", "tuple_links",
+        "type_schema", "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets",
+        "ws_handshake",
     ]),
     ("front", [
         "const_fn", "const_literal", "copy_manifest", "copy_view", "discharge_into",
-        "forward_walk", "in_range", "ir_node", "ir_read", "ir_store", "lease", "ownership_cfg",
-        "literal_host", "parser", "place_result", "rebind_place", "same_read", "scopes",
+        "forward_walk", "in_range", "ir_node", "ir_read", "ir_store", "lease", "literal_host",
+        "ownership_cfg", "parser", "place_result", "rebind_place", "same_read", "scopes",
         "single_use", "spent", "typedef", "use_analysis",
     ]),
-    ("gen", [
-        "ctor_literal", "generation", "leaf_inline", "self_replace", "value_record",
-        "zero_count",
+    ("opt", [
+        "ctor_literal", "leaf_inline", "lib_ids", "native_gate", "opt", "self_replace",
+        "value_record", "zero_count",
     ]),
-    ("runtime", [
-        "c_call", "codegen_runtime", "compile", "compiled_stdlib", "create", "debugger",
-        "lib_ids",
-        "engine_host", "extensions", "fill", "fuzz_keyed", "fuzz_oracle", "introspect",
-        "live_control", "live_dispatch", "live_rebuild", "live_reload", "native", "native_gate",
-        "native_lib", "parallel", "parallel_natives", "profiler", "stack", "state", "wasm_gl",
+    ("interp", [
+        "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",
+        "fuzz_oracle", "interp", "introspect", "live_dispatch", "live_reload", "native_adopt", "parallel",
+        "parallel_natives", "profiler", "stack", "state", "wasm_gl",
+    ]),
+    ("lower", [
+       
+    ]),
+    ("rust", [
+        "create", "generation", "native_lib", "stdlib_codegen",
     ]),
     ("facade", [
-        "doc_site", "fix_apply", "host", "lib_placement", "lsp", "repl", "rpc", "script", "serve",
-        "startup_cache", "wasm_debug", "wasm_entry", "wasm_threads",
+        "doc_site", "fix_apply", "host", "lib_placement", "lsp", "native_artifact", "repl", "rpc",
+        "script", "serve", "startup_cache", "wasm_debug", "wasm_entry", "wasm_threads",
     ]),
 ]
 
-# Back-edges allowed per (from-layer, to-layer) while P2 of @PLN191 cuts them: a ratchet.
+# Layer pairs that may not name each other in EITHER direction (@PLN200): the interpreter and
+# the compiled targets' layers are siblings above `opt`, so a reference from one to the other is
+# forbidden like an upward one, whichever way it points in the list order, and is budgeted in
+# BUDGET the same way.
+SIBLINGS: list[tuple[str, str]] = [
+    ("interp", "lower"),
+    ("interp", "rust"),
+]
+
+# Back-edges allowed per (from-layer, to-layer) while @PLN200's B1 and B2 cut them: a ratchet.
 # A count may only fall; `check` fails when one rises, and when one has fallen below its
 # budget without the budget being lowered, so the number here is always the tree's.
 BUDGET: dict[tuple[str, str], int] = {
@@ -112,7 +133,7 @@ BUDGET: dict[tuple[str, str], int] = {
 RUNTIME: list[str] = [
     "arena", "base64", "btree", "c_libs", "cache", "calc", "call_frames", "codegen_runtime",
     "crash_report", "database", "diagnostic_render", "diagnostics", "engine_host", "file_access",
-    "fxhash", "git_query", "hash", "integrity", "json", "keys", "lexer", "limits", "live_control",
+    "fxhash", "git_query", "hash", "host_abi", "integrity", "json", "keys", "lexer", "limits", "live_control",
     "live_rebuild", "lockfile", "log_config", "logger", "loop_kernels", "narrow", "native", "native_bind", "net",
     "net_profile", "op_census", "ops", "page_metrics", "paged_reader", "par_pool", "placement",
     "platform", "png_store", "process_run", "radix_db", "radix_tree", "resolution_scope",
@@ -122,7 +143,16 @@ RUNTIME: list[str] = [
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
-RUNTIME_BUDGET: int = 1
+RUNTIME_BUDGET: int = 0
+
+# The interpreter's ENTRY (@PLN200 B2.6): outside the `interp` layer, code reaches an
+# interpreter module only through `interp` (src/interp.rs), the one place its surface is
+# stated.  Counted over the library's modules and over the driver binaries, which name the
+# library as `loft::` (src/main.rs and its modules, src/bin/).  A ratchet like the others.
+ENTRY_MODULE: str = "interp"
+ENTRY_BUDGET: int = 0
+DRIVER_FILES: list[str] = ["main.rs", "native_utils.rs", "test_runner.rs", "android.rs", "bin"]
+LOFT_PATH = re.compile(r"loft::([A-Za-z_0-9]+)")
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 
@@ -408,6 +438,34 @@ def runtime_crossings(mods) -> list[tuple[str, str, str]]:
     return out
 
 
+def entry_crossings(mods) -> list[str]:
+    """Every reference from outside the interp layer to an interp module other than its entry."""
+    lo = layer_of()
+    inside = {m for m, (_, layer) in lo.items() if layer == "interp"} - {ENTRY_MODULE}
+    out = []
+    for a, b, path, line in references(mods):
+        if b in inside and lo.get(a, (0, ""))[1] != "interp":
+            out.append(f"{path.relative_to(ROOT)}:{line} {a} -> {b}")
+    files = []
+    for d in DRIVER_FILES:
+        f = SRC / d
+        files += sorted(f.rglob("*.rs")) if f.is_dir() else [f] if f.exists() else []
+    for f in files:
+        text = blank_noise(f.read_text(encoding="utf-8"))
+        for m in LOFT_PATH.finditer(text):
+            if m.group(1) in inside:
+                line = text.count("\n", 0, m.start()) + 1
+                out.append(f"{f.relative_to(ROOT)}:{line} driver -> {m.group(1)}")
+    return out
+
+
+def set_entry_budget(n: int) -> None:
+    path = Path(__file__)
+    src = path.read_text(encoding="utf-8")
+    src = re.sub(r"^ENTRY_BUDGET: int = \d+$", f"ENTRY_BUDGET: int = {n}", src, count=1, flags=re.M)
+    path.write_text(src, encoding="utf-8")
+
+
 def rewrite_runtime(members: list[str]) -> None:
     me = Path(__file__)
     src = me.read_text(encoding="utf-8")
@@ -432,11 +490,18 @@ def set_runtime_budget(n: int) -> None:
     me.write_text(src, encoding="utf-8")
 
 
+def forbidden(lo, a: str, b: str) -> bool:
+    """Is a reference from module `a` to module `b` one the layering forbids: upward in the list
+    order, or between two SIBLINGS layers in either direction."""
+    (ia, la), (ib, lb) = lo[a], lo[b]
+    return ib > ia or (la, lb) in SIBLINGS or (lb, la) in SIBLINGS
+
+
 def back_counts(mods) -> dict[tuple[str, str], int]:
     lo = layer_of()
     counts: dict[tuple[str, str], int] = defaultdict(int)
     for a, b, _p, _l in references(mods):
-        if a in lo and b in lo and lo[b][0] > lo[a][0]:
+        if a in lo and b in lo and forbidden(lo, a, b):
             counts[(lo[a][1], lo[b][1])] += 1
     return counts
 
@@ -505,6 +570,12 @@ def main(argv):
             set_runtime_budget(have)
         elif have > RUNTIME_BUDGET:
             raised.append(f"runtime: {have} reference(s) out of the runtime set, budget {RUNTIME_BUDGET}")
+        have = len(entry_crossings(mods))
+        if have < ENTRY_BUDGET:
+            print(f"entry: budget {ENTRY_BUDGET} -> {have}")
+            set_entry_budget(have)
+        elif have > ENTRY_BUDGET:
+            raised.append(f"entry: {have} reference(s) past `{ENTRY_MODULE}`, budget {ENTRY_BUDGET}")
         for r in raised:
             print(f"NOT raised — cut these instead: {r}")
         return 1 if raised else 0
@@ -536,6 +607,19 @@ def main(argv):
             if x == a and y == b:
                 print(f"{p.relative_to(ROOT)}:{l}")
         return 0
+    if cmd == "selftest":
+        global SIBLINGS
+        saved = SIBLINGS
+        SIBLINGS = [("x", "y")]
+        lo = {"a": (0, "low"), "b": (1, "x"), "c": (2, "y"), "d": (3, "top")}
+        # A lower layer naming a higher one is forbidden; a higher naming a lower is not,
+        # except between siblings, where neither direction is allowed.
+        cases = [("a", "b", True), ("b", "a", False), ("c", "a", False), ("b", "c", True),
+                 ("c", "b", True), ("d", "a", False), ("b", "d", True)]
+        bad = [(a, b) for a, b, want in cases if forbidden(lo, a, b) != want]
+        SIBLINGS = saved
+        print("selftest:", "ok" if not bad else f"WRONG for {bad}")
+        return 1 if bad else 0
     if cmd == "check":
         lo = layer_of()
         bad = 0
@@ -551,15 +635,15 @@ def main(argv):
             bad = 1
         back = defaultdict(list)
         for a, b, p, l in references(mods):
-            if a in lo and b in lo and lo[b][0] > lo[a][0]:
+            if a in lo and b in lo and forbidden(lo, a, b):
                 back[(lo[a][1], lo[b][1])].append(f"{p.relative_to(ROOT)}:{l} {a} -> {b}")
         for key in sorted(set(back) | set(BUDGET)):
             sites = back.get(key, [])
             allowed = BUDGET.get(key, 0)
             if len(sites) > allowed:
                 bad = 1
-                print(f"{key[0]} -> {key[1]}: {len(sites)} upward reference(s), budget {allowed}: "
-                      "a lower layer may not name a higher one")
+                print(f"{key[0]} -> {key[1]}: {len(sites)} forbidden reference(s), budget {allowed}: "
+                      "a lower layer may not name a higher one, nor a layer its sibling")
                 for s in sites:
                     print(f"    {s}")
             elif len(sites) < allowed:
@@ -585,6 +669,24 @@ def main(argv):
             bad = 1
             print(f"runtime: {len(cross)} reference(s) out of the runtime set, budget "
                   f"{RUNTIME_BUDGET}: lower RUNTIME_BUDGET to {len(cross)} (`lower`)")
+        if ENTRY_MODULE not in mods:
+            print(f"ENTRY_MODULE {ENTRY_MODULE!r} is not a module lib.rs declares")
+            bad = 1
+        entry = entry_crossings(mods)
+        if len(entry) > ENTRY_BUDGET:
+            bad = 1
+            print(f"entry: {len(entry)} reference(s) reach an interpreter module past "
+                  f"`{ENTRY_MODULE}`, budget {ENTRY_BUDGET}: name `{ENTRY_MODULE}::…` instead")
+            for site in entry:
+                print(f"    {site}")
+        elif len(entry) < ENTRY_BUDGET:
+            bad = 1
+            print(f"entry: {len(entry)} reference(s) past `{ENTRY_MODULE}`, budget {ENTRY_BUDGET}: "
+                  f"lower ENTRY_BUDGET to {len(entry)} (`lower`)")
+        elif verbose and entry:
+            print(f"entry: {len(entry)} reference(s) past `{ENTRY_MODULE}`")
+            for site in entry:
+                print(f"    {site}")
         return bad
     print(__doc__)
     return 2

@@ -44,34 +44,35 @@ fn main() {
 
   if mode == "write" {
     t: trie<RfWord[w]> = [];
-    if !store_persist_bind(t, trie_img) { println("FAIL write-trie"); return }
     t += [RfWord { w: "kerkstraat", hits: 3 }];
     t += [RfWord { w: "lonneker", hits: 7 }];
 
     x: index<RfRow[id]> = [];
-    if !store_persist_bind(x, idx_img) { println("FAIL write-index"); return }
     x += [RfRow { id: 42, v: 4200 }];
 
     h: hash<RfRow[id]> = [];
-    if !store_persist_bind(h, hash_img) { println("FAIL write-hash"); return }
     h += [RfRow { id: 42, v: 4200 }];
 
     // A `vector<text>` field is exactly what the working-set copy cannot
     // relocate, so this image drives the refusal only a FETCH can decide.
     b: hash<RfBig[id]> = [];
-    if !store_persist_bind(b, big_img) { println("FAIL write-big"); return }
     big = RfBig { id: 7 };
     big.tags += ["kerk"];
     b += [big];
 
     s: sorted<RfRow[id]> = [];
-    if !store_persist_bind(s, sort_img) { println("FAIL write-sorted"); return }
     s += [RfRow { id: 1, v: 10 }];
 
     sp: spatial<RfPt[x, y]> = [];
-    if !store_persist_bind(sp, pt_img) { println("FAIL write-spatial"); return }
     sp += [RfPt { x: 10, y: 20, v: 1020 }];
     sp += [RfPt { x: 11, y: 21, v: 1121 }];
+
+    if !store_persist_copy(t, trie_img) { println("FAIL write-trie"); return }
+    if !store_persist_copy(x, idx_img) { println("FAIL write-index"); return }
+    if !store_persist_copy(h, hash_img) { println("FAIL write-hash"); return }
+    if !store_persist_copy(b, big_img) { println("FAIL write-big"); return }
+    if !store_persist_copy(s, sort_img) { println("FAIL write-sorted"); return }
+    if !store_persist_copy(sp, pt_img) { println("FAIL write-spatial"); return }
 
     println("seeded={t.len()},{h.len()},{b.len()},{s.len()},{len(x)},{sp.len()}");
     return

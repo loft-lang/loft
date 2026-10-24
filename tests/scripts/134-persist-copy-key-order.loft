@@ -5,10 +5,8 @@
 // live collection does not move.
 //
 // The two halves are inseparable. A rebuilt image is only useful if it answers
-// exactly what the bound one answers, and it is only LEGAL if the collection the
-// caller still holds keeps every reference it handed out — which is the one
-// thing `store_persist_bind` promises and the reason record placement could not
-// simply be fixed there.
+// exactly what the live collection answers, and it is only LEGAL if the
+// collection the caller still holds keeps every reference it handed out.
 //
 // So this asserts, on both backends:
 //   * a reference taken BEFORE the call still reads correctly after it,
@@ -18,8 +16,8 @@
 // what a query fetches is not visible from inside the program.
 //
 // Env in:
-//   LOFT_PERSIST_TEST_PATH   the bound image (as built)
-//   LOFT_PERSIST_TEST_COPY   the rebuilt image (key order)
+//   LOFT_PERSIST_TEST_PATH   a first image, written before the reference is taken
+//   LOFT_PERSIST_TEST_COPY   a second image, written while it is held (key order)
 //   LOFT_PERSIST_TEST_MODE   "write" | "read"
 
 struct PWord {
@@ -99,7 +97,7 @@ fn main() {
       n += 1;
       t += [PWord { w: w, n: n }];
     }
-    if !store_persist_bind(t, path) { println("FAIL bind"); return }
+    if !store_persist_copy(t, path) { println("FAIL write"); return }
 
     // The reference the guarantee is ABOUT, taken before the call. A rebuild
     // that moved these records would leave this naming someone else's bytes —

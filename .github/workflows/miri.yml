@@ -302,7 +302,7 @@ jobs:
         run: |
           cargo +nightly miri test --lib -- --exact \
             store::tests::coalesce_free_merges_adjacent_and_reuses_space \
-            store::tests::resize_in_place_zeroes_absorbed_region \
+            store::tests::a_delete_never_reads_an_unwritten_claim \
             store::tests::borrow_locked_reads_original_data \
             database::worker_output_slot_tests::adopt_store_pushes_to_parent_allocations \
             database::worker_output_slot_tests::take_slot_returns_owned_store_and_leaves_sentinel \

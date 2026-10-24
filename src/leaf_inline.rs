@@ -52,8 +52,8 @@
 //! clause);
 //! `LOFT_TRACE_INLINE_LEAF=1` names every inlined call and every reduction.
 use crate::data::{Block, Data, DefType, Type, Value};
-use crate::generation::range::{Range, range, range_vars};
 use crate::lexer::Position;
+use crate::opt::range::{Range, range, range_vars};
 use std::collections::{HashMap, HashSet};
 
 /// A body larger than this many nodes stays a call: it is copied into every call site.
@@ -1153,8 +1153,8 @@ pub fn rewrite_program(data: &mut Data) -> usize {
     if off_all() || data.open_world || data.observes_entries || profiled() {
         return 0;
     }
-    // The range memo is about one program, and this pass is the first to ask it.
-    crate::generation::range::begin_generation();
+    // The analysis memos are about one program, and this pass is the first to ask them.
+    crate::opt::begin_program();
     let mut leaves: HashMap<u32, Leaf> = HashMap::new();
     for d in 0..data.definitions() {
         if data.def(d).def_type != DefType::Function {
@@ -1211,14 +1211,18 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             &mut n,
         );
         if n > 0 {
-            let nn = crate::generation::non_sentinel::non_sentinel_vars(data, &code);
+            let nn = crate::opt::non_sentinel::non_sentinel_vars(
+                data,
+                &data.definitions[caller as usize].variables,
+                &code,
+            );
             let base = range_vars(
                 data,
                 &data.definitions[caller as usize].variables,
                 &code,
                 &nn,
                 &std::collections::BTreeMap::new(),
-                &crate::generation::range::Ranges::default(),
+                &crate::opt::range::Ranges::default(),
             )
             .vars;
             let mut r = Reduce {

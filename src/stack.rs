@@ -196,7 +196,7 @@ impl<'a> Stack<'a> {
             .position
             .checked_add(bytes)
             .filter(|&p| u32::from(p) <= self.data.limits.frame)
-            .unwrap_or_else(|| crate::limits::frame_too_large(self.data, self.def_nr));
+            .unwrap_or_else(|| self.data.frame_too_large(self.def_nr));
     }
 
     pub fn add_op(&mut self, name: &str, state: &mut State) {

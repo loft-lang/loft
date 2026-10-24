@@ -24,7 +24,7 @@ fn main() {
     s += Tile { id: 13, name: "thirteen" };
     s += Tile { id: 20, name: "twenty" };
     s += Tile { id: 99, name: "ninety-nine" };
-    if !store_persist_bind(s, path) { println("FAIL write-bind"); return }
+    if !store_persist_copy(s, path) { println("FAIL write-bind"); return }
     println("write ok");
   } else if mode == "range" {
     n = store_load_range(s, path, 13, 42);

@@ -15,14 +15,13 @@
 // keeps using the collection afterwards.
 //
 // Env in:
-//   LOFT_PERSIST_TEST_PATH   file prefix; two stores are written
+//   LOFT_PERSIST_TEST_PATH   file prefix
 //   B2_SHAPE                 rich (default) | refuse | foreign
 //                            `refuse` puts a `reference<T>` in each record,
-//                            pointing at another record of the same image: the
-//                            load rebases it (@FR-L-Ref-Slot), compaction must
-//                            decline, and every link must still read its target.
-//                            `foreign` points each record into a store outside
-//                            the image, which the load refuses (@FR-L-Ref-Slot).
+//                            pointing at another record of the same collection:
+//                            the rebuild cannot carry it, so the image write
+//                            declines.  `foreign` points each record into a
+//                            store outside the collection, the same decline.
 
 struct Inner { const a: i32, const b: i32 }
 struct Tag { const name: text, const w: i32 }
@@ -104,18 +103,19 @@ fn main() {
   if prefix == "" { println("no path"); return }
   shape = env_variable("B2_SHAPE") ?? "rich";
   src_path = "{prefix}-src.store";
-  out_path = "{prefix}-out.store";
 
-  // A shape the rebuild must DECLINE: a `reference<T>` is a position, and this
-  // rebuild moves records without rewriting the positions that name them.
-  // Every link points at one of the 29 records that survive, so reading each
-  // one after the load checks the rebase as well as the decline.
+  // A `reference<T>` into the SAME store: a position the plain rebuild cannot rewrite, so the
+  // image is rebuilt by the converter, which re-points each reference to the record it named
+  // (`@FR-L-Ref-Slot`).  Nodes 0..29 stay; node i links node (7i mod 29), so nodes 1..28
+  // name each of 1..28 once and node 29 names node 0: the links sum to 406.
   if shape == "refuse" {
     nodes: hash<Node[id]> = [];
     for i in 0..300 { nodes += [Node { id: i, label: "l-{i}", link: null }] }
     for i in 1..300 { nodes[i].link = &nodes[(i * 7) % 29] }
     for d in 30..300 { nodes[d] = null }
-    if !store_persist_bind(nodes, src_path) { println("FAIL bind"); return }
+    ok = store_persist_copy(nodes, src_path);
+    println("refuse write {ok} file {file(src_path).size}");
+    if !ok { return }
     back: hash<Node[id]> = [];
     if !store_load(back, src_path) { println("FAIL load"); return }
     n = 0;
@@ -128,27 +128,29 @@ fn main() {
     return
   }
 
-  // A reference into a store OUTSIDE the image: nothing in the file says what
-  // that store holds in the reader, so the load is refused.
+  // A reference into a store OUTSIDE the image: nothing in the file could say what that
+  // store holds in the reader, so the write declines: `false`, no file.
   if shape == "foreign" {
     pool: vector<Leaf> = [];
     for p in 0..50 { pool += [Leaf { v: p * 7 }] }
     lh: hash<Linked[id]> = [];
     for i in 0..300 { lh += [Linked { id: i, label: "l-{i}", link: &pool[i % 50] }] }
     for d in 30..300 { lh[d] = null }
-    if !store_persist_bind(lh, src_path) { println("FAIL bind"); return }
+    ok = store_persist_copy(lh, src_path);
+    println("foreign write {ok}");
+    if !ok { return }
     outside: hash<Linked[id]> = [];
     println("foreign load {store_load(outside, src_path)} count {len(outside)}");
     return
   }
 
-  // Fragmented: grown 10x, dropped back, tail already reclaimed by arc A, so
-  // what is left for B to take is the interior and nothing else.
+  // Fragmented: grown 10x, dropped back, tail already reclaimed by arc A.  The
+  // image is written rebuilt, so the load reads a dense one.
   frag: hash<Rec[id]> = [];
   for g in 0..2000 { frag += [make(g)] }
   for d in 200..2000 { frag[d] = null }
   store_reclaim(frag);
-  if !store_persist_bind(frag, src_path) { println("FAIL bind"); return }
+  if !store_persist_copy(frag, src_path) { println("FAIL write"); return }
   report(frag, "source", file(src_path).size);
 
   loaded: hash<Rec[id]> = [];
@@ -158,8 +160,7 @@ fn main() {
   probe = loaded[7];
   if probe == null { println("FAIL root-ref-lost"); return }
   println("root_ref label {probe.label} tags {len(probe.tags)} xs {len(probe.xs)}");
-  if !store_persist_bind(loaded, out_path) { println("FAIL bind2"); return }
-  report(loaded, "loaded", file(out_path).size);
+  report(loaded, "loaded", 0);
 
   // A compacted store is still a store.
   loaded += [make(99997)];

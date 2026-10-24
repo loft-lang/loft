@@ -594,7 +594,7 @@ fn b2_unmark_switches_interpret_set_to_interpreted() {
     );
     // Simulate them being default-native (compiled cdylib dispatch).
     let all: HashSet<u32> = [baz, bar, foo, unrelated].into_iter().collect();
-    loft::native_lib::mark_exports(&mut p.data, &all);
+    loft::native_adopt::mark_exports(&mut p.data, &all);
     assert!(
         !p.data.def(baz).native().is_empty(),
         "baz starts marked (compiled)"

@@ -1,9 +1,9 @@
 diff --git a/src/data.rs b/src/data.rs
-index 6f36bd9a..5388f331 100644
+index 1198f197..750c8af5 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -6209,15 +6209,15 @@ pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
- impl Data {
+@@ -6378,15 +6378,15 @@ impl Data {
+ 
      /// map a vector's content `Type` to a narrow
      /// database element type-nr when the content is a `Type::Integer`
 -    /// (@FR-H-Stride — the width is read off the TYPE, never off the def it resolves to)
@@ -22,7 +22,7 @@ index 6f36bd9a..5388f331 100644
      ///
      /// The caller falls back to the default wide storage (the
      /// content's own `known_type`, or the plain-`integer` slot) when
-@@ -6314,10 +6314,6 @@ impl Data {
+@@ -6483,10 +6483,6 @@ impl Data {
      /// renderer read two 2-byte elements as one 8-byte slot (loft#624 nested,
      /// the named remainder of the plan-58 / loft#437 / #457 / #483 family —
      /// `doc/claude/plans/nested-narrow-width/`).
@@ -34,7 +34,7 @@ index 6f36bd9a..5388f331 100644
          &self,
          content: &Type,
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index 97976c1c..23a1e58a 100644
+index 37644699..3d695fb5 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
 @@ -817,18 +817,11 @@ impl Parser {
@@ -62,10 +62,10 @@ index 97976c1c..23a1e58a 100644
                          // Start at length; the first step gives len-1 (last element).
                          *code = v_set(
 diff --git a/src/parser/fields.rs b/src/parser/fields.rs
-index ab66a0d6..6371729a 100644
+index 15ed284c..73dbd76f 100644
 --- a/src/parser/fields.rs
 +++ b/src/parser/fields.rs
-@@ -1252,21 +1252,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+@@ -1284,21 +1284,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
          vec_tp: &Type,
      ) -> bool {
          if field == "remove" {
@@ -87,7 +87,7 @@ index ab66a0d6..6371729a 100644
              self.lexer.token("(");
              let (tps, ls) = self.parse_parameters();
              let mut cd = ls[0].clone();
-@@ -2160,12 +2145,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+@@ -2192,12 +2177,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
              td => td,
          };
          let known = self.data.def(elm_td).known_type();

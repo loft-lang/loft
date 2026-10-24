@@ -523,9 +523,9 @@ pub struct State {
     /// build, so each keeps its own path.
     pub(crate) fast_stack: bool,
     /// Codegen only: the character walks of the function being generated
-    /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep` — found on the
+    /// (`opt::char_walk::char_walks`), whose step is emitted as one `OpTextWalkStep` — found on the
     /// first character local a block assigns, since most functions have none.
-    pub(crate) walk_steps: Option<Vec<crate::generation::hoist::CharWalk>>,
+    pub(crate) walk_steps: Option<Vec<crate::opt::char_walk::CharWalk>>,
     /// Locals whose only write a fused op of the function being generated took over, so
     /// the slot they were given is never written (a character walk's result temp, which
     /// `OpTextWalkStep` writes straight into the loop variable).  Read by the @PLN120 A
@@ -956,7 +956,8 @@ impl State {
     */
     #[must_use]
     pub fn new(mut db: Stores) -> State {
-        let stack_cur = db.database(1000);
+        // DEFINED: the stack census reads the stack store whole (`Store::defined`).
+        let stack_cur = db.database_defined(1000);
         crate::store_census::set_stack_store(stack_cur.store_nr);
         db.stack_store_at_zero = true; // #306 — protect slot 0 from whole-store frees
         // @PLN154 — arm the stack shadow.  Here and only here: the shadow is what makes a
@@ -1234,17 +1235,7 @@ impl State {
                 && buf_span > 0
             {
                 let def = data.def(d_nr as u32);
-                let visible = def
-                    .attributes()
-                    .iter()
-                    .filter(|a| {
-                        !a.hidden
-                            && a.name != "__closure"
-                            && !matches!(&a.typedef,
-                                crate::data::Type::RefVar(t) if matches!(**t, crate::data::Type::Text(_)))
-                    })
-                    .count();
-                let pushed = data.fnref_text_buffers(visible, def.returned());
+                let pushed = data.fnref_text_buffers(def.fnref_visible_params(), def.returned());
                 let wanted = def.text_work_buffers();
                 let extra = u16::try_from(pushed.saturating_sub(wanted)).unwrap_or(0) * buf_span;
                 if extra > 0 && asz >= extra {
@@ -1700,8 +1691,7 @@ impl State {
             return false;
         }
         let name = def.name().to_string();
-        let visible = def.attributes().iter().filter(|a| !a.hidden).count();
-        let pushed = data.fnref_text_buffers(visible, def.returned());
+        let pushed = data.fnref_text_buffers(def.fnref_visible_params(), def.returned());
         let buf_span = self.stack_step(size_ref());
         let dest = if crate::state::codegen::is_text_dest_native(&name) {
             self.library_names.get(&format!("{name}_dest")).copied()
@@ -8562,7 +8552,7 @@ impl State {
     /// (`generation::fnref::upcall_carries`): scalar, text and reference parameters, and a
     /// scalar or void return, so the callee has no hidden buffer.
     ///
-    /// [`LibArg`]: crate::native_lib::LibArg
+    /// [`LibArg`]: crate::host_abi::LibArg
     /// `n` empty `String` slots above every live frame, for a call back's text result: below
     /// the frame `reenter_ret` builds, each named by the `DbRef` `OpCreateStack` makes for a
     /// local, which is the form a callee's hidden `&text` work buffer takes.
@@ -8590,8 +8580,8 @@ impl State {
         &mut self,
         d_nr: u32,
         closure: DbRef,
-        args: &[crate::native_lib::LibArg],
-    ) -> crate::native_lib::LibArg {
+        args: &[crate::host_abi::LibArg],
+    ) -> crate::host_abi::LibArg {
         use crate::data::Type;
         let handle = self.data_ptr.clone();
         let data = handle
@@ -8654,7 +8644,7 @@ impl State {
                 }
             }
         };
-        let mut ret = crate::native_lib::LibArg::ZERO;
+        let mut ret = crate::host_abi::LibArg::ZERO;
         match def.returned().base() {
             Type::Void | Type::Null => self.reenter(d_nr, pos, push),
             Type::Text(_) => {
@@ -9123,7 +9113,8 @@ impl State {
         library: Arc<Vec<Call>>,
     ) -> State {
         let mut db = worker.stores;
-        let stack_cur = db.database(1000);
+        // DEFINED: the stack census reads the stack store whole (`Store::defined`).
+        let stack_cur = db.database_defined(1000);
         crate::store_census::set_stack_store(stack_cur.store_nr);
         // @PLN154 — a worker runs the same bytecode on its own frame, so it gets its own
         // shadow; without this the detector would be blind to exactly the `par` arms.

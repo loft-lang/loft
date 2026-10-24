@@ -1283,7 +1283,7 @@ pub fn reserve(hash: &DbRef, count: i64, stride: u32, stores: &mut [Store], keys
 /// growth and [`reserve`] on a non-empty hash — used to do only the first half, so every
 /// doubling stranded its predecessor. A grown 1M-entry hash carried 49.3 MB where the
 /// identical content pre-sized carried 33.0, `store_reclaim` recovered none of it (the
-/// blocks are CLAIMED, not free), and `store_persist_bind` wrote the dead tables to disk.
+/// blocks are CLAIMED, not free), and an image of the store wrote the dead tables to disk.
 ///
 /// The order is load-bearing and is why this is one function rather than a line at each
 /// site: repoint FIRST, free second. `Store::delete` repurposes the block's body as a

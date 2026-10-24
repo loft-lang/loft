@@ -58,6 +58,7 @@ a guard that does not exercise it — is its line in
 - [C141](DESIGN_DECISIONS_OWNERSHIP.md#c141--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from) — A decoded text or byte string may be a view into the bytes it was decoded from
 - [C145](DESIGN_DECISIONS_OWNERSHIP.md#c145--no-back-references-inside-a-store-what-a-reference-points-at-never-moves-under-it) — No back references inside a store: what a reference points at never moves under it
 - [C150](DESIGN_DECISIONS_OWNERSHIP.md#c150--a-collections-size-reports-its-representation-which-the-compiler-may-size) — A collection's size() reports its representation, which the compiler may size
+- [C154](DESIGN_DECISIONS_OWNERSHIP.md#c154--store-memory-is-not-filled-only-a-store-whose-bytes-leave-the-process-is-written-whole) — Store memory is not filled; only a store whose bytes leave the process is written whole
 
 ## Syntax, names and calls — [DESIGN_DECISIONS_SYNTAX.md](DESIGN_DECISIONS_SYNTAX.md)
 - [C132](DESIGN_DECISIONS_SYNTAX.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function) — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
@@ -129,3 +130,4 @@ a guard that does not exercise it — is its line in
 - [C133](DESIGN_DECISIONS_PLATFORM.md#c133--a-development-build-uses-the-startup-cache-loft_no_cache1-turns-it-off) — A development build uses the startup cache; `LOFT_NO_CACHE=1` turns it off
 - [C138](DESIGN_DECISIONS_PLATFORM.md#c138--every-scalar-in-a-store-sits-on-its-natural-boundary-the-bytecode-stays-byte-packed) — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
 - [C144](DESIGN_DECISIONS_PLATFORM.md#c144--a-nullable-value-record-carries-a-presence-word-an-absent-one-holds-its-fields-nulls) — A nullable value record carries a presence word; an absent one holds its fields' nulls
+- [C153](DESIGN_DECISIONS_PLATFORM.md#c153--what-the-interpreter-can-use-lives-in-opt-a-compiled-targets-decisions-in-lower-a-backend-only-spells) — What the interpreter can use lives in `opt`, a compiled target's decisions in `lower`; a backend only spells

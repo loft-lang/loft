@@ -84,7 +84,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F101](F101.md) | The build phase — `loft build`, declared targets, zero-config defaults |
 | [@F102](F102.md) | Android target — `--native-android`, APK packaging, GL surface and touch input |
 | [@F103](F103.md) | `deliver` / `expose` — hand a loft value to JavaScript with no copy |
-| [@F104](F104.md) | `store_reclaim()` — give a store's unused file space back |
+| [@F104](F104.md) | `store_reclaim()` — give a store's unused space back |
 | [@F105](F105.md) | Custom `to_text` format hook — a type owns how it prints |
 | [@F106](F106.md) | Copy and move semantics — when two names share data, and when they do not |
 | [@F107](F107.md) | Type reflection — the declared shape of a type, as data |
@@ -92,7 +92,6 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F109](F109.md) | `#superseded` — steer callers to a newer form without breaking the old one |
 | [@F110](F110.md) | Diagnostic suggestions — what to write instead, checked by running it |
 | [@F111](F111.md) | `for f in s#fields` — a compile-time loop over a struct's scalar fields |
-| [@F112](F112.md) | `store_release()` — say a record is finished, and stop holding it in memory |
 | [@F113](F113.md) | Associated types — an interface names a companion type |
 | [@F114](F114.md) | A library type reads an element through a named method — `[…]` is the built-in collections' |
 | [@F115](F115.md) | `OpDrop` — a type runs code when its scope lets it die |

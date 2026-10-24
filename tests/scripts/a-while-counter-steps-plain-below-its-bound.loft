@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A WHILE COUNTER STEPS PLAIN BELOW ITS BOUND (`@FR-R-Range`'s while-counter clause).  In
+// `while i < E { …; i += 1 }` every statement of the loop runs after the test passed and before
+// the step, so there `i < E <= i64::MAX` and the step cannot overflow, whatever `E` is; outside
+// such loops the counter lies in `[lowest seed, i64::MAX]`.  A null `E` ends the loop.  A
+// second step in one pass, a step that is not the loop's last statement, and an unranged seed
+// decline: their arithmetic stays checked.  `tests/while_counter.rs` pins what is emitted; these
+// cells pin the values, on both backends.
+//
+// Expected values, computed by an independent model of null-on-overflow arithmetic:
+//   c1 sum of [3, 5, 7, 9] walked by a while counter, * 100 + the final counter     2404
+//   c2 the telescoping v[i + 1] - v[i] over the same vector, * 10 + final counter     63
+//   c3 a counter from i64::MAX - 3 up to i64::MAX: 3 passes, then `i - 1`              3 9223372036854775806
+//   c4 a null bound: no pass                                                          0 0
+//   c5 a negative seed: -5 + … + 2                                                    -12 3
+//   c6 two steps in one pass (declines): 1 + 3 + 5 + 7 + 9                            25 10
+//   c7 an unranged seed at i64::MIN + 1, one pass (declines): `i - 2` overflows to null  null -9223372036854775806
+//
+// @falsified-at: hand-measured (2026-10-23) — with `range::seed_while_counters` taking an unranged
+//   seed as 0 instead of declining, c7's `i - 2` is emitted plain and answers
+//   9223372036854775807 on `--native` instead of null; the interpreter passes.  (With two passes
+//   the plant was inert: the second `i - 2` lands on i64::MIN, the null value, and hid it.)
+
+/// The value back through a vector element: no range proof reaches it.
+fn opaque(v: integer) -> integer {
+  xs: vector<integer> = [v];
+  xs[0] ?? 0
+}
+
+fn c1(v: vector<integer>) -> integer {
+  i = 0;
+  s = 0;
+  while i < len(v) {
+    s += v[i] ?? 0;
+    i += 1;
+  }
+  s * 100 + i
+}
+
+fn c2(v: vector<integer>) -> integer {
+  i = 0;
+  s = 0;
+  while i < len(v) - 1 {
+    s += (v[i + 1] ?? 0) - (v[i] ?? 0);
+    i += 1;
+  }
+  s * 10 + i
+}
+
+fn c3() -> text {
+  i = 9223372036854775804;
+  c = 0;
+  while i < 9223372036854775807 {
+    c += 1;
+    i += 1;
+  }
+  "{c} {i - 1}"
+}
+
+fn c4() -> text {
+  none: vector<integer> = [];
+  n = none[0];
+  i = 0;
+  c = 0;
+  while i < n {
+    c += 1;
+    i += 1;
+  }
+  "{c} {i}"
+}
+
+fn c5() -> text {
+  i = -5;
+  c = 0;
+  while i < 3 {
+    c += i;
+    i += 1;
+  }
+  "{c} {i}"
+}
+
+fn c6() -> text {
+  i = 0;
+  c = 0;
+  while i < 10 {
+    i += 1;
+    c += i;
+    i += 1;
+  }
+  "{c} {i}"
+}
+
+fn c7() -> text {
+  i = opaque(-9223372036854775807);
+  n = opaque(-9223372036854775806);
+  s = 0;
+  while i < n {
+    s += i - 2;
+    i += 1;
+  }
+  "{s} {i}"
+}
+
+fn main() {
+  v = [3, 5, 7, 9];
+  assert(c1(v) == 2404, "c1 {c1(v)}");
+  assert(c2(v) == 63, "c2 {c2(v)}");
+  assert(c3() == "3 9223372036854775806", "c3 {c3()}");
+  assert(c4() == "0 0", "c4 {c4()}");
+  assert(c5() == "-12 3", "c5 {c5()}");
+  assert(c6() == "25 10", "c6 {c6()}");
+  assert(c7() == "null -9223372036854775806", "c7 {c7()}");
+  println("ok");
+}

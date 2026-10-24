@@ -1,8 +1,8 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 451f243a..2ef1a6ef 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -15636,13 +15636,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+diff --git a/src/opt/value_records/mod.rs b/src/opt/value_records/mod.rs
+index 8a15de0e8..603775307 100644
+--- a/src/opt/value_records/mod.rs
++++ b/src/opt/value_records/mod.rs
+@@ -878,13 +878,8 @@ pub(crate) fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
              // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
              // was freed by nobody, one record per call on `--native` alone, in a concrete
              // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
@@ -19,10 +19,10 @@ index 451f243a..2ef1a6ef 100644
              }
              // `@FR-N-Road` — the view carries the layout its own TYPE names: a view of `S` the
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
-index 633bb252..5a61c887 100644
+index 4bc24e5b5..bc8a8ca09 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
-@@ -1114,15 +1114,6 @@ impl Scopes<'_> {
+@@ -1120,15 +1120,6 @@ impl Scopes<'_> {
          if to_scope == 1 {
              let free_distinct = data.def_nr("OpFreeRefIfDistinct");
              for (param, orig) in function.rebind_params() {
@@ -39,10 +39,10 @@ index 633bb252..5a61c887 100644
                      free_distinct,
                      vec![Value::Var(param), Value::Var(orig)],
 diff --git a/src/use_analysis.rs b/src/use_analysis.rs
-index f92bc5c9..b504904a 100644
+index 437ad622c..e9090934a 100644
 --- a/src/use_analysis.rs
 +++ b/src/use_analysis.rs
-@@ -7846,77 +7846,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
+@@ -7952,77 +7952,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
          func.is_argument(v)
              && !matches!(func.tp(v), Type::RefVar(_))
              && !func.name(v).starts_with("__")

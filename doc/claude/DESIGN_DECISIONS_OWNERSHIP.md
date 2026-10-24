@@ -342,3 +342,28 @@ guard `loft-suite/rules/rewrites/R-PushFill/a-counted-hash-fill-reserves-its-tab
 beside unchanged values); `loft-suite/rules/collections/Col-Bucket/pln110-size-hash.loft` measures the growth ladder
 with fills the clause does not take.
 **Catalogue:** `bench/portal/analysis/keyed.md` · reads @C122
+
+## C154 — Store memory is not filled; only a store whose bytes leave the process is written whole
+
+**Decision.** A store's buffer is allocated and grown without filling.  A store whose raw bytes
+leave the process — an image written to a file, a placed library's arena, the REPL's resume
+image, the stack census — is DEFINED: zeroed at creation and on growth, or copied from an
+image, and only a defined store is read as raw bytes (`Store::raw_bytes` checks it).  The
+allocator itself never reads a word a claim may hold: before a delete reads a free footer at
+its left edge, it asks the claims whether a claimed block ends there.  A collection is saved
+by `store_persist_copy`, which writes it rebuilt into a defined store, and read back by
+`store_load`; there is no store whose file IS its live buffer.  **Why.** A claim promises no
+value (@C137), so a fill writes memory no program may read — a cost every store paid, on
+creation and on every growth.  Reading an unwritten byte is undefined behaviour in Rust, so
+the reads that remain must be of written bytes, and one flag per store makes that checkable.
+A bound store (`store_persist_bind`, with `store_release` and the durable sidecar of
+`store_durable_check` / `store_durable_seal`) writes its live buffer to its file as it stands,
+so every store that could be bound would have had to be filled; no library or consumer used
+it, and the surface was removed before contract 1.
+
+**Revisit when.** A program needs a file that follows a live collection without rewriting it;
+such a store would be defined by construction.  Decided 2026-10-24 — [record](DESIGN_DECISIONS-history.md#c154--store-memory-is-not-filled-only-a-store-whose-bytes-leave-the-process-is-written-whole).
+**Holds at:** `@C154` — `Store::defined` and `Store::claimed_block_ends_at` in `src/store.rs`,
+`(H-FreeFooter)` in [formal/allocator.md](formal/allocator.md); guard
+`store::tests::a_delete_never_reads_an_unwritten_claim` in the Miri job.
+**Catalogue:** reads @C137 · `formal/heap.md` `(H-Claim)` · `formal/allocator.md` `(H-FreeFooter)`

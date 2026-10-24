@@ -222,7 +222,7 @@ fn points(w: &Width) -> Vec<(i64, i64)> {
 fn build(w: &Width, relayout: bool) -> (Store, DbRef, Vec<Key>, usize) {
     let keys = keys_for(w);
     let pts = points(w);
-    let mut store = Store::new_in_use(1 << 18);
+    let mut store = Store::new_in_use_defined(1 << 18);
     let coll = crate::radix_tree::empty_collection(&mut store);
     let mut order: Vec<usize> = (0..pts.len()).collect();
     let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
@@ -249,7 +249,7 @@ fn build(w: &Width, relayout: bool) -> (Store, DbRef, Vec<Key>, usize) {
         );
     }
     if relayout {
-        // What `store_persist_bind` does before it writes the image, so this is the
+        // What `store_persist_copy` does before it writes the image, so this is the
         // layout a reader actually pages.
         let tree = store.get_u32_raw(coll.rec, coll.pos);
         assert!(crate::radix_tree::rtree_relayout(&mut store, tree));
@@ -481,7 +481,7 @@ fn a_capped_box_stops_fetching_at_the_cap() {
 fn every_axis_width_decodes_to_what_was_written() {
     for w in WIDTHS {
         let keys = keys_for(w);
-        let mut store = Store::new_in_use(1 << 12);
+        let mut store = Store::new_in_use_defined(1 << 12);
         let words = 1 + u32::from(w.stride * 2).div_ceil(8);
         let (lo, hi) = w.span;
         let probes = [lo, lo + 1, -1, 0, 1, hi - 1, hi];

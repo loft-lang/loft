@@ -374,13 +374,13 @@ impl Output<'_> {
         Ok(())
     }
 
-    /// `@FR-B-Ref-Lvalue` — the Rust place of member `i` of tuple `t`: a tuple local's field, a
-    /// `&(…)` parameter's (a `&mut` tuple, reached by auto-deref), or a LOCAL link's, which is a
-    /// raw pointer to the tuple and is dereferenced.  Used inside `unsafe`.
+    /// `@FR-B-Ref-Lvalue` — the Rust place of member `i` of tuple `t`: a tuple local's field, or
+    /// a `&(…)` link's or parameter's, which is a raw pointer to the tuple and is dereferenced.
+    /// Used inside `unsafe`.
     pub(super) fn tuple_member_place(&self, t: u16, i: u16) -> String {
         let variables = self.data.def(self.def_nr).variables();
         let name = sanitize(variables.name(t));
-        if matches!(variables.tp(t).base(), Type::RefVar(_)) && !variables.is_argument(t) {
+        if matches!(variables.tp(t).base(), Type::RefVar(_)) {
             format!("(*var_{name}).{i}")
         } else {
             // A generator's local is its struct field (loft#1899).
@@ -768,25 +768,19 @@ impl Output<'_> {
         {
             if to != &Value::Null {
                 let name = sanitize(variables.name(var));
-                // `@FR-B-Ref-Repoint` on a `&` PARAMETER.  The parameter is a `&mut T`, so a
-                // re-point takes a borrow of the new place, unbounded like the raw pointer a local
-                // link holds.  Every other value is the write-back below.
-                // `c = &b` with `b` itself a link: take the pointer `b` holds, for every kind —
-                // a text link is a `*mut String` and a record link a `*mut DbRef`, the same `T` the
-                // parameter borrows.
+                // `@FR-B-Ref-Repoint` on a `&` PARAMETER.  The parameter is a raw `*mut T`, as a
+                // local link is, so a re-point takes the new place's address.  Every other value
+                // is the write-back below.
+                // `c = &b` with `b` itself a link or a `&` parameter: take the pointer `b` holds,
+                // for every kind — a text link is a `*mut String` and a record link a `*mut
+                // DbRef`, the same `T` the parameter points at.
                 if let Value::Call(d_nr, cargs) = to.unspan()
                     && self.data.def(*d_nr).name() == "OpVarRef"
                     && let [src_arg] = cargs.as_slice()
                     && let Value::Var(src) = src_arg.unspan()
                 {
-                    let base = crate::generation::link_base_type(inner);
                     let src_name = sanitize(variables.name(*src));
-                    let ptr = if variables.is_argument(*src) {
-                        format!("(&mut *var_{src_name}) as *mut {base}")
-                    } else {
-                        format!("var_{src_name}")
-                    };
-                    write!(w, "var_{name} = unsafe {{ &mut *({ptr}) }}")?;
+                    write!(w, "var_{name} = var_{src_name}")?;
                     return Ok(());
                 }
                 // `c = &v[i]`, `c = &o.f` and `c = &m` on a SCALAR parameter.
@@ -796,9 +790,9 @@ impl Output<'_> {
                     let op = self.data.def(*d_nr).name().to_string();
                     let base = crate::generation::link_base_type(inner);
                     if matches!(op.as_str(), "OpGetField" | "OpGetVector" | "OpVectorRef") {
-                        write!(w, "var_{name} = unsafe {{ &mut *{{ ")?;
+                        write!(w, "var_{name} = unsafe {{ ")?;
                         self.output_place_pointer(w, to, &base)?;
-                        write!(w, " }} }}")?;
+                        write!(w, " }}")?;
                         return Ok(());
                     }
                     if op == "OpCreateStack"
@@ -807,10 +801,7 @@ impl Output<'_> {
                         && !matches!(variables.tp(*src).base(), Type::RefVar(_))
                     {
                         let src_place = self.var_place(*src);
-                        write!(
-                            w,
-                            "var_{name} = unsafe {{ &mut *std::ptr::addr_of_mut!({src_place}) }}"
-                        )?;
+                        write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
                         return Ok(());
                     }
                 }
@@ -868,12 +859,12 @@ impl Output<'_> {
                     && matches!(to.unspan(), Value::Text(t) if t.is_empty())
                 {
                     crate::rewrite_census::fired("R-TextClear", 1);
-                    return write!(w, "var_{name}.clear()");
+                    return write!(w, "unsafe {{ (*var_{name}).clear() }}");
                 }
                 if amp_owned_writeback {
-                    write!(w, "{{ let _old_disp = *var_{name}; *var_{name} = ")?;
+                    write!(w, "unsafe {{ let _old_disp = *var_{name}; *var_{name} = ")?;
                 } else {
-                    write!(w, "*var_{name} = ")?;
+                    write!(w, "unsafe {{ *var_{name} = ")?;
                     if needs_bool_coerce {
                         write!(w, "u8::from(")?;
                     }
@@ -901,10 +892,13 @@ impl Output<'_> {
                     // backends.  Inlining the comparison here is what let the native
                     // side keep freeing a store the caller had marked as not its own.
                     write!(w, "; OpFreeRefIfDistinct(cell, _old_disp, *var_{name}); }}")?;
-                } else if needs_text_coerce {
-                    write!(w, ").to_string()")?;
-                } else if needs_bool_coerce {
-                    write!(w, ")")?;
+                } else {
+                    if needs_text_coerce {
+                        write!(w, ").to_string()")?;
+                    } else if needs_bool_coerce {
+                        write!(w, ")")?;
+                    }
+                    write!(w, " }}")?;
                 }
             }
             return Ok(());
@@ -1053,13 +1047,7 @@ impl Output<'_> {
                 // and a scalar `&` parameter already are a `*mut T`; any other `&` parameter
                 // is a `&mut T`, re-borrowed raw.
                 let src_name = sanitize(variables.name(*src));
-                let ptr = if variables.is_argument(*src)
-                    && !crate::generation::is_raw_scalar_ref(variables.tp(*src))
-                {
-                    format!("(&mut *var_{src_name}) as *mut {base}")
-                } else {
-                    format!("var_{src_name}")
-                };
+                let ptr = format!("var_{src_name}");
                 if self.declared.contains(&var) {
                     write!(w, "var_{name} = {ptr}")?;
                 } else {
@@ -1164,11 +1152,7 @@ impl Output<'_> {
             let src_name = sanitize(variables.name(*src));
             // `OpVarRef(b)`: `b` is itself a record link, so take the pointer it holds.
             let target = if self.data.def(*d_nr).name() == "OpVarRef" {
-                if variables.is_argument(*src) {
-                    format!("(&mut *var_{src_name}) as *mut DbRef")
-                } else {
-                    format!("var_{src_name}")
-                }
+                format!("var_{src_name}")
             } else {
                 format!("std::ptr::addr_of_mut!({})", self.var_place(*src))
             };
@@ -2325,14 +2309,10 @@ impl Output<'_> {
                 // Without the peel it fell through to `&var.to_string()` (E0308: `&String`).
                 let text_local_clone =
                     needs_to_string && matches!(to.unspan(), Value::Var(v) if self.text_owned(*v));
-                // @P283 — source is a `RefVar(Text)` argument (`&mut String`).
-                // `output_code_inner` for `Value::Var` in this case emits
-                // `&*var_X` (emit.rs:141); appending `.to_string()` then parses
-                // as `&*(var_X.to_string())` per Rust method-call precedence,
-                // which evaluates to `&str` and breaks the `String`-typed
-                // assignment with E0308.  Emit `var_X.to_string()` directly —
-                // auto-deref through `&mut String` produces a fresh owned
-                // `String` of the correct type.
+                // The source is a `RefVar(Text)` argument, a raw `*mut String`: the owned
+                // copy is the `String` behind it, cloned.  The ordinary read would hand
+                // `.to_string()` a borrow, and the precedence of `&*(…).to_string()` would
+                // leave a `&str` in a `String` slot (E0308).
                 let refvar_text_clone = needs_to_string
                     && matches!(to.unspan(), Value::Var(v) if {
                         let vars = self.data.def(self.def_nr).variables();
@@ -2464,7 +2444,7 @@ impl Output<'_> {
                 } else if refvar_text_clone {
                     if let Value::Var(v) = to.unspan() {
                         let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.to_string()")?;
+                        write!(w, "unsafe {{ (*var_{src_name}).clone() }}")?;
                     }
                 } else if tuple_text_elem_clone {
                     // P228: read through the same unspan as the detection above.

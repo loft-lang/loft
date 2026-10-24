@@ -296,6 +296,7 @@ pub mod ffi_deliver;
 pub mod fix_apply;
 pub mod fxhash;
 pub mod hash;
+pub mod host_abi;
 pub mod ir_node;
 pub mod ir_read;
 pub mod ir_schema;
@@ -404,6 +405,7 @@ pub mod native_build;
 pub mod op_layout;
 pub mod op_sets;
 pub mod ops;
+pub mod opt;
 #[cfg(test)]
 mod page_metrics;
 pub mod parser;
@@ -470,6 +472,7 @@ pub mod fuzz_oracle;
 #[cfg(feature = "registry")]
 pub mod install;
 pub mod integrity;
+pub mod interp;
 pub mod introspect;
 pub mod layout_schema;
 pub mod lib_ids;
@@ -478,6 +481,8 @@ pub mod lockfile;
 pub mod log_config;
 pub mod logger;
 pub mod manifest;
+pub mod native_adopt;
+pub mod native_artifact;
 pub mod native_gate;
 pub mod native_lib;
 #[cfg(feature = "registry")]
@@ -499,7 +504,9 @@ pub mod schema_sidecar;
 #[cfg(feature = "registry")]
 pub mod self_update;
 mod stack;
+pub mod stdlib_codegen;
 pub mod timeout;
+pub mod toolchain;
 pub mod triggers;
 pub mod verify_self;
 

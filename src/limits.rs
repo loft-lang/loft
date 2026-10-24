@@ -130,16 +130,14 @@ pub const TREE_DEPTH: usize = 8 * LIMIT as usize;
 /// multiply into it — 300 variables each holding a 300-element tuple is far past it — so a
 /// frame past it is refused on its own, wherever a pass first meets it: the slot layout for
 /// parameters and variables, the code generator for the values pending in an expression.
-pub fn frame_too_large(data: &crate::data::Data, d_nr: u32) -> ! {
-    let d = data.def(d_nr);
+pub fn frame_too_large(pos: &crate::lexer::Position, name: &str, limits: Limits) -> ! {
     crate::crash_report::limit_exceeded(
-        d.position(),
+        pos,
         &format!(
-            "`{}` needs more than {} of stack for its parameters, its variables and the \
+            "`{name}` needs more than {} of stack for its parameters, its variables and the \
              values its expressions hold — move part of the work into a function of its own, \
              or keep large tuples in a struct or a vector",
-            d.display_name(),
-            data.limits.frame_text()
+            limits.frame_text()
         ),
     )
 }
