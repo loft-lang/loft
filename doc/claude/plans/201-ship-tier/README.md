@@ -76,9 +76,9 @@ coverage.  The choice is the owner's: the cheap form is assumed until it is deci
 @PLN200 builds a second code generator (ANSI C).  The tier is defined on the IR, so it holds
 for both: a fault site is named by the function, its body hash and the operator's position,
 never by the emitted text.  One ledger then licenses a ship build on either backend.  Each
-generator supplies its own check-free form of an operator.  `stats.py` takes the C backend as
-lanes of its own (checked and ship) beside `native`, compared with the same Rust twin and
-required to print the same hash.
+generator supplies its own check-free form of an operator.  The C backend validates the
+generator only: it gets no benchmark lanes and no twins of the bench routines (owner), so
+the ship tier is measured on the Rust backend alone.
 
 ## See also
 
