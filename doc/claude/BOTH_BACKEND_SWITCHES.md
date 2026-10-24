@@ -389,7 +389,7 @@ rewrite (`LOFT_NO_VALUE_RECORD`); it is the first bisect step for a wrong field 
 small-record call.  **`LOFT_TRACE_IR_VALUEREC=1`** names each carrier the pass declines and why.
 The analysis behind it (`opt::value_records`) skips, in each round of its admission fixpoint,
 a caller with nothing to decline, and remembers a caller's value locals while the verdicts its
-body reads are unchanged (loft#2159).  **`LOFT_NO_VR_SKIP=1`** walks every caller and
+body reads are unchanged.  **`LOFT_NO_VR_SKIP=1`** walks every caller and
 recomputes every one's locals each round; the compiled program is the same either way, so it
 is the control half of an A/B on compile time, never a bisect step for a wrong answer.
 
