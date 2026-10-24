@@ -739,3 +739,20 @@ pub(crate) fn callee_writes(
 pub fn is_element_address(data: &Data, d_nr: u32) -> bool {
     (d_nr as usize) < data.definitions.len() && ELEMENT_ADDRESS_OPS.contains(&data.def(d_nr).name())
 }
+
+/// The buffer and every local whose dependencies reach it: the views a body builds through.
+#[must_use]
+pub fn views(vars: &crate::variables::Function, b: u16) -> HashSet<u16> {
+    let mut set: HashSet<u16> = HashSet::from([b]);
+    loop {
+        let before = set.len();
+        for v in 0..vars.next_var() {
+            if !set.contains(&v) && vars.tp(v).depend().iter().any(|d| set.contains(d)) {
+                set.insert(v);
+            }
+        }
+        if set.len() == before {
+            return set;
+        }
+    }
+}

@@ -24,7 +24,7 @@ mod decode_structure_emit;
 pub use crate::lower::decode_structure_scan;
 pub use crate::lower::decode_view;
 mod decode_view_emit;
-pub mod destination;
+pub use crate::lower::destination;
 mod dispatch;
 mod emit;
 pub use crate::fnref;

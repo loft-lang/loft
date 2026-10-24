@@ -200,7 +200,7 @@ fn compute_shape(data: &Data, stores: &Stores, d_nr: u32, vo: i64) -> Option<Sha
     if !def.is_loft_defined() || matches!(def.returned().base(), Type::Iterator(_, _)) {
         return None;
     }
-    let rb = super::hoist::retbuf_var(data, d_nr)?;
+    let rb = crate::opt::attrs::retbuf_var(data, d_nr)?;
     let vars = def.variables();
     let Type::Reference(rd, _) = vars.tp(rb).base() else {
         return None;
@@ -674,7 +674,7 @@ pub fn site<'a>(
         }
     }
     // The calls' arguments: no reach into the container; a scalar of an earlier result named.
-    let reach = super::append_twin::views(data.def(d_nr).variables(), container);
+    let reach = crate::opt::body_writes::views(data.def(d_nr).variables(), container);
     let mut args_rw: Vec<Vec<Value>> = Vec::new();
     for w in &wins {
         let mut out = Vec::new();
