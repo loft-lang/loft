@@ -1053,7 +1053,9 @@ pub fn OpGetHashLongAt(
         let claim = store.collection_rec(data.rec, data.pos);
         if claim != 0
             && let Some(found) =
-                crate::hash::inline_find_int(store, data.store_nr, claim, key_pos, key)
+                crate::hash::inline_find_int(store, data.store_nr, claim, key_pos, key).or_else(
+                    || crate::hash::borrowed_find_int(store, data.store_nr, claim, key_pos, key),
+                )
             && (found.rec != 0 || !stores.lazy_bound(&data))
         {
             return found.or_null();
