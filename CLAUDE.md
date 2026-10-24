@@ -601,6 +601,7 @@ Lua, measured (reports, never gates — and run a generator probe inside a memor
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) parser/two-pass/types ·
 [INTERMEDIATE.md](doc/claude/INTERMEDIATE.md) Value/Type/opcodes/State · [INTERNALS.md](doc/claude/INTERNALS.md) ·
 [SLOTS.md](doc/claude/SLOTS.md) stack slots · [NATIVE.md](doc/claude/NATIVE.md) `--native` codegen ·
+[C_BACKEND.md](doc/claude/C_BACKEND.md) `--emit-c`, the C backend, and `scripts/c_sweep.py` ·
 [THREADING.md](doc/claude/THREADING.md) par · [CODEGEN_METHOD.md](doc/claude/CODEGEN_METHOD.md) how to do compiler work.
 
 **Runtime / memory:** [DATABASE.md](doc/claude/DATABASE.md) stores/DbRef ·
