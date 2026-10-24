@@ -336,6 +336,20 @@ pub(crate) fn namings_avoid_place(
     let (root, watch_off) = watch;
     let vars = data.def(def_nr).variables();
     let parent = data.type_def_nr(vars.tp(root).base());
+    // The watched place is a SLOT of the root's record, summed down a run of embedded fields
+    // (`o.inner.a`); a naming below reads one TOP-LEVEL field of the root, so it is compared
+    // against the top-level field holding that slot.  Without one to name, `ANY_FIELD` makes
+    // every naming reach it, the conservative answer.
+    let top = |off: u32| -> u32 {
+        if off == crate::use_analysis::ANY_FIELD || parent == u32::MAX {
+            return off;
+        }
+        match stores.top_field_containing(data.def(parent).known_type(), off) {
+            u16::MAX => crate::use_analysis::ANY_FIELD,
+            t => u32::from(t),
+        }
+    };
+    let watch_off = top(watch_off);
     let field_off = |fld: i32| -> Option<u32> {
         if fld == i32::from(u16::MAX) {
             return None;
@@ -352,6 +366,7 @@ pub(crate) fn namings_avoid_place(
         root: u16,
         watch: crate::scopes::ParamPlace,
         disturbed: Option<&'a crate::scopes::DisturbedParams>,
+        top: &'a dyn Fn(u32) -> u32,
         ok: bool,
     }
     fn walk(cx: &mut Cx, n: &Value, field_off: &dyn Fn(i32) -> Option<u32>) {
@@ -372,7 +387,10 @@ pub(crate) fn namings_avoid_place(
                         let reaches = places.is_some_and(|p| {
                             p.keys().any(|&(slot, inner)| {
                                 usize::from(slot) == i
-                                    && crate::scopes::same_place(cx.watch, (cx.root, inner))
+                                    && crate::scopes::same_place(
+                                        cx.watch,
+                                        (cx.root, (cx.top)(inner)),
+                                    )
                             })
                         });
                         // The summary records what MOVES; a callee that writes a value
@@ -479,6 +497,7 @@ pub(crate) fn namings_avoid_place(
         root,
         watch: (root, watch_off),
         disturbed,
+        top: &top,
         ok: true,
     };
     walk(&mut cx, stmt, &field_off);
