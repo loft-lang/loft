@@ -191,13 +191,102 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed("fn same(c: character) -> character { c }\n");
-    let d = p.data.def_nr("n_same");
+    let p = parsed("fn up(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }\n");
+    let d = p.data.def_nr("n_up");
     let refusal =
-        loft::c::emit_unit(&p.data, &p.database, &[d]).expect_err("character is not carried yet");
-    assert_eq!(refusal.function, "same");
+        loft::c::emit_unit(&p.data, &p.database, &[d]).expect_err("a generator is not carried yet");
+    assert_eq!(refusal.function, "up");
     assert!(
         refusal.why.contains("returns"),
         "names the construct: {refusal}"
     );
+}
+
+/// The overflow macros of `src/c/loft_cc.h` against Rust's checked arithmetic, at the
+/// boundaries where a fallback can go wrong (0, ±1, ±2^31.5, ±2^32, `i64::MAX`, `i64::MIN`
+/// and their neighbours), in each macro mode: a mode changes speed, never a value.
+#[test]
+fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let mut edges: Vec<i64> = vec![0, 1, 2, 3, 3_037_000_499, 3_037_000_500, 4_294_967_296];
+    for e in edges.clone() {
+        edges.push(e.wrapping_neg());
+        edges.push(e + 1);
+        edges.push(-(e + 1));
+    }
+    edges.extend([
+        i64::MAX,
+        i64::MAX - 1,
+        i64::MIN,
+        i64::MIN + 1,
+        i64::MAX / 2,
+        i64::MIN / 2,
+    ]);
+    edges.sort_unstable();
+    edges.dedup();
+    let list: Vec<String> = edges
+        .iter()
+        .map(|e| {
+            if *e == i64::MIN {
+                "INT64_MIN".to_string()
+            } else {
+                format!("INT64_C({e})")
+            }
+        })
+        .collect();
+    let mut c = String::from(include_str!("../src/c/loft_cc.h"));
+    let _ = write!(
+        c,
+        "\nstatic const int64_t edges[] = {{ {} }};\nint main(void) {{\n    size_t n = sizeof edges / sizeof edges[0];\n    for (size_t i = 0; i < n; i++) for (size_t j = 0; j < n; j++) {{\n        int64_t a = edges[i], b = edges[j], r;\n        int o = LOFT_ADD_OVF(a, b, &r); printf(\"%d %lld \", o, o ? 0LL : (long long) r);\n        o = LOFT_SUB_OVF(a, b, &r); printf(\"%d %lld \", o, o ? 0LL : (long long) r);\n        o = LOFT_MUL_OVF(a, b, &r); printf(\"%d %lld\\n\", o, o ? 0LL : (long long) r);\n    }}\n    return 0;\n}}\n",
+        list.join(", ")
+    );
+    let mut want = String::new();
+    for a in &edges {
+        for b in &edges {
+            for r in [a.checked_add(*b), a.checked_sub(*b), a.checked_mul(*b)] {
+                match r {
+                    Some(v) => {
+                        let _ = write!(want, "0 {v} ");
+                    }
+                    None => want.push_str("1 0 "),
+                }
+            }
+            want.pop();
+            want.push('\n');
+        }
+    }
+    let dir = scratch("ovf");
+    let src = dir.join("ovf.c");
+    fa::write(&src, &c).expect("write C");
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("default", &[][..]),
+        ("verify", &["-DLOFT_VERIFY"][..]),
+    ] {
+        let exe = dir.join(format!("ovf-{mode}"));
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O2"])
+            .args(flags)
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: cc rejected the overflow macros:\n{}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the overflow program");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the overflow macros disagree with checked arithmetic"
+        );
+    }
 }

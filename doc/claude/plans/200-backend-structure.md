@@ -447,34 +447,22 @@ once @PLN201's ledger exists.  Each step checks the emitted C of `insertion_sort
 left in its inner loop after (2), no reload of the store table after (3)) and the sweep in all
 three modes.
 
-**Done (2026-10-24, measured on macOS ARM with clang).**  (a) `ticks()`, `arguments()` and
-the text→integer cast are carried, so the benches run unpatched.  (b) the accessors are
-`static inline __attribute__((always_inline))` — no change on clang, which inlined them
-already.  (c) the decision moved to `opt::header::hoistable_vectors` (out of the Rust writer;
-`introspect_diff` identical bar an absolute address in registry-library code) and `src/c/`
-holds each admitted vector in a `loft_vh` (store, record, length, base) before the loop,
-reading and writing elements through the held base.  (d) `__builtin_mul_overflow` for a
-multiply of two computed operands only: with a constant operand the portable check folds to
-one compare, and the add/sub builtins made a summing loop 2.7× slower, so those keep the
-portable form.  C ÷ native, `-O2`, median of 3, hashes equal:
-
-| bench | before | after |
-|---|---|---|
-| fibonacci | 0.72 | 0.72 |
-| sum_loop | 1.05 | 1.04 |
-| sieve | 1.78 | 1.91 |
-| collatz | 1.01 | 1.01 |
-| mandelbrot | 1.02 | 1.02 |
-| newton_sqrt | 1.07 | 1.07 |
-| string_build | 3.77 | 3.75 |
-| matrix_mul | 2.86 | **1.21** |
-| sort | 3.43 | **2.39** |
-
-Sort misses the 1.5× bar.  What is left in its inner loop is the per-access bounds test and
-the checked `-` on the index, which native drops where its range and non-null analyses prove
-them (`opt::range`, `opt::non_sentinel`); sieve is the same question for `i * i` and `n % i`.
-Those analyses are already in `opt`, so the next step is the C writer asking them.
-string_build is text building — a separate family.
+**Where the order stands (2026-10-24).**  (1) done: `src/c/loft_cc.h` holds the three modes
+and the safe-hint, proof and ship macros; `loft_rt.h` names no compiler.  The checked multiply
+sits on `LOFT_MUL_OVF` (two computed operands; a constant operand keeps the portable check,
+which folds to one compare).  `loft_add` / `loft_sub` keep the portable comparison rather than
+`LOFT_ADD_OVF` / `LOFT_SUB_OVF`: the builtin hides the operands' ranges from the optimiser,
+measured on clang as a masked accumulator's loop (`bench/02_sum_loop`'s `mix`) running 2.7×
+slower.  `tests/c_emit.rs` checks the three overflow macros against Rust's checked arithmetic at
+the boundaries in all three modes.  (2) done: the accessors are `LOFT_HOT_INLINE`; the element
+access still answers a `loft_ref`, which the forced inlining scalarises.  (3) done without
+`FnPlan`: `hoistable_vectors` and its gate moved to `opt::header` (the Rust writer re-exports
+them; `introspect_diff` identical bar an absolute address in registry-library code), and the C
+generator holds each admitted vector in a `loft_vh` before the loop with a `LOFT_PROVED` site at
+every held access — injecting a push into a held loop aborts under `LOFT_VERIFY` naming the site.
+`insertion_sort`'s inner loop has no call and no store-table reload left.  `scripts/c_sweep.py`
+runs the three modes; the strict build is `-pedantic -Werror` clean on every carried program.
+(4) waits for @PLN201's ledger.
 
 ## B6 — optional: a minimal binary
 

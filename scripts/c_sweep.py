@@ -8,11 +8,16 @@
     scripts/c_sweep.py --verbose        # also every differing program's two outputs
     scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
     scripts/c_sweep.py --all            # every refusal reason, not the top 25
+    scripts/c_sweep.py --mode default   # one macro mode (strict, default, verify) instead of all
     LOFT_BIN=<loft> scripts/c_sweep.py  # another build (default target/release/loft)
 
-For each program: `loft --emit-c` writes it as C, `cc` builds it, and the C program's stdout
+For each program: `loft --emit-c` writes it as C, `cc` builds it in each macro mode of
+src/c/loft_cc.h — `-DLOFT_STRICT` (pure C99, `-pedantic -Werror`), the default, and
+`-DLOFT_VERIFY` (every proof the generator relied on checked again) — and each build's stdout
 and exit status are compared with `loft --interpret`'s; a program without `main` is its tests,
-and the C's exit status is compared with `loft --tests`'s.  Every program lands in one bucket:
+and the C's exit status is compared with `loft --tests`'s.  A mode changes speed, never a
+value, so a difference between modes is a defect of a macro's fallback.  Every program lands
+in one bucket:
 
   match     the backend carries it and the C answers what the interpreter answers
   differ    carried, and the answers differ — a defect of the C backend
@@ -33,7 +38,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
-CC = ["cc", "-std=c99", "-O1", "-w"]
+CC = ["cc", "-std=c99", "-O1"]
+MODES = {
+    "strict": ["-DLOFT_STRICT", "-pedantic", "-Werror"],
+    "default": ["-w"],
+    "verify": ["-DLOFT_VERIFY", "-w"],
+}
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
@@ -61,7 +71,7 @@ def reason(stderr: bytes) -> str:
     return re.sub(r"\d+", "N", why)
 
 
-def one(path: str, asan: bool = False):
+def one(path: str, asan: bool = False, modes=tuple(MODES)):
     src = ROOT / path
     with tempfile.TemporaryDirectory(prefix="loft-c-sweep-") as tmp:
         c = os.path.join(tmp, "p.c")
@@ -71,25 +81,24 @@ def one(path: str, asan: bool = False):
             return path, "refused", reason(err), None
         if code != 0:
             return path, "refused", "the program does not compile in loft", None
-        code, _, err = run(CC + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
-        if code != 0:
-            return path, "cc-error", err.decode(errors="replace").strip().split("\n")[0], None
-        c_out = run([exe], 60, cwd=src.parent)
-        if asan and (b"Sanitizer" in c_out[2] or b"runtime error:" in c_out[2]):
-            line = next((l for l in c_out[2].decode(errors="replace").split("\n")
-                         if "Sanitizer" in l or "runtime error:" in l), "")
-            return path, "sanitizer", line.strip()[:200], None
-        if HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace")):
-            i_out = run([LOFT, "--interpret", str(src)], 60, cwd=src.parent)
-            same = (c_out[0], c_out[1]) == (i_out[0], i_out[1])
-        else:
-            # A program without `main` is its tests: the C runs them as `loft --tests` does,
-            # and the two exit statuses say whether every test passed.
-            i_out = run([LOFT, "--tests", str(src)], 60, cwd=src.parent)
-            same = c_out[0] == i_out[0]
-        if same:
-            return path, "match", "", None
-        return path, "differ", "", (i_out, c_out)
+        tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
+        # A program without `main` is its tests: the C runs them as `loft --tests` does,
+        # and the two exit statuses say whether every test passed.
+        i_out = run([LOFT, "--tests" if tests else "--interpret", str(src)], 60, cwd=src.parent)
+        for mode in modes:
+            code, _, err = run(CC + MODES[mode] + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
+            if code != 0:
+                first = err.decode(errors="replace").strip().split("\n")[0]
+                return path, "cc-error", f"[{mode}] {first}", None
+            c_out = run([exe], 60, cwd=src.parent)
+            if asan and (b"Sanitizer" in c_out[2] or b"runtime error:" in c_out[2]):
+                line = next((l for l in c_out[2].decode(errors="replace").split("\n")
+                             if "Sanitizer" in l or "runtime error:" in l), "")
+                return path, "sanitizer", f"[{mode}] {line.strip()[:200]}", None
+            same = c_out[0] == i_out[0] if tests else (c_out[0], c_out[1]) == (i_out[0], i_out[1])
+            if not same:
+                return path, "differ", f"[{mode}]", (i_out, c_out)
+        return path, "match", "", None
 
 
 def main(argv: list[str]) -> int:
@@ -97,13 +106,18 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 0
     verbose = "--verbose" in argv
+    modes = tuple(MODES)
+    if "--mode" in argv:
+        i = argv.index("--mode")
+        modes = (argv[i + 1],)
+        del argv[i:i + 2]
     files = [a for a in argv[1:] if not a.startswith("--")] or corpus()
     buckets = Counter()
     reasons = Counter()
     bad = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
         asan = "--asan" in argv
-        for path, bucket, why, outs in ex.map(lambda f: one(f, asan), files):
+        for path, bucket, why, outs in ex.map(lambda f: one(f, asan, modes), files):
             buckets[bucket] += 1
             if bucket == "refused":
                 reasons[why] += 1
