@@ -366,7 +366,20 @@ pub(crate) fn capture_build_backings(
             }
             match crate::use_analysis::view_root_slots(data, rhs).as_deref() {
                 Some([root]) if bind_views_root(function, *v, rhs, *root) => {
-                    latest.insert(*v, *root);
+                    // A root that is itself a view holds no store: `y = vs[1]` names `vs`,
+                    // and `vs` views `__vdb_1`.  The backing is the local that HOLDS the store,
+                    // so follow the root's own backing as it stands at this point
+                    // (@FR-O-Latest).  Stopping at `vs` left the record adopting a local the
+                    // frame never frees, and the frame then freed `__vdb_1` under a returned
+                    // closure that still read it (loft#2154).
+                    let mut holder = *root;
+                    for _ in 0..8 {
+                        match latest.get(&holder) {
+                            Some(&next) if next != holder => holder = next,
+                            _ => break,
+                        }
+                    }
+                    latest.insert(*v, holder);
                 }
                 // A call that delivers into a hidden return buffer (`c = mk(5)` lowers to
                 // `c = n_mk(5, __ref_1)`) is backed by that buffer: it is the store a build
