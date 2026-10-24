@@ -943,6 +943,8 @@ impl Stores {
         // `State::release_fnref_bufs` compares it against a per-call snapshot to tell a store
         // the callee MINTED from one that was already there (loft#1185).
         store.alloc_serial = serial;
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!("N {serial} {}", store.capacity_words()));
         // @PLN154 phase 3 — the slot's own number, stamped where the slot goes live so a
         // record relocation can name the store it happened in.
         store.store_nr = slot;
@@ -1949,6 +1951,8 @@ impl Stores {
         }
         store.free = true;
         crate::store_census::note(crate::store_census::Work::StoreFree, 1);
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!("F {}", store.alloc_serial));
         // LOFT_UAF: record the freed slot so the dispatch loop can scan, after
         // this op, for live variables that still read it (a premature free).
         if crate::keys::uaf_any_enabled() {

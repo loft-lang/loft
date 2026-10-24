@@ -473,6 +473,51 @@ every held access — injecting a push into a held loop aborts under `LOFT_VERIF
 runs the three modes; the strict build is `-pedantic -Werror` clean on every carried program.
 (4) waits for @PLN201's ledger.
 
+**The memory model is loft's, not the C's own (owner, 2026-10-24).**  The C runtime keeps the
+stores, the allocator, the keyed layouts and the on-disk image exactly as the interpreter and
+`--native` keep them — ported from `src/store.rs`, `src/hash.rs`, `src/btree.rs`,
+`src/radix_tree.rs`, `src/trie_db.rs` and the image code in `src/database/`, never re-derived.
+@PLN91 makes the C the floor that builds with a C compiler alone, so linking the Rust store is
+not the route.  This retires the bump allocator and `loft_keyed.h`'s own layouts: a persisted
+image IS the layout (`store_persist_copy` writes a store's raw words; the paged loaders and
+the browser read them), so a layout is observable.
+
+- **The invariant.**  For every program, the sequence of allocator events — a store made or
+  freed, and each claim (size → position), delete and resize in it — is the interpreter's,
+  store by store; so every store holds the same bytes at the same positions.  Store NUMBERS
+  are not part of it: stores are named by the order they were made, the interpreter's first
+  two (its value stack, made in `State::new`, and its constant store) left out.  The
+  interpreter is the reference because the C is written from the same operations it runs.
+  `--native` is NOT event-identical to the interpreter and need not be: its rewrites change
+  what is claimed (measured: a 20-element vector claimed whole up front where the
+  interpreter grows it by `resize`, a hash table placed at 55 where the interpreter places
+  it at 76).  What every backend shares is the allocator, the layouts and the image format.
+- **What carries it.**  The allocator's decisions read state outside the store's bytes too:
+  the claims bitset, the parked lists (`@FR-H-Park`), the lazy-free set and its sweep bound
+  (`@FR-H-LazyFree`), the wilderness (`@FR-H-Wilderness`), the scan index
+  (`@FR-H-ScanIndex`), the referenced/removed sets (`@FR-H-Removed`), and a store's CAPACITY,
+  which a reused slot keeps and the growth rule (×7/3) sets.  Each is ported with the
+  default of its switch; the switches themselves stay on the Rust side.
+- **How it breaks.**  (1) a ported routine that differs — caught in isolation by replaying one
+  seeded sequence of claims, deletes and resizes through `Store` and through the C, comparing
+  every position and the final bytes; (2) a free the C makes at another moment than the
+  interpreter, or not at all — the C frees nothing today; (3) a keyed collection that sizes,
+  hashes or rebalances differently; (4) store reuse and capacity.  (2)–(4) are caught by the
+  event trace below on every corpus program.
+- **The instrument.**  `LOFT_ALLOC_TRACE=<file>` writes the event sequence from `Store` and
+  `Stores` (interpreter and native) and from the C runtime; `scripts/c_sweep.py` compares the
+  C's trace with the interpreter's beside the output.  First measured between the interpreter
+  and `--native`, which shows where loft's own two backends already agree.
+- **Steps.**  (a) the trace on the Rust side, interpreter against native; (b) the allocator
+  ported, proved by the replay; (c) the C frees where the interpreter frees, until every
+  carried program's trace matches; (d) the keyed layouts ported (hash, index, sorted, then
+  spatial and trie); (e) the image — `store_persist_copy`, `store_load`, a file-backed store
+  over POSIX `mmap` (a whole-file read under `-DLOFT_NO_POSIX`), the paged loaders.  Its
+  acceptance (owner): a C program reads the store files the interpreter and a `--native`
+  program wrote — mapped, loaded and paged — and they read the C's; a cell per direction.
+  `store_memory()` and `store_reclaim` then answer as the interpreter's do, bar the
+  interpreter-only creation site, which reads 0 as on native.
+
 ## B6 — optional: a minimal binary
 
 **Later, not now (owner, 2026-10-23).**  A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
