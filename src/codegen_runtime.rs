@@ -5196,32 +5196,10 @@ where
     n as i64
 }
 
-/// Plan-06 ARC.md A5b — native runtime entry for `par_fold(items, init,
-/// fn fold, threads)`.  Closure-based bridge mirroring `n_parallel_queue_native`
-/// but accumulates per-thread instead of buffering one result per row.
-///
-/// V1: `items` is `vector<integer>` (8-byte rows), `init` and the
-/// worker's accumulator/row/return are all `i64`.  Worker closure
-/// signature is `Fn(&UnsafeCell<Stores>, acc, row) -> i64` — takes
-/// two primitive i64 args, distinct from the queue family's
-/// `Fn(cell, DbRef) -> i64` shape because fold's worker takes the row
-/// as a primitive value, not a reference.
-///
-/// Algorithm mirrors `parallel::run_parallel_fold` (interp side):
-///   1. Workers each accumulate over their slice via `worker(cell, acc, row_val)`.
-///   2. Main thread combines per-thread partials in worker-completion
-///      order using the same worker closure.
-///
-/// Shape decisions:
-/// - `threads.max(1)` matches the interp side; zero/negative collapse to 1.
-/// - Empty input short-circuits to `init` (no thread spawn).
-/// - Per-row read is a 1-line unaligned i64 load — V1 hardcodes
-///   8-byte stride.  Wider shapes (V2 heterogeneous types) belong in a
-///   future ARC step.
 /// `@FR-R-ParRows` — [`n_parallel_queue_native`] for a worker that can map its rows AT ONCE:
 /// each batch of contiguous rows goes to `fast`, which reads the elements straight from the
 /// vector (`base` is the batch's first element, `stride` bytes apart) and answers every row's
-/// value into `out` — `true` when it answered them all, `false` when a row would have REPORTED
+/// value into `out`: `true` when it answered them all, `false` when a row would have REPORTED
 /// (an overflow, a division by zero) on the exact path.  Such a batch is run again, whole,
 /// through `exact` — today's per-row worker — so whatever reports, reports exactly as before,
 /// and a clean batch runs in a loop the compiler can vectorise (bench/portal/analysis/par-rows.md).
@@ -5261,8 +5239,12 @@ where
                     let cell: &std::cell::UnsafeCell<Stores> =
                         unsafe { &*(&raw mut ws.stores as *const std::cell::UnsafeCell<Stores>) };
                     for (slot, row) in local.iter_mut().zip(start..end) {
-                        let elm =
-                            vector::get_vector(&input_t, stride as u32, row as i64, &ws.allocations);
+                        let elm = vector::get_vector(
+                            &input_t,
+                            stride as u32,
+                            row as i64,
+                            &ws.allocations,
+                        );
                         *slot = exact(cell, elm);
                     }
                 }
@@ -5276,6 +5258,28 @@ where
     n as i64
 }
 
+/// Plan-06 ARC.md A5b — native runtime entry for `par_fold(items, init,
+/// fn fold, threads)`.  Closure-based bridge mirroring `n_parallel_queue_native`
+/// but accumulates per-thread instead of buffering one result per row.
+///
+/// V1: `items` is `vector<integer>` (8-byte rows), `init` and the
+/// worker's accumulator/row/return are all `i64`.  Worker closure
+/// signature is `Fn(&UnsafeCell<Stores>, acc, row) -> i64` — takes
+/// two primitive i64 args, distinct from the queue family's
+/// `Fn(cell, DbRef) -> i64` shape because fold's worker takes the row
+/// as a primitive value, not a reference.
+///
+/// Algorithm mirrors `parallel::run_parallel_fold` (interp side):
+///   1. Workers each accumulate over their slice via `worker(cell, acc, row_val)`.
+///   2. Main thread combines per-thread partials in worker-completion
+///      order using the same worker closure.
+///
+/// Shape decisions:
+/// - `threads.max(1)` matches the interp side; zero/negative collapse to 1.
+/// - Empty input short-circuits to `init` (no thread spawn).
+/// - Per-row read is a 1-line unaligned i64 load — V1 hardcodes
+///   8-byte stride.  Wider shapes (V2 heterogeneous types) belong in a
+///   future ARC step.
 pub fn n_parallel_fold_native<F>(
     cell: &std::cell::UnsafeCell<Stores>,
     input: DbRef,
