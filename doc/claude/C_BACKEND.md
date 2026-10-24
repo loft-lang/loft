@@ -31,8 +31,9 @@ refusals by reason — that ranking is the work list.
 that grows `match` is measured by the sweep and by `--asan` before it is committed.  A program
 without `main` is its tests: the C runs every test the way `loft --tests` picks them, and the
 two exit statuses are compared.  `tests/c_emit.rs` is the cargo guard: a scalar program checked
-against hand-computed values on both the interpreter and the C, a refusal naming its
-construct, and the overflow macros against Rust's checked arithmetic in every mode.
+against hand-computed values on both the interpreter and the C, a keyed program (hash, sorted,
+index, a linked group) checked the same way, a refusal naming its construct, and the overflow
+macros against Rust's checked arithmetic in every mode.
 
 ## The parts
 
@@ -42,8 +43,10 @@ construct, and the overflow macros against Rust's checked arithmetic in every mo
 | `body.rs` | `FnWriter`: one function's body — statements, expressions, the copy rules, the operators |
 | `show.rs` | the `{v}` rendering of a record or vector: one `loft_show{tp}` per type |
 | `fnval.rs` | function values: the dispatcher of each signature, one arm per function used as a value |
+| `body/keyed.rs` | the keyed collections: filing a record, a lookup by key, a walk over a key range, a removal, a whole-collection write |
 | `loft_cc.h` | the macro layer — the ONLY place the C names a compiler — pasted first into every unit |
 | `loft_rt.h` | the C runtime, pasted after it |
+| `loft_keyed.h` | the keyed collections' runtime, pasted after `loft_rt.h` |
 
 ## The macro modes
 
@@ -97,6 +100,18 @@ writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`
 `LOFT_VERIFY` catches a held vector that changed.  `LOFT_NO_VECTOR_HOIST=1` holds none and
 `LOFT_NO_WRITE_HOIST=1` none in a loop that writes, as for the Rust writer.
 
+**Keyed collections.**  A hash, a sorted and an index keep the interpreter's ORDERS and
+answers, in layouts of the C runtime's own (`loft_keyed.h`): nothing observes a layout, because
+every walk over a keyed collection is in key order (`@FR-Col-Order`) and every lookup is by key.
+A hash is an open-addressed table of record numbers, its entries records of their own; an index
+and an `ordered` are a key-ordered array of record numbers; a sorted is a vector kept in key
+order, read by a vector's readers.  The key compare, the range search and the sorted insert are
+ports of `keys::compare`, `vector::sorted_search` and `vector::sorted_finish`.  A record type
+shared by several collections of one struct (`@FR-Col-Group`) turns its vector into an `array`
+and its sorted into an `ordered`; a record finished into one member enters every member, and a
+record a key collision displaces leaves every keyed member.  A walk over a hash walks a snapshot
+in key order; an entry a write displaces or removes while the walk runs drops out of it.
+
 **The evaluation-stack tail.**  `[value, frees…, return null]` returns the value: the scopes
 pass leaves it on the bytecode's stack for `OpReturn`.  The C captures it into a temporary, as
 the Rust writer does (`detect_ref_tail_capture`).
@@ -120,6 +135,7 @@ only by failing with one of its messages — the annotations are read by the sam
 
 ## Not carried yet
 
-The sweep's ranking is the current list.  The large families: closures and function values,
-the keyed collections (hash, sorted, index), iterators and coroutines, tuples holding text, file
-and system I/O, parallel blocks, and the native library calls.
+The sweep's ranking is the current list.  The large families: file and system I/O, iterators and
+coroutines, `&` locals, the spatial and trie collections, parallel blocks, and the native library
+calls.  A record holding a linked group is not copied yet: its members name one record set,
+which a field-by-field copy would split.

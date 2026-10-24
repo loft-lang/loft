@@ -39,6 +39,14 @@ impl Cx<'_> {
                 .filter(|(v, _)| *v != u16::MAX)
                 .try_for_each(|(v, _)| self.eq_type(*v)),
             Parts::Vector(elem) | Parts::ChildRec(elem) => self.eq_type(*elem),
+            Parts::Sorted(elem, _)
+            | Parts::Hash(elem, _)
+            | Parts::Index(elem, _)
+            | Parts::Ordered(elem, _)
+            | Parts::Array(elem) => {
+                self.keys_of(tp);
+                self.eq_type(*elem)
+            }
             Parts::Byte(..)
             | Parts::Short(..)
             | Parts::ShortRaw(..)
@@ -114,7 +122,19 @@ impl Cx<'_> {
                     }
                     out.push_str("    default:\n        return 1;\n    }\n");
                 }
-                Parts::Vector(elem) => {
+                Parts::Hash(elem, _)
+                | Parts::Index(elem, _)
+                | Parts::Ordered(elem, _)
+                | Parts::Array(elem) => {
+                    let (keys, n) = self.keys_of(tp);
+                    let _ = writeln!(
+                        out,
+                        "    return loft_eq_keyed(a, b, {}, {keys}, {n}, {});",
+                        i32::from(matches!(t.parts, Parts::Hash(..))),
+                        Self::eq_fn(*elem)
+                    );
+                }
+                Parts::Vector(elem) | Parts::Sorted(elem, _) => {
                     let _ = writeln!(
                         out,
                         "    return loft_eq_vector(a, b, {}, {});",

@@ -549,8 +549,10 @@ LOFT_HOT_INLINE loft_store_t *loft_store_of(loft_ref r) {
 static uint32_t loft_store_new(void) {
     uint32_t nr = 0;
     while (nr < loft_nstores && loft_stores[nr].live) nr++;
+    if (nr >= 0xFFFF) { fputs("loft: store table exhausted: 65535 stores live at once\n", stderr); abort(); }
     if (nr == loft_nstores) {
         uint32_t n = loft_nstores ? loft_nstores * 2 : 16;
+        if (n > 0xFFFF) n = 0xFFFF;
         loft_store_t *s = (loft_store_t *) realloc(loft_stores, n * sizeof *s);
         if (!s) { fputs("loft: out of memory\n", stderr); abort(); }
         memset(s + loft_nstores, 0, (n - loft_nstores) * sizeof *s);
@@ -1100,6 +1102,8 @@ static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
 #define LOFT_T_VECTOR 3
 #define LOFT_T_ENUM 4
 #define LOFT_T_CHILD 5
+#define LOFT_T_HASH 6
+#define LOFT_T_INDEX 7
 
 typedef struct { uint16_t pos; uint16_t type; } loft_fld;
 typedef struct {
@@ -1160,6 +1164,33 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
     case LOFT_T_ENUM: {
         int e = (int) *loft_at(fs, from.rec, from.pos) - 1;
         if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_copy_claims(T, d->variants[e], from, to);
+        return;
+    }
+    case LOFT_T_HASH:
+    case LOFT_T_INDEX: {
+        /* The table (or the key-ordered array) is copied as it is — the same keys hash to the
+         * same slots — and each entry it names is copied into a record of the destination's. */
+        uint32_t cur = loft_u32(fs, from.rec, from.pos);
+        if (cur == 0 || cur == 0xFFFFFFFFu) { loft_set_u32(loft_store_of(to), to.rec, to.pos, cur); return; }
+        int32_t claimed;
+        memcpy(&claimed, loft_at(fs, cur, 0), 4);
+        uint32_t into = loft_claim(loft_store_of(to), (uint32_t) claimed);
+        memmove(loft_at(loft_store_of(to), into, 4), loft_at(fs, cur, 4), (size_t) claimed * 8 - 4);
+        loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
+        int hash = d->kind == LOFT_T_HASH;
+        uint32_t first = hash ? 16 : 8;
+        uint32_t count = loft_u32(loft_store_of(to), into, hash ? 8 : 4);
+        uint32_t size = T[d->elem].size;
+        for (uint32_t i = 0; i < count; i++) {
+            uint32_t r = loft_u32(loft_store_of(to), into, first + i * 4);
+            if (r == 0 || r == 0xFFFFFFFFu) continue;
+            uint32_t nr = loft_claim(loft_store_of(to), 1 + (size + 7) / 8);
+            loft_ref a = { from.store_nr, r, 8 };
+            loft_ref b = { to.store_nr, nr, 8 };
+            loft_copy_bytes(b, 0, a, 0, size);
+            loft_copy_claims(T, d->elem, a, b);
+            loft_set_u32(loft_store_of(to), into, first + i * 4, nr);
+        }
         return;
     }
     case LOFT_T_CHILD: {
@@ -1285,6 +1316,8 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
     case LOFT_T_TEXT:
     case LOFT_T_VECTOR:
     case LOFT_T_CHILD:
+    case LOFT_T_HASH:
+    case LOFT_T_INDEX:
         loft_set_u32(loft_store_of(r), r.rec, r.pos, 0);
         return;
     case LOFT_T_STRUCT:
