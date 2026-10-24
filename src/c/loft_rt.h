@@ -1496,28 +1496,122 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
 
 /* OpClear (Stores::remove_claims): the record releases what it owns — every text, vector and
  * child record slot it holds, through its struct fields and enum variant, reads empty after. */
+/* Stores::remove_claims (`remove_claims_mode`, `remove_struct_claims` and the owned walk): every
+ * claim the value of type `tp` at `r` owns is deleted, children before the record that holds
+ * them, and each collection field is left empty — the order the interpreter deletes in, which
+ * decides where later claims land.  The hash and index tables are the C's own until their
+ * layouts are ported: their field is emptied and their records kept. */
 static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     const loft_tdesc *d = &T[tp];
+    loft_store_t *s = loft_store_of(r);
+    if (d->kind == LOFT_T_TEXT) {
+        uint32_t cur = loft_u32(s, r.rec, r.pos);
+        if (cur != 0) {
+            loft_st_delete(s, cur);
+            loft_set_u32(s, r.rec, r.pos, 0);
+        }
+        return;
+    }
+    if (d->kind == LOFT_T_VECTOR || d->kind == LOFT_T_CHILD || d->kind == LOFT_T_HASH || d->kind == LOFT_T_INDEX) {
+        /* An absent collection slot owns nothing and reads as empty afterwards. */
+        if (loft_u32(s, r.rec, r.pos) == 0xFFFFFFFFu) { loft_set_u32(s, r.rec, r.pos, 0); return; }
+    }
+    if (!d->owns_heap) return;
     switch (d->kind) {
-    case LOFT_T_TEXT:
-    case LOFT_T_VECTOR:
-    case LOFT_T_CHILD:
-    case LOFT_T_HASH:
-    case LOFT_T_INDEX:
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++) {
+            if (!T[d->fields[i].type].owns_heap) continue;
+            loft_remove_claims(T, d->fields[i].type, loft_field(r, d->fields[i].pos));
+        }
+        return;
+    case LOFT_T_VECTOR: {
+        uint32_t cur = loft_u32(s, r.rec, r.pos);
+        if (cur != 0) {
+            uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
+            if (T[d->elem].owns_heap) {
+                for (uint32_t i = 0; i < len; i++) {
+                    loft_ref e = { r.store_nr, cur, 8 + i * size };
+                    loft_remove_claims(T, d->elem, e);
+                }
+            }
+            loft_st_delete(loft_store_of(r), cur);
+        }
         loft_set_u32(loft_store_of(r), r.rec, r.pos, 0);
         return;
-    case LOFT_T_STRUCT:
-        for (uint16_t i = 0; i < d->n; i++) loft_remove_claims(T, d->fields[i].type, loft_field(r, d->fields[i].pos));
+    }
+    case LOFT_T_CHILD: {
+        uint32_t cur = loft_u32(s, r.rec, r.pos);
+        if (cur != 0) {
+            loft_ref c = { r.store_nr, cur, 8 };
+            loft_remove_claims(T, d->elem, c);
+            loft_st_delete(loft_store_of(r), cur);
+        }
+        loft_set_u32(loft_store_of(r), r.rec, r.pos, 0);
         return;
+    }
     case LOFT_T_ENUM: {
-        int e = (int) *loft_at(loft_store_of(r), r.rec, r.pos) - 1;
+        int e = (int) *loft_at(s, r.rec, r.pos) - 1;
         if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_remove_claims(T, d->variants[e], r);
         return;
     }
+    case LOFT_T_HASH:
+    case LOFT_T_INDEX:
+        loft_set_u32(s, r.rec, r.pos, 0);
+        return;
     default:
         return;
     }
+}
+
+/* vector::reached_capacity: the elements `v`'s claim holds room for, 0 when it has none. */
+static uint32_t loft_vec_reached(loft_ref v, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return 0;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return 0;
+    int32_t words = loft_st_i32(s, r, 0);
+    return words <= 0 ? 0 : (uint32_t) (((uint64_t) words * 8 - 8) / size);
+}
+
+/* OpClearVector (Stores::clear_vector_release): `v` emptied, releasing what its elements own.
+ * A vector that is the whole content of its store's root record (a one-field root type) whose
+ * elements own heap resets the store instead — made again with the root alone, the vector
+ * pre-sized to the room it had reached — rather than walking every element. */
+static void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, loft_ref v) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+    loft_store_t *s = loft_store_of(v);
+    if (v.rec == 1) {
+        uint16_t kt = s->known;
+        int one_field = kt < loft_ntypes && T[kt].kind == LOFT_T_STRUCT && T[kt].n == 1;
+        uint16_t vec_tp = 0xFFFF;
+        if (one_field) vec_tp = T[kt].fields[0].type;
+        else if (kt < loft_ntypes && T[kt].kind == LOFT_T_STRUCT) {
+            for (uint16_t i = 0; i < T[kt].n; i++)
+                if (T[kt].fields[i].pos + 8u == v.pos) { vec_tp = T[kt].fields[i].type; break; }
+        }
+        uint16_t elem = vec_tp < loft_ntypes && T[vec_tp].kind == LOFT_T_VECTOR ? T[vec_tp].elem : 0xFFFF;
+        if (elem != 0xFFFF && T[elem].owns_heap) {
+            uint32_t size = T[elem].size;
+            if (one_field) {
+                uint32_t reached = loft_vec_reached(v, size);
+                loft_st_init(s);
+                uint32_t root = loft_claim(s, 1 + (T[kt].size + 7u) / 8);
+                loft_set_u32(s, root, 4, kt);
+                loft_vec_prealloc(v, reached, size);
+                return;
+            }
+            uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+            if (r != 0) {
+                uint32_t len = loft_u32(s, r, 4);
+                for (uint32_t i = 0; i < len; i++) {
+                    loft_ref e = { v.store_nr, r, 8 + i * size };
+                    loft_remove_claims(T, elem, e);
+                }
+            }
+        }
+    }
+    loft_vec_clear(v);
 }
 
 /* OpAppendVector (Stores::vector_add): every element of `o` appended to `v`, deep-copied so the

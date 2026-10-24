@@ -976,6 +976,7 @@ impl<'a> FnWriter<'a> {
         let data = self.cx.data;
         let known = data.owned_vector_type(elm, data.def(self.d).source());
         let size = self.cx.stores.enum_parent_size(known);
+        self.cx.describe_type(known);
         let name = self.var(var);
         self.line(ind, &format!("{name} = loft_ref_null();"));
         self.line(
@@ -2051,6 +2052,7 @@ impl<'a> FnWriter<'a> {
                 let tp = Self::literal(tp, "type")?;
                 let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
                 let size = self.cx.stores.enum_parent_size(tp);
+                self.cx.describe_type(tp);
                 let var = self.var(*v);
                 if self.cx.stores.is_vector_wrapper(tp) {
                     return Ok(E::new(
@@ -2505,8 +2507,15 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
             }
             ("OpClearVector", [v]) => {
+                self.cx.name_types();
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_vec_clear({})", as_ref(v)?), K::Void))
+                Ok(E::new(
+                    format!(
+                        "loft_vec_clear_release(loft_types, loft_ntypes, {})",
+                        as_ref(v)?
+                    ),
+                    K::Void,
+                ))
             }
             ("OpLengthVector", [v]) => {
                 let v = self.expr(v, ind)?;

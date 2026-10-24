@@ -111,6 +111,13 @@ pub(crate) struct Cx<'a> {
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
     /// Every type the unit's deep copies walk, by type number (`loft_types`).
     copy_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// Types the runtime reads the shape of — a store's root type, which `OpClearVector` asks
+    /// (`Stores::clear_vector_release`) — and every type they reach: rows of the type table,
+    /// never a promise that a copy of them is carried (that is `copy_types`' question).
+    described: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The program names `loft_types` where no type may be registered (`OpClearVector`): an
+    /// empty table is then still written, and only then — an unused one fails `-Werror`.
+    names_types: std::cell::Cell<bool>,
     /// Every plain enum type whose value names the unit spells, by type number.
     enum_names: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// A copy of the stores the default walk runs in, made on first use.
@@ -158,6 +165,8 @@ impl<'a> Cx<'a> {
             stores,
             tuples: std::cell::RefCell::new(Vec::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            described: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            names_types: std::cell::Cell::new(false),
             enum_names: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             scratch: std::cell::RefCell::new(None),
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
@@ -363,6 +372,44 @@ impl<'a> Cx<'a> {
         r
     }
 
+    /// The emitted code names the type table whether or not any type is registered.
+    pub(crate) fn name_types(&self) {
+        self.names_types.set(true);
+    }
+
+    /// Put type `tp`, and every type it reaches, in the type table as a description.
+    pub(crate) fn describe_type(&self, tp: u16) {
+        use crate::database::Parts;
+        let Some(t) = self.stores.types.get(tp as usize) else {
+            return;
+        };
+        if !self.described.borrow_mut().insert(tp) {
+            return;
+        }
+        match &t.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                for f in fields {
+                    self.describe_type(f.content);
+                }
+            }
+            Parts::Vector(c)
+            | Parts::ChildRec(c)
+            | Parts::Sorted(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Array(c) => self.describe_type(*c),
+            Parts::Enum(values) => {
+                for (v, _) in values {
+                    if *v != u16::MAX {
+                        self.describe_type(*v);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// May a value of type `tp` move to another store whole (@FR-H-SwapIn)?  Not when its tree
     /// holds a stored reference, which could name the store it moves from
     /// (`Stores::tree_holds_no_stored_refs`).
@@ -401,13 +448,22 @@ impl<'a> Cx<'a> {
     /// The copy table: one `loft_tdesc` per registered type, at its type number.
     fn copy_table(&self) -> String {
         use crate::database::Parts;
-        let types = self.copy_types.borrow();
+        let types: std::collections::BTreeSet<u16> = self
+            .copy_types
+            .borrow()
+            .union(&self.described.borrow())
+            .copied()
+            .collect();
         if types.is_empty() {
-            return String::new();
+            return if self.names_types.get() {
+                "static const loft_tdesc *const loft_types = 0;\nstatic const uint32_t loft_ntypes = 0;\n".to_string()
+            } else {
+                String::new()
+            };
         }
         let mut out = String::new();
         let mut rows = Vec::new();
-        for &tp in types.iter() {
+        for &tp in &types {
             let t = &self.stores.types[tp as usize];
             let size = self.stores.size(tp);
             let row = match &t.parts {
@@ -469,6 +525,11 @@ impl<'a> Cx<'a> {
             "static const loft_tdesc loft_types[{}] = {{\n{}\n}};",
             u32::from(max) + 1,
             rows.join("\n")
+        );
+        let _ = writeln!(
+            out,
+            "static const uint32_t loft_ntypes = {};",
+            u32::from(max) + 1
         );
         out
     }
