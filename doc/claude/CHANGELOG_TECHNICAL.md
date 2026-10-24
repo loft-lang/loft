@@ -10,6 +10,34 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-FaultFlag)`: a `for` statement runs a fast copy under a fault flag
+
+A `for` statement whose only effect is on its scalar locals (`generation/fault_flag.rs`): its
+nodes are literals, locals, blocks, branches and loops that stay inside it, operators whose
+templates touch nothing once their recoverable raise is taken out, store READS by name (36
+getters and lengths), and calls to loft functions whose bodies pass the same walk with no
+raise.  It runs a FAST copy first.  A `??` / `?` discharge sets a flag where its local is null,
+and a template's `s.raise_recoverable` sets the flag instead of raising.  A set flag restores
+the locals declared before the statement and runs it as written.  A constant range of 1–64
+rounds is unrolled in the fast copy, each round setting the loop variable and `#index`.  The
+copy is skipped under `--dev-soft-halt` and after a site's eighth rerun.  Integer operators
+keep their checked form: a per-operator flag measured slower than their predicted null branches
+(`02_sum_loop` 1.81× → 2.24×).  @C120 records the rule as an admissible successor (the no-fault
+fact established after a speculative run whose effects are restored).  `06_newton_sqrt` 1.67× →
+1.14× of Rust; the bench admits 247 statements.  Switches `LOFT_NO_FAULT_FLAG`,
+`LOFT_TRACE_FAULT_FLAG`.  Guard
+`loft-suite/rules/rewrites/R-FaultFlag/a-for-statement-run-under-a-fault-flag-answers-as-written.loft`.
+The `next_counter` and `literal_walk` pins run with the rule off: they count one copy's
+emission.
+
+### The ship lane: each routine's speed as a game's release build would ship it
+
+`bench/stats.py --lanes native,rust,ship` builds every program once more, its libraries' loft
+code included, under `LOFT_RELEASE_PASS_PROBE=1`, and reports `ship_ratio` beside each row's
+checked ratio.  A ship hash that differs is marked on the row and carries no ratio.  The portal
+renders a ship column when a run measured it (`make perf-portal ARGS="--lanes native,rust,ship"`).
+@PLN201 is the build this measures: the ledger and the ship build are designed, not built.
+
 ### Store memory is not filled; the bound-store family is removed (@C153)
 
 `Store::new` allocates without zeroing and growth zeroes nothing.  A store whose raw bytes

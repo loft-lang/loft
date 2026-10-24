@@ -58,11 +58,10 @@ fact (`@FR-R-Range` over a local whose every write is bounded) makes every opera
 ## Design: `(R-FaultFlag)`, mechanisms 1 and 3
 
 **Built** (`generation/fault_flag.rs`): `06_newton_sqrt` 1.67× → 1.14× of Rust (priced 1.12×),
-hash unchanged.  Across the bench it admits 5 statements.  The declines, ranked: 462 name a
-call (196 of them `OpLengthCharacter`, a text walk; the rest user and stdlib functions) and 230
-a store READ (`OpGetVectorNullable`, `OpGetText`, `OpLengthVector`, `OpGetInt`, …).  A read has
-no effect a rerun can observe, and a call to a function whose own body passes the walk has
-none either, so those two clauses are the next reach.
+hash unchanged.  The first build admitted 5 statements across the bench; the declines ranked
+462 calls and 230 store READS first.  A read has no effect a rerun can observe, and a call to a
+function whose own body passes the walk without a raise has none either.  With those two
+clauses built, the bench admits 247 statements.
 
 **Unit.** A `for` statement (the IR's `For block`: the counter seed, the range end, the loop).
 Taking the whole statement, not the bare loop, lets the rerun restart from the seed and lets

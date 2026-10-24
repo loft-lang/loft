@@ -1094,3 +1094,34 @@ allocation overhead.
 
 
 ---
+
+## Parity record
+
+Moved from NATIVE.md § Current State; the record as of 2026-03-23.
+
+**Updated 2026-03-23 — Full native test parity achieved.**
+
+`src/generation/` translates the loft IR tree into Rust source files.  The original 6
+root-cause error categories (totalling ~1500 errors) are resolved by the completed N-steps.
+The `codegen_runtime.rs` module is in place; templates are corrected; stdlib inclusion works.
+`src/fill.rs` is now auto-generated: `create.rs::generate_code()` runs `rustfmt` after
+writing and the `n9_generated_fill_matches_src` test enforces byte-exact match.
+
+**Test parity (2026-03-23):**
+- All 24 `tests/docs/*.loft` files compile and run natively (0 failures).
+- All 35 non-error `tests/scripts/*.loft` files compile and run natively (0 failures).
+- `loft --tests --native tests/scripts` passes 305 tests across 39 files — identical
+  to the interpreter.
+- CI (`make ci`) now fails on any native compile or runtime failure.
+
+**Key fixes in 0d15114 (2026-03-23):**
+- **Issue #77 (fn-ref dispatch):** Conditional fn-refs like `if flag { fn a } else { fn b }`
+  now generate correct match-dispatch arms.  Root cause: `collect_fn_ref_literals` only
+  extracted `Int(n)` from direct `Set(var, Int(n))`, missing `Int` inside `If`/`Block`.
+  Fix: recursive `collect_int_fn_refs` helper.
+- **Issue #80 (LIFO store-free):** Recursive functions caused use-after-free because native
+  codegen allocates stores at call time (not pre-allocated like the interpreter).
+  Fix: `allocation.rs::free_named` now allows non-LIFO frees by cascading `max` downward;
+  `generation/` resets `store_nr` to `u16::MAX` after `OpFreeRef`.
+- **Pre-eval extension:** `needs_pre_eval` now covers `Value::Insert` and `Value::Iter`;
+  `collect_pre_evals_inner` handles `Value::Return`.

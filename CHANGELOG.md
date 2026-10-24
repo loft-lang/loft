@@ -144,6 +144,14 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A loop that discharges a null or divides runs faster.**  This is visible only as speed,
+under `--native`.  A `for` loop that changes nothing but its own numbers and booleans first
+runs without testing each `?`, `??` or division as it goes.  It notes once whether any of them
+would have answered differently, and in that case runs again exactly as written.  A loop over a
+fixed count of up to 64 rounds is written out round by round in that first run.  A Newton
+square root in a 50-round loop runs in 1.14 times the time of the same code written in Rust,
+where it took 1.67 times.  `LOFT_NO_FAULT_FLAG=1` turns it off.
+
 **The Linux download can load libraries with native code.**  The Linux release is now
 `x86_64-unknown-linux-gnu` instead of the static `x86_64-unknown-linux-musl`, which could not
 load any shared library, so a package such as `graphics` failed with the downloaded loft and
