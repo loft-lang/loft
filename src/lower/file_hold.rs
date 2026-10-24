@@ -15,7 +15,7 @@
 //! structure or collection with a `File` in it, a function value (which may have captured
 //! one) — and a call reaches only what its arguments reach.  So the loop is admitted when
 //! `f` is the ONE variable in it whose type can hold a `File`, and every mention of `f` is
-//! the file operand of a read [`super::ops::file_ops`] types as a fixed-width integer.
+//! the file operand of a read `generation::ops::file_ops` types as a fixed-width integer.
 
 use crate::data::{Block, Data, Type, Value};
 use std::collections::HashMap;
@@ -84,7 +84,7 @@ fn record_holds_file(data: &Data, file: u32, d: u32, seen: &mut HashMap<u32, boo
 /// `typed` answers whether one `OpReadFile` call is a fixed-width integer read the emitter
 /// will route through the guard; the emitter asks the same function, so a read this gate
 /// counted is a read the guard serves.
-pub(super) fn held_file(
+pub(crate) fn held_file(
     body: &Block,
     data: &Data,
     def_nr: u32,

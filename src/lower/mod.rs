@@ -12,6 +12,7 @@ pub mod apart_value;
 pub mod decode_structure;
 pub mod decode_structure_scan;
 pub mod decode_view;
+pub mod file_hold;
 pub mod hand_over;
 pub mod keyed_entry;
 pub mod keyed_place;
