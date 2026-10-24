@@ -542,6 +542,9 @@ fn seed_elems(
     rv: &mut Ranges,
 ) {
     let mut sets: HashMap<u16, Vec<&Value>> = HashMap::new();
+    // The type is read through `base()` (`@FR-N-Shape`): a tuple cannot be nullable — the
+    // language refuses `(…)?` — so no `Optional` reaches here, and none is mistaken for a
+    // non-tuple if one ever does.
     code.walk(&mut |n| {
         if let Value::Set(t, e) = n.unspan()
             && matches!(vars.tp(*t).base(), crate::data::Type::Tuple(_))
