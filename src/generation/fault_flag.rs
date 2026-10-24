@@ -161,7 +161,8 @@ impl Walk<'_> {
             Value::If(t, a, b) => {
                 if !self.callee && is_discharge(self.data, t, a) {
                     self.fault_forms += 1;
-                    self.discharge_targets.extend(self.set_stack.iter().copied());
+                    self.discharge_targets
+                        .extend(self.set_stack.iter().copied());
                 }
                 self.node(t, depth)?;
                 self.node(a, depth)?;
@@ -381,7 +382,11 @@ impl Output<'_> {
         // (x / guess)?) / 2`).  A discharge that only feeds a condition was a select off that
         // path, and a raise is a predicted branch: duplicating the statement for them costs
         // the function its inlining and buys nothing (`count_ink`, `if v ?? 0 == ink`, +42 %).
-        if !walk.discharge_targets.iter().any(|t| walk.reads.contains(t)) {
+        if !walk
+            .discharge_targets
+            .iter()
+            .any(|t| walk.reads.contains(t))
+        {
             return decline("no discharge feeds a local the statement reads back");
         }
         let variables = data.def(self.def_nr).variables();
