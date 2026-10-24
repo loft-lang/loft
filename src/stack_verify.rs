@@ -32,17 +32,31 @@
 //! defects.
 //!
 //! Off by default and off in every release path: when the shadow is not armed the whole
-//! mechanism is one length load and a not-taken branch per store write.
+//! mechanism is one length load and a not-taken branch per store write, and a runtime built
+//! without the `stack-verify` feature (the installed one) carries not even that.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
-/// Is the shadow armed?  `LOFT_VERIFY_STACK=1`.
+/// Is the shadow armed?  `LOFT_VERIFY_STACK=1`, on a runtime built with the `stack-verify`
+/// feature.  Without it (an installed runtime) the write hooks are compiled out, so the
+/// switch is refused once, out loud, rather than letting a silent run read as a clean one.
 #[must_use]
 pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("LOFT_VERIFY_STACK").is_ok_and(|v| v != "0"))
+    *ON.get_or_init(|| {
+        let asked = std::env::var("LOFT_VERIFY_STACK").is_ok_and(|v| v != "0");
+        if asked && !cfg!(feature = "stack-verify") {
+            crate::loft_eprintln!(
+                "[verify-stack] this runtime was built without the stack shadow (the \
+                 `stack-verify` feature): LOFT_VERIFY_STACK is ignored — run it from a \
+                 development build"
+            );
+            return false;
+        }
+        asked
+    })
 }
 
 /// `LOFT_VERIFY_STACK_INJECT=1` — the positive control.
