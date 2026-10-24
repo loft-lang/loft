@@ -238,8 +238,16 @@ pub(super) fn reuse_record_buffers(
         // `@FR-H-ClearRelease`, the record clause — a reused buffer is REFILLED: the
         // callee's literal overwrites every handle it writes, so what the previous call left
         // in the record is released before each call after the first.
+        // `@FR-R-Reuse`'s reset clause — the buffer's store is its own and holds nothing but
+        // the previous result, so the release resets the store to a fresh root
+        // (`POOL_RESET`) instead of walking the tree.
+        let release_tp = if crate::keys::pool_reset_enabled() {
+            i32::from(known | crate::keys::POOL_RESET)
+        } else {
+            i32::from(known)
+        };
         let release = releases_what_it_held(data, function.tp(av))
-            .then(|| Value::Call(clear_nr, vec![Value::Var(av), Value::Int(i32::from(known))]));
+            .then(|| Value::Call(clear_nr, vec![Value::Var(av), Value::Int(release_tp)]));
         if !ungated && crate::keys::lazy_buffer_enabled() {
             // `@FR-O-LazyBuffer` — once per activation still, but only on a path that
             // reaches the call: the null test lets a later pass through a loop reuse it,

@@ -809,7 +809,11 @@ fn placed_pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
         return None;
     }
     match call_named(release, data, "OpClear")? {
-        [arg, Value::Int(clear_tp)] if is_var(arg, buf) && i32::from(tp) == *clear_tp => {
+        // `@FR-R-Reuse`'s reset clause sets `POOL_RESET` on the release's type.
+        [arg, Value::Int(clear_tp)]
+            if is_var(arg, buf)
+                && i32::from(tp) == *clear_tp & i32::from(crate::keys::POOL_TP_MASK) =>
+        {
             Some((buf, tp))
         }
         _ => None,
@@ -8653,7 +8657,11 @@ fn pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
         _ => return None,
     };
     match call_named(release, data, "OpClear")? {
-        [arg, Value::Int(clear_tp)] if is_var(arg, buf) && i32::from(tp) == *clear_tp => {
+        // `@FR-R-Reuse`'s reset clause sets `POOL_RESET` on the release's type.
+        [arg, Value::Int(clear_tp)]
+            if is_var(arg, buf)
+                && i32::from(tp) == *clear_tp & i32::from(crate::keys::POOL_TP_MASK) =>
+        {
             Some((buf, tp))
         }
         _ => None,

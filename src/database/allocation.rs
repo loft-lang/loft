@@ -4798,6 +4798,15 @@ impl Stores {
     }
 
     pub fn remove_claims(&mut self, rec: &DbRef, tp: u16) {
+        // `@FR-R-Reuse`'s reset clause — a pool's release resets the buffer's store to a
+        // fresh root when it can, and walks the tree below when it cannot.
+        if tp & crate::keys::POOL_RESET != 0 {
+            let tp = tp & crate::keys::POOL_TP_MASK;
+            if self.reset_pool_root(rec, tp) {
+                return;
+            }
+            return self.remove_claims(rec, tp);
+        }
         // A reused buffer is released before every refill, and most hold no heap by then
         // (a moved-out value is zeroed): answered from the type's heap slots, without the
         // walk's descent (`holds_no_heap_fast`).  A null or misplaced record, or any slot the
@@ -4821,6 +4830,55 @@ impl Stores {
             return;
         }
         self.remove_claims_mode(rec, tp, false);
+    }
+
+    /// `@FR-R-Reuse`'s reset clause — the release of a pooled call buffer `rec` of type `tp`
+    /// as `OpDatabase` re-mints a reused store: the store is re-initialised and its root
+    /// record claimed, zeroed, tagged and prefilled anew at `1@8`, and the records a stored
+    /// reference named are entombed so such a reference reads null.  The walk
+    /// ([`Self::remove_claims`]) frees the same tree block by block and leaves the root;
+    /// this leaves the same root and every block free at once.  What makes the store's
+    /// whole content the previous result is the pool's own condition: the buffer is minted
+    /// per activation in a store of its own and named by nothing but its pool statement, its
+    /// one call and its releases (`scopes::reuse_record_buffers`).
+    ///
+    /// Declined — the caller walks — when `rec` is not the store's root (`1@8`), the slot is
+    /// out of range, free, pinned, locked or bound to a file, a view serves foreign bytes,
+    /// a generator frame holds the store (its frame reads the value), or the switch is off.
+    pub fn reset_pool_root(&mut self, rec: &DbRef, tp: u16) -> bool {
+        if !crate::keys::pool_reset_enabled()
+            || rec.store_nr == u16::MAX
+            || rec.rec != 1
+            || rec.pos != 8
+            || (rec.store_nr as usize) >= self.allocations.len()
+            || self.is_frame_held(rec.store_nr)
+        {
+            return false;
+        }
+        {
+            let s = &self.allocations[rec.store_nr as usize];
+            if s.free || s.pinned || s.read_only || s.is_file_backed() || s.is_foreign() {
+                return false;
+            }
+        }
+        let size = self.enum_parent_size(tp);
+        let kept = self.clear(rec);
+        let r = self.claim(rec, 1 + u32::from(size).div_ceil(8));
+        let store = &mut self.allocations[r.store_nr as usize];
+        store.entomb_kept(&kept);
+        store.set_known_type(tp);
+        store.zero_fill(r.rec);
+        store.set_u32_raw(r.rec, 4, u32::from(tp));
+        debug_assert_eq!(r.rec, 1, "a reset store claims its root at record 1");
+        self.set_default_value(
+            tp,
+            &DbRef {
+                store_nr: r.store_nr,
+                rec: 1,
+                pos: 8,
+            },
+        );
+        true
     }
 
     /// Release a SECONDARY VIEW of a linked collection group: drop this route to

@@ -702,6 +702,12 @@ entry too, and checks a removal's recognised slot against the entry's own index.
 
 ## Runtime: store claims, clears and prefill
 
+**`LOFT_NO_POOL_RESET=1`** (`@FR-R-Reuse`'s reset clause, default-ON, both backends) makes a
+reused call buffer's release walk its tree again — with it off, the pool's release before every
+call after the first resets the buffer's store to a fresh root (`Stores::reset_pool_root`), the
+way `OpDatabase` re-mints a reused store.  The first bisect step for a value lost, or a store
+read stale, after a reused call buffer's release.
+
 **A claim writes nothing** (`@FR-H-Claim`, `@C137`): a claimed payload, and the tail an
 in-place grow exposes, hold whatever the block held last; every value is written by the code
 that builds it.  **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill` / `poison_range`) fills both

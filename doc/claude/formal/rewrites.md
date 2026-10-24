@@ -3494,6 +3494,33 @@ cells `loft-suite/attic/scripts/a-reduction-loop-is-one-kernel-call.loft`.
                  (H-ClearRelease, its record clause).
 ```
 
+```
+  (R-Reuse), the reset clause: a reused buffer's release — the pool statement's
+                 `OpClear(b, tp)` before every call after the first, for a type that
+                 owns heap — RESETS b's store instead of walking its tree: the store is
+                 re-initialised and its root claimed, zeroed, tagged and prefilled at
+                 1@8 as `OpDatabase` mints it, and the records a stored reference named
+                 are entombed, so such a reference reads null.  The walk frees exactly
+                 the tree reachable from the root and keeps the root; the reset keeps
+                 the same root and frees the store's every other block at once, which
+                 is the same set because the pool's own conditions make the store the
+                 previous result's alone: minted per activation, in a store of its own,
+                 named by nothing but its pool statement, its one call and its
+                 releases.  Spelled as the release with `POOL_RESET` on its type, so
+                 every pass that reads an `OpClear` reads it as before; declined at run
+                 time (the walk runs) for a record that is not its store's root, a
+                 store pinned, locked, file-backed, serving a foreign view, or held by a
+                 generator frame.
+```
+
+**In words.**  The walk paid one free per block and the next call one claim per block,
+every call, for a store that held nothing else: `panel_build`'s per-frame panel tree is
+−18.8 % reset rather than walked (hand-priced, hash unchanged).  A record that owns no
+heap keeps the walk's own fast path, which a reset would not beat.  Both backends run it:
+the bit is set on the IR (`scopes::reuse_record_buffers`) and acted on in
+`Stores::reset_pool_root`, reached from `remove_claims`.  Switch
+`LOFT_NO_POOL_RESET=1`.
+
 **In words.** @PLN157 § V and § V-af.  `scopes::reuse_record_buffers` inserts the
 `OpDatabase` and `scopes`'s pairing supplies the witness (`Scopes::minted_pairs` names the
 adopt-at-bind pairings it skips — @PLN164 B1's matrix measured the use-after-free that
