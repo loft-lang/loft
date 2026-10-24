@@ -23,7 +23,7 @@ interleaved samples; both lanes printed the same result hash or the row would no
 | host | arch | measured | commit | routines | median | within 2× | over 3× | over 4.5× | over 5× | at or under 1× |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|
 | firewall02.lan.betterbe.com | arm64-darwin | 2026-10-19 | `6dc9c64a6` | 205 | **1.84×** | 110 | 33 | 5 | 2 | 19 |
-| laptop | x86_64-linux | 2026-10-16 | `7d30105c8` | 205 | **1.99×** | 106 | 49 | 9 | 5 | 14 |
+| laptop | x86_64-linux | 2026-10-20 | `920d6d7f7` | 205 | **1.77×** | 126 | 34 | 0 | 0 | 22 |
 | lima-default | aarch64-linux | 2026-09-30 | `1c010450` | 205 | **2.78×** | 65 | 95 | 62 | 59 | 6 |
 
 The rows over 5× are the release cut (`bench/portal/analysis/worklist.md` § 0); `scripts/perf_trend.py --population` is the same table over every committed measurement.
