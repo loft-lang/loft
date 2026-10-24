@@ -2817,11 +2817,18 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<ChainGuard> {
-        // A fault-flag fast copy (`@FR-R-FaultFlag`) guards no chain: its operators set the flag.
+        // Under the release-pass probe every chain operator is plain already, so the guarded
+        // copy is the checked copy's twin, statement for statement: a duplicated loop.  What
+        // it moved on the ship lane is the optimiser's response to the duplicate, not work
+        // removed (`slope_path_with_undo` 3.50x -> 3.65x and `draw_quads` 2.99x -> 3.18x
+        // slower, `render_stage` 2.11x -> 1.62x faster), so it declines.  The bounded nest
+        // stays: its raw element reads are work removed.  A fault-flag fast copy
+        // (`@FR-R-FaultFlag`) guards no chain either: its operators set the flag.
         if self.switches.chain_guard_disabled
             || self.fault_flag.is_some()
             || self.hoist_disabled
             || self.in_coroutine_body
+            || self.release_pass_probe
         {
             return Ok(ChainGuard::None);
         }
