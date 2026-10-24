@@ -2064,8 +2064,12 @@ fn the_ungated_stdlib_surface_is_the_reviewed_list() {
 /// `check`'s designation — not refused as an undesignated same-library helper.  Both selector
 /// forms: the path selector the issue had, and the `fn:` one, whose name the variant does not
 /// carry.  `scopes::check` runs the rewrite, as the CLI and `loft test` do before admission.
-const SHARED_CALL_SRC: &str = "pub fn check(j: JsonValue) -> boolean { k = j.keys(); return len(k) == 2; }\n\
-     pub fn dispatch(j: JsonValue) -> integer { if !check(j) { return -1; } k = j.keys(); return len(k); }\n";
+/// The shared call is `names(j)`, a forwarding wrapper of the `#pure` native — the shape of
+/// the issue's `base64_to_bytes`; the clause shares a call of a loft function, not of the
+/// native itself.
+const SHARED_CALL_SRC: &str = "pub fn names(j: JsonValue) -> vector<text> { j.keys() }\n\
+     pub fn check(j: JsonValue) -> boolean { k = names(j); return len(k) == 2; }\n\
+     pub fn dispatch(j: JsonValue) -> integer { if !check(j) { return -1; } k = names(j); return len(k); }\n";
 
 fn shared_call_admitted(p: &mut Parser) {
     crate::scopes::check(&mut p.data, &mut p.database);
@@ -2098,7 +2102,7 @@ fn a_shared_call_variant_takes_its_path_designation() {
 fn a_shared_call_variant_takes_its_fn_designation() {
     let mut p = parse_admit_file(
         |_file, _lib| {
-            "[sandbox]\nmod = [\"fn:check\", \"fn:dispatch\"]\n[profile.mod]\nallow_libs = [\"code\"]\n"
+            "[sandbox]\nmod = [\"fn:names\", \"fn:check\", \"fn:dispatch\"]\n[profile.mod]\nallow_libs = [\"code\"]\n"
                 .to_string()
         },
         SHARED_CALL_SRC,
