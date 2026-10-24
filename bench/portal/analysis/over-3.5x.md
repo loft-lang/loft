@@ -169,6 +169,30 @@ is not what decides (to price next), or move the test off the loop-carried chain
 remaining 2.15× is the row loop (`get_vector`, store lookup and `push` per row, no two-lane divide
 across rows).
 
+**Priced 2026-10-24: unrolling is not the lever.**  All 50 rounds unrolled by hand, each keeping
+its NaN test: 230 ms against 230 ms, unchanged (hash `141af99`).  The test removed still gives
+140 ms (−39 %).  The test compiles branch-free (`divsd`, `cmpordsd`, `andpd`, `addsd`, `mulsd`
+per round against `divsd`, `addsd`, `mulsd`): two µops on a 50-round chain, and the measured
+1.65× is more than their latency, so the cost is the out-of-order window — fewer µops per item
+let the processor overlap the next items' independent chains.  The test is the program's:
+`x / guess` is `float?` and the source must discharge it into the non-null `float` (without
+the `?` loft warns and `newton_sqrt(0.0)` answers null), while the twin's natural Rust has no
+such step.  No general rewrite removes it; a proof that the quotient is never NaN is
+algorithm-specific (`x > 0` finite keeps `guess > 0` by induction).  **An owner question**:
+what a float division owes a non-null float.
+
+### hex_roof `roof_match` — 3.60× (new on 2026-10-24)
+
+`gap_report.py --fn match_op` (the bench's wrapper; `roof_match` itself is inlined into it):
+139.5 M instructions per call against the twin's 33.6 M.  `n_track_distance__inv` is 65 M and
+its caller `n_ridge_at` 56.6 M: every cell walks the track's segments, `seg_distance` reading
+`t.tk_p[i * 6 + j]` through `pv`.  Each read pays the checked `i * 6 + j` (`op_mul_long`,
+`op_add_long`, the overflow intrinsics, ≈ 25 M) and the element read's own bounds test
+(`elem_index` + `get_elem_at`, 17 M); `op_min_long_nullable` is another 9 M.  `ranged-call`
+declines every loop: "no call gains".  `tk_n` is a field nothing bounds, so no range proof
+reaches `i * 6`: the lever is a fact about the vector itself — `tk_p` holds `6 · tk_n`
+elements — which loft has no rule to state.  Not yet priced.
+
 ## In order
 
 1. **No decision needed, largest reach:** `draw_quads`' range split (also moves `canvas`,
