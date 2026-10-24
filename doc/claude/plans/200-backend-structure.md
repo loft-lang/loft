@@ -413,6 +413,27 @@ Three kinds of site:
   maps every checked operator to its ship form, the C twin of `LOFT_RELEASE_PASS_PROBE=1`.
   The checked tier never emits a ship site; the ship build composes with `LOFT_STRICT`.
 
+**What the macros become in LLVM** (clang `-O2`, read from `-emit-llvm` and the assembly;
+gcc's builtins are the same operations):
+
+| C the generator writes | LLVM IR | meaning |
+|---|---|---|
+| a plain signed `a + b` | `add nsw` | a PROMISE of no overflow: an overflow is poison and the optimiser may assume none.  Never emitted |
+| `(int64_t) ((uint64_t) a + (uint64_t) b)` — `LOFT_PLAIN_*`, `LOFT_SHIP_*` | `add` | wraps, defined; the same IR as Rust's `wrapping_add` |
+| `__builtin_*_overflow` — `LOFT_*_OVF` | `llvm.{s,u}{add,sub,mul}.with.overflow` | `{result, overflow bit}`; the same IR as Rust's `checked_*` / `overflowing_*`, so the checked C and the checked native are one operation |
+| a clamp | `llvm.sadd.sat` and siblings | saturating; clang recognises a hand-written clamp.  Not loft's semantics — a clamped value is a wrong answer that looks right |
+
+The checked multiply (`loft_mul` on the overflow macro) compiles to two compares against the
+sentinel, `imul`, and `cmovno`: the overflow test is one conditional move with no branch, and
+the two null compares cost more than it does.  LLVM has no sentinel: those compares are always
+the generator's, and only a non-null proof removes them.  A `with.overflow` intrinsic gives one
+bit per operation and the loop vectoriser does not vectorise across it, which is why
+`157-native-4x`'s fast copies find an overflow by SIGN BITS (`@FR-R-FaultFlag`); what the ship
+tier wins is the vectorised loop, not a cheaper scalar operator.  `-fwrapv` (signed overflow
+defined, compiler-wide, not standard) is NOT the substitute for the `uint64_t` casts;
+`-fsanitize=signed-integer-overflow` is a useful sweep cross-check on the emitted C, proving no
+signed `+` slipped past the macros.
+
 `scripts/c_sweep.py` runs the corpus under `LOFT_STRICT`, the default and `LOFT_VERIFY`; all
 three must match the interpreter, and a difference between modes is a bug in a macro's
 fallback.  A tested sketch of the first two kinds: 1587 operand pairs (the boundaries at 0, ±1,
