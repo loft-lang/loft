@@ -123,7 +123,8 @@ file that cannot fail on any earlier build.
 
 - **Arm the instrument the defect needs.**  A leaked store is not an exit code, so a leak guard
   scored plainly reads `leak none -> none`.  `LOFT_STRICT_STORES=1 make falsify …` (plus
-  `LOFT_POISON=1` for a use-after-free) passes both through to control and HERE; record the
+  `LOFT_POISON=1` for a use-after-free, and `LOFT_LEAK_CHECK=1` for a `main`-less guard, whose
+  tests check their stores only under it) passes them through to control and HERE; record the
   invocation in the `@falsified-at:` line, and name the CI leg that runs with that instrument
   (the nightly poison sweep), because on the plain suites such a guard passes on every build.
 - **A refused tree is the useful half.**  `THIS TREE IS NOT CLEAN` means the guard fails here,
@@ -208,15 +209,17 @@ debug build of its commit, and one per fix adds up to hours on a loaded box.
 - **Score before the branch is joined.**  Once main holds the fix, the installed build passes
   too and the guard reads INERT; from then on the control is the fix's parent commit
   (`REF=`), a full build again.
-- **It answers "fails without the branch", not "which fix cures it".**  With several fixes on
-  the branch, the patch the run writes reverses all of them, and the run says so; keep each
-  guard's patch to its own fix's diff and score that with `--patch`.
+- **It writes no patch receipt, because none is needed.**  A patch rescues a receipt whose
+  control commit can vanish (a squash-merged branch); main keeps every commit, so a receipt
+  naming main's commit stays re-runnable, and a per-fix patch would cost the control build this
+  mode avoids.  It answers "fails without the branch", not "which fix cures it"; where that
+  matters, score the fix's own reversed diff with `--patch`.
 - **It runs from a mirror of the tree without its `Cargo.toml`**: a loft whose runtime
   refresh reads only the working directory (loft#2153) would take the tree for its own
   checkout and build it before every native run.
 - **A stale install still scores, and says so**: a note when `origin/main` has moved past the
   installed commit, and a second when that commit is not an ancestor of this tree — the two
-  sides then also differ by commits the branch lacks, and no patch is written.
+  sides then also differ by commits the branch lacks.
 
 ### The patch receipt — `@falsified-by:`
 
