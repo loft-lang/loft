@@ -534,6 +534,18 @@ if [ -n "$INSTALLED_BIN" ]; then
   else
     git worktree add -q --detach "$WT" "$RESOLVED_SHA" || { echo "cannot create a worktree at $SHA" >&2; exit 1; }
   fi
+  # The run directory mirrors the tree WITHOUT its `Cargo.toml`.  A loft that finds one in its
+  # working directory takes it for its own source checkout and runs `cargo build --lib` there
+  # before a native run — a full debug build of the tree, which the installed binary never
+  # links (it links `share/loft/libloft.rlib`).  Everything a guard reads (`lib/`, fixtures)
+  # is reached through the links.
+  RUN_DIR="$CACHE/installed-run"
+  rm -rf "$RUN_DIR" && mkdir -p "$RUN_DIR" || { echo "cannot create $RUN_DIR" >&2; exit 1; }
+  for e in "$WT"/* "$WT"/.[!.]*; do
+    [ -e "$e" ] || continue
+    case "${e##*/}" in Cargo.toml|target|.git) continue ;; esac
+    ln -s "$e" "$RUN_DIR/${e##*/}"
+  done
 elif [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
   if [ -n "$PATCHFILE" ]; then
     [ -d "$WT" ] || {
@@ -564,9 +576,9 @@ elif [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
 fi
 # The installed control runs WITHOUT `--path`: it loads the stdlib it was installed with.
 if [ -n "$INSTALLED_BIN" ]; then
-  CONTROL="$INSTALLED_BIN"; CONTROL_PATH=()
+  CONTROL="$INSTALLED_BIN"; CONTROL_PATH=(); CONTROL_TREE="$RUN_DIR"
 else
-  CONTROL="$TGT/debug/loft"; CONTROL_PATH=(--path "$WT/")
+  CONTROL="$TGT/debug/loft"; CONTROL_PATH=(--path "$WT/"); CONTROL_TREE="$WT"
   touch "$TGT" "$WT" 2>/dev/null
 fi
 # The control build is a full debug `target/` (~2 GB: the native leg links `libloft.rlib` and
@@ -602,7 +614,7 @@ printf '%-12s %-10s %-46s %s\n' backend tree "exit|asserts|leak|panic|refusals|e
 for pair in "interpret ${MODE_I[*]}" "native ${MODE_N[*]}"; do
   name=${pair%% *}; args=${pair#* }
   # shellcheck disable=SC2086
-  c=$(signature "$CONTROL" "$WT" "$ROOT/$GUARD" ${CONTROL_PATH[@]+"${CONTROL_PATH[@]}"} $args)
+  c=$(signature "$CONTROL" "$CONTROL_TREE" "$ROOT/$GUARD" ${CONTROL_PATH[@]+"${CONTROL_PATH[@]}"} $args)
   # `--path` for BOTH sides: the binary is built into its own target dir and has no
   # `default/` beside it, so without this it cannot load the stdlib and exits 1 — which
   # reads as a difference and would score every guard as falsified for the wrong reason.
