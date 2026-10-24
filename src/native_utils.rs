@@ -885,7 +885,16 @@ pub(crate) fn ensure_rlib_fresh() {
     // "could not find Cargo.toml" error.  Gate the whole thing on a
     // `Cargo.toml` in cwd: `cargo build --lib` needs one there anyway, so if
     // absent we are not in the loft source root — use the shipped rlib as-is.
-    if !crate::file_access::exists("Cargo.toml") {
+    //
+    // loft#2153 — and only when the running binary was built FROM that root.  `cargo build
+    // --lib` here refreshes this checkout's `target/`, which is the rlib the binary links
+    // only when the binary itself lives there.  An installed loft links
+    // `share/loft/libloft.rlib` and a dev binary of another checkout links that checkout's,
+    // so for both the build changes nothing they run — and on a fresh checkout it outlasts
+    // the run's own timeout.
+    if !crate::file_access::exists("Cargo.toml")
+        || !loft_source_tree().is_some_and(|tree| crate::file_access::same_file(&tree, "."))
+    {
         return;
     }
     let Some(lib_dir) = loft_lib_dir() else {
