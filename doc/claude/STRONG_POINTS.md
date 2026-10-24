@@ -68,7 +68,7 @@ open is the exact trust-break above.
 | 4 | Friction-free surface | refugees from Rust's lifetime ceremony | a needed shape is *refused*, or an error makes them serve the compiler |
 | 5 | Soundness | people betting a product on "it won't corrupt my data" | latent UB that passes today and corrupts after a toolchain bump |
 | 6 | One source, three backends | "write once, share a link" demo/tool authors | the browser build behaves differently from the desktop one |
-| 7 | Approachable parallelism | people who want safe parallelism without race-hunting | they ship to web and `par` silently runs sequentially |
+| 7 | Approachable parallelism | people who want safe parallelism without race-hunting | on a host without COOP/COEP headers `par` quietly runs sequentially |
 | 8 | Inherits Rust's ecosystem | people who need a crate (regex, http, decimal) *now* | the crate exists but isn't bound, and binding is painful |
 | 9 | Embeddable + sandboxable | hosts running player scripts / mods | a script escapes, or its effects can't be rolled back |
 | 10 | Ships and is legible | a newcomer who just discovered loft | they install, hit a library that fights them, and leave |
@@ -260,18 +260,18 @@ about. Safe parallelism without a data-race surface. See [THREADING.md](THREADIN
 **Who it wins.** People who want to speed something up across cores without
 becoming concurrency experts or hunting races.
 
-**The turn-off.** They prototype on the desktop where `par` is parallel, then ship
-to the web — where `par` runs **sequentially**
-([C3, accepted](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially)) — and the
-speedup they designed around silently isn't there. The accepted trade-off becomes a
-broken expectation for anyone who picked loft *for* the parallelism *and* targets
-the browser.
+**The turn-off.** In the browser `par` runs in parallel on Web Workers — but only when the page
+is served with the COOP/COEP headers that grant `crossOriginIsolated`
+([C3](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially),
+[WASM.md § COOP/COEP hosting contract](WASM.md)).  On a host without them — a simple local file
+server, a plain static host — the same `par` runs **sequentially** with the same answer, and the
+speedup they designed around quietly isn't there.  `globalThis.loftThreads` and `?loftTrace=1`
+say how many workers a page got, but only to someone who looks.
 
-**Raise it higher.** Make the bound **loud, not silent** — surface WASM's
-sequential `par` where the author meets it, not only in a design-decisions doc — and
-keep the door open to real wasm threading. *Check:* a web program relying on `par`
-for throughput gets a visible signal (doc, warning, or introspection) that it runs
-sequentially, rather than discovering it by profiling.
+**Raise it higher.** Make the fallback **loud, not silent** — when a page that uses `par` runs
+without isolation, say so where the author meets it (the console on load), not only through an
+introspection value.  *Check:* a `par` page served without COOP/COEP reports on load that it runs
+sequentially, rather than the author discovering it by profiling.
 
 ---
 
