@@ -389,3 +389,50 @@ fn a_defined_but_empty_profile_still_reports_its_grants() {
         "and it reports the empty grant list it really has: {err}"
     );
 }
+
+/// loft#2158 — two designated functions that make the same TOTAL call (`names(j)`, a
+/// forwarder of JSON's `#pure` `keys()`, the shape of the issue's `base64_to_bytes`) make
+/// `@FR-R-PureReuse`'s shared-call clause hand the value to a VARIANT of `check`
+/// (`check__given_n_names`), built after parsing.  `(Cap-Trusted)` reads `restricted` as
+/// "inside a sandbox-designated def", and the variant is such a def's code, so it is judged
+/// under `check`'s designation.  On main b36d0449f each of these was refused: *"sandboxed
+/// `dispatch` reaches `check__given_n_names`, a helper in its OWN library `prog`, which is
+/// not designated sandboxed"*, on both backends.  A unit test that parsed a standalone file
+/// did not reach this path and passed with the fix reverted.
+const SHARED_CALL_PROG: &str = "fn names(j: JsonValue) -> vector<text> { j.keys() }\n\
+     fn check(j: JsonValue) -> boolean { len(names(j)) == 2 }\n\
+     fn dispatch(j: JsonValue) -> integer {\n  if !check(j) { return -1; }\n  len(names(j))\n}\n\
+     fn main() { j = json_parse(\"{{\\\"b\\\": 1, \\\"a\\\": 2}}\"); \
+     assert(dispatch(j) == 2, \"dispatch\"); }\n";
+
+fn shared_call_policy(selectors: &str) -> String {
+    format!("[sandbox]\nmod = [{selectors}]\n[profile.mod]\nallow_libs = [\"code\"]\n")
+}
+
+#[test]
+fn a_shared_call_variant_takes_its_path_designation() {
+    let (ok, err) = run(
+        "sharedpath",
+        SHARED_CALL_PROG,
+        &shared_call_policy("\"prog.loft\""),
+        false,
+    );
+    assert!(
+        ok,
+        "the variant is the designated file's code; stderr: {err}"
+    );
+}
+
+#[test]
+fn a_shared_call_variant_takes_its_fn_designation() {
+    let policy = shared_call_policy("\"fn:names\", \"fn:check\", \"fn:dispatch\"");
+    let (ok, err) = run("sharedfn", SHARED_CALL_PROG, &policy, false);
+    assert!(ok, "the variant takes `check`'s designation; stderr: {err}");
+}
+
+#[test]
+fn a_shared_call_variant_takes_its_designation_on_native() {
+    let policy = shared_call_policy("\"fn:names\", \"fn:check\", \"fn:dispatch\"");
+    let (ok, err) = run("sharedfnnat", SHARED_CALL_PROG, &policy, true);
+    assert!(ok, "admission is backend-agnostic; stderr: {err}");
+}
