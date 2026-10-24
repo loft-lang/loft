@@ -156,3 +156,39 @@ pub fn at_ticks(value: i64) {
         let _ = f.write_all(line.as_bytes());
     }
 }
+
+/// `LOFT_ALLOC_TRACE=<file>` — every allocator EVENT of the run, one line each, in the order
+/// they happen: `N <store> <capacity>` a store made (or a freed slot made again), `F <store>`
+/// a store freed, `C <store> <words> <position>` a claim (the words the record CLAIMED, which a
+/// whole free block can make more than were asked), `D <store> <position>` a delete,
+/// `R <store> <position> <words> <position>` a resize that grew in place or moved the record
+/// (the moving one after the claim and delete it makes).  A store is named by the order it was made (`alloc_serial`), not
+/// by its slot: the interpreter's slot 0 is its value stack, native's an ordinary store, so
+/// the two number stores differently while placing every record alike.  It is what a second
+/// runtime compares itself against to keep loft's memory model rather than one of its own
+/// (@PLN200 B5) — the C runtime writes the same lines.  Compiled only with `op-census`; the
+/// file is written line by line, unbuffered, so a run that aborts keeps what it did.  Every
+/// call site is itself `#[cfg(feature = "op-census")]`: a build without the feature compiles
+/// no trace code at all.
+#[cfg(feature = "op-census")]
+pub fn alloc_event(line: std::fmt::Arguments) {
+    use std::sync::Mutex;
+    static FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        let path = crate::platform::env_output("LOFT_ALLOC_TRACE")?;
+        crate::file_access::open_with(
+            path.as_str(),
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true),
+        )
+        .ok()
+        .map(Mutex::new)
+    });
+    if let Some(f) = file
+        && let Ok(mut f) = f.lock()
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}

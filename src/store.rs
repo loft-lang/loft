@@ -1679,6 +1679,13 @@ impl Store {
     /// payload poisoned under `LOFT_POISON_CLAIM=1`, zeroed under `LOFT_ZERO_CLAIM=1`.
     #[inline]
     fn finish_claim(&mut self, pos: u32) -> u32 {
+        // `LOFT_ALLOC_TRACE` — every claim ends here; compiled only into the `op-census` build.
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!(
+            "C {} {} {pos}",
+            self.alloc_serial,
+            self.read::<i32>(pos, 0)
+        ));
         // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
         // falsifier for the zero-on-claim question: fill a freshly claimed payload with
         // `0xDEADBEEF` instead of zeros, so a caller that RELIES on zero-init breaks
@@ -2298,6 +2305,12 @@ impl Store {
                 } else if Self::zero_claim_enabled() {
                     self.zero_range(rec, from, len);
                 }
+                #[cfg(feature = "op-census")]
+                crate::store_census::alloc_event(format_args!(
+                    "R {} {rec} {} {rec}",
+                    self.alloc_serial,
+                    self.read::<i32>(rec, 0)
+                ));
                 return rec;
             }
         }
@@ -2312,6 +2325,12 @@ impl Store {
         if crate::stack_verify::enabled() {
             crate::stack_verify::note_relocation(self.store_nr, rec, new);
         }
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!(
+            "R {} {rec} {} {new}",
+            self.alloc_serial,
+            self.read::<i32>(new, 0)
+        ));
         new
     }
 
@@ -2457,6 +2476,8 @@ impl Store {
             self.refuse_locked("Delete on locked store", rec, 0);
             return;
         }
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!("D {} {rec}", self.alloc_serial));
         // CO1.9/S28: increment generation so coroutine_next can detect deletions that
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);

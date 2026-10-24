@@ -92,7 +92,10 @@ function holds.  The null text is the one byte `"\0"`, as in the interpreter.
 words, a record a run of words whose first word is its claimed size, a reference names a store,
 a record and a byte position, and `rec == 0` is null.  Vectors keep their claim at byte 0, their
 length at byte 4 and their elements from byte 8, with the interpreter's growth rule.  The
-allocator is a bump allocator: which words a claim gets is not observable, and a store's words
+allocator is still a bump allocator, which is being replaced: the memory model is loft's — the
+allocator, the keyed layouts and the image ported from the Rust store, so a store holds the
+same bytes at the same positions on every backend ([@PLN200 B5](plans/200-backend-structure.md),
+owner).  Until then a store's words
 go back together when the store is freed.  The default bytes of a new record are captured by
 running `Stores::set_default_value` on a scratch copy of the stores.
 
@@ -115,8 +118,8 @@ writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`
 `LOFT_NO_WRITE_HOIST=1` none in a loop that writes, as for the Rust writer.
 
 **Keyed collections.**  A hash, a sorted and an index keep the interpreter's ORDERS and
-answers, in layouts of the C runtime's own (`loft_keyed.h`): nothing observes a layout, because
-every walk over a keyed collection is in key order (`@FR-Col-Order`) and every lookup is by key.
+answers, for now in layouts of the C runtime's own (`loft_keyed.h`), to be replaced by ports
+of the interpreter's (a persisted image carries the layout, so it is observable).
 A hash is an open-addressed table of record numbers, its entries records of their own; an index
 and an `ordered` are a key-ordered array of record numbers; a sorted is a vector kept in key
 order, read by a vector's readers.  The key compare, the range search and the sorted insert are
