@@ -39,22 +39,7 @@ pub fn buffer(data: &Data, d_nr: u32) -> Option<u16> {
     super::hoist::retbuf_var(data, d_nr)
 }
 
-/// The buffer and every local whose dependencies reach it: the views a body builds through.
-#[must_use]
-pub fn views(vars: &Function, b: u16) -> HashSet<u16> {
-    let mut set: HashSet<u16> = HashSet::from([b]);
-    loop {
-        let before = set.len();
-        for v in 0..vars.next_var() {
-            if !set.contains(&v) && vars.tp(v).depend().iter().any(|d| set.contains(d)) {
-                set.insert(v);
-            }
-        }
-        if set.len() == before {
-            return set;
-        }
-    }
-}
+pub use crate::opt::body_writes::views;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Pos {
