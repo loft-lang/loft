@@ -1,0 +1,9 @@
+enum T { Leaf, Node { l: reference<T>, r: reference<T> } }
+fn f(t: T) -> integer {
+  match t {
+    Leaf => 0,
+    Node { l: Leaf, r: Leaf } => 1,
+    Node { l: Node { l, r }, r: _ } => 2,
+  }
+}
+fn main() { f(Leaf); println("ok"); }

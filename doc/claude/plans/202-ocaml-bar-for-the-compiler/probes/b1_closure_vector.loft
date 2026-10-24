@@ -1,0 +1,12 @@
+fn main() {
+  base = 10;
+  scale = 3;
+  steps: vector<fn(integer) -> integer> = [
+    fn(x: integer) -> integer { x + base },
+    fn(x: integer) -> integer { x * scale },
+  ];
+  v = 1;
+  for f in steps { v = f(v); }
+  assert(v == 33, "(1 + 10) * 3 == {v}");
+  println("ok");
+}

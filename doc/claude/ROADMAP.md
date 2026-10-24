@@ -124,6 +124,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |
 | [@PLN191](https://github.com/loft-lang/plans/issues/191) | active | The loft crate split into a DAG of crates — an edit rebuilds its own layer, a clean release build compiles the layers in parallel (P0 measures incremental release first) |
 | [@PLN200](https://github.com/loft-lang/plans/issues/200) | next | The interpreter and the code generators as defined parts — `opt` (what every backend asks, the interpreter's optimisations), `interp` (a contract), `lower` (a compiled target's decisions as data) apart from the Rust writer: the base for an ANSI-C backend ([plan](plans/200-backend-structure.md)) |
+| [@PLN202](https://github.com/loft-lang/plans/issues/202) | next | The OCaml bar, for the compiler — the rows a loft-written front end uses, measured on both backends; P1–P4 parser steps (`>>`, `..base` record update, the scalar-match hole warning, slice totality), P5 the self tail call as an `opt` pass, P7 the re-measure; child of @PLN91 1a |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |
 
 ### N — Niche / opportunistic

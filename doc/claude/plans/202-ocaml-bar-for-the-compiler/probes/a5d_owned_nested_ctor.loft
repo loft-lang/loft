@@ -1,0 +1,15 @@
+enum Expr {
+  Lit { v: integer },
+  Add { l: Expr, r: Expr },
+}
+fn eval(e: Expr) -> integer {
+  match e {
+    Lit { v } => v,
+    Add { l, r } => eval(l) + eval(r),
+  }
+}
+fn main() {
+  e = Add { l: Lit { v: 1 }, r: Add { l: Lit { v: 2 }, r: Lit { v: 3 } } };
+  assert(eval(e) == 6, "eval: {eval(e)}");
+  println("ok");
+}

@@ -1,0 +1,2 @@
+fn count(n: integer, acc: integer) -> integer { if n == 0 { acc } else { count(n - 1, acc + 1) } }
+fn main() { assert(count(100000, 0) == 100000, "deep"); println("ok"); }

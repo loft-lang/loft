@@ -1,0 +1,14 @@
+enum Tree<T> {
+  Leaf,
+  Node { left: reference<Tree<T> >, value: T, right: reference<Tree<T> > },
+}
+fn size<T>(t: Tree<T>) -> integer {
+  match t { Leaf => 0, Node { left, value, right } => 1 + size(left) + size(right) }
+}
+fn main() {
+  l: Tree<integer> = Leaf;
+  n1: Tree<integer> = Node { left: &l, value: 1, right: &l };
+  t: Tree<integer> = Node { left: &n1, value: 2, right: &l };
+  assert(size(t) == 2, "size: {size(t)}");
+  println("ok");
+}
