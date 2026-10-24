@@ -439,7 +439,9 @@ static void loft_vec_prealloc(loft_ref v, uint32_t count, uint32_t size) {
     loft_set_u32(s, r, 4, 0);
 }
 
-/* vector_append: room for one more element of `size`; the reference to its slot. */
+/* vector_append: room for one more element of `size`; the reference to its slot.  The
+ * length is not bumped: a push bumps it once its value is written (append_done), a new record
+ * once it is finished (vector_finish). */
 static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(v);
@@ -462,7 +464,6 @@ static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
             r = nr;
         }
     }
-    loft_set_u32(s, r, 4, len + 1);
     loft_ref e;
     e.store_nr = v.store_nr;
     e.rec = r;
@@ -470,8 +471,26 @@ static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
     return e;
 }
 
+/* vector_finish: the element `loft_vec_append` made counts. */
+static void loft_vec_finish(loft_ref v) {
+    if (v.store_nr == 0xFFFF || v.rec == 0) return;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    loft_set_u32(s, r, 4, loft_u32(s, r, 4) + 1);
+}
+
 static void loft_vec_push_int(loft_ref v, int64_t x) {
-    loft_set_int(loft_vec_append(v, 8), 0, x);
+    loft_ref e = loft_vec_append(v, 8);
+    if (e.rec == 0) return;
+    loft_set_int(e, 0, x);
+    loft_vec_finish(v);
+}
+
+/* A new record's defaults: the bytes the interpreter's default walk writes for its type
+ * (Stores::set_default_value, captured by the emitter as `image`). */
+static void loft_fill(loft_ref r, const uint8_t *image, uint32_t n) {
+    if (r.store_nr == 0xFFFF || r.rec == 0) return;
+    memcpy(loft_at(loft_store_of(r), r.rec, r.pos), image, n);
 }
 
 /* get_vector: the element at `from` (negative counts from the end), or the null reference. */

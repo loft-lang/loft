@@ -83,6 +83,10 @@ pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
     pub(crate) stores: &'a Stores,
     tuples: std::cell::RefCell<Vec<Vec<CType>>>,
+    /// A copy of the stores the default walk runs in, made on first use.
+    scratch: std::cell::RefCell<Option<Stores>>,
+    /// Every record type's default bytes the unit names, by type number.
+    defaults: std::cell::RefCell<std::collections::BTreeMap<u16, Vec<u8>>>,
 }
 
 impl<'a> Cx<'a> {
@@ -91,7 +95,30 @@ impl<'a> Cx<'a> {
             data,
             stores,
             tuples: std::cell::RefCell::new(Vec::new()),
+            scratch: std::cell::RefCell::new(None),
+            defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         }
+    }
+
+    /// The C name of record type `tp`'s default bytes — what the interpreter's default walk
+    /// writes into a new record of it (`Stores::set_default_value`), computed by running that
+    /// walk on a copy of the stores, so the two cannot disagree.
+    pub(crate) fn default_image(&self, tp: u16) -> (String, u32) {
+        let size = u32::from(self.stores.size(tp));
+        if !self.defaults.borrow().contains_key(&tp) {
+            let mut scratch = self.scratch.borrow_mut();
+            // The clone keeps the schema and no stores; `max` still counts the original's.
+            let s = scratch.get_or_insert_with(|| {
+                let mut s = self.stores.clone();
+                s.max = 0;
+                s
+            });
+            let r = s.database(size.div_ceil(8) + 1);
+            s.set_default_value(tp, &r);
+            let bytes = s.store(&r).read_span(r.rec, r.pos, size).to_vec();
+            self.defaults.borrow_mut().insert(tp, bytes);
+        }
+        (format!("loft_dflt{tp}"), size)
     }
 
     /// The C shape of `tp`, nullable or not — a null is held in the same shape — or `None`.
@@ -185,9 +212,22 @@ impl<'a> Cx<'a> {
         fields.iter().find_map(|f| self.record_owns(f.content))
     }
 
-    /// The tuple structs, each after the ones it holds.
+    /// The tuple structs, each after the ones it holds, and the default images.
     fn typedefs(&self) -> String {
         let mut out = String::new();
+        for (tp, bytes) in self.defaults.borrow().iter() {
+            let list: Vec<String> = bytes.iter().map(u8::to_string).collect();
+            let _ = writeln!(
+                out,
+                "static const uint8_t loft_dflt{tp}[{}] = {{ {} }};",
+                bytes.len().max(1),
+                if list.is_empty() {
+                    "0".to_string()
+                } else {
+                    list.join(", ")
+                }
+            );
+        }
         for (id, shapes) in self.tuples.borrow().iter().enumerate() {
             let fields: Vec<String> = shapes
                 .iter()

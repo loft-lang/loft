@@ -72,6 +72,8 @@ fn kind_of(c: CType) -> K {
 /// One function's body under construction.
 pub(crate) struct FnWriter<'a> {
     cx: &'a Cx<'a>,
+    /// The function's definition number.
+    d: u32,
     vars: &'a Function,
     code: &'a Value,
     /// The C shape of every variable, parameters first.
@@ -93,6 +95,7 @@ impl<'a> FnWriter<'a> {
         let def = cx.data.def(d);
         FnWriter {
             cx,
+            d,
             vars: def.variables(),
             code: def.code(),
             shapes,
@@ -240,22 +243,7 @@ impl<'a> FnWriter<'a> {
             Value::Span(b) => self.stmt(&b.1, ind),
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
-            Value::Set(var, x) => {
-                let c = self.shapes[*var as usize];
-                if (*var as usize) < self.nparams && c == CType::Text {
-                    return Err("assigns a text parameter".into());
-                }
-                let name = self.var(*var);
-                if let Some((src, tp)) = self.whole_value_bind(*var, x) {
-                    let bytes = self.copyable(tp)?;
-                    let src = self.var(src);
-                    self.line(ind, &format!("loft_bind_copy(&{name}, {src}, {bytes});"));
-                    return Ok(());
-                }
-                self.assign(x, &name, c, ind)?;
-                self.flush(ind);
-                Ok(())
-            }
+            Value::Set(var, x) => self.set_stmt(*var, x, ind),
             Value::TuplePut(var, i, x) => {
                 let CType::Tuple(id) = self.shapes[*var as usize] else {
                     return Err("a tuple write into a non-tuple".into());
@@ -336,12 +324,106 @@ impl<'a> FnWriter<'a> {
             .then(|| (*src, data.def(d).known_type()))
     }
 
+    /// `v = f(…)` binding a record variable to a loft function's result that the bind must
+    /// copy rather than adopt — the bytecode writer's first-bind test: a callee that hands
+    /// over a fresh store, an elided view and a minted store are adopted; anything else is
+    /// copied, its source freed when `call_return_frees_source` says the copy owns it.  The
+    /// record's store type and that flag; `None` to adopt.
+    fn call_copy(&self, v: u16, x: &Value) -> Result<Option<(u16, bool)>, String> {
+        use crate::data::Type;
+        use crate::use_analysis as ua;
+        let data = self.cx.data;
+        let (Type::Reference(d, _) | Type::Enum(d, true, _)) =
+            ua::first_bind_shape(self.vars.tp(v)).clone()
+        else {
+            return Ok(None);
+        };
+        let Some(f) = ua::callee_of(data, self.d, x) else {
+            return Ok(None);
+        };
+        if !data.def(f).is_loft_defined() {
+            return Ok(None);
+        }
+        if crate::keys::join_own_enabled()
+            && !self.vars.is_view_elided(v)
+            && matches!(ua::ownership_of(data, self.d, x), ua::Own::Join { base } if base != u16::MAX)
+        {
+            return Err(
+                "a bind of a result that is fresh on one arm and borrowed on the other".into(),
+            );
+        }
+        if data.def(f).return_adopts_fresh_store()
+            || self.vars.is_view_elided(v)
+            || ua::adopts_minted_at_bind(data, self.vars, v, x)
+        {
+            return Ok(None);
+        }
+        Ok(Some((
+            data.def(d).known_type(),
+            ua::call_return_frees_source(data, self.d, x),
+        )))
+    }
+
+    /// `v = c[i]` binding an owning record variable to an element of a container: the
+    /// element is copied out (the bytecode writer's `gen_set_first_ref_elem_copy` test — no
+    /// dependency, no owner witness, a projection of a container).  The store type.
+    fn element_copy(&self, v: u16, x: &Value) -> Option<u16> {
+        let tp = self.vars.tp(v);
+        let d = tp.base().heap_def_nr()?;
+        (tp.depend().is_empty()
+            && self.vars.owner_witness(v).is_none()
+            && crate::use_analysis::projection_container_var(self.cx.data, x).is_some())
+        .then(|| self.cx.data.def(d).known_type())
+    }
+
     /// The byte size of record type `tp`, when copying its bytes copies all of it.
     fn copyable(&self, tp: u16) -> Result<u32, String> {
         if let Some(kind) = self.cx.record_owns(tp) {
             return Err(format!("a copy of a record that owns a {kind}"));
         }
         Ok(u32::from(self.cx.stores.size(tp)))
+    }
+
+    /// `var = x`: a copy where loft copies a record, else the plain assignment.
+    fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        let c = self.shapes[var as usize];
+        if (var as usize) < self.nparams && c == CType::Text {
+            return Err("assigns a text parameter".into());
+        }
+        let name = self.var(var);
+        if let Some((tp, frees)) = self.call_copy(var, x)? {
+            let bytes = self.copyable(tp)?;
+            let e = self.expr(x, ind)?;
+            let r = self.temp(CType::Ref);
+            self.line(ind, &format!("{r} = {};", as_ref(e)?));
+            self.line(ind, &format!("loft_bind_copy(&{name}, {r}, {bytes});"));
+            if frees {
+                self.line(
+                    ind,
+                    &format!("if ({r}.store_nr != {name}.store_nr) loft_free_ref({r});"),
+                );
+            }
+            self.flush(ind);
+            return Ok(());
+        }
+        if let Some(tp) = self.element_copy(var, x) {
+            let bytes = self.copyable(tp)?;
+            let e = self.expr(x, ind)?;
+            let r = self.temp(CType::Ref);
+            self.line(ind, &format!("{r} = {};", as_ref(e)?));
+            self.line(ind, &format!("loft_bind_copy(&{name}, {r}, {bytes});"));
+            self.flush(ind);
+            return Ok(());
+        }
+        if let Some((src, tp)) = self.whole_value_bind(var, x) {
+            let bytes = self.copyable(tp)?;
+            let src = self.var(src);
+            self.line(ind, &format!("loft_bind_copy(&{name}, {src}, {bytes});"));
+            return Ok(());
+        }
+        self.assign(x, &name, c, ind)?;
+        self.flush(ind);
+        Ok(())
     }
 
     fn block_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
@@ -720,6 +802,19 @@ impl<'a> FnWriter<'a> {
                 let dest = self.text_dest(dest)?;
                 Ok(E::new(format!("loft_text_free(&{dest})"), K::Void))
             }
+            "OpPrint" => {
+                let es = self.args(args, ind)?;
+                let [a] = <[E; 1]>::try_from(es)
+                    .map_err(|_| "OpPrint without one operand".to_string())?;
+                Ok(E::new(format!("loft_print({})", as_view(a)?), K::Void))
+            }
+            _ => self.scalar_operator(name, args, ind),
+        }
+    }
+
+    /// The conversions and the text measures.
+    fn scalar_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match name {
             "OpLengthText" | "OpSizeText" => {
                 let es = self.args(args, ind)?;
                 let [a] =
@@ -744,12 +839,6 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("({} != LOFT_NULL)", as_int(a)?), K::Cond))
             }
             "OpConvIntFromNull" | "OpConvLongFromNull" => Ok(E::new("LOFT_NULL", K::Int)),
-            "OpPrint" => {
-                let es = self.args(args, ind)?;
-                let [a] = <[E; 1]>::try_from(es)
-                    .map_err(|_| "OpPrint without one operand".to_string())?;
-                Ok(E::new(format!("loft_print({})", as_view(a)?), K::Void))
-            }
             _ => self.store_operator(name, args, ind),
         }
     }
@@ -839,9 +928,57 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// The vector `OpNewRecord`/`OpFinishRecord` add to, and its element type: the parent
+    /// itself when `fld` is `u16::MAX`, else the parent's field — a plain vector in both cases
+    /// (`Stores::record_new`'s two short paths); any other collection is refused.
+    fn record_collection(
+        &mut self,
+        data: &Value,
+        ptp: &Value,
+        fld: &Value,
+        ind: usize,
+    ) -> Result<(String, u16), String> {
+        use crate::database::Parts;
+        let stores = self.cx.stores;
+        let ptp = u16::try_from(Self::literal(ptp, "type")?)
+            .map_err(|_| "a type out of range".to_string())?;
+        let fld = u16::try_from(Self::literal(fld, "field")?)
+            .map_err(|_| "a field out of range".to_string())?;
+        let data = self.expr(data, ind)?;
+        let data = as_ref(data)?;
+        if fld == u16::MAX {
+            let Parts::Vector(c) = stores.types[ptp as usize].parts else {
+                return Err("a new record in a collection other than a vector".into());
+            };
+            return Ok((data, c));
+        }
+        if !matches!(stores.types[ptp as usize].parts, Parts::Struct(_)) {
+            return Err("a new record in a field of a non-struct".into());
+        }
+        let vtp = stores.field_type(ptp, fld);
+        let Some(Parts::Vector(c)) = stores.types.get(vtp as usize).map(|t| &t.parts) else {
+            return Err("a new record in a field that is not a vector".into());
+        };
+        let pos = stores.field_position(ptp, fld);
+        Ok((format!("loft_field({data}, {pos})"), *c))
+    }
+
     /// The operators over vectors.
     fn vector_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
+            ("OpNewRecord", [data, ptp, fld]) => {
+                let (v, elem) = self.record_collection(data, ptp, fld, ind)?;
+                let size = self.cx.stores.size(elem);
+                let (image, n) = self.cx.default_image(elem);
+                let t = self.temp(CType::Ref);
+                self.line(ind, &format!("{t} = loft_vec_append({v}, {size});"));
+                self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
+                Ok(E::new(t, K::Ref))
+            }
+            ("OpFinishRecord", [data, _rec, ptp, fld]) => {
+                let (v, _) = self.record_collection(data, ptp, fld, ind)?;
+                Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
+            }
             ("OpClearVector", [v]) => {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_clear({})", as_ref(v)?), K::Void))
