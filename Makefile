@@ -561,7 +561,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -605,6 +605,9 @@ sections:  ## Every section of LOFT.md / STDLIB.md and what keeps it — a sampl
 rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py
+runtime-surface:  ## What emitted Rust names in the loft crate, over the corpus, and what of it lies outside the runtime set (doc/claude/RUNTIME_SURFACE.md; a report)
+	cargo build --release --bin loft -q
+	python3 scripts/runtime_surface.py --write
 gap-report:  ## Where one routine's distance to its Rust twin lives: own code, inlined runtime, called runtime, loft lines, declines (ARGS="--bench 17 --fn c_slope_path")
 	cargo build --release --lib --bin loft -q
 	python3 scripts/gap_report.py $(ARGS)
