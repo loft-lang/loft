@@ -1,0 +1,186 @@
+diff --git b/src/parser/call_args.rs a/src/parser/call_args.rs
+index 5089e54..1c41b17 100644
+--- b/src/parser/call_args.rs
++++ a/src/parser/call_args.rs
+@@ -24,10 +24,6 @@ impl Parser {
+         arg_pos: &[Position],
+     ) -> Vec<Value> {
+         let mut actual = Vec::new();
+-        // loft#2146 — an overload trial converts arguments too; only the call built from THIS
+-        // conversion takes its store-backs.
+-        self.pending_arg_pres.clear();
+-        self.pending_arg_posts.clear();
+         if types.is_empty() {
+             return actual;
+         }
+diff --git b/src/parser/calls.rs a/src/parser/calls.rs
+index a080d02..28187e9 100644
+--- b/src/parser/calls.rs
++++ a/src/parser/calls.rs
+@@ -1299,29 +1299,9 @@ impl Parser {
+         if self.in_sandbox && !self.first_pass {
+             self.record_param_lock_overrides(d_nr, &actual);
+         }
+-        let pres = std::mem::take(&mut self.pending_arg_pres);
+-        let posts = std::mem::take(&mut self.pending_arg_posts);
+         self.add_defaults(d_nr, &mut actual, &mut all_types);
+         let tp = self.call_dependencies(d_nr, &all_types);
+         *code = Value::Call(d_nr, actual);
+-        // loft#2146 — an argument linked through a temp is stored back once the call returns.
+-        if !posts.is_empty() {
+-            let call = std::mem::replace(code, Value::Null);
+-            if matches!(tp.base(), Type::Void) {
+-                let mut ops = pres;
+-                ops.push(call);
+-                ops.extend(posts);
+-                *code = crate::data::v_block(ops, Type::Void, "amp slot write-back");
+-            } else {
+-                let r = self.create_unique("amp_ret", &tp);
+-                self.vars.defined(r);
+-                let mut ops = pres;
+-                ops.push(crate::data::v_set(r, call));
+-                ops.extend(posts);
+-                ops.push(Value::Var(r));
+-                *code = crate::data::v_block(ops, tp.clone(), "amp slot write-back");
+-            }
+-        }
+         self.warn_text_len_byte_index(d_nr, code);
+         // @PLN102 arc C step 3 — the recommended-idiom STEER.  A resolved call FROM
+         // OWNED source (the entry project) to a `#superseded "Y"` symbol warns the
+diff --git b/src/parser/convert.rs a/src/parser/convert.rs
+index 5b585b3..9d83fe5 100644
+--- b/src/parser/convert.rs
++++ a/src/parser/convert.rs
+@@ -865,59 +865,6 @@ impl Parser {
+         {
+             return true;
+         }
+-        // loft#2146, `@FR-B-Ref-Lvalue` — a nullable struct SLOT (a field `b.s`, an element of
+-        // a `vector<S?>`, stored inline as `__nullable<S>`) handed to a `&S?` parameter.  The
+-        // slot holds a four-byte record pointer, `0` when absent (loft#1071), which no `&S?`
+-        // link can name: the link reads and writes a handle.  So the slot is linked through an
+-        // OWNED temp — null when the slot is absent, else its own copy of the payload, so a
+-        // whole-value write-back in the callee releases the copy and never the holder's store —
+-        // and the temp is stored back with the slot's own write once the call returns
+-        // (`call_nr` places both halves around the call).  The argument stays the bare
+-        // `OpCreateStack(temp)` both backends pass as a link.
+-        if let Type::RefVar(ref_tp) = should
+-            && let Type::Optional(inner) = &**ref_tp
+-            && let Type::Reference(struct_d, _) = &**inner
+-            && let Type::Enum(enum_d, true, _) = is_type
+-            && self.data.def(*enum_d).name
+-                == format!("__nullable<{}>", self.data.def(*struct_d).name())
+-        {
+-            if !self.first_pass {
+-                let (struct_d, syn) = (*struct_d, *enum_d);
+-                let kt = Value::Int(i32::from(self.data.def(struct_d).known_type()));
+-                let held = Type::Optional(Box::new(Type::Reference(struct_d, Deps::none())));
+-                let slot = code.clone();
+-                let read = self.emit_nullable_slot_read(syn, slot.clone(), is_type);
+-                // The view BORROWS the holder's store — typed with its deps, as the slot read's
+-                // own name is — so neither backend copies the payload into it; the one copy is
+-                // the temp's below.
+-                let viewed = Type::Optional(Box::new(
+-                    Type::Reference(struct_d, Deps::none()).with_deps_of(is_type),
+-                ));
+-                let view = self.vars.work_refs(&viewed, &mut self.lexer);
+-                self.vars.set_skip_free(view);
+-                self.vars.mark_inline_ref(view);
+-                let tmp = self.vars.work_refs(&held, &mut self.lexer);
+-                let absent = self.cl("OpRefIsNull", &[Value::Var(view)]);
+-                let present = self.cl("OpNot", &[absent]);
+-                let mint = self.cl("OpDatabase", &[Value::Var(tmp), kt.clone()]);
+-                let copy = self.cl("OpCopyRecord", &[Value::Var(view), Value::Var(tmp), kt]);
+-                let sentinel = self.cl("OpNullRefSentinel", &[]);
+-                self.pending_arg_pres.extend([
+-                    v_set(view, read),
+-                    v_set(tmp, sentinel.clone()),
+-                    v_if(present, Value::Insert(vec![mint, copy]), Value::Null),
+-                ]);
+-                let mut post = vec![self.nullable_slot_write_from(syn, &slot, tmp, false)];
+-                // The slot took its own copy of whatever the temp holds — the payload copy,
+-                // or the store a write-back installed — so the temp releases it here and is
+-                // left at the sentinel, which a loop's next pass and the scope exit find empty.
+-                post.push(self.cl("OpFreeRef", &[Value::Var(tmp)]));
+-                post.push(v_set(tmp, sentinel));
+-                self.pending_arg_posts.extend(post);
+-                *code = self.cl("OpCreateStack", &[Value::Var(tmp)]);
+-            }
+-            return true;
+-        }
+         // @PLN25 single-payload — a `__nullable<S>` value flows into a `&S` (`RefVar(Reference
+         // (S))`) parameter (`fn f(r: &S)` that may MUTATE through `r`).  Unwrap to the payload
+         // sub-ref, then pass it BY-REFERENCE via a work-ref + `OpCreateStack` (with `skip_free`,
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 14310c6..be9d30c 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -926,13 +926,6 @@ pub struct Parser {
+     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
+     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
+     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+-    /// loft#2146 — statements an argument conversion needs run around the call it is an
+-    /// argument of: a nullable struct SLOT passed to a `&S?` parameter is copied into an
+-    /// owned temp BEFORE the call and stored back into the slot AFTER it, while the argument
+-    /// itself stays the bare `OpCreateStack(temp)` both backends pass as a link.  Cleared by
+-    /// `process_call_args`, taken by `call_nr` once the call is built.
+-    pending_arg_pres: Vec<Value>,
+-    pending_arg_posts: Vec<Value>,
+     /// Pass 1's tuple-local call arguments, `(function, callee def name, argument index,
+     /// local)`, judged against the callee's signature between the passes
+     /// (`record_forward_ref_tuple_links`).
+@@ -1954,8 +1947,6 @@ impl Parser {
+             infer_ret_defs: std::collections::HashSet::new(),
+             adopted_ret_defs: std::collections::HashSet::new(),
+             ref_linked_tuple_locals: std::collections::HashSet::new(),
+-            pending_arg_pres: Vec::new(),
+-            pending_arg_posts: Vec::new(),
+             pending_tuple_args: Vec::new(),
+             tuple_place_wanted: false,
+             loop_sources_replaced: std::collections::HashSet::new(),
+diff --git b/src/parser/nullable_slots.rs a/src/parser/nullable_slots.rs
+index 245c138..0d4b844 100644
+--- b/src/parser/nullable_slots.rs
++++ a/src/parser/nullable_slots.rs
+@@ -93,6 +93,7 @@ impl Parser {
+         let Some(struct_d) = self.nullable_payload_struct(syn) else {
+             return Vec::new();
+         };
++        let some_d = self.data.variant_of(syn, "Some");
+         // The stash is typed by the PAYLOAD struct, not by the source expression: a bare
+         // `null` member has type `Type::Null`, which names no storage to stash into.
+         let src_tp = Type::Reference(struct_d, crate::data::Deps::none());
+@@ -101,23 +102,6 @@ impl Parser {
+             return Vec::new();
+         }
+         let mut list = vec![v_set(src_var, value)];
+-        list.push(self.nullable_slot_write_from(syn, slot_ref, src_var, fresh));
+-        list
+-    }
+-
+-    /// [`Self::emit_nullable_slot_write`] from a value already held in `src_var`, a reference
+-    /// local of the payload struct (or the sentinel): the slot takes its own copy of it, or
+-    /// is emptied when it is null.  For a source that IS a variable, so no stash is needed —
+-    /// a stash `Set` from a variable is a record copy on `--native`, which nothing releases
+-    /// (loft#2146's store-back).
+-    pub(crate) fn nullable_slot_write_from(
+-        &mut self,
+-        syn: u32,
+-        slot_ref: &Value,
+-        src_var: u16,
+-        fresh: bool,
+-    ) -> Value {
+-        let some_d = self.data.variant_of(syn, "Some");
+         let kt = self.data.def(syn).known_type();
+         let mut present = Vec::with_capacity(3);
+         // `@FR-H-Claim` — a FRESH slot, an element the construction just minted, holds no value yet, so
+@@ -144,7 +128,8 @@ impl Parser {
+         };
+         let is_null = self.cl("OpRefIsNull", &[Value::Var(src_var)]);
+         let not_null = self.cl("OpNot", &[is_null]);
+-        v_if(not_null, Value::Insert(present), absent)
++        list.push(v_if(not_null, Value::Insert(present), absent));
++        list
+     }
+ 
+     /// Flag every record copy in `steps` as writing a FRESH destination
