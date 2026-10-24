@@ -441,6 +441,77 @@ static void loft_set_int4(loft_ref r, uint32_t fld, int64_t v) {
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &x, 4);
 }
 
+/* The narrow integer fields: a byte biased by `min` (255 the nullable form's null), a short
+ * in the `+1` encoding (0 is null), a raw short (0xFFFF its null), a 4-byte int (INT32_MIN).
+ * A value a field cannot hold takes its default: the nullable forms' is null. */
+static int32_t loft_i32_of(int64_t v) {
+    return v == LOFT_NULL ? INT32_MIN : (int32_t) (uint32_t) (uint64_t) v;
+}
+
+static int64_t loft_get_byte(loft_ref r, uint32_t fld, int64_t min) {
+    if (r.rec == 0) return LOFT_NULL;
+    return *loft_at(loft_store_of(r), r.rec, r.pos + fld) + min;
+}
+
+static int64_t loft_get_byte_nullable(loft_ref r, uint32_t fld, int64_t min) {
+    if (r.rec == 0) return LOFT_NULL;
+    uint8_t raw = *loft_at(loft_store_of(r), r.rec, r.pos + fld);
+    return raw == 255 ? LOFT_NULL : raw + min;
+}
+
+static uint8_t loft_byte_raw(int64_t min, int64_t val);
+
+static void loft_set_byte_v(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
+    if (r.rec == 0) return;
+    *loft_at(loft_store_of(r), r.rec, r.pos + fld) = loft_byte_raw(min, v);
+}
+
+static void loft_set_byte_nullable(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
+    if (r.rec == 0) return;
+    int32_t x = loft_i32_of(v);
+    if (!(x == INT32_MIN || ((int64_t) x >= min && (int64_t) x <= min + 255))) x = INT32_MIN;
+    *loft_at(loft_store_of(r), r.rec, r.pos + fld) = loft_byte_raw(min, x);
+}
+
+static int64_t loft_get_short(loft_ref r, uint32_t fld, int64_t min) {
+    if (r.rec == 0) return LOFT_NULL;
+    uint16_t raw;
+    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos + fld), 2);
+    return raw == 0 ? LOFT_NULL : raw + min - 1;
+}
+
+static void loft_set_short(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
+    if (r.rec == 0) return;
+    int32_t x = loft_i32_of(v);
+    uint16_t raw = 0;
+    if (x != INT32_MIN && (int64_t) x >= min && (int64_t) x <= min + 65534) raw = (uint16_t) ((int64_t) x - min + 1);
+    memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &raw, 2);
+}
+
+static int64_t loft_get_short_raw(loft_ref r, uint32_t fld, int64_t min) {
+    if (r.rec == 0) return LOFT_NULL;
+    uint16_t raw;
+    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos + fld), 2);
+    return raw + min;
+}
+
+static void loft_set_short_raw(loft_ref r, uint32_t fld, int64_t min, int64_t v) {
+    if (r.rec == 0) return;
+    int32_t x = loft_i32_of(v);
+    uint16_t raw;
+    if (x == INT32_MIN) raw = 0xFFFF;
+    else if ((int64_t) x >= min && (int64_t) x <= min + 65535) raw = (uint16_t) ((int64_t) x - min);
+    else raw = 0;
+    memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &raw, 2);
+}
+
+static int64_t loft_get_int4(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return LOFT_NULL;
+    int32_t x;
+    memcpy(&x, loft_at(loft_store_of(r), r.rec, r.pos + fld), 4);
+    return x == INT32_MIN ? LOFT_NULL : x;
+}
+
 /* ── Vectors (src/vector.rs) ───────────────────────────────────────────────────────────── */
 
 static uint32_t loft_collection_rec(loft_store_t *s, uint32_t rec, uint32_t pos) {
@@ -975,4 +1046,216 @@ static void loft_format_float(loft_text *s, double val, int64_t width, int64_t p
         loft_format_signed(s, loft_view(&res), width, dir, token);
         loft_text_free(&res);
     }
+}
+
+/* ── Rendering a value of a store (database/format.rs ShowDb, the `{v}` of a record or a
+ * vector) ─────────────────────────────────────────────────────────────────────────────────
+ * `fmt` is the format operand: bit 1 pretty, bit 2 JSON.  The emitter writes one
+ * `loft_show{tp}` per type a program renders; these are the parts every type shares. */
+typedef void (*loft_show_fn)(loft_text *s, loft_ref r, int fmt, int ind);
+
+static void loft_push_cstr(loft_text *s, const char *p) {
+    loft_push(s, p, strlen(p));
+}
+
+static void loft_push_i64(loft_text *s, int64_t v) {
+    char buf[24];
+    int n = snprintf(buf, sizeof buf, "%lld", (long long) v);
+    loft_push(s, buf, (size_t) n);
+}
+
+static void loft_nl(loft_text *s, int ind) {
+    loft_push_char(s, '\n');
+    for (int i = 0; i < ind; i++) loft_push(s, "  ", 2);
+}
+
+/* write_json_escaped */
+static void loft_push_json(loft_text *s, loft_str t) {
+    loft_push_char(s, '"');
+    for (size_t i = 0; i < t.len; i++) {
+        unsigned char c = (unsigned char) t.p[i];
+        switch (c) {
+        case '"': loft_push(s, "\\\"", 2); break;
+        case '\\': loft_push(s, "\\\\", 2); break;
+        case '\n': loft_push(s, "\\n", 2); break;
+        case '\r': loft_push(s, "\\r", 2); break;
+        case '\t': loft_push(s, "\\t", 2); break;
+        case 0x08: loft_push(s, "\\b", 2); break;
+        case 0x0c: loft_push(s, "\\f", 2); break;
+        default:
+            if (c < 0x20) {
+                char buf[8];
+                snprintf(buf, sizeof buf, "\\u%04x", c);
+                loft_push(s, buf, 6);
+            } else {
+                loft_push_char(s, (char) c);
+            }
+        }
+    }
+    loft_push_char(s, '"');
+}
+
+/* A code point as UTF-8; 0 bytes for one that is not a character. */
+static size_t loft_utf8(uint32_t c, char *out) {
+    if (c < 0x80) { out[0] = (char) c; return 1; }
+    if (c < 0x800) { out[0] = (char) (0xC0 | (c >> 6)); out[1] = (char) (0x80 | (c & 0x3F)); return 2; }
+    if (c >= 0xD800 && c <= 0xDFFF) return 0;
+    if (c < 0x10000) {
+        out[0] = (char) (0xE0 | (c >> 12)); out[1] = (char) (0x80 | ((c >> 6) & 0x3F));
+        out[2] = (char) (0x80 | (c & 0x3F));
+        return 3;
+    }
+    if (c < 0x110000) {
+        out[0] = (char) (0xF0 | (c >> 18)); out[1] = (char) (0x80 | ((c >> 12) & 0x3F));
+        out[2] = (char) (0x80 | ((c >> 6) & 0x3F)); out[3] = (char) (0x80 | (c & 0x3F));
+        return 4;
+    }
+    return 0;
+}
+
+static void loft_show_long(loft_text *s, loft_ref r, int fmt, int ind) {
+    (void) fmt; (void) ind;
+    int64_t v = loft_get_int(r, 0);
+    if (v == LOFT_NULL) loft_push(s, "null", 4); else loft_push_i64(s, v);
+}
+
+static void loft_show_single(loft_text *s, loft_ref r, int fmt, int ind) {
+    (void) fmt; (void) ind;
+    float v = loft_get_single(r, 0);
+    if (isnan(v)) loft_push(s, "null", 4); else loft_push_shortest(s, v, 1);
+}
+
+static void loft_show_float(loft_text *s, loft_ref r, int fmt, int ind) {
+    (void) fmt; (void) ind;
+    double v = loft_get_float(r, 0);
+    if (isnan(v)) loft_push(s, "null", 4); else loft_push_shortest(s, v, 0);
+}
+
+static void loft_show_bool(loft_text *s, loft_ref r, int fmt, int ind) {
+    (void) fmt; (void) ind;
+    uint8_t b = *loft_at(loft_store_of(r), r.rec, r.pos);
+    loft_push_cstr(s, b == 0 ? "false" : b == 255 ? "null" : "true");
+}
+
+static void loft_show_text(loft_text *s, loft_ref r, int fmt, int ind) {
+    (void) ind;
+    loft_store_t *st = loft_store_of(r);
+    uint32_t h = loft_u32(st, r.rec, r.pos);
+    if (h != 0 && h >= st->words) {
+        /* A handle outside the store is corruption, not absence. */
+        if (fmt & 2) { loft_push(s, "null", 4); return; }
+        loft_push_cstr(s, "<bad-text:");
+        loft_push_i64(s, h);
+        loft_push_char(s, '>');
+        return;
+    }
+    loft_str t = loft_get_text(r, 0);
+    if (loft_str_is_null(t)) { loft_push(s, "null", 4); return; }
+    if (fmt & 2) { loft_push_json(s, t); return; }
+    loft_push_char(s, '"');
+    loft_text_append(s, t);
+    loft_push_char(s, '"');
+}
+
+static void loft_show_char(loft_text *s, loft_ref r, int fmt, int ind) {
+    (void) ind;
+    uint32_t c = loft_u32(loft_store_of(r), r.rec, r.pos);
+    char buf[4];
+    size_t n = c == 0 ? 0 : loft_utf8(c, buf);
+    if (n == 0) { loft_push(s, "null", 4); return; }
+    if (fmt & 2) { loft_push_json(s, loft_lit(buf, n)); return; }
+    loft_push_char(s, '\'');
+    loft_push(s, buf, n);
+    loft_push_char(s, '\'');
+}
+
+/* The narrow integer widths, each with its own null code (Stores::narrow_is_null). */
+static void loft_show_byte(loft_text *s, loft_ref r, int64_t min, int nullable) {
+    uint8_t raw = *loft_at(loft_store_of(r), r.rec, r.pos);
+    if (nullable && raw == 255) loft_push(s, "null", 4); else loft_push_i64(s, raw + min);
+}
+
+static void loft_show_short(loft_text *s, loft_ref r, int64_t min, int nullable) {
+    uint16_t raw;
+    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos), 2);
+    if (nullable && raw == 0) { loft_push(s, "null", 4); return; }
+    loft_push_i64(s, raw != 0 ? raw + min - 1 : (int64_t) INT32_MIN);
+}
+
+static void loft_show_short_raw(loft_text *s, loft_ref r, int64_t min, int nullable) {
+    uint16_t raw;
+    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos), 2);
+    if (nullable && raw == 0xFFFF) loft_push(s, "null", 4); else loft_push_i64(s, raw + min);
+}
+
+static void loft_show_int4(loft_text *s, loft_ref r, int nullable) {
+    int32_t v;
+    memcpy(&v, loft_at(loft_store_of(r), r.rec, r.pos), 4);
+    if (nullable && v == INT32_MIN) loft_push(s, "null", 4); else loft_push_i64(s, v);
+}
+
+static void loft_show_int_raw(loft_text *s, loft_ref r, int nullable) {
+    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos);
+    if (nullable && v == 0xFFFFFFFFu) loft_push(s, "null", 4); else loft_push_i64(s, v);
+}
+
+static void loft_show_child(loft_text *s, loft_ref r) {
+    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos);
+    if (v == 0) { loft_push(s, "null", 4); return; }
+    loft_push_cstr(s, "ChildRec(");
+    loft_push_i64(s, v);
+    loft_push_char(s, ')');
+}
+
+/* write_struct's frame: the opening brace, and whether the body goes on lines of its own. */
+static int loft_show_open(loft_text *s, int fmt, int ind, int complex_type, int any) {
+    int pretty = fmt & 1, json = (fmt & 2) != 0;
+    int c = pretty && (json || complex_type);
+    loft_push_char(s, '{');
+    if (c && json && any) loft_nl(s, ind + 1);
+    else if (pretty) loft_push_char(s, ' ');
+    return c;
+}
+
+static void loft_show_close(loft_text *s, int fmt, int ind, int c, int any) {
+    if (c && any) loft_nl(s, ind);
+    else if ((fmt & 1) && !c) loft_push_char(s, ' ');
+    loft_push_char(s, '}');
+}
+
+/* Between two fields (write_indent with its zero test). */
+static void loft_show_sep(loft_text *s, int fmt, int ind, int c) {
+    loft_push_char(s, ',');
+    if (c) loft_nl(s, ind + 1);
+    else if (fmt & 1) loft_push_char(s, ' ');
+}
+
+static void loft_show_name(loft_text *s, int fmt, const char *name) {
+    if (fmt & 2) loft_push_char(s, '"');
+    loft_push_cstr(s, name);
+    if (fmt & 2) loft_push_char(s, '"');
+    loft_push_char(s, ':');
+    if (fmt & 1) loft_push_char(s, ' ');
+}
+
+/* write_list for a vector: its elements of `size` bytes, each rendered by `f`. */
+static void loft_show_list(loft_text *s, loft_ref r, int fmt, int ind, uint32_t size,
+                           int complex_elem, int struct_elem, loft_show_fn f) {
+    int pretty = fmt & 1;
+    int c = pretty && complex_elem;
+    loft_push_char(s, '[');
+    uint32_t vr = loft_collection_rec(loft_store_of(r), r.rec, r.pos);
+    uint32_t n = vr == 0 ? 0 : loft_u32(loft_store_of(r), vr, 4);
+    for (uint32_t i = 0; i < n; i++) {
+        if (i == 0) {
+            if (pretty) { if (c) loft_nl(s, ind + 1); else loft_push_char(s, ' '); }
+        } else {
+            loft_push_char(s, ',');
+            if (pretty) { if (struct_elem) loft_nl(s, ind + 1); else loft_push_char(s, ' '); }
+        }
+        loft_ref e = { r.store_nr, vr, 8 + i * size };
+        f(s, e, fmt, ind + 1);
+    }
+    if (pretty) loft_push_char(s, ' ');
+    loft_push_char(s, ']');
 }
