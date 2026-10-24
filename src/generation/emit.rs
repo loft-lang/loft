@@ -910,6 +910,7 @@ impl Output<'_> {
             Value::Block(bl)
                 if bl.name == "For block"
                     && self.fault_flag.is_some()
+                    && !super::fault_flag::unroll_disabled()
                     && let Some(u) = super::fault_flag::unroll_shape(
                         self.data,
                         bl,

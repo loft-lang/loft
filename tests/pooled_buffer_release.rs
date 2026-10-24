@@ -66,6 +66,16 @@ fn operands(ir: &str, op: &str) -> Vec<String> {
         .collect()
 }
 
+/// A release's type operands with `@FR-R-Reuse`'s reset bit (`POOL_RESET`, `0x8000`) taken off.
+fn unreset(ops: &[String]) -> Vec<String> {
+    ops.iter()
+        .map(|t| {
+            t.parse::<i32>()
+                .map_or_else(|_| t.clone(), |v| (v & 0x7FFF).to_string())
+        })
+        .collect()
+}
+
 /// The type operand of every `__ref_1(1):… = OpPlaceRecord(<host>, <tp>i32)` in `ir`.
 fn placed(ir: &str) -> Vec<String> {
     ir.lines()
@@ -86,7 +96,15 @@ fn a_reused_buffer_of_a_heap_owning_record_releases_before_each_refill() {
         "n_c1", "n_c2", "n_c3", "n_c4", "n_c5", "n_c6", "n_c9", "n_c10", "n_c11",
     ] {
         let ir = ir_of(&text, name);
-        let released = operands(ir, "OpClear");
+        let raw = operands(ir, "OpClear");
+        // `@FR-R-Reuse`'s reset clause sets `POOL_RESET` on the release's type: the pool
+        // releases by resetting the buffer's store, and the type under the bit is the mint's.
+        assert!(
+            raw.iter()
+                .all(|t| t.parse::<i32>().is_ok_and(|v| v & 0x8000 != 0)),
+            "{name}'s pooled release must carry the reset bit:\n{ir}"
+        );
+        let released = unreset(&raw);
         // The mint is `OpDatabase(__ref_1, tp)` — or, since `(R-Place)`'s loop clause,
         // `__ref_1 = OpPlaceRecord(host, tp)`: the buffer claimed in the host's store,
         // released by the same type at every turn.
@@ -121,7 +139,7 @@ fn a_buffer_of_scalars_takes_no_release() {
 fn a_struct_enum_buffer_is_released_through_its_parent_type() {
     let text = introspect(&[]);
     let caller = ir_of(&text, "n_c12");
-    let released = operands(caller, "OpClear");
+    let released = unreset(&operands(caller, "OpClear"));
     assert!(
         released.len() == 1 && released == operands(caller, "OpDatabase"),
         "c12's buffer is released by the type it is minted as:\n{caller}"

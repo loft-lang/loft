@@ -19,6 +19,13 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
+/// `LOFT_NO_FAULT_FLAG_UNROLL=1` — a fast copy keeps its constant ranges as loops: the bisect
+/// step between the flag and the unroll for a statement `@FR-R-FaultFlag` admits.
+pub(super) fn unroll_disabled() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("LOFT_NO_FAULT_FLAG_UNROLL").is_ok_and(|v| v != "0"))
+}
+
 /// The longest constant range the fast copy unrolls.
 const UNROLL_MAX: i64 = 64;
 /// The largest body, in IR nodes, the fast copy repeats per round.
@@ -109,8 +116,11 @@ struct Walk<'a> {
     reads: HashSet<u16>,
     /// The `Set`s whose right-hand side is being walked, innermost last.
     set_stack: Vec<u16>,
-    /// The locals a discharge's value is written into (through any enclosing `Set`).
-    discharge_targets: HashSet<u16>,
+    /// Each discharge: the local it tests and the locals its value is written into (every
+    /// `Set` around it).
+    discharges: Vec<(u16, Vec<u16>)>,
+    /// The locals each local's assignments read, over the whole statement.
+    set_reads: HashMap<u16, HashSet<u16>>,
     /// Walking a CALLEE: its raise would report from inside the fast copy, so a raising
     /// template declines; its `return` ends only its own frame.
     callee: bool,
@@ -142,6 +152,12 @@ impl Walk<'_> {
             }
             Value::Set(x, e) => {
                 self.writes.insert(*x);
+                let reads = self.set_reads.entry(*x).or_default();
+                e.walk(&mut |n| {
+                    if let Value::Var(r) = n {
+                        reads.insert(*r);
+                    }
+                });
                 self.set_stack.push(*x);
                 let r = self.node(e, depth);
                 self.set_stack.pop();
@@ -161,8 +177,9 @@ impl Walk<'_> {
             Value::If(t, a, b) => {
                 if !self.callee && is_discharge(self.data, t, a) {
                     self.fault_forms += 1;
-                    self.discharge_targets
-                        .extend(self.set_stack.iter().copied());
+                    if let Value::Var(n) = a.unspan() {
+                        self.discharges.push((*n, self.set_stack.clone()));
+                    }
                 }
                 self.node(t, depth)?;
                 self.node(a, depth)?;
@@ -242,7 +259,8 @@ impl Walk<'_> {
             fault_forms: 0,
             reads: HashSet::new(),
             set_stack: Vec::new(),
-            discharge_targets: HashSet::new(),
+            discharges: Vec::new(),
+            set_reads: HashMap::new(),
             callee: true,
             calls: self.calls + 1,
             pure: self.pure,
@@ -366,7 +384,8 @@ impl Output<'_> {
             fault_forms: 0,
             reads: HashSet::new(),
             set_stack: Vec::new(),
-            discharge_targets: HashSet::new(),
+            discharges: Vec::new(),
+            set_reads: HashMap::new(),
             callee: false,
             calls: 0,
             pure: &self.fault_flag_pure,
@@ -377,17 +396,28 @@ impl Output<'_> {
         if walk.fault_forms == 0 {
             return decline("nothing in it can fault");
         }
-        // Profitability: the fast copy pays where a discharge's select sat on a LOOP-CARRIED
-        // chain — its value written into a local the statement also reads (`guess = (guess +
-        // (x / guess)?) / 2`).  A discharge that only feeds a condition was a select off that
-        // path, and a raise is a predicted branch: duplicating the statement for them costs
-        // the function its inlining and buys nothing (`count_ink`, `if v ?? 0 == ink`, +42 %).
-        if !walk
-            .discharge_targets
-            .iter()
-            .any(|t| walk.reads.contains(t))
-        {
-            return decline("no discharge feeds a local the statement reads back");
+        // Profitability: the fast copy pays where a discharge's select sits ON A RECURRENCE —
+        // the value it tests depends, through the statement's own assignments, on a local its
+        // result is written into (`guess = (guess + (x / guess)?) / 2`).  A discharge whose
+        // value only feeds a local through an associative step (`acc += (v[i] ?? 0) * w`) is
+        // an independent select per element that LLVM vectorises, and the flag's extra
+        // reduction measured slower there (`resize` +33 %, `render_marks` +42 %); one that only
+        // feeds a condition was never on a chain at all (`count_ink`).
+        if !walk.discharges.iter().any(|(n, targets)| {
+            let mut seen: HashSet<u16> = HashSet::new();
+            let mut todo = vec![*n];
+            while let Some(v) = todo.pop() {
+                if let Some(reads) = walk.set_reads.get(&v) {
+                    for r in reads {
+                        if seen.insert(*r) {
+                            todo.push(*r);
+                        }
+                    }
+                }
+            }
+            targets.iter().any(|t| seen.contains(t))
+        }) {
+            return decline("no discharge lies on a recurrence of a local it writes");
         }
         let variables = data.def(self.def_nr).variables();
         let mut escaped: HashSet<u16> = HashSet::new();

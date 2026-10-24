@@ -113,3 +113,24 @@ counter seeded at its start) whose body is straight-line (no loop, `break`, `con
 **Invariant.** The fast copy's only effect is on locals, and those are restored before a
 rerun.  So a set flag leaves no trace, and a clear flag means every fault form answered
 exactly what today's form answers.
+
+## Where the flag pays (measured)
+
+The flag pays where a discharge's select sits ON A RECURRENCE: the value it tests depends on
+the local its result is written into.  Measured with the rule on and off (`LOFT_NO_FAULT_FLAG`):
+
+| row | off | on | the statement |
+|---|---|---|---|
+| `06_newton_sqrt` | 1.67× | 1.14× | `guess = (guess + (x / guess)?) / 2`, 50 rounds unrolled |
+| `11_par/par` | 3.59× | 2.67× | the same worker |
+| `drawing/resize` | 1.35× | 1.25× | a resample row walk |
+| `19_stdlib_par/par_map_float` | 0.73× | 0.90× | `t = t * 0.5 + sqrt(t + 1.0)?`, 24 rounds |
+
+Where the discharged value only feeds a local through an associative step (`acc += (v[i] ?? 0)
+* w`) the exact select vectorises and the flag measured 33–42 % slower (`render_marks`,
+`resize`, `fov_rays` before the condition), so such a statement is declined.  The unroll is
+part of the gain: without it `newton_sqrt` is 1.29× and `par` 2.90×
+(`LOFT_NO_FAULT_FLAG_UNROLL`).  `par_map_float` is the one row that still loses: its select
+is on a `sqrt` where `newton_sqrt`'s is on a division, and no fact the IR carries tells the two
+apart.  It stays under Rust's time; the trade-off is recorded rather than fitted.
+

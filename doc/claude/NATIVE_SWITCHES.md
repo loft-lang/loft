@@ -673,7 +673,8 @@ sentinel) stay unranged, and a boxed capture is read through its box and stays c
 **`LOFT_NO_FAULT_FLAG=1`** (`@FR-R-FaultFlag`, default-ON, generation time, `--native` only)
 runs every `for` statement as written — with it off, a statement that writes only scalar locals
 first runs a fast copy, each fault form setting a flag, and reruns as written when it is set —
-the first bisect step for a wrong value out of such a loop; `LOFT_TRACE_FAULT_FLAG=1` names each.
+the first bisect step for a wrong value out of such a loop; `LOFT_TRACE_FAULT_FLAG=1` names each,
+and `LOFT_NO_FAULT_FLAG_UNROLL=1` keeps the fast copy's constant ranges as loops.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
 only) makes a counted loop's index chains keep their checked operators — with it off, chains
 of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals
