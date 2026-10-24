@@ -182,7 +182,7 @@ impl<'a> Cx<'a> {
                     .iter()
                     .map(|e| {
                         self.ctype(e)
-                            .filter(|c| !matches!(c, CType::Void | CType::Text | CType::Fn))
+                            .filter(|c| !matches!(c, CType::Void | CType::Fn))
                     })
                     .collect::<Option<Vec<_>>>()?;
                 Some(CType::Tuple(self.tuple_id(shapes)))
@@ -190,6 +190,11 @@ impl<'a> Cx<'a> {
             Type::Void => Some(CType::Void),
             _ => None,
         }
+    }
+
+    /// Does a tuple of these shapes hold a text, which it owns and must copy and free?
+    pub(crate) fn tuple_has_text(&self, id: u32) -> bool {
+        self.tuple_shapes(id).contains(&CType::Text)
     }
 
     /// The number of the tuple struct with these element shapes, made on first use.

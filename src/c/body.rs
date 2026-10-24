@@ -215,6 +215,16 @@ impl<'a> FnWriter<'a> {
             .filter(|&v| !self.params[v] && self.shapes[v] == CType::Text)
             .map(|v| self.var(v as u16))
             .collect();
+        // The texts a tuple local owns.
+        for v in (0..self.shapes.len()).filter(|&v| !self.params[v]) {
+            if let CType::Tuple(id) = self.shapes[v] {
+                for (i, c) in self.cx.tuple_shapes(id).into_iter().enumerate() {
+                    if c == CType::Text {
+                        texts.push(format!("{}.f{i}", self.var(v as u16)));
+                    }
+                }
+            }
+        }
         texts.extend(
             self.temps
                 .iter()
@@ -707,6 +717,20 @@ impl<'a> FnWriter<'a> {
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
     fn assign(&mut self, v: &Value, target: &str, c: CType, ind: usize) -> Result<(), String> {
         match v.unspan() {
+            // A tuple that owns texts is copied element by element: a struct copy would share them.
+            Value::Var(src) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) => {
+                let CType::Tuple(id) = c else { unreachable!() };
+                for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
+                    let i16 = u16::try_from(i).map_err(|_| "a tuple too wide")?;
+                    self.assign(
+                        &Value::TupleGet(*src, i16),
+                        &format!("{target}.f{i}"),
+                        e,
+                        ind,
+                    )?;
+                }
+                Ok(())
+            }
             // A function named as a value: its definition number.
             Value::Int(d) if c == CType::Fn && self.cx.is_function(*d) => {
                 let f = self.cx.fn_value(d.unsigned_abs());
@@ -859,7 +883,11 @@ impl<'a> FnWriter<'a> {
             }
             Value::TupleGet(var, i) => {
                 let c = self.shape_of(&Value::TupleGet(*var, *i))?;
-                Ok(E::new(format!("{}.f{i}", self.var(*var)), kind_of(c)))
+                let place = format!("{}.f{i}", self.var(*var));
+                if c == CType::Text {
+                    return Ok(E::new(format!("loft_view(&{place})"), K::View));
+                }
+                Ok(E::new(place, kind_of(c)))
             }
             Value::Call(d, args) => self.call(*d, args, ind),
             Value::CallRef(v, args) => self.call_ref(*v, args, ind),
@@ -918,6 +946,12 @@ impl<'a> FnWriter<'a> {
     fn text_dest(&self, v: &Value) -> Result<String, String> {
         match v.unspan() {
             Value::Var(var) if self.text_held(*var) => Ok(self.var(*var)),
+            Value::TupleGet(var, i)
+                if matches!(self.shapes[*var as usize], CType::Tuple(id)
+                    if self.cx.tuple_shapes(id).get(*i as usize) == Some(&CType::Text)) =>
+            {
+                Ok(format!("{}.f{i}", self.var(*var)))
+            }
             _ => Err("a text operator writing elsewhere than a text local".into()),
         }
     }
