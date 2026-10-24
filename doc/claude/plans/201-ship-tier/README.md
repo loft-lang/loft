@@ -71,6 +71,15 @@ site's own executions, which costs a counter per operator in ledger runs only.  
 untaken branch then keeps its check, and the tier is exactly as safe as the testing's
 coverage.  The choice is the owner's: the cheap form is assumed until it is decided.
 
+## Cross-arc dependencies
+
+@PLN200 builds a second code generator (ANSI C).  The tier is defined on the IR, so it holds
+for both: a fault site is named by the function, its body hash and the operator's position,
+never by the emitted text.  One ledger then licenses a ship build on either backend.  Each
+generator supplies its own check-free form of an operator.  `stats.py` takes the C backend as
+lanes of its own (checked and ship) beside `native`, compared with the same Rust twin and
+required to print the same hash.
+
 ## See also
 
 [NATIVE.md § Optimisation tiers](../../NATIVE.md#optimisation-tiers--semantics-runs-performance-lanes-shipped-binaries) ·
