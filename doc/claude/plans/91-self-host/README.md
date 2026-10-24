@@ -57,8 +57,8 @@ de-risking probes below are the Stage-A spec for the spine.
 - **Embedded idiom already writable:** fixed-capacity collections (pre-sized array + count + index-write, the loft#320 pattern) are proven in crawler loft today.
 - **The C backend exists (P-cemit is past):** `src/c/` on the @PLN200 B5 branch emits
   ANSI C beside the Rust writer, checked by `scripts/c_sweep.py` on three macro modes with
-  ASan and UBSan; 1648 of 2817 corpus programs match on all three (2026-10-24), the
-  refusals concentrated in file and system I/O, generators, `&` locals, `par`, native
+  ASan and UBSan; 1789 tests pass across the modes and the sanitizers (owner, 2026-10-24),
+  the refusals concentrated in file and system I/O, generators, `&` locals, `par`, native
   library calls, spatial and trie.
 - **The IR is already written in loft:** `tools/ir_schema/ir.loft` transcribes the complete
   IR as loft `struct`/`enum` declarations (hand-mirrored from `src/data.rs`), and the IR
@@ -76,7 +76,7 @@ de-risking probes below are the Stage-A spec for the spine.
 
 | Item | Status | Notes |
 |---|---|---|
-| **1a — The compiler in loft** | Open — **the trunk, first** | Lexer, parser, scopes and types in loft, emitting the codec IR (`tools/ir_schema/ir.loft` is the type vocabulary), compiled by the stage-0 backend. Gate: a byte-identical IR diff against the Rust parser over the corpus and the language suite, the same instrument as `scripts/introspect_diff.sh`; the measurement is HOW MANY programs agree. The existing backends stay as they are, so no runtime question is opened. |
+| **1a — The compiler in loft** | Open — **the trunk, first** | Lexer, parser, scopes and types in loft, emitting the codec IR (`tools/ir_schema/ir.loft` is the type vocabulary), compiled by the stage-0 backend. Gate: a byte-identical IR diff against the Rust parser over the corpus and the language suite, the same instrument as `scripts/introspect_diff.sh`; the measurement is HOW MANY programs agree. The existing backends stay as they are, so no runtime question is opened. **The AST holds its children in a `vector<Node>`, in a keyed collection (records that do not move), or as arena indices — never `&v[i]` into a vector that grows** (loft#2163: the interpreter reads null, `--native` the moved record's old bytes). The bar rows 1a uses, measured, and the steps that close them: the child plan "The OCaml bar, for the compiler". |
 | **1b — The runtime in loft** | Open — after 1a, gated by P-perf | The interpreter loop, the stores and the opcode bodies in loft. Pulls strands 2–4 with it; the only part of strand 1 the P-perf probe speaks to. |
 | **2 — Bundle/mod system for the core** | Open | Convert central switches (`fill.rs` opcode match, parser operator/precedence table, native registry) into additive scanner-wired registration seams. No `src/` edits to extend. |
 | **3 — Migrate types/structures into bundles** | Open | Base language = the default bundle set; no privileged core path; enables subsettable / "limited" loft builds. |
