@@ -2179,9 +2179,13 @@ arm in `ops::int_arith`, the loop hook in `emit.rs`.
                  which holds at least one FAULT FORM, runs a fast copy first.  In it a
                  `??` / `?` discharge (`if not-null(n) { n } else { d }`) sets a flag where
                  `n` is null and answers `n`; a template's `s.raise_recoverable(k)` sets the
-                 flag instead of raising; `+ - *` and negation wrap and set the flag on a
-                 null operand or an overflow; `& | ^` set it on a null operand.  Each fault
-                 form answers exactly the exact form's value while the flag stays clear.
+                 flag instead of raising.  Each fault form answers exactly the exact form's
+                 value while the flag stays clear.  An integer operator keeps its checked
+                 form: its null tests are branches the processor predicts, off the value
+                 path, and a flag computed per operator measured slower (`02_sum_loop`
+                 1.81× → 2.24×).  A store READ (a getter or length, by name) and a call to a
+                 loft function whose own body passes the walk without a raise are admitted
+                 in a statement that writes no store.
                  After the copy a set flag restores every written local declared before the
                  statement and runs the statement as written, so a fault is answered and
                  reported once, by the exact statement.  The copy is skipped under
@@ -2201,8 +2205,7 @@ established after a speculative run instead of before the arithmetic.  `06_newto
 1.67× → 1.14× of Rust.  Switch `LOFT_NO_FAULT_FLAG=1`; `LOFT_TRACE_FAULT_FLAG=1` names each
 admission and each decline with its reason.  Sites: `generation/fault_flag.rs`
 (`fault_flag_admits`, `fault_flag_statement`, `fault_flag_unrolled`), the fault forms in
-`emit.rs` (the discharge), `calls.rs` (the raise) and `ops/int_arith.rs` (the operators),
-the runtime helpers `ops::fault_flag_*` and `ops::ff_*`.  Guard
+`emit.rs` (the discharge), `calls.rs` (the raise), the runtime helpers `ops::fault_flag_*`.  Guard
 `loft-suite/rules/rewrites/R-FaultFlag/a-for-statement-run-under-a-fault-flag-answers-as-written.loft`.
 
 ### A dying temporary's elements move into the append that consumes them

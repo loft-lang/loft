@@ -37,21 +37,6 @@ pub(super) fn is_discharge(data: &Data, test: &Value, then: &Value) -> bool {
     )
 }
 
-/// The `ops::ff_*` helper an integer operator takes in a fast copy, or `None` for an operator
-/// that keeps its ordinary emission.
-pub(super) fn int_form(name: &str, arity: usize) -> Option<&'static str> {
-    match (name, arity) {
-        ("OpAddInt" | "OpAddIntNullable", 2) => Some("ff_add"),
-        ("OpMinInt" | "OpMinIntNullable", 2) => Some("ff_sub"),
-        ("OpMulInt" | "OpMulIntNullable", 2) => Some("ff_mul"),
-        ("OpMinSingleInt", 1) => Some("ff_neg"),
-        ("OpLandInt", 2) => Some("&"),
-        ("OpLorInt", 2) => Some("|"),
-        ("OpEorInt", 2) => Some("^"),
-        _ => None,
-    }
-}
-
 /// Does an operator template touch anything but its operands once its recoverable raise is
 /// taken out?  A `s.` method, the `stores` or `cell` handles, or a `crate::` path all reach
 /// state a rerun could observe.
@@ -170,7 +155,7 @@ impl Walk<'_> {
                 self.node(b, depth)
             }
             Value::Call(d, args) => {
-                self.call(*d, args.len())?;
+                self.call(*d)?;
                 self.all(args, depth)
             }
             Value::Return(e) if self.callee => self.node(e, depth),
@@ -181,7 +166,7 @@ impl Walk<'_> {
 
     /// A call: a store READ by name, an operator whose template touches nothing but its
     /// operands, or a loft function whose own body passes this walk.
-    fn call(&mut self, d: u32, arity: usize) -> Result<(), String> {
+    fn call(&mut self, d: u32) -> Result<(), String> {
         let def = self.data.def(d);
         let name = def.name();
         if READS.contains(&name) {
@@ -195,7 +180,7 @@ impl Walk<'_> {
             if raises && self.callee {
                 return Err(format!("`{name}` raises inside a called function"));
             }
-            if !self.callee && (raises || int_form(name, arity).is_some()) {
+            if !self.callee && raises {
                 self.fault_forms += 1;
             }
             return Ok(());
@@ -348,7 +333,6 @@ impl Output<'_> {
         if self.fault_flag_disabled
             || self.fault_flag.is_some()
             || self.in_coroutine_body
-            || self.release_pass_probe
         {
             return None;
         }

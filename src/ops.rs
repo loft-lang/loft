@@ -511,54 +511,6 @@ pub fn fault_flag_raise(flag: &mut bool, _kind: crate::runtime_error::RuntimeErr
     *flag = true;
 }
 
-/// `@FR-R-FaultFlag` — `+` in a fast copy: the wrapping sum, the flag set where the checked
-/// form would answer null (a null operand, or an overflow found by sign bits, which keeps the
-/// overflow intrinsic out of a loop LLVM may vectorise).  Clear flag: the checked answer.
-#[inline]
-#[must_use]
-pub fn ff_add(v1: i64, v2: i64, flag: &mut bool) -> i64 {
-    let r = v1.wrapping_add(v2);
-    *flag |= v1 == i64::MIN || v2 == i64::MIN || ((v1 ^ r) & (v2 ^ r)) < 0;
-    r
-}
-
-/// `@FR-R-FaultFlag` — `-` in a fast copy, as [`ff_add`].
-#[inline]
-#[must_use]
-pub fn ff_sub(v1: i64, v2: i64, flag: &mut bool) -> i64 {
-    let r = v1.wrapping_sub(v2);
-    *flag |= v1 == i64::MIN || v2 == i64::MIN || ((v1 ^ v2) & (v1 ^ r)) < 0;
-    r
-}
-
-/// `@FR-R-FaultFlag` — `*` in a fast copy, as [`ff_add`].  A product equal to the sentinel
-/// is flagged too: the checked form answers null for it.
-#[inline]
-#[must_use]
-pub fn ff_mul(v1: i64, v2: i64, flag: &mut bool) -> i64 {
-    let (r, o) = v1.overflowing_mul(v2);
-    *flag |= v1 == i64::MIN || v2 == i64::MIN || o || r == i64::MIN;
-    r
-}
-
-/// `@FR-R-FaultFlag` — unary `-` in a fast copy: the sentinel is the only operand whose
-/// negation the checked form refuses.
-#[inline]
-#[must_use]
-pub fn ff_neg(v1: i64, flag: &mut bool) -> i64 {
-    *flag |= v1 == i64::MIN;
-    v1.wrapping_neg()
-}
-
-/// `@FR-R-FaultFlag` — `&`, `|`, `^` in a fast copy: the operator, the flag set on a null
-/// operand (the checked form answers null there).
-#[inline]
-#[must_use]
-pub fn ff_null2(v1: i64, v2: i64, flag: &mut bool) -> (i64, i64) {
-    *flag |= v1 == i64::MIN || v2 == i64::MIN;
-    (v1, v2)
-}
-
 #[inline]
 #[must_use]
 pub fn op_add_long_nn(v1: i64, v2: i64) -> i64 {
