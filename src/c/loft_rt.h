@@ -661,6 +661,12 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
     return r;
 }
 
+/* OpEqRef */
+static int loft_ref_eq(loft_ref a, loft_ref b) {
+    if (a.rec == 0 || b.rec == 0) return a.rec == 0 && b.rec == 0;
+    return a.store_nr == b.store_nr && a.rec == b.rec && a.pos == b.pos;
+}
+
 /* OpStoreLive (Stores::store_live): the reference names a record of a store not freed. */
 static int loft_store_live(loft_ref r) {
     return r.rec != 0 && r.store_nr != 0xFFFF && r.store_nr < loft_nstores && loft_stores[r.store_nr].live;

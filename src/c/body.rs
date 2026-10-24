@@ -822,6 +822,7 @@ impl<'a> FnWriter<'a> {
             Value::Text(_) => Ok(CType::Text),
             Value::Var(v) => Ok(self.shapes[*v as usize]),
             Value::FnRef(..) => Ok(CType::Fn),
+            Value::FnRefDnr(_) => Ok(CType::Int),
             Value::CallRef(v, _) => match self.vars.tp(*v).base() {
                 crate::data::Type::Function(_, ret, ..) => cx
                     .ctype(ret)
@@ -896,6 +897,8 @@ impl<'a> FnWriter<'a> {
             }
             Value::Call(d, args) => self.call(*d, args, ind),
             Value::CallRef(v, args) => self.call_ref(*v, args, ind),
+            // The definition number a function value names, as an integer.
+            Value::FnRefDnr(v) => Ok(E::new(format!("{}.d", self.var(*v)), K::Int)),
             Value::FnRef(d, clos, _) => {
                 let f = self.cx.fn_value(d.unsigned_abs());
                 if *clos == u16::MAX {
@@ -1100,6 +1103,13 @@ impl<'a> FnWriter<'a> {
             match args[i].unspan() {
                 Value::Int(d) if shapes[i] == CType::Fn && self.cx.is_function(*d) => {
                     xs[i] = self.cx.fn_value(d.unsigned_abs());
+                }
+                // A bare null takes the parameter's shape.
+                Value::Null if shapes[i] != CType::Void => {
+                    xs[i] = match shapes[i] {
+                        CType::Text => "loft_null_text()".into(),
+                        c => format!("(({}) {})", held(c), self.cx.initial(c)),
+                    };
                 }
                 _ => rest.push(i),
             }
@@ -2182,6 +2192,16 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
             }
+            // A reference equality: two absent references are equal, an absent one equals no
+            // present one, two present ones when they name the same place.
+            ("OpEqRef" | "OpNeRef", [_, _]) => {
+                let (a, b) = self.two(name, args, ind)?;
+                let neg = if name == "OpNeRef" { "!" } else { "" };
+                Ok(E::new(
+                    format!("{neg}loft_ref_eq({}, {})", as_ref(a)?, as_ref(b)?),
+                    K::Cond,
+                ))
+            }
             ("OpStoreLive", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("loft_store_live({})", as_ref(r)?), K::Cond))
@@ -2420,6 +2440,8 @@ const OP_BOOL: &[&str] = &[
     "OpConvBoolFromNull",
     "OpRemoveVector",
     "OpStoreLive",
+    "OpEqRef",
+    "OpNeRef",
 ];
 const OP_REF: &[&str] = &[
     "OpConstRef",
