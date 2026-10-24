@@ -96,3 +96,40 @@ have answered the same values and reported nothing**; everything else is the exa
 5. Guards: cells for values (hand-computed), for a report in one row of a batch (overflow,
    divide by zero) being made exactly once, and for each decline; falsified.
 6. Measure `11_par/par` and the `19_stdlib_par` lane; the rewrite census.
+
+## Reach, and what generalises (measured 2026-10-24, laptop, pinned)
+
+**Where it fires.**  One `par` site in the bench admits (`11_par`).  All four scalar sites of
+`19_stdlib_par` decline, first on `extra arguments` (the salt, which the lane's header names as
+how programs pass context).  Behind that come three sites whose element is a scalar
+(`vector<float>`, `vector<integer>`, a range), and two operators whose template raises:
+`as integer` (`OpCastIntFromFloat`) and `>>` (`OpSRightInt`).  No consumer and no
+`loft-libs-*` library writes `par` at all.
+
+**What admitting them would buy** (the rule as built, the source edited around each decline,
+`LOFT_NO_PAR_ROWS` A/B, hash unchanged):
+
+| shape | off | on | Rust | note |
+|---|---|---|---|---|
+| `par_records` (salt and cast moved out) | 3.48 ms | 2.44 ms | 2.04 ms | 1.71× → 1.20× |
+| `par_reduce` (record element, `>>` as `/ 8192`) | 30.6 ms | 23.4 ms | 7.5 ms | −24 %; plain integer ops in the row variant change nothing, so the rest is outside the row (the materialised input, the result buffer), not yet located |
+
+The three clauses are small: scalar extras (the fast closure captures them), a scalar element
+or a range (the row is the value itself), and a GENERIC template lowering in which a branch
+that only calls `s.raise_recoverable(…)` becomes `*__bad = true`.  That last one replaces the
+`OpDivFloat` special case.
+
+**Sequential loops: what transfers and what does not.**  `02_sum_loop` (1.81×) is a serial
+chain, `acc = ((acc ^ i) + (i & 7)) & 16777215`.  Measured on the emitted Rust:
+
+| form | ms | |
+|---|---|---|
+| as emitted (checked ops) | 5.38 | |
+| plain ops | 2.91 | Rust 2.87; the whole gap is the checked ops |
+| block of 1024, plain + overflow flag, exact rerun | 4.56 | −15 % |
+| the same block, no flag | 3.97 | the block structure alone costs |
+
+So the speculate-and-rerun half of this rule does not pay on a serial chain: it pays where the
+fast path vectorises.  A static proof pays in full: `acc` after `& 16777215` lies in
+`[0, 2^24)`, so a loop-carried range fact (`@FR-R-Range` over a local whose every write is
+bounded) makes every operator plain.  `14_stdlib_vector/index_read` (1.94×) has the same shape.
