@@ -362,47 +362,69 @@ AddressSanitizer/UBSan; 2018 are refused by name (355 of them do not compile in 
 expected-error programs and ones needing a library).  How it works and how to extend it:
 [C_BACKEND.md](../C_BACKEND.md).
 
-**⚠ NEXT — the C output's speed: read this before the next feature (owner, 2026-10-24).**
-Correctness is measured; speed is not, and the C output is up to 13× slower than `--native`.
-Measured at `7d370d10`: the 9 benches the C backend carries once the harness is
-stubbed (`ticks()` → 0, `--n` fixed), the C lane built with `cc -std=c99 -O2` and the native lane with
-the shipped rustc flags, whole-process medians of 5 pinned runs, same hash in both lanes.
-C ÷ native: fibonacci 0.49, sum_loop 0.57, newton_sqrt 0.82, mandelbrot 1.04, collatz 1.65,
-string_build 3.2, sieve 6.5, matrix_mul 11.6, **sort 13.1**.  Sort was taken apart by
-hand-patching its emitted `insertion_sort` (8.8 s as emitted, native 0.65 s):
+**⚠ NEXT — the quality of the C the generator writes: read this before the next feature (owner, 2026-10-24).**
+The C backend validates the generator and gets no benchmark lanes or twins (@PLN201, owner),
+so nothing here is a speed bar.  These are defects in the emitted C, found by taking one
+program apart by hand: `bench/10_sort`'s `insertion_sort` at `7d370d10`, built `cc -std=c99 -O2`,
+ran 8.8 s where `--native` ran 0.65 s.  Forcing the access helpers inline gave 1.3 s; holding
+the vector header and element base in locals before the loop gave 0.34 s.  Removing the
+arithmetic checks alone changed nothing.
 
-| change to the emitted C | time |
+1. **The hot accessors are out-of-line calls.**  gcc keeps `loft_vec_get` as a function, and its
+   12-byte `loft_ref` comes back through the stack as two narrow stores and one wide load, a
+   store-forwarding stall per element access.  `loft_set_int` is a call too.  Fix in
+   `loft_rt.h`: the accessors `LOFT_HOT_INLINE` (below), and the element access answers the
+   element's address, not a struct.
+2. **Nothing is hoisted, and the C compiler cannot do it.**  An element write is a `memcpy`
+   into the store's `uint8_t` buffer, which may alias the store table and the buffer pointer,
+   so gcc reloads table → buffer → header → length after every write.  Native holds them in
+   locals under `(R-Header)` (`vec_header` / `vec_base`).  That decision is B3.4's first
+   family: move it into `FnPlan` and emit the base and length as locals before the loop.
+3. **`loft_mul` tests overflow by DIVIDING** (`a > INT64_MAX / b`): a hardware divide per `*`.
+   Replace it with the overflow macros below.
+
+**The macro layer (`src/c/loft_cc.h`, included by `loft_rt.h`).**  The ONLY place the emitted
+C names a compiler; the generator writes these macros and never a raw `__builtin` or
+attribute.  Three compile-time modes, and a mode changes speed, never a value:
+
+| mode | meaning |
 |---|---|
-| none | 8.8 s |
-| arithmetic overflow checks removed | 8.9 s — not the cost |
-| `-O3` instead of `-O2` | 2.0 s |
-| `loft_vec_get` / `loft_get_int` / `loft_set_int` and their helpers forced inline | 1.3 s |
-| the vector header and element base read ONCE before the loop | **0.34 s — faster than native** |
+| `-DLOFT_STRICT` | pure C99, clean under `cc -std=c99 -pedantic -Werror`: every macro its exact C99 fallback |
+| default | gcc / clang / MSVC extensions where detected (`__has_builtin`, `__GNUC__`, `_MSC_VER`), the fallback otherwise |
+| `-DLOFT_VERIFY` | default, and every PROOF the generator relied on is re-checked: a false one aborts naming the site (the C twin of `LOFT_HOIST_VERIFY=1`) |
 
-Two causes, in order of size:
+Three kinds of site:
 
-1. **The access helpers are out-of-line calls.**  At `-O2` gcc keeps `loft_vec_get` as a
-   function (11 call sites in `sorted_sum`), and its 12-byte `loft_ref` comes back through
-   the stack as two narrow stores and one wide load, a store-forwarding stall on every
-   element access.  Fix in `loft_rt.h`: make the hot accessors `static inline` (forced where the
-   compiler allows it), and have the element access answer the element's address, not a struct.
-2. **Nothing is hoisted, and the C compiler cannot do it for us.**  Every element write is a
-   `memcpy` into the store's `uint8_t` buffer, which may alias the global store table and the
-   buffer pointer, so after every write gcc reloads table → buffer → header → length.
-   The native build already proves a vector cannot move inside the loop and holds the header
-   and element base in locals (R-Header, `vec_header` / `vec_base`).  That decision is B3.4's
-   first family: move it into `FnPlan` and have `src/c/` emit the base and length as locals
-   before the loop.  This is the step that reaches native speed.
+- **Safe hints** — ignoring one changes speed only: `LOFT_HOT_INLINE`, `LOFT_COLD`,
+  `LOFT_LIKELY` / `LOFT_UNLIKELY`, and `LOFT_ADD_OVF` / `LOFT_SUB_OVF` / `LOFT_MUL_OVF`
+  (`__builtin_*_overflow`; the C99 fallback multiplies directly when both operands are below
+  2^31.5 and divides only above).  The CHECKED operators `loft_add` / `loft_sub` / `loft_mul`
+  sit on them with unchanged semantics: a null operand or an overflow answers null.
+- **Proof sites** — emitted only where a rewrite PROVED the fact (`(R-RangeArith)`,
+  `(R-GuardedChain)` for a plain operator, `(R-Header)` for a held base):
+  `LOFT_PLAIN_ADD/SUB/MUL(a, b, site)` and `LOFT_PROVED(cond, site)`.  A plain operator
+  computes in `uint64_t`, so a wrong proof is a wrong value and never C's undefined behaviour.
+  `restrict` and `__builtin_unreachable` / `__builtin_assume` belong here and nowhere else.
+- **Ship sites (@PLN201)** — the ship tier's dropped check, chosen PER OPERATOR by the generator
+  from the ledger exactly as the Rust generator chooses it: `LOFT_SHIP_ADD/SUB/MUL/NEG/SHL(a, b)`,
+  the operator wrapping through `uint64_t`.  NEVER a plain signed `a + b`: Rust's `wrapping_add`
+  is defined, a C signed overflow is not, and a licensed site that overflows after all must
+  answer a wrong number, never let the compiler delete code around it.  `-DLOFT_SHIP_PROBE`
+  maps every checked operator to its ship form, the C twin of `LOFT_RELEASE_PASS_PROBE=1`.
+  The checked tier never emits a ship site; the ship build composes with `LOFT_STRICT`.
 
-Also: `loft_mul` tests overflow by DIVIDING (`a > INT64_MAX / b`), a hardware divide per `*`,
-which is the likely cost in sieve (`i * i` per step) and part of matrix_mul.  Use
-`__builtin_mul_overflow` where available, a 128-bit product otherwise.
+`scripts/c_sweep.py` runs the corpus under `LOFT_STRICT`, the default and `LOFT_VERIFY`; all
+three must match the interpreter, and a difference between modes is a bug in a macro's
+fallback.  A tested sketch of the first two kinds: 1587 operand pairs (the boundaries at 0, ±1,
+±2^31.5, ±2^32, `INT64_MAX`, `INT64_MIN`) equal a 128-bit reference in all three modes under
+gcc and clang, the strict header passes `-pedantic -Werror`, a false proof aborts under
+`LOFT_VERIFY`.
 
-What to build, in order: (a) a C lane for the bench harness — the C backend must carry
-`ticks()`, `arguments()` and the text→integer cast the harness uses, so the benches run
-unpatched; (b) the inline fix; (c) R-Header through `FnPlan` to the C emitter (B3.4);
-(d) the multiply guard.  Re-measure the 9 rows after each step; sort ≤ 1.5× native is the
-bar for (c).
+Order: (1) the macro layer with the overflow macros, replacing the divide; (2) the inline
+accessors; (3) `(R-Header)` through `FnPlan` to the C generator (B3.4); (4) the ship sites,
+once @PLN201's ledger exists.  Each step checks the emitted C of `insertion_sort` (no call
+left in its inner loop after (2), no reload of the store table after (3)) and the sweep in all
+three modes.
 
 ## B6 — optional: a minimal binary
 
