@@ -960,7 +960,8 @@ guards-check:  ## @PLN175 — fail when a library guard was added or removed sin
 	@python3 scripts/fetch-library-guards.py --check
 
 features-fetch:  ## Refresh index/features.json from the loft-lang/features tracker (network; gh + jq)
-	@gh issue list -R $(FEATURES_REPO) --state all --limit 200 \
+	@# OPEN issues only: closing an entry's issue RETIRES it (the feature left the language).
+	@gh issue list -R $(FEATURES_REPO) --state open --limit 200 \
 	    --json number,title,labels,body \
 	  | jq 'sort_by(.number) | map({number, title, kind: ((.labels|map(.name)|map(select(startswith("kind:")))|.[0]) // "kind:unknown" | sub("^kind:";"")), group: (.labels|map(.name)|map(select(startswith("group:"))|sub("^group:";""))|join(",")), keys: ([.body|scan("<!-- keys: ([^>]*?) -->")]|.[0][0] // ""|split(" ")|map(select(length>0))), body})' \
 	  > index/features.json

@@ -9,7 +9,7 @@
 // repository, where `@F2` is `F2.md`.
 //
 // The two halves read differently.  An `@F` page says what the feature is and
-// how it aids you, and 77 of the 92 carry a runnable example; the rest
+// how it aids you, and 76 of the 91 carry a runnable example; the rest
 // name what demonstrates them instead, because a loft program cannot run the
 // compiler that runs it.  An `@I` page says what the part does and where it lives
 // in the source — it describes how loft is built, not something you write.
@@ -100,7 +100,6 @@
 // - **@F109** — `#superseded` — steer callers to a newer form without breaking the old one
 // - **@F110** — Diagnostic suggestions — what to write instead, checked by running it
 // - **@F111** — `for f in s#fields` — a compile-time loop over a struct's scalar fields
-// - **@F112** — `store_release()` — say a record is finished, and stop holding it in memory
 // - **@F113** — Associated types — an interface names a companion type
 // - **@F114** — A library type reads an element through a named method — `[…]` is the built-in collections'
 // - **@F115** — `OpDrop` — a type runs code when its scope lets it die
