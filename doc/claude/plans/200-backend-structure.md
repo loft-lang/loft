@@ -351,6 +351,17 @@ built with `cc` — can be written as a NEW part (`src/c/` or `crates/loft-c`) t
 `ProgramPlan`/`FnPlan` and the runtime description, with no edit to `rust`, `interp` or `opt`.
 Every edit it would need is a defect of this plan, fixed here before strand 5 starts.
 
+**Progress (2026-10-24).**  The probe grew into a backend: `src/c/` (layer `c`, a sibling of
+`interp` and `rust`) writes whole programs — texts, stores, vectors, records, enums, floats,
+characters, narrow integers, `&` parameters, deep copies, the `{v}` renderer — and its tests.
+It reads `use_analysis`, `scopes` and the store layouts and edits nothing in `rust`, `interp`
+or `opt`; the one shared edit was moving `test_runner`'s annotation parser to module level so
+`--emit-c` and `--tests` read `@EXPECT_FAIL` alike.  Measured with `scripts/c_sweep.py` over
+the 2816 corpus programs: 798 match the interpreter, 0 differ, 0 fail to compile, 0 trip
+AddressSanitizer/UBSan; 2018 are refused by name (355 of them do not compile in loft at all —
+expected-error programs and ones needing a library).  How it works and how to extend it:
+[C_BACKEND.md](../C_BACKEND.md).
+
 ## B6 — optional: a minimal binary
 
 **Later, not now (owner, 2026-10-23).**  A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
