@@ -30,6 +30,7 @@ mod emit;
 pub use crate::fnref;
 pub use crate::lower::file_hold;
 pub use crate::lower::hand_over;
+pub mod fault_flag;
 pub mod hoist;
 pub mod kept;
 pub use crate::lower::keyed_entry;
@@ -496,6 +497,17 @@ pub struct Output<'a> {
     pub chains_suspended: u32,
     /// `LOFT_TRACE_CHAIN=1` — name every loop whose chains are guarded, and why one is not.
     pub chain_trace: bool,
+    /// `@FR-R-FaultFlag` — the flag a `for` statement's FAST copy is being emitted under:
+    /// each fault form in it sets this local instead of branching, raising or reporting
+    /// ([`fault_flag`]).  `None` outside a fast copy.
+    pub fault_flag: Option<String>,
+    /// `@FR-R-FaultFlag` — the next statement number, so each site's flag and counter are distinct.
+    pub fault_flag_next: u32,
+    /// `LOFT_TRACE_FAULT_FLAG=1` — name every `for` statement admitted, and why one is not.
+    pub fault_flag_trace: bool,
+    /// `@FR-R-FaultFlag` — the `for` statements whose EXACT copy is being emitted, so the
+    /// ordinary path does not admit them a second time.
+    pub fault_flag_exact: HashSet<usize>,
     /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
     /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
     pub placed_locals: HashSet<u16>,
@@ -1789,6 +1801,10 @@ impl<'a> Output<'a> {
             plain_chains: Vec::new(),
             chains_suspended: 0,
             chain_trace: std::env::var("LOFT_TRACE_CHAIN").is_ok_and(|v| v != "0"),
+            fault_flag: None,
+            fault_flag_next: 0,
+            fault_flag_trace: std::env::var("LOFT_TRACE_FAULT_FLAG").is_ok_and(|v| v != "0"),
+            fault_flag_exact: HashSet::new(),
             placed_locals: HashSet::new(),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
@@ -2801,7 +2817,9 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<ChainGuard> {
+        // A fault-flag fast copy (`@FR-R-FaultFlag`) guards no chain: its operators set the flag.
         if self.switches.chain_guard_disabled
+            || self.fault_flag.is_some()
             || self.hoist_disabled
             || self.release_pass_probe
             || self.in_coroutine_body

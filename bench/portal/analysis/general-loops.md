@@ -54,3 +54,54 @@ fact (`@FR-R-Range` over a local whose every write is bounded) makes every opera
    `sum_loop`'s gap, and the same shape as `14_stdlib_vector/index_read` (1.94×).
 3. **Full unroll of a constant loop of at most 64 rounds** with a straight-line body.  It pays
    only once the body is branch- and select-free (mechanism 1): then LLVM overlaps calls.
+
+## Design: `(R-FaultFlag)`, mechanisms 1 and 3
+
+**Unit.** A `for` statement (the IR's `For block`: the counter seed, the range end, the loop).
+Taking the whole statement, not the bare loop, lets the rerun restart from the seed and lets
+the unroll see the seed.
+
+**Admission** (a walk over the block, declining with a reason under `LOFT_TRACE_FAULT_FLAG`):
+
+1. Every node is a literal, a `Var`, a `Set` of a local, a block, an `if`, a loop, a
+   `break` / `continue` that stays inside the statement, a `Drop`, or a call to an OPERATOR
+   whose `#rust` template touches no store: once `s.raise_recoverable(…)` is taken out, it
+   names no `s.`, `stores`, `cell` or `crate::`.  A user function, a store read, a text, a
+   `return` or a `yield` declines: the statement must have no effect but its locals.
+2. Every local the statement writes is a scalar (`integer`, `float`, `single`, `boolean`,
+   `character`) whose address nothing takes.
+3. At least one node has a fault form (below), or the copy buys nothing.
+
+**Emission.**
+
+```
+{ static __FFM_n: AtomicU32 = AtomicU32::new(0);      // this site's reruns
+  let __ffs_n = (var_a, var_b,);                       // the written locals declared before it
+  let mut __ff_n: bool = ops::fault_flag_skip(&__FFM_n);
+  if !__ff_n { <the statement, FAST> }
+  if __ff_n { ops::fault_flag_rerun(&__FFM_n); (var_a, var_b,) = __ffs_n; <the statement, as today> } }
+```
+
+`fault_flag_skip` is true under `--dev-soft-halt`, where an integer overflow REPORTS, and once
+a site has rerun 8 times: a loop whose nulls are common pays its fast copy at most eight
+times.
+
+**The fault forms**, each answering today's value whenever it leaves the flag clear:
+
+| node | fast form |
+|---|---|
+| `if not-null(n) { n } else { d }` (the lowering of `??` and `?`) | `__ff \|= is-null(n); n` |
+| a template's `s.raise_recoverable(k)` | `ops::fault_flag_raise(&mut __ff, k)` |
+| `+ - *` and negation on integers, checked or `Nullable` | wrapping, `__ff` set on a null operand or an overflow |
+| `&`, `\|`, `^` on integers | the operator, `__ff` set on a null operand |
+
+Every other node is emitted exactly as today, so the fast copy differs only where a fault
+form stands in.
+
+**The unroll.** Inside the fast copy, a `for` over `0..C` (literal `C` in `1..=64`, the
+counter seeded at its start) whose body is straight-line (no loop, `break`, `continue` or
+`return`, at most 48 nodes) is emitted as `C` copies of the body, each with the counter set.
+
+**Invariant.** The fast copy's only effect is on locals, and those are restored before a
+rerun.  So a set flag leaves no trace, and a clear flag means every fault form answered
+exactly what today's form answers.

@@ -670,6 +670,10 @@ cbor decoder's `(bytes[p] ?? 0) * 256`) carries its type's range — a fact beca
 such a slot refuses an unprovable value; `i32`/`u32` (the templates) and a
 signed alias with a spare bottom code (`limit(-100, 100) size(1)`, whose overflow writes the
 sentinel) stay unranged, and a boxed capture is read through its box and stays checked.
+**`LOFT_NO_FAULT_FLAG=1`** (`@FR-R-FaultFlag`, default-ON, generation time, `--native` only)
+runs every `for` statement as written — with it off, a statement that writes only scalar locals
+first runs a fast copy, each fault form setting a flag, and reruns as written when it is set —
+the first bisect step for a wrong value out of such a loop; `LOFT_TRACE_FAULT_FLAG=1` names each.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
 only) makes a counted loop's index chains keep their checked operators — with it off, chains
 of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals
