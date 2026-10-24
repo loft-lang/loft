@@ -427,10 +427,17 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 ///
 /// # Errors
 /// A program without a `main` that takes nothing, or the first [`Refusal`].
-pub fn emit_program(data: &Data, stores: &Stores) -> Result<String, Refusal> {
+///
+/// `expected` names the messages a test is expected to fail with (one must appear in its
+/// failure), or none for a test that must pass.
+pub fn emit_program(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
     let main = data.def_nr("n_main");
     if main >= data.definitions() {
-        return emit_tests(data, stores);
+        return emit_tests(data, stores, expected);
     }
     if !data.def(main).attributes().is_empty() {
         return Err(Refusal {
@@ -466,7 +473,11 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
     }
     let mut shapes = Vec::with_capacity(vars.count() as usize);
     for v in 0..vars.count() {
-        let tp = vars.tp(v);
+        // A `&` parameter has its target's shape, passed as a pointer to it.
+        let tp = match vars.tp(v) {
+            Type::RefVar(inner) if args.contains(&v) => inner,
+            tp => tp,
+        };
         let c = cx.ctype(tp).filter(|c| *c != CType::Void).ok_or_else(|| {
             let what = if args.contains(&v) {
                 "parameter"
@@ -480,11 +491,13 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
     let params: Vec<String> = args
         .iter()
         .map(|&a| {
-            format!(
-                "{} {}",
-                passed(shapes[a as usize]),
-                body::var_name(vars.name(a), a)
-            )
+            let c = shapes[a as usize];
+            let name = body::var_name(vars.name(a), a);
+            if matches!(vars.tp(a), Type::RefVar(_)) {
+                format!("{} *{name}", held(c))
+            } else {
+                format!("{} {name}", passed(c))
+            }
         })
         .collect();
     let params = if params.is_empty() {
@@ -522,7 +535,11 @@ fn test_functions(data: &Data) -> Vec<u32> {
 
 /// A program without `main` is run as its tests: a C `main` that runs each, catches a failed
 /// assert, and exits 1 when any test failed — `loft --tests`'s exit status.
-fn emit_tests(data: &Data, stores: &Stores) -> Result<String, Refusal> {
+fn emit_tests(
+    data: &Data,
+    stores: &Stores,
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
     let tests = test_functions(data);
     if tests.is_empty() {
         return Err(Refusal {
@@ -533,12 +550,30 @@ fn emit_tests(data: &Data, stores: &Stores) -> Result<String, Refusal> {
     let mut out = emit_unit(data, stores, &tests)?;
     out.push_str("\nint main(void) {\n    int failed = 0;\n    loft_in_test = 1;\n");
     for &d in &tests {
-        let _ = writeln!(
-            out,
-            "    if (setjmp(loft_test_jmp) == 0) {}(); else {{ failed++; fputs(\"FAIL {}\\n\", stderr); }}",
-            c_name(data, d),
-            data.def(d).original_name()
-        );
+        let name = data.def(d).original_name();
+        let subs = expected(&name);
+        if subs.is_empty() {
+            let _ = writeln!(
+                out,
+                "    if (setjmp(loft_test_jmp) == 0) {}(); else {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
+                c_name(data, d),
+            );
+        } else {
+            // Passes only by failing, with one of the expected messages in its own.
+            let list: Vec<String> = subs
+                .iter()
+                .map(|s| format!("loft_lit({}, {})", body::c_string(s), s.len()))
+                .collect();
+            let _ = writeln!(
+                out,
+                "    {{ const loft_str want[] = {{ {} }};\n      \
+                 if (setjmp(loft_test_jmp) == 0) {{ {}(); failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
+                 else if (!loft_failed_with(want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }}",
+                list.join(", "),
+                c_name(data, d),
+                subs.len()
+            );
+        }
     }
     out.push_str("    return failed ? 1 : 0;\n}\n");
     Ok(out)

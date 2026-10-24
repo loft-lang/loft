@@ -85,6 +85,17 @@ static void loft_text_append(loft_text *t, loft_str s) {
     loft_push(t, s.p, s.len);
 }
 
+/* OpAppendText (ops::append_text): a null text stays null, a null source makes it null. */
+static void loft_text_concat(loft_text *t, loft_str s) {
+    if (loft_str_is_null(loft_view(t))) return;
+    if (loft_str_is_null(s)) {
+        t->len = 0;
+        loft_push_char(t, 0);
+        return;
+    }
+    loft_text_append(t, s);
+}
+
 static void loft_text_set(loft_text *t, loft_str s) {
     if (t->p && s.p == t->p && s.len == t->len) return;
     if (t->p && s.p >= t->p && s.p < t->p + t->cap) {
@@ -273,6 +284,9 @@ static int64_t loft_rem(int64_t a, int64_t b) {
 static jmp_buf loft_test_jmp;
 static int loft_in_test = 0;
 
+/* The message of the last failed assert, for a test expected to fail with it. */
+static loft_text loft_fail_msg = { 0, 0, 0 };
+
 static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t line) {
     (void) file;
     (void) line;
@@ -280,9 +294,23 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
     fputs("error: assertion failed: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
     fputc('\n', stderr);
+    loft_fail_msg.len = 0;
+    loft_push(&loft_fail_msg, "assertion failed: ", 18);
+    loft_push(&loft_fail_msg, message.p, message.len);
     if (loft_in_test) longjmp(loft_test_jmp, 1);
     fflush(stdout);
     exit(1);
+}
+
+/* True when the last failure's message holds one of `want`. */
+static int loft_failed_with(const loft_str *want, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (want[i].len == 0) return 1;
+        for (size_t at = 0; at + want[i].len <= loft_fail_msg.len; at++) {
+            if (memcmp(loft_fail_msg.p + at, want[i].p, want[i].len) == 0) return 1;
+        }
+    }
+    return 0;
 }
 
 /* ── Stores ────────────────────────────────────────────────────────────────────────────────
