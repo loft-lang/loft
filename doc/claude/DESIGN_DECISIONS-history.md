@@ -5047,3 +5047,10 @@ The merge now asks the claims first, the images are written from a rebuilt defin
 the bound-store family — `store_persist_bind`, `store_release`, `store_durable_check`,
 `store_durable_seal`, bound-file compaction and upgrade-on-bind — was removed: no library or
 consumer used it, only loft's own tests and four `loft-suite` attic cells.
+
+Measured after the change, 2026-10-24 (`bench/stats.py`, lean builds, A/B against the same
+tree with every store zeroed): no measurable difference — `panel_build` 3.20x against 3.23x
+of Rust, `map_json` 2.61x against 2.58x, `truncate_to` 1.76x against 1.71x, each inside the
+other's sample range.  The fill was never these routines' cost; what the decision buys is the
+rule — no byte nobody wrote is read or leaves the process — made checkable (Miri,
+`Store::raw_bytes`).
