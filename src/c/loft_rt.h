@@ -334,6 +334,35 @@ static loft_str loft_bool_text(uint8_t b) {
 
 static size_t loft_utf8(uint32_t c, char *out);
 
+/* OpGetTextSub (State::get_text_sub): the bytes [from, till) of `v`, a negative bound
+ * counting from the end, `from` snapped back and `till` forward to a character boundary;
+ * `till` INT32_MIN is the one character at `from`.  The bounds arrive as i64 and are taken
+ * as i32, as the interpreter takes them. */
+static loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
+    int32_t from = (int32_t) (uint32_t) (uint64_t) from64;
+    int32_t till = (int32_t) (uint32_t) (uint64_t) till64;
+    int32_t n = (int32_t) v.len;
+    const unsigned char *b = (const unsigned char *) v.p;
+    if (from < 0) { from += n; if (from < 0) from = 0; }
+    if (from >= n) return loft_lit(v.p, 0);
+    while ((b[from] & 0xC0) == 0x80 && from > 0) from--;
+    if (till == INT32_MIN) {
+        unsigned char c = b[from];
+        int32_t w = (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF0) == 0xF0 ? 4 : 1;
+        if (w > n - from) w = n - from;
+        return loft_lit(v.p + from, (size_t) w);
+    }
+    if (till < 0) till += n;
+    int32_t len = till - from;
+    if (len <= 0) return loft_lit(v.p, 0);
+    if (len + from > n) {
+        len = n - from;
+    } else if (till < n) {
+        for (int32_t t = till; t < n && (b[t] & 0xC0) == 0x80; t++) len++;
+    }
+    return loft_lit(v.p + from, (size_t) len);
+}
+
 /* Characters: a code point, 0 the null character. */
 static uint32_t loft_char_of(int64_t v) {
     if (v == LOFT_NULL || v < 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) return 0;
@@ -380,7 +409,8 @@ static void loft_push_code(loft_text *t, uint32_t c) {
  * is not observable, and a store's words go back together when the store is freed. */
 typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; } loft_ref;
 
-typedef struct { uint8_t *buf; uint32_t words; uint32_t top; int live; } loft_store_t;
+/* `known`: the type a wrapper mint gave the store's first record, 0xFFFF for any other. */
+typedef struct { uint8_t *buf; uint32_t words; uint32_t top; int live; uint16_t known; } loft_store_t;
 
 static loft_store_t *loft_stores = 0;
 static uint32_t loft_nstores = 0;
@@ -416,6 +446,7 @@ static uint32_t loft_store_new(void) {
     }
     s->top = 1; /* word 0 is never a record: rec 0 is the null reference */
     s->live = 1;
+    s->known = 0xFFFF;
     return nr;
 }
 
@@ -463,9 +494,24 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
         nr = loft_store_new();
     }
     uint32_t rec = loft_claim(&loft_stores[nr], (bytes + 15) / 8);
+    loft_stores[nr].known = 0xFFFF;
     var->store_nr = (uint16_t) nr;
     var->rec = rec;
     var->pos = 8;
+}
+
+/* OpDatabase of a vector wrapper (`main_vector<T>`, Stores::mint_at_place, @FR-R-Place): a
+ * buffer that is a PLACE — a collection field of another record, not the wrapper's own store
+ * — stays where it is with its collection emptied, so the literal builds where it lives;
+ * the ordinary mint would clear the store the place lives in. */
+static void loft_database_wrapper(loft_ref *var, uint32_t bytes, uint16_t tp) {
+    if (var->store_nr != 0xFFFF && var->rec != 0 && var->store_nr < loft_nstores
+        && !(var->rec == 1 && loft_stores[var->store_nr].known == tp)) {
+        loft_set_u32(&loft_stores[var->store_nr], var->rec, var->pos, 0);
+        return;
+    }
+    loft_database(var, bytes);
+    loft_stores[var->store_nr].known = tp;
 }
 
 /* OpFreeRef: the whole store goes, everything the root owned with it. */

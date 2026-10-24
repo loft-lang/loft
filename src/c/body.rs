@@ -339,7 +339,14 @@ impl<'a> FnWriter<'a> {
     /// Emit `v` for its effect.
     fn stmt(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         match v {
-            Value::Null | Value::Line(_) => Ok(()),
+            // A value block's result where nothing takes it: a leaf has no effect.
+            Value::Null
+            | Value::Line(_)
+            | Value::Var(_)
+            | Value::Int(_)
+            | Value::Long(_)
+            | Value::Boolean(_)
+            | Value::Text(_) => Ok(()),
             Value::Span(b) => self.stmt(&b.1, ind),
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
@@ -1387,6 +1394,12 @@ impl<'a> FnWriter<'a> {
                 let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
                 let size = self.cx.stores.enum_parent_size(tp);
                 let var = self.var(*v);
+                if self.cx.stores.is_vector_wrapper(tp) {
+                    return Ok(E::new(
+                        format!("loft_database_wrapper(&{var}, {size}, {tp})"),
+                        K::Void,
+                    ));
+                }
                 Ok(E::new(format!("loft_database(&{var}, {size})"), K::Void))
             }
             ("OpFreeRef", [r]) => {
@@ -1540,7 +1553,11 @@ impl<'a> FnWriter<'a> {
     /// The narrow integer fields: bytes, shorts and 4-byte integers, each in its encoding.
     fn narrow_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
-            ("OpGetByte" | "OpGetByteNullable" | "OpGetShort" | "OpGetShortRaw", [r, fld, min]) => {
+            (
+                "OpGetByte" | "OpGetByteNullable" | "OpGetShort" | "OpGetShortRaw"
+                | "OpGetShortFull",
+                [r, fld, min],
+            ) => {
                 let fld = Self::literal(fld, "field")?;
                 let min = Self::literal(min, "minimum")?;
                 let f = match name {
@@ -1824,6 +1841,21 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("{dest}.len = 0"), K::Void))
             }
             ("OpConvTextFromNull", []) => Ok(E::new("loft_null_text()", K::View)),
+            ("OpConvBoolFromNull", []) => Ok(E::new("LOFT_BOOL_NULL", K::Bool)),
+            ("OpGetTextSub", [_, _, _]) => {
+                let es = self.args(args, ind)?;
+                let [t, from, till] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "OpGetTextSub without three operands".to_string())?;
+                Ok(E::new(
+                    format!(
+                        "loft_text_sub({}, {}, {})",
+                        as_view(t)?,
+                        as_int(from)?,
+                        as_int(till)?
+                    ),
+                    K::View,
+                ))
+            }
             ("OpConvCharacterFromNull", []) => Ok(E::new("((uint32_t) 0)", K::Char)),
             _ if name.contains("Character") => self.char_operator(name, args, ind),
             ("OpCastTextFromBool", [b]) => {
@@ -1966,6 +1998,7 @@ const OP_INT: &[&str] = &[
     "OpGetByteNullable",
     "OpGetShort",
     "OpGetShortRaw",
+    "OpGetShortFull",
     "OpGetInt4",
     "OpLandInt",
     "OpLandLong",
@@ -2004,6 +2037,7 @@ const OP_BOOL: &[&str] = &[
     "OpDistinctStore",
     "OpConvBoolFromText",
     "OpConvBoolFromCharacter",
+    "OpConvBoolFromNull",
 ];
 const OP_REF: &[&str] = &[
     "OpGetField",
@@ -2022,6 +2056,7 @@ const OP_TEXT: &[&str] = &[
     "OpCastTextFromEnum",
     "OpConvTextFromNull",
     "OpCastTextFromBool",
+    "OpGetTextSub",
 ];
 const OP_FLOAT: &[&str] = &[
     "OpAddFloat",
