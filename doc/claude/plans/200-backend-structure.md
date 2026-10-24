@@ -353,19 +353,22 @@ Every edit it would need is a defect of this plan, fixed here before strand 5 st
 
 **Progress (2026-10-24).**  The probe grew into a backend: `src/c/` (layer `c`, a sibling of
 `interp` and `rust`) writes whole programs — texts, stores, vectors, records, enums, floats,
-characters, narrow integers, tuples, `&` parameters, function values and closures, deep copies
-and store moves, the `{v}` renderer, content equality, constants, the keyed collections (hash,
-sorted, index, and the `array` / `ordered` forms of a linked group) — and its tests.  It reads
-`use_analysis`, `scopes`, `opt` and the store layouts and edits nothing in `rust`, `interp` or
-`opt` beyond two moves into shared homes: `test_runner`'s annotation parser (so `--emit-c` and
-`--tests` read `@EXPECT_FAIL` alike) and `opt::header` (the header-hoist decision).  Measured
-with `scripts/c_sweep.py` over the 2817 corpus programs, in the three macro modes: 1459 match
-the interpreter, 0 differ, 0 fail to compile, 0 trip AddressSanitizer/UBSan; 1358 are refused
-by name (355 of them do not compile in loft at all — expected-error programs and ones needing
-a library).  The largest families still refused: file I/O, generators, `&` locals, and the
-spatial and trie collections.  Porting the sorted ranges turned up loft#2160 (an inclusive bound
-between two keys walked one element too far, on both backends), fixed on this branch.  How it
-works and how to
+characters, narrow integers, tuples, `&` parameters and locals, function values and closures,
+deep copies and store moves, the `{v}` renderer, content equality, constants, the keyed
+collections (hash, sorted, index, and the `array` / `ordered` forms of a linked group), files
+and the filesystem, generators, `par` loops and `parallel` blocks (run in order) — and its
+tests.  It reads `use_analysis`, `scopes`, `opt` and the store layouts and edits nothing in
+`rust`, `interp` or `opt` beyond two moves into shared homes: `test_runner`'s annotation parser
+(so `--emit-c` and `--tests` read `@EXPECT_FAIL` alike) and `opt::header` (the header-hoist
+decision).  Measured with `scripts/c_sweep.py` over the 2817 corpus programs, in the three
+macro modes: 1828 match the interpreter, 0 differ, 0 fail to compile, 0 trip
+AddressSanitizer/UBSan; 989 are refused by name (355 of them do not compile in loft at
+all — expected-error programs and ones needing a library).  The largest families still
+refused: text parsed into a typed value, the spatial and trie collections, the persistent
+stores, and the native library calls.  Porting the sorted ranges turned up loft#2160 (an
+inclusive bound between two keys walked one element too far, on both backends), fixed on this
+branch; its guard cell is on the language suite's branch of the same name, so the PR bumps
+`tests/loft-suite.pin`.  How it works and how to
 extend it: [C_BACKEND.md](../C_BACKEND.md).
 
 **⚠ NEXT — the quality of the C the generator writes: read this before the next feature (owner, 2026-10-24).**

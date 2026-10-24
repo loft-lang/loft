@@ -18,8 +18,14 @@
 #ifndef LOFT_CC_H
 #define LOFT_CC_H
 
-/* clock_gettime is POSIX, not C99; the request precedes every system header. */
+/* The OS beyond C99 — a monotonic clock, a path's kind, directories, truncate — is POSIX where
+ * the platform is one (`LOFT_POSIX`); `-DLOFT_NO_POSIX` builds against ISO C99 alone, where the
+ * clock is `clock()` and the directory operations answer Other.  The request precedes every
+ * system header. */
+#if !defined(LOFT_NO_POSIX) && (defined(__unix__) || defined(__unix) || defined(__APPLE__))
+#define LOFT_POSIX 1
 #define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

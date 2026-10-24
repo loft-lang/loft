@@ -100,6 +100,27 @@ impl Cx<'_> {
         Ok(out)
     }
 
+    /// `loft_drop_closure` (`State::drop_fn_ref`): a function value's closure record releases
+    /// what it captured through its type's drop cascade — the hooks of the captured values run
+    /// there.  A value with no record, or one in a freed store, releases nothing.
+    pub(crate) fn drop_code(&self, fns: &[u32]) -> String {
+        let mut out = String::from(
+            "\nstatic void loft_drop_closure(loft_fn f) {\n    if (!loft_store_live(f.clos)) return;\n    switch (f.d) {\n",
+        );
+        for &d in self.fn_values.borrow().iter() {
+            let cascade = self.data.drop_cascade_nr(self.data.def(d).closure_record());
+            if cascade != u32::MAX && fns.contains(&cascade) {
+                let _ = writeln!(
+                    out,
+                    "    case INT64_C({d}): {}(f.clos); return;",
+                    c_name(self.data, cascade)
+                );
+            }
+        }
+        out.push_str("    default:\n        return;\n    }\n}\n");
+        out
+    }
+
     /// The arm calling `d`: its visible parameters in order, the value's closure, and a text
     /// result's work buffer made for the call and released after it.
     fn dispatch_arm(&self, out: &mut String, d: u32, ret: CType) -> Result<(), String> {
