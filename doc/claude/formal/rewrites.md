@@ -3280,6 +3280,41 @@ store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
 `output_functions`.  Guard
 `loft-suite/rules/rewrites/R-RangedCall/a-helper-runs-plain-only-where-the-callers-guard-bounds-its-arguments.loft`.
 
+### A `par` worker maps its rows at once
+
+```
+  (R-ParRows)    a `par` on the wide scalar lane (an integer, float or boolean result), with
+                 no extra argument, over a vector of records, whose worker takes the element
+                 alone and is ROW-PURE — it and every loft function it calls read the
+                 element's fields, scalar parameters and locals, and compute with operators
+                 whose templates touch no store — maps each worker's batch of contiguous
+                 rows at once: the element's fields are read straight from the vector at
+                 their offsets, a reporting operator takes its silent `…Nullable` twin (the
+                 same value; the report exists only under `--dev-soft-halt`, where every row
+                 takes the per-row worker), `+` and `-` find their overflow by sign bits,
+                 and `OpDivFloat` divides plainly and FLAGS the batch on a zero divisor.  A
+                 flagged batch runs again, whole, through the per-row worker, so a raise
+                 happens exactly as without the rule.  A range loop with a literal count of
+                 1 to 64 rounds and a body free of loops, `break`, `continue` and `return`
+                 is unrolled inside the row variants, its counters left where the loop
+                 leaves them.
+```
+
+**In words.** A per-row worker reads each element through an out-of-line `get_vector` and the
+store, and pushes its answer: no row loop around a call vectorises, so two rows never share
+an instruction, while the Rust twin of a pure map runs two rows per `divpd`.  The row
+variants are translated from the IR by a covering subset (`generation/par_rows.rs`); a
+construct outside it declines the rule, named, and the `par` keeps its per-row worker.  The
+unroll is load-bearing: with a select in a 50-round body the compiler keeps the loop rolled
+and cannot vectorise the rows around it (priced 3.29× against 1.78×), and `checked_add`
+lowers to an overflow intrinsic no vectoriser widens, which is why `+` and `-` use the sign-bit
+forms (`ops::op_add_long_bitwise`, pinned against `op_add_long_nullable` on every boundary
+pair).  `11_par/par`: 3.49× → 1.80× of Rust, pinned to one core.  Switch `LOFT_NO_PAR_ROWS=1`;
+`LOFT_TRACE_PAR_ROWS=1` names each admission and decline.  Sites: `par_rows.rs`
+(`row_variants`), `ops/parallel.rs` (`par_rows_items`), `codegen_runtime.rs`
+(`n_parallel_rows_native`).  Guard
+`loft-suite/rules/rewrites/R-ParRows/a-par-worker-mapped-by-rows-answers-what-each-row-answers.loft`.
+
 ### A filling loop is one slice fill
 
 ```
