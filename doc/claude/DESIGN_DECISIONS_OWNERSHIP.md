@@ -362,7 +362,7 @@ so every store that could be bound would have had to be filled; no library or co
 it, and the surface was removed before contract 1.
 
 **Revisit when.** A program needs a file that follows a live collection without rewriting it;
-such a store would be defined by construction.  Decided 2026-10-24 — [record](DESIGN_DECISIONS-history.md#c153--store-memory-is-not-filled-only-a-store-whose-bytes-leave-the-process-is-written-whole).
+such a store would be defined by construction.  Decided 2026-10-24 — [record](DESIGN_DECISIONS-history.md#c154--store-memory-is-not-filled-only-a-store-whose-bytes-leave-the-process-is-written-whole).
 **Holds at:** `@C154` — `Store::defined` and `Store::claimed_block_ends_at` in `src/store.rs`,
 `(H-FreeFooter)` in [formal/allocator.md](formal/allocator.md); guard
 `store::tests::a_delete_never_reads_an_unwritten_claim` in the Miri job.
