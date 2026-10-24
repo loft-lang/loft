@@ -36,7 +36,17 @@ python3 bench/stats.py --lanes native,rust,interp,python
 python3 bench/stats.py --tsv out.tsv         # keep the run, to diff against the next one
 python3 bench/stats.py --show-samples        # every sample under its row
 python3 bench/stats.py --routine check_request,cbor/decode   # one routine, or a set
+python3 bench/stats.py --lanes native,rust,ship   # add the SHIPPED-GAME speed per routine
 ```
+
+**The ship lane** builds each program once more, its libraries' loft code included, under
+`LOFT_RELEASE_PASS_PROBE=1`: the code a game's release build emits when its own checked runs
+licensed dropping every fault check (@PLN201, NATIVE.md § Optimisation tiers).  Each row gains
+`ship N.NN`, the ship time over the Rust twin's, beside the checked ratio.  A routine slow in
+BOTH is slow for a reason the checks do not explain.  A routine slow only CHECKED is paying for
+its checks, which a range proof or a fault-flag rewrite can take back.  Its hash is reported, not
+required to agree: a fault wraps there instead of answering null, and a row whose ship hash
+differs is marked `ship (hash differs)` and carries no ship ratio.
 
 `--routine` takes `name` or `bench/name` (the qualified form for a name several programs
 use, such as `hash`).  On its own it builds only the programs `portal/routines.tsv` places
@@ -67,7 +77,8 @@ What it does, and why each part is there:
   The verdict reads the range: `ok` only when all of it is inside `--bar` (2.0), `OVER` only
   when all of it is outside, `unclear` otherwise.  A row the tool cannot decide says so.
 - **Requires the hashes to agree** across lanes.  A disagreement is fatal: the lanes are not
-  computing the same thing and their times do not compare.
+  computing the same thing and their times do not compare.  The ship lane alone is exempt,
+  and is marked instead (above).
 - **Builds before it measures, and never beside a measurement.**  The programs go in sets of
   `--batch` (20): a set is compiled `--build-jobs` (5) at a time — each worker takes the next
   program the moment its last one is built, at `nice 10`, waiting while the machine has less
