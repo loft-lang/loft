@@ -392,6 +392,32 @@ pub fn op_rem_long(v1: i64, v2: i64) -> i64 {
     }
 }
 
+/// [`op_add_long_nullable`] with the overflow found by sign bits, not by `checked_add`: the
+/// same value for every input, in a form the compiler can vectorise — `checked_add` lowers to
+/// an overflow intrinsic no loop vectoriser widens.  The row variants of `@FR-R-ParRows` use it.
+#[inline]
+#[must_use]
+pub fn op_add_long_bitwise(v1: i64, v2: i64) -> i64 {
+    let r = v1.wrapping_add(v2);
+    if v1 == i64::MIN || v2 == i64::MIN || ((v1 ^ r) & (v2 ^ r)) < 0 {
+        i64::MIN
+    } else {
+        r
+    }
+}
+
+/// [`op_min_long_nullable`] by sign bits, as [`op_add_long_bitwise`].
+#[inline]
+#[must_use]
+pub fn op_min_long_bitwise(v1: i64, v2: i64) -> i64 {
+    let r = v1.wrapping_sub(v2);
+    if v1 == i64::MIN || v2 == i64::MIN || ((v1 ^ v2) & (v1 ^ r)) < 0 {
+        i64::MIN
+    } else {
+        r
+    }
+}
+
 // ── C54.G-hybrid — nullable long arithmetic ──────────────────────────────
 // Sibling of op_add_int_nullable / etc. for the long path.
 
@@ -1205,6 +1231,40 @@ pub fn fix_till(till: i32, from: usize, s: &str) -> usize {
 #[cfg(test)]
 mod test {
     use super::*;
+    /// `@FR-R-ParRows` — the bitwise forms answer what the nullable ops answer, on every pair
+    /// of boundary values: the null, the extremes and their neighbours, zero, ±1, mid values.
+    #[test]
+    fn bitwise_add_and_sub_answer_the_nullable_ops() {
+        let vals = [
+            i64::MIN,
+            i64::MIN + 1,
+            i64::MIN + 2,
+            -4_611_686_018_427_387_904,
+            -1000,
+            -1,
+            0,
+            1,
+            1000,
+            4_611_686_018_427_387_904,
+            i64::MAX - 1,
+            i64::MAX,
+        ];
+        for &a in &vals {
+            for &b in &vals {
+                assert_eq!(
+                    op_add_long_bitwise(a, b),
+                    op_add_long_nullable(a, b),
+                    "{a} + {b}"
+                );
+                assert_eq!(
+                    op_min_long_bitwise(a, b),
+                    op_min_long_nullable(a, b),
+                    "{a} - {b}"
+                );
+            }
+        }
+    }
+
     /// A number is rendered in place behind what the text already holds, and only a field
     /// wider than it is padded — every value below computed by hand.
     #[test]
