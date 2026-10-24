@@ -51,6 +51,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
         return out;
     }
     let trace = std::env::var("LOFT_TRACE_VALUEREC").is_ok();
+    let mut clock = Clock::new(std::env::var_os("LOFT_TIMING").is_some());
     // Candidates by RESULT TYPE.
     let mut cand: HashMap<u32, u16> = HashMap::new();
     for d_nr in 0..data.definitions.len() as u32 {
@@ -123,6 +124,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
     // Which of them ARE received as tuples is decided in the fixpoint below beside the
     // value locals, because a parameter handed on is served only by another tuple parameter.
     let mut params = tuple_param_candidates(data, stores, &mut out.types, &mut out.index);
+    clock.add("candidates");
     if cand.is_empty() && params.is_empty() {
         return out;
     }
@@ -209,6 +211,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             false
         });
     }
+    clock.add("fnref_scan");
     arms.extend(targets.iter().filter(|t| !grouped.contains(t)));
     cand.retain(|d_nr, _| {
         let keep = !arms.contains(d_nr);
@@ -252,8 +255,10 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
     // @PLN164 C5 — the callee half of `(B-Disturb)`, built ONCE over the whole program as
     // the scope pass builds it: a site asks whether a call between its bind and its last
     // read can grow the container its leaf views, and that is a fact about the callee.
+    clock.add("fnref_groups");
     let disturbed =
         view_field_on().then(|| crate::scopes::disturbed_params_map(data, Some(stores)));
+    clock.add("disturbed_map");
 
     // The view-leaf OFFSETS are fixed by the record's type, so they are read once: every
     // reader of a value local needs them to account a field read the tuple serves.
@@ -283,6 +288,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             .count()
     };
     loop {
+        clock.rounds += 1;
         let before = (
             cand.len(),
             params.values().map(HashMap::len).sum::<usize>(),
@@ -308,6 +314,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
                 }
             }
         }
+        clock.add("presence");
         let admitted: HashMap<u32, u16> = cand.clone();
         let sp = surely_present_fns(data, &admitted, &params, &sites);
         cand.retain(|d_nr, record| {
@@ -355,8 +362,10 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             }
             why.is_none()
         });
+        clock.add("body_gate");
         let admitted: HashMap<u32, u16> = cand.clone();
         let sp = surely_present_fns(data, &admitted, &params, &sites);
+        clock.add("surely_present");
         let mut declined: HashSet<u32> = HashSet::new();
         // `(R-ValueLocal)` — a parameter whose uses the tuple cannot serve leaves this
         // round; a site that handed a value local to it is then unserved next round.
@@ -416,6 +425,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
                 ));
             }
         }
+        clock.add("site_gate");
         if trace {
             for d in &declined {
                 crate::loft_eprintln!(
@@ -459,7 +469,10 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             }
         }
     }
+    clock.add("fixpoint_tail");
     out.sp = surely_present_fns(data, &cand, &params, &sites);
+    clock.add("final_presence");
+    clock.report(data.definitions.len());
     out.fns = cand;
     out.params = params;
     out.fnref_sites = sites;
@@ -1522,4 +1535,47 @@ pub(crate) fn local_uses_ok(
         crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
     }
     mentions == accounted
+}
+
+/// `LOFT_TIMING` — what each step of [`value_records`] cost, summed over the fixpoint's
+/// rounds.  Inert unless `on`.
+struct Clock {
+    last: Option<std::time::Instant>,
+    steps: Vec<(&'static str, f64)>,
+    rounds: u32,
+}
+
+impl Clock {
+    fn new(on: bool) -> Self {
+        Clock {
+            last: on.then(std::time::Instant::now),
+            steps: Vec::new(),
+            rounds: 0,
+        }
+    }
+
+    fn add(&mut self, step: &'static str) {
+        if let Some(last) = self.last {
+            let now = std::time::Instant::now();
+            let ms = now.duration_since(last).as_secs_f64() * 1000.0;
+            match self.steps.iter_mut().find(|(s, _)| *s == step) {
+                Some(entry) => entry.1 += ms,
+                None => self.steps.push((step, ms)),
+            }
+            self.last = Some(now);
+        }
+    }
+
+    fn report(&self, definitions: usize) {
+        if self.last.is_some() {
+            let mut line = format!(
+                "LOFT_TIMING value_records defs={definitions} rounds={}",
+                self.rounds
+            );
+            for (step, ms) in &self.steps {
+                let _ = std::fmt::Write::write_fmt(&mut line, format_args!(" {step}={ms:.2}ms"));
+            }
+            eprintln!("{line}");
+        }
+    }
 }
