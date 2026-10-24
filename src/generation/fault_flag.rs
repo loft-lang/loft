@@ -216,7 +216,11 @@ impl Walk<'_> {
             }
             return Ok(());
         }
-        if !def.is_loft_defined() || !def.native.is_empty() {
+        // A library function with a loft body may carry a `loft_shared_*` bridge name in
+        // `native` for the interpreter's dispatch; this backend compiles its body into the
+        // program all the same (the C-ABI header declares only body-less natives), so the
+        // body is what runs and what is walked.
+        if !def.is_loft_defined() {
             return Err(format!("`{name}` is not a loft function"));
         }
         if let Some(known) = self.pure.borrow().get(&d) {
