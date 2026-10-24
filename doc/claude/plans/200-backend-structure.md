@@ -504,10 +504,15 @@ the browser read them), so a layout is observable.
   interpreter, or not at all — the C frees nothing today; (3) a keyed collection that sizes,
   hashes or rebalances differently; (4) store reuse and capacity.  (2)–(4) are caught by the
   event trace below on every corpus program.
-- **The instrument.**  `LOFT_ALLOC_TRACE=<file>` writes the event sequence from `Store` and
-  `Stores` (interpreter and native) and from the C runtime; `scripts/c_sweep.py` compares the
-  C's trace with the interpreter's beside the output.  First measured between the interpreter
-  and `--native`, which shows where loft's own two backends already agree.
+- **The instruments.**  The allocator alone: `tests/c_emit.rs` replays one seeded sequence of
+  claims, deletes, resizes and tombstones through `Store` and through `loft_store.h` and
+  compares every position and every byte (DEFINED stores, no payload written).  A program:
+  `LOFT_ALLOC_TRACE=<file>` writes the event sequence from `Store` and `Stores` and from the C
+  runtime, and `scripts/c_sweep.py` compares the C's with the interpreter's.  Never a program
+  store's whole buffer: a claim promises no value (`@FR-H-Claim`), so its unwritten bytes
+  differ between runs by design.  The CONTENT is compared by walking it from the store's root
+  by its type, as a format change is checked — `Stores::live_digest`, the bytes the walk
+  reaches with their positions — written with the store-freed event.
 - **Steps.**  (a) the trace on the Rust side, interpreter against native; (b) the allocator
   ported, proved by the replay; (c) the C frees where the interpreter frees, until every
   carried program's trace matches; (d) the keyed layouts ported (hash, index, sorted, then
