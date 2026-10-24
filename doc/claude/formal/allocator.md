@@ -38,7 +38,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                  claimed block ends: a claimed block's last word is payload, possibly
                  unwritten (`H-Claim`), so the claims — the start of every claimed block,
                  its header its length — are asked first, and a claimed block ending at
-                 the left edge is a predecessor that cannot merge (@C153).
+                 the left edge is a predecessor that cannot merge (@C154).
   (H-Wilderness) inside one store, the free block that ENDS the store (the wilderness)
                  is held beside the free tree rather than in it, and every tree
                  operation treats it as the node it would have been: a block of at

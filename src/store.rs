@@ -451,7 +451,7 @@ pub struct Store {
     /// image, a placement arena, a resume image — is created DEFINED instead
     /// ([`Store::new_defined`]), so no byte it never wrote reaches a file or a peer, and
     /// reading it whole is not a read of uninitialised memory.  [`Store::raw_bytes`] asks
-    /// for it (@C153).
+    /// for it (@C154).
     pub(crate) defined: bool,
     /// @PLN126 — the word past the highest block ever claimed, carried forward by
     /// [`Store::claim_block`]: a monotone UPPER bound on [`StoreUsage::live_end_words`]
@@ -1830,7 +1830,7 @@ impl Store {
         if start > PRIMARY && !self.claimed_block_ends_at(start) {
             // The word before `start` is a free FOOTER only when the predecessor is free; a
             // CLAIMED predecessor's last word is its payload, possibly unwritten
-            // (`@FR-H-Claim`), so it is not read at all (@C153).  A predecessor the claims
+            // (`@FR-H-Claim`), so it is not read at all (@C154).  A predecessor the claims
             // do not know — a mapped image's — can still hold any value, `i32::MIN`
             // included, which `-f` cannot negate: the checks below reject a word that
             // merely looks like a footer.
@@ -3535,7 +3535,7 @@ impl Store {
         if h == 0 {
             // A fresh node: both link words written WHOLE.  The right word also carries the
             // colour, and the setters keep the half they are not given — a read of a word
-            // nobody has written yet on a block just freed (@C153).
+            // nobody has written yet on a block just freed (@C154).
             self.fl_set_left(rec, 0);
             self.write::<u32>(rec, FL_RIGHT, FL_RED_BIT);
             return rec;
@@ -6534,7 +6534,7 @@ mod tests {
         assert_eq!(store.claim(100), big, "the tree hands the block back");
     }
 
-    /// @C153 — a store's memory is not filled and a claim writes only its header, so a
+    /// @C154 — a store's memory is not filled and a claim writes only its header, so a
     /// claimed block's last word may be UNWRITTEN; no delete path may read it.  Every
     /// delete below has a claimed predecessor, on the exact, lazy and parked paths, and the
     /// last claim takes the store's tail, so the next claim's tail check meets a claimed
@@ -7346,7 +7346,7 @@ mod tests {
         // The record's last payload word still spells the old free block's footer (a claim
         // does not have to zero it).  The claims say a claimed block ends the store, so the
         // scan answers what the walk would — growth appends — without reading that word
-        // (@C153).
+        // (@C154).
         let size = full.size;
         assert_eq!(
             full.indexed_scan(5),

@@ -43,7 +43,7 @@ See `src/store.rs` module docs for memory layout, signed size headers, and
 free-block allocation.  See `src/keys.rs` module docs for `DbRef`, `Str`,
 `Key`, and `Content` types.
 
-**A store's memory is not filled** (@C153).  A buffer is allocated and grown without
+**A store's memory is not filled** (@C154).  A buffer is allocated and grown without
 zeroing, and a claim promises no value (@C137), so a word nothing wrote holds whatever the
 allocator handed out.  The one exception is a DEFINED store (`Store::defined`), whose raw
 bytes leave the process — an image being written, a placed library's arena, the REPL's

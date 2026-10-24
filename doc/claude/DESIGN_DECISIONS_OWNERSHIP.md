@@ -343,7 +343,7 @@ beside unchanged values); `loft-suite/rules/collections/Col-Bucket/pln110-size-h
 with fills the clause does not take.
 **Catalogue:** `bench/portal/analysis/keyed.md` · reads @C122
 
-## C153 — Store memory is not filled; only a store whose bytes leave the process is written whole
+## C154 — Store memory is not filled; only a store whose bytes leave the process is written whole
 
 **Decision.** A store's buffer is allocated and grown without filling.  A store whose raw bytes
 leave the process — an image written to a file, a placed library's arena, the REPL's resume
@@ -363,7 +363,7 @@ it, and the surface was removed before contract 1.
 
 **Revisit when.** A program needs a file that follows a live collection without rewriting it;
 such a store would be defined by construction.  Decided 2026-10-24 — [record](DESIGN_DECISIONS-history.md#c153--store-memory-is-not-filled-only-a-store-whose-bytes-leave-the-process-is-written-whole).
-**Holds at:** `@C153` — `Store::defined` and `Store::claimed_block_ends_at` in `src/store.rs`,
+**Holds at:** `@C154` — `Store::defined` and `Store::claimed_block_ends_at` in `src/store.rs`,
 `(H-FreeFooter)` in [formal/allocator.md](formal/allocator.md); guard
 `store::tests::a_delete_never_reads_an_unwritten_claim` in the Miri job.
 **Catalogue:** reads @C137 · `formal/heap.md` `(H-Claim)` · `formal/allocator.md` `(H-FreeFooter)`

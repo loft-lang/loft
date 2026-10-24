@@ -1660,7 +1660,7 @@ impl Stores {
     /// The image of the store in `slot`, and the slot the references inside it name (what its
     /// sidecar records as `slot=`).  A DEFINED store is imaged as it is; any other is first
     /// rebuilt into a defined scratch store ([`Stores::image_rebuild`]), so no byte nobody
-    /// wrote reaches the image (@C153).
+    /// wrote reaches the image (@C154).
     pub(crate) fn store_image(&mut self, slot: u16) -> Option<(u16, Vec<u8>)> {
         if self.allocations[slot as usize].defined {
             return defined_image(&self.allocations[slot as usize]).map(|img| (slot, img));

@@ -10,7 +10,7 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
-### Store memory is not filled; the bound-store family is removed (@C153)
+### Store memory is not filled; the bound-store family is removed (@C154)
 
 `Store::new` allocates without zeroing and growth zeroes nothing.  A store whose raw bytes
 leave the process is DEFINED (`Store::defined`, `Store::new_defined`,

@@ -279,7 +279,7 @@ fn compaction_on_load_returns_both_backends() {
     }
 }
 
-/// @C153 — an image is written from a store whose every byte was written: a write whose
+/// @C154 — an image is written from a store whose every byte was written: a write whose
 /// rebuild lands in a store that is not DEFINED stops on `Store::raw_bytes` (measured: with
 /// `rebuild_into_scratch` building into `Store::new_in_use`, this test and the sorted one fail
 /// on both backends with that refusal).

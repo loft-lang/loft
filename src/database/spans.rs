@@ -24,7 +24,7 @@
 //!
 //! What survived is the other claim: 87–99% of the pages below a record's finish
 //! frontier hold nothing written afterwards. That needs no per-record contiguity, and
-//! it is what the frontier release (`store_release`, removed with @C153 —
+//! it is what the frontier release (`store_release`, removed with @C154 —
 //! DATABASE-history.md) was built on.
 //!
 //! **It reads the final layout, not a model of it.** Every word of the arena is painted
