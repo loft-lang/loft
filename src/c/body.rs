@@ -249,11 +249,7 @@ impl<'a> FnWriter<'a> {
                 if let Some((src, tp)) = self.whole_value_bind(*var, x) {
                     let bytes = self.copyable(tp)?;
                     let src = self.var(src);
-                    self.line(ind, &format!("loft_database(&{name}, {bytes});"));
-                    self.line(
-                        ind,
-                        &format!("loft_copy_record({src}, {name}, {bytes}, 0);"),
-                    );
+                    self.line(ind, &format!("loft_bind_copy(&{name}, {src}, {bytes});"));
                     return Ok(());
                 }
                 self.assign(x, &name, c, ind)?;
@@ -724,6 +720,30 @@ impl<'a> FnWriter<'a> {
                 let dest = self.text_dest(dest)?;
                 Ok(E::new(format!("loft_text_free(&{dest})"), K::Void))
             }
+            "OpLengthText" | "OpSizeText" => {
+                let es = self.args(args, ind)?;
+                let [a] =
+                    <[E; 1]>::try_from(es).map_err(|_| format!("{name} without one operand"))?;
+                let f = if name == "OpLengthText" {
+                    "loft_text_length"
+                } else {
+                    "loft_text_size"
+                };
+                Ok(E::new(format!("{f}({})", as_view(a)?), K::Int))
+            }
+            "OpMinSingleInt" | "OpMinSingleLong" => {
+                let es = self.args(args, ind)?;
+                let [a] =
+                    <[E; 1]>::try_from(es).map_err(|_| format!("{name} without one operand"))?;
+                Ok(E::new(format!("loft_neg({})", as_int(a)?), K::Int))
+            }
+            "OpConvBoolFromInt" | "OpConvBoolFromLong" => {
+                let es = self.args(args, ind)?;
+                let [a] =
+                    <[E; 1]>::try_from(es).map_err(|_| format!("{name} without one operand"))?;
+                Ok(E::new(format!("({} != LOFT_NULL)", as_int(a)?), K::Cond))
+            }
+            "OpConvIntFromNull" | "OpConvLongFromNull" => Ok(E::new("LOFT_NULL", K::Int)),
             "OpPrint" => {
                 let es = self.args(args, ind)?;
                 let [a] = <[E; 1]>::try_from(es)
@@ -756,6 +776,22 @@ impl<'a> FnWriter<'a> {
             ("OpFreeRef", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("loft_free_ref({})", as_ref(r)?), K::Void))
+            }
+            ("OpRefIsNull", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("({}.store_nr == 0xFFFF)", as_ref(r)?),
+                    K::Cond,
+                ))
+            }
+            ("OpNullRefSentinel", []) => Ok(E::new("loft_ref_null()", K::Ref)),
+            ("OpRefAlias", [r]) => self.expr(r, ind),
+            ("OpFreeRefIfDistinct", [_, _]) => {
+                let (p, w) = self.two(name, args, ind)?;
+                Ok(E::new(
+                    format!("loft_free_displaced({}, {})", as_ref(p)?, as_ref(w)?),
+                    K::Void,
+                ))
             }
             ("OpGetInt", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -806,6 +842,10 @@ impl<'a> FnWriter<'a> {
     /// The operators over vectors.
     fn vector_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
+            ("OpClearVector", [v]) => {
+                let v = self.expr(v, ind)?;
+                Ok(E::new(format!("loft_vec_clear({})", as_ref(v)?), K::Void))
+            }
             ("OpLengthVector", [v]) => {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
@@ -897,16 +937,59 @@ fn as_shape(e: E, c: CType) -> Result<String, String> {
 
 /// The C shape an operator's value is held in, for the operators this backend writes.
 fn op_shape(name: &str) -> Option<CType> {
-    Some(match name {
-        "OpAddInt" | "OpAddLong" | "OpMinInt" | "OpMinLong" | "OpMulInt" | "OpMulLong"
-        | "OpDivInt" | "OpDivLong" | "OpRemInt" | "OpRemLong" | "OpGetInt" | "OpLengthVector" => {
-            CType::Int
-        }
-        "OpEqInt" | "OpEqLong" | "OpNeInt" | "OpNeLong" | "OpLtInt" | "OpLtLong" | "OpLeInt"
-        | "OpLeLong" | "OpEqBool" | "OpNeBool" | "OpNot" | "OpEqText" | "OpNeText" => CType::Bool,
-        "OpGetField" | "OpGetVector" | "OpGetVectorNullable" => CType::Ref,
-        _ => return None,
-    })
+    const INT: &[&str] = &[
+        "OpAddInt",
+        "OpAddLong",
+        "OpMinInt",
+        "OpMinLong",
+        "OpMulInt",
+        "OpMulLong",
+        "OpDivInt",
+        "OpDivLong",
+        "OpRemInt",
+        "OpRemLong",
+        "OpGetInt",
+        "OpLengthVector",
+        "OpLengthText",
+        "OpSizeText",
+        "OpMinSingleInt",
+        "OpMinSingleLong",
+        "OpConvIntFromNull",
+        "OpConvLongFromNull",
+    ];
+    const BOOL: &[&str] = &[
+        "OpEqInt",
+        "OpEqLong",
+        "OpNeInt",
+        "OpNeLong",
+        "OpLtInt",
+        "OpLtLong",
+        "OpLeInt",
+        "OpLeLong",
+        "OpEqBool",
+        "OpNeBool",
+        "OpNot",
+        "OpEqText",
+        "OpNeText",
+        "OpRefIsNull",
+        "OpConvBoolFromInt",
+        "OpConvBoolFromLong",
+    ];
+    const REF: &[&str] = &[
+        "OpGetField",
+        "OpGetVector",
+        "OpGetVectorNullable",
+        "OpNullRefSentinel",
+    ];
+    if INT.contains(&name) {
+        Some(CType::Int)
+    } else if BOOL.contains(&name) {
+        Some(CType::Bool)
+    } else if REF.contains(&name) {
+        Some(CType::Ref)
+    } else {
+        None
+    }
 }
 
 /// `s` as a C string literal: printable ASCII as itself, every other byte as an octal escape
