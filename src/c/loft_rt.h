@@ -620,6 +620,13 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
     var->pos = 8;
 }
 
+/* OpDatabase of a record type: the store remembers the type its root was minted as, which
+ * tells a move (`loft_swap_in`) its own store from another. */
+static void loft_database_typed(loft_ref *var, uint32_t bytes, uint16_t tp) {
+    loft_database(var, bytes);
+    loft_stores[var->store_nr].known = tp;
+}
+
 /* OpDatabase of a vector wrapper (`main_vector<T>`, Stores::mint_at_place, @FR-R-Place): a
  * buffer that is a PLACE — a collection field of another record, not the wrapper's own store
  * — stays where it is with its collection emptied, so the literal builds where it lives;
@@ -1175,9 +1182,31 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
 /* OpCopyRecord: the record's bytes and everything it owns, into the destination; the source's
  * store freed when the copy says so and it is another store (state/io.rs do_copy_record).  A
  * copy onto itself and a copy from or into a null reference do nothing. */
-static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst, int free_source) {
+/* @FR-H-SwapIn (Stores::swap_stores_in): a copy that frees its source, from one store's root
+ * to another's, both minted as `tp`, where the destination holds nothing but its root, MOVES
+ * the source's content into the destination store instead of copying it.  The caller vouches
+ * that `tp`'s tree holds no stored reference, which could name the source store. */
+static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
+    if (src.store_nr == dst.store_nr || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return 0;
+    if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
+    loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
+    if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
+    int32_t root;
+    memcpy(&root, b->buf + 8, 4);
+    if (b->top != 1 + (uint32_t) root) return 0;
+    loft_store_t t = *a;
+    *a = *b;
+    *b = t;
+    loft_free_ref(src);
+    return 1;
+}
+
+/* OpCopyRecord's flags: bit 0 frees the source, bit 1 says the type may move (loft_swap_in). */
+static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst, int flags) {
+    int free_source = flags & 1;
     if (src.store_nr == dst.store_nr && src.rec == dst.rec && src.pos == dst.pos) return;
     if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0) return;
+    if (free_source && (flags & 2) && loft_swap_in(tp, src, dst)) return;
     loft_copy_bytes(dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, dst);
     if (free_source && src.store_nr != dst.store_nr) loft_free_ref(src);
@@ -1886,4 +1915,91 @@ static int loft_eq_reference(loft_ref fa, loft_ref fb, uint16_t target, loft_eq_
 static int loft_eq_content(loft_eq_fn f, loft_ref a, loft_ref b) {
     loft_eq_seen_n = 0;
     return f(a, b);
+}
+
+/* ── Kernels and conversions the stdlib calls natively ─────────────────────────────────── */
+
+/* vector_sum_int (loop_kernels.rs): `acc` plus every element, with integer addition's rules. */
+static int64_t loft_vector_sum_int(loft_ref v, int64_t acc) {
+    int64_t n = loft_vec_len(v);
+    for (int64_t i = 0; i < n; i++) acc = loft_add(acc, loft_get_int(loft_vec_get(v, 8, i), 0));
+    return acc;
+}
+
+/* Is `p[0..n)` well-formed UTF-8, as Rust's `String::from_utf8` asks? */
+static int loft_utf8_valid(const unsigned char *p, size_t n) {
+    size_t i = 0;
+    while (i < n) {
+        unsigned char c = p[i];
+        size_t len;
+        uint32_t cp, min;
+        if (c < 0x80) { i++; continue; }
+        if (c >= 0xC2 && c <= 0xDF) { len = 2; cp = c & 0x1F; min = 0x80; }
+        else if (c >= 0xE0 && c <= 0xEF) { len = 3; cp = c & 0x0F; min = 0x800; }
+        else if (c >= 0xF0 && c <= 0xF4) { len = 4; cp = c & 0x07; min = 0x10000; }
+        else return 0;
+        if (i + len > n) return 0;
+        for (size_t k = 1; k < len; k++) {
+            if ((p[i + k] & 0xC0) != 0x80) return 0;
+            cp = (cp << 6) | (p[i + k] & 0x3F);
+        }
+        if (cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return 0;
+        i += len;
+    }
+    return 1;
+}
+
+/* text_from_bytes (Stores::text_from_bytes_native): the bytes of a vector<u8> as a text; bytes
+ * that are not UTF-8 give the empty text. */
+static loft_text loft_text_from_bytes(loft_ref v) {
+    loft_text out = { 0, 0, 0 };
+    int64_t n = loft_vec_len(v);
+    if (n == 0) return out;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return out;
+    const unsigned char *p = loft_at(s, r, 8);
+    if (loft_utf8_valid(p, (size_t) n)) loft_push(&out, (const char *) p, (size_t) n);
+    return out;
+}
+
+/* OpSliceVector / OpSliceView (Stores::vector_slice; C has no foreign stores, so a view is the
+ * copy): the elements [lo, hi) of `o`, clamped to it, appended to `v`.  Scalar elements only. */
+static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || o.store_nr == 0xFFFF || o.rec == 0 || o.pos == 0) return;
+    int64_t n = loft_vec_len(o);
+    if (lo < 0) lo = 0;
+    if (lo > n) lo = n;
+    if (hi < lo) hi = lo;
+    if (hi > n) hi = n;
+    for (int64_t i = lo; i < hi; i++) {
+        loft_ref e = loft_vec_append(v, size);
+        loft_ref a = { o.store_nr, loft_collection_rec(loft_store_of(o), o.rec, o.pos), 8 + (uint32_t) i * size };
+        loft_copy_bytes(e, 0, a, 0, size);
+        loft_vec_finish(v);
+    }
+}
+
+/* OpPlaceRecord (Stores::place_record_prefilled): a `tp` record claimed inside the host's store,
+ * prefilled with its defaults, or in a fresh store of its own when there is no host. */
+static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n) {
+    loft_ref r;
+    if (host.store_nr == 0xFFFF || host.rec == 0 || host.store_nr >= loft_nstores) {
+        r = loft_ref_null();
+        loft_database(&r, size);
+    } else {
+        r.store_nr = host.store_nr;
+        r.rec = loft_claim(loft_store_of(host), 1 + (size + 7) / 8);
+        r.pos = 8;
+    }
+    loft_set_u32(loft_store_of(r), r.rec, 4, tp);
+    loft_fill(r, image, n);
+    return r;
+}
+
+/* OpFreeRecordIn (Stores::free_record_in): a store's root record frees the store; a placed
+ * record's words go back with its store. */
+static void loft_free_record_in(loft_ref r) {
+    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= loft_nstores) return;
+    if (r.rec == 1 && r.pos == 8) loft_free_ref(r);
 }

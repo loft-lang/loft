@@ -283,6 +283,41 @@ impl<'a> Cx<'a> {
         }
     }
 
+    /// May a value of type `tp` move to another store whole (@FR-H-SwapIn)?  Not when its tree
+    /// holds a stored reference, which could name the store it moves from
+    /// (`Stores::tree_holds_no_stored_refs`).
+    pub(crate) fn swap_safe(&self, tp: u16) -> bool {
+        fn walk(stores: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
+            use crate::database::Parts;
+            if seen.contains(&tp) {
+                return true;
+            }
+            seen.push(tp);
+            match stores.types.get(tp as usize).map(|t| &t.parts) {
+                Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) => fields
+                    .iter()
+                    .all(|f| f.target == u16::MAX && walk(stores, f.content, seen)),
+                Some(Parts::Enum(values)) => values
+                    .iter()
+                    .all(|(v, _)| *v == u16::MAX || walk(stores, *v, seen)),
+                Some(
+                    Parts::Vector(c)
+                    | Parts::Sorted(c, _)
+                    | Parts::Array(c)
+                    | Parts::Ordered(c, _)
+                    | Parts::Hash(c, _)
+                    | Parts::Index(c, _)
+                    | Parts::Radix(c, _)
+                    | Parts::Trie(c, _)
+                    | Parts::ChildRec(c),
+                ) => walk(stores, *c, seen),
+                Some(Parts::DbRef) | None => false,
+                Some(_) => true,
+            }
+        }
+        walk(self.stores, tp, &mut Vec::new())
+    }
+
     /// The copy table: one `loft_tdesc` per registered type, at its type number.
     fn copy_table(&self) -> String {
         use crate::database::Parts;
@@ -458,6 +493,8 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_assert" => Some("loft_assert"),
         "n_ticks" => Some("loft_ticks"),
         "n_arguments" => Some("loft_arguments"),
+        "n_vector_sum_int" => Some("loft_vector_sum_int"),
+        "n_text_from_bytes" => Some("loft_text_from_bytes"),
         "t_4text_starts_with" => Some("loft_starts_with"),
         "t_4text_ends_with" => Some("loft_ends_with"),
         "t_4text_find" => Some("loft_find"),

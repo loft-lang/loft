@@ -890,6 +890,28 @@ impl<'a> FnWriter<'a> {
                 }
                 Ok(())
             }
+            // A function value read out of a store: its definition number and its closure, the
+            // two values the bytecode pushes as the pair (`fn_ref_field_read`).
+            Value::Block(b) if c == CType::Fn && b.name == "fn_ref_field_read" => {
+                let ops: Vec<&Value> = b
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+                    .collect();
+                let [d, clos] = ops[..] else {
+                    return Err("a function value read with an unexpected shape".into());
+                };
+                let (d, clos) = self.two("fn_ref_field_read", &[d.clone(), clos.clone()], ind)?;
+                self.line(
+                    ind,
+                    &format!(
+                        "{target} = loft_fn_make({}, {});",
+                        as_int(d)?,
+                        as_ref(clos)?
+                    ),
+                );
+                Ok(())
+            }
             // A function named as a value: its definition number.
             Value::Int(d) if c == CType::Fn && self.cx.is_function(*d) => {
                 let f = self.cx.fn_value(d.unsigned_abs());
@@ -1215,7 +1237,7 @@ impl<'a> FnWriter<'a> {
             })
             .collect::<Result<_, _>>()?;
         if shapes.len() != args.len() {
-            return Err("a call with default arguments left out".into());
+            return Err("a call whose arguments do not match its parameters".into());
         }
         let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
         let linked: Vec<bool> = def
@@ -1839,7 +1861,10 @@ impl<'a> FnWriter<'a> {
                         K::Void,
                     ));
                 }
-                Ok(E::new(format!("loft_database(&{var}, {size})"), K::Void))
+                Ok(E::new(
+                    format!("loft_database_typed(&{var}, {size}, {tp})"),
+                    K::Void,
+                ))
             }
             // A function variable's scope-exit free reads its definition number as a
             // reference and releases nothing: its closure record is freed through its own.
@@ -1896,7 +1921,8 @@ impl<'a> FnWriter<'a> {
                 let raw =
                     u16::try_from(raw).map_err(|_| "a type number out of range".to_string())?;
                 let tp = self.copyable(raw & crate::keys::COPY_TP_MASK)?;
-                let free = u8::from(raw & crate::keys::COPY_FREE_SOURCE != 0);
+                let free = u8::from(raw & crate::keys::COPY_FREE_SOURCE != 0)
+                    | (u8::from(self.cx.swap_safe(tp)) << 1);
                 let (src, dst) = self.two(name, &[(*src).clone(), (*dst).clone()], ind)?;
                 Ok(E::new(
                     format!(
@@ -1965,6 +1991,27 @@ impl<'a> FnWriter<'a> {
                         as_ref(b)?
                     ),
                     K::Cond,
+                ))
+            }
+            ("OpPlaceRecord", [host, tp]) => {
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                let size = self.cx.stores.enum_parent_size(tp);
+                let (image, n) = self.cx.default_image(tp);
+                let host = self.expr(host, ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_place_record({}, {tp}, {size}, {image}, {n})",
+                        as_ref(host)?
+                    ),
+                    K::Ref,
+                ))
+            }
+            ("OpFreeRecordIn", [r, _]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_free_record_in({})", as_ref(r)?),
+                    K::Void,
                 ))
             }
             ("OpStoreLive", [r]) => {
@@ -2272,6 +2319,48 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `r += src[lo..hi]` of scalar elements (`OpSliceVector`, and `OpSliceView`, which C,
+    /// having no foreign stores, copies the same way).
+    fn vec_slice(&mut self, args: &[Value], ind: usize) -> Result<E, String> {
+        let [v, src, lo, hi, tp] = args else {
+            return Err("a slice with an unexpected operand list".into());
+        };
+        let tp = u16::try_from(Self::literal(tp, "element type")?)
+            .map_err(|_| "an element type out of range")?;
+        // The parser emits these for scalar elements only; anything else is refused.
+        let scalar = (tp <= 6 && tp != 5)
+            || matches!(
+                self.cx.stores.types.get(tp as usize).map(|t| &t.parts),
+                Some(
+                    crate::database::Parts::Byte(..)
+                        | crate::database::Parts::Short(..)
+                        | crate::database::Parts::ShortRaw(..)
+                        | crate::database::Parts::Int(..)
+                        | crate::database::Parts::IntRaw(..)
+                )
+            );
+        if !scalar {
+            return Err("a slice of elements that are not scalars".into());
+        }
+        let size = self.cx.stores.size(tp);
+        let es = self.args(
+            &[(*v).clone(), (*src).clone(), (*lo).clone(), (*hi).clone()],
+            ind,
+        )?;
+        let [v, src, lo, hi] =
+            <[E; 4]>::try_from(es).map_err(|_| "a slice without four operands".to_string())?;
+        Ok(E::new(
+            format!(
+                "loft_vec_slice({}, {}, {}, {}, {size})",
+                as_ref(v)?,
+                as_ref(src)?,
+                as_int(lo)?,
+                as_int(hi)?
+            ),
+            K::Void,
+        ))
+    }
+
     /// The whole-vector operators: append, replace, remove, repeat — each with the deep
     /// copies its store method makes.
     fn collection_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
@@ -2310,6 +2399,7 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
+            ("OpSliceVector" | "OpSliceView", [_, _, _, _, _]) => self.vec_slice(args, ind),
             ("OpRemoveVector", [v, tp, idx]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
@@ -2632,6 +2722,7 @@ const OP_BOOL: &[&str] = &[
     "OpNeRef",
 ];
 const OP_REF: &[&str] = &[
+    "OpPlaceRecord",
     "OpConstRef",
     "OpGetDbRef",
     "OpGetField",
