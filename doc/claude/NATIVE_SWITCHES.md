@@ -699,8 +699,8 @@ release build emits where its ledger licenses every site (@PLN201, @C120, NATIVE
 tiers).  The values after a fault are NOT the language's (`b = MAX + 1; d = (b + 5) * 2` reads
 `10` for null), so a row compares only while its hash agrees; its time is the CEILING the checked
 build is measured against.  `bench/stats.py --lanes native,rust,ship` builds under it, giving each
-routine a `ship` ratio beside its checked one.  The null test itself, the `*Nullable` twins and
-`@FR-R-FaultFlag` keep their forms: they are the language's null semantics, not its fault protection.
+routine a `ship` ratio beside its checked one.  The null test and the `*Nullable` twins keep their
+templates (null semantics, not fault protection), and every rewrite still runs under it.
 
 ## Records returned and passed as values
 
