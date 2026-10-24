@@ -191,11 +191,11 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed("fn half(x: float) -> float { x / 2.0 }\n");
-    let d = p.data.def_nr("n_half");
+    let p = parsed("fn same(c: character) -> character { c }\n");
+    let d = p.data.def_nr("n_same");
     let refusal =
-        loft::c::emit_unit(&p.data, &p.database, &[d]).expect_err("float is not carried yet");
-    assert_eq!(refusal.function, "half");
+        loft::c::emit_unit(&p.data, &p.database, &[d]).expect_err("character is not carried yet");
+    assert_eq!(refusal.function, "same");
     assert!(
         refusal.why.contains("returns"),
         "names the construct: {refusal}"

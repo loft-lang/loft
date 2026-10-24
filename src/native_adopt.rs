@@ -11,7 +11,9 @@
 
 use crate::data::Data;
 use crate::database::Stores;
-use crate::host_abi::{HOST_ABI, HostTable, LAYOUT_FP_SYMBOL, LibArg};
+#[cfg(feature = "native-extensions")]
+use crate::host_abi::LAYOUT_FP_SYMBOL;
+use crate::host_abi::{HOST_ABI, HostTable, LibArg};
 use crate::keys::DbRef;
 use crate::opt::native_key::{
     artifact_sources, auto_cdylib_stem, contributing_fingerprint, fn_numbering_fingerprint,

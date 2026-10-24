@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <setjmp.h>
+#include <math.h>
 
 #define LOFT_NULL INT64_MIN
 #define LOFT_BOOL_NULL 255
@@ -697,4 +698,183 @@ static void loft_bind_copy(const loft_tdesc *T, uint16_t tp, loft_ref *dst, loft
     loft_database(dst, T[tp].size);
     loft_copy_bytes(*dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, *dst);
+}
+
+/* ── Floats (src/ops.rs, the stdlib's #rust templates) ─────────────────────────────────────
+ * float is a double, single a float; NaN is null.  A literal is written from its bits, so no
+ * decimal round trip can change it. */
+static double loft_f64(uint64_t bits) { double d; memcpy(&d, &bits, 8); return d; }
+static float loft_f32(uint32_t bits) { float f; memcpy(&f, &bits, 4); return f; }
+
+static int loft_feq(double a, double b) { return (isnan(a) && isnan(b)) || (a <= b && b <= a); }
+static int loft_flt(double a, double b) { return !isnan(b) && !(a >= b); }
+static int loft_fle(double a, double b) { return isnan(a) || (!isnan(b) && a <= b); }
+
+/* op_conv_float_from_long: null becomes NaN. */
+static double loft_i2f(int64_t v) { return v == LOFT_NULL ? (double) NAN : (double) v; }
+static float loft_i2s(int64_t v) { return v == LOFT_NULL ? (float) NAN : (float) v; }
+
+/* OpCastIntFromFloat: NaN and a value outside i64 are null; else truncated toward zero. */
+static int64_t loft_f2i(double v) {
+    if (isnan(v) || !(v >= -9223372036854775808.0 && v < 9223372036854775808.0)) return LOFT_NULL;
+    return (int64_t) v;
+}
+
+static double loft_math1(int id, double x) {
+    switch (id) {
+    case 0: return cos(x);
+    case 1: return sin(x);
+    case 2: return tan(x);
+    case 3: return acos(x);
+    case 4: return asin(x);
+    case 5: return atan(x);
+    case 6: return ceil(x);
+    case 7: return floor(x);
+    case 8: return round(x);
+    case 9: return sqrt(x);
+    default: return (double) NAN;
+    }
+}
+
+static float loft_math1s(int id, float x) {
+    switch (id) {
+    case 0: return cosf(x);
+    case 1: return sinf(x);
+    case 2: return tanf(x);
+    case 3: return acosf(x);
+    case 4: return asinf(x);
+    case 5: return atanf(x);
+    case 6: return ceilf(x);
+    case 7: return floorf(x);
+    case 8: return roundf(x);
+    case 9: return sqrtf(x);
+    default: return (float) NAN;
+    }
+}
+
+/* id 0 is atan2; id 1 is the logarithm in base `b` (log10 and log2 exactly, else ln a / ln b). */
+static double loft_math2(int id, double a, double b) {
+    if (id == 0) return atan2(a, b);
+    if (id == 1) return b == 10.0 ? log10(a) : b == 2.0 ? log2(a) : log(a) / log(b);
+    return (double) NAN;
+}
+
+static float loft_math2s(int id, float a, float b) {
+    if (id == 0) return atan2f(a, b);
+    if (id == 1) return b == 10.0f ? log10f(a) : b == 2.0f ? log2f(a) : logf(a) / logf(b);
+    return (float) NAN;
+}
+
+static double loft_get_float(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return (double) NAN;
+    double v;
+    memcpy(&v, loft_at(loft_store_of(r), r.rec, r.pos + fld), 8);
+    return v;
+}
+
+static void loft_set_float(loft_ref r, uint32_t fld, double v) {
+    if (r.rec == 0) return;
+    memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 8);
+}
+
+static float loft_get_single(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return (float) NAN;
+    float v;
+    memcpy(&v, loft_at(loft_store_of(r), r.rec, r.pos + fld), 4);
+    return v;
+}
+
+static void loft_set_single(loft_ref r, uint32_t fld, float v) {
+    if (r.rec == 0) return;
+    memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 4);
+}
+
+static void loft_vec_push_float(loft_ref v, double x) {
+    loft_ref e = loft_vec_append(v, 8);
+    if (e.rec == 0) return;
+    loft_set_float(e, 0, x);
+    loft_vec_finish(v);
+}
+
+static void loft_vec_push_single(loft_ref v, float x) {
+    loft_ref e = loft_vec_append(v, 4);
+    if (e.rec == 0) return;
+    loft_set_single(e, 0, x);
+    loft_vec_finish(v);
+}
+
+/* Rust's `{}` for a float: the shortest digits that read back as `v` (as a float when `single`),
+ * written out in full with no exponent — 1e21 is "1000000000000000000000", 1.0 is "1", -0.0 is
+ * "-0".  The digits are the first `%.*e` precision that round-trips, correctly rounded. */
+static void loft_push_shortest(loft_text *s, double v, int single) {
+    if (isinf(v)) {
+        if (v < 0) loft_push(s, "-inf", 4); else loft_push(s, "inf", 3);
+        return;
+    }
+    char buf[48];
+    int maxp = single ? 9 : 17;
+    for (int p = 1; p <= maxp; p++) {
+        snprintf(buf, sizeof buf, "%.*e", p - 1, v);
+        double back = strtod(buf, 0);
+        if (single ? (float) back == (float) v : back == v) break;
+    }
+    const char *q = buf;
+    if (*q == '-') { loft_push_char(s, '-'); q++; }
+    char digits[48];
+    int nd = 0;
+    for (; *q && *q != 'e'; q++) if (*q >= '0' && *q <= '9') digits[nd++] = *q;
+    int exp = atoi(q + 1);
+    while (nd > 1 && digits[nd - 1] == '0') nd--;
+    if (nd == 1 && digits[0] == '0') { loft_push_char(s, '0'); return; }
+    if (exp >= 0) {
+        int int_len = exp + 1;
+        for (int i = 0; i < int_len; i++) loft_push_char(s, i < nd ? digits[i] : '0');
+        if (nd > int_len) { loft_push_char(s, '.'); loft_push(s, digits + int_len, (size_t) (nd - int_len)); }
+    } else {
+        loft_push(s, "0.", 2);
+        for (int i = 0; i < -exp - 1; i++) loft_push_char(s, '0');
+        loft_push(s, digits, (size_t) nd);
+    }
+}
+
+/* ops::format_signed */
+static void loft_format_signed(loft_text *s, loft_str res, int64_t width, int dir, uint8_t token) {
+    int is_null = res.len == 4 && memcmp(res.p, "null", 4) == 0;
+    if (token == '0' && !is_null && res.len > 0 && (res.p[0] == '-' || res.p[0] == '+')) {
+        loft_push_char(s, res.p[0]);
+        loft_format_text(s, loft_lit(res.p + 1, res.len - 1), width - 1, dir, token);
+        return;
+    }
+    loft_format_text(s, res, width, dir, is_null ? loft_null_pad(token) : token);
+}
+
+/* ops::format_float and ops::format_single */
+static void loft_format_float(loft_text *s, double val, int64_t width, int64_t prec, uint8_t token, int plus,
+                              int dir, int single) {
+    if (dir == 2) dir = 1;
+    size_t start = s->len;
+    if (isnan(val)) {
+        loft_push(s, "null", 4);
+    } else if (prec >= 0) {
+        int n = snprintf(0, 0, "%.*f", (int) prec, val);
+        char *buf = (char *) malloc((size_t) n + 1);
+        if (!buf) { fputs("loft: out of memory\n", stderr); abort(); }
+        snprintf(buf, (size_t) n + 1, "%.*f", (int) prec, val);
+        loft_push(s, buf, (size_t) n);
+        free(buf);
+    } else {
+        loft_push_shortest(s, val, single);
+    }
+    /* sign_a_number */
+    if (plus && !isnan(val) && !(s->len > start && s->p[start] == '-')) {
+        loft_push_char(s, ' ');
+        memmove(s->p + start + 1, s->p + start, s->len - start - 1);
+        s->p[start] = '+';
+    }
+    if (width > (int64_t) (s->len - start)) {
+        loft_text res = loft_text_own(loft_lit(s->p + start, s->len - start));
+        s->len = start;
+        loft_format_signed(s, loft_view(&res), width, dir, token);
+        loft_text_free(&res);
+    }
 }
