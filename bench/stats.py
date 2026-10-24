@@ -40,8 +40,9 @@ with numbers that can be compared from one pass to the next:
 Lanes: `native` (loft `--native-emit --lean`, rustc opt-level 3, one codegen unit — what
 `--native-release` ships), `rust` (the reference, `rustc -O` unless `--ref-flags` says
 otherwise), `interp` (the loft interpreter), `python`, and `ship`: the program compiled whole,
-its libraries' loft code included, under `LOFT_RELEASE_PASS_PROBE=1` — what a game's release
-build would emit once its own checked runs licensed dropping the fault checks (@PLN201).  The
+its libraries' loft code included and their Rust linked in (`--static`), under
+`LOFT_RELEASE_PASS_PROBE=1` — what a game's release build would emit once its own checked
+runs licensed dropping the fault checks (@PLN201).  The
 ratio column is native / rust; `ship` adds `ship_ratio` (ship / rust) to each row, the speed
 of the shipped product beside the speed of the checked build.  The ship hash is not one of the
 hashes that must agree: a fault the checked lanes answer as null wraps there, so a row whose
@@ -266,9 +267,11 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
         cmds["native"] = [max(built, key=os.path.getmtime)]
     if "ship" in lanes:
         # Every library recompiled inside the program at the ship level: `--native-release`
-        # compiles the libraries' loft code into the binary from source, and the probe switch
-        # is part of the cache key, so this is a binary of its own (the newest one).
-        run_checked([loft, "--native-release", "--install-libs", "bench/bench.loft", "--n", "2"],
+        # compiles the libraries' loft code into the binary from source, `--static` links
+        # their Rust into it as well (one file, as a game ships), and the probe switch is part
+        # of the cache key, so this is a binary of its own (the newest one).
+        run_checked([loft, "--native-release", "--static", "--install-libs", "bench/bench.loft",
+                     "--n", "2"],
                     f"{pkg_dir}: loft --native-release (ship)", times, "ship-release", reserve_gb,
                     cwd=pkg_dir, env=SHIP_ENV)
         cache = os.path.join(bench_dir, ".loft", "cache")

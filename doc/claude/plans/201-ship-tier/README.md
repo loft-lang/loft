@@ -43,7 +43,8 @@ licensed.
 ## Steps
 
 1. **Measure the ceiling (built).**  `stats.py --lanes native,rust,ship` builds each program a
-   third time under the probe, the libraries' loft code included, and reports `ship_ratio`
+   third time under the probe, the libraries' loft code included and their Rust linked into
+   the binary (`--static`, as step 3 builds it), and reports `ship_ratio`
    beside the checked ratio.  A row whose ship hash differs is marked, never failed: a fault
    wraps there.  `make perf-portal ARGS="--lanes native,rust,ship"` puts the column on the
    portal page.
@@ -54,7 +55,9 @@ licensed.
    development runs (interpreted routine, precompiled libraries) collect one ledger.  Many
    runs merge: a fault in any run marks the site.
 3. **The ship build.**  `loft build --ship <ledger>…` compiles the program and every library
-   from source.  At each fault site: the function's body hash matches the ledger, the
+   from source, and links the libraries' Rust STATICALLY: a library loaded as a shared object
+   reaches its thread-locals through `__tls_get_addr` and is called through a bound slot,
+   which cost web `pack_u8` 43 % and random `rand` 23 % against the static link.  At each fault site: the function's body hash matches the ledger, the
    function ran, and the site never faulted — the processor's operator; otherwise the checked
    form.  A function the ledger does not know keeps every check.  The probe's emission forms
    are reused, chosen per site instead of globally.
