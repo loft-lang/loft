@@ -213,7 +213,9 @@ impl Walk<'_> {
         let def = self.data.def(d);
         let name = def.name();
         for a in def.attributes() {
-            if a.hidden || matches!(a.typedef, Type::RefVar(_)) {
+            // A by-reference parameter, also as `τ?` (`.base()` would peel the `&` away too).
+            let (shape, _) = a.typedef.peel_optional();
+            if a.hidden || matches!(shape, Type::RefVar(_)) {
                 return Err(format!(
                     "`{name}` writes through its parameter `{}`",
                     a.name
@@ -330,10 +332,7 @@ impl Output<'_> {
     /// `@FR-R-FaultFlag` admission: the written locals the rerun restores (those declared
     /// before the statement), or `None` with the reason traced under `LOFT_TRACE_FAULT_FLAG`.
     pub(super) fn fault_flag_admits(&self, bl: &Block) -> Option<Vec<u16>> {
-        if self.fault_flag_disabled
-            || self.fault_flag.is_some()
-            || self.in_coroutine_body
-        {
+        if self.fault_flag_disabled || self.fault_flag.is_some() || self.in_coroutine_body {
             return None;
         }
         let data = self.data;
