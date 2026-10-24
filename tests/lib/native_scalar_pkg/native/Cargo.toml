@@ -16,6 +16,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 loft-ffi = { path = "../../../../loft-ffi" }
 loft-ffi-macros = { path = "../../../../loft-ffi-macros" }
+# A registry crate loft itself links, at the version loft's own Cargo.lock holds: a static
+# link then carries ONE copy of it only when the package was built with the flags loft was
+# (`a_static_link_ships_one_file_that_runs_alone`).  A path dependency cannot show that —
+# the path remap never touches its sources — and a different version is a different crate.
+cfg-if = "=1.0.4"
 
 [build-dependencies]
 loft-ffi-build = { path = "../../../../loft-ffi-build" }

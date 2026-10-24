@@ -367,6 +367,7 @@ pub const INERT_ENV: &[&str] = &[
     // them at run time: the build's values are compiled in (`env!`) and already in the key.
     "LOFT_BUILD_ID",
     "LOFT_BUILD_RUSTC",
+    "LOFT_BUILD_REMAPPED",
     "LOFT_BUILD_RUSTFLAGS",
     "LOFT_BUILD_STAMP",
     "LOFT_BUILD_TARGET",
@@ -873,10 +874,16 @@ pub fn loft_ffi_fingerprint() -> u64 {
 /// `StableCrateId`, different SVH, "colliding StableCrateId" at link.  Folding this
 /// into the native-artifact cache key invalidates on a flag change while preserving
 /// the cross-profile sharing the loft-ffi key was chosen for (same flags → shared).
+/// Whether loft's build remapped its paths (`LOFT_BUILD_REMAPPED`) is folded in too: the
+/// package build follows it, and the remap enters every crate's SVH the same way.
 /// `DefaultHasher` is seeded with fixed keys, so the value is stable across runs.
 #[must_use]
 pub fn rustflags_fingerprint() -> u64 {
-    rustflags_fp_of(env!("LOFT_BUILD_RUSTFLAGS"))
+    rustflags_fp_of(concat!(
+        env!("LOFT_BUILD_RUSTFLAGS"),
+        "/remap=",
+        env!("LOFT_BUILD_REMAPPED")
+    ))
 }
 
 /// `LOFT_NATIVE_RELEASE_FLAGS` — extra `rustc` arguments for the SHIPPED tier
