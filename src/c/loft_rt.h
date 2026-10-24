@@ -497,3 +497,51 @@ static void loft_copy_record(loft_ref src, loft_ref dst, uint32_t bytes, int fre
             bytes);
     if (free_source && src.store_nr != dst.store_nr) loft_free_ref(src);
 }
+
+/* ops::op_negate_long: null stays null. */
+static int64_t loft_neg(int64_t a) {
+    return a == LOFT_NULL ? a : -a;
+}
+
+/* OpLengthText: characters, OpSizeText: bytes; both 0 for the null text. */
+static int64_t loft_text_length(loft_str s) {
+    return loft_str_is_null(s) ? 0 : (int64_t) loft_chars(s);
+}
+
+static int64_t loft_text_size(loft_str s) {
+    return loft_str_is_null(s) ? 0 : (int64_t) s.len;
+}
+
+/* Stores::free_displaced: free what a rebind displaced, unless it is the witness's store. */
+static void loft_free_displaced(loft_ref displaced, loft_ref witness) {
+    if (displaced.store_nr == witness.store_nr || displaced.store_nr == 0xFFFF) return;
+    loft_free_ref(displaced);
+}
+
+/* vector::clear_vector: an absent slot becomes the empty vector; a present one length 0. */
+static void loft_vec_clear(loft_ref v) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+    loft_store_t *s = loft_store_of(v);
+    if (loft_u32(s, v.rec, v.pos) == 0xFFFFFFFFu) { loft_set_u32(s, v.rec, v.pos, 0); return; }
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r != 0) loft_set_u32(s, r, 4, 0);
+}
+
+/* A whole-value bind `dst = src` of a record that owns nothing past its bytes (@C86): an
+ * independent copy of a present source, and the null of an absent one, releasing what `dst`
+ * held.  The bytes go through a buffer: refilling `dst`'s store in place could clear the
+ * source when both live in it. */
+static void loft_bind_copy(loft_ref *dst, loft_ref src, uint32_t bytes) {
+    if (src.store_nr == 0xFFFF || src.rec == 0) {
+        loft_free_ref(*dst);
+        *dst = loft_ref_null();
+        return;
+    }
+    if (src.store_nr == dst->store_nr && src.rec == dst->rec && src.pos == dst->pos) return;
+    uint8_t *tmp = (uint8_t *) malloc(bytes ? bytes : 1);
+    if (!tmp) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(tmp, loft_at(loft_store_of(src), src.rec, src.pos), bytes);
+    loft_database(dst, bytes);
+    memcpy(loft_at(loft_store_of(*dst), dst->rec, dst->pos), tmp, bytes);
+    free(tmp);
+}
