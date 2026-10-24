@@ -2003,8 +2003,9 @@ pub fn OpIterate(
                 let finish = if till.is_empty() {
                     vec_len
                 } else {
-                    let (t, cmp) = vector::sorted_find(&data, ex, size, all, keys, till);
-                    if ex || cmp { t } else { t + 1 }
+                    // @FR-Slice-KeyedIter — see `State::iterate`: the search's answer is
+                    // the exclusive end.
+                    vector::sorted_find(&data, ex, size, all, keys, till).0
                 };
                 pack_iter(start, finish)
             }
