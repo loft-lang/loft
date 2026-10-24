@@ -777,7 +777,7 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
     let mut shapes = Vec::with_capacity(vars.count() as usize);
     for v in 0..vars.count() {
         // A `&` parameter has its target's shape, passed as a pointer to it.
-        let tp = match vars.tp(v) {
+        let tp = match vars.tp(v).base() {
             Type::RefVar(inner) => inner,
             tp => tp,
         };
@@ -796,7 +796,7 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
         .map(|&a| {
             let c = shapes[a as usize];
             let name = body::var_name(vars.name(a), a);
-            if matches!(vars.tp(a), Type::RefVar(_)) {
+            if matches!(vars.tp(a).base(), Type::RefVar(_)) {
                 format!("{} *{name}", held(c))
             } else {
                 format!("{} {name}", passed(c))
@@ -809,7 +809,7 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
         params.join(", ")
     };
     let sig = format!("static {} {}({params})", held(ret), c_name(data, d));
-    if let Type::Iterator(elem, _) = def.returned() {
+    if let Type::Iterator(elem, _) = def.returned().base() {
         let elem = cx
             .ctype(elem)
             .filter(|c| !matches!(c, CType::Void | CType::Tuple(_)))
@@ -836,7 +836,7 @@ fn test_functions(data: &Data) -> Vec<u32> {
                 && def.name().starts_with("n_")
                 && !def.name().starts_with("n___lambda_")
                 && def.attributes().is_empty()
-                && !matches!(def.returned(), Type::Iterator(..))
+                && !matches!(def.returned().base(), Type::Iterator(..))
         })
         .collect();
     if fns

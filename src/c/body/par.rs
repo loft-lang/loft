@@ -185,8 +185,8 @@ impl FnWriter<'_> {
         let mut visible = 0;
         for a in def.attributes() {
             if a.hidden {
-                match &a.typedef {
-                    Type::RefVar(t) if matches!(**t, Type::Text(_)) => {
+                match a.typedef.base() {
+                    Type::RefVar(t) if matches!(t.base(), Type::Text(_)) => {
                         let w = format!("loft_w{}", buffers.len());
                         call_args.push(format!("&{w}"));
                         buffers.push(w);

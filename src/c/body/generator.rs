@@ -56,7 +56,7 @@ impl FnWriter<'_> {
                 let Value::Var(v) = g.unspan() else {
                     return Err("a generator step on a value that is not a variable".into());
                 };
-                let Type::Iterator(elem, _) = self.vars.tp(*v) else {
+                let Type::Iterator(elem, _) = self.vars.tp(*v).base() else {
                     return Err("a generator step on a value that is not an iterator".into());
                 };
                 let c = self

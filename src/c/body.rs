@@ -156,7 +156,7 @@ impl<'a> FnWriter<'a> {
                 p
             },
             links: (0..def.variables().count())
-                .map(|v| matches!(def.variables().tp(v), crate::data::Type::RefVar(_)))
+                .map(|v| matches!(def.variables().tp(v).base(), crate::data::Type::RefVar(_)))
                 .collect(),
             ret,
             body: String::new(),
@@ -672,9 +672,13 @@ impl<'a> FnWriter<'a> {
         use crate::data::Type;
         use crate::use_analysis as ua;
         let data = self.cx.data;
-        let (Type::Reference(d, _) | Type::Enum(d, true, _)) =
-            ua::first_bind_shape(self.vars.tp(v)).clone()
-        else {
+        let shape = ua::first_bind_shape(self.vars.tp(v)).clone();
+        // A `τ?` that `first_bind_shape` leaves wrapped (`LOFT_NO_NULLABLE_RETBUF`) is not
+        // bound here, as in the bytecode writer.
+        if matches!(shape, Type::Optional(_)) {
+            return Ok(None);
+        }
+        let (Type::Reference(d, _) | Type::Enum(d, true, _)) = shape.base().clone() else {
             return Ok(None);
         };
         let Some(f) = ua::callee_of(data, self.d, x) else {
@@ -701,9 +705,13 @@ impl<'a> FnWriter<'a> {
         use crate::data::Type;
         use crate::use_analysis as ua;
         let data = self.cx.data;
-        let (Type::Reference(d, _) | Type::Enum(d, true, _)) =
-            ua::first_bind_shape(self.vars.tp(v)).clone()
-        else {
+        let shape = ua::first_bind_shape(self.vars.tp(v)).clone();
+        // A `τ?` that `first_bind_shape` leaves wrapped (`LOFT_NO_NULLABLE_RETBUF`) is not
+        // bound here, as in the bytecode writer.
+        if matches!(shape, Type::Optional(_)) {
+            return None;
+        }
+        let (Type::Reference(d, _) | Type::Enum(d, true, _)) = shape.base().clone() else {
             return None;
         };
         let f = ua::callee_of(data, self.d, x)?;
@@ -808,10 +816,10 @@ impl<'a> FnWriter<'a> {
     /// record it held is released unless the new one lives in its store (the bytecode's
     /// `SetStackRef` + `FreeRefIfDistinct`, @FR-B-Ref-Repoint).
     fn link_rebind(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
-        let crate::data::Type::RefVar(inner) = self.vars.tp(var) else {
+        let crate::data::Type::RefVar(inner) = self.vars.tp(var).base() else {
             return Err("a link that is not a parameter".into());
         };
-        if !matches!(**inner, crate::data::Type::Reference(..))
+        if !matches!(inner.base(), crate::data::Type::Reference(..))
             || !matches!(x.unspan(), Value::Block(_))
         {
             return Err(format!("a rebind of a & {} parameter", type_word(inner)));
@@ -862,7 +870,7 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         if matches!(x.unspan(), Value::Null)
-            && let crate::data::Type::Vector(_, dep) = self.vars.tp(var)
+            && let crate::data::Type::Vector(_, dep) = self.vars.tp(var).base()
             && dep.is_empty()
             && (if lazy {
                 !first
@@ -961,7 +969,7 @@ impl<'a> FnWriter<'a> {
     }
 
     /// A keyed local bound to null gets a store too, unless it borrows one
-    /// (`gen_keyed_null`); a later bind to null empties that store in place (@P302).
+    /// (`gen_keyed_null`); a later bind to null empties that store in place.
     fn keyed_null(&mut self, var: u16, first: bool, ind: usize) {
         let name = self.var(var);
         if first {
@@ -1122,6 +1130,17 @@ impl<'a> FnWriter<'a> {
         ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))
     }
 
+    /// The C shape a call through function value `v` answers.
+    fn call_ref_shape(&self, v: u16) -> Result<CType, String> {
+        match self.vars.tp(v).base() {
+            crate::data::Type::Function(_, ret, ..) => self
+                .cx
+                .ctype(ret)
+                .ok_or_else(|| format!("a function value returning {}", type_word(ret))),
+            _ => Err("a call through a value that is not a function".into()),
+        }
+    }
+
     /// The C shape `v` evaluates to, when it is a compound the caller must hold.
     fn shape_of(&self, v: &Value) -> Result<CType, String> {
         let cx = self.cx;
@@ -1143,12 +1162,7 @@ impl<'a> FnWriter<'a> {
             Value::Var(v) => Ok(self.shapes[*v as usize]),
             Value::FnRef(..) => Ok(CType::Fn),
             Value::FnRefDnr(_) => Ok(CType::Int),
-            Value::CallRef(v, _) => match self.vars.tp(*v).base() {
-                crate::data::Type::Function(_, ret, ..) => cx
-                    .ctype(ret)
-                    .ok_or_else(|| format!("a function value returning {}", type_word(ret))),
-                _ => Err("a call through a value that is not a function".into()),
-            },
+            Value::CallRef(v, _) => self.call_ref_shape(*v),
             Value::TupleGet(v, i) => match self.shapes[*v as usize] {
                 CType::Tuple(id) => cx
                     .tuple_shapes(id)
@@ -1379,10 +1393,7 @@ impl<'a> FnWriter<'a> {
             .attributes()
             .iter()
             .map(|a| {
-                let tp = match &a.typedef {
-                    crate::data::Type::RefVar(inner) => inner,
-                    tp => tp,
-                };
+                let tp = a.typedef.peel_link();
                 cx.ctype(tp).ok_or_else(|| {
                     format!(
                         "a call to {callee} with a {} parameter",
@@ -1398,7 +1409,7 @@ impl<'a> FnWriter<'a> {
         let linked: Vec<bool> = def
             .attributes()
             .iter()
-            .map(|a| matches!(a.typedef, crate::data::Type::RefVar(_)))
+            .map(|a| matches!(a.typedef.base(), crate::data::Type::RefVar(_)))
             .collect();
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
@@ -1467,7 +1478,7 @@ impl<'a> FnWriter<'a> {
         let cx = self.cx;
         let shapes = params
             .iter()
-            .map(|p| match p {
+            .map(|p| match p.base() {
                 crate::data::Type::RefVar(_) => None,
                 p => cx.ctype(p).filter(|c| *c != CType::Void),
             })
@@ -2797,8 +2808,11 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpClear", [r, tp]) => {
-                let tp =
-                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                // `@FR-R-Reuse`'s reset flag asks for a fresh root where the store allows it;
+                // the walk below is the answer the interpreter falls back to when it does not.
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type out of range")?
+                    & crate::keys::POOL_TP_MASK;
                 self.cx.copy_type(tp)?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(

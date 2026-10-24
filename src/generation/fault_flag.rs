@@ -371,9 +371,7 @@ impl Output<'_> {
     /// `@FR-R-FaultFlag` admission: the written locals the rerun restores (those declared
     /// before the statement), or `None` with the reason traced under `LOFT_TRACE_FAULT_FLAG`.
     pub(super) fn fault_flag_admits(&self, bl: &Block) -> Option<Vec<u16>> {
-        if self.switches.fault_flag_disabled
-            || self.fault_flag.is_some()
-            || self.in_coroutine_body
+        if self.switches.fault_flag_disabled || self.fault_flag.is_some() || self.in_coroutine_body
         {
             return None;
         }
