@@ -659,7 +659,7 @@ impl<'a> FnWriter<'a> {
         match v.unspan() {
             Value::Int(i) => Ok(E::new(format!("INT64_C({i})"), K::Int)),
             Value::Long(l) if *l == i64::MIN => Ok(E::new("LOFT_NULL", K::Int)),
-            Value::Long(l) => Ok(E::new(format!("INT64_C({l})"), K::Int)),
+            Value::Long(l) => Ok(E::new(c_long(*l), K::Int)),
             Value::Boolean(b) => Ok(E::new(if *b { "1" } else { "0" }, K::Cond)),
             Value::Enum(v, _) => Ok(E::new(format!("(uint8_t) {v}"), K::Enum)),
             Value::Float(f) => Ok(E::new(
@@ -690,14 +690,21 @@ impl<'a> FnWriter<'a> {
             }
             Value::Call(d, args) => self.call(*d, args, ind),
             compound @ (Value::Block(_) | Value::Insert(_) | Value::If(..) | Value::Tuple(_)) => {
+                // The compound's own statements free only the temporaries they make: the
+                // enclosing expression's are still to be read once the compound is done.
+                let outer = std::mem::take(&mut self.pending);
                 let c = self.shape_of(compound)?;
-                if c == CType::Void {
+                let e = if c == CType::Void {
                     self.stmt(compound, ind)?;
-                    return Ok(E::new("(void) 0", K::Void));
-                }
-                let t = self.temp(c);
-                self.assign(compound, &t, c, ind)?;
-                Ok(self.held(t, c))
+                    E::new("(void) 0", K::Void)
+                } else {
+                    let t = self.temp(c);
+                    self.assign(compound, &t, c, ind)?;
+                    self.held(t, c)
+                };
+                let inner = std::mem::replace(&mut self.pending, outer);
+                self.pending.extend(inner);
+                Ok(e)
             }
             Value::Null => Err("a null without a type".into()),
             other => Err(unsupported(other)),
@@ -963,6 +970,25 @@ impl<'a> FnWriter<'a> {
                     "loft_text_size"
                 };
                 Ok(E::new(format!("{f}({})", as_view(a)?), K::Int))
+            }
+            "OpRangeDefault" => {
+                let [v, lo, hi, dflt] = args else {
+                    return Err("OpRangeDefault with an unexpected operand list".into());
+                };
+                let lo = Self::literal(lo, "range bound")?;
+                let hi = Self::literal(hi, "range bound")?;
+                let dflt = Self::literal(dflt, "range default")?;
+                let v = self.expr(v, ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_range_default({}, {}, {}, {})",
+                        as_int(v)?,
+                        c_long(lo),
+                        c_long(hi),
+                        c_long(dflt)
+                    ),
+                    K::Int,
+                ))
             }
             "OpMinSingleInt" | "OpMinSingleLong" => {
                 let es = self.args(args, ind)?;
@@ -1415,6 +1441,23 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_clear({})", as_ref(v)?), K::Void))
             }
+            ("OpAppendVector", [v, other, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) {
+                    return Err("an append of a linked element type".into());
+                }
+                self.cx.copy_type(tp)?;
+                let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_add(loft_types, {tp}, {}, {})",
+                        as_ref(v)?,
+                        as_ref(other)?
+                    ),
+                    K::Void,
+                ))
+            }
             ("OpLengthVector", [v]) => {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
@@ -1450,8 +1493,90 @@ impl<'a> FnWriter<'a> {
                     K::Ref,
                 ))
             }
+            _ => self.slot_operator(name, args, ind),
+        }
+    }
+
+    /// Booleans and bytes in records and vectors, absent vectors, store identity, text
+    /// clears and the text null.
+    fn slot_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match (name, args) {
+            ("OpGetBoolean", [r, fld]) => {
+                let fld = Self::literal(fld, "field")?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_get_bool({}, {fld})", as_ref(r)?),
+                    K::Bool,
+                ))
+            }
+            ("OpSetBoolean", [r, fld, val]) => {
+                let fld = Self::literal(fld, "field")?;
+                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_set_byte({}, {fld}, {})", as_ref(r)?, as_bool(val)?),
+                    K::Void,
+                ))
+            }
+            ("OpPushByte", [v, min, val]) => {
+                let min = Self::literal(min, "byte minimum")?;
+                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_push_byte({}, loft_byte_raw({min}, {}))",
+                        as_ref(v)?,
+                        as_int(val)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpVectorIsNull", [v]) => {
+                let v = self.expr(v, ind)?;
+                Ok(E::new(format!("loft_vec_absent({})", as_ref(v)?), K::Cond))
+            }
+            ("OpLengthSorted", [v]) => {
+                let v = self.expr(v, ind)?;
+                Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
+            }
+            ("OpDistinctStore", [_, _]) => {
+                let (a, b) = self.two(name, args, ind)?;
+                Ok(E::new(
+                    format!("({}.store_nr != {}.store_nr)", as_ref(a)?, as_ref(b)?),
+                    K::Cond,
+                ))
+            }
+            ("OpClear", [r, tp]) => {
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                self.cx.copy_type(tp)?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_remove_claims(loft_types, {tp}, {})", as_ref(r)?),
+                    K::Void,
+                ))
+            }
+            ("OpClearText", [dest]) => {
+                let dest = self.text_dest(dest)?;
+                Ok(E::new(format!("{dest}.len = 0"), K::Void))
+            }
+            ("OpConvTextFromNull", []) => Ok(E::new("loft_null_text()", K::View)),
+            ("OpConvBoolFromText", [t]) => {
+                let t = self.expr(t, ind)?;
+                Ok(E::new(
+                    format!("(!loft_str_is_null({}))", as_view(t)?),
+                    K::Cond,
+                ))
+            }
             _ => Err(format!("operator {name}")),
         }
+    }
+}
+
+/// `n` as a C `int64_t` constant: the null as `LOFT_NULL`, since `INT64_C` cannot spell it.
+fn c_long(n: i64) -> String {
+    if n == i64::MIN {
+        "LOFT_NULL".into()
+    } else {
+        format!("INT64_C({n})")
     }
 }
 
@@ -1556,6 +1681,8 @@ const OP_INT: &[&str] = &[
     "OpConvIntFromNull",
     "OpConvLongFromNull",
     "OpConvIntFromEnum",
+    "OpLengthSorted",
+    "OpRangeDefault",
 ];
 const OP_BOOL: &[&str] = &[
     "OpEqInt",
@@ -1576,6 +1703,10 @@ const OP_BOOL: &[&str] = &[
     "OpConvBoolFromLong",
     "OpConvBoolFromEnum",
     "OpConvBoolFromRef",
+    "OpGetBoolean",
+    "OpVectorIsNull",
+    "OpDistinctStore",
+    "OpConvBoolFromText",
 ];
 const OP_REF: &[&str] = &[
     "OpGetField",
@@ -1589,7 +1720,7 @@ const OP_ENUM: &[&str] = &[
     "OpConvEnumFromNull",
     "OpConstEnum",
 ];
-const OP_TEXT: &[&str] = &["OpGetText", "OpCastTextFromEnum"];
+const OP_TEXT: &[&str] = &["OpGetText", "OpCastTextFromEnum", "OpConvTextFromNull"];
 const OP_FLOAT: &[&str] = &[
     "OpAddFloat",
     "OpMinFloat",

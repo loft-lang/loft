@@ -558,6 +558,36 @@ static void loft_vec_push_byte(loft_ref v, uint8_t x) {
     loft_vec_finish(v);
 }
 
+/* OpRangeDefault: a value entering a narrow integer — null stays null (or takes the default
+ * when one is given), a value outside [lo, hi] takes the default (a recoverable fault the
+ * interpreter records silently). */
+static int64_t loft_range_default(int64_t v, int64_t lo, int64_t hi, int64_t dflt) {
+    if (v == LOFT_NULL) return dflt == LOFT_NULL ? v : dflt;
+    if (v >= lo && v <= hi) return v;
+    return dflt;
+}
+
+/* OpGetBoolean: the null boolean for the null reference, the stored byte otherwise. */
+static uint8_t loft_get_bool(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return LOFT_BOOL_NULL;
+    return *loft_at(loft_store_of(r), r.rec, r.pos + fld);
+}
+
+/* Store::byte_raw: the byte a slot biased by `min` holds for `val` (an i32, as `OpPushByte`
+ * narrows it); 255 for null, 0 for a value out of the byte's range. */
+static uint8_t loft_byte_raw(int64_t min, int64_t val) {
+    int32_t v = (int32_t) (uint32_t) (uint64_t) val;
+    if (v == INT32_MIN) return 255;
+    if ((int64_t) v >= min && (int64_t) v <= min + 255) return (uint8_t) ((int64_t) v - min);
+    return 0;
+}
+
+/* vector::is_absent_collection: the null reference, no record, or the absent slot. */
+static int loft_vec_absent(loft_ref v) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return 1;
+    return loft_u32(loft_store_of(v), v.rec, v.pos) == 0xFFFFFFFFu;
+}
+
 /* OpGetText (Store::get_str): the field holds a string record — its length at byte 4, its
  * bytes from byte 8 — and 0 for the null text. */
 static loft_str loft_get_text(loft_ref r, uint32_t fld) {
@@ -682,6 +712,46 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
     loft_copy_bytes(dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, dst);
     if (free_source && src.store_nr != dst.store_nr) loft_free_ref(src);
+}
+
+/* OpClear (Stores::remove_claims): the record releases what it owns — every text, vector and
+ * child record slot it holds, through its struct fields and enum variant, reads empty after. */
+static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+    if (r.store_nr == 0xFFFF || r.rec == 0) return;
+    const loft_tdesc *d = &T[tp];
+    switch (d->kind) {
+    case LOFT_T_TEXT:
+    case LOFT_T_VECTOR:
+    case LOFT_T_CHILD:
+        loft_set_u32(loft_store_of(r), r.rec, r.pos, 0);
+        return;
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++) loft_remove_claims(T, d->fields[i].type, loft_field(r, d->fields[i].pos));
+        return;
+    case LOFT_T_ENUM: {
+        int e = (int) *loft_at(loft_store_of(r), r.rec, r.pos) - 1;
+        if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_remove_claims(T, d->variants[e], r);
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+/* OpAppendVector (Stores::vector_add): every element of `o` appended to `v`, deep-copied so the
+ * destination owns what each element holds.  The source's length is read once, and each source
+ * element is re-read after the growth, so a self-append (`v += v`) reads the moved record. */
+static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+    int64_t n = loft_vec_len(o);
+    if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+    uint32_t size = T[tp].size;
+    for (int64_t i = 0; i < n; i++) {
+        loft_ref e = loft_vec_append(v, size);
+        loft_ref a = { o.store_nr, loft_collection_rec(loft_store_of(o), o.rec, o.pos), 8 + (uint32_t) i * size };
+        loft_copy_bytes(e, 0, a, 0, size);
+        if (T[tp].kind != LOFT_T_SCALAR) loft_copy_claims(T, tp, a, e);
+        loft_vec_finish(v);
+    }
 }
 
 /* A whole-value bind `dst = src` (@C86): an independent copy of a present source, the null of

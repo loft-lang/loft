@@ -145,13 +145,9 @@ impl<'a> Cx<'a> {
     /// The C shape of `tp`, nullable or not — a null is held in the same shape — or `None`.
     pub(crate) fn ctype(&self, tp: &Type) -> Option<CType> {
         match tp.base() {
-            Type::Integer(spec)
-                if spec.forced_size.is_none()
-                    && spec.min == i32::MIN + 1
-                    && (spec.max == i64::from(i32::MAX) || spec.max == i64::from(u32::MAX)) =>
-            {
-                Some(CType::Int)
-            }
+            // A narrow integer is held as a plain one: its range is enforced where a value
+            // enters it (`OpRangeDefault`) and where a field stores it.
+            Type::Integer(_) => Some(CType::Int),
             Type::Boolean => Some(CType::Bool),
             Type::Float => Some(CType::Float),
             Type::Single => Some(CType::Single),
@@ -277,7 +273,7 @@ impl<'a> Cx<'a> {
                         .collect();
                     let _ = writeln!(
                         out,
-                        "static const loft_fld loft_f{tp}[] = {{ {} }};",
+                        "static const loft_fld loft_fields{tp}[] = {{ {} }};",
                         if list.is_empty() {
                             "{ 0, 0 }".into()
                         } else {
@@ -285,7 +281,7 @@ impl<'a> Cx<'a> {
                         }
                     );
                     format!(
-                        "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_f{tp}, 0 }}",
+                        "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_fields{tp}, 0 }}",
                         fields.len()
                     )
                 }
@@ -295,11 +291,11 @@ impl<'a> Cx<'a> {
                     let list: Vec<String> = values.iter().map(|(v, _)| v.to_string()).collect();
                     let _ = writeln!(
                         out,
-                        "static const uint16_t loft_v{tp}[] = {{ {} }};",
+                        "static const uint16_t loft_variants{tp}[] = {{ {} }};",
                         list.join(", ")
                     );
                     format!(
-                        "{{ LOFT_T_ENUM, {size}, 0, {}, 0, loft_v{tp} }}",
+                        "{{ LOFT_T_ENUM, {size}, 0, {}, 0, loft_variants{tp} }}",
                         values.len()
                     )
                 }
