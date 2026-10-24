@@ -408,7 +408,12 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             {
                 continue;
             }
+            let caller_clock = clock.last.map(|_| std::time::Instant::now());
+            clock.walked += 1;
             let locals = value_locals_in(data, caller, &admitted, &params, &view_offs, &sites, &sp);
+            if let Some(t) = caller_clock {
+                clock.locals_ms += t.elapsed().as_secs_f64() * 1000.0;
+            }
             let own = admitted.contains_key(&caller).then_some(caller);
             let c = ShapeCtx {
                 data,
@@ -456,6 +461,9 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
                     &view_offs,
                     disturbed.as_ref(),
                 ));
+            }
+            if let Some(t) = caller_clock {
+                clock.slowest(t.elapsed().as_secs_f64() * 1000.0, caller);
             }
         }
         clock.add("site_gate");
@@ -505,7 +513,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
     clock.add("fixpoint_tail");
     out.sp = surely_present_fns(data, &cand, &params, &sites);
     clock.add("final_presence");
-    clock.report(data.definitions.len());
+    clock.report(data);
     out.fns = cand;
     out.params = params;
     out.fnref_sites = sites;
@@ -1576,6 +1584,12 @@ struct Clock {
     last: Option<std::time::Instant>,
     steps: Vec<(&'static str, f64)>,
     rounds: u32,
+    /// Callers the site gate walked, over all rounds, and the part of that spent in
+    /// `value_locals_in`.
+    walked: u32,
+    locals_ms: f64,
+    /// The five callers that cost the site gate most in one round.
+    slow: Vec<(f64, u32)>,
 }
 
 impl Clock {
@@ -1584,7 +1598,16 @@ impl Clock {
             last: on.then(std::time::Instant::now),
             steps: Vec::new(),
             rounds: 0,
+            walked: 0,
+            locals_ms: 0.0,
+            slow: Vec::new(),
         }
+    }
+
+    fn slowest(&mut self, ms: f64, caller: u32) {
+        self.slow.push((ms, caller));
+        self.slow.sort_by(|a, b| b.0.total_cmp(&a.0));
+        self.slow.truncate(5);
     }
 
     fn add(&mut self, step: &'static str) {
@@ -1599,12 +1622,21 @@ impl Clock {
         }
     }
 
-    fn report(&self, definitions: usize) {
+    fn report(&self, data: &Data) {
         if self.last.is_some() {
             let mut line = format!(
-                "LOFT_TIMING value_records defs={definitions} rounds={}",
-                self.rounds
+                "LOFT_TIMING value_records defs={} rounds={} walked={} locals={:.2}ms",
+                data.definitions.len(),
+                self.rounds,
+                self.walked,
+                self.locals_ms
             );
+            for (ms, d) in &self.slow {
+                let _ = std::fmt::Write::write_fmt(
+                    &mut line,
+                    format_args!(" slow:{}={ms:.1}ms", data.def(*d).name()),
+                );
+            }
             for (step, ms) in &self.steps {
                 let _ = std::fmt::Write::write_fmt(&mut line, format_args!(" {step}={ms:.2}ms"));
             }
