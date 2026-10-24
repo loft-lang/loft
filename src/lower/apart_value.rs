@@ -500,7 +500,7 @@ impl<'a> Gate<'a> {
             return false;
         }
         let gdef = self.data.def(g);
-        let Some(rbi) = super::hoist::ret_buffer_attr(gdef) else {
+        let Some(rbi) = crate::opt::attrs::ret_buffer_attr(gdef) else {
             return false;
         };
         if args.len() != gdef.attributes().len() {
@@ -770,7 +770,7 @@ fn roles_of(
     if rec.is_empty() {
         return Err("no variable of an apart type".into());
     }
-    let rb = super::hoist::ret_buffer_attr(def).map(|i| vars.var(&def.attributes()[i].name));
+    let rb = crate::opt::attrs::ret_buffer_attr(def).map(|i| vars.var(&def.attributes()[i].name));
     let mut g = Gate {
         data,
         types,
@@ -933,7 +933,7 @@ fn admit_twins(
         .iter()
         .filter_map(|d| {
             let def = data.def(*d);
-            super::hoist::ret_buffer_attr(def)?;
+            crate::opt::attrs::ret_buffer_attr(def)?;
             Some((*d, record_of(def.returned(), types)?))
         })
         .collect();
