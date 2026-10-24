@@ -626,3 +626,161 @@ fn main() {
         .expect("run the par C program");
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
+
+/// The C store allocator (`src/c/loft_store.h`) is a PORT of `Store`'s, not one of its own
+/// (@PLN200 B5, owner): one seeded sequence of claims, deletes, resizes and referenced-record
+/// marks runs through `Store` and through the C, and every position either answers, then the
+/// block chain the run leaves (each block's header, and a free block's footer), must be the
+/// same.  A sequence long and varied enough to reach each path: the wilderness bump, the
+/// parked lists, the lazy phase and its sweep, best fit with carving, the backward merge, the
+/// growth, an in-place and a moving resize, and a tombstone.  The stores are DEFINED (zeroed
+/// when made and grown) and the test writes no payload, so every byte is the allocator's and
+/// the whole buffer is compared — which a program's store never allows, since a claim promises
+/// no value (`@FR-H-Claim`); a program is compared by walking its data instead.  Falsified: a
+/// parked-size bound, the lazy floor, the in-place resize's slack, the tombstone and carving
+/// switched off each fail it.
+#[test]
+fn the_c_store_allocator_places_every_record_where_store_does() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    // A fixed LCG, so the sequence is the same on every run and every machine.
+    let mut seed: u64 = 0x5eed_1234_abcd_0001;
+    let mut next = |n: u64| {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 33) % n
+    };
+    // DEFINED stores (zeroed when made and grown), so every byte is the allocator's to write.
+    let mut store = loft::store::Store::new_in_use_defined(100);
+    let mut live: Vec<u32> = Vec::new();
+    let (mut script, mut want) = (String::new(), String::new());
+    for _ in 0..6000 {
+        let pick = next(100);
+        if pick < 50 || live.is_empty() {
+            let size = match next(20) {
+                0..=11 => 1 + next(8),
+                12..=16 => 9 + next(12),
+                17..=18 => 40 + next(40),
+                _ => 150 + next(250),
+            } as u32;
+            let pos = store.claim(size);
+            live.push(pos);
+            let _ = writeln!(script, "C {size}");
+            let _ = writeln!(want, "{pos}");
+        } else if pick < 80 {
+            let rec = live.swap_remove(next(live.len() as u64) as usize);
+            store.delete(rec);
+            let _ = writeln!(script, "D {rec}");
+        } else if pick < 95 {
+            let i = next(live.len() as u64) as usize;
+            let rec = live[i];
+            let words = store.read::<i32>(rec, 0) as u32;
+            let size = words + 1 + next(u64::from(words)) as u32;
+            let pos = store.resize(rec, size);
+            live[i] = pos;
+            let _ = writeln!(script, "R {rec} {size}");
+            let _ = writeln!(want, "{pos}");
+        } else {
+            let rec = live[next(live.len() as u64) as usize];
+            store.note_referenced(rec);
+            let _ = writeln!(script, "N {rec}");
+        }
+    }
+    let _ = writeln!(want, "size {}", store.capacity_words());
+    // FNV-1a over every byte: the free tree's links and colours, the parked lists' links, the
+    // footers — what the chain below does not show, and what a tree that places every record
+    // alike can still disagree on.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for w in 0..store.capacity_words() {
+        for b in store.read::<u64>(w, 0).to_le_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    let _ = writeln!(want, "bytes {h:016x}");
+    let mut pos = 1u32;
+    while pos < store.capacity_words() {
+        let h = store.read::<i32>(pos, 0);
+        let words = h.unsigned_abs();
+        if h < 0 {
+            let footer = store.read::<i32>(pos + words - 1, 4);
+            let _ = writeln!(want, "{pos} {h} {footer}");
+        } else {
+            let _ = writeln!(want, "{pos} {h}");
+        }
+        pos += words;
+    }
+    let mut c = String::from(
+        "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
+    );
+    c.push_str(include_str!("../src/c/loft_store.h"));
+    c.push_str(
+        r#"
+int main(int argc, char **argv) {
+    loft_store_t s;
+    memset(&s, 0, sizeof s);
+    s.size = 100;
+    s.buf = (uint8_t *) calloc(s.size, 8);
+    s.defined = 1;
+    loft_st_init(&s);
+    FILE *f = fopen(argv[argc - 1], "r");
+    char op;
+    unsigned a, b;
+    while (fscanf(f, " %c", &op) == 1) {
+        if (op == 'C') { if (fscanf(f, "%u", &a) != 1) return 2; printf("%u\n", loft_st_claim(&s, a)); }
+        else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(&s, a); }
+        else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(&s, a, b)); }
+        else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(&s, a); }
+    }
+    printf("size %u\n", s.size);
+    uint64_t h = UINT64_C(0xcbf29ce484222325);
+    for (size_t i = 0; i < (size_t) s.size * 8; i++) h = (h ^ s.buf[i]) * UINT64_C(0x100000001b3);
+    printf("bytes %016llx\n", (unsigned long long) h);
+    for (uint32_t pos = 1; pos < s.size;) {
+        int32_t h = loft_st_i32(&s, pos, 0);
+        uint32_t words = (uint32_t) (h < 0 ? -h : h);
+        if (h < 0) printf("%u %d %d\n", pos, h, loft_st_i32(&s, pos + words - 1, 4));
+        else printf("%u %d\n", pos, h);
+        pos += words;
+    }
+    return 0;
+}
+"#,
+    );
+    let dir = scratch("store");
+    let (src, ops, exe) = (dir.join("store.c"), dir.join("ops.txt"), dir.join("store"));
+    fa::write(&src, &c).expect("write C");
+    fa::write(&ops, &script).expect("write ops");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2", "-pedantic", "-Werror"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected loft_store.h:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .arg(&ops)
+        .output()
+        .expect("run the allocator program");
+    let got = String::from_utf8_lossy(&out.stdout);
+    if let Some((i, (w, g))) = want
+        .lines()
+        .zip(got.lines())
+        .enumerate()
+        .find(|(_, (w, g))| w != g)
+    {
+        panic!("line {i}: Store answers {w:?}, the C {g:?}");
+    }
+    assert_eq!(
+        got.lines().count(),
+        want.lines().count(),
+        "the C stopped early"
+    );
+}
