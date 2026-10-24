@@ -1208,7 +1208,6 @@ impl State {
     # Panics
     When called on a not implemented data-structure
     */
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn iterate(&mut self) {
         let on = self.code::<u8>();
         let arg = self.code::<u16>();
@@ -1310,8 +1309,10 @@ impl State {
                     finish = if till.is_empty() {
                         vec_len
                     } else {
-                        let (t, cmp) = vector::sorted_find(&data, ex, arg, all, &keys, &till);
-                        if ex || cmp { t } else { t + 1 }
+                        // @FR-Slice-KeyedIter — the search answers the exclusive end itself:
+                        // the first element at (`ex`) or past (`..=`) the bound, whether or not
+                        // a stored key equals it.
+                        vector::sorted_find(&data, ex, arg, all, &keys, &till).0
                     };
                 }
                 if trace_iter {
