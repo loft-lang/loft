@@ -790,11 +790,16 @@ impl<'a> FnWriter<'a> {
         if self.tail_capture(ops).is_some() {
             return self.ops_stmt(ops, ind);
         }
-        let Some((last, rest)) = ops.split_last() else {
-            return Err("a value block with no operators".into());
-        };
-        rest.iter().try_for_each(|o| self.stmt(o, ind))?;
-        self.assign(last, target, c, ind)
+        // The value is the last operator that is not a free: frees after it run once it is
+        // taken, as they run under it on the bytecode's evaluation stack.
+        let at = ops
+            .iter()
+            .rposition(|o| !matches!(o.unspan(), Value::Line(_)) && !self.is_free(o))
+            .ok_or("a value block with no value")?;
+        ops[..at].iter().try_for_each(|o| self.stmt(o, ind))?;
+        self.assign(&ops[at], target, c, ind)?;
+        self.flush(ind);
+        ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))
     }
 
     /// The C shape `v` evaluates to, when it is a compound the caller must hold.

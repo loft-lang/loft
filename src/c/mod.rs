@@ -451,6 +451,16 @@ pub fn c_name(data: &Data, d: u32) -> String {
 pub(crate) fn native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_assert" => Some("loft_assert"),
+        "t_4text_starts_with" => Some("loft_starts_with"),
+        "t_4text_ends_with" => Some("loft_ends_with"),
+        "t_4text_find" => Some("loft_find"),
+        "t_4text_rfind" => Some("loft_rfind"),
+        "t_4text_contains" => Some("loft_contains"),
+        "t_4text_trim" => Some("loft_trim"),
+        "t_4text_trim_start" => Some("loft_trim_start"),
+        "t_4text_trim_end" => Some("loft_trim_end"),
+        "t_4text_replace" => Some("loft_replace"),
+        "t_4text_byte_at" => Some("loft_byte_at"),
         _ => None,
     }
 }
