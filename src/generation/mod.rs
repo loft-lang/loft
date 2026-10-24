@@ -22,7 +22,7 @@ mod coroutine;
 pub mod decode_structure;
 mod decode_structure_emit;
 pub mod decode_structure_scan;
-pub mod decode_view;
+pub use crate::lower::decode_view;
 mod decode_view_emit;
 pub mod destination;
 mod dispatch;
