@@ -89,6 +89,9 @@ pub(crate) struct FnWriter<'a> {
     shapes: Vec<CType>,
     /// Which variables are the function's parameters (`Function::arguments`).
     params: Vec<bool>,
+    /// Which parameters are `&` links: a pointer to the caller's variable, read and written
+    /// through (`(*v)`), as the bytecode reads and writes through the stack reference.
+    links: Vec<bool>,
     ret: CType,
     body: String,
     /// Every temporary: its name and shape, declared at the top.
@@ -119,6 +122,9 @@ impl<'a> FnWriter<'a> {
                 }
                 p
             },
+            links: (0..def.variables().count())
+                .map(|v| matches!(def.variables().tp(v), crate::data::Type::RefVar(_)))
+                .collect(),
             ret,
             body: String::new(),
             temps: Vec::new(),
@@ -157,7 +163,19 @@ impl<'a> FnWriter<'a> {
     }
 
     fn var(&self, v: u16) -> String {
-        var_name(self.vars.name(v), v)
+        let name = var_name(self.vars.name(v), v);
+        if self.links[v as usize] {
+            format!("(*{name})")
+        } else {
+            name
+        }
+    }
+
+    /// A text variable this function holds as a `loft_text`: a local, or the caller's
+    /// through a link; a plain text parameter is a borrowed `loft_str`.
+    fn text_held(&self, v: u16) -> bool {
+        self.shapes[v as usize] == CType::Text
+            && (!self.params[v as usize] || self.links[v as usize])
     }
 
     fn line(&mut self, ind: usize, s: &str) {
@@ -460,8 +478,35 @@ impl<'a> FnWriter<'a> {
         Ok(tp)
     }
 
+    /// `p = x` for a `&` record parameter: the caller's variable takes the new record and the
+    /// record it held is released unless the new one lives in its store (the bytecode's
+    /// `SetStackRef` + `FreeRefIfDistinct`, @FR-B-Ref-Repoint).
+    fn link_rebind(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        let crate::data::Type::RefVar(inner) = self.vars.tp(var) else {
+            return Err("a link that is not a parameter".into());
+        };
+        if !matches!(**inner, crate::data::Type::Reference(..))
+            || !matches!(x.unspan(), Value::Block(_))
+        {
+            return Err(format!("a rebind of a & {} parameter", type_word(inner)));
+        }
+        let e = self.expr(x, ind)?;
+        let r = self.temp(CType::Ref);
+        let old = self.temp(CType::Ref);
+        let name = self.var(var);
+        self.line(ind, &format!("{r} = {};", as_ref(e)?));
+        self.line(ind, &format!("{old} = {name};"));
+        self.line(ind, &format!("{name} = {r};"));
+        self.line(ind, &format!("loft_free_displaced({old}, {name});"));
+        self.flush(ind);
+        Ok(())
+    }
+
     /// `var = x`: a copy where loft copies a record, else the plain assignment.
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        if self.links[var as usize] && self.shapes[var as usize] == CType::Ref {
+            return self.link_rebind(var, x, ind);
+        }
         let first = !std::mem::replace(&mut self.bound[var as usize], true);
         // An owned vector variable bound to null gets a store of its own whose record holds
         // the (empty) vector — the bytecode writer's `gen_set_first_vector_null`: the variable
@@ -485,7 +530,7 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         let c = self.shapes[var as usize];
-        if self.params[var as usize] && c == CType::Text {
+        if c == CType::Text && !self.text_held(var) {
             return Err("assigns a text parameter".into());
         }
         let name = self.var(var);
@@ -677,7 +722,7 @@ impl<'a> FnWriter<'a> {
             Value::Var(var) => {
                 let name = self.var(*var);
                 Ok(match self.shapes[*var as usize] {
-                    CType::Text if !self.params[*var as usize] => {
+                    CType::Text if self.text_held(*var) => {
                         E::new(format!("loft_view(&{name})"), K::View)
                     }
                     CType::Void => return Err("a void variable".into()),
@@ -690,25 +735,31 @@ impl<'a> FnWriter<'a> {
             }
             Value::Call(d, args) => self.call(*d, args, ind),
             compound @ (Value::Block(_) | Value::Insert(_) | Value::If(..) | Value::Tuple(_)) => {
-                // The compound's own statements free only the temporaries they make: the
-                // enclosing expression's are still to be read once the compound is done.
-                let outer = std::mem::take(&mut self.pending);
                 let c = self.shape_of(compound)?;
-                let e = if c == CType::Void {
-                    self.stmt(compound, ind)?;
-                    E::new("(void) 0", K::Void)
-                } else {
-                    let t = self.temp(c);
-                    self.assign(compound, &t, c, ind)?;
-                    self.held(t, c)
-                };
-                let inner = std::mem::replace(&mut self.pending, outer);
-                self.pending.extend(inner);
-                Ok(e)
+                self.nested(|w| {
+                    if c == CType::Void {
+                        w.stmt(compound, ind)?;
+                        Ok(E::new("(void) 0", K::Void))
+                    } else {
+                        let t = w.temp(c);
+                        w.assign(compound, &t, c, ind)?;
+                        Ok(w.held(t, c))
+                    }
+                })
             }
             Value::Null => Err("a null without a type".into()),
             other => Err(unsupported(other)),
         }
+    }
+
+    /// Statements written inside an expression: they free only the temporaries they make, as
+    /// the enclosing expression's are still to be read once they are done.
+    fn nested<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+        let outer = std::mem::take(&mut self.pending);
+        let r = f(self);
+        let inner = std::mem::replace(&mut self.pending, outer);
+        self.pending.extend(inner);
+        r
     }
 
     /// The expression reading temporary `t` of shape `c`.
@@ -726,11 +777,7 @@ impl<'a> FnWriter<'a> {
     /// The name of the text local `v` an operator writes into.
     fn text_dest(&self, v: &Value) -> Result<String, String> {
         match v.unspan() {
-            Value::Var(var)
-                if self.shapes[*var as usize] == CType::Text && !self.params[*var as usize] =>
-            {
-                Ok(self.var(*var))
-            }
+            Value::Var(var) if self.text_held(*var) => Ok(self.var(*var)),
             _ => Err("a text operator writing elsewhere than a text local".into()),
         }
     }
@@ -779,7 +826,11 @@ impl<'a> FnWriter<'a> {
             .attributes()
             .iter()
             .map(|a| {
-                cx.ctype(&a.typedef).ok_or_else(|| {
+                let tp = match &a.typedef {
+                    crate::data::Type::RefVar(inner) => inner,
+                    tp => tp,
+                };
+                cx.ctype(tp).ok_or_else(|| {
                     format!(
                         "a call to {callee} with a {} parameter",
                         type_word(&a.typedef)
@@ -791,10 +842,26 @@ impl<'a> FnWriter<'a> {
             return Err("a call with default arguments left out".into());
         }
         let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
-        let es = self.args(args, ind)?;
-        let mut xs = Vec::with_capacity(es.len());
-        for (e, c) in es.into_iter().zip(shapes) {
-            xs.push(as_shape(e, c)?);
+        let linked: Vec<bool> = def
+            .attributes()
+            .iter()
+            .map(|a| matches!(a.typedef, crate::data::Type::RefVar(_)))
+            .collect();
+        // A link argument is the address of the caller's variable; the others are values,
+        // evaluated in order.
+        let mut xs = vec![String::new(); args.len()];
+        let mut values = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            if linked[i] {
+                xs[i] = self.link_arg(a, shapes[i], ind)?;
+            } else {
+                values.push(i);
+            }
+        }
+        let vals: Vec<Value> = values.iter().map(|&i| args[i].clone()).collect();
+        let es = self.args(&vals, ind)?;
+        for (e, &i) in es.into_iter().zip(&values) {
+            xs[i] = as_shape(e, shapes[i])?;
         }
         let call = format!("{name}({})", xs.join(", "));
         Ok(match ret {
@@ -806,6 +873,38 @@ impl<'a> FnWriter<'a> {
             }
             c => E::new(call, kind_of(c)),
         })
+    }
+
+    /// The address a `&` argument passes: the caller's own variable, or a link it holds.
+    fn link_arg(&mut self, a: &Value, c: CType, ind: usize) -> Result<String, String> {
+        let v = match a.unspan() {
+            // A text result's buffer: `{ __work = ""; OpCreateStack(__work) }`.
+            Value::Block(b) => {
+                let Some((last, rest)) = b.operators.split_last() else {
+                    return Err("a link block with no operators".into());
+                };
+                self.nested(|w| rest.iter().try_for_each(|o| w.stmt(o, ind)))?;
+                return self.link_arg(last, c, ind);
+            }
+            Value::Call(op, xs) if self.cx.data.def(*op).name() == "OpCreateStack" => {
+                match xs.as_slice() {
+                    [x] => match x.unspan() {
+                        Value::Var(v) => *v,
+                        _ => return Err("a link to a computed place".into()),
+                    },
+                    _ => return Err("OpCreateStack without one operand".into()),
+                }
+            }
+            Value::Var(v) if self.links[*v as usize] => *v,
+            Value::Call(op, _) => {
+                return Err(format!("a link made by {}", self.cx.data.def(*op).name()));
+            }
+            other => return Err(format!("a link to {}", unsupported(other))),
+        };
+        if self.shapes[v as usize] != c || (c == CType::Text && !self.text_held(v)) {
+            return Err("a link to a variable of another shape".into());
+        }
+        Ok(format!("&{}", self.var(v)))
     }
 
     fn one(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
@@ -821,6 +920,17 @@ impl<'a> FnWriter<'a> {
     }
 
     fn operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        // The text writes through a `&` parameter: the C names the caller's text the same way.
+        let name = match name {
+            "OpAppendStackText" => "OpAppendText",
+            "OpClearStackText" => "OpClearText",
+            "OpFormatStackInt" => "OpFormatInt",
+            "OpFormatStackFloat" => "OpFormatFloat",
+            "OpFormatStackSingle" => "OpFormatSingle",
+            "OpFormatStackText" => "OpFormatText",
+            "OpFormatStackDatabase" => "OpFormatDatabase",
+            n => n,
+        };
         let arith = match name {
             "OpAddInt" | "OpAddLong" => Some("loft_add"),
             "OpMinInt" | "OpMinLong" => Some("loft_sub"),
@@ -885,7 +995,7 @@ impl<'a> FnWriter<'a> {
                 let dest = self.text_dest(dest)?;
                 let val = self.expr(val, ind)?;
                 Ok(E::new(
-                    format!("loft_text_append(&{dest}, {})", as_view(val)?),
+                    format!("loft_text_concat(&{dest}, {})", as_view(val)?),
                     K::Void,
                 ))
             }

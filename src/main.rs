@@ -12557,7 +12557,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     state.database.set_logger(lg);
 
     if let Some(out) = emit_c {
-        match loft::c::emit_program(&p.data, &state.database) {
+        // A test expected to fail (`@EXPECT_FAIL`) passes by failing with its message, as
+        // `loft --tests` runs it.
+        let ann =
+            test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
+        let expected = |name: &str| ann.expected_failure(name);
+        match loft::c::emit_program(&p.data, &state.database, &expected) {
             Ok(c) => {
                 if let Err(e) = fa::write(&out, c) {
                     eprintln!("loft: cannot write {out}: {e}");
