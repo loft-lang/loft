@@ -58,6 +58,8 @@ pub(crate) enum CType {
     Float,
     /// A single, `float`; NaN is null.
     Single,
+    /// A character, its code point as `uint32_t`; 0 is null.
+    Char,
     /// A tuple: the C struct [`Cx::tuple_shapes`] numbers, held and passed by value.
     Tuple(u32),
     /// No value.
@@ -74,6 +76,7 @@ pub(crate) fn held(c: CType) -> String {
         CType::Enum => "uint8_t".into(),
         CType::Float => "double".into(),
         CType::Single => "float".into(),
+        CType::Char => "uint32_t".into(),
         CType::Tuple(id) => format!("loft_tup{id}"),
         CType::Void => "void".into(),
     }
@@ -155,6 +158,7 @@ impl<'a> Cx<'a> {
             Type::Boolean => Some(CType::Bool),
             Type::Float => Some(CType::Float),
             Type::Single => Some(CType::Single),
+            Type::Character => Some(CType::Char),
             Type::Text(_) => Some(CType::Text),
             Type::Reference(..) | Type::Vector(..) | Type::Enum(_, true, _) => Some(CType::Ref),
             Type::Enum(_, false, _) => Some(CType::Enum),
@@ -199,6 +203,7 @@ impl<'a> Cx<'a> {
             CType::Enum => "255".into(),
             CType::Float => "(double) NAN".into(),
             CType::Single => "(float) NAN".into(),
+            CType::Char => "0".into(),
             CType::Tuple(id) => {
                 let fields: Vec<String> = self
                     .tuple_shapes(id)

@@ -313,6 +313,64 @@ static int loft_failed_with(const loft_str *want, size_t n) {
     return 0;
 }
 
+/* The bit operators (ops::op_logical_and_long …): null when either side is; a shift by an
+ * amount outside 0..63 is null. */
+static int64_t loft_and(int64_t a, int64_t b) { return a == LOFT_NULL || b == LOFT_NULL ? LOFT_NULL : (a & b); }
+static int64_t loft_or(int64_t a, int64_t b) { return a == LOFT_NULL || b == LOFT_NULL ? LOFT_NULL : (a | b); }
+static int64_t loft_xor(int64_t a, int64_t b) { return a == LOFT_NULL || b == LOFT_NULL ? LOFT_NULL : (a ^ b); }
+static int64_t loft_shl(int64_t a, int64_t b) {
+    if (a == LOFT_NULL || b == LOFT_NULL || b < 0 || b > 63) return LOFT_NULL;
+    return (int64_t) ((uint64_t) a << b);
+}
+static int64_t loft_shr(int64_t a, int64_t b) {
+    if (a == LOFT_NULL || b == LOFT_NULL || b < 0 || b > 63) return LOFT_NULL;
+    return a >> b;
+}
+
+/* OpCastTextFromBool: the null boolean is the null text. */
+static loft_str loft_bool_text(uint8_t b) {
+    return b == 1 ? loft_lit("true", 4) : b == 255 ? loft_null_text() : loft_lit("false", 5);
+}
+
+static size_t loft_utf8(uint32_t c, char *out);
+
+/* Characters: a code point, 0 the null character. */
+static uint32_t loft_char_of(int64_t v) {
+    if (v == LOFT_NULL || v < 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) return 0;
+    return (uint32_t) v;
+}
+
+static int64_t loft_char_int(uint32_t c) {
+    return c == 0 ? LOFT_NULL : (int64_t) c;
+}
+
+static int64_t loft_char_len(uint32_t c) {
+    return c == 0 ? 0 : c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+}
+
+/* ops::text_character: the character holding byte `from` (negative counts from the end); an
+ * index inside a character snaps back to its first byte; out of range is the null character. */
+static uint32_t loft_text_char(loft_str t, int64_t from) {
+    int64_t len = (int64_t) t.len;
+    int64_t i = from < 0 ? from + len : from;
+    if (from == LOFT_NULL || i < 0 || i >= len) return 0;
+    const unsigned char *b = (const unsigned char *) t.p;
+    if (b[i] < 0x80) return b[i];
+    while (i > 0 && (b[i] & 0xC0) == 0x80) i--;
+    uint32_t c = b[i];
+    int n = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1;
+    c &= n == 3 ? 0x07 : n == 2 ? 0x0F : 0x1F;
+    for (int k = 1; k <= n && i + k < len; k++) c = (c << 6) | (b[i + k] & 0x3F);
+    return c;
+}
+
+/* OpAppendCharacter: the null character appends nothing. */
+static void loft_push_code(loft_text *t, uint32_t c) {
+    char buf[4];
+    size_t n = c == 0 ? 0 : loft_utf8(c, buf);
+    loft_push(t, buf, n);
+}
+
 /* ── Stores ────────────────────────────────────────────────────────────────────────────────
  * A port of the store model the IR addresses (src/store.rs, src/vector.rs): a store is an
  * array of 8-byte words; a record is a run of words whose first word holds its claimed size
@@ -510,6 +568,18 @@ static int64_t loft_get_int4(loft_ref r, uint32_t fld) {
     int32_t x;
     memcpy(&x, loft_at(loft_store_of(r), r.rec, r.pos + fld), 4);
     return x == INT32_MIN ? LOFT_NULL : x;
+}
+
+static uint32_t loft_get_char(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return 0;
+    uint32_t c;
+    memcpy(&c, loft_at(loft_store_of(r), r.rec, r.pos + fld), 4);
+    return c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF) ? 0 : c;
+}
+
+static void loft_set_char(loft_ref r, uint32_t fld, uint32_t c) {
+    if (r.rec == 0) return;
+    memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &c, 4);
 }
 
 /* ── Vectors (src/vector.rs) ───────────────────────────────────────────────────────────── */
@@ -962,6 +1032,13 @@ static void loft_vec_push_float(loft_ref v, double x) {
     loft_ref e = loft_vec_append(v, 8);
     if (e.rec == 0) return;
     loft_set_float(e, 0, x);
+    loft_vec_finish(v);
+}
+
+static void loft_vec_push_char(loft_ref v, uint32_t c) {
+    loft_ref e = loft_vec_append(v, 4);
+    if (e.rec == 0) return;
+    memcpy(loft_at(loft_store_of(e), e.rec, e.pos), &c, 4);
     loft_vec_finish(v);
 }
 

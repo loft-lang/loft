@@ -42,6 +42,8 @@ enum K {
     Float,
     /// `float`.
     Single,
+    /// A character's code point, `uint32_t`; 0 is null.
+    Char,
     /// A tuple struct, by its number.
     Tup(u32),
     /// No value.
@@ -73,6 +75,7 @@ fn kind_of(c: CType) -> K {
         CType::Enum => K::Enum,
         CType::Float => K::Float,
         CType::Single => K::Single,
+        CType::Char => K::Char,
         CType::Tuple(id) => K::Tup(id),
         CType::Void => K::Void,
     }
@@ -321,6 +324,7 @@ impl<'a> FnWriter<'a> {
             CType::Enum => format!("{target} = 255;"),
             CType::Float => format!("{target} = (double) NAN;"),
             CType::Single => format!("{target} = (float) NAN;"),
+            CType::Char => format!("{target} = 0;"),
             CType::Tuple(id) => {
                 for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     self.null_into(&format!("{target}.f{i}"), e, ind);
@@ -803,6 +807,7 @@ impl<'a> FnWriter<'a> {
                 K::Enum => (CType::Enum, e.code),
                 K::Float => (CType::Float, e.code),
                 K::Single => (CType::Single, e.code),
+                K::Char => (CType::Char, e.code),
                 _ => (CType::Bool, as_bool(e)?),
             };
             let t = self.temp(c);
@@ -937,6 +942,11 @@ impl<'a> FnWriter<'a> {
             "OpMulInt" | "OpMulLong" => Some("loft_mul"),
             "OpDivInt" | "OpDivLong" => Some("loft_div"),
             "OpRemInt" | "OpRemLong" => Some("loft_rem"),
+            "OpLandInt" | "OpLandLong" => Some("loft_and"),
+            "OpLorInt" | "OpLorLong" => Some("loft_or"),
+            "OpEorInt" | "OpEorLong" => Some("loft_xor"),
+            "OpSLeftInt" | "OpSLeftLong" => Some("loft_shl"),
+            "OpSRightInt" | "OpSRightLong" => Some("loft_shr"),
             _ => None,
         };
         if let Some(f) = arith {
@@ -1479,7 +1489,7 @@ impl<'a> FnWriter<'a> {
                 );
                 Ok(self.held(t, CType::Text))
             }
-            ("OpSetText", [r, fld, val]) => {
+            ("OpSetText" | "OpSetTextReplace", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
                 Ok(E::new(
@@ -1691,6 +1701,67 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// The character operators: a code point, 0 the null character.
+    fn char_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match (name, args) {
+            ("OpConvCharacterFromInt", [v]) => {
+                let v = self.expr(v, ind)?;
+                Ok(E::new(format!("loft_char_of({})", as_int(v)?), K::Char))
+            }
+            ("OpConvIntFromCharacter", [c]) => {
+                let c = self.expr(c, ind)?;
+                Ok(E::new(format!("loft_char_int({})", as_char(c)?), K::Int))
+            }
+            ("OpConvBoolFromCharacter", [c]) => {
+                let c = self.expr(c, ind)?;
+                Ok(E::new(format!("({} != 0)", as_char(c)?), K::Cond))
+            }
+            ("OpLengthCharacter", [c]) => {
+                let c = self.expr(c, ind)?;
+                Ok(E::new(format!("loft_char_len({})", as_char(c)?), K::Int))
+            }
+            ("OpTextCharacter" | "OpTextCharacterNullable", [_, _]) => {
+                let (t, i) = self.two(name, args, ind)?;
+                Ok(E::new(
+                    format!("loft_text_char({}, {})", as_view(t)?, as_int(i)?),
+                    K::Char,
+                ))
+            }
+            ("OpAppendCharacter" | "OpAppendStackCharacter", [dest, c]) => {
+                let dest = self.text_dest(dest)?;
+                let c = self.expr(c, ind)?;
+                Ok(E::new(
+                    format!("loft_push_code(&{dest}, {})", as_char(c)?),
+                    K::Void,
+                ))
+            }
+            ("OpGetCharacter", [r, fld]) => {
+                let fld = Self::literal(fld, "field")?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_get_char({}, {fld})", as_ref(r)?),
+                    K::Char,
+                ))
+            }
+            ("OpSetCharacter", [r, fld, c]) => {
+                let fld = Self::literal(fld, "field")?;
+                let (r, c) = self.two(name, &[(*r).clone(), (*c).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_set_char({}, {fld}, {})", as_ref(r)?, as_char(c)?),
+                    K::Void,
+                ))
+            }
+            ("OpPushCharacter", [v, c]) => {
+                let (v, c) = self.two(name, &[(*v).clone(), (*c).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_vec_push_char({}, {})", as_ref(v)?, as_char(c)?),
+                    K::Void,
+                ))
+            }
+            _ => Err(format!("operator {name}")),
+        }
+    }
+
     /// Booleans and bytes in records and vectors, absent vectors, store identity, text
     /// clears and the text null.
     fn slot_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
@@ -1753,6 +1824,12 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("{dest}.len = 0"), K::Void))
             }
             ("OpConvTextFromNull", []) => Ok(E::new("loft_null_text()", K::View)),
+            ("OpConvCharacterFromNull", []) => Ok(E::new("((uint32_t) 0)", K::Char)),
+            _ if name.contains("Character") => self.char_operator(name, args, ind),
+            ("OpCastTextFromBool", [b]) => {
+                let b = self.expr(b, ind)?;
+                Ok(E::new(format!("loft_bool_text({})", as_bool(b)?), K::View))
+            }
             ("OpConvBoolFromText", [t]) => {
                 let t = self.expr(t, ind)?;
                 Ok(E::new(
@@ -1832,6 +1909,13 @@ fn as_single(e: E) -> Result<String, String> {
     }
 }
 
+fn as_char(e: E) -> Result<String, String> {
+    match e.kind {
+        K::Char => Ok(e.code),
+        k => Err(format!("a character expected, a {k:?} found")),
+    }
+}
+
 fn as_view(e: E) -> Result<String, String> {
     match e.kind {
         K::View => Ok(e.code),
@@ -1850,6 +1934,7 @@ fn as_shape(e: E, c: CType) -> Result<String, String> {
         CType::Enum => as_enum(e),
         CType::Float => as_float(e),
         CType::Single => as_single(e),
+        CType::Char => as_char(e),
         CType::Void => Err("a void value".into()),
     }
 }
@@ -1882,6 +1967,18 @@ const OP_INT: &[&str] = &[
     "OpGetShort",
     "OpGetShortRaw",
     "OpGetInt4",
+    "OpLandInt",
+    "OpLandLong",
+    "OpLorInt",
+    "OpLorLong",
+    "OpEorInt",
+    "OpEorLong",
+    "OpSLeftInt",
+    "OpSLeftLong",
+    "OpSRightInt",
+    "OpSRightLong",
+    "OpConvIntFromCharacter",
+    "OpLengthCharacter",
 ];
 const OP_BOOL: &[&str] = &[
     "OpEqInt",
@@ -1906,6 +2003,7 @@ const OP_BOOL: &[&str] = &[
     "OpVectorIsNull",
     "OpDistinctStore",
     "OpConvBoolFromText",
+    "OpConvBoolFromCharacter",
 ];
 const OP_REF: &[&str] = &[
     "OpGetField",
@@ -1919,7 +2017,12 @@ const OP_ENUM: &[&str] = &[
     "OpConvEnumFromNull",
     "OpConstEnum",
 ];
-const OP_TEXT: &[&str] = &["OpGetText", "OpCastTextFromEnum", "OpConvTextFromNull"];
+const OP_TEXT: &[&str] = &[
+    "OpGetText",
+    "OpCastTextFromEnum",
+    "OpConvTextFromNull",
+    "OpCastTextFromBool",
+];
 const OP_FLOAT: &[&str] = &[
     "OpAddFloat",
     "OpMinFloat",
@@ -1972,6 +2075,13 @@ const OP_FCMP: &[&str] = &[
     "OpConvBoolFromSingle",
 ];
 const OP_FINT: &[&str] = &["OpCastIntFromFloat", "OpCastIntFromSingle"];
+const OP_CHAR: &[&str] = &[
+    "OpConvCharacterFromInt",
+    "OpConvCharacterFromNull",
+    "OpTextCharacter",
+    "OpTextCharacterNullable",
+    "OpGetCharacter",
+];
 
 /// The C shape an operator's value is held in, for the operators this backend writes.
 fn op_shape(name: &str) -> Option<CType> {
@@ -1985,6 +2095,7 @@ fn op_shape(name: &str) -> Option<CType> {
         (OP_SINGLE, CType::Single),
         (OP_FCMP, CType::Bool),
         (OP_FINT, CType::Int),
+        (OP_CHAR, CType::Char),
     ];
     shapes
         .iter()
