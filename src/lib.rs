@@ -278,6 +278,7 @@ pub mod api_surface;
 pub mod arena;
 pub mod base64;
 pub mod build_phase;
+pub mod c;
 pub mod c_call;
 pub mod c_shim;
 pub mod c_signature;
