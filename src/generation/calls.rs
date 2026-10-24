@@ -1449,6 +1449,14 @@ impl Output<'_> {
         // the log line is the statement's and each site keeps its own rate-limit budget.  The
         // line reaches only the raise: the in-range paths are unchanged.
         let at = self.ckpt_cur_line;
+        // `@FR-R-FaultFlag` — in a fast copy the raise sets the copy's flag instead: the exact
+        // rerun the flag starts reports the fault, once.
+        if let Some(flag) = &self.fault_flag {
+            res = res.replace(
+                "s.raise_recoverable(",
+                &format!("ops::fault_flag_raise(&mut {flag}, "),
+            );
+        }
         res = res.replace(
             "s.raise_recoverable(",
             &format!("stores.raise_recoverable_at_runtime({at}, "),

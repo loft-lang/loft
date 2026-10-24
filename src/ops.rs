@@ -482,6 +482,83 @@ pub fn nest_verify(plain: i64, checked: i64, op: &'static str) -> i64 {
     plain
 }
 
+/// `@FR-R-FaultFlag` — the reruns after which a site stops trying its fast copy.  A loop whose
+/// nulls are common flags every time, so it pays the fast copy at most this many times.
+const FAULT_FLAG_TRIES: u32 = 8;
+
+/// `@FR-R-FaultFlag` — should this site skip its fast copy and run the statement as written?
+/// Under `--dev-soft-halt` an integer overflow REPORTS, and the fast copy never reports, so
+/// that mode always takes the exact statement; otherwise a site skips once it has rerun
+/// [`FAULT_FLAG_TRIES`] times.
+#[inline]
+#[must_use]
+pub fn fault_flag_skip(reruns: &std::sync::atomic::AtomicU32) -> bool {
+    reruns.load(std::sync::atomic::Ordering::Relaxed) >= FAULT_FLAG_TRIES || dev_soft_halt()
+}
+
+/// `@FR-R-FaultFlag` — count one exact run of a site, up to the point where it stops trying.
+#[cold]
+pub fn fault_flag_rerun(reruns: &std::sync::atomic::AtomicU32) {
+    if reruns.load(std::sync::atomic::Ordering::Relaxed) < FAULT_FLAG_TRIES {
+        reruns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// `@FR-R-FaultFlag` — a template's recoverable raise, in a fast copy: the fault is not
+/// reported here but flagged, and the exact rerun reports it once.
+#[inline]
+pub fn fault_flag_raise(flag: &mut bool, _kind: crate::runtime_error::RuntimeErrorKind) {
+    *flag = true;
+}
+
+/// `@FR-R-FaultFlag` — `+` in a fast copy: the wrapping sum, the flag set where the checked
+/// form would answer null (a null operand, or an overflow found by sign bits, which keeps the
+/// overflow intrinsic out of a loop LLVM may vectorise).  Clear flag: the checked answer.
+#[inline]
+#[must_use]
+pub fn ff_add(v1: i64, v2: i64, flag: &mut bool) -> i64 {
+    let r = v1.wrapping_add(v2);
+    *flag |= v1 == i64::MIN || v2 == i64::MIN || ((v1 ^ r) & (v2 ^ r)) < 0;
+    r
+}
+
+/// `@FR-R-FaultFlag` — `-` in a fast copy, as [`ff_add`].
+#[inline]
+#[must_use]
+pub fn ff_sub(v1: i64, v2: i64, flag: &mut bool) -> i64 {
+    let r = v1.wrapping_sub(v2);
+    *flag |= v1 == i64::MIN || v2 == i64::MIN || ((v1 ^ v2) & (v1 ^ r)) < 0;
+    r
+}
+
+/// `@FR-R-FaultFlag` — `*` in a fast copy, as [`ff_add`].  A product equal to the sentinel
+/// is flagged too: the checked form answers null for it.
+#[inline]
+#[must_use]
+pub fn ff_mul(v1: i64, v2: i64, flag: &mut bool) -> i64 {
+    let (r, o) = v1.overflowing_mul(v2);
+    *flag |= v1 == i64::MIN || v2 == i64::MIN || o || r == i64::MIN;
+    r
+}
+
+/// `@FR-R-FaultFlag` — unary `-` in a fast copy: the sentinel is the only operand whose
+/// negation the checked form refuses.
+#[inline]
+#[must_use]
+pub fn ff_neg(v1: i64, flag: &mut bool) -> i64 {
+    *flag |= v1 == i64::MIN;
+    v1.wrapping_neg()
+}
+
+/// `@FR-R-FaultFlag` — `&`, `|`, `^` in a fast copy: the operator, the flag set on a null
+/// operand (the checked form answers null there).
+#[inline]
+#[must_use]
+pub fn ff_null2(v1: i64, v2: i64, flag: &mut bool) -> (i64, i64) {
+    *flag |= v1 == i64::MIN || v2 == i64::MIN;
+    (v1, v2)
+}
+
 #[inline]
 #[must_use]
 pub fn op_add_long_nn(v1: i64, v2: i64) -> i64 {

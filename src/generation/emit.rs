@@ -897,6 +897,28 @@ impl Output<'_> {
             // `@FR-R-RangedCall`'s guarded copy — a counted `For` block whose hoisted integer
             // fields bound every call it makes: the copy under the guard runs with those
             // fields ranged (and calls ranged variants), the plain block is the `else` arm.
+            // `@FR-R-FaultFlag`'s unroll — a constant range inside a fast copy, one block per
+            // round.
+            Value::Block(bl)
+                if bl.name == "For block"
+                    && self.fault_flag.is_some()
+                    && let Some(u) = super::fault_flag::unroll_shape(
+                        self.data,
+                        bl,
+                        self.data.def(self.def_nr).variables(),
+                    ) =>
+            {
+                self.fault_flag_unrolled(w, bl, &u)?;
+            }
+            // `@FR-R-FaultFlag` — a `for` statement whose only effect is on scalar locals runs a
+            // fast copy under a fault flag first, and itself, as written, when the flag is set.
+            Value::Block(bl)
+                if bl.name == "For block"
+                    && !super::fault_flag::is_exact_copy(self, bl)
+                    && let Some(saved) = self.fault_flag_admits(bl) =>
+            {
+                self.fault_flag_statement(w, code, bl, &saved)?;
+            }
             Value::Block(bl) if bl.name == "For block" && !self.in_range_copy => {
                 if let Some((test, facts)) = self.range_guard_for(bl) {
                     let declared_before = self.declared.clone();
@@ -1152,6 +1174,18 @@ impl Output<'_> {
                 self.end_file_hold(w, file_held)?;
             }
             Value::Set(var, to) => self.output_set(w, *var, to)?,
+            // `@FR-R-FaultFlag` — a `??` / `?` discharge in a fast copy: the flag is set where the
+            // local is null, and the local answers; a set flag discards the copy's answers.
+            Value::If(test, true_v, _)
+                if let Some(flag) = self.fault_flag.clone()
+                    && super::fault_flag::is_discharge(self.data, test, true_v) =>
+            {
+                write!(w, "{{ {flag} |= (({{ ")?;
+                self.output_code_inner(w, test)?;
+                write!(w, " }}) as u8) != 1; ")?;
+                self.output_code_inner(w, true_v)?;
+                write!(w, " }}")?;
+            }
             Value::If(test, true_v, false_v) => self.output_if(w, test, true_v, false_v)?,
             Value::Call(def_nr, vals) => {
                 // `@FR-R-Destination` — inside a destination twin, a write to a scalar field
