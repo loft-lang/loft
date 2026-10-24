@@ -106,6 +106,8 @@ pub(crate) struct Cx<'a> {
     defaults: std::cell::RefCell<std::collections::BTreeMap<u16, Vec<u8>>>,
     /// Every type the unit renders as text (`loft_show{tp}`), by type number.
     show_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
+    consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
 }
 
 impl<'a> Cx<'a> {
@@ -119,6 +121,7 @@ impl<'a> Cx<'a> {
             scratch: std::cell::RefCell::new(None),
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             show_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -365,6 +368,48 @@ impl<'a> Cx<'a> {
             );
         }
         out.push_str(&self.show_code());
+        out.push_str(&self.const_code());
+        out
+    }
+
+    /// The C name of compile-time constant `d`'s vector, or a refusal when it was not built.
+    pub(crate) fn const_ref(&self, d: u32) -> Result<String, String> {
+        if self.data.def(d).const_ref.is_none() {
+            return Err("a constant that was not built".into());
+        }
+        self.consts.borrow_mut().insert(d);
+        Ok(format!("loft_const{d}"))
+    }
+
+    /// Each constant's store, as words, and `loft_init`, which loads them before `main` runs.
+    fn const_code(&self) -> String {
+        let mut out = String::new();
+        let mut init = String::from("static void loft_init(void) {\n");
+        for &d in self.consts.borrow().iter() {
+            let Some(r) = self.data.def(d).const_ref else {
+                continue;
+            };
+            let store = self.stores.store(&r);
+            let mut n = store.capacity_words();
+            while n > 1 && store.get_u32_raw(n - 1, 0) == 0 && store.get_u32_raw(n - 1, 4) == 0 {
+                n -= 1;
+            }
+            let words: Vec<String> = (0..n)
+                .flat_map(|w| [store.get_u32_raw(w, 0), store.get_u32_raw(w, 4)])
+                .map(|x| format!("{x}u"))
+                .collect();
+            let _ = writeln!(
+                out,
+                "static const uint32_t loft_cwords{d}[] = {{ {} }};\nstatic loft_ref loft_const{d};",
+                words.join(", ")
+            );
+            let _ = writeln!(
+                init,
+                "    loft_const{d} = loft_const_store(loft_cwords{d}, {n});"
+            );
+        }
+        init.push_str("}\n");
+        out.push_str(&init);
         out
     }
 }
@@ -458,7 +503,7 @@ pub fn emit_program(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(void) {{\n    {}();\n    return 0;\n}}\n",
+        "\nint main(void) {{\n    loft_init();\n    {}();\n    return 0;\n}}\n",
         c_name(data, main)
     );
     Ok(out)
@@ -558,7 +603,9 @@ fn emit_tests(
         });
     }
     let mut out = emit_unit(data, stores, &tests)?;
-    out.push_str("\nint main(void) {\n    int failed = 0;\n    loft_in_test = 1;\n");
+    out.push_str(
+        "\nint main(void) {\n    int failed = 0;\n    loft_init();\n    loft_in_test = 1;\n",
+    );
     for &d in &tests {
         let name = data.def(d).original_name();
         let subs = expected(&name);
