@@ -362,6 +362,48 @@ AddressSanitizer/UBSan; 2018 are refused by name (355 of them do not compile in 
 expected-error programs and ones needing a library).  How it works and how to extend it:
 [C_BACKEND.md](../C_BACKEND.md).
 
+**⚠ NEXT — the C output's speed: read this before the next feature (owner, 2026-10-24).**
+Correctness is measured; speed is not, and the C output is up to 13× slower than `--native`.
+Measured at `7d370d10`: the 9 benches the C backend carries once the harness is
+stubbed (`ticks()` → 0, `--n` fixed), the C lane built with `cc -std=c99 -O2` and the native lane with
+the shipped rustc flags, whole-process medians of 5 pinned runs, same hash in both lanes.
+C ÷ native: fibonacci 0.49, sum_loop 0.57, newton_sqrt 0.82, mandelbrot 1.04, collatz 1.65,
+string_build 3.2, sieve 6.5, matrix_mul 11.6, **sort 13.1**.  Sort was taken apart by
+hand-patching its emitted `insertion_sort` (8.8 s as emitted, native 0.65 s):
+
+| change to the emitted C | time |
+|---|---|
+| none | 8.8 s |
+| arithmetic overflow checks removed | 8.9 s — not the cost |
+| `-O3` instead of `-O2` | 2.0 s |
+| `loft_vec_get` / `loft_get_int` / `loft_set_int` and their helpers forced inline | 1.3 s |
+| the vector header and element base read ONCE before the loop | **0.34 s — faster than native** |
+
+Two causes, in order of size:
+
+1. **The access helpers are out-of-line calls.**  At `-O2` gcc keeps `loft_vec_get` as a
+   function (11 call sites in `sorted_sum`), and its 12-byte `loft_ref` comes back through
+   the stack as two narrow stores and one wide load, a store-forwarding stall on every
+   element access.  Fix in `loft_rt.h`: make the hot accessors `static inline` (forced where the
+   compiler allows it), and have the element access answer the element's address, not a struct.
+2. **Nothing is hoisted, and the C compiler cannot do it for us.**  Every element write is a
+   `memcpy` into the store's `uint8_t` buffer, which may alias the global store table and the
+   buffer pointer, so after every write gcc reloads table → buffer → header → length.
+   The native build already proves a vector cannot move inside the loop and holds the header
+   and element base in locals (R-Header, `vec_header` / `vec_base`).  That decision is B3.4's
+   first family: move it into `FnPlan` and have `src/c/` emit the base and length as locals
+   before the loop.  This is the step that reaches native speed.
+
+Also: `loft_mul` tests overflow by DIVIDING (`a > INT64_MAX / b`), a hardware divide per `*`,
+which is the likely cost in sieve (`i * i` per step) and part of matrix_mul.  Use
+`__builtin_mul_overflow` where available, a 128-bit product otherwise.
+
+What to build, in order: (a) a C lane for the bench harness — the C backend must carry
+`ticks()`, `arguments()` and the text→integer cast the harness uses, so the benches run
+unpatched; (b) the inline fix; (c) R-Header through `FnPlan` to the C emitter (B3.4);
+(d) the multiply guard.  Re-measure the 9 rows after each step; sort ≤ 1.5× native is the
+bar for (c).
+
 ## B6 — optional: a minimal binary
 
 **Later, not now (owner, 2026-10-23).**  A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
