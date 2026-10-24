@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator
 
 //! `@FR-R-ParRows` — the ROW variant of a `par` worker: the worker and every loft function it
 //! calls, translated to Rust items that read the element's fields straight from the vector and
@@ -118,7 +119,8 @@ impl<'a> Translator<'a> {
                 return Err(format!("`{name}` has a hidden parameter `{}`", a.name));
             }
             if worker && i == 0 {
-                if !matches!(a.typedef, Type::Reference(_, _)) {
+                // A row of a `vector<T>` is never null, so `T?` is the same record.
+                if !matches!(a.typedef.base(), Type::Reference(_, _)) {
                     return Err(format!("`{name}`'s parameter is not a record"));
                 }
                 f.row_var = Some(0);
@@ -249,7 +251,7 @@ impl<'a> Translator<'a> {
             .iter()
             .filter(|o| !matches!(o.unspan(), Value::Line(_)))
             .collect();
-        let void = matches!(b.result, Type::Void);
+        let void = matches!(b.result.base(), Type::Void);
         let mut out = String::from("{ ");
         let mut i = 0;
         while i < ops.len() {
