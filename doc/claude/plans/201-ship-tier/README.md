@@ -75,8 +75,10 @@ coverage.  The choice is the owner's: the cheap form is assumed until it is deci
 
 @PLN200 builds a second code generator (ANSI C).  The tier is defined on the IR, so it holds
 for both: a fault site is named by the function, its body hash and the operator's position,
-never by the emitted text.  One ledger then licenses a ship build on either backend.  Each
-generator supplies its own check-free form of an operator.  The C backend validates the
+never by the emitted text.  One ledger then licenses a ship build on either backend.  The C
+generator implements the same two tiers as the Rust one: the CHECKED tier, where every fault
+answers null exactly as the interpreter does, and the SHIP tier, where a check the ledger
+licenses is dropped.  Only the text each generator emits for an operator differs.  The C backend validates the
 generator only: it gets no benchmark lanes and no twins of the bench routines (owner), so
 the ship tier is measured on the Rust backend alone.
 

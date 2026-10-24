@@ -693,15 +693,14 @@ cannot say which admitted loop paid.
 ## The release-pass probe (a measurement instrument)
 
 **`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
-build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
-division emits the processor's wrapping operator and every float comparison the plain
-one — what the eventual release build pass for games would emit (DESIGN_DECISIONS.md
-@C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the language's
-(`b = MAX + 1; d = (b + 5) * 2` reads `10` for null), so a row is comparable only while
-its hash still agrees; its time is the CEILING the checked build is measured against,
-which is what says whether a row is bound by the checks or by something else — the
-guide for what to optimise next.  The null test itself and the `*Nullable` twins keep
-their templates: they are the language's null semantics, not its fault protection.
+build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal division emits
+the processor's wrapping operator and every float comparison the plain one — what a game's
+release build emits where its ledger licenses every site (@PLN201, @C120, NATIVE.md § Optimisation
+tiers).  The values after a fault are NOT the language's (`b = MAX + 1; d = (b + 5) * 2` reads
+`10` for null), so a row compares only while its hash agrees; its time is the CEILING the checked
+build is measured against.  `bench/stats.py --lanes native,rust,ship` builds under it, giving each
+routine a `ship` ratio beside its checked one.  The null test itself, the `*Nullable` twins and
+`@FR-R-FaultFlag` keep their forms: they are the language's null semantics, not its fault protection.
 
 ## Records returned and passed as values
 

@@ -91,39 +91,27 @@ always carries the checks; a game that has passed extended in-house testing unde
 checked build is compiled once more from every source it uses — its libraries recompiled
 at that level inside the game's build, never taken as published binaries — into the
 less safe artefact that ships to Steam or the browser.  A build, not a switch, and
-licensed by the testing's fault-free ledger.  Until it exists, the only way a check is
+licensed by the testing's fault-free ledger.  Precompiled libraries serve quick
+development only; the release build recompiles every library from source, because the checks
+it drops live inside the library code.  Its design is @PLN201
+([plans/201-ship-tier](plans/201-ship-tier/README.md)): a ledger of the checked runs' fault
+sites, named on the IR so it holds for any code generator (the ANSI-C generator of @PLN200
+validates generation now and is the intended endpoint later), and the build that drops a check
+the ledger licenses.  Its speed is measured already: `bench/stats.py --lanes native,rust,ship`
+compiles each program, libraries included, under `LOFT_RELEASE_PASS_PROBE=1`, the tier with
+every site licensed, and reports a `ship` ratio per routine beside the checked one
+(`make perf-portal ARGS="--lanes native,rust,ship"` puts it on the portal page).  Until it exists, the only way a check is
 retired is a PROOF that the value cannot be the sentinel (`@FR-R-Counter`, the range
 proofs @PLN157 queues), which is portable by construction and — the point — retires the
 check inside a library's ordinary build, so every consumer gets it with the checks on.
 
 ## Current State
 
-**Updated 2026-03-23 — Full native test parity achieved.**
-
-`src/generation/` translates the loft IR tree into Rust source files.  The original 6
-root-cause error categories (totalling ~1500 errors) are resolved by the completed N-steps.
-The `codegen_runtime.rs` module is in place; templates are corrected; stdlib inclusion works.
-`src/fill.rs` is now auto-generated: `create.rs::generate_code()` runs `rustfmt` after
-writing and the `n9_generated_fill_matches_src` test enforces byte-exact match.
-
-**Test parity (2026-03-23):**
-- All 24 `tests/docs/*.loft` files compile and run natively (0 failures).
-- All 35 non-error `tests/scripts/*.loft` files compile and run natively (0 failures).
-- `loft --tests --native tests/scripts` passes 305 tests across 39 files — identical
-  to the interpreter.
-- CI (`make ci`) now fails on any native compile or runtime failure.
-
-**Key fixes in 0d15114 (2026-03-23):**
-- **Issue #77 (fn-ref dispatch):** Conditional fn-refs like `if flag { fn a } else { fn b }`
-  now generate correct match-dispatch arms.  Root cause: `collect_fn_ref_literals` only
-  extracted `Int(n)` from direct `Set(var, Int(n))`, missing `Int` inside `If`/`Block`.
-  Fix: recursive `collect_int_fn_refs` helper.
-- **Issue #80 (LIFO store-free):** Recursive functions caused use-after-free because native
-  codegen allocates stores at call time (not pre-allocated like the interpreter).
-  Fix: `allocation.rs::free_named` now allows non-LIFO frees by cascading `max` downward;
-  `generation/` resets `store_nr` to `u16::MAX` after `OpFreeRef`.
-- **Pre-eval extension:** `needs_pre_eval` now covers `Value::Insert` and `Value::Iter`;
-  `collect_pre_evals_inner` handles `Value::Return`.
+`src/generation/` translates the loft IR tree into Rust source files, with the runtime in
+`codegen_runtime.rs`; `src/fill.rs` is generated from the `#rust` templates
+(`create.rs::generate_code()`, pinned byte-exact by `n9_generated_fill_matches_src`), and
+`make ci` fails on any native compile or runtime failure.  How the backend reached parity with
+the interpreter is in [NATIVE-history.md § Parity record](NATIVE-history.md#parity-record).
 
 ### Loop-invariant vector headers (loft#885)
 
