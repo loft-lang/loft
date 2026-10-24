@@ -2180,6 +2180,131 @@ static int64_t loft_int_of_text(loft_str t) {
     return v > (uint64_t) INT64_MAX ? LOFT_NULL : (int64_t) v;
 }
 
+/* Does `t` follow Rust's float grammar (`str::parse::<f64>`): an optional sign, then `inf`,
+ * `infinity` or `nan` in any case, or digits with an optional point and exponent — no space,
+ * no hexadecimal? */
+static int loft_float_text_ok(loft_str t) {
+    size_t i = 0, n = t.len;
+    if (n > 0 && (t.p[0] == '+' || t.p[0] == '-')) i = 1;
+    if (i == n) return 0;
+    const char *words[] = { "inf", "infinity", "nan" };
+    for (int w = 0; w < 3; w++) {
+        size_t wl = strlen(words[w]);
+        if (n - i != wl) continue;
+        size_t k = 0;
+        while (k < wl && (t.p[i + k] | 32) == words[w][k]) k++;
+        if (k == wl) return 1;
+    }
+    size_t digits = 0;
+    while (i < n && t.p[i] >= '0' && t.p[i] <= '9') { i++; digits++; }
+    if (i < n && t.p[i] == '.') {
+        i++;
+        while (i < n && t.p[i] >= '0' && t.p[i] <= '9') { i++; digits++; }
+    }
+    if (digits == 0) return 0;
+    if (i < n && (t.p[i] == 'e' || t.p[i] == 'E')) {
+        i++;
+        if (i < n && (t.p[i] == '+' || t.p[i] == '-')) i++;
+        size_t ed = 0;
+        while (i < n && t.p[i] >= '0' && t.p[i] <= '9') { i++; ed++; }
+        if (ed == 0) return 0;
+    }
+    return i == n;
+}
+
+/* OpCastFloatFromText: `parse::<f64>().unwrap_or(NAN)`. */
+static double loft_float_of_text(loft_str t) {
+    if (!loft_float_text_ok(t)) return (double) NAN;
+    char buf[64];
+    char *heap = 0, *p = buf;
+    if (t.len >= sizeof buf) {
+        heap = (char *) malloc(t.len + 1);
+        if (!heap) { fputs("loft: out of memory\n", stderr); abort(); }
+        p = heap;
+    }
+    memcpy(p, t.p, t.len);
+    p[t.len] = 0;
+    double v = strtod(p, 0);
+    free(heap);
+    return v;
+}
+
+/* OpCastSingleFromText: `parse::<f32>().unwrap_or(NAN)`. */
+static float loft_single_of_text(loft_str t) {
+    if (!loft_float_text_ok(t)) return (float) NAN;
+    char buf[64];
+    char *heap = 0, *p = buf;
+    if (t.len >= sizeof buf) {
+        heap = (char *) malloc(t.len + 1);
+        if (!heap) { fputs("loft: out of memory\n", stderr); abort(); }
+        p = heap;
+    }
+    memcpy(p, t.p, t.len);
+    p[t.len] = 0;
+    float v = strtof(p, 0);
+    free(heap);
+    return v;
+}
+
+/* ── Unicode (src/c/unicode.rs writes the tables from Rust's own `char`) ── */
+typedef struct { uint32_t c; const char *m; } loft_umap;
+
+/* Is `c` in the sorted, disjoint ranges `r`? */
+static uint8_t loft_in_ranges(uint32_t c, const uint32_t (*r)[2], size_t n) {
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (c < r[mid][0]) hi = mid;
+        else if (c > r[mid][1]) lo = mid + 1;
+        else return 1;
+    }
+    return 0;
+}
+
+static const char *loft_umap_find(const loft_umap *m, size_t n, uint32_t c) {
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (c < m[mid].c) hi = mid;
+        else if (c > m[mid].c) lo = mid + 1;
+        else return m[mid].m;
+    }
+    return 0;
+}
+
+/* A letter for the final-sigma rule: one with a case. */
+static int loft_cased(uint32_t c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= 0xC0 && c != 0xD7 && c != 0xF7);
+}
+
+/* str::to_lowercase / to_uppercase: each character's mapping from `m`, or itself; lowering a
+ * capital sigma at the end of a word gives the final sigma. */
+static loft_text loft_text_case(loft_str s, const loft_umap *m, size_t n, int lower) {
+    loft_text out = { 0, 0, 0 };
+    if (loft_str_is_null(s)) return loft_text_own(s);
+    size_t i = 0;
+    uint32_t prev = 0;
+    while (i < s.len) {
+        size_t w;
+        uint32_t c = loft_decode(s, i, &w);
+        const char *to = loft_umap_find(m, n, c);
+        if (lower && c == 0x3A3) {
+            uint32_t next = 0;
+            if (i + w < s.len) {
+                size_t w2;
+                next = loft_decode(s, i + w, &w2);
+            }
+            to = loft_cased(prev) && !loft_cased(next) ? "\xCF\x82" : "\xCF\x83";
+        }
+        if (to) loft_push(&out, to, strlen(to));
+        else loft_push(&out, s.p + i, w);
+        prev = c;
+        i += w;
+    }
+    if (!out.p) loft_push(&out, "", 0);
+    return out;
+}
+
 /* Called first by `main`: the arguments, the clock's start, the constants. */
 static void loft_init(void);
 static void loft_start(int argc, char **argv) {
