@@ -223,7 +223,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     if disabled() || data.open_world {
         return 0;
     }
-    let mut laps = crate::compile::PassLaps::new(std::env::var_os("LOFT_TIMING").is_some());
+    let mut laps = crate::opt::laps::PassLaps::new(std::env::var_os("LOFT_TIMING").is_some());
     let vr = crate::opt::value_records::value_records(data, stores, false);
     laps.lap("vr_analysis");
     if vr.fns.is_empty() && vr.params.is_empty() {

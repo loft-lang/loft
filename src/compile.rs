@@ -54,7 +54,7 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // `LOFT_TIMING=1` — one line naming what each pass cost, so a slow close is
     // attributed to its pass.  The clock is read only when asked: `Instant::now()`
     // panics on wasm32-unknown-unknown.
-    let mut laps = PassLaps::new(std::env::var_os("LOFT_TIMING").is_some());
+    let mut laps = crate::opt::laps::PassLaps::new(std::env::var_os("LOFT_TIMING").is_some());
     // `value_record` reads closure-record layouts; the verdict `byte_code_from` carries in
     // first is idempotent, so a close ahead of it carries it in too.
     crate::typedef::sync_capture_ownership(data, database);
@@ -92,42 +92,6 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     crate::discharge_into::rewrite_program(data);
     laps.lap("discharge_into");
     laps.report("close_program", data.definitions());
-}
-
-/// The time each pass of a whole-program step took, for `LOFT_TIMING`.  Inert (no clock
-/// read, no allocation) unless `on`.
-pub(crate) struct PassLaps {
-    last: Option<std::time::Instant>,
-    laps: Vec<(&'static str, f64)>,
-}
-
-impl PassLaps {
-    pub(crate) fn new(on: bool) -> Self {
-        PassLaps {
-            last: on.then(std::time::Instant::now),
-            laps: Vec::new(),
-        }
-    }
-
-    pub(crate) fn lap(&mut self, pass: &'static str) {
-        if let Some(last) = self.last {
-            let now = std::time::Instant::now();
-            self.laps
-                .push((pass, now.duration_since(last).as_secs_f64() * 1000.0));
-            self.last = Some(now);
-        }
-    }
-
-    pub(crate) fn report(&self, step: &str, definitions: u32) {
-        if self.last.is_some() {
-            let total: f64 = self.laps.iter().map(|(_, ms)| ms).sum();
-            let mut line = format!("LOFT_TIMING {step} defs={definitions} total={total:.2}ms");
-            for (pass, ms) in &self.laps {
-                let _ = write!(line, " {pass}={ms:.2}ms");
-            }
-            eprintln!("{line}");
-        }
-    }
 }
 
 /// Incremental variant of [`byte_code`] — only emit bytecode for
