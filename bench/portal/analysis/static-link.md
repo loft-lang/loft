@@ -32,14 +32,17 @@ The class reads 2.24× checked (dynamic) and 1.45× ship (static) at the median;
 rows, where the callee does real work, did not move.  The ship lane now builds with `--static` (@PLN201 step 3: the ship build
 recompiles every library inside the game's build, so its Rust is linked in as well).
 
-## The decision this leaves for the owner
+## Where the static link belongs (owner, 2026-10-24)
 
-`--native-release` — what a game ships today — still links DYNAMICALLY by default, so every
-shipped program pays the crossing that the static link removes.  Making the release build
-static by default (a dynamic `--native` development build keeps reusing the cdylib, which is
-what makes it compile fast) would move the checked column the way the ship column moved.
-Against it: a static binary is larger, and @PLN195's search order for shipped library files
-exists for the dynamic layout.
+Only in the SHIP build.  Development uses precompiled libraries wherever possible and does
+not chase the last drop of speed.  A static link cannot use a precompiled library: it needs
+the library's rlib built against the exact loft build that links it (one rustc, the same
+flags, the same shared-dependency SVHs, the class loft#274 and loft#2162 belong to), so it
+recompiles the library's native crate from source.  The C-ABI shared object seals its own
+dependencies and is what a precompiled library is.  The ship build recompiles every library
+from source anyway (@PLN201), so there the static link costs nothing extra; measured on web
+and random it added no build time to speak of (1.4 → 1.6 s, 1.5 → 1.5 s) and changed the
+binary size by under 3 %.  `--native` and `--native-release` keep the dynamic default.
 
 ## Measured on the way, and not kept as levers
 
