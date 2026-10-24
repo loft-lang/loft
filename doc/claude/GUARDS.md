@@ -215,6 +215,9 @@ control is scored.  Nothing outside the repository has to survive for it to be r
 - **A patch isolates ONE defect only against the commit right before the fix.**  Against a
   distant control it is the whole source difference since; over 800 source lines `falsify.sh`
   writes no patch and says to re-run against the commit before the fix.
+- **The written patch is this TREE against the control.**  When later fixes sit on top of the
+  one the guard catches, it reverts them too: keep only that fix's own diff (`git diff -R
+  <fix>^ <fix>`, plus any later edit to the same lines) and score it with `--patch`.
 - **Deriving one after the fact**: a control is the PARENT of the commit that added the guard,
   so the patch is that commit's source diff reversed.  It stays runnable only while the tree
   still resembles the fix, and `falsify.sh` exits 3 when it no longer applies — detected, where
