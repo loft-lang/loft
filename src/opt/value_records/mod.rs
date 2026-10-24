@@ -6,6 +6,8 @@
 //! record argument, travel BY VALUE (a tuple of the fields) instead of through a store
 //! record.  The IR pass `value_record` and the native generator both read the answer.
 
+use crate::opt::value_records::sites::{forward_site, forward_tuple_on};
+
 use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
 use crate::opt::attrs::ret_buffer_attr;
@@ -1522,4 +1524,152 @@ pub(crate) fn local_uses_ok(
         crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
     }
     mentions == accounted
+}
+
+/// Every [`forward_site`] of `def_nr`, keyed by the address of the call's ARGUMENT LIST — the
+/// slice the emitter is handed for that call — mapped to the buffer it writes.
+#[must_use]
+pub fn forward_sites(
+    data: &Data,
+    def_nr: u32,
+    admitted: &HashMap<u32, u16>,
+    locals: &HashMap<u16, u16>,
+) -> HashMap<usize, u16> {
+    let mut out = HashMap::new();
+    if !forward_tuple_on() {
+        return out;
+    }
+    data.def(def_nr).code().any_node(&mut |n| {
+        if let Value::Set(target, rhs) = n
+            && forward_site(data, def_nr, *target, rhs, admitted, locals).is_some()
+            && let Value::Call(_, args) = rhs.unspan()
+        {
+            out.insert(args.as_ptr() as usize, *target);
+        }
+        false
+    });
+    out
+}
+
+/// The DEAD BUFFERS of `def_nr` (@PLN157 § V-ah, `@FR-R-ValueRecord`): a local minted by
+/// `OpDatabase` whose every mention the value form drops — the buffer argument of an
+/// admitted callee (dropped from the call), the subject of a free or of the pool's
+/// release-on-reuse (`OpClear`), or an operand of a store-identity test whose other operand
+/// is a value local (answered `true` without a read).  Such a local was a § V-af join buffer for a branch that now binds a tuple: the
+/// store it minted per activation served nothing, so the mint and the frees are emitted
+/// as nothing.  A buffer with any other mention — a witness read against a RECORD local,
+/// an argument to a callee that keeps its buffer — is minted as before.
+#[must_use]
+pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    if vr.fns.is_empty() {
+        return out;
+    }
+    let locals = value_locals_in(
+        data,
+        def_nr,
+        &vr.fns,
+        &vr.params,
+        &vr.view_offs,
+        &vr.fnref_sites,
+        &vr.sp,
+    );
+    // A forward's buffer is WRITTEN by the site (`forward_site`), so its argument is a use.
+    let forwards = forward_sites(data, def_nr, &vr.fns, &locals);
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let mut minted: HashSet<u16> = HashSet::new();
+    let mut mentions: HashMap<u16, u32> = HashMap::new();
+    let mut dropped: HashMap<u16, u32> = HashMap::new();
+    let mut assigned: HashSet<u16> = HashSet::new();
+    def.code().any_node(&mut |n| {
+        match n {
+            Value::Var(w) => *mentions.entry(*w).or_insert(0) += 1,
+            // A buffer BOUND to a value holds whatever that value is — a call result is a
+            // store (`__lift_1 = mk(…)` of a record that owns a collection), and its free is
+            // its owner's release, not an empty one.
+            Value::Set(w, rhs) if !matches!(rhs.unspan(), Value::Null) => {
+                assigned.insert(*w);
+            }
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let arg_var = |i: usize| match args.get(i).map(Value::unspan) {
+                    Some(Value::Var(w)) => Some(*w),
+                    _ => None,
+                };
+                let callee = data.def(*d);
+                match callee.name() {
+                    "OpDatabase" | "OpDatabaseNP" => {
+                        if let Some(w) = arg_var(0) {
+                            minted.insert(w);
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    // The pool's release of a reused buffer (loft#1549): a buffer never
+                    // minted holds nothing to release (`OpClearEmitter`).
+                    "OpClear" => {
+                        if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    "OpFreeRef" | "OpFreeRefIfDistinct" => {
+                        if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                        // A free guarded FOR a value local is emitted as nothing
+                        // (`OpFreeRefIfDistinctEmitter`), and its witness goes with it.
+                        if callee.name() == "OpFreeRefIfDistinct"
+                            && arg_var(0).is_some_and(|o| locals.contains_key(&o))
+                            && let Some(w) = arg_var(1)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    // `@FR-O-LazyBuffer` — the null test in front of a lazy buffer's mint
+                    // is the mint's own guard, and goes with it.
+                    "OpRefIsNull" => {
+                        if let Some(w) = arg_var(0)
+                            && vars.is_lazy_buffer(w)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    "OpDistinctStore" => {
+                        for (i, other) in [(0, 1), (1, 0)] {
+                            if let Some(w) = arg_var(i)
+                                && arg_var(other).is_some_and(|o| locals.contains_key(&o))
+                            {
+                                *dropped.entry(w).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                    _ if vr.fns.contains_key(d)
+                        && !forwards.contains_key(&(args.as_ptr() as usize)) =>
+                    {
+                        if let Some(idx) = ret_buffer_attr(callee)
+                            && let Some(w) = arg_var(idx)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    // A buffer never minted in this frame — handed to admitted callees as their buffer and
+    // freed, nothing else — holds nothing either: the callees answer tuples and mint into
+    // no buffer, so it stays the null it was declared as, and its frees are nothing.
+    for w in minted.iter().copied().chain(dropped.keys().copied()) {
+        if !vars.is_argument(w)
+            && !locals.contains_key(&w)
+            && !assigned.contains(&w)
+            && crate::data::is_dbref(vars.tp(w).base())
+            && mentions.get(&w).copied().unwrap_or(0) == dropped.get(&w).copied().unwrap_or(0)
+        {
+            out.insert(w);
+        }
+    }
+    out
 }
