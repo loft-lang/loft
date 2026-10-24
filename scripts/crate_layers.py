@@ -101,6 +101,9 @@ LAYERS: list[tuple[str, list[str]]] = [
     ("rust", [
         "create", "generation", "native_lib", "stdlib_codegen",
     ]),
+    ("c", [
+        "c",
+    ]),
     ("facade", [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "native_artifact", "repl", "rpc",
         "script", "serve", "startup_cache", "wasm_debug", "wasm_entry", "wasm_threads",
@@ -114,6 +117,8 @@ LAYERS: list[tuple[str, list[str]]] = [
 SIBLINGS: list[tuple[str, str]] = [
     ("interp", "lower"),
     ("interp", "rust"),
+    ("interp", "c"),
+    ("rust", "c"),
 ]
 
 # Back-edges allowed per (from-layer, to-layer) while @PLN200's B1 and B2 cut them: a ratchet.

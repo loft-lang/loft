@@ -157,6 +157,9 @@ def report() -> str:
 
 
 def main(argv: list[str]) -> int:
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
     text = report()
     if "--write" in argv:
         (ROOT / "doc" / "claude" / "RUNTIME_SURFACE.md").write_text(text, encoding="utf-8")
