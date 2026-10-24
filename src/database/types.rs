@@ -3131,6 +3131,36 @@ impl Stores {
         }
     }
 
+    /// The position of the TOP-LEVEL field of struct `tp` whose bytes hold offset `off` — the
+    /// field itself where `off` is its position, or an embedded struct field whose record spans
+    /// it.  `u16::MAX` when no field does, which every caller reads as "cannot say".
+    ///
+    /// The inverse of adding offsets down a run of field reads: the scope pass names a place
+    /// inside an embedded record by its summed slot (`o.inner.a` is `off_inner + off_a`), and a
+    /// reader that sees only the root's own `OpGetField(o, off_inner)` asks which field of the
+    /// root that slot lies in (loft#2161).
+    #[must_use]
+    pub fn top_field_containing(&self, tp: u16, off: u32) -> u16 {
+        if tp == u16::MAX {
+            return u16::MAX;
+        }
+        let (Parts::Struct(f) | Parts::EnumValue(_, f)) = &self.types[tp as usize].parts else {
+            return u16::MAX;
+        };
+        for fld in f {
+            let pos = u32::from(fld.position);
+            if pos == off {
+                return fld.position;
+            }
+            let embedded = fld.content != u16::MAX
+                && matches!(self.types[fld.content as usize].parts, Parts::Struct(_));
+            if embedded && pos < off && off < pos + u32::from(self.size(fld.content)) {
+                return fld.position;
+            }
+        }
+        u16::MAX
+    }
+
     /// A compare, not a name lookup: every file read and write asks it, and hashing the
     /// name per call was 15 % of a binary read loop.
     #[must_use]

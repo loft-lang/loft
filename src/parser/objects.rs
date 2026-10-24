@@ -6185,11 +6185,12 @@ impl Parser {
         // initialisers need @FR-R-InPlaceLiteral's staging exactly as a whole-variable rebind's
         // do.  Read through the same walk every other reader of "which place is this?" uses, so
         // the two cannot disagree; a destination it cannot name yields no root and keeps
-        // today's behaviour.
+        // today's behaviour.  The offset is the root's own field (`g.h.c` is `off_h`), the one
+        // `reads_place` matches against an `OpGetField` on the root.
         if !self.first_pass
             && !declined_place
             && !matches!(code, Value::Var(_))
-            && let Some(place) = crate::use_analysis::projection_container_place(&self.data, code)
+            && let Some(place) = crate::use_analysis::projection_root_field_place(&self.data, code)
             && !self.vars.is_compiler_generated(place.0)
         {
             self_read_root = Some(place);

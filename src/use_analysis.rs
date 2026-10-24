@@ -3546,6 +3546,19 @@ pub fn root_element_index(data: &Data, value: &Value) -> Option<(u32, i32)> {
     projection_place_of(data, value, true).and_then(|(_, _, _, idx)| idx)
 }
 
+/// The root variable and the offset of the field read NEAREST it — `g.h.c` is `(g, off_h)`,
+/// where [`projection_container_place`] answers the slot `(g, off_h + off_c)`.
+///
+/// For a reader that matches the place against the `OpGetField` applied directly to the root
+/// variable, which carries exactly that offset: `Parser::reads_place` asks whether a literal's
+/// initialiser reads the field of the root its destination lies in.  Compared against the summed
+/// slot, every read of `g.h.…` looked disjoint from a destination `g.h.c` and the literal stopped
+/// staging what it reads (loft#2161).
+#[must_use]
+pub fn projection_root_field_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
+    projection_walk(data, value, false).map(|w| (w.0, w.4))
+}
+
 /// [`projection_container_place`] with the element-read depth [`view_source_place_depth`]
 /// describes — for naming the CONTAINER an op disturbs, which is not a nullable read.
 #[must_use]
@@ -3565,8 +3578,19 @@ fn projection_place_of(
     value: &Value,
     nullable_reads: bool,
 ) -> Option<(u16, u32, u8, Option<(u32, i32)>)> {
+    projection_walk(data, value, nullable_reads).map(|w| (w.0, w.1, w.2, w.3))
+}
+
+/// [`projection_place_of`] with a fifth answer: the offset of the field read NEAREST the root
+/// alone, not summed with the run it sits in (`g.h.c` answers `off_h`).
+fn projection_walk(
+    data: &Data,
+    value: &Value,
+    nullable_reads: bool,
+) -> Option<(u16, u32, u8, Option<(u32, i32)>, u32)> {
     let mut cur = value;
     let mut field = ANY_FIELD;
+    let mut nearest = ANY_FIELD;
     // How many ELEMENT reads the chain crosses.  Counted by the element-reading ops below and
     // never reset: one element read anywhere in the chain means the value lives at a position
     // the container can move, and each further one is a container inside an element.
@@ -3587,7 +3611,13 @@ fn projection_place_of(
         if let Value::If(_, t, e) = cur.unspan()
             && let Some(v) = variant_check_subject(data, t, e)
         {
-            return Some((v, field, elems, root_index.map(|i| (run_since_elem, i))));
+            return Some((
+                v,
+                field,
+                elems,
+                root_index.map(|i| (run_since_elem, i)),
+                nearest,
+            ));
         }
         let Value::Call(d, args) = cur.unspan() else {
             return None;
@@ -3607,6 +3637,7 @@ fn projection_place_of(
         if name == "OpGetField" {
             if let Some(Value::Int(off)) = args.get(1).map(Value::unspan) {
                 let off = *off as u32;
+                nearest = off;
                 field = if in_run && field != ANY_FIELD {
                     field + off
                 } else {
@@ -3634,7 +3665,13 @@ fn projection_place_of(
         }
         match args.first().map(Value::unspan) {
             Some(Value::Var(c)) => {
-                return Some((*c, field, elems, root_index.map(|i| (run_since_elem, i))));
+                return Some((
+                    *c,
+                    field,
+                    elems,
+                    root_index.map(|i| (run_since_elem, i)),
+                    nearest,
+                ));
             }
             Some(inner) => cur = inner,
             None => return None,
