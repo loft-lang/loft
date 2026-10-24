@@ -1059,9 +1059,15 @@ pub(crate) fn run_tests(
                 // recorded before its own libraries went in.
                 p.data.definitions()
             };
+            // `LOFT_TIMING=1` — what this file's front end cost, phase by phase, on one
+            // line, so a slow suite is attributed to a phase and a file.
+            let phase_clock = std::env::var_os("LOFT_TIMING")
+                .is_some()
+                .then(std::time::Instant::now);
             let parse_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 p.parse(&abs_file, false);
             }));
+            let parse_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
             if let Err(payload) = parse_ok {
                 let msg = panic_message(&*payload);
                 if has_expect_error && ann.expect_errors.iter().any(|s| msg.contains(s.as_str())) {
@@ -1108,8 +1114,18 @@ pub(crate) fn run_tests(
             // library's CI — which IS a test run — could not see a lost write, or a
             // `#superseded` steer pointing at nothing, which is a hard ERROR everywhere
             // else.
+            let scopes_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
             if !has_errors {
                 loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+            }
+            if let (Some(t), Some(parse_ms), Some(scopes_ms)) = (phase_clock, parse_ms, scopes_ms) {
+                eprintln!(
+                    "LOFT_TIMING test_file={display_name} seeded={} parse={parse_ms:.2}ms scopes={:.2}ms lints={:.2}ms defs={}",
+                    seeded.is_some(),
+                    scopes_ms - parse_ms,
+                    t.elapsed().as_secs_f64() * 1000.0 - scopes_ms,
+                    p.data.definitions()
+                );
             }
 
             // Collect diagnostics.
