@@ -508,6 +508,9 @@ pub struct Output<'a> {
     /// `@FR-R-FaultFlag` — the `for` statements whose EXACT copy is being emitted, so the
     /// ordinary path does not admit them a second time.
     pub fault_flag_exact: HashSet<usize>,
+    /// `@FR-R-FaultFlag`'s pure-call clause — each function already asked: `None` pure,
+    /// `Some(why)` not.
+    pub fault_flag_pure: std::cell::RefCell<HashMap<u32, Option<String>>>,
     /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
     /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
     pub placed_locals: HashSet<u16>,
@@ -1805,6 +1808,7 @@ impl<'a> Output<'a> {
             fault_flag_next: 0,
             fault_flag_trace: std::env::var("LOFT_TRACE_FAULT_FLAG").is_ok_and(|v| v != "0"),
             fault_flag_exact: HashSet::new(),
+            fault_flag_pure: std::cell::RefCell::new(HashMap::new()),
             placed_locals: HashSet::new(),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,

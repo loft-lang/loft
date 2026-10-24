@@ -44,7 +44,10 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
-        .env("LOFT_TIMEOUT", "120");
+        .env("LOFT_TIMEOUT", "120")
+        // These counts pin how ONE copy of a loop is emitted; `@FR-R-FaultFlag` emits a
+        // statement it admits twice (a fast copy and the exact one), which doubles them.
+        .env("LOFT_NO_FAULT_FLAG", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }
