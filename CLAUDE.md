@@ -143,7 +143,11 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   library routines still waiting for a row (@PLN158).
                                          #   `perf-portal-render` re-renders from saved runs;
                                          #   PACKAGES="--package <scratch clone>/drawing=drawing"
-                                         #   adds a library's own bench.  A REPORT, never a gate
+                                         #   adds a library's own bench; ARGS="--lanes
+                                         #   native,rust,ship" adds a SHIP column per routine:
+                                         #   the program as a game's release build would be
+                                         #   compiled, fault checks dropped (@PLN201).  A
+                                         #   REPORT, never a gate
 make perf-check [ARGS="--only 16,17"]     # ONCE PER ARC, IN THE BACKGROUND, never a foreground
                                          #   wait — a commit needs the matrix, the pins, clippy
                                          #   and one targeted A/B on its own row; CI_BUDGET.md
