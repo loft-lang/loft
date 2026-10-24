@@ -72,6 +72,15 @@ release has to hold still, so the release takes the cut where the remaining exce
 large, and the 3× work continues after it.  The work toward the cut is not restricted to
 low-risk changes: optimising is inherently unstable, and that is accepted while it runs.
 
+**The bug line (owner).**  A routine whose SHIP time (`stats.py --lanes native,rust,ship`, the
+program compiled as a game's release build would be, its fault checks dropped) is over 3.5×
+its twin's is a bug: that gap is not what loft's guarantees cost, so it is structural.  The bug
+is filed once per CLASS of problem, the shared cause the routines in it pay for, and never
+once per routine; the issue lists its routines and closes when the class is under the line.
+The checked build's own excess over the ship time is what the guarantees cost.  It is worked
+too, by making those checks cheaper (range proofs, fault-flag rewrites), and is not a bug of
+its own.
+
 ### A reference twin is created where it matters, not everywhere
 
 ```
