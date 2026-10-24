@@ -603,10 +603,6 @@ checks every plain operator.  **`LOFT_NO_RANGED_CALL_VARS=1`** keeps the guard t
 fields: no integer VARIABLE (a window walk's bounds) is a guard leaf — the next step finer.
 **`LOFT_NO_WHILE_COUNTER=1`** checks the step of `while i < E { …; i += 1 }` again (`(R-Range)`'s
 while-counter clause) — the bisect step for a wrong counter or index out of such a loop on native.
-**`LOFT_NO_PAR_ROWS=1`** (`(R-ParRows)`, default-ON, generation time, `--native` only) keeps
-every `par` on its per-row worker — with it off, a row-pure worker maps each batch of rows at once
-(`11_par/par` 3.49× → 1.80×) — and is the first bisect step for a wrong value out of a `par` on
-native; `LOFT_TRACE_PAR_ROWS=1` names each admission and decline.
 **`LOFT_NO_DISTINCT_VERSION=1`** (`(R-Alias)`'s versioned clause, default-ON, generation time,
 `--native` only) emits every loop once — with it off, a loop that grows the function's return
 buffer while it reads a parameter also runs a copy under a run-time test that the two stores

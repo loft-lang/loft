@@ -5197,68 +5197,6 @@ where
     n as i64
 }
 
-/// `@FR-R-ParRows` — [`n_parallel_queue_native`] for a worker that can map its rows AT ONCE:
-/// each batch of contiguous rows goes to `fast`, which reads the elements straight from the
-/// vector (`base` is the batch's first element, `stride` bytes apart) and answers every row's
-/// value into `out`: `true` when it answered them all, `false` when a row would have REPORTED
-/// (an overflow, a division by zero) on the exact path.  Such a batch is run again, whole,
-/// through `exact` — today's per-row worker — so whatever reports, reports exactly as before,
-/// and a clean batch runs in a loop the compiler can vectorise (bench/portal/analysis/par-rows.md).
-pub fn n_parallel_rows_native<F, E>(
-    cell: &std::cell::UnsafeCell<Stores>,
-    input: DbRef,
-    elem_size: i32,
-    threads: i32,
-    fast: F,
-    exact: E,
-) -> i64
-where
-    F: Fn(*const u8, usize, &mut [i64]) -> bool + Send + Sync,
-    E: Fn(&std::cell::UnsafeCell<Stores>, DbRef) -> i64 + Send + Sync,
-{
-    let stores: &mut Stores = unsafe { &mut *cell.get() };
-    let n = vector::length_vector(&input, &stores.allocations) as usize;
-    let results = if n == 0 {
-        Vec::new()
-    } else {
-        let h = vector::vec_header(&input, &stores.allocations);
-        // An address is not `Send`; the batches only read through it, and the input is
-        // `const` for the whole `par` (the worker writes no store: `@FR-R-ParRows`).
-        let base = vector::vec_base(&h, &stores.allocations) as usize;
-        let stride = elem_size.max(0) as usize;
-        let input_t = input;
-        let batches = crate::par_pool::parallel_workers(
-            stores,
-            threads.max(1) as usize,
-            n,
-            |start, end, mut ws| {
-                let mut local = vec![0i64; end - start];
-                let first = (base + start * stride) as *const u8;
-                // Under `--dev-soft-halt` an overflow REPORTS, which the fast path's silent
-                // operators do not: every row takes the exact path there.
-                if crate::ops::dev_soft_halt() || !fast(first, end - start, &mut local) {
-                    let cell: &std::cell::UnsafeCell<Stores> =
-                        unsafe { &*(&raw mut ws.stores as *const std::cell::UnsafeCell<Stores>) };
-                    for (slot, row) in local.iter_mut().zip(start..end) {
-                        let elm = vector::get_vector(
-                            &input_t,
-                            stride as u32,
-                            row as i64,
-                            &ws.allocations,
-                        );
-                        *slot = exact(cell, elm);
-                    }
-                }
-                (start, local)
-            },
-        );
-        crate::par_pool::merge_batches(batches, n, 0i64)
-    };
-    let buf: Vec<u64> = results.into_iter().map(|v| v as u64).collect();
-    stores.par_buffer_stack.push(buf);
-    n as i64
-}
-
 /// Plan-06 ARC.md A5b — native runtime entry for `par_fold(items, init,
 /// fn fold, threads)`.  Closure-based bridge mirroring `n_parallel_queue_native`
 /// but accumulates per-thread instead of buffering one result per row.
