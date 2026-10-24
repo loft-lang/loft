@@ -9,7 +9,6 @@
 # `make release-checklist`'s A-ignores reads this file, so a test ignored WITHOUT a
 # reason is a release finding, not just a lint.
 # Regenerate with: `python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline`
-src/database/spans.rs::a_frontier_release_moves_the_resident_set	a design measurement: builds ~90 MB of store and PRINTS peak RSS — run with --release --lib --ignored --nocapture
 src/database/spans.rs::record_spans_across_the_generator_matrix	a design measurement: reads a layout and PRINTS, rather than defending an invariant — run with --release --lib --ignored --nocapture
 src/fuzz_keyed.rs::f26_wide_poison_sweep	F2.6 wide poison sweep — heavy; runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --lib fuzz_keyed::tests::f26_wide_poison_sweep -- --ignored`
 src/fuzz_oracle.rs::seed_corpus_replay	F1 seed-corpus replay — heavy; runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --lib fuzz_oracle::tests::seed_corpus_replay -- --ignored`

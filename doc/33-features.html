@@ -24,7 +24,7 @@
 <h1>Feature catalogue</h1>
 <article>
 <p>Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in <code>doc/features/</code> in the repository, where <code>@F2</code> is <code>F2.md</code>.</p>
-<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 77 of the 92 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
+<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 76 of the 91 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
 <p>The catalogue is generated from the <code>loft-lang/features</code> issue tracker, which is the single source of truth: every entry is an issue, and <code>make features-check</code> regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.</p>
 <h2 id="language-features">Language features</h2>
 <ul>
@@ -98,7 +98,7 @@
 <li><strong>@F101</strong> — The build phase — <code>loft build</code>, declared targets, zero-config defaults</li>
 <li><strong>@F102</strong> — Android target — <code>--native-android</code>, APK packaging, GL surface and touch input</li>
 <li><strong>@F103</strong> — <code>deliver</code> / <code>expose</code> — hand a loft value to JavaScript with no copy</li>
-<li><strong>@F104</strong> — <code>store_reclaim()</code> — give a store's unused file space back</li>
+<li><strong>@F104</strong> — <code>store_reclaim()</code> — give a store's unused space back</li>
 <li><strong>@F105</strong> — Custom <code>to_text</code> format hook — a type owns how it prints</li>
 <li><strong>@F106</strong> — Copy and move semantics — when two names share data, and when they do not</li>
 <li><strong>@F107</strong> — Type reflection — the declared shape of a type, as data</li>
@@ -106,7 +106,6 @@
 <li><strong>@F109</strong> — <code>#superseded</code> — steer callers to a newer form without breaking the old one</li>
 <li><strong>@F110</strong> — Diagnostic suggestions — what to write instead, checked by running it</li>
 <li><strong>@F111</strong> — <code>for f in s#fields</code> — a compile-time loop over a struct's scalar fields</li>
-<li><strong>@F112</strong> — <code>store_release()</code> — say a record is finished, and stop holding it in memory</li>
 <li><strong>@F113</strong> — Associated types — an interface names a companion type</li>
 <li><strong>@F114</strong> — A library type reads an element through a named method — <code>[…]</code> is the built-in collections'</li>
 <li><strong>@F115</strong> — <code>OpDrop</code> — a type runs code when its scope lets it die</li>
@@ -184,7 +183,7 @@
 // repository, where `@F2` is `F2.md`.
 //
 // The two halves read differently.  An `@F` page says what the feature is and
-// how it aids you, and 77 of the 92 carry a runnable example; the rest
+// how it aids you, and 76 of the 91 carry a runnable example; the rest
 // name what demonstrates them instead, because a loft program cannot run the
 // compiler that runs it.  An `@I` page says what the part does and where it lives
 // in the source — it describes how loft is built, not something you write.
@@ -267,7 +266,7 @@
 // - **@F101** — The build phase — `loft build`, declared targets, zero-config defaults
 // - **@F102** — Android target — `--native-android`, APK packaging, GL surface and touch input
 // - **@F103** — `deliver` / `expose` — hand a loft value to JavaScript with no copy
-// - **@F104** — `store_reclaim()` — give a store's unused file space back
+// - **@F104** — `store_reclaim()` — give a store's unused space back
 // - **@F105** — Custom `to_text` format hook — a type owns how it prints
 // - **@F106** — Copy and move semantics — when two names share data, and when they do not
 // - **@F107** — Type reflection — the declared shape of a type, as data
@@ -275,7 +274,6 @@
 // - **@F109** — `#superseded` — steer callers to a newer form without breaking the old one
 // - **@F110** — Diagnostic suggestions — what to write instead, checked by running it
 // - **@F111** — `for f in s#fields` — a compile-time loop over a struct's scalar fields
-// - **@F112** — `store_release()` — say a record is finished, and stop holding it in memory
 // - **@F113** — Associated types — an interface names a companion type
 // - **@F114** — A library type reads an element through a named method — `[…]` is the built-in collections'
 // - **@F115** — `OpDrop` — a type runs code when its scope lets it die

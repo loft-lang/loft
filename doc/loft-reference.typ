@@ -6988,7 +6988,7 @@ Calling the inner function directly does the same thing, and calling it twice is
 
 Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in `doc/features/` in the repository, where `\@F2` is `F2.md`.
 
-The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 77 of the 92 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
+The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 76 of the 91 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
 
 The catalogue is generated from the `loft-lang/features` issue tracker, which is the single source of truth: every entry is an issue, and `make features-check` regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.
 
@@ -7064,7 +7064,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F101\*\* — The build phase — `loft build`, declared targets, zero-config defaults
 - \*\*\@F102\*\* — Android target — `--native-android`, APK packaging, GL surface and touch input
 - \*\*\@F103\*\* — `deliver` / `expose` — hand a loft value to JavaScript with no copy
-- \*\*\@F104\*\* — `store\_reclaim()` — give a store's unused file space back
+- \*\*\@F104\*\* — `store\_reclaim()` — give a store's unused space back
 - \*\*\@F105\*\* — Custom `to\_text` format hook — a type owns how it prints
 - \*\*\@F106\*\* — Copy and move semantics — when two names share data, and when they do not
 - \*\*\@F107\*\* — Type reflection — the declared shape of a type, as data
@@ -7072,7 +7072,6 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F109\*\* — `\#superseded` — steer callers to a newer form without breaking the old one
 - \*\*\@F110\*\* — Diagnostic suggestions — what to write instead, checked by running it
 - \*\*\@F111\*\* — `for f in s\#fields` — a compile-time loop over a struct's scalar fields
-- \*\*\@F112\*\* — `store\_release()` — say a record is finished, and stop holding it in memory
 - \*\*\@F113\*\* — Associated types — an interface names a companion type
 - \*\*\@F114\*\* — A library type reads an element through a named method — `\[…\]` is the built-in collections'
 - \*\*\@F115\*\* — `OpDrop` — a type runs code when its scope lets it die
@@ -9060,45 +9059,19 @@ Flushes buffered bytes for self to the underlying storage so that the preceding 
 == Persistent stores
 
 ```rust
-pub fn store_durable_check(path: text) -> boolean fs#read
-```
-
-Durable-store integrity check.  Returns true iff the `.dmeta` sidecar at `\<path\>.dmeta` validates against the main file at `\<path\>` (signature, header CRC, payload length, payload CRC, tier\_id all OK).  Returns false on any failure or missing file.  Pair with `store\_durable\_seal` after a clean write session to record the new state.
-Desktop-only: the sidecar is built over memory-mapped files, so on the wasm targets this answers false — "nothing validates", which is the state that sends a caller down its rebuild branch.
-
-```rust
-pub fn store_durable_seal(path: text) -> boolean fs#update
-```
-
-Write a fresh `.dmeta` sidecar capturing the current main-file's byte length + CRC32 + a clean-close timestamp. Returns true on success, false on any I/O error.  Call this after finishing a write session; if the program crashes between the last write and the seal, the sidecar stays stale and the next `store\_durable\_check` returns false → caller rebuilds.
-Desktop-only, like `store\_durable\_check`: on the wasm targets this answers false — the seal did not happen — so seal where the store is written and read it back with `store\_load`.
-
-```rust
-pub fn store_persist_bind(r: reference, path: text) -> boolean fs#update
-```
-
-"The collection IS the file."  Re-root the Store backing the given reference at a file path so mutations are durable via mmap without any explicit save/load loop.
-Works for any store-rooted collection — `hash`, `sorted`, `ordered`, `index` (each keyed local/field is a dedicated Store).  `hash` carries its bucket seed in its own record and `sorted`/`ordered`/`index` are comparison-based (no per-process state), so the persisted image is portable: a different process (a restart, or a remote reader) both iterates AND key-looks-up correctly.  A reference that is NOT its own Store root fails soft (returns `false`), same as any I/O error.
-First call on a path that does NOT exist: serialises the current in-memory Store at the reference's slot to disk (padded to a valid ≥1024-word image with a tail free block), then mmaps it back.  Caller's existing DbRefs into that slot remain valid.
-Call on a path that DOES exist: opens the file via mmap; the caller's prior in-memory contents at that slot are dropped in favour of the on-disk image.  This is the load-on-startup path. The `.dschema` file written beside the store records the layout it was written with.  When that layout is older than `r`'s type — a struct gained, lost or widened a field — the FILE is upgraded in place: every added field takes its default (which may read the record through `\$`), the new store is written beside the old one and swapped in, and the old file is kept as `\<path\>.old`, replacing an earlier `.old`.  A change the upgrade cannot carry, such as one that looks like a rename, is refused (`false`, the reason on stderr), and the file, its `.dschema` and `r` are left untouched.
-Both modes return `true` on success, `false` on any I/O / format / layout error (no panic — the binding is fail-soft, callers fall back to JSON or rebuild-from-source).
-Typical dryopea-style pattern: pw = PaintedWorld { painted: \[\] }   // painted's declared type is hash\<PaintedHex\[q, r\]\> store\_persist\_bind(pw.painted, "dryopea\_world.store") // …mutations to pw.painted now hit mmap'd bytes… `r` is any store-rooted collection — `hash`, `sorted`, `index`, `spatial`. A bare `reference` parameter accepts them all.
-It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash\<PaintedHex\[q, r\]\>`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.
-
-```rust
 pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update
 ```
 
-Write an image of `r` laid out for PAGING, and keep the live collection as it is. Use this for a file another program (or a browser) will READ — a vocabulary, a map, any shipped dataset — where what matters is how few pages a query touches.
-`store\_persist\_bind` copies the live bytes, so every record keeps its place and your references stay valid. That place is the layout: records sit where they were INSERTED, so a `trie` prefix query returning 20 records reads 20 scattered pages. This writes a rebuilt copy instead, with each record placed in its collection's own order — key order for a `trie` — so one prefix is one run. Measured on a 74,692-word vocabulary, one 20-record prefix query: 22 requests and 1.25 MB from a bound image, 4 and 0.26 MB from this one.
-The live collection is untouched: nothing moves, so every reference you hold stays valid, and the file is NOT bound (writes after this do not reach it). Call it when the data is final. To keep writing, use `store\_persist\_bind`. words: trie\<Word\[w\]\> = \[\] for w in vocabulary() { words += \[Word { w: w }\] } store\_persist\_copy(words, "vocab.store")   // ship this file // a reader pages it: store\_load\_prefix(local, "vocab.store", "kerk", 20)
-Returns `false` on an I/O or format error, and for a collection whose shape the rebuild cannot carry. The image is sized to its content, with none of the growth slack a bound file keeps.
+Write an image of `r` to `path`, laid out for PAGING, and keep the live collection as it is. Use this to save a collection and for a file another program (or a browser) will READ — a vocabulary, a map, any shipped dataset — where what matters is how few pages a query touches.
+The image is a rebuilt copy, with each record placed in its collection's own order — key order for a `trie` — so one prefix is one run of pages. Records in the live store sit where they were INSERTED; written as they are, a 20-record prefix query on a 74,692-word vocabulary read 22 requests and 1.25 MB, against 4 and 0.26 MB from the rebuilt image.
+The live collection is untouched: nothing moves, so every reference you hold stays valid, and writes after this do not reach the file. Write it again to save a later state; `store\_load` reads it back. words: trie\<Word\[w\]\> = \[\] for w in vocabulary() { words += \[Word { w: w }\] } store\_persist\_copy(words, "vocab.store")   // ship this file // a reader pages it: store\_load\_prefix(local, "vocab.store", "kerk", 20)
+A `reference\<T\>` to a record in the same collection is carried: it names the same record in the image.  Returns `false` on an I/O or format error, and for a collection the image cannot carry — one holding a reference into another store. The image is sized to its content, with none of the growth slack the live store keeps.
 
 ```rust
 pub fn store_load(r: reference, path: text) -> boolean fs#read
 ```
 
-Load a persisted store IMAGE fully into memory, populating the empty store-rooted collection `r` so it can be queried like any in-memory collection.  The portable, read-only counterpart of `store\_persist\_bind`: it HEAP-COPIES the file (no mmap), so it works on EVERY backend — including wasm, which has no mmap — but is NOT durable (writes stay in memory and never reach the file).  Use it to open a snapshot for querying where `store\_persist\_bind` can't run (a browser / wasm target) or where a durable live binding isn't wanted.  A file whose `.dschema` records an older layout than `r`'s declared type is converted in memory: every added field takes its default (which may read the record through `\$`), and the file itself is left as it is.  Returns `false` on a missing / truncated / wrong-format file, and on a change the conversion cannot carry, such as one that looks like a rename (no panic; the reason is printed on stderr). This is the whole-file load that the browser's working-set path builds on. h: hash\<Rec\[id\]\> = \[\] store\_load(h, "world.store")   // h now holds the file's records
+Load a persisted store IMAGE fully into memory, populating the empty store-rooted collection `r` so it can be queried like any in-memory collection — the reading counterpart of `store\_persist\_copy`.  It copies the file into memory, so it works on EVERY backend, wasm included, and writes after it stay in memory: write the collection again with `store\_persist\_copy` to save them.  A file whose `.dschema` records an older layout than `r`'s declared type is converted in memory: every added field takes its default (which may read the record through `\$`), and the file itself is left as it is.  Returns `false` on a missing / truncated / wrong-format file, and on a change the conversion cannot carry, such as one that looks like a rename (no panic; the reason is printed on stderr). This is the whole-file load that the browser's working-set path builds on. h: hash\<Rec\[id\]\> = \[\] store\_load(h, "world.store")   // h now holds the file's records
 
 ```rust
 pub struct Release { pub major: integer, pub minor: integer, pub patch: integer }
@@ -9153,21 +9126,10 @@ Structural integrity check of a store-rooted collection's heap graph: verify eve
 pub fn store_reclaim(r: reference) -> integer fs#update
 ```
 
-Give back the free space at the END of a store-rooted collection's store, and return the BYTES handed back (0 when there was nothing to give). For a store bound with `store\_persist\_bind` that is the FILE shrinking; otherwise it is memory returned to the allocator. Records are never moved, so every reference into the collection stays valid.
+Give back the free space at the END of a store-rooted collection's store, and return the BYTES handed back to the allocator (0 when there was nothing to give). Records are never moved, so every reference into the collection stays valid.
 You say when, because only the program knows whether a drop is permanent: a collection that shrinks and grows again would just pay to re-grow. Read `store\_memory()` first, and read it as a RANKING rather than a quantity: its `tail%` says which store is worth reclaiming, and it is NOT the size of the return. A reclaimed store lands at `tail 11%` — a growth reserve the allocator keeps — so what comes back is `tail% - 11%` of the resulting capacity, never the whole tail. Measured across eight shapes with tails from 13% to 60%: at a 13% tail the report suggests ~36 KB and the call hands back 5832 bytes. Treat a reading near 11% as nothing to get back, not a little. Its `inner%` is the space BETWEEN records, which this does not touch — though the number RISES after a reclaim, because the capacity it is a percentage of has shrunk.
 WHERE the drop was matters as much as how big it was. `mergeable` counts adjacent free neighbours that never coalesced, so it measures how CONTIGUOUS the drop was, and that is exactly the part this call can fix: the same 2000 records dropped contiguously merge 2004 free blocks down to 7 and hand back 25400 bytes, while dropped alternately they leave 1997 blocks standing forever — the live records between them are what keeps them apart — and hand back 16312.
-You do NOT need this to right-size a file at the END of a run. A bound store keeps its file AS the live arena, and the arena's capacity grows by 7/3 and never shrinks by itself — so mid-run the file is a rung on a ladder, not a measure of content, and can sit 57% above what it holds. Releasing the collection hands that tail back on its own, so the file a program leaves behind follows its content whether or not this was ever called. Call it MID-RUN, when a live set has dropped for good and the memory (or the disk) is wanted back before the end. world: hash\<Hex\[q, r\]\> = \[\] store\_persist\_bind(world, "world.store") // …a region is unloaded for good… store\_reclaim(world)          // the file follows what the world holds NOW Returns 0, changing nothing, for a store that is read-only, shares another store's memory, or carries a `store\_durable\_seal` sidecar — truncating behind that sidecar's back would report a healthy store as corrupt.
-
-```rust
-pub fn store_release(r: reference) -> integer fs#update
-```
-
-Say "everything I have written so far is finished": start writing it out to the file and stop holding it in memory. Returns the BYTES dropped from the resident set (0 when there was nothing to drop, or the collection is not bound to a file).
-For a GENERATOR streaming a large collection into a store bound with `store\_persist\_bind`. Without it the resident set grows with everything written so far, and the kernel only learns which pages are finished by evicting the wrong ones first. Measured on a 20 000-record build, one call per record: peak memory 44.3 MB -\> 2.2 MB (20x), at no cost in wall clock.
-tiles: hash\<TTile\[tkey\]\> = \[\] store\_persist\_bind(tiles, "tiles.store")   // bind FIRST — the file IS the arena for cell in cells { …fill the tile… store\_release(tiles)                     // this cell is done }
-Content is untouched and every reference into the collection stays valid: nothing moves and nothing is freed. Reading a released record simply re-reads it from the file, at the cost of one page fault. So this is a HINT — calling it too often, or on the wrong collection, costs a little speed and can never cost an answer.
-It pays when records are written IN KEY ORDER and not returned to. A generator that keeps many records open at once leaves the store scattered with free blocks (measured: 3 691 against 10 for the same data written in order) and the allocator then keeps re-reading them, so the same call gives back 1.0x instead of 20x. If your build streams in cell order, this is close to free; if it does not, sort it first and this is the reason to.
-Not `store\_reclaim`, which gives back the FILE's unused TAIL and changes its size. This changes only what is resident, and never the file's length. Not a durability barrier either — it asks for writeback to START; `store\_durable\_seal` is what promises the bytes have landed.
+You do NOT need this before writing an image: `store\_persist\_copy` writes the collection rebuilt, sized by what it holds. Call it MID-RUN, when a live set has dropped for good and the memory is wanted back before the end. // …a region of the world is unloaded for good… store\_reclaim(world)          // the store follows what the world holds NOW Returns 0, changing nothing, for a store that is read-only or shares another store's memory.
 
 == Lazy stores
 
