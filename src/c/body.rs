@@ -137,7 +137,15 @@ impl<'a> FnWriter<'a> {
             pending: Vec::new(),
             loops: Vec::new(),
             labels: 0,
-            bound: vec![false; def.variables().count() as usize],
+            // A parameter arrives bound: its first `Set` is a rebind.
+            bound: {
+                let vars = def.variables();
+                let mut b = vec![false; vars.count() as usize];
+                for a in vars.arguments() {
+                    b[a as usize] = true;
+                }
+                b
+            },
         }
     }
 
@@ -493,6 +501,16 @@ impl<'a> FnWriter<'a> {
         Ok(tp)
     }
 
+    /// A rebind's copy lands in a fresh store unless `var` owns the store it displaces
+    /// (`Function::owns_displaced_store`, @FR-O-Proxy): a witnessed or borrowing local may hold
+    /// a view of another record at that moment, and refilling its store in place wrote the copy
+    /// into the viewed record.  An owned store is refilled, which is its free and a fresh mint.
+    fn fresh_unless_owned(&mut self, var: u16, x: &Value, first: bool, name: &str, ind: usize) {
+        if !first && !self.vars.owns_displaced_store(var, x, self.cx.data) {
+            self.line(ind, &format!("{name} = loft_ref_null();"));
+        }
+    }
+
     /// `p = x` for a `&` record parameter: the caller's variable takes the new record and the
     /// record it held is released unless the new one lives in its store (the bytecode's
     /// `SetStackRef` + `FreeRefIfDistinct`, @FR-B-Ref-Repoint).
@@ -554,6 +572,7 @@ impl<'a> FnWriter<'a> {
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
+            self.fresh_unless_owned(var, x, first, &name, ind);
             self.line(
                 ind,
                 &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
@@ -579,6 +598,7 @@ impl<'a> FnWriter<'a> {
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
+            self.fresh_unless_owned(var, x, first, &name, ind);
             self.line(
                 ind,
                 &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
@@ -589,6 +609,7 @@ impl<'a> FnWriter<'a> {
         if let Some((src, tp)) = self.whole_value_bind(var, x) {
             let bytes = self.copyable(tp)?;
             let src = self.var(src);
+            self.fresh_unless_owned(var, x, first, &name, ind);
             self.line(
                 ind,
                 &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {src});"),
@@ -1545,18 +1566,6 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpNullRefSentinel", []) => Ok(E::new("loft_ref_null()", K::Ref)),
-            ("OpPutRef", [Value::Var(v), x]) => {
-                let x = self.expr(x, ind)?;
-                Ok(E::new(
-                    format!("{} = {}", self.var(*v), as_ref(x)?),
-                    K::Void,
-                ))
-            }
-            ("OpConstRef", [d]) => {
-                let d = u32::try_from(Self::literal(d, "constant")?)
-                    .map_err(|_| "a constant out of range")?;
-                Ok(E::new(self.cx.const_ref(d)?, K::Ref))
-            }
             ("OpConvBoolFromRef", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("({}.rec != 0)", as_ref(r)?), K::Cond))
@@ -1610,6 +1619,43 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("loft_field({}, {fld})", as_ref(r)?), K::Ref))
+            }
+            _ => self.ref_operator(name, args, ind),
+        }
+    }
+
+    /// References as values: constants, whole references in fields, raw rebinds.
+    fn ref_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match (name, args) {
+            ("OpConstRef", [d]) => {
+                let d = u32::try_from(Self::literal(d, "constant")?)
+                    .map_err(|_| "a constant out of range")?;
+                Ok(E::new(self.cx.const_ref(d)?, K::Ref))
+            }
+            ("OpGetDbRef", [r, fld]) => {
+                let fld = Self::literal(fld, "field")?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_get_dbref({}, {fld})", as_ref(r)?),
+                    K::Ref,
+                ))
+            }
+            ("OpSetDbRef", [r, fld, x]) => {
+                let fld = Self::literal(fld, "field")?;
+                let (r, x) = self.two(name, &[(*r).clone(), (*x).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_set_dbref({}, {fld}, {})", as_ref(r)?, as_ref(x)?),
+                    K::Void,
+                ))
+            }
+            // The drop cascade of a closure record releases stores only: nothing observable.
+            ("OpDropFnRef", [_]) => Ok(E::new("(void) 0", K::Void)),
+            ("OpPutRef", [Value::Var(v), x]) => {
+                let x = self.expr(x, ind)?;
+                Ok(E::new(
+                    format!("{} = {}", self.var(*v), as_ref(x)?),
+                    K::Void,
+                ))
             }
             _ => self.field_operator(name, args, ind),
         }
@@ -2254,6 +2300,7 @@ const OP_BOOL: &[&str] = &[
 ];
 const OP_REF: &[&str] = &[
     "OpConstRef",
+    "OpGetDbRef",
     "OpGetField",
     "OpGetVector",
     "OpGetVectorNullable",
