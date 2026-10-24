@@ -1270,6 +1270,23 @@ pub const COPY_FREE_SOURCE: u16 = 0x8000;
 pub const COPY_FRESH_DEST: u16 = 0x4000;
 pub const COPY_TP_MASK: u16 = 0x3FFF;
 
+/// `@FR-R-Reuse`'s reset clause — set on the type of a POOL's release (`OpClear(b, tp |
+/// POOL_RESET)`, `scopes::reuse_record_buffers`): the buffer's store holds nothing but the
+/// previous result's tree, so the release resets the store to a fresh root
+/// ([`crate::database::Stores::reset_pool_root`]) instead of walking the tree to free it block
+/// by block.  Every pass that reads the `OpClear` reads a release either way; only the
+/// runtime acts on the bit.  [`POOL_TP_MASK`] strips it.
+pub const POOL_RESET: u16 = 0x8000;
+pub const POOL_TP_MASK: u16 = 0x7FFF;
+
+/// `LOFT_NO_POOL_RESET=1` — a pool's release walks its tree again (`@FR-R-Reuse`'s reset
+/// clause off): the first bisect step for a value lost or a store reading stale after a
+/// reused call buffer's release.
+pub fn pool_reset_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_POOL_RESET"))
+}
+
 /// @PLN157 § V (Route R, caller half): a call's hidden RECORD buffer is allocated once —
 /// **DEFAULT ON**.  Opt OUT with `LOFT_NO_RETBUF_REUSE`.
 ///
