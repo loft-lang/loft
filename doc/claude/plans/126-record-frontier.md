@@ -3,7 +3,8 @@
 > **Status — DONE 2026-08-11.** Shipped `store_release(collection)`; declined the
 > per-record release the issue proposed. Reference for the post-plan contract lives in
 > [DATABASE.md § `store_release`](../DATABASE.md) and
-> [STDLIB.md](../STDLIB.md); the catalogue entry is `loft-lang/features#112` (@F112).
+> [STDLIB.md](../STDLIB.md); the catalogue entry was `loft-lang/features#112`, closed when
+> C153 removed the bound-store family `store_release` belonged to.
 > This file is a closure record: the prediction written before the instrument existed,
 > the measurement that falsified half of it, and what the build then cost.
 

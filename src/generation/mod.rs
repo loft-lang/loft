@@ -905,6 +905,9 @@ pub struct Output<'a> {
     /// `@FR-R-FaultFlag` — the `for` statements whose EXACT copy is being emitted, so the
     /// ordinary path does not admit them a second time.
     pub fault_flag_exact: HashSet<usize>,
+    /// `@FR-R-FaultFlag`'s pure-call clause — each function already asked: `None` pure,
+    /// `Some(why)` not.
+    pub fault_flag_pure: std::cell::RefCell<HashMap<u32, Option<String>>>,
     /// `LOFT_NO_DISTINCT_GROWTH=1` — a loop that grows ANY store binds no element base and a
     /// remainder that grows one binds no record address, as before `@FR-R-Base`'s growth
     /// clause; the bisect step for a wrong element or field read in a loop that appends
@@ -2468,6 +2471,7 @@ impl<'a> Output<'a> {
             fault_flag_disabled: std::env::var("LOFT_NO_FAULT_FLAG").is_ok_and(|v| v != "0"),
             fault_flag_trace: std::env::var("LOFT_TRACE_FAULT_FLAG").is_ok_and(|v| v != "0"),
             fault_flag_exact: HashSet::new(),
+            fault_flag_pure: std::cell::RefCell::new(HashMap::new()),
             distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
                 .is_ok_and(|v| v != "0"),
             placed_locals: HashSet::new(),

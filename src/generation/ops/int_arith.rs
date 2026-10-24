@@ -170,34 +170,6 @@ fn write_plain(ctx: &mut EmitCtx<'_, '_>, form: &str, args: &[Value]) -> io::Res
 impl OpEmitter for IntArithEmitter {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        // `@FR-R-FaultFlag` — in a fast copy an operator that can answer null wraps and sets
-        // the copy's flag where the checked form would answer null; a clear flag means the
-        // wrapping answer IS the checked one.
-        if let Some(flag) = ctx.output.fault_flag.clone()
-            && let Some(form) = super::super::fault_flag::int_form(ctx.def_fn.name(), args.len())
-        {
-            return match form {
-                "&" | "|" | "^" => {
-                    write!(ctx.w, "{{ let (__fa, __fb) = ops::ff_null2(")?;
-                    ctx.emit(&args[0])?;
-                    write!(ctx.w, ", ")?;
-                    ctx.emit(&args[1])?;
-                    write!(ctx.w, ", &mut {flag}); __fa {form} __fb }}")
-                }
-                "ff_neg" => {
-                    write!(ctx.w, "ops::ff_neg(")?;
-                    ctx.emit(&args[0])?;
-                    write!(ctx.w, ", &mut {flag})")
-                }
-                _ => {
-                    write!(ctx.w, "ops::{form}(")?;
-                    ctx.emit(&args[0])?;
-                    write!(ctx.w, ", ")?;
-                    ctx.emit(&args[1])?;
-                    write!(ctx.w, ", &mut {flag})")
-                }
-            };
-        }
         if ctx.output.plain_nest > 0
             && !ctx.output.release_pass_probe
             && let Some(form) = nest_form(ctx.def_fn.name(), args)
@@ -332,6 +304,37 @@ impl OpEmitter for IntArithEmitter {
             )?;
             ctx.emit(&args[1])?;
             return write!(ctx.w, ") }} }}");
+        }
+        // `@FR-R-FaultFlag` — in a fast copy an operator whose operands are not proven non-null
+        // wraps and sets the copy's flag where the checked form would answer null; a clear flag
+        // means the wrapping answer IS the checked one.  AFTER the range and literal forms, and
+        // only where the non-sentinel proof fails: those forms carry no null test on the value
+        // path, which is the one thing the flag takes off it (a counter's step stays theirs).
+        if let Some(flag) = ctx.output.fault_flag.clone()
+            && (ctx.output.nn_fast_disabled || !ctx.output.non_sentinel_args(args))
+            && let Some(form) = super::super::fault_flag::int_form(ctx.def_fn.name(), args.len())
+        {
+            return match form {
+                "&" | "|" | "^" => {
+                    write!(ctx.w, "{{ let (__fa, __fb) = ops::ff_null2(")?;
+                    ctx.emit(&args[0])?;
+                    write!(ctx.w, ", ")?;
+                    ctx.emit(&args[1])?;
+                    write!(ctx.w, ", &mut {flag}); __fa {form} __fb }}")
+                }
+                "ff_neg" => {
+                    write!(ctx.w, "ops::ff_neg(")?;
+                    ctx.emit(&args[0])?;
+                    write!(ctx.w, ", &mut {flag})")
+                }
+                _ => {
+                    write!(ctx.w, "ops::{form}(")?;
+                    ctx.emit(&args[0])?;
+                    write!(ctx.w, ", ")?;
+                    ctx.emit(&args[1])?;
+                    write!(ctx.w, ", &mut {flag})")
+                }
+            };
         }
         let Some(fast) = fast_form(ctx.def_fn.name(), args) else {
             return super::default::DefaultEmitter.emit(ctx, args);
