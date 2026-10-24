@@ -129,7 +129,7 @@ fn compiled() -> Vec<String> {
         .iter()
         .map(|(f, _, _)| p.data.def_nr(&format!("n_{f}")))
         .collect();
-    let mut c = loft::c::emit_unit(&p.data, &roots)
+    let mut c = loft::c::emit_unit(&p.data, &p.database, &roots)
         .unwrap_or_else(|r| panic!("the scalar subset is carried, but: {r}"));
     c.push_str("\n#include <stdio.h>\n\nstatic void show(int64_t v) {\n");
     c.push_str("    if (v == LOFT_NULL) printf(\"null\\n\"); else printf(\"%lld\\n\", (long long) v);\n}\n\n");
@@ -191,10 +191,11 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed("fn label(n: integer) -> text { \"n={n}\" }\n");
-    let d = p.data.def_nr("n_label");
-    let refusal = loft::c::emit_unit(&p.data, &[d]).expect_err("text is not carried yet");
-    assert_eq!(refusal.function, "label");
+    let p = parsed("fn half(x: float) -> float { x / 2.0 }\n");
+    let d = p.data.def_nr("n_half");
+    let refusal =
+        loft::c::emit_unit(&p.data, &p.database, &[d]).expect_err("float is not carried yet");
+    assert_eq!(refusal.function, "half");
     assert!(
         refusal.why.contains("returns"),
         "names the construct: {refusal}"
