@@ -70,7 +70,7 @@ def one(path: str, asan: bool = False):
             return path, "refused", reason(err), None
         if code != 0:
             return path, "refused", "the program does not compile in loft", None
-        code, _, err = run(CC + (ASAN if asan else []) + [c, "-o", exe], 120)
+        code, _, err = run(CC + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
         if code != 0:
             return path, "cc-error", err.decode(errors="replace").strip().split("\n")[0], None
         c_out = run([exe], 60, cwd=src.parent)

@@ -38,6 +38,10 @@ enum K {
     Ref,
     /// A plain enum value, `uint8_t`.
     Enum,
+    /// `double`.
+    Float,
+    /// `float`.
+    Single,
     /// A tuple struct, by its number.
     Tup(u32),
     /// No value.
@@ -67,6 +71,8 @@ fn kind_of(c: CType) -> K {
         CType::Text => K::View,
         CType::Ref => K::Ref,
         CType::Enum => K::Enum,
+        CType::Float => K::Float,
+        CType::Single => K::Single,
         CType::Tuple(id) => K::Tup(id),
         CType::Void => K::Void,
     }
@@ -92,6 +98,8 @@ pub(crate) struct FnWriter<'a> {
     /// The label number of each enclosing loop, innermost last.
     loops: Vec<u32>,
     labels: u32,
+    /// Which variables a statement written so far has bound: a later `Set` is a rebind.
+    bound: Vec<bool>,
 }
 
 impl<'a> FnWriter<'a> {
@@ -117,6 +125,7 @@ impl<'a> FnWriter<'a> {
             pending: Vec::new(),
             loops: Vec::new(),
             labels: 0,
+            bound: vec![false; def.variables().count() as usize],
         }
     }
 
@@ -214,19 +223,74 @@ impl<'a> FnWriter<'a> {
                     Some(v) => self.assign(v, &r, c, ind)?,
                     None => self.null_into(&r, c, ind),
                 }
-                if c == CType::Text {
-                    // The result leaves the function: its buffer moves out before the
-                    // epilogue frees every text the function holds.
-                    self.line(ind, &format!("loft_text {r}_out = {r};"));
-                    self.line(ind, &format!("{r}.p = 0;"));
-                    self.epilogue(ind);
-                    self.line(ind, &format!("return {r}_out;"));
-                } else {
-                    self.epilogue(ind);
-                    self.line(ind, &format!("return {r};"));
-                }
+                self.ret_held(&r, ind);
             }
         }
+        Ok(())
+    }
+
+    /// Return the value temporary `r` already holds, of the function's result shape.
+    fn ret_held(&mut self, r: &str, ind: usize) {
+        if self.ret == CType::Text {
+            // The result leaves the function: its buffer moves out before the
+            // epilogue frees every text the function holds.
+            self.line(ind, &format!("loft_text {r}_out = {r};"));
+            self.line(ind, &format!("{r}.p = 0;"));
+            self.epilogue(ind);
+            self.line(ind, &format!("return {r}_out;"));
+        } else {
+            self.epilogue(ind);
+            self.line(ind, &format!("return {r};"));
+        }
+    }
+
+    /// A value the scopes pass left for the bytecode's evaluation stack: `[value, frees…,
+    /// return null]`, where `OpReturn` answers the value still on the stack top.  The
+    /// positions of the value and of the return, when `ops` ends that way; the native
+    /// writer's `detect_ref_tail_capture` is the same reading.
+    fn tail_capture(&self, ops: &[Value]) -> Option<(usize, usize)> {
+        if self.ret == CType::Void {
+            return None;
+        }
+        let ret = ops
+            .iter()
+            .rposition(|o| !matches!(o.unspan(), Value::Line(_)))?;
+        let Value::Return(x) = ops[ret].unspan() else {
+            return None;
+        };
+        if !matches!(x.unspan(), Value::Null) && !self.is_free(x) {
+            return None;
+        }
+        let at = ops[..ret]
+            .iter()
+            .rposition(|o| !matches!(o.unspan(), Value::Line(_)) && !self.is_free(o))?;
+        (self.shape_of(&ops[at]).ok() == Some(self.ret)).then_some((at, ret))
+    }
+
+    /// A scope-exit free, or the store lock the cleanup window may hold.
+    fn is_free(&self, v: &Value) -> bool {
+        matches!(v.unspan(), Value::Call(d, _) if {
+            let name = self.cx.data.def(*d).name();
+            name.starts_with("OpFree") || name == "n_set_store_lock"
+        })
+    }
+
+    /// `ops` for their effect, returning the value a `tail_capture` names.
+    fn ops_stmt(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
+        let Some((at, ret)) = self.tail_capture(ops) else {
+            return ops.iter().try_for_each(|o| self.stmt(o, ind));
+        };
+        ops[..at].iter().try_for_each(|o| self.stmt(o, ind))?;
+        let r = self.temp(self.ret);
+        self.assign(&ops[at], &r, self.ret, ind)?;
+        self.flush(ind);
+        ops[at + 1..ret]
+            .iter()
+            .try_for_each(|o| self.stmt(o, ind))?;
+        if let Value::Return(x) = ops[ret].unspan() {
+            self.stmt(x, ind)?;
+        }
+        self.ret_held(&r, ind);
         Ok(())
     }
 
@@ -237,6 +301,8 @@ impl<'a> FnWriter<'a> {
             CType::Text => format!("loft_text_set(&{target}, loft_null_text());"),
             CType::Ref => format!("{target} = loft_ref_null();"),
             CType::Enum => format!("{target} = 255;"),
+            CType::Float => format!("{target} = (double) NAN;"),
+            CType::Single => format!("{target} = (float) NAN;"),
             CType::Tuple(id) => {
                 for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     self.null_into(&format!("{target}.f{i}"), e, ind);
@@ -396,16 +462,22 @@ impl<'a> FnWriter<'a> {
 
     /// `var = x`: a copy where loft copies a record, else the plain assignment.
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        let first = !std::mem::replace(&mut self.bound[var as usize], true);
         // An owned vector variable bound to null gets a store of its own whose record holds
         // the (empty) vector — the bytecode writer's `gen_set_first_vector_null`: the variable
         // then names that field.  A skip-free, inline or lazy-buffer one, and a view of another
-        // variable (bound to its target later), keep the sentinel.
+        // variable (bound to its target later), keep the sentinel.  A lazy buffer's LATER
+        // `Set(v, Null)` is its mint (`@FR-O-LazyBuffer`): the scopes pass guards it with
+        // `OpRefIsNull(v)`.
+        let lazy = self.vars.is_lazy_buffer(var);
         if matches!(x.unspan(), Value::Null)
             && let crate::data::Type::Vector(_, dep) = self.vars.tp(var)
             && dep.is_empty()
-            && !(self.vars.is_skip_free(var)
-                || self.vars.is_inline_ref(var)
-                || self.vars.is_lazy_buffer(var))
+            && (if lazy {
+                !first
+            } else {
+                !(self.vars.is_skip_free(var) || self.vars.is_inline_ref(var))
+            })
         {
             let name = self.var(var);
             self.line(ind, &format!("{name} = loft_ref_null();"));
@@ -469,7 +541,7 @@ impl<'a> FnWriter<'a> {
     }
 
     fn block_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
-        b.operators.iter().try_for_each(|o| self.stmt(o, ind))
+        self.ops_stmt(&b.operators, ind)
     }
 
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
@@ -525,6 +597,9 @@ impl<'a> FnWriter<'a> {
         c: CType,
         ind: usize,
     ) -> Result<(), String> {
+        if self.tail_capture(ops).is_some() {
+            return self.ops_stmt(ops, ind);
+        }
         let Some((last, rest)) = ops.split_last() else {
             return Err("a value block with no operators".into());
         };
@@ -546,6 +621,8 @@ impl<'a> FnWriter<'a> {
             },
             Value::Int(_) | Value::Long(_) => Ok(CType::Int),
             Value::Enum(..) => Ok(CType::Enum),
+            Value::Float(_) => Ok(CType::Float),
+            Value::Single(_) => Ok(CType::Single),
             Value::Boolean(_) => Ok(CType::Bool),
             Value::Text(_) => Ok(CType::Text),
             Value::Var(v) => Ok(self.shapes[*v as usize]),
@@ -585,6 +662,14 @@ impl<'a> FnWriter<'a> {
             Value::Long(l) => Ok(E::new(format!("INT64_C({l})"), K::Int)),
             Value::Boolean(b) => Ok(E::new(if *b { "1" } else { "0" }, K::Cond)),
             Value::Enum(v, _) => Ok(E::new(format!("(uint8_t) {v}"), K::Enum)),
+            Value::Float(f) => Ok(E::new(
+                format!("loft_f64(UINT64_C({:#x}))", f.to_bits()),
+                K::Float,
+            )),
+            Value::Single(f) => Ok(E::new(
+                format!("loft_f32(UINT32_C({:#x}))", f.to_bits()),
+                K::Single,
+            )),
             Value::Text(s) => Ok(E::new(
                 format!("loft_lit({}, {})", c_string(s), s.len()),
                 K::View,
@@ -662,6 +747,8 @@ impl<'a> FnWriter<'a> {
                 K::Ref => (CType::Ref, e.code),
                 K::Tup(id) => (CType::Tuple(id), e.code),
                 K::Enum => (CType::Enum, e.code),
+                K::Float => (CType::Float, e.code),
+                K::Single => (CType::Single, e.code),
                 _ => (CType::Bool, as_bool(e)?),
             };
             let t = self.temp(c);
@@ -930,6 +1017,185 @@ impl<'a> FnWriter<'a> {
                     K::View,
                 ))
             }
+            _ => self.float_operator(name, args, ind),
+        }
+    }
+
+    /// The float and single operators: `Float` names a double, `Single` a float.
+    fn float_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        /// `(operator, single?, C spelling)` for the binary arithmetic.
+        const INFIX: &[(&str, bool, &str)] = &[
+            ("OpAddFloat", false, "+"),
+            ("OpMinFloat", false, "-"),
+            ("OpMulFloat", false, "*"),
+            ("OpDivFloat", false, "/"),
+            ("OpDivFloatNullable", false, "/"),
+            ("OpAddSingle", true, "+"),
+            ("OpMinSingle", true, "-"),
+            ("OpMulSingle", true, "*"),
+            ("OpDivSingle", true, "/"),
+            ("OpDivSingleNullable", true, "/"),
+        ];
+        /// `(operator, single?, C function)` for the calls of two operands.
+        const CALL2: &[(&str, bool, &str)] = &[
+            ("OpRemFloat", false, "fmod"),
+            ("OpRemFloatNullable", false, "fmod"),
+            ("OpPowFloat", false, "pow"),
+            ("OpRemSingle", true, "fmodf"),
+            ("OpRemSingleNullable", true, "fmodf"),
+            ("OpPowSingle", true, "powf"),
+        ];
+        /// `(operator, single?, C comparison, negated?)`.
+        const CMP: &[(&str, bool, &str, bool)] = &[
+            ("OpEqFloat", false, "loft_feq", false),
+            ("OpNeFloat", false, "loft_feq", true),
+            ("OpLtFloat", false, "loft_flt", false),
+            ("OpLeFloat", false, "loft_fle", false),
+            ("OpEqSingle", true, "loft_feq", false),
+            ("OpNeSingle", true, "loft_feq", true),
+            ("OpLtSingle", true, "loft_flt", false),
+            ("OpLeSingle", true, "loft_fle", false),
+        ];
+        let shape = |single: bool| -> (K, fn(E) -> Result<String, String>) {
+            if single {
+                (K::Single, as_single)
+            } else {
+                (K::Float, as_float)
+            }
+        };
+        if let Some((_, single, op)) = INFIX.iter().find(|(n, _, _)| *n == name) {
+            let (k, conv) = shape(*single);
+            let (a, b) = self.two(name, args, ind)?;
+            return Ok(E::new(format!("({} {op} {})", conv(a)?, conv(b)?), k));
+        }
+        if let Some((_, single, f)) = CALL2.iter().find(|(n, _, _)| *n == name) {
+            let (k, conv) = shape(*single);
+            let (a, b) = self.two(name, args, ind)?;
+            return Ok(E::new(format!("{f}({}, {})", conv(a)?, conv(b)?), k));
+        }
+        if let Some((_, single, f, neg)) = CMP.iter().find(|(n, _, _, _)| *n == name) {
+            let (_, conv) = shape(*single);
+            let (a, b) = self.two(name, args, ind)?;
+            let neg = if *neg { "!" } else { "" };
+            return Ok(E::new(
+                format!("{neg}{f}({}, {})", conv(a)?, conv(b)?),
+                K::Cond,
+            ));
+        }
+        let unary = match name {
+            "OpMinSingleFloat" => Some((false, "-")),
+            "OpMinSingleSingle" => Some((true, "-")),
+            "OpAbsFloat" => Some((false, "fabs")),
+            "OpAbsSingle" => Some((true, "fabsf")),
+            _ => None,
+        };
+        if let Some((single, f)) = unary {
+            let (k, conv) = shape(single);
+            let a = self.one(name, args, ind)?;
+            return Ok(E::new(format!("({f}({}))", conv(a)?), k));
+        }
+        self.float_conversion(name, args, ind)
+    }
+
+    /// The conversions to and from floats, their math functions and their fields.
+    fn float_conversion(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match (name, args) {
+            ("OpConvFloatFromNull", []) => Ok(E::new("(double) NAN", K::Float)),
+            ("OpConvSingleFromNull", []) => Ok(E::new("(float) NAN", K::Single)),
+            ("OpConvFloatFromInt" | "OpConvFloatFromLong", [_]) => {
+                let a = self.one(name, args, ind)?;
+                Ok(E::new(format!("loft_i2f({})", as_int(a)?), K::Float))
+            }
+            ("OpConvSingleFromInt", [_]) => {
+                let a = self.one(name, args, ind)?;
+                Ok(E::new(format!("loft_i2s({})", as_int(a)?), K::Single))
+            }
+            ("OpCastIntFromFloat", [_]) => {
+                let a = self.one(name, args, ind)?;
+                Ok(E::new(format!("loft_f2i({})", as_float(a)?), K::Int))
+            }
+            ("OpCastIntFromSingle", [_]) => {
+                let a = self.one(name, args, ind)?;
+                Ok(E::new(
+                    format!("loft_f2i((double) {})", as_single(a)?),
+                    K::Int,
+                ))
+            }
+            ("OpConvBoolFromFloat", [_]) => {
+                let a = self.one(name, args, ind)?;
+                Ok(E::new(format!("(!isnan({}))", as_float(a)?), K::Cond))
+            }
+            ("OpConvBoolFromSingle", [_]) => {
+                let a = self.one(name, args, ind)?;
+                Ok(E::new(format!("(!isnan({}))", as_single(a)?), K::Cond))
+            }
+            ("OpCastSingleFromFloat", [_]) => {
+                let a = self.one(name, args, ind)?;
+                Ok(E::new(format!("((float) {})", as_float(a)?), K::Single))
+            }
+            ("OpConvFloatFromSingle", [_]) => {
+                let a = self.one(name, args, ind)?;
+                Ok(E::new(format!("((double) {})", as_single(a)?), K::Float))
+            }
+            ("OpMathPiFloat", []) => Ok(E::new("M_PI", K::Float)),
+            ("OpMathEFloat", []) => Ok(E::new("M_E", K::Float)),
+            ("OpMathFuncFloat" | "OpMathFuncSingle", [id, v]) => {
+                let id = Self::literal(id, "math function")?;
+                let a = self.expr(v, ind)?;
+                Ok(if name.ends_with("Single") {
+                    E::new(format!("loft_math1s({id}, {})", as_single(a)?), K::Single)
+                } else {
+                    E::new(format!("loft_math1({id}, {})", as_float(a)?), K::Float)
+                })
+            }
+            ("OpMathFunc2Float" | "OpMathFunc2Single", [id, a, b]) => {
+                let id = Self::literal(id, "math function")?;
+                let (a, b) = self.two(name, &[(*a).clone(), (*b).clone()], ind)?;
+                Ok(if name.ends_with("Single") {
+                    E::new(
+                        format!("loft_math2s({id}, {}, {})", as_single(a)?, as_single(b)?),
+                        K::Single,
+                    )
+                } else {
+                    E::new(
+                        format!("loft_math2({id}, {}, {})", as_float(a)?, as_float(b)?),
+                        K::Float,
+                    )
+                })
+            }
+            ("OpFormatFloat" | "OpFormatSingle", [dest, val, width, prec, token, plus, dir]) => {
+                let dest = self.text_dest(dest)?;
+                let (Value::Int(token), Value::Boolean(plus)) = (token.unspan(), plus.unspan())
+                else {
+                    return Err(format!("{name} with a computed format"));
+                };
+                let es = self.args(
+                    &[
+                        (*val).clone(),
+                        (*width).clone(),
+                        (*prec).clone(),
+                        (*dir).clone(),
+                    ],
+                    ind,
+                )?;
+                let [val, width, prec, dir] =
+                    <[E; 4]>::try_from(es).map_err(|_| "format operands".to_string())?;
+                let (val, single) = if name == "OpFormatSingle" {
+                    (format!("(double) {}", as_single(val)?), 1)
+                } else {
+                    (as_float(val)?, 0)
+                };
+                Ok(E::new(
+                    format!(
+                        "loft_format_float(&{dest}, {val}, {}, {}, {token}, {}, (int) {}, {single})",
+                        as_int(width)?,
+                        as_int(prec)?,
+                        u8::from(*plus),
+                        as_int(dir)?
+                    ),
+                    K::Void,
+                ))
+            }
             _ => self.store_operator(name, args, ind),
         }
     }
@@ -1060,6 +1326,35 @@ impl<'a> FnWriter<'a> {
                     format!("loft_set_text({}, {fld}, {})", as_ref(r)?, as_view(val)?),
                     K::Void,
                 ))
+            }
+            ("OpGetFloat" | "OpGetSingle", [r, fld]) => {
+                let fld = Self::literal(fld, "field")?;
+                let r = self.expr(r, ind)?;
+                let (f, k) = if name == "OpGetFloat" {
+                    ("loft_get_float", K::Float)
+                } else {
+                    ("loft_get_single", K::Single)
+                };
+                Ok(E::new(format!("{f}({}, {fld})", as_ref(r)?), k))
+            }
+            ("OpSetFloat" | "OpSetSingle", [r, fld, val]) => {
+                let fld = Self::literal(fld, "field")?;
+                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let (f, v) = if name == "OpSetFloat" {
+                    ("loft_set_float", as_float(val)?)
+                } else {
+                    ("loft_set_single", as_single(val)?)
+                };
+                Ok(E::new(format!("{f}({}, {fld}, {v})", as_ref(r)?), K::Void))
+            }
+            ("OpPushFloat" | "OpPushSingle", [v, val]) => {
+                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                let (f, x) = if name == "OpPushFloat" {
+                    ("loft_vec_push_float", as_float(val)?)
+                } else {
+                    ("loft_vec_push_single", as_single(val)?)
+                };
+                Ok(E::new(format!("{f}({}, {x})", as_ref(v)?), K::Void))
             }
             _ => self.vector_operator(name, args, ind),
         }
@@ -1204,6 +1499,20 @@ fn as_enum(e: E) -> Result<String, String> {
     }
 }
 
+fn as_float(e: E) -> Result<String, String> {
+    match e.kind {
+        K::Float => Ok(e.code),
+        k => Err(format!("a float expected, a {k:?} found")),
+    }
+}
+
+fn as_single(e: E) -> Result<String, String> {
+    match e.kind {
+        K::Single => Ok(e.code),
+        k => Err(format!("a single expected, a {k:?} found")),
+    }
+}
+
 fn as_view(e: E) -> Result<String, String> {
     match e.kind {
         K::View => Ok(e.code),
@@ -1220,72 +1529,132 @@ fn as_shape(e: E, c: CType) -> Result<String, String> {
         CType::Ref => as_ref(e),
         CType::Tuple(id) => as_tuple(e, id),
         CType::Enum => as_enum(e),
+        CType::Float => as_float(e),
+        CType::Single => as_single(e),
         CType::Void => Err("a void value".into()),
     }
 }
 
+/// The operators of each C shape, for the operators this backend writes.
+const OP_INT: &[&str] = &[
+    "OpAddInt",
+    "OpAddLong",
+    "OpMinInt",
+    "OpMinLong",
+    "OpMulInt",
+    "OpMulLong",
+    "OpDivInt",
+    "OpDivLong",
+    "OpRemInt",
+    "OpRemLong",
+    "OpGetInt",
+    "OpLengthVector",
+    "OpLengthText",
+    "OpSizeText",
+    "OpMinSingleInt",
+    "OpMinSingleLong",
+    "OpConvIntFromNull",
+    "OpConvLongFromNull",
+    "OpConvIntFromEnum",
+];
+const OP_BOOL: &[&str] = &[
+    "OpEqInt",
+    "OpEqLong",
+    "OpNeInt",
+    "OpNeLong",
+    "OpLtInt",
+    "OpLtLong",
+    "OpLeInt",
+    "OpLeLong",
+    "OpEqBool",
+    "OpNeBool",
+    "OpNot",
+    "OpEqText",
+    "OpNeText",
+    "OpRefIsNull",
+    "OpConvBoolFromInt",
+    "OpConvBoolFromLong",
+    "OpConvBoolFromEnum",
+    "OpConvBoolFromRef",
+];
+const OP_REF: &[&str] = &[
+    "OpGetField",
+    "OpGetVector",
+    "OpGetVectorNullable",
+    "OpNullRefSentinel",
+];
+const OP_ENUM: &[&str] = &[
+    "OpGetEnum",
+    "OpCastEnumFromInt",
+    "OpConvEnumFromNull",
+    "OpConstEnum",
+];
+const OP_TEXT: &[&str] = &["OpGetText", "OpCastTextFromEnum"];
+const OP_FLOAT: &[&str] = &[
+    "OpAddFloat",
+    "OpMinFloat",
+    "OpMulFloat",
+    "OpDivFloat",
+    "OpDivFloatNullable",
+    "OpRemFloat",
+    "OpRemFloatNullable",
+    "OpPowFloat",
+    "OpMinSingleFloat",
+    "OpAbsFloat",
+    "OpConvFloatFromNull",
+    "OpConvFloatFromInt",
+    "OpConvFloatFromLong",
+    "OpConvFloatFromSingle",
+    "OpMathPiFloat",
+    "OpMathEFloat",
+    "OpMathFuncFloat",
+    "OpMathFunc2Float",
+    "OpGetFloat",
+];
+const OP_SINGLE: &[&str] = &[
+    "OpAddSingle",
+    "OpMinSingle",
+    "OpMulSingle",
+    "OpDivSingle",
+    "OpDivSingleNullable",
+    "OpRemSingle",
+    "OpRemSingleNullable",
+    "OpPowSingle",
+    "OpMinSingleSingle",
+    "OpAbsSingle",
+    "OpConvSingleFromNull",
+    "OpConvSingleFromInt",
+    "OpCastSingleFromFloat",
+    "OpMathFuncSingle",
+    "OpMathFunc2Single",
+    "OpGetSingle",
+];
+const OP_FCMP: &[&str] = &[
+    "OpEqFloat",
+    "OpNeFloat",
+    "OpLtFloat",
+    "OpLeFloat",
+    "OpEqSingle",
+    "OpNeSingle",
+    "OpLtSingle",
+    "OpLeSingle",
+    "OpConvBoolFromFloat",
+    "OpConvBoolFromSingle",
+];
+const OP_FINT: &[&str] = &["OpCastIntFromFloat", "OpCastIntFromSingle"];
+
 /// The C shape an operator's value is held in, for the operators this backend writes.
 fn op_shape(name: &str) -> Option<CType> {
-    const INT: &[&str] = &[
-        "OpAddInt",
-        "OpAddLong",
-        "OpMinInt",
-        "OpMinLong",
-        "OpMulInt",
-        "OpMulLong",
-        "OpDivInt",
-        "OpDivLong",
-        "OpRemInt",
-        "OpRemLong",
-        "OpGetInt",
-        "OpLengthVector",
-        "OpLengthText",
-        "OpSizeText",
-        "OpMinSingleInt",
-        "OpMinSingleLong",
-        "OpConvIntFromNull",
-        "OpConvLongFromNull",
-        "OpConvIntFromEnum",
-    ];
-    const BOOL: &[&str] = &[
-        "OpEqInt",
-        "OpEqLong",
-        "OpNeInt",
-        "OpNeLong",
-        "OpLtInt",
-        "OpLtLong",
-        "OpLeInt",
-        "OpLeLong",
-        "OpEqBool",
-        "OpNeBool",
-        "OpNot",
-        "OpEqText",
-        "OpNeText",
-        "OpRefIsNull",
-        "OpConvBoolFromInt",
-        "OpConvBoolFromLong",
-        "OpConvBoolFromEnum",
-        "OpConvBoolFromRef",
-    ];
-    const REF: &[&str] = &[
-        "OpGetField",
-        "OpGetVector",
-        "OpGetVectorNullable",
-        "OpNullRefSentinel",
-    ];
-    const ENUM: &[&str] = &[
-        "OpGetEnum",
-        "OpCastEnumFromInt",
-        "OpConvEnumFromNull",
-        "OpConstEnum",
-    ];
-    const TEXT: &[&str] = &["OpGetText", "OpCastTextFromEnum"];
     let shapes = [
-        (INT, CType::Int),
-        (BOOL, CType::Bool),
-        (REF, CType::Ref),
-        (ENUM, CType::Enum),
-        (TEXT, CType::Text),
+        (OP_INT, CType::Int),
+        (OP_BOOL, CType::Bool),
+        (OP_REF, CType::Ref),
+        (OP_ENUM, CType::Enum),
+        (OP_TEXT, CType::Text),
+        (OP_FLOAT, CType::Float),
+        (OP_SINGLE, CType::Single),
+        (OP_FCMP, CType::Bool),
+        (OP_FINT, CType::Int),
     ];
     shapes
         .iter()
