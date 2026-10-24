@@ -2177,7 +2177,9 @@ arm in `ops::int_arith`, the loop hook in `emit.rs`.
                  scalar local nothing takes the address of, a block, an `if`, a loop, a
                  `break` / `continue` that stays inside it, or an OPERATOR whose `#rust`
                  template touches no state once its recoverable raise is taken out, and
-                 which holds at least one FAULT FORM, runs a fast copy first.  In it a
+                 which holds a DISCHARGE ON A RECURRENCE — one whose tested value
+                 depends, through the statement's assignments, on a local its result
+                 is written into — runs a fast copy first.  In it a
                  `??` / `?` discharge (`if not-null(n) { n } else { d }`) sets a flag where
                  `n` is null and answers `n`; a template's `s.raise_recoverable(k)` sets the
                  flag instead of raising.  Each fault form answers exactly the exact form's

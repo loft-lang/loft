@@ -4857,7 +4857,15 @@ impl Stores {
         }
         {
             let s = &self.allocations[rec.store_nr as usize];
-            if s.free || s.pinned || s.read_only || s.is_file_backed() || s.is_foreign() {
+            // The store was minted FOR this buffer: a buffer `(R-Place)` claimed inside a host's
+            // store is never that store's root at `1@8`, and its known type is the host's.
+            if s.free
+                || s.pinned
+                || s.read_only
+                || s.is_file_backed()
+                || s.is_foreign()
+                || s.known_type != tp
+            {
                 return false;
             }
         }
