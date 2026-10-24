@@ -143,6 +143,11 @@ slower than the compiled program on the same code. So:
 - **A hand-written Rust routine standing in for a loop.** It fixes one function name, not the
   pattern, and users' own loops of the same shape stay slow. Make the loft code fast; loft
   compiles through Rust, so it can be.
+- **A fix for code layout.** A routine that moved because its code moved (alignment, function
+  order, a branch predictor's luck) is noted, not fixed, unless the remedy is easy and gains
+  consistently across routines and runs (owner): processors are fickle, and a layout tweak that
+  helps one routine on one core costs another elsewhere.  Name the cause as layout with
+  evidence (identical emitted Rust, the same instruction count) before setting a row aside.
 - **Trusting the first profile.** A profile says what a symbol costs, not what removing it saves,
   and an operation-count profile overstates cheap work. Confirm in real time, then confirm the
   prize by hand (step 4).
