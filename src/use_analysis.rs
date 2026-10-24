@@ -517,8 +517,8 @@ struct Uses {
     ineligible: HashSet<u16>,
     /// The `Set(v, _)`s of each var: how many (a reassignment is > 1), and whether one hands
     /// it a VALUE — any right-hand side but a null.  A record built in place (`OpDatabase(v)`
-    /// + field writes) has none; one that also takes a value got its store from that value on
-    /// some path (loft#2148).  One entry per var, so the second question allocates nothing.
+    /// and field writes) has none; one that also takes a value got its store from that value
+    /// on some path (loft#2148).  One entry per var, so the second question allocates nothing.
     def_count: HashMap<u16, SetDefs>,
     /// The null-producing calls a `Set` may name — the reference null sentinel and the null
     /// conversion — which hand the var no value.

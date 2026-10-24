@@ -1,9 +1,8 @@
 # @PLN126 — tell a bound store a record is finished
 
 > **Status — DONE 2026-08-11.** Shipped `store_release(collection)`; declined the
-> per-record release the issue proposed. Reference for the post-plan contract lives in
-> [DATABASE.md § `store_release`](../DATABASE.md) and
-> [STDLIB.md](../STDLIB.md); the catalogue entry is `loft-lang/features#112` (@F112).
+> per-record release the issue proposed.  `store_release` was removed with the bound-store
+> family (C154), and its catalogue entry `loft-lang/features#112` is retired.
 > This file is a closure record: the prediction written before the instrument existed,
 > the measurement that falsified half of it, and what the build then cost.
 
