@@ -8,6 +8,11 @@
 // behind it, and a table that grew through several sizes with keys colliding in their home
 // buckets.  Every value is hand-computed.
 //
+// @falsified-at: hand-measured (2026-10-24) — with `hash::borrowed_find_int` reading the key 8
+//   bytes past its field (the `val` beside it), `--native` fails c1 with `1 0` (only key 0,
+//   whose val is also 0, is found); the interpreter passes, as it does not take this path.
+//   HOLDS: the cell passes on both backends with the walk as built.
+//
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
 struct G { id: integer, val: integer }
