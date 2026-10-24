@@ -7554,6 +7554,8 @@ fn main() {
     // into `introspect_opts` and are flushed into a real
     // `introspect::Options` after argv parsing.
     let mut introspect_mode = false;
+    // @PLN200 B5 — `--emit-c <out.c>`: write the program as C (the C backend) and exit.
+    let mut emit_c: Option<String> = None;
     // @PLN86 F12 — `loft sandbox-check <file>`: run the admission walk ONLY and print
     // Admitted / Rejected + diagnostics, NEVER execute.  The modder's "will this be
     // allowed?" loop; the policy comes from `loft.toml` like a normal run.
@@ -7724,6 +7726,10 @@ fn main() {
             // @PLN86 F12 — admission-only verdict; never executes (forced interpret
             // path, no codegen).  The program file follows as a positional arg.
             sandbox_check_mode = true;
+            native_mode = false;
+        } else if a == "--emit-c" {
+            emit_c = argv.get(i).cloned();
+            i += 1;
             native_mode = false;
         } else if a == "--introspect" || a == "introspect" {
             // @PLN12 phase 01: introspection mode (flag or bare subcommand).
@@ -12550,6 +12556,21 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     }
     state.database.set_logger(lg);
 
+    if let Some(out) = emit_c {
+        match loft::c::emit_program(&p.data, &state.database) {
+            Ok(c) => {
+                if let Err(e) = fa::write(&out, c) {
+                    eprintln!("loft: cannot write {out}: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            Err(r) => {
+                eprintln!("loft: the C backend does not carry this program yet: {r}");
+                std::process::exit(2);
+            }
+        }
+    }
     let main_nr = p.data.def_nr("n_main");
     // Plan-08 phase 01: --introspect short-circuits everything.
     // Bypass execution; emit bytecode + Rust + slots and exit.
