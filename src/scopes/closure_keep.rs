@@ -483,24 +483,25 @@ impl Scopes<'_> {
     /// value is copied into a displaced temp; after it, the temp gives up a closure it shares
     /// with the new value (`OpFnRefDetachShared` — `f = keep(f)` hands the same record back),
     /// runs the record's cascade and frees its store, and is set to null so the scope-end
-    /// sweep of the temp releases nothing.  Declined where the old value may be a record this
-    /// frame built (the record releases through itself) or another local shares the fn-ref
+    /// sweep of the temp releases nothing.  Declined where another local shares the fn-ref
     /// (`g = f`: releasing it here would leave `g` a freed closure).
+    ///
+    /// What decides is the DISPLACED value, never the new one: `f = mk(); f = plain` and
+    /// `f = mk(); f = |…| 0` displace a call's closure exactly as `f = mk(); f = mk()` does,
+    /// and asking whether the right-hand side was a call left those records and their captures
+    /// unreleased (loft#2155).  The old value may instead be a record this FRAME built (an
+    /// earlier statement, a loop's earlier pass), which releases through itself; so the
+    /// release is guarded by store identity against each of the frame's records, and runs
+    /// only for a displaced closure that is none of them.
     pub(super) fn fnref_call_rebind(
         &mut self,
         stmt: &Value,
         function: &mut Function,
         data: &Data,
     ) -> Option<(Vec<Value>, Vec<Value>)> {
-        let Value::Set(ov, rhs) = stmt.unspan() else {
+        let Value::Set(ov, _) = stmt.unspan() else {
             return None;
         };
-        // Only a CALL's closure is displaced here: a lambda built in this frame is released
-        // through its own record, and the first assignment of a local declared ahead of a
-        // branch (`h` bound in each arm) displaces only its null pre-init.
-        if !matches!(rhs.unspan(), Value::Call(d, _) if !data.def(*d).name().starts_with("Op")) {
-            return None;
-        }
         let v = *self.var_mapping.get(ov).unwrap_or(ov);
         if !matches!(function.tp(v).base(), Type::Function(..))
             || !self.fnref_bound.iter().any(|b| b.contains(&v))
@@ -513,10 +514,23 @@ impl Scopes<'_> {
             return None;
         }
         let count = function.count();
-        // Every entry a callee's tagged note (a call result), never a local of this frame.
-        if function.tp(v).depend().iter().any(|&r| r < count) {
+        // Any frame local in its deps other than a closure record is a value this release
+        // cannot reason about, as before.
+        if function
+            .tp(v)
+            .depend()
+            .iter()
+            .any(|&r| r < count && !super::capture_builds::is_record_local(function, r))
+        {
             return None;
         }
+        // Guarded against EVERY closure record of the frame, not the ones the deps name: a
+        // fn-ref's dep names only the last record assigned to it, so `r = |…| a; r = |…| b`
+        // displaces a record its type no longer mentions, and releasing that one here freed
+        // it a second time at its own scope end, captures included.
+        let frame_records: Vec<u16> = (0..count)
+            .filter(|&r| super::capture_builds::is_record_local(function, r))
+            .collect();
         if (0..count).any(|u| {
             u != v
                 && matches!(function.tp(u).base(), Type::Function(..))
@@ -533,10 +547,24 @@ impl Scopes<'_> {
             data.def_nr("OpFnRefDetachShared"),
             vec![Value::Var(tmp), Value::Var(v)],
         )];
+        let mut release = Vec::new();
         if data.any_closure_drop() {
-            post.push(call("OpDropFnRef", tmp, data));
+            release.push(call("OpDropFnRef", tmp, data));
         }
-        post.push(call("OpFreeRef", tmp, data));
+        release.push(call("OpFreeRef", tmp, data));
+        if frame_records.is_empty() {
+            post.extend(release);
+        } else {
+            let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(tmp)]);
+            post.push(Self::closure_keep_unless_shared(
+                &closure,
+                &[],
+                &frame_records,
+                Value::Insert(release),
+                &Value::Null,
+                data,
+            ));
+        }
         post.push(v_set(tmp, Value::Null));
         Some((pre, post))
     }
