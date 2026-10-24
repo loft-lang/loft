@@ -366,19 +366,7 @@ pub(crate) fn capture_build_backings(
             }
             match crate::use_analysis::view_root_slots(data, rhs).as_deref() {
                 Some([root]) if bind_views_root(function, *v, rhs, *root) => {
-                    // A root that is itself a view holds no store: `y = vs[1]` names `vs`,
-                    // and `vs` views `__vdb_1`.  The backing is the local that HOLDS the store,
-                    // so follow the root's own backing as it stands at this point
-                    // (@FR-O-Latest).  Stopping at `vs` left the record adopting a local the
-                    // frame never frees, and the frame then freed `__vdb_1` under a returned
-                    // closure that still read it (loft#2154).
-                    let mut holder = *root;
-                    for _ in 0..8 {
-                        match latest.get(&holder) {
-                            Some(&next) if next != holder => holder = next,
-                            _ => break,
-                        }
-                    }
+                    let holder = store_holder(&latest, *root);
                     latest.insert(*v, holder);
                 }
                 // A call that delivers into a hidden return buffer (`c = mk(5)` lowers to
@@ -450,6 +438,24 @@ pub(crate) fn capture_build_backings(
         _ => {}
     });
     out
+}
+
+/// The local that HOLDS the store `root` reaches, as `latest` stands at this point.
+///
+/// A root that is itself a view holds no store: `y = vs[1]` names `vs`, and `vs` views
+/// `__vdb_1`.  [`CaptureBuilds::backing`] names the holder, so the root's own backing is
+/// followed (@FR-O-Latest).  Stopping at `vs` left the record adopting a local the frame never
+/// frees, and the frame then freed `__vdb_1` under a returned closure that still read it
+/// (loft#2154).  The bound guards a cycle; it is not a depth the language sets.
+fn store_holder(latest: &HashMap<u16, u16>, root: u16) -> u16 {
+    let mut holder = root;
+    for _ in 0..8 {
+        match latest.get(&holder) {
+            Some(&next) if next != holder => holder = next,
+            _ => break,
+        }
+    }
+    holder
 }
 
 /// The captures a right-hand side BUILDS, each with the backing local it names.
