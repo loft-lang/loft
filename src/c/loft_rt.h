@@ -664,6 +664,26 @@ static void loft_set_char(loft_ref r, uint32_t fld, uint32_t c) {
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &c, 4);
 }
 
+/* A whole reference held in a field (Stores::get_db_ref / set_db_ref): store, record and
+ * position as three 4-byte words — how a closure record holds what it captured by reference. */
+static loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
+    if (r.rec == 0) return loft_ref_null();
+    loft_store_t *s = loft_store_of(r);
+    loft_ref x;
+    x.store_nr = (uint16_t) loft_u32(s, r.rec, r.pos + fld);
+    x.rec = loft_u32(s, r.rec, r.pos + fld + 4);
+    x.pos = loft_u32(s, r.rec, r.pos + fld + 8);
+    return x;
+}
+
+static void loft_set_dbref(loft_ref r, uint32_t fld, loft_ref x) {
+    if (r.rec == 0) return;
+    loft_store_t *s = loft_store_of(r);
+    loft_set_u32(s, r.rec, r.pos + fld, x.store_nr);
+    loft_set_u32(s, r.rec, r.pos + fld + 4, x.rec);
+    loft_set_u32(s, r.rec, r.pos + fld + 8, x.pos);
+}
+
 /* ── Vectors (src/vector.rs) ───────────────────────────────────────────────────────────── */
 
 static uint32_t loft_collection_rec(loft_store_t *s, uint32_t rec, uint32_t pos) {
