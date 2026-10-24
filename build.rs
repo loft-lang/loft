@@ -91,12 +91,22 @@ fn main() {
     // side.  `extensions::local_remap_flags` recomputes them for whatever machine
     // is doing the building, which makes both halves agree on `/cargo` and
     // `/rustc` rather than on nothing.
+    // Whether there WERE any is kept: the remap is a tracked option, so it is part of every
+    // crate's SVH, and a package's copy of a shared dep matches loft's only when both or
+    // neither were remapped (`LOFT_BUILD_REMAPPED`, read by `auto_build_native`).
+    let remapped = rustflags
+        .split_whitespace()
+        .any(|f| f.starts_with("--remap-path-prefix="));
     let rustflags = rustflags
         .split_whitespace()
         .filter(|f| !f.starts_with("--remap-path-prefix="))
         .collect::<Vec<_>>()
         .join(" ");
     println!("cargo:rustc-env=LOFT_BUILD_RUSTFLAGS={}", rustflags.trim());
+    println!(
+        "cargo:rustc-env=LOFT_BUILD_REMAPPED={}",
+        if remapped { "1" } else { "0" }
+    );
 
     // Stamp the rustc version this loft (and its rlib) was built with, so the
     // native path can detect — up front, before a doomed compile — that the
