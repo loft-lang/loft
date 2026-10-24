@@ -213,7 +213,9 @@ impl Walk<'_> {
         let def = self.data.def(d);
         let name = def.name();
         for a in def.attributes() {
-            if a.hidden || matches!(a.typedef, Type::RefVar(_)) {
+            // A by-reference parameter, also as `τ?` (`.base()` would peel the `&` away too).
+            let (shape, _) = a.typedef.peel_optional();
+            if a.hidden || matches!(shape, Type::RefVar(_)) {
                 return Err(format!(
                     "`{name}` writes through its parameter `{}`",
                     a.name
