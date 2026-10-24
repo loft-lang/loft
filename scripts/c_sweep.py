@@ -6,6 +6,7 @@
     scripts/c_sweep.py                  # every program scripts/corpus_files.sh lists
     scripts/c_sweep.py FILE...          # these programs
     scripts/c_sweep.py --verbose        # also every differing program's two outputs
+    scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
     LOFT_BIN=<loft> scripts/c_sweep.py  # another build (default target/release/loft)
 
 For each program: `loft --emit-c` writes it as C, `cc` builds it, and the C program's stdout
@@ -15,6 +16,7 @@ and the C's exit status is compared with `loft --tests`'s.  Every program lands 
   match     the backend carries it and the C answers what the interpreter answers
   differ    carried, and the answers differ — a defect of the C backend
   cc-error  carried, and the C does not compile — a defect of the C backend
+  sanitizer (--asan) carried, and the C program trips a sanitizer — a defect of the C backend
   refused   not carried yet; the reason is counted, and the ranking is the next work
 
 Exit 1 when any program differs or fails to compile, else 0.  Needs `cc` on PATH.
@@ -31,6 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
 CC = ["cc", "-std=c99", "-O1", "-w"]
+ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
 
@@ -57,7 +60,7 @@ def reason(stderr: bytes) -> str:
     return re.sub(r"\d+", "N", why)
 
 
-def one(path: str):
+def one(path: str, asan: bool = False):
     src = ROOT / path
     with tempfile.TemporaryDirectory(prefix="loft-c-sweep-") as tmp:
         c = os.path.join(tmp, "p.c")
@@ -67,10 +70,14 @@ def one(path: str):
             return path, "refused", reason(err), None
         if code != 0:
             return path, "refused", "the program does not compile in loft", None
-        code, _, err = run(CC + [c, "-o", exe], 120)
+        code, _, err = run(CC + (ASAN if asan else []) + [c, "-o", exe], 120)
         if code != 0:
             return path, "cc-error", err.decode(errors="replace").strip().split("\n")[0], None
-        c_out = run([exe], 30, cwd=src.parent)
+        c_out = run([exe], 60, cwd=src.parent)
+        if asan and (b"Sanitizer" in c_out[2] or b"runtime error:" in c_out[2]):
+            line = next((l for l in c_out[2].decode(errors="replace").split("\n")
+                         if "Sanitizer" in l or "runtime error:" in l), "")
+            return path, "sanitizer", line.strip()[:200], None
         if HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace")):
             i_out = run([LOFT, "--interpret", str(src)], 60, cwd=src.parent)
             same = (c_out[0], c_out[1]) == (i_out[0], i_out[1])
@@ -94,15 +101,16 @@ def main(argv: list[str]) -> int:
     reasons = Counter()
     bad = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
-        for path, bucket, why, outs in ex.map(one, files):
+        asan = "--asan" in argv
+        for path, bucket, why, outs in ex.map(lambda f: one(f, asan), files):
             buckets[bucket] += 1
             if bucket == "refused":
                 reasons[why] += 1
-            elif bucket in ("differ", "cc-error"):
+            elif bucket in ("differ", "cc-error", "sanitizer"):
                 bad.append((path, bucket, why, outs))
     total = len(files)
     print(f"C backend over {total} programs: " + ", ".join(
-        f"{buckets[b]} {b}" for b in ("match", "differ", "cc-error", "refused")))
+        f"{buckets[b]} {b}" for b in ("match", "differ", "cc-error", "sanitizer", "refused")))
     for path, bucket, why, outs in sorted(bad):
         print(f"  {bucket:8} {path}" + (f" — {why}" if why else ""))
         if verbose and outs:
