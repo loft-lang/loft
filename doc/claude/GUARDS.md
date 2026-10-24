@@ -98,8 +98,10 @@ assert names those outside values by construction.
 
 ## A guard that never failed is not a guard — `make falsify`
 
-**`make falsify GUARD=tests/scripts/<file>.loft REF=<commit-before-the-fix>`**
-(`scripts/falsify.sh`) builds `REF` in a cached worktree, runs the guard THERE and HERE, and
+**`make falsify GUARD=tests/scripts/<file>.loft [REF=<commit-before-the-fix>]`**
+(`scripts/falsify.sh`) takes the control — the installed main without `REF`
+([§ The control is installed main](#the-control-is-installed-main)), else `REF` built in a
+cached worktree — runs the guard THERE and HERE, and
 compares four channels apart — **exit code, assertion failures, leaked stores, panic** — plus
 the `refusals` and `expect` columns for annotation-scored files, so the verdict names *which
 one moved*:
@@ -188,6 +190,30 @@ lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS
   decision.
 - Checking that a sha exists: `git rev-parse --verify --quiet` or `git cat-file -e`; a plain
   `git rev-parse` prints its argument even for a missing object.
+
+### The control is installed main
+
+A bug is filed and fixed only when main has it ([CLAUDE.md § Bug-filing policy](../../CLAUDE.md)),
+so while a fix is unmerged, main IS the build without it — for every guard on the branch at
+once.  `make install-main` installs `origin/main` into `~/.local` from a persistent worktree
+(`LOFT_MAIN_TREE`, default `~/.cache/loft-main`), so after main moves only what changed is
+rebuilt; `make falsify GUARD=<file>` without `REF` (`falsify.sh <guard> --installed [<loft>]`)
+then scores the guard against that binary with no build at all.  A ref control costs a full
+debug build of its commit, and one per fix adds up to hours on a loaded box.
+
+- **Which commit it is** comes from `<prefix>/share/loft/SOURCE` (`<sha> clean|dirty`), which
+  `make install` writes from a git checkout.  The receipt is `@falsified-at: <that sha>`, the
+  same form as a ref receipt, because the installed binary is a build of that commit.  A
+  missing stamp or a dirty install is refused: neither names a build anyone can rebuild.
+- **Score before the branch is joined.**  Once main holds the fix, the installed build passes
+  too and the guard reads INERT; from then on the control is the fix's parent commit
+  (`REF=`), a full build again.
+- **It answers "fails without the branch", not "which fix cures it".**  With several fixes on
+  the branch, the patch the run writes reverses all of them, and the run says so; keep each
+  guard's patch to its own fix's diff and score that with `--patch`.
+- **A stale install still scores, and says so**: a note when `origin/main` has moved past the
+  installed commit, and a second when that commit is not an ancestor of this tree — the two
+  sides then also differ by commits the branch lacks, and no patch is written.
 
 ### The patch receipt — `@falsified-by:`
 

@@ -27,6 +27,13 @@
 # The control build is cached per ref under the scratch root, so a second guard against the
 # same ref costs nothing.
 #
+# `--installed` takes the INSTALLED loft as the control instead of building one: the binary
+# `make install-main` put on PATH, whose `share/loft/SOURCE` names the commit it was built
+# from.  Every bug fixed on a branch exists on main (CLAUDE.md § Bug-filing policy), so while
+# the fix is unmerged that one install is the control for every guard on the branch, and a
+# check costs the guard's run and nothing else.  Score before the branch is joined: once main
+# holds the fix, the installed build passes too and the guard reads INERT.
+#
 # ⚠ ONE CHANNEL IS BLIND, and it is blind for the corpus's usual guard shape.  The leak column
 # is read off the run's stderr ("stores not freed at program exit"), which only a `main`-ful
 # run under `--interpret` prints: `--tests` does not leak-check at all (the corpus leak gate
@@ -50,6 +57,7 @@ set -uo pipefail
 usage() {
   echo "usage: scripts/falsify.sh <guard.loft> <control-ref>" >&2
   echo "       scripts/falsify.sh <guard.loft> --patch <file>  # control = HEAD + the patch" >&2
+  echo "       scripts/falsify.sh <guard.loft> --installed [<loft>]  # control = the installed build" >&2
   echo "       scripts/falsify.sh --bulk <listfile>   # <guard>TAB<control-ref> per line" >&2
   echo "       scripts/falsify.sh --self-test         # the scorer's own parsing, on this machine's tools" >&2
   exit 2
@@ -59,11 +67,18 @@ SELF_TEST=""
 REF=""
 PATCHFILE=""
 PATCH_ABS=""
+INSTALLED_BIN=""
 if [ "${1:-}" = "--self-test" ]; then
   SELF_TEST=1
 elif [ "${1:-}" = "--bulk" ]; then
   [ $# -eq 2 ] || usage
   BULK="$2"; [ -f "$BULK" ] || { echo "no such list: $BULK" >&2; exit 2; }
+elif [ "${2:-}" = "--installed" ]; then
+  [ $# -eq 2 ] || [ $# -eq 3 ] || usage
+  GUARD="$1"; INSTALLED_BIN="${3:-$(command -v loft || true)}"
+  [ -f "$GUARD" ] || { echo "no such guard: $GUARD" >&2; exit 2; }
+  [ -n "$INSTALLED_BIN" ] && [ -x "$INSTALLED_BIN" ] || {
+    echo "no installed loft to use as the control — run: make install-main" >&2; exit 2; }
 elif [ "${2:-}" = "--patch" ]; then
   # The control as a PATCH rather than a ref, for a guard whose control commit no longer
   # exists anywhere.  The patch reintroduces the defect on top of HEAD, so the receipt carries
@@ -139,6 +154,38 @@ if [ -n "$PATCHFILE" ]; then
   # the branch had left, and scored the guard against semantics HEAD no longer has).
   SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)-$(git rev-parse --short=12 HEAD)"
   WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
+elif [ -n "$INSTALLED_BIN" ]; then
+  # The installed build is a control only when we know which commit it is: `make install`
+  # writes `<prefix>/share/loft/SOURCE` ("<sha> clean|dirty").  A dirty install is a build of
+  # no commit, so its receipt could name nothing anyone can rebuild.
+  bin_real=$(readlink -f "$INSTALLED_BIN" 2>/dev/null || echo "$INSTALLED_BIN")
+  src_file="$(dirname "$(dirname "$bin_real")")/share/loft/SOURCE"
+  isha=""; istate=""
+  [ -r "$src_file" ] && read -r isha istate < "$src_file"
+  if [ -z "$isha" ]; then
+    echo "$INSTALLED_BIN does not say which commit it was built from (no $src_file)." >&2
+    echo "  Install it with: make install-main" >&2
+    exit 2
+  fi
+  if [ "$istate" != clean ]; then
+    echo "$INSTALLED_BIN was built from a tree with uncommitted changes, so it is no commit's" >&2
+    echo "  build.  Reinstall from a clean tree: make install-main" >&2
+    exit 2
+  fi
+  resolve_control "$isha" || { echo "the installed build's commit $isha is not in this clone" >&2; exit 2; }
+  SHA=$(git rev-parse --short "$RESOLVED_SHA")
+  WT="$CACHE/installed-wt"; TGT=""
+  echo "control: the installed loft ($INSTALLED_BIN), built from $SHA" >&2
+  main_sha=$(git rev-parse --verify -q origin/main 2>/dev/null || true)
+  if [ -n "$main_sha" ] && [ "$main_sha" != "$RESOLVED_SHA" ]; then
+    echo "  note: origin/main is $(git rev-parse --short "$main_sha") — make install-main refreshes it" >&2
+  fi
+  INSTALLED_ANCESTOR=yes
+  if ! git merge-base --is-ancestor "$RESOLVED_SHA" HEAD; then
+    INSTALLED_ANCESTOR=no
+    echo "  note: $SHA is not an ancestor of this tree, so the two sides also differ by commits" >&2
+    echo "  this branch lacks; rebase onto it, or read a moved channel with that in mind" >&2
+  fi
 elif [ -z "$BULK" ] && [ -z "$SELF_TEST" ]; then
   resolve_control "$REF" || {
     echo "unknown ref: $REF" >&2
@@ -479,7 +526,15 @@ fi
 
 # `$WT.stub` marks a control still holding the stub: the stub build leaves a `debug/loft` too,
 # and a run killed before the regeneration must not be scored on it.
-if [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
+if [ -n "$INSTALLED_BIN" ]; then
+  # No build: only the SOURCE tree at the installed commit, because a guard runs inside the
+  # tree it is scored against (its `lib/`, its fixtures — `signature` says why).
+  if [ -d "$WT" ]; then
+    git -C "$WT" checkout -q --force --detach "$RESOLVED_SHA" || { echo "cannot check out $SHA" >&2; exit 1; }
+  else
+    git worktree add -q --detach "$WT" "$RESOLVED_SHA" || { echo "cannot create a worktree at $SHA" >&2; exit 1; }
+  fi
+elif [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
   if [ -n "$PATCHFILE" ]; then
     [ -d "$WT" ] || {
       git worktree add --detach "$WT" HEAD >/dev/null 2>&1 || {
@@ -507,13 +562,18 @@ if [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
   build "$WT" "$TGT" >/dev/null || { echo "the control does not build" >&2; exit 1; }
   rm -f "$WT.stub"
 fi
-CONTROL="$TGT/debug/loft"
+# The installed control runs WITHOUT `--path`: it loads the stdlib it was installed with.
+if [ -n "$INSTALLED_BIN" ]; then
+  CONTROL="$INSTALLED_BIN"; CONTROL_PATH=()
+else
+  CONTROL="$TGT/debug/loft"; CONTROL_PATH=(--path "$WT/")
+  touch "$TGT" "$WT" 2>/dev/null
+fi
 # The control build is a full debug `target/` (~2 GB: the native leg links `libloft.rlib` and
 # its dependency rlibs, so the binary alone is not enough).  Kept per ref and never pruned,
 # these reached 364 GB and filled the disk (2026-09-05).  Keep the LOFT_FALSIFY_KEEP most
 # recently USED controls (default 4) — this one is stamped now — and remove the rest, their
 # worktrees with them.
-touch "$TGT" "$WT" 2>/dev/null
 keep="${LOFT_FALSIFY_KEEP:-4}"
 for old in $(ls -td "$CACHE"/*-target 2>/dev/null | tail -n +$((keep + 1))); do
   case "$old" in */head-target|*/shared-target) continue;; esac
@@ -542,7 +602,7 @@ printf '%-12s %-10s %-46s %s\n' backend tree "exit|asserts|leak|panic|refusals|e
 for pair in "interpret ${MODE_I[*]}" "native ${MODE_N[*]}"; do
   name=${pair%% *}; args=${pair#* }
   # shellcheck disable=SC2086
-  c=$(signature "$CONTROL" "$WT" "$ROOT/$GUARD" --path "$WT/" $args)
+  c=$(signature "$CONTROL" "$WT" "$ROOT/$GUARD" ${CONTROL_PATH[@]+"${CONTROL_PATH[@]}"} $args)
   # `--path` for BOTH sides: the binary is built into its own target dir and has no
   # `default/` beside it, so without this it cannot load the stdlib and exits 1 — which
   # reads as a difference and would score every guard as falsified for the wrong reason.
@@ -664,7 +724,15 @@ elif [ $falsified_any -eq 1 ]; then
     # reintroduces everything fixed in between and cannot say which one the guard caught.  A
     # measured 47079-line "receipt" is the shape of that mistake.  The recorded receipts run
     # 17 to 203 lines, so a bound well above them separates the two uses without tuning.
-    if [ "${plines:-0}" -eq 0 ]; then
+    if [ "${INSTALLED_ANCESTOR:-yes}" = no ]; then
+      rm -f "$new"
+      echo
+      echo "note: no durable patch written — the installed build is not an ancestor of this tree,"
+      echo "      so a diff against it would also reverse commits this branch never had."
+      if [ "$kept" = yes ]; then
+        echo "      The EXISTING tests/falsified/$pbase.patch is untouched."
+      fi
+    elif [ "${plines:-0}" -eq 0 ]; then
       rm -f "$new"
       echo
       echo "note: no durable patch written — the fix touches nothing under src/, default/ or lib/,"
@@ -692,6 +760,14 @@ elif [ $falsified_any -eq 1 ]; then
       echo "…and the receipt that does not decay — written to tests/falsified/$pbase.patch."
       echo "Score it with: scripts/falsify.sh $GUARD --patch tests/falsified/$pbase.patch"
       echo "// @falsified-by: tests/falsified/$pbase.patch — $CHANNELS"
+      # The patch is this TREE against the control.  Against the installed main that is the
+      # whole branch, so with more than one fix on it the patch reverts them all.
+      nfix=$(git -C "$ROOT" rev-list --count "$SHA"..HEAD -- src/ default/ lib/ 2>/dev/null || echo 0)
+      if [ "${nfix:-0}" -gt 1 ]; then
+        echo "note: $nfix commits since $SHA touch the source, so this patch reverts all of them."
+        echo "      Keep only the fix's own diff (git diff -R <fix>^ <fix>) and score it with --patch"
+        echo "      — GUARDS.md § The patch receipt."
+      fi
     fi
   fi
   exit 0

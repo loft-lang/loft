@@ -288,7 +288,9 @@ the checklist:
    clippy legs.  A gate first run on GitHub after the push costs the gate, a fix build and a
    red tip a sibling may already have joined.
 5. **Receipts last** — `scripts/falsify.sh` builds the working tree, so it runs after the fix
-   is committed and while no edit is pending.
+   is committed and while no edit is pending.  Score against the installed main
+   (`make install-main`, then `make falsify GUARD=…` without `REF`) before the branch is
+   joined: no control build at all (GUARDS.md § The control is installed main).
 6. **One issue per push** — a defect found while verifying is filed with its repro at once
    and is the next push.
 
