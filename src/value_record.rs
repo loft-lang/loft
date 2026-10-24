@@ -223,7 +223,9 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     if disabled() || data.open_world {
         return 0;
     }
+    let mut laps = crate::compile::PassLaps::new(std::env::var_os("LOFT_TIMING").is_some());
     let vr = crate::opt::value_records::value_records(data, stores, false);
+    laps.lap("vr_analysis");
     if vr.fns.is_empty() && vr.params.is_empty() {
         return 0;
     }
@@ -264,11 +266,14 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             def.def_type == DefType::Function && !matches!(def.code(), Value::Null)
         })
         .collect();
+    laps.lap("vr_shapes");
+    let mut rounds = 0u32;
     // ADMISSION, a fixpoint: declining a function or a parameter turns what it carried into
     // an ordinary value, which declines the carriers that handed it on.  Every round only
     // removes.  A call site that cannot take the tuple declines nothing — it keeps calling
     // the record form (below).
     loop {
+        rounds += 1;
         let mut bad_fns: HashSet<u32> = HashSet::default();
         let mut bad_params: HashSet<(u32, usize)> = HashSet::default();
         let mut called: HashSet<u32> = HashSet::default();
@@ -290,6 +295,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             return 0;
         }
     }
+    laps.lap("vr_admission");
     // TWINS, a fixpoint that only grows.  A function some site still calls for a RECORD — a
     // local that cannot carry the tuple, an element or a field it is built into, a forward
     // whose function keeps its record — keeps its record form for exactly those sites, and a
@@ -300,6 +306,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     let mut plans: Vec<(u32, Plan)>;
     let mut twin_plans: Vec<(u32, Plan)>;
     loop {
+        rounds += 1000;
         plans = Vec::new();
         twin_plans = Vec::new();
         let mut owed: HashSet<u32> = HashSet::default();
@@ -320,6 +327,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             break;
         }
     }
+    laps.lap("vr_twins");
     // The twins are cloned from the untouched bodies, before anything is rewritten.
     let mut twins: HashMap<u32, u32> = HashMap::default();
     let mut sorted: Vec<u32> = twinned.iter().copied().collect();
@@ -354,6 +362,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         rewrite_callee(data, &w, target, c);
         touched.insert(target);
     }
+    laps.lap("vr_rewrite");
     crate::rewrite_census::fired("R-ValueRecord", w.cands.len());
     crate::rewrite_census::fired("R-ValueLocal", w.params.len());
     let mut touched: Vec<u32> = touched.into_iter().collect();
@@ -364,6 +373,17 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         crate::scopes::compute_function_intervals(data, d);
         crate::scopes::assign_function_slots(data, d);
     }
+    laps.lap("vr_intervals");
+    // `rounds`: admission rounds + 1000 x twin rounds.
+    laps.report(
+        &format!(
+            "value_record functions={} cands={} params={} rounds={rounds}",
+            functions.len(),
+            w.cands.len(),
+            w.params.len()
+        ),
+        data.definitions(),
+    );
     w.cands.len() + w.params.len()
 }
 

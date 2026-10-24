@@ -96,20 +96,20 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
 
 /// The time each pass of a whole-program step took, for `LOFT_TIMING`.  Inert (no clock
 /// read, no allocation) unless `on`.
-struct PassLaps {
+pub(crate) struct PassLaps {
     last: Option<std::time::Instant>,
     laps: Vec<(&'static str, f64)>,
 }
 
 impl PassLaps {
-    fn new(on: bool) -> Self {
+    pub(crate) fn new(on: bool) -> Self {
         PassLaps {
             last: on.then(std::time::Instant::now),
             laps: Vec::new(),
         }
     }
 
-    fn lap(&mut self, pass: &'static str) {
+    pub(crate) fn lap(&mut self, pass: &'static str) {
         if let Some(last) = self.last {
             let now = std::time::Instant::now();
             self.laps
@@ -118,7 +118,7 @@ impl PassLaps {
         }
     }
 
-    fn report(&self, step: &str, definitions: u32) {
+    pub(crate) fn report(&self, step: &str, definitions: u32) {
         if self.last.is_some() {
             let total: f64 = self.laps.iter().map(|(_, ms)| ms).sum();
             let mut line = format!("LOFT_TIMING {step} defs={definitions} total={total:.2}ms");
