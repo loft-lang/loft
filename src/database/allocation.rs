@@ -4124,6 +4124,13 @@ impl Stores {
         if src_claim == 0 || !hash::is_inline(self.store(rec), src_claim) {
             children.sort_by_key(|c| (c.child.rec, c.child.pos));
         }
+        // The destination table is sized for every entry BEFORE the first is filed, so it
+        // never grows mid-copy: a growth frees the old table, and an entry record claimed
+        // after it could land below an earlier one.  A borrowed entry walks in record order
+        // (`hash::records_by_slot`), so the copy's records must be claimed in the source's
+        // order, ascending, for an unordered walk of the copy to repeat its source's
+        // (`@FR-Col-Unordered`).
+        self.reserve_hash(to, children.len() as i64, tp);
         for child in children {
             let src_db = child.child;
             // The destination's entry takes the layout its TYPE asks for (`hash_entry`): a
