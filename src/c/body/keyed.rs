@@ -280,6 +280,21 @@ impl FnWriter<'_> {
                 let size = match on & 63 {
                     1 | 3 => 0,
                     2 => self.cx.stores.size(tp),
+                    // A vector walk: its state is the index; forward, the successor moves into
+                    // the removed slot, so the index steps back to visit it (State::remove).
+                    0 if !self.cx.stores.is_linked(tp) => {
+                        let size = self.cx.stores.size(tp);
+                        let state = self.var(*state);
+                        let data = self.expr(data, ind)?;
+                        let back = if on & 64 != 0 { "" } else { " - 1" };
+                        return Ok(Some(E::new(
+                            format!(
+                                "{{ (void) loft_vec_remove({}, {size}, {state}); {state} = {state}{back}; }}",
+                                as_ref(data)?
+                            ),
+                            K::Void,
+                        )));
+                    }
                     k => return Err(format!("a removal in a walk of kind {k}")),
                 };
                 let state = self.var(*state);

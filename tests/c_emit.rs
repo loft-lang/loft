@@ -191,13 +191,15 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed("fn up(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }\n");
+    let p = parsed(
+        "struct Pt { x: integer, y: integer }\nfn up() -> integer { s: spatial<Pt[x, y]> = [Pt { x: 1, y: 2 }]; len(s) }\n",
+    );
     let d = p.data.def_nr("n_up");
-    let refusal =
-        loft::c::emit_unit(&p.data, &p.database, &[d]).expect_err("a generator is not carried yet");
+    let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
+        .expect_err("a spatial collection is not carried yet");
     assert_eq!(refusal.function, "up");
     assert!(
-        refusal.why.contains("returns"),
+        refusal.why.contains("Radix"),
         "names the construct: {refusal}"
     );
 }
@@ -338,7 +340,11 @@ fn main() {
         .arg(&file)
         .output()
         .expect("run loft");
-    assert_eq!(String::from_utf8_lossy(&interp.stdout), want, "the interpreter");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
     let c = dir.join("keyed.c");
     let emit = loft::platform::process::harness_command(loft)
         .arg("--emit-c")
@@ -368,5 +374,255 @@ fn main() {
     let out = loft::platform::process::harness_command(&exe)
         .output()
         .expect("run the keyed C program");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
+}
+
+/// Files as C (`src/c/loft_io.h`): a record, a sized integer and a text written in their binary
+/// form and read back in order through a second handle, a text file written and read as lines,
+/// and a deleted path no longer existing.  Each value is computed by hand; the C is built twice
+/// — against POSIX and, with `-DLOFT_NO_POSIX`, against ISO C99 alone — and both must answer it.
+#[test]
+fn files_written_as_c_answer_the_hand_computed_values() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct P { x: integer, y: i32 }
+fn main() {
+  f = file("c_emit_files.bin");
+  f#format = LittleEndian;
+  f += P { x: 5, y: -6 };
+  f += (513 as u16);
+  f += "hi";
+  g = file("c_emit_files.bin");
+  g#format = LittleEndian;
+  q = g#read as P;
+  u = g#read as u16;
+  t = g#read(2) as text;
+  println("{q.x} {q.y} {u} {t} {g.size}");
+  h = file("c_emit_files.txt");
+  h.write("a\nb\n");
+  println("{file(\"c_emit_files.txt\").lines()}");
+  delete("c_emit_files.bin");
+  delete("c_emit_files.txt");
+  println("{exists(\"c_emit_files.bin\")}");
+}
+"#;
+    // The record is 8 + 4 bytes, the u16 2, the text 2: 16 bytes, which `file()` reports.
+    let want = "5 -6 513 hi 16\n[\"a\",\"b\"]\nfalse\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    for (mode, flags) in [
+        ("posix", &["-DLOFT_STRICT"][..]),
+        ("iso", &["-DLOFT_STRICT", "-DLOFT_NO_POSIX"][..]),
+    ] {
+        let dir = scratch(&format!("files-{mode}"));
+        let file = dir.join("files.loft");
+        fa::write(&file, src).expect("write program");
+        if mode == "posix" {
+            let interp = loft::platform::process::harness_command(loft)
+                .arg("--interpret")
+                .arg(&file)
+                .output()
+                .expect("run loft");
+            assert_eq!(
+                String::from_utf8_lossy(&interp.stdout),
+                want,
+                "the interpreter"
+            );
+        }
+        let c = dir.join("files.c");
+        let emit = loft::platform::process::harness_command(loft)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "the file program is carried: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let exe = dir.join("files");
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-pedantic", "-Werror"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: cc rejected the file C:\n{}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .current_dir(&dir)
+            .output()
+            .expect("run the file C program");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
+}
+
+/// Generators as C (`src/c/body/generator.rs`): a generator of texts over a text parameter ended
+/// early by `break`, one of integers through nested loops with a `continue`, and one stepped by
+/// hand and abandoned before its end.  Each value is computed by hand; the interpreter and the C
+/// must both answer it, and the C must stay clean under AddressSanitizer where `cc` offers it.
+#[test]
+fn generators_written_as_c_answer_the_hand_computed_values() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+fn words(prefix: text, n: integer) -> iterator<text> {
+  for i in 0..n {
+    if i == 3 { break; }
+    yield "{prefix}-{i}";
+  }
+}
+fn grid(w: integer, h: integer) -> iterator<integer> {
+  for y in 0..h { for x in 0..w { if x == y { continue; } yield y * 10 + x; } }
+}
+fn main() {
+  t = "";
+  for w in words("ab", 9) { t += w + ","; }
+  println(t);
+  s = 0;
+  for v in grid(3, 3) { s += v; }
+  println("{s}");
+  it = words("x", 5);
+  a = next(it);
+  b = next(it);
+  println("{a} {b}");
+}
+"#;
+    // words stops at i == 3; grid skips the diagonal: 1+2+10+12+20+21 = 66; `it` is left after
+    // two values, its frame released at the end of `main`.
+    let want = "ab-0,ab-1,ab-2,\n66\nx-0 x-1\n";
+    let dir = scratch("generators");
+    let file = dir.join("generators.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("generators.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "the generators are carried: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let exe = dir.join("generators");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the generator C:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the generator C program");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
+}
+
+/// `par` as C (`src/c/body/par.rs`): a worker over integer rows, one over record rows that
+/// returns a text, and one with an extra argument.  The C runs the rows in order; each result
+/// is the one a thread computes, so the hand-computed values hold on both.
+#[test]
+fn par_loops_written_as_c_answer_the_hand_computed_values() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct It { name: text, n: integer }
+fn sq(x: integer) -> integer { x * x }
+fn label(it: const It) -> text { "{it.name}{it.n}" }
+fn scaled(x: integer, k: integer) -> integer { x * k }
+fn main() {
+  v = [1, 2, 3, 4];
+  s = 0;
+  for x in v par(r = sq(x), 2) { s += r; }
+  items = [It { name: "a", n: 1 }, It { name: "b", n: 2 }];
+  t = "";
+  for it in items par(l = label(it), 2) { t += l + ","; }
+  k = 10;
+  u = 0;
+  for x in v par(m = scaled(x, k), 3) { u += m; }
+  println("{s} {t} {u}");
+}
+"#;
+    // 1+4+9+16 = 30; the labels in row order; (1+2+3+4)*10 = 100.
+    let want = "30 a1,b2, 100\n";
+    let dir = scratch("par");
+    let file = dir.join("par.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("par.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "the par loops are carried: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let exe = dir.join("par");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the par C:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the par C program");
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }

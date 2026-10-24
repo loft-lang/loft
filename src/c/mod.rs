@@ -18,6 +18,7 @@
 
 mod body;
 mod eq;
+mod files;
 mod fnval;
 mod show;
 
@@ -29,7 +30,8 @@ use std::fmt::Write as _;
 const RUNTIME: &str = concat!(
     include_str!("loft_cc.h"),
     include_str!("loft_rt.h"),
-    include_str!("loft_keyed.h")
+    include_str!("loft_keyed.h"),
+    include_str!("loft_io.h")
 );
 
 /// Why a function cannot be written as C yet.
@@ -125,6 +127,12 @@ pub(crate) struct Cx<'a> {
     eq_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every keyed collection type whose key parts the unit names (`loft_keys{tp}`).
     key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// Every type the unit writes to or reads from a file (`loft_ser{tp}` / `loft_de{tp}`).
+    ser_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The generators' frames and prototypes, written before the unit's functions.
+    gen_decls: std::cell::RefCell<String>,
+    /// The generators' resume and release functions, written after them.
+    gen_bodies: std::cell::RefCell<String>,
 }
 
 /// The record collections beside a plain vector the C carries; each layout is described in
@@ -155,6 +163,9 @@ impl<'a> Cx<'a> {
             fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            ser_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            gen_decls: std::cell::RefCell::new(String::new()),
+            gen_bodies: std::cell::RefCell::new(String::new()),
         }
     }
 
@@ -225,6 +236,7 @@ impl<'a> Cx<'a> {
             | Type::Hash(..)
             | Type::Sorted(..)
             | Type::Index(..)
+            | Type::Iterator(..)
             | Type::Enum(_, true, _) => Some(CType::Ref),
             Type::Enum(_, false, _) => Some(CType::Enum),
             Type::Tuple(elems) => {
@@ -511,6 +523,7 @@ impl<'a> Cx<'a> {
         }
         out.push_str(&self.show_code());
         out.push_str(&self.eq_code());
+        out.push_str(&self.ser_code());
         out.push_str(&self.const_code());
         out
     }
@@ -577,6 +590,10 @@ pub fn c_name(data: &Data, d: u32) -> String {
 pub(crate) fn native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_assert" => Some("loft_assert"),
+        "n_panic" => Some("loft_panic"),
+        "n_exit" => Some("loft_exit"),
+        "n_protect_store_frees" => Some("loft_protect"),
+        "n_unprotect_store_frees" => Some("loft_unprotect"),
         "n_ticks" => Some("loft_ticks"),
         "n_arguments" => Some("loft_arguments"),
         "n_vector_sum_int" => Some("loft_vector_sum_int"),
@@ -593,6 +610,36 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "t_4text_byte_at" => Some("loft_byte_at"),
         "n_hash_sorted" => Some("loft_hash_sorted"),
         "t_4hash_len" => Some("loft_hash_len"),
+        "n_read_bytes" => Some("loft_read_bytes"),
+        "n_write_bytes" => Some("loft_write_bytes"),
+        "n_write_text_raw" => Some("loft_write_text_raw"),
+        "n_list_dir" => Some("loft_list_dir"),
+        "n_mtime" => Some("loft_mtime"),
+        "n_is_dir" => Some("loft_is_dir_at"),
+        "n_is_file" => Some("loft_is_file_at"),
+        "n_os_temp_dir" => Some("loft_os_temp_dir"),
+        "n_source_dir" => Some("loft_source_dir"),
+        "n_path_sep" => Some("loft_path_sep"),
+        "n_env_variable" => Some("loft_env_variable"),
+        "n_now" => Some("loft_now"),
+        "n_parallel_queue"
+        | "n_parallel_queue_text"
+        | "n_parallel_queue_ref"
+        | "n_parallel_queue_narrow"
+        | "n_parallel_queue_fn"
+        | "n_parallel_discard"
+        | "n_parallel_buf_get"
+        | "n_parallel_buf_get_float"
+        | "n_parallel_buf_get_single"
+        | "n_parallel_buf_get_ref"
+        | "n_parallel_buf_get_fn"
+        | "n_parallel_buf_get_text"
+        | "n_parallel_buf_get_narrow"
+        | "n_parallel_buf_drop"
+        | "n_parallel_buf_drop_text"
+        | "n_parallel_buf_drop_narrow"
+        | "n_parallel_buf_drop_fn"
+        | "n_parallel_buf_drop_ref" => Some("loft_par"),
         _ => None,
     }
 }
@@ -608,7 +655,16 @@ pub(crate) fn is_operator(data: &Data, d: u32) -> bool {
 /// # Errors
 /// The first [`Refusal`], the roots' own first.
 pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, Refusal> {
-    let mut fns: Vec<u32> = crate::opt::names::reachable_functions(data, roots)
+    // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
+    // lambda the program reaches brings its record's cascade along.
+    let mut all: Vec<u32> = roots.to_vec();
+    for d in crate::opt::names::reachable_functions(data, roots) {
+        let cascade = data.drop_cascade_nr(data.def(d).closure_record());
+        if cascade != u32::MAX && !all.contains(&cascade) {
+            all.push(cascade);
+        }
+    }
+    let mut fns: Vec<u32> = crate::opt::names::reachable_functions(data, &all)
         .into_iter()
         .filter(|&d| {
             matches!(data.def(d).def_type(), DefType::Function)
@@ -636,8 +692,11 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     let mut out = String::from(RUNTIME);
     out.push('\n');
     out.push_str(&cx.typedefs());
+    out.push_str(&cx.gen_decls.borrow());
     out.push_str(&protos);
     out.push_str(&dispatch);
+    out.push_str(&cx.drop_code(&fns));
+    out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
     Ok(out)
 }
@@ -667,10 +726,22 @@ pub fn emit_program(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    loft_start(argc, argv);\n    {}();\n    return 0;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    {}\n    loft_start(argc, argv);\n    {}();\n    return 0;\n}}\n",
+        anchor(stores),
         c_name(data, main)
     );
     Ok(out)
+}
+
+/// The statement a generated `main` starts with: the directory a relative path resolves against
+/// (the program's own, as the interpreter's `Stores::resolve_path` anchors it) and whether
+/// the program anchors there at all (`#cwd` says no).
+fn anchor(stores: &Stores) -> String {
+    format!(
+        "loft_set_anchor({}, {});",
+        body::c_string(&stores.source_dir),
+        i32::from(stores.program_relative)
+    )
 }
 
 /// The signature and the body of function `d`.
@@ -694,7 +765,7 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
     for v in 0..vars.count() {
         // A `&` parameter has its target's shape, passed as a pointer to it.
         let tp = match vars.tp(v) {
-            Type::RefVar(inner) if args.contains(&v) => inner,
+            Type::RefVar(inner) => inner,
             tp => tp,
         };
         let c = cx.ctype(tp).filter(|c| *c != CType::Void).ok_or_else(|| {
@@ -725,6 +796,18 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
         params.join(", ")
     };
     let sig = format!("static {} {}({params})", held(ret), c_name(data, d));
+    if let Type::Iterator(elem, _) = def.returned() {
+        let elem = cx
+            .ctype(elem)
+            .filter(|c| !matches!(c, CType::Void | CType::Tuple(_)))
+            .ok_or_else(|| format!("a generator of {}", type_word(elem)))?;
+        let (body, parts) = body::FnWriter::new(cx, d, shapes, CType::Void)
+            .yielding(elem)
+            .write_gen()?;
+        cx.gen_decls.borrow_mut().push_str(&parts.decls);
+        cx.gen_bodies.borrow_mut().push_str(&parts.bodies);
+        return Ok((sig, body));
+    }
     let body = body::FnWriter::new(cx, d, shapes, ret).write()?;
     Ok((sig, body))
 }
@@ -767,8 +850,10 @@ fn emit_tests(
         });
     }
     let mut out = emit_unit(data, stores, &tests)?;
-    out.push_str(
-        "\nint main(int argc, char **argv) {\n    int failed = 0;\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
+    let _ = write!(
+        out,
+        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    {}\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
+        anchor(stores)
     );
     for &d in &tests {
         let name = data.def(d).original_name();

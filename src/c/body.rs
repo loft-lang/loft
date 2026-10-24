@@ -8,7 +8,11 @@
 //! still in scope where it is freed.  An owned text temporary is freed after the statement
 //! that made it; every `return` first copies its value out, then frees the function's texts.
 
+mod files;
+mod generator;
 mod keyed;
+mod misc;
+mod par;
 
 use super::{CType, Cx, c_name, held, is_operator, type_word};
 use crate::data::{Block, Value};
@@ -128,6 +132,10 @@ pub(crate) struct FnWriter<'a> {
     decls: Vec<String>,
     /// Which variables a statement written so far has bound: a later `Set` is a rebind.
     bound: Vec<bool>,
+    /// A generator's element shape (`body::generator`): its `yield`s and its `return` differ.
+    gen_elem: Option<CType>,
+    /// The `yield`s written so far, each a resume label.
+    yields: u32,
 }
 
 impl<'a> FnWriter<'a> {
@@ -168,7 +176,15 @@ impl<'a> FnWriter<'a> {
                 }
                 b
             },
+            gen_elem: None,
+            yields: 0,
         }
+    }
+
+    /// This function is a generator of `elem`s: written by `write_gen`.
+    pub(crate) fn yielding(mut self, elem: CType) -> Self {
+        self.gen_elem = Some(elem);
+        self
     }
 
     /// The body: the locals, the temporaries and the statements.
@@ -183,6 +199,11 @@ impl<'a> FnWriter<'a> {
         let mut out = String::new();
         for v in (0..self.shapes.len()).filter(|v| !self.params[*v]) {
             let c = self.shapes[v];
+            if self.links[v] {
+                let name = var_name(self.vars.name(v as u16), v as u16);
+                let _ = writeln!(out, "    {} *{name} = 0;", held(c));
+                continue;
+            }
             let _ = writeln!(
                 out,
                 "    {} {} = {};",
@@ -237,11 +258,11 @@ impl<'a> FnWriter<'a> {
     /// Free every text the function holds: its locals and its temporaries.
     fn epilogue(&mut self, ind: usize) {
         let mut texts: Vec<String> = (0..self.shapes.len())
-            .filter(|&v| !self.params[v] && self.shapes[v] == CType::Text)
+            .filter(|&v| !self.params[v] && !self.links[v] && self.shapes[v] == CType::Text)
             .map(|v| self.var(v as u16))
             .collect();
         // The texts a tuple local owns.
-        for v in (0..self.shapes.len()).filter(|&v| !self.params[v]) {
+        for v in (0..self.shapes.len()).filter(|&v| !self.params[v] && !self.links[v]) {
             if let CType::Tuple(id) = self.shapes[v] {
                 for (i, c) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     if c == CType::Text {
@@ -265,6 +286,10 @@ impl<'a> FnWriter<'a> {
     /// held in a `loft_vh` — the frame the loop's element accesses read.
     /// `LOFT_NO_VECTOR_HOIST=1` holds none, `LOFT_NO_WRITE_HOIST=1` none in a loop that writes.
     fn hold_vectors(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        // A generator's locals live in its frame between resumes; a held header is not one.
+        if self.gen_elem.is_some() {
+            return Ok(());
+        }
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         let mut frame = Vec::new();
         if !env_on("LOFT_NO_VECTOR_HOIST") {
@@ -595,7 +620,17 @@ impl<'a> FnWriter<'a> {
                 self.line(ind, &format!("goto cont_{l};"));
                 Ok(())
             }
+            // A generator's `return` ends it: what it returns is done for its effect.
+            Value::Return(x) if self.gen_elem.is_some() => {
+                self.stmt(x, ind)?;
+                self.line(ind, "goto loft_gen_end;");
+                Ok(())
+            }
             Value::Return(x) => self.ret_value(Some(x), ind),
+            Value::Yield(x) => self.gen_yield(x, ind),
+            // `parallel { … }`: the arms run one after another — each arm's effect is the one
+            // its thread has (State's `OpParallelBegin`).
+            Value::Parallel(arms) => arms.iter().try_for_each(|a| self.stmt(a, ind)),
             Value::Drop(_) | Value::Call(..) | Value::CallRef(..) => {
                 let x = if let Value::Drop(x) = v { &**x } else { v };
                 let e = self.expr(x, ind)?;
@@ -795,6 +830,20 @@ impl<'a> FnWriter<'a> {
 
     /// `var = x`: a copy where loft copies a record, else the plain assignment.
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
+        // every later read and write of it goes through.
+        if self.links[var as usize] && !self.params[var as usize] {
+            if let Some(target) = self.stack_target(x) {
+                self.bound[var as usize] = true;
+                let name = var_name(self.vars.name(var), var);
+                let to = self.var(target);
+                self.line(ind, &format!("{name} = &{to};"));
+                return Ok(());
+            }
+            if !self.bound[var as usize] {
+                return Err("an & local bound to something other than a variable".into());
+            }
+        }
         if self.links[var as usize] && self.shapes[var as usize] == CType::Ref {
             return self.link_rebind(var, x, ind);
         }
@@ -889,6 +938,26 @@ impl<'a> FnWriter<'a> {
         self.assign(x, &name, c, ind)?;
         self.flush(ind);
         Ok(())
+    }
+
+    /// The variable `OpCreateStack(v)` names, whose shape a link to it shares; `None` for any
+    /// other value, and for a target that is itself a parameter passed by value.
+    fn stack_target(&self, x: &Value) -> Option<u16> {
+        match x.unspan() {
+            Value::Call(d, args) if self.cx.data.def(*d).name() == "OpCreateStack" => {
+                match args.as_slice() {
+                    [Value::Var(t)]
+                        if !(self.params[*t as usize]
+                            && !self.links[*t as usize]
+                            && self.shapes[*t as usize] == CType::Text) =>
+                    {
+                        Some(*t)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// A keyed local bound to null gets a store too, unless it borrows one
@@ -1211,7 +1280,14 @@ impl<'a> FnWriter<'a> {
             {
                 Ok(format!("{}.f{i}", self.var(*var)))
             }
-            _ => Err("a text operator writing elsewhere than a text local".into()),
+            Value::Var(var) => Err(format!(
+                "a text operator writing into a {:?} variable",
+                self.shapes[*var as usize]
+            )),
+            other => Err(format!(
+                "a text operator writing into {}",
+                unsupported(other)
+            )),
         }
     }
 
@@ -1287,6 +1363,9 @@ impl<'a> FnWriter<'a> {
         }
         let def = cx.data.def(d);
         if let Some(e) = self.keyed_native(def.name(), args, ind)? {
+            return Ok(e);
+        }
+        if let Some(e) = self.par_native(def.name(), args, ind)? {
             return Ok(e);
         }
         let callee = def.original_name();
@@ -1479,6 +1558,12 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.keyed_operator(name, args, ind)? {
             return Ok(e);
         }
+        if let Some(e) = self.file_operator(name, args, ind)? {
+            return Ok(e);
+        }
+        if let Some(e) = self.gen_operator(name, args, ind)? {
+            return Ok(e);
+        }
         let arith = match name {
             // The `Nullable` forms answer the same values; only the overflow report differs.
             "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
@@ -1509,10 +1594,7 @@ impl<'a> FnWriter<'a> {
         };
         if let Some(op) = cmp {
             let (a, b) = self.two(name, args, ind)?;
-            return Ok(E::new(
-                format!("({} {op} {})", as_int(a)?, as_int(b)?),
-                K::Cond,
-            ));
+            return Ok(compare(&as_int(a)?, op, &as_int(b)?));
         }
         self.text_operator(name, args, ind)
     }
@@ -1523,10 +1605,7 @@ impl<'a> FnWriter<'a> {
             "OpEqBool" | "OpNeBool" => {
                 let (a, b) = self.two(name, args, ind)?;
                 let op = if name == "OpEqBool" { "==" } else { "!=" };
-                Ok(E::new(
-                    format!("({} {op} {})", as_bool(a)?, as_bool(b)?),
-                    K::Cond,
-                ))
+                Ok(compare(&as_bool(a)?, op, &as_bool(b)?))
             }
             "OpNot" => {
                 let es = self.args(args, ind)?;
@@ -1539,6 +1618,18 @@ impl<'a> FnWriter<'a> {
                 let neg = if name == "OpNeText" { "!" } else { "" };
                 Ok(E::new(
                     format!("{neg}loft_str_eq({}, {})", as_view(a)?, as_view(b)?),
+                    K::Cond,
+                ))
+            }
+            "OpLtText" | "OpLeText" => {
+                let (a, b) = self.two(name, args, ind)?;
+                let f = if name == "OpLtText" {
+                    "loft_text_lt"
+                } else {
+                    "loft_text_le"
+                };
+                Ok(E::new(
+                    format!("{f}({}, {})", as_view(a)?, as_view(b)?),
                     K::Cond,
                 ))
             }
@@ -2042,8 +2133,11 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            // The drop cascade of a closure record releases stores only: nothing observable.
-            ("OpDropFnRef", [_]) => Ok(E::new("(void) 0", K::Void)),
+            // The closure record releases what it captured, running the captured values'
+            // drop hooks (`State::drop_fn_ref`).
+            ("OpDropFnRef", [Value::Var(f)]) if self.shapes[*f as usize] == CType::Fn => Ok(
+                E::new(format!("loft_drop_closure({})", self.var(*f)), K::Void),
+            ),
             ("OpPutRef", [Value::Var(v), x]) => {
                 let x = self.expr(x, ind)?;
                 Ok(E::new(
@@ -2228,14 +2322,45 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            ("OpGetInt4", [r, fld]) => {
+            ("OpGetInt4" | "OpGetInt4Raw" | "OpGetInt4Full", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
+                let f = match name {
+                    "OpGetInt4" => "loft_get_int4",
+                    "OpGetInt4Raw" => "loft_get_int4_raw",
+                    _ => "loft_get_int4_full",
+                };
+                Ok(E::new(format!("{f}({}, {fld})", as_ref(r)?), K::Int))
+            }
+            ("OpSetInt4Raw", [r, fld, val]) => {
+                let fld = Self::literal(fld, "field")?;
+                let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
                 Ok(E::new(
-                    format!("loft_get_int4({}, {fld})", as_ref(r)?),
+                    format!("loft_set_int4_raw({}, {fld}, {})", as_ref(r)?, as_int(val)?),
+                    K::Void,
+                ))
+            }
+            ("OpPushInt4", [v, val]) => {
+                let (v, val) = self.two(name, &[(*v).clone(), (*val).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_vec_push_int4({}, {})", as_ref(v)?, as_int(val)?),
+                    K::Void,
+                ))
+            }
+            ("OpSizeVector", [v, stride]) => {
+                let stride = Self::literal(stride, "stride")?;
+                let v = self.expr(v, ind)?;
+                Ok(E::new(
+                    format!("(loft_vec_len({}) * {stride})", as_ref(v)?),
                     K::Int,
                 ))
             }
+            ("OpFnRefClosure", [Value::Var(f)]) if self.shapes[*f as usize] == CType::Fn => {
+                Ok(E::new(format!("{}.clos", self.var(*f)), K::Ref))
+            }
+            ("OpInitRefSentinel", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Ref => Ok(
+                E::new(format!("{} = loft_ref_null()", self.var(*v)), K::Void),
+            ),
             _ => self.vector_operator(name, args, ind),
         }
     }
@@ -2268,7 +2393,9 @@ impl<'a> FnWriter<'a> {
             };
             return Ok((data, c, Coll::Keyed(ptp)));
         }
-        let Parts::Struct(fields) = &stores.types[ptp as usize].parts else {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &stores.types[ptp as usize].parts
+        else {
             return Err("a new record in a field of a non-struct".into());
         };
         let vtp = stores.field_type(ptp, fld);
@@ -2447,7 +2574,7 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            _ => Err(format!("operator {name}")),
+            _ => self.misc_operator(name, args, ind),
         }
     }
 
@@ -2563,6 +2690,57 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
+            _ => self.vector_move_operator(name, args, ind),
+        }
+    }
+
+    /// A local vector given up to a field, and a vector cut to a range.
+    fn vector_move_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        match (name, args) {
+            ("OpMoveVector", [dst, src, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) {
+                    return Err("a move of a linked element type".into());
+                }
+                self.cx.copy_type(tp)?;
+                let (dst, src) = self.two(name, &[(*dst).clone(), (*src).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_move_vector(loft_types, {tp}, {}, {})",
+                        as_ref(dst)?,
+                        as_ref(src)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpKeepVectorRange", [v, tp, lo, hi]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                // A linked element's slot is its record number, its record removed when dropped.
+                let size = if self.cx.stores.is_linked(tp) {
+                    0
+                } else {
+                    self.cx.stores.size(tp)
+                };
+                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
+                let [v, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a range without three operands".to_string())?;
+                Ok(E::new(
+                    format!(
+                        "loft_keep_vector_range({}, {size}, {}, {})",
+                        as_ref(v)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
+                    K::Void,
+                ))
+            }
             _ => self.slot_operator(name, args, ind),
         }
     }
@@ -2665,6 +2843,16 @@ impl<'a> FnWriter<'a> {
             _ => Err(format!("operator {name}")),
         }
     }
+}
+
+/// `a op b` for two integers or booleans.  A variable compared with itself has a fixed answer
+/// (a null equals itself, as in loft), and C compilers reject the tautology under `-Werror`.
+fn compare(a: &str, op: &str, b: &str) -> E {
+    if a == b && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        let same = matches!(op, "==" | "<=" | ">=");
+        return E::new(if same { "1" } else { "0" }, K::Cond);
+    }
+    E::new(format!("({a} {op} {b})"), K::Cond)
 }
 
 /// `n` as a C `int64_t` constant: the null as `LOFT_NULL`, since `INT64_C` cannot spell it.

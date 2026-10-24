@@ -763,7 +763,7 @@ static void loft_replace_keyed(const loft_tdesc *T, uint16_t tp, loft_ref src, l
     if (dest.store_nr == 0xFFFF || dest.rec == 0) return;
     loft_remove_claims(T, tp, dest);
     loft_copy_claims(T, tp, src, dest);
-    if (free_source && src.store_nr != dest.store_nr) loft_free_ref(src);
+    if (free_source && src.store_nr != dest.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
 /* keys::set_key: key part `k` of the element `e` takes the value `v`. */
@@ -864,7 +864,7 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     else loft_index_finish(c, e, keys, nk);
     for (int i = 0; i < n; i++) loft_text_free(&own[i]);
     if (tmp.store_nr != 0xFFFF) loft_free_ref(tmp);
-    if (free_source && value.store_nr != c.store_nr) loft_free_ref(value);
+    if (free_source && value.store_nr != c.store_nr && !loft_free_protected(value)) loft_free_ref(value);
 }
 
 /* OpRemove (`e#remove`) in a walk over a sorted (`size` its element) or an index (`size` 0):
@@ -950,4 +950,93 @@ static void loft_group_finish(loft_ref parent, loft_ref rec, const loft_member *
             }
         }
     }
+}
+
+/* ── par (parallel_natives.rs): the rows in order ──
+ * A `for x in v par(r = f(x), n)` loop hands every row to the worker and reads the results back
+ * by row.  The C runs the worker over the rows one after another — each row's result is the
+ * one a thread would compute — into a buffer on a stack the loop reads (`parallel_buf_get*`)
+ * and pops (`parallel_buf_drop*`). */
+typedef struct { int64_t i; double f; float g; loft_text t; loft_ref r; loft_fn fn; } loft_par_slot;
+typedef struct { loft_par_slot *rows; int64_t n; } loft_par_buf;
+static loft_par_buf *loft_par_bufs = 0;
+static int loft_npar = 0, loft_par_cap = 0;
+
+static loft_par_slot *loft_par_push(int64_t n) {
+    if (loft_npar == loft_par_cap) {
+        loft_par_cap = loft_par_cap ? loft_par_cap * 2 : 8;
+        loft_par_bufs = (loft_par_buf *) realloc(loft_par_bufs, (size_t) loft_par_cap * sizeof *loft_par_bufs);
+        if (!loft_par_bufs) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_par_slot *rows = (loft_par_slot *) calloc((size_t) (n > 0 ? n : 1), sizeof *rows);
+    if (!rows) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (int64_t i = 0; i < n; i++) {
+        rows[i].i = LOFT_NULL;
+        rows[i].r = loft_ref_null();
+        rows[i].fn = loft_fn_of(LOFT_NULL);
+    }
+    loft_par_bufs[loft_npar].rows = rows;
+    loft_par_bufs[loft_npar].n = n;
+    loft_npar++;
+    return rows;
+}
+
+static loft_par_slot *loft_par_row(int64_t i) {
+    if (loft_npar == 0 || i < 0 || i >= loft_par_bufs[loft_npar - 1].n) return 0;
+    return &loft_par_bufs[loft_npar - 1].rows[i];
+}
+
+static int64_t loft_par_get(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->i : LOFT_NULL; }
+static double loft_par_get_float(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->f : (double) NAN; }
+static float loft_par_get_single(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->g : (float) NAN; }
+static loft_ref loft_par_get_ref(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->r : loft_ref_null(); }
+static loft_fn loft_par_get_fn(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->fn : loft_fn_of(LOFT_NULL); }
+static loft_text loft_par_get_text(int64_t i) {
+    loft_par_slot *s = loft_par_row(i);
+    return loft_text_own(s ? loft_view(&s->t) : loft_null_text());
+}
+
+/* The buffer leaves the stack; `refs` releases the stores the workers' results were made in. */
+static void loft_par_drop(int refs) {
+    if (loft_npar == 0) return;
+    loft_par_buf *b = &loft_par_bufs[--loft_npar];
+    for (int64_t i = 0; i < b->n; i++) {
+        loft_text_free(&b->rows[i].t);
+        if (refs) loft_free_ref(b->rows[i].r);
+    }
+    free(b->rows);
+}
+
+/* parallel_buf_get_narrow: a 1-, 2- or 4-byte result, its low bytes extended as `signed` says. */
+static int64_t loft_par_get_narrow(int64_t i, int64_t size, int64_t is_signed) {
+    loft_par_slot *s = loft_par_row(i);
+    if (!s) return LOFT_NULL;
+    uint64_t u = (uint64_t) s->i;
+    int bits = (int) (size * 8);
+    if (bits <= 0 || bits >= 64) return s->i;
+    u &= (UINT64_C(1) << bits) - 1;
+    if (is_signed && (u >> (bits - 1))) return (int64_t) (u | ~((UINT64_C(1) << bits) - 1)) ;
+    return (int64_t) u;
+}
+
+/* read_primitive_at: a row handed to a worker by value — its stored bits, 1, 4 or 8 bytes by the
+ * element's width. */
+static uint64_t loft_par_arg(loft_ref e, int64_t size) {
+    if (e.rec == 0) return 0;
+    uint8_t *p = loft_at(loft_store_of(e), e.rec, e.pos);
+    if (size == 1) return p[0];
+    if (size == 4) {
+        uint32_t x;
+        memcpy(&x, p, 4);
+        return x;
+    }
+    uint64_t x;
+    memcpy(&x, p, 8);
+    return x;
+}
+
+static int64_t loft_i64_bits(uint64_t u) {
+    int64_t v;
+    memcpy(&v, &u, 8);
+    return v;
 }
