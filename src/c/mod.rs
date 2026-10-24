@@ -451,6 +451,8 @@ pub fn c_name(data: &Data, d: u32) -> String {
 pub(crate) fn native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_assert" => Some("loft_assert"),
+        "n_ticks" => Some("loft_ticks"),
+        "n_arguments" => Some("loft_arguments"),
         "t_4text_starts_with" => Some("loft_starts_with"),
         "t_4text_ends_with" => Some("loft_ends_with"),
         "t_4text_find" => Some("loft_find"),
@@ -535,7 +537,7 @@ pub fn emit_program(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(void) {{\n    loft_init();\n    {}();\n    return 0;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_start(argc, argv);\n    {}();\n    return 0;\n}}\n",
         c_name(data, main)
     );
     Ok(out)
@@ -636,7 +638,7 @@ fn emit_tests(
     }
     let mut out = emit_unit(data, stores, &tests)?;
     out.push_str(
-        "\nint main(void) {\n    int failed = 0;\n    loft_init();\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {\n    int failed = 0;\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
     );
     for &d in &tests {
         let name = data.def(d).original_name();
