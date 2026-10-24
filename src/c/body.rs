@@ -275,6 +275,35 @@ impl<'a> FnWriter<'a> {
         Ok(())
     }
 
+    /// `(R-Header)`'s proof site for a held access: the vector still is what `held` holds.
+    /// Checked only under `LOFT_VERIFY`; `((void) 0)` when the vector is not a plain place.
+    fn held_proof(&self, v: &Value, held: &str) -> String {
+        match self.place_of(v) {
+            Some(place) => {
+                let site = format!("{}:{held}", self.cx.data.def(self.d).original_name());
+                format!(
+                    "LOFT_PROVED(loft_vh_same({held}, {place}), {})",
+                    c_string(&site)
+                )
+            }
+            None => "((void) 0)".into(),
+        }
+    }
+
+    /// A vector path as a C expression with no statement before it: a variable, or fields of one.
+    fn place_of(&self, v: &Value) -> Option<String> {
+        match v.unspan() {
+            Value::Var(var) if self.shapes[*var as usize] == CType::Ref => Some(self.var(*var)),
+            Value::Call(d, a) if a.len() == 3 && self.cx.data.def(*d).name() == "OpGetField" => {
+                let Value::Int(fld) = a[1].unspan() else {
+                    return None;
+                };
+                Some(format!("loft_field({}, {fld})", self.place_of(&a[0])?))
+            }
+            _ => None,
+        }
+    }
+
     /// The `loft_vh` an enclosing loop holds for vector expression `v`, if any.
     fn held_vector(&self, v: &Value) -> Option<String> {
         let path = crate::opt::writes::vector_path(self.cx.data, v)?;
@@ -306,8 +335,9 @@ impl<'a> FnWriter<'a> {
                 };
                 let size = Self::literal(size, "element size")?;
                 let i = self.expr(idx, ind)?;
+                let proof = self.held_proof(v, &h);
                 Ok(Some(E::new(
-                    format!("loft_vh_get({h}, {size}, {})", as_int(i)?),
+                    format!("({proof}, loft_vh_get({h}, {size}, {}))", as_int(i)?),
                     K::Ref,
                 )))
             }
@@ -329,8 +359,9 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vh_get_float", K::Float)
                 };
+                let proof = self.held_proof(&vec, &held);
                 Ok(Some(E::new(
-                    format!("{f}({held}, {size}, {}, {fld})", as_int(index)?),
+                    format!("({proof}, {f}({held}, {size}, {}, {fld}))", as_int(index)?),
                     k,
                 )))
             }
@@ -349,8 +380,12 @@ impl<'a> FnWriter<'a> {
                 } else {
                     ("loft_vh_set_float", as_float(value)?)
                 };
+                let proof = self.held_proof(&vec, &held);
                 Ok(Some(E::new(
-                    format!("{f}({held}, {size}, {}, {fld}, {value})", as_int(index)?),
+                    format!(
+                        "({proof}, {f}({held}, {size}, {}, {fld}, {value}))",
+                        as_int(index)?
+                    ),
                     K::Void,
                 )))
             }

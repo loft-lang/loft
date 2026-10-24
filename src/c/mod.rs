@@ -25,7 +25,7 @@ use crate::database::Stores;
 use std::fmt::Write as _;
 
 /// The C runtime every unit starts with.
-const RUNTIME: &str = include_str!("loft_rt.h");
+const RUNTIME: &str = concat!(include_str!("loft_cc.h"), include_str!("loft_rt.h"));
 
 /// Why a function cannot be written as C yet.
 #[derive(Debug, Clone, PartialEq, Eq)]

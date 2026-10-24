@@ -20,16 +20,19 @@ cc -std=c99 out.c -o prog -lm && ./prog
 python3 scripts/c_sweep.py         # every corpus program: C against the interpreter
 python3 scripts/c_sweep.py --asan  # the same, built with AddressSanitizer + UBSan
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
+python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
+python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
 ```
 
-`c_sweep.py` puts every program in one bucket: `match`, `differ`, `cc-error`, `sanitizer`
-(`--asan`) or `refused`, and ranks the refusals by reason — that ranking is the work list.
+`c_sweep.py` builds every carried program in the three macro modes (below) and puts it in one
+bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`) or `refused`, and ranks the
+refusals by reason — that ranking is the work list.
 `differ`, `cc-error` and `sanitizer` are defects of the backend and must stay at 0; a change
 that grows `match` is measured by the sweep and by `--asan` before it is committed.  A program
 without `main` is its tests: the C runs every test the way `loft --tests` picks them, and the
 two exit statuses are compared.  `tests/c_emit.rs` is the cargo guard: a scalar program checked
-against hand-computed values on both the interpreter and the C, and a refusal naming its
-construct.
+against hand-computed values on both the interpreter and the C, a refusal naming its
+construct, and the overflow macros against Rust's checked arithmetic in every mode.
 
 ## The parts
 
@@ -38,7 +41,22 @@ construct.
 | `mod.rs` | `Cx` (one per unit): the C shape of each loft type, the tuple structs, the copy table, the enum name tables, the record default images, the render functions; `emit_unit`, `emit_program`, the test `main` |
 | `body.rs` | `FnWriter`: one function's body — statements, expressions, the copy rules, the operators |
 | `show.rs` | the `{v}` rendering of a record or vector: one `loft_show{tp}` per type |
-| `loft_rt.h` | the C runtime, included verbatim at the top of every unit |
+| `fnval.rs` | function values: the dispatcher of each signature, one arm per function used as a value |
+| `loft_cc.h` | the macro layer — the ONLY place the C names a compiler — pasted first into every unit |
+| `loft_rt.h` | the C runtime, pasted after it |
+
+## The macro modes
+
+`loft_cc.h` gives the emitted C three compile-time modes, and a mode changes speed, never a
+value: `-DLOFT_STRICT` is pure C99 (clean under `-std=c99 -pedantic -Werror`, every macro its
+C99 fallback); the default uses gcc / clang / MSVC extensions where it detects them;
+`-DLOFT_VERIFY` checks every proof the generator relied on again and aborts naming the site.
+Its sites are of three kinds: SAFE HINTS (`LOFT_HOT_INLINE`, `LOFT_LIKELY`, the overflow tests
+`LOFT_ADD_OVF` / `LOFT_SUB_OVF` / `LOFT_MUL_OVF`), PROOF SITES (`LOFT_PROVED`, the
+`LOFT_PLAIN_*` operators, emitted only where a rewrite proved the fact) and SHIP SITES
+(`LOFT_SHIP_*`, @PLN201's dropped checks, wrapping through `uint64_t` because a C signed
+overflow is undefined).  The runtime and the generator write these macros and never a raw
+builtin or attribute.
 
 ## The model
 
@@ -71,6 +89,13 @@ element bind.  A deep copy walks a table of the program's types (`loft_types`).
 **`&` parameters.**  A link is a pointer to the caller's variable; every read and write of it
 goes through the pointer.  A text result's hidden buffer is a link the caller makes for the
 call.  A rebind of a `&` record releases the record it displaces.
+
+**Held vectors.**  Before a loop, each vector `opt::header::hoistable_vectors` admits — a loop
+that writes no store but in place, so no record moves and no length changes — is held in a
+`loft_vh` (store, record, length, element base), and the loop's element reads and in-place
+writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`, so
+`LOFT_VERIFY` catches a held vector that changed.  `LOFT_NO_VECTOR_HOIST=1` holds none and
+`LOFT_NO_WRITE_HOIST=1` none in a loop that writes, as for the Rust writer.
 
 **The evaluation-stack tail.**  `[value, frees…, return null]` returns the value: the scopes
 pass leaves it on the bytecode's stack for `OpReturn`.  The C captures it into a temporary, as
