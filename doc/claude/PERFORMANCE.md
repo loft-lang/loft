@@ -776,7 +776,11 @@ and guarded by a COUNT, never by a time (@PLN166).
   of the sources' sizes and mtimes — `cache::stdlib_fingerprint` — never a read of them while
   nothing moved), the drift manifest (`manifest`) and the bundle's materialisation (`bundle`:
   the mmap'd store copied into the definition table, the one cost a warm start still pays
-  per definition), and `compiled stdlib: … (N us)` is the dispatch mark.
+  per definition), and `compiled stdlib: … (N us)` is the dispatch mark.  Past the front end,
+  `close_program` prints one line naming each whole-program rewrite pass's time, and
+  `value_records` one naming its analysis steps (the site gate summed over the fixpoint's
+  rounds, the callers it walked, and the five costliest).  Under `loft test` each file prints
+  its own `parse` / `scopes` / `lints` line, and whether it started from a shared base.
 - **Where a slower test's time went.**  With `LOFT_TIMING_LEDGER=<dir>` every loft process
   appends rows to `<dir>/timing-<pid>.tsv`: its phases (`parse_default`, `parse_user`,
   `scopes`, `lints`, `byte_code`, `native_emit`, `run`), the program's own native compile
