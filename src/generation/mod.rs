@@ -29,7 +29,7 @@ mod dispatch;
 mod emit;
 pub mod file_hold;
 pub use crate::fnref;
-pub mod hand_over;
+pub use crate::lower::hand_over;
 pub mod hoist;
 pub mod kept;
 pub mod keyed_entry;
