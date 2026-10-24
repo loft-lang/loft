@@ -449,14 +449,22 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
         // (overriding any ambient value) and clear `CARGO_ENCODED_RUSTFLAGS` so
         // cargo doesn't see both forms at once.
         // The baked flags carry no `--remap-path-prefix` (build.rs strips them:
-        // they name the RELEASE machine's paths).  Recompute them for THIS
-        // machine so loft's rlibs and the package crate agree on `/cargo` and
-        // `/rustc`, which is what #274's SVH match actually needs — and which
-        // also keeps the consumer's cdylib free of their own home directory.
+        // they name the RELEASE machine's paths).  When loft's own build HAD them,
+        // recompute them for THIS machine so loft's rlibs and the package crate
+        // agree on `/cargo` and `/rustc`, which is what #274's SVH match actually
+        // needs.  When it had none — every build from a checkout — the package
+        // takes none either: the remap is part of each crate's SVH, so adding it
+        // on one side only made a shared dep (`cfg_if`) two crates with one
+        // `StableCrateId`, and every static link of such a package failed.
+        let remap = if env!("LOFT_BUILD_REMAPPED") == "1" {
+            local_remap_flags()
+        } else {
+            String::new()
+        };
         let flags = format!(
             "{} {} {}",
             env!("LOFT_BUILD_RUSTFLAGS"),
-            local_remap_flags(),
+            remap,
             relocatable_dylib_flags(&lib_name)
         );
         cmd = cmd
