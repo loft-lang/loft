@@ -14,6 +14,7 @@ pub mod decode_structure_scan;
 pub mod decode_view;
 pub mod hand_over;
 pub mod keyed_entry;
+pub mod keyed_place;
 pub mod plan;
 pub mod stream_walk;
 pub mod switches;
