@@ -65,3 +65,8 @@ resolution it removes costs more than the arithmetic it saves.
   of Rust) and `sphere` −38 %.
 - **`LOFT_NO_NULL_BUFFER_HOIST`'s setter fix** took stage's `pack_instances` 24.3× → 8.4×.
 - **The bounded-sum blocks** took the stdlib `sum` 11.9 → 3.7 µs, 6.45× → 2.06× of Rust, pinned.
+- **The loop-free `#[inline]` hint**, measured over the suite and three library benches (87
+  routines, hashes identical): geomean −2.3 %, hex_field `edgeset_count` 23.1 → 10.1 ms (35.6× →
+  ~15.6×), `join` −19 %, `replace` −18 %, `dot_product` −14 %; the largest loss, `char_roundtrip`
+  +5 %, was function layout — both arms read the same once `-align-all-functions=6
+  -align-loops=64` pins it.

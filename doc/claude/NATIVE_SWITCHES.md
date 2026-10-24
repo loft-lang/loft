@@ -603,6 +603,10 @@ checks every plain operator.  **`LOFT_NO_RANGED_CALL_VARS=1`** keeps the guard t
 fields: no integer VARIABLE (a window walk's bounds) is a guard leaf — the next step finer.
 **`LOFT_NO_WHILE_COUNTER=1`** checks the step of `while i < E { …; i += 1 }` again (`(R-Range)`'s
 while-counter clause) — the bisect step for a wrong counter or index out of such a loop on native.
+**`LOFT_NO_PAR_ROWS=1`** (`(R-ParRows)`, default-ON, generation time, `--native` only) keeps
+every `par` on its per-row worker — with it off, a row-pure worker maps each batch of rows at once
+(`11_par/par` 3.49× → 1.80×) — and is the first bisect step for a wrong value out of a `par` on
+native; `LOFT_TRACE_PAR_ROWS=1` names each admission and decline.
 **`LOFT_NO_DISTINCT_VERSION=1`** (`(R-Alias)`'s versioned clause, default-ON, generation time,
 `--native` only) emits every loop once — with it off, a loop that grows the function's return
 buffer while it reads a parameter also runs a copy under a run-time test that the two stores
@@ -990,10 +994,6 @@ whose checked arithmetic pushed it just past the default budget now folds into i
 way rustc folds a plain-Rust twin's.  A function that runs a loop gets no hint: pulled into a
 caller that loops itself, its loop-carried values spill across the caller's live range
 (`newton_sqrt` inlined through `roots` into `main` kept `guess` on the stack across its divide
-chain, +16 %).  Measured over the suite and three library benches (87 routines, hashes
-identical): geomean −2.3 %, hex_field `edgeset_count` 23.1 → 10.1 ms (35.6× → ~15.6×),
-`join` −19 %, `replace` −18 %, `dot_product` −14 %; the largest loss, `char_roundtrip` +5 %,
-is function layout — both arms read the same once `-align-all-functions=6 -align-loops=64`
-pins it.  **`LOFT_NO_INLINE_HINT=1`** emits no attribute (the emission of before) and is the
+chain, +16 %).  **`LOFT_NO_INLINE_HINT=1`** emits no attribute (the emission of before) and is the
 A/B for a row that moved after a rebuild.  `--names` pins every loft function
 `#[inline(never)]` regardless.  One home: `Output::fn_inline_attr`.
