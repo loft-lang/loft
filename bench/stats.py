@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """stats.py — the benchmark suite as STATISTICS: is each routine within its bar of Rust?
 
-    python3 bench/stats.py [--only 01,08] [--lanes native,rust] [--samples 7]
+    python3 bench/stats.py [--only 01,08] [--lanes native,rust[,ship]] [--samples 7]
                            [--target-ms 400] [--bar 2.0] [--tsv out.tsv] [--no-pin]
                            [--package DIR[=NAME]]... [--routine [BENCH/]NAME[,…]]...
 
@@ -39,8 +39,13 @@ with numbers that can be compared from one pass to the next:
 
 Lanes: `native` (loft `--native-emit --lean`, rustc opt-level 3, one codegen unit — what
 `--native-release` ships), `rust` (the reference, `rustc -O` unless `--ref-flags` says
-otherwise), `interp` (the loft interpreter) and `python`.  The ratio column is
-native / rust; the other lanes are reported beside it.
+otherwise), `interp` (the loft interpreter), `python`, and `ship`: the program compiled whole,
+its libraries' loft code included, under `LOFT_RELEASE_PASS_PROBE=1` — what a game's release
+build would emit once its own checked runs licensed dropping the fault checks (@PLN201).  The
+ratio column is native / rust; `ship` adds `ship_ratio` (ship / rust) to each row, the speed
+of the shipped product beside the speed of the checked build.  The ship hash is not one of the
+hashes that must agree: a fault the checked lanes answer as null wraps there, so a row whose
+ship hash differs is marked and carries no ship ratio.
 
 `--package DIR` measures a LIBRARY's own bench — `DIR/bench/bench.loft` beside its twin
 `DIR/bench/bench.rs`, the layout the drawing library set (@PLN158).  A package has
@@ -152,6 +157,9 @@ class BuildFailed(Exception):
 
 
 NICE = ["nice", "-n", "10"] if shutil.which("nice") else []
+# The environment a SHIP-lane build runs under: the release-pass probe, the form a game's
+# release build would emit once its checked runs licensed it (@PLN201).
+SHIP_ENV = {**os.environ, "LOFT_RELEASE_PASS_PROBE": "1"}
 
 
 def mem_available_gb():
@@ -204,6 +212,22 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
                     reserve_gb)
         os.remove(rs)
         cmds["native"] = [exe]
+    if "ship" in lanes:
+        # The SHIP lane: what a game's release build would emit (@PLN201, NATIVE.md §
+        # Optimisation tiers) — the program compiled whole with the fault checks the
+        # release-pass probe drops.  The hash check below keeps a row only while its values
+        # still agree with the checked lanes.
+        rs = os.path.join(out, "stats_ship.rs")
+        exe = os.path.join(out, "stats_ship")
+        run_checked([loft, "--native-emit", rs, "--lean", "--path", ROOT + "/",
+                     os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit (ship)", times,
+                    "ship-emit", reserve_gb, env=SHIP_ENV)
+        run_checked(["rustc", *release_rustc_args(), "--edition=2024",
+                     "--extern", f"loft={lib_dir}/libloft.rlib", "-L", f"{lib_dir}/deps",
+                     "-o", exe, rs], f"{bench}: rustc (ship lane)", times, "ship-rustc",
+                    reserve_gb)
+        os.remove(rs)
+        cmds["ship"] = [exe]
     if "rust" in lanes and os.path.exists(os.path.join(d, "bench.rs")):
         exe = os.path.join(out, "stats_rs")
         run_checked(["rustc", *ref_flags, "-o", exe, os.path.join(d, "bench.rs")],
@@ -240,6 +264,19 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
         if not built:
             raise BuildFailed(f"{pkg_dir}: loft left no cached native binary under bench/.loft/cache")
         cmds["native"] = [max(built, key=os.path.getmtime)]
+    if "ship" in lanes:
+        # Every library recompiled inside the program at the ship level: `--native-release`
+        # compiles the libraries' loft code into the binary from source, and the probe switch
+        # is part of the cache key, so this is a binary of its own (the newest one).
+        run_checked([loft, "--native-release", "--install-libs", "bench/bench.loft", "--n", "2"],
+                    f"{pkg_dir}: loft --native-release (ship)", times, "ship-release", reserve_gb,
+                    cwd=pkg_dir, env=SHIP_ENV)
+        cache = os.path.join(bench_dir, ".loft", "cache")
+        built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(("native-", "bench-"))]
+        ship = max(built, key=os.path.getmtime)
+        if ship in cmds.get("native", []):
+            raise BuildFailed(f"{pkg_dir}: the ship build reused the checked binary")
+        cmds["ship"] = [ship]
     if "rust" in lanes and os.path.exists(os.path.join(bench_dir, "bench.rs")):
         out = os.path.join(bench_dir, ".build")
         os.makedirs(out, exist_ok=True)
@@ -464,7 +501,8 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
         rounds(max(0, a.noisy_samples - a.samples))
     names = [n for n in next(iter(samples.values())) if keep is None or keep(n)]
     for name in names:
-        seen = {lane: hashes[lane].get(name) for lane in cmds if name in hashes[lane]}
+        seen = {lane: hashes[lane].get(name) for lane in cmds
+                if name in hashes[lane] and lane != "ship"}
         if len(set(seen.values())) != 1:
             fail(f"{bench}/{name}: the lanes compute different results — {seen}")
         line = f"{bench:15} {name:13}"
@@ -502,6 +540,17 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
             line += f" {ratio:>9.2f} {f'{lo:.2f}–{hi:.2f}':>13}  {verdict}{flags}"
             rec.update(ratio=ratio, ratio_lo=lo, ratio_hi=hi, verdict=verdict,
                        flags=(("noisy " if noisy else "") + ("coarse" if coarse else "")).strip())
+        shp = samples.get("ship", {}).get(name)
+        ship_same = hashes.get("ship", {}).get(name) == rec["hash"]
+        if shp and ref and not ship_same:
+            # A fault the checked lanes answer as null, wrapped: the ship time is of other
+            # work, so it is not a ratio.  The row says so instead of failing the run.
+            line += "  ship (hash differs)"
+            rec.update(ship_hash=hashes["ship"][name])
+        elif shp and ref:
+            ship_ratio = statistics.median(shp) / statistics.median(ref)
+            line += f"  ship {ship_ratio:.2f}"
+            rec.update(ship_ratio=ship_ratio)
         lines.append(line)
         if a.show_samples:
             for lane in lanes:
@@ -655,7 +704,7 @@ def main():
     subprocess.run([os.path.join(ROOT, "scripts", "disk_janitor.sh"), "--background"], check=False)
 
     lanes = [x for x in a.lanes.split(",") if x]
-    unknown = set(lanes) - {"native", "rust", "interp", "python"}
+    unknown = set(lanes) - {"native", "rust", "interp", "python", "ship"}
     if unknown:
         fail(f"unknown lane(s): {', '.join(sorted(unknown))}")
     if not os.access(a.loft, os.X_OK):

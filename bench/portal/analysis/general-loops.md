@@ -99,11 +99,13 @@ times.
 |---|---|
 | `if not-null(n) { n } else { d }` (the lowering of `??` and `?`) | `__ff \|= is-null(n); n` |
 | a template's `s.raise_recoverable(k)` | `ops::fault_flag_raise(&mut __ff, k)` |
-| `+ - *` and negation on integers, checked or `Nullable` | wrapping, `__ff` set on a null operand or an overflow |
-| `&`, `\|`, `^` on integers | the operator, `__ff` set on a null operand |
 
 Every other node is emitted exactly as today, so the fast copy differs only where a fault
 form stands in.
+
+An integer operator keeps its checked form.  Its null tests are branches the processor
+predicts, off the value path; a flag computed per operator measured slower on `02_sum_loop`
+(1.81× → 2.24×), so the integer forms built first were removed.
 
 **The unroll.** Inside the fast copy, a `for` over `0..C` (literal `C` in `1..=64`, the
 counter seeded at its start) whose body is straight-line (no loop, `break`, `continue` or
