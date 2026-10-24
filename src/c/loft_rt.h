@@ -400,6 +400,12 @@ static void loft_push_code(loft_text *t, uint32_t c) {
     loft_push(t, buf, n);
 }
 
+/* A function value: the definition it names (LOFT_NULL for the absent one) and the closure
+ * record a capturing lambda reads.  A call goes through the emitted dispatcher of its
+ * signature, `loft_call{n}`, which switches on `d` (State::fn_call_ref). */
+typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; } loft_ref;
+typedef struct { int64_t d; loft_ref clos; } loft_fn;
+
 /* ── Stores ────────────────────────────────────────────────────────────────────────────────
  * A port of the store model the IR addresses (src/store.rs, src/vector.rs): a store is an
  * array of 8-byte words; a record is a run of words whose first word holds its claimed size
@@ -407,8 +413,6 @@ static void loft_push_code(loft_text *t, uint32_t c) {
  * store, a record and a byte position, and a field is `rec * 8 + pos + offset`.  `rec == 0`
  * is the null reference.  The allocator is a plain bump allocator: which words a claim gets
  * is not observable, and a store's words go back together when the store is freed. */
-typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; } loft_ref;
-
 /* `known`: the type a wrapper mint gave the store's first record, 0xFFFF for any other. */
 typedef struct { uint8_t *buf; uint32_t words; uint32_t top; int live; uint16_t known; int pinned; } loft_store_t;
 
@@ -513,6 +517,17 @@ static void loft_database_wrapper(loft_ref *var, uint32_t bytes, uint16_t tp) {
     }
     loft_database(var, bytes);
     loft_stores[var->store_nr].known = tp;
+}
+
+static loft_fn loft_fn_make(int64_t d, loft_ref clos) {
+    loft_fn f;
+    f.d = d;
+    f.clos = clos;
+    return f;
+}
+
+static loft_fn loft_fn_of(int64_t d) {
+    return loft_fn_make(d, loft_ref_null());
 }
 
 /* OpFreeRef: the whole store goes, everything the root owned with it. */
