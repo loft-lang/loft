@@ -2179,12 +2179,12 @@ impl State {
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpDatabase", self);
         self.code_add(slot_offset);
-        let name = format!("main_vector<{}>", elm_tp.name(stack.data));
-        let known = stack.data.name_type(&name, self.source);
+        let known = stack.data.owned_vector_type(elm_tp, self.source);
         debug_assert_ne!(
             known,
             u16::MAX,
-            "Incomplete type {name} in {}",
+            "Incomplete type main_vector<{}> in {}",
+            elm_tp.name(stack.data),
             stack.function.name
         );
         self.code_add(known);

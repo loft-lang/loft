@@ -1,5 +1,10 @@
 /* Copyright (c) 2026 Jurjen Stellingwerff
  * SPDX-License-Identifier: LGPL-3.0-or-later */
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 /* ── The store allocator ───────────────────────────────────────────────────────────────────
  * A PORT of `src/store.rs`'s allocator, line for line, with every switch at its default: the
  * memory model is loft's, so a store holds the same bytes at the same positions as on the
@@ -806,7 +811,7 @@ static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size) {
  * block held (`@FR-H-Claim`). */
 static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
     uint32_t pos = loft_st_claim_inner(s, size);
-    LOFT_TRACE("C %llu %u %u\n", (unsigned long long) s->serial, size, pos);
+    LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
     return pos;
 }
 
@@ -869,12 +874,14 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
             } else {
                 loft_st_set_i32(s, rec, 0, claim - next_size);
             }
+            LOFT_TRACE("R %llu %u %d %u\n", (unsigned long long) s->serial, rec, loft_st_i32(s, rec, 0), rec);
             return rec;
         }
     }
     uint32_t nw = loft_st_claim(s, size);
     memcpy(s->buf + (size_t) nw * 8 + 4, s->buf + (size_t) rec * 8 + 4, (size_t) claim * 8 - 4);
     loft_st_delete(s, rec);
+    LOFT_TRACE("R %llu %u %d %u\n", (unsigned long long) s->serial, rec, loft_st_i32(s, nw, 0), nw);
     return nw;
 }
 
@@ -882,7 +889,6 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
  * moved (the new position answered). */
 static uint32_t loft_st_resize(loft_store_t *s, uint32_t rec, uint32_t size) {
     uint32_t nw = loft_st_resize_inner(s, rec, size);
-    LOFT_TRACE("R %llu %u %u %u\n", (unsigned long long) s->serial, rec, size, nw);
     return nw;
 }
 
@@ -915,4 +921,93 @@ static void loft_st_note_referenced(loft_store_t *s, uint32_t rec) {
 
 static int loft_st_is_removed(const loft_store_t *s, uint32_t rec) {
     return loft_bits_contains(&s->removed, rec);
+}
+
+/* `Store::claim_at`: the record at exactly `pos`, `size` words, carved out of the free blocks
+ * that cover it (an image's tombstones are placed this way). */
+static uint32_t loft_st_claim_at(loft_store_t *s, uint32_t pos, uint32_t size) {
+    uint32_t base = LOFT_ST_PRIMARY;
+    for (;;) {
+        int32_t h = loft_st_i32(s, base, 0);
+        uint32_t bsz = (uint32_t) (h < 0 ? -h : h);
+        if (base >= s->size || bsz == 0) { fputs("loft: claim_at past the store's end\n", stderr); abort(); }
+        if (pos < base + bsz) break;
+        base += bsz;
+    }
+    int32_t header = loft_st_i32(s, base, 0);
+    if (header >= 0) { fputs("loft: claim_at on a claimed block\n", stderr); abort(); }
+    loft_fl_remove(s, base);
+    uint32_t bend = base + (uint32_t) -header;
+    while (bend < pos + size) {
+        int32_t nx = bend < s->size ? loft_st_i32(s, bend, 0) : 0;
+        if (nx >= 0) { fputs("loft: claim_at runs into a claimed block\n", stderr); abort(); }
+        loft_fl_remove(s, bend);
+        bend += (uint32_t) -nx;
+    }
+    if (base < pos) {
+        loft_set_free_header(s, base, (int32_t) (pos - base));
+        loft_fl_insert(s, base);
+    }
+    loft_st_set_i32(s, pos, 0, (int32_t) size);
+    loft_bits_insert(&s->claims, pos);
+    uint32_t tail = pos + size;
+    if (tail < bend) {
+        loft_set_free_header(s, tail, (int32_t) (bend - tail));
+        loft_fl_insert(s, tail);
+    }
+    return pos;
+}
+
+/* `Store::kept_positions`: the referenced and removed positions, ascending, in a fresh array
+ * (*n of them; 0 and no array when there are none). */
+static uint32_t *loft_st_kept_positions(const loft_store_t *s, uint32_t *n) {
+    *n = s->referenced.live + s->removed.live;
+    if (*n == 0) return 0;
+    uint32_t *out = (uint32_t *) malloc(*n * sizeof *out), k = 0;
+    if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
+    uint32_t words = s->referenced.nwords > s->removed.nwords ? s->referenced.nwords : s->removed.nwords;
+    for (uint32_t w = 0; w < words; w++) {
+        uint64_t bits = (w < s->referenced.nwords ? s->referenced.bits[w] : 0) | (w < s->removed.nwords ? s->removed.bits[w] : 0);
+        for (uint32_t b = 0; b < 64; b++) if ((bits >> b) & 1u) out[k++] = w * 64 + b;
+    }
+    *n = k;
+    return out;
+}
+
+/* `Store::entomb_kept`: after a reset, each kept position past the root becomes a tombstone
+ * again, so a stored reference to it still reads null (`@FR-H-Removed`). */
+static void loft_st_entomb_kept(loft_store_t *s, const uint32_t *kept, uint32_t n) {
+    uint32_t root_end = LOFT_ST_PRIMARY;
+    if (loft_bits_contains(&s->claims, LOFT_ST_PRIMARY)) {
+        int32_t h = loft_st_i32(s, LOFT_ST_PRIMARY, 0);
+        root_end = LOFT_ST_PRIMARY + (uint32_t) (h < 0 ? -h : h);
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t pos = kept[i];
+        if (pos < root_end || pos >= s->size) continue;
+        loft_st_claim_at(s, pos, 1);
+        loft_bits_remove(&s->claims, pos);
+        loft_bits_insert(&s->removed, pos);
+        loft_st_set_i32(s, pos, 4, 0);
+    }
+}
+
+/* `Store::holds_only_root`. */
+static int loft_st_holds_only_root(const loft_store_t *s) {
+    return s->claims.live == 1 && loft_bits_contains(&s->claims, LOFT_ST_PRIMARY);
+}
+
+/* `Store::claims_rebuild` with `fl_rebuild` before it (`resync_allocator`): the allocator's
+ * state read back off the store's own words, as for an image adopted whole. */
+static void loft_st_resync(loft_store_t *s) {
+    loft_fl_rebuild(s);
+    loft_bits_clear(&s->claims);
+    uint32_t pos = LOFT_ST_PRIMARY;
+    while (pos < s->size) {
+        int32_t h = loft_st_i32(s, pos, 0);
+        uint32_t bs = (uint32_t) (h < 0 ? -h : h);
+        if (bs == 0) break;
+        if (h > 0 && !loft_bits_contains(&s->removed, pos)) loft_bits_insert(&s->claims, pos);
+        pos += bs;
+    }
 }

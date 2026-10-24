@@ -30,6 +30,7 @@ use std::fmt::Write as _;
 /// The C runtime every unit starts with.
 const RUNTIME: &str = concat!(
     include_str!("loft_cc.h"),
+    include_str!("loft_store.h"),
     include_str!("loft_rt.h"),
     include_str!("loft_keyed.h"),
     include_str!("loft_io.h")
@@ -454,6 +455,12 @@ impl<'a> Cx<'a> {
                 }
                 _ => format!("{{ LOFT_T_SCALAR, {size}, 0, 0, 0, 0 }}"),
             };
+            // `owns_heap`: the Rust store's own answer (`Stores::type_owns_heap`), never re-derived.
+            let row = format!(
+                "{}, {} }}",
+                row.strip_suffix(" }").unwrap_or(&row),
+                u8::from(self.stores.type_owns_heap(tp))
+            );
             rows.push(format!("    [{tp}] = {row},"));
         }
         let max = types.iter().max().copied().unwrap_or(0);

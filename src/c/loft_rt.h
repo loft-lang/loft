@@ -574,19 +574,13 @@ typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; } loft_ref;
 typedef struct { int64_t d; loft_ref clos; } loft_fn;
 
 /* ── Stores ────────────────────────────────────────────────────────────────────────────────
- * A port of the store model the IR addresses (src/store.rs, src/vector.rs): a store is an
- * array of 8-byte words; a record is a run of words whose first word holds its claimed size
- * (and, at byte 4 of a vector record, the vector's length); a reference (`DbRef`) names a
- * store, a record and a byte position, and a field is `rec * 8 + pos + offset`.  `rec == 0`
- * is the null reference.  The allocator is a plain bump allocator: which words a claim gets
- * is not observable, and a store's words go back together when the store is freed. */
-/* `known`: the type a wrapper mint gave the store's first record, 0xFFFF for any other. */
-/* `protect`: the calls in flight that hold this store as an argument (protect_store_frees). */
-typedef struct { uint8_t *buf; uint32_t words; uint32_t top; int live; uint16_t known; int pinned; int protect; } loft_store_t;
-
-static loft_store_t *loft_stores = 0;
-static uint32_t loft_nstores = 0;
-
+ * The store model the IR addresses (src/store.rs, src/vector.rs): a store is an array of 8-byte
+ * words; a record is a run of words whose first word holds its claimed size (and, at byte 4 of a
+ * vector record, the vector's length); a reference (`DbRef`) names a store, a record and a byte
+ * position, and a field is `rec * 8 + pos + offset`.  `rec == 0` is the null reference.  The
+ * allocator is loft's own (`loft_store.h`, a port of `Store`); the table of stores below is
+ * `Stores`: the lowest free slot is made again, a new slot starts at 100 words and a reused one
+ * keeps its capacity, and a store's serial is the order it was made. */
 LOFT_HOT_INLINE loft_ref loft_ref_null(void) {
     loft_ref r;
     r.store_nr = 0xFFFF;
@@ -599,7 +593,9 @@ LOFT_HOT_INLINE loft_store_t *loft_store_of(loft_ref r) {
     return &loft_stores[r.store_nr];
 }
 
-static uint32_t loft_store_new(void) {
+/* `Stores::database_named`: the lowest free slot, a fresh store in it; `counted` gives it the
+ * next serial, as every store the program makes. */
+static uint32_t loft_store_make(int counted) {
     uint32_t nr = 0;
     while (nr < loft_nstores && loft_stores[nr].live) nr++;
     if (nr >= 0xFFFF) { fputs("loft: store table exhausted: 65535 stores live at once\n", stderr); abort(); }
@@ -614,34 +610,34 @@ static uint32_t loft_store_new(void) {
     }
     loft_store_t *s = &loft_stores[nr];
     if (!s->buf) {
-        s->words = 64;
-        s->buf = (uint8_t *) calloc(s->words, 8);
+        s->size = 100;
+        s->buf = (uint8_t *) malloc((size_t) s->size * 8);
         if (!s->buf) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    s->top = 1; /* word 0 is never a record: rec 0 is the null reference */
+    loft_st_init(s);
     s->live = 1;
     s->known = 0xFFFF;
     s->pinned = 0;
     s->protect = 0;
+    s->serial = 0;
+    if (counted) {
+        s->serial = ++loft_stores_allocated;
+        LOFT_TRACE("N %llu %u\n", (unsigned long long) s->serial, s->size);
+    }
     return nr;
 }
 
+static uint32_t loft_store_new(void) {
+    return loft_store_make(1);
+}
+
+/* A record of `words` words, its payload zeroed: the C runtime's callers build on zeroed
+ * records, where `Store::claim` promises no value (`@FR-H-Claim`). */
 static uint32_t loft_claim(loft_store_t *s, uint32_t words) {
     if (words < 1) words = 1;
-    if (s->top + words > s->words) {
-        uint32_t n = s->words;
-        while (s->top + words > n) n *= 2;
-        uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) n * 8);
-        if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
-        memset(b + (size_t) s->words * 8, 0, (size_t) (n - s->words) * 8);
-        s->buf = b;
-        s->words = n;
-    }
-    uint32_t rec = s->top;
-    s->top += words;
-    memset(s->buf + (size_t) rec * 8, 0, (size_t) words * 8);
-    int32_t size = (int32_t) words;
-    memcpy(s->buf + (size_t) rec * 8, &size, 4);
+    uint32_t rec = loft_st_claim(s, words);
+    int32_t got = loft_st_i32(s, rec, 0);
+    memset(s->buf + (size_t) rec * 8 + 4, 0, (size_t) got * 8 - 4);
     return rec;
 }
 
@@ -663,13 +659,21 @@ LOFT_HOT_INLINE void loft_set_u32(loft_store_t *s, uint32_t rec, uint32_t byte, 
  * new store when the variable holds none. */
 static void loft_database(loft_ref *var, uint32_t bytes) {
     uint32_t nr;
-    if (var->store_nr != 0xFFFF && var->store_nr < loft_nstores && loft_stores[var->store_nr].live) {
+    uint32_t *kept = 0, nkept = 0;
+    if (var->store_nr != 0xFFFF && var->store_nr < loft_nstores) {
+        /* `Stores::clear`: the slot the variable names made again in place — a freed one too,
+         * which keeps its serial — its tombstones kept. */
         nr = var->store_nr;
-        loft_stores[nr].top = 1;
+        loft_store_t *s = &loft_stores[nr];
+        if (s->live) kept = loft_st_kept_positions(s, &nkept);
+        loft_st_init(s);
+        s->live = 1;
     } else {
         nr = loft_store_new();
     }
     uint32_t rec = loft_claim(&loft_stores[nr], (bytes + 15) / 8);
+    loft_st_entomb_kept(&loft_stores[nr], kept, nkept);
+    free(kept);
     loft_stores[nr].known = 0xFFFF;
     var->store_nr = (uint16_t) nr;
     var->rec = rec;
@@ -718,9 +722,10 @@ static void loft_free_ref(loft_ref r) {
     }
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return;
     loft_store_t *s = &loft_stores[r.store_nr];
-    if (s->pinned) return;
+    /* `Stores::free_named`: a store already free stays as it is. */
+    if (s->pinned || !s->live) return;
     s->live = 0;
-    s->top = 1;
+    LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
 }
 
 /* ── Generators (@F34, the interpreter's coroutines) ──
@@ -785,16 +790,18 @@ static void loft_gen_free(loft_ref g) {
  * interpreter laid them out, loaded once and pinned for the whole run.  The vector is the
  * field at byte 8 of the store's first record. */
 static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
-    uint32_t nr = loft_store_new();
+    /* The interpreter's constant store is its own, made before the program's: it takes no
+     * serial here either, so the program's stores are numbered alike. */
+    uint32_t nr = loft_store_make(0);
     loft_store_t *s = &loft_stores[nr];
-    if (n > s->words) {
+    if (n > s->size) {
         uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) n * 8);
         if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
         s->buf = b;
-        s->words = n;
+        s->size = n;
     }
     memcpy(s->buf, words, (size_t) n * 8);
-    s->top = n;
+    loft_st_resync(s);
     s->pinned = 1;
     loft_ref r = { (uint16_t) nr, 1, 8 };
     return r;
@@ -938,20 +945,15 @@ static void loft_set_char(loft_ref r, uint32_t fld, uint32_t c) {
 
 /* A whole reference held in a field (Stores::get_db_ref / set_db_ref): store, record and
  * position as three 4-byte words — how a closure record holds what it captured by reference. */
-/* A removed record keeps its words, its claim word negated: a stored reference to it reads
- * null (@FR-H-Removed, Stores::reference_removed). */
+/* A removed record is deleted; when a stored reference named it, the delete leaves a
+ * tombstone and that reference reads null (@FR-H-Removed, Stores::reference_removed). */
 static void loft_remove_record(loft_store_t *s, uint32_t rec) {
-    int32_t size;
-    memcpy(&size, loft_at(s, rec, 0), 4);
-    if (size > 0) size = -size;
-    memcpy(loft_at(s, rec, 0), &size, 4);
+    loft_st_delete(s, rec);
 }
 
 static int loft_record_removed(loft_ref x) {
     if (x.rec == 0 || x.store_nr == 0xFFFF || x.store_nr >= loft_nstores || !loft_stores[x.store_nr].live) return 0;
-    int32_t size;
-    memcpy(&size, loft_at(&loft_stores[x.store_nr], x.rec, 0), 4);
-    return size < 0;
+    return loft_st_is_removed(&loft_stores[x.store_nr], x.rec);
 }
 
 static loft_ref loft_get_dbref(loft_ref r, uint32_t fld) {
@@ -971,6 +973,8 @@ static void loft_set_dbref(loft_ref r, uint32_t fld, loft_ref x) {
     loft_set_u32(s, r.rec, r.pos + fld, x.store_nr);
     loft_set_u32(s, r.rec, r.pos + fld + 4, x.rec);
     loft_set_u32(s, r.rec, r.pos + fld + 8, x.pos);
+    /* `Stores::set_db_ref`: the record named is marked, so removing it leaves a tombstone. */
+    if (x.rec != 0 && x.store_nr < loft_nstores && loft_stores[x.store_nr].live) loft_st_note_referenced(&loft_stores[x.store_nr], x.rec);
 }
 
 /* ── Vectors (src/vector.rs) ───────────────────────────────────────────────────────────── */
@@ -1019,10 +1023,11 @@ static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
         memcpy(&claimed, loft_at(s, r, 0), 4);
         uint32_t cap = (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
         if (len + 1 > cap) {
-            uint32_t nr = loft_claim(s, loft_vec_cap_words((len + 1) * 2, size));
-            memcpy(loft_at(s, nr, 4), loft_at(s, r, 4), 4 + (size_t) len * size);
-            loft_set_u32(s, v.rec, v.pos, nr);
-            r = nr;
+            uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words((len + 1) * 2, size));
+            if (nr != r) {
+                loft_set_u32(s, v.rec, v.pos, nr);
+                r = nr;
+            }
         }
     }
     loft_ref e;
@@ -1260,7 +1265,7 @@ static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
     if (r.rec == 0) return;
     loft_store_t *s = loft_store_of(r);
     loft_text copy = { 0, 0, 0 };
-    if (v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->words * 8) {
+    if (v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
         copy = loft_text_own(v);
         v = loft_view(&copy);
     }
@@ -1291,6 +1296,7 @@ typedef struct {
     uint16_t n;                /* fields, or variants */
     const loft_fld *fields;    /* a struct's fields */
     const uint16_t *variants;  /* a struct-enum's variant types, 0xFFFF for a unit variant */
+    uint8_t owns_heap;         /* Stores::type_owns_heap: a value of it owns a claim of its own */
 } loft_tdesc;
 
 /* Copy `n` bytes between two places that may share a buffer a claim could move. */
@@ -1401,12 +1407,14 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
     if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
     if (a->protect || b->protect) return 0;
-    int32_t root;
-    memcpy(&root, b->buf + 8, 4);
-    if (b->top != 1 + (uint32_t) root) return 0;
+    if (!loft_st_holds_only_root(b)) return 0;
+    /* `Store::swap_contents`: the content moves, each slot keeps its serial. */
     loft_store_t t = *a;
     *a = *b;
     *b = t;
+    uint64_t serial = a->serial;
+    a->serial = b->serial;
+    b->serial = serial;
     loft_free_ref(src);
     return 1;
 }
@@ -1515,16 +1523,62 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
 /* OpAppendVector (Stores::vector_add): every element of `o` appended to `v`, deep-copied so the
  * destination owns what each element holds.  The source's length is read once, and each source
  * element is re-read after the growth, so a self-append (`v += v`) reads the moved record. */
+/* Stores::vector_set_size: the vector grows by `adding` elements of `size`, its claim resized to
+ * hold exactly them when more than one arrives. */
+static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size) {
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_u32(s, v.rec, v.pos);
+    uint32_t len = loft_u32(s, r, 4);
+    if (adding > 1) {
+        uint32_t nr = loft_st_resize(s, r, (uint32_t) (((uint64_t) (len + adding) * size + 15) / 8));
+        if (nr != r) {
+            loft_set_u32(s, v.rec, v.pos, nr);
+            r = nr;
+        }
+    }
+    loft_set_u32(s, r, 4, len + adding);
+}
+
+/* Stores::vector_add (OpAppendVector): the elements of `o` appended to `v` as deep copies.  When
+ * they own no heap and fit the room `v` has, one block copy (`vector_add_fits`); into an empty
+ * `v`, a claim of exactly their size; else `vector_append` and a resize to the total. */
 static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
-    int64_t n = loft_vec_len(o);
-    if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+    int64_t n64 = loft_vec_len(o);
+    if (n64 == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+    uint32_t n = (uint32_t) n64;
     uint32_t size = T[tp].size;
-    for (int64_t i = 0; i < n; i++) {
-        loft_ref e = loft_vec_append(v, size);
-        loft_ref a = { o.store_nr, loft_collection_rec(loft_store_of(o), o.rec, o.pos), 8 + (uint32_t) i * size };
-        loft_copy_bytes(e, 0, a, 0, size);
-        if (T[tp].kind != LOFT_T_SCALAR) loft_copy_claims(T, tp, a, e);
-        loft_vec_finish(v);
+    loft_store_t *s = loft_store_of(v);
+    uint32_t o_rec = loft_u32(loft_store_of(o), o.rec, o.pos);
+    uint32_t d_rec = loft_collection_rec(s, v.rec, v.pos);
+    int same_vec = v.store_nr == o.store_nr && o_rec != 0 && loft_u32(s, v.rec, v.pos) == o_rec;
+    if (size != 0 && !T[tp].owns_heap && d_rec != 0 && !(v.store_nr == o.store_nr && d_rec == o_rec)) {
+        int32_t claimed = loft_st_i32(s, d_rec, 0);
+        uint32_t len = loft_u32(s, d_rec, 4);
+        uint32_t cap = (uint32_t) (((uint64_t) (claimed > 0 ? claimed : 0) * 8 - 8) / size);
+        if (claimed > 0 && (uint64_t) len + n <= cap) {
+            loft_ref dst = { v.store_nr, d_rec, 0 }, src = { o.store_nr, o_rec, 0 };
+            loft_copy_bytes(dst, 8 + len * size, src, 8, (size_t) n * size);
+            loft_set_u32(s, d_rec, 4, len + n);
+            return;
+        }
+    }
+    if (!same_vec && loft_u32(s, v.rec, v.pos) == 0) {
+        uint32_t rec = loft_claim(s, (uint32_t) (((uint64_t) n * size + 15) / 8));
+        loft_set_u32(s, v.rec, v.pos, rec);
+        loft_set_u32(s, rec, 4, 0);
+    }
+    loft_ref slot = loft_vec_append(v, size);
+    uint32_t append_pos = slot.pos;
+    loft_vec_set_size(v, n, size);
+    uint32_t dest = loft_u32(s, v.rec, v.pos);
+    if (v.store_nr == o.store_nr) o_rec = loft_u32(loft_store_of(o), o.rec, o.pos);
+    loft_ref dst = { v.store_nr, dest, 0 }, src = { o.store_nr, o_rec, 0 };
+    loft_copy_bytes(dst, append_pos, src, 8, (size_t) n * size);
+    if (!T[tp].owns_heap) return;
+    for (uint32_t i = 0; i < n; i++) {
+        loft_ref a = { o.store_nr, o_rec, 8 + i * size };
+        loft_ref b = { v.store_nr, dest, append_pos + i * size };
+        loft_copy_claims(T, tp, a, b);
     }
 }
 
@@ -1951,7 +2005,7 @@ static void loft_show_text(loft_text *s, loft_ref r, int fmt, int ind) {
     (void) ind;
     loft_store_t *st = loft_store_of(r);
     uint32_t h = loft_u32(st, r.rec, r.pos);
-    if (h != 0 && h >= st->words) {
+    if (h != 0 && h >= st->size) {
         /* A handle outside the store is corruption, not absence. */
         if (fmt & 2) { loft_push(s, "null", 4); return; }
         loft_push_cstr(s, "<bad-text:");
@@ -2311,6 +2365,7 @@ static void loft_start(int argc, char **argv) {
     loft_argc = argc;
     loft_argv = argv;
     loft_start_us = loft_now_us();
+    LOFT_TRACE("M\n");
     loft_init();
 }
 

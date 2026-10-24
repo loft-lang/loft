@@ -12182,6 +12182,13 @@ impl Data {
         self.def_names.get(name, source).unwrap_or(u32::MAX)
     }
 
+    /// The type an owned vector local of element `elm` is minted as, `main_vector<elm>`: what
+    /// the bytecode writer's `OpDatabase` names for it, and every other writer with it.
+    #[must_use]
+    pub fn owned_vector_type(&self, elm: &Type, source: u16) -> u16 {
+        self.name_type(&format!("main_vector<{}>", elm.name(self)), source)
+    }
+
     /** Get the definition by name
     # Panics
     When an unknown definition is requested

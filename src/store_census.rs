@@ -174,6 +174,13 @@ pub fn at_ticks(value: i64) {
 pub fn alloc_event(line: std::fmt::Arguments) {
     use std::sync::Mutex;
     static FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+    static STDERR: OnceLock<bool> = OnceLock::new();
+    if *STDERR.get_or_init(|| {
+        crate::platform::env_output("LOFT_ALLOC_TRACE").is_some_and(|p| p == "-")
+    }) {
+        eprintln!("{line}");
+        return;
+    }
     let file = FILE.get_or_init(|| {
         let path = crate::platform::env_output("LOFT_ALLOC_TRACE")?;
         crate::file_access::open_with(

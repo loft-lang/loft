@@ -5497,7 +5497,7 @@ impl Stores {
 
     /// Can a value of `tp` own a heap record?  See [`Self::heap_facts`].
     #[inline]
-    pub(super) fn type_owns_heap(&self, tp: u16) -> bool {
+    pub(crate) fn type_owns_heap(&self, tp: u16) -> bool {
         self.heap_facts(tp).0
     }
 

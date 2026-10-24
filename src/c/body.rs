@@ -878,9 +878,7 @@ impl<'a> FnWriter<'a> {
                 !(self.vars.is_skip_free(var) || self.vars.is_inline_ref(var))
             })
         {
-            let name = self.var(var);
-            self.line(ind, &format!("{name} = loft_ref_null();"));
-            self.line(ind, &format!("loft_database(&{name}, 8);"));
+            self.owned_vector_null(var, ind);
             return Ok(());
         }
         let c = self.shapes[var as usize];
@@ -966,6 +964,24 @@ impl<'a> FnWriter<'a> {
             }
             _ => None,
         }
+    }
+
+    /// An owned vector variable bound to null: a fresh store minted as `main_vector<elm>`, the
+    /// type the bytecode writer's `OpDatabase` names (`gen_owned_vector_store`), so a later
+    /// wrapper mint of it clears it in place.
+    fn owned_vector_null(&mut self, var: u16, ind: usize) {
+        let crate::data::Type::Vector(elm, _) = self.vars.tp(var).base() else {
+            return;
+        };
+        let data = self.cx.data;
+        let known = data.owned_vector_type(elm, data.def(self.d).source());
+        let size = self.cx.stores.enum_parent_size(known);
+        let name = self.var(var);
+        self.line(ind, &format!("{name} = loft_ref_null();"));
+        self.line(
+            ind,
+            &format!("loft_database_typed(&{name}, {size}, {known});"),
+        );
     }
 
     /// A keyed local bound to null gets a store too, unless it borrows one
