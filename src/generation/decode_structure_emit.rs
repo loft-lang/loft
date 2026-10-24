@@ -49,13 +49,13 @@ pub enum PsParam {
 
 impl Output<'_> {
     fn ps_producer_of(&self, pd: u32) -> &Producer {
-        &self.ps.producers[&pd]
+        &self.plan.ps.producers[&pd]
     }
 
     /// The producer and consumer of the function being emitted, when it is a positional one.
     fn ps_consumer(&self) -> Option<&Consumer> {
         match self.ps_mode {
-            Some(PsMode::Consumer(d)) => self.ps.consumers.get(&d),
+            Some(PsMode::Consumer(d)) => self.plan.ps.consumers.get(&d),
             _ => None,
         }
     }
@@ -76,7 +76,7 @@ impl Output<'_> {
     /// emitted in its positional form under its own name, taking the frame — so a call of one
     /// from another root's twin stays a plain call.
     fn ps_twin(&self, d: u32) -> bool {
-        self.ps.consumers.contains_key(&d) && !self.ps.roots.contains(&d)
+        self.plan.ps.consumers.contains_key(&d) && !self.plan.ps.roots.contains(&d)
     }
 
     fn ps_name(&self, d: u32, suffix: &str) -> String {
@@ -98,14 +98,20 @@ impl Output<'_> {
         match self.ps_mode? {
             PsMode::Shape(_) => Some("__ps".into()),
             PsMode::Walk(pd, key) => {
-                let k = self.ps.walks.get(&(pd, key.0, key.1)).copied().unwrap_or(0);
+                let k = self
+                    .plan
+                    .ps
+                    .walks
+                    .get(&(pd, key.0, key.1))
+                    .copied()
+                    .unwrap_or(0);
                 let prod = self.ps_producer_of(pd);
                 Some(format!(
                     "__psw{k}<R, F: FnMut(&std::cell::UnsafeCell<Stores>, {}) -> Option<R>>",
                     self.ps_elem_type(prod, key.1)
                 ))
             }
-            PsMode::Consumer(d) if !self.ps.roots.contains(&d) => Some("__ps".into()),
+            PsMode::Consumer(d) if !self.plan.ps.roots.contains(&d) => Some("__ps".into()),
             PsMode::Consumer(_) => None,
         }
     }
@@ -113,7 +119,7 @@ impl Output<'_> {
     /// Parameters written right after `cell`.
     pub(super) fn ps_leading_params(&self) -> &'static str {
         match self.ps_mode {
-            Some(PsMode::Consumer(d)) if !self.ps.roots.contains(&d) => ", __psb: DbRef",
+            Some(PsMode::Consumer(d)) if !self.plan.ps.roots.contains(&d) => ", __psb: DbRef",
             _ => "",
         }
     }
@@ -141,7 +147,7 @@ impl Output<'_> {
                 }
             }
             Some(PsMode::Consumer(d)) => {
-                let Some(cons) = self.ps.consumers.get(&d) else {
+                let Some(cons) = self.plan.ps.consumers.get(&d) else {
                     return PsParam::Same;
                 };
                 if cons.retbuf == Some(v) {
@@ -164,7 +170,7 @@ impl Output<'_> {
             PsMode::Shape(pd) => Some(self.ps_producer_of(pd).shape_tuple()),
             PsMode::Walk(..) => Some("Option<R>".into()),
             PsMode::Consumer(d) => {
-                let cons = self.ps.consumers.get(&d)?;
+                let cons = self.plan.ps.consumers.get(&d)?;
                 let r = cons.returns?;
                 Some(self.ps_rep_type(self.ps_producer_of(cons.producer), r))
             }
@@ -256,7 +262,7 @@ impl Output<'_> {
                 }
             }
             Some(PsMode::Consumer(d)) => {
-                let Some(cons) = self.ps.consumers.get(&d).cloned() else {
+                let Some(cons) = self.plan.ps.consumers.get(&d).cloned() else {
                     return out;
                 };
                 let prod = self.ps_producer_of(cons.producer).clone();
@@ -289,8 +295,9 @@ impl Output<'_> {
             Some(PsMode::Shape(pd) | PsMode::Walk(pd, _)) => {
                 self.ps_var(self.ps_producer_of(pd).frame)
             }
-            Some(PsMode::Consumer(d)) if self.ps.roots.contains(&d) => {
+            Some(PsMode::Consumer(d)) if self.plan.ps.roots.contains(&d) => {
                 let f = self
+                    .plan
                     .ps
                     .consumers
                     .get(&d)
@@ -403,7 +410,7 @@ impl Output<'_> {
             );
         }
         if self.ps_twin(callee) {
-            let gc = &self.ps.consumers[&callee];
+            let gc = &self.plan.ps.consumers[&callee];
             let def = self.data.def(callee);
             return Some(
                 args.iter()
@@ -924,7 +931,7 @@ impl Output<'_> {
         if !self.ps_twin(callee) {
             return Ok(false);
         }
-        let Some(gc) = self.ps.consumers.get(&callee).cloned() else {
+        let Some(gc) = self.plan.ps.consumers.get(&callee).cloned() else {
             return Ok(false);
         };
         let def = self.data.def(callee);
@@ -969,6 +976,7 @@ impl Output<'_> {
             return write!(w, "unreachable!()");
         };
         let k = self
+            .plan
             .ps
             .walks
             .get(&(pd, walk.field.0, walk.field.1))
@@ -1047,12 +1055,13 @@ impl Output<'_> {
         dnr: u32,
         program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
     ) -> std::io::Result<()> {
-        if self.ps.producers.contains_key(&dnr) {
+        if self.plan.ps.producers.contains_key(&dnr) {
             self.ps_mode = Some(PsMode::Shape(dnr));
             let r = self.output_function(w, dnr, program_store);
             self.ps_mode = None;
             r?;
             let mut walks: Vec<((u32, i64, u16), usize)> = self
+                .plan
                 .ps
                 .walks
                 .iter()

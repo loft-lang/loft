@@ -87,7 +87,7 @@ impl OpEmitter for OpGetRecordEmitter {
         // width `hash::find_long` lists, so the lookup takes the typed entry with the key
         // as a value.  The widths are the ones `emit_content` wraps as `Content::Long`
         // AND `fast_key` resolves; any other key, kind or arity keeps the general call.
-        let typed = !ctx.output.typed_keyed_disabled
+        let typed = !ctx.output.switches.typed_keyed_disabled
             && row.is_some_and(|t| matches!(t.parts, crate::database::Parts::Hash(..)))
             && key_vals.len() == 1
             && matches!(key_types.as_slice(), [k] if matches!(k.unsigned_abs(), 1 | 2 | 8 | 12));
@@ -112,7 +112,7 @@ impl OpEmitter for OpGetRecordEmitter {
         }
         // The compound clause: two to four `integer` / `long` parts, handed over as values
         // (`hash::find_ints`).
-        let typed_ints = !ctx.output.typed_keyed_disabled
+        let typed_ints = !ctx.output.switches.typed_keyed_disabled
             && row.is_some_and(|t| matches!(t.parts, crate::database::Parts::Hash(..)))
             && (2..=4).contains(&key_vals.len())
             && key_types.len() == key_vals.len()
@@ -131,7 +131,7 @@ impl OpEmitter for OpGetRecordEmitter {
             return write!(ctx.w, "])");
         }
         // The text clause: ONE `text` key, handed over as the text (`hash::find_str`).
-        let typed_text = !ctx.output.typed_keyed_disabled
+        let typed_text = !ctx.output.switches.typed_keyed_disabled
             && row.is_some_and(|t| matches!(t.parts, crate::database::Parts::Hash(..)))
             && key_vals.len() == 1
             && matches!(key_types.as_slice(), [k] if k.unsigned_abs() == 6);

@@ -55,7 +55,7 @@ impl Output<'_> {
     /// Is this call of `d` with `vals` a twin's call taking an apart value?  The twin's
     /// apart argument is the one the plan named.
     pub(super) fn apr_call(&self, d: u32, vals: &[Value]) -> bool {
-        let Some(&(_, at, _)) = self.apr.twins.get(&d) else {
+        let Some(&(_, at, _)) = self.plan.apr.twins.get(&d) else {
             return false;
         };
         matches!(vals.get(at).map(Value::unspan), Some(Value::Var(v)) if self.apr_rec(*v).is_some())
@@ -69,7 +69,7 @@ impl Output<'_> {
 
     /// The struct of every type instance 4 admitted, once per program.
     pub(super) fn output_apr_types(&mut self, w: &mut dyn Write) -> std::io::Result<()> {
-        let mut types: Vec<&apart_records::RecLayout> = self.apr.types.values().collect();
+        let mut types: Vec<&apart_records::RecLayout> = self.plan.apr.types.values().collect();
         types.sort_by(|a, b| a.rust.cmp(&b.rust));
         for t in types {
             let r = &t.rust;
@@ -124,7 +124,7 @@ impl Output<'_> {
             Value::Int(i) => i64::from(*i),
             _ => return None,
         };
-        Some((*v, self.apr.types[&rec].field(off)?))
+        Some((*v, self.plan.apr.types[&rec].field(off)?))
     }
 
     /// A field's length `len(OpGetField(v, off, _))` of an apart value.

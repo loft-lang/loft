@@ -738,17 +738,22 @@ impl super::Output<'_> {
         if let Some(&known) = self.kept_cache.clear.get(&d_nr) {
             return known;
         }
-        let clear = !self.sw.sites.contains_key(&d_nr)
-            && !self.sw.producers.contains_key(&d_nr)
-            && !self.apart.regions.get(&d_nr).is_some_and(|r| r.profitable)
+        let clear = !self.plan.sw.sites.contains_key(&d_nr)
+            && !self.plan.sw.producers.contains_key(&d_nr)
+            && !self
+                .plan
+                .apart
+                .regions
+                .get(&d_nr)
+                .is_some_and(|r| r.profitable)
             && super::apart_vector::roles(self.data, d_nr).is_none_or(|v| v.is_empty())
-            && super::apart_records::roles(self.data, &self.apr, d_nr, false).is_empty()
-            && (self.element_first_disabled || {
+            && super::apart_records::roles(self.data, &self.plan.apr, d_nr, false).is_empty()
+            && (self.switches.element_first_disabled || {
                 let ef = super::hoist::element_first(
                     self.data,
                     self.stores,
                     d_nr,
-                    self.value_records.views.get(&d_nr),
+                    self.plan.value_records.views.get(&d_nr),
                 );
                 ef.pairs.is_empty() && ef.buf_place.is_empty()
             })

@@ -69,12 +69,14 @@ impl OpEmitter for ViewFieldReadEmitter {
             && let Value::Int(off) = fld.unspan()
             && ctx
                 .output
+                .plan
                 .value_records
                 .view_offs
                 .get(&tp)
                 .is_some_and(|offs| offs.contains(&i64::from(*off)))
             && let Some(idx) = ctx
                 .output
+                .plan
                 .value_records
                 .index
                 .get(&(tp, i64::from(*off)))
@@ -102,7 +104,7 @@ impl OpEmitter for FusedElementReadEmitter {
         if let [base, fld, ..] = args
             && let Some((v, off)) = super::super::hoist::view_field(ctx.output.data, base, fld)
             && let Some(tp) = ctx.output.value_record_locals.get(&v).copied()
-            && let Some(idx) = ctx.output.value_records.index.get(&(tp, off)).copied()
+            && let Some(idx) = ctx.output.plan.value_records.index.get(&(tp, off)).copied()
         {
             let name =
                 super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
@@ -540,7 +542,7 @@ impl OpEmitter for FusedElementWriteEmitter {
         if let [base, fld, val] = args
             && let Some((v, off)) = super::super::hoist::view_field(ctx.output.data, base, fld)
             && let Some(tp) = ctx.output.value_record_locals.get(&v).copied()
-            && let Some(idx) = ctx.output.value_records.index.get(&(tp, off)).copied()
+            && let Some(idx) = ctx.output.plan.value_records.index.get(&(tp, off)).copied()
         {
             let name =
                 super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
@@ -550,6 +552,7 @@ impl OpEmitter for FusedElementWriteEmitter {
             // which nothing has reported yet.  The value is evaluated first, as there.
             if let Some(at) = ctx
                 .output
+                .plan
                 .value_records
                 .types
                 .get(&tp)
@@ -800,7 +803,7 @@ impl OpEmitter for NewRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         let out = &ctx.output;
         let vars = out.data.def(out.def_nr).variables();
-        let Some((target, header)) = (!out.record_push_disabled)
+        let Some((target, header)) = (!out.switches.record_push_disabled)
             .then(|| {
                 crate::generation::hoist::mint_target(
                     out.data,
@@ -911,7 +914,7 @@ fn field_append(
     tp: &Value,
     fld: &Value,
 ) -> Option<(u16, u16, u16)> {
-    if out.field_append_disabled {
+    if out.switches.field_append_disabled {
         return None;
     }
     let (Value::Int(tp), Value::Int(fld)) = (tp.unspan(), fld.unspan()) else {
@@ -935,7 +938,7 @@ fn bare_append(
     tp: &Value,
     fld: &Value,
 ) -> Option<(u16, u16, bool)> {
-    if out.bare_append_disabled {
+    if out.switches.bare_append_disabled {
         return None;
     }
     let (Value::Int(tp), Value::Int(fld)) = (tp.unspan(), fld.unspan()) else {
@@ -961,7 +964,7 @@ impl OpEmitter for FinishRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         let out = &ctx.output;
         let vars = out.data.def(out.def_nr).variables();
-        let Some((target, header)) = (!out.record_push_disabled)
+        let Some((target, header)) = (!out.switches.record_push_disabled)
             .then(|| {
                 crate::generation::hoist::mint_target(
                     out.data,
@@ -1026,7 +1029,7 @@ pub struct KeepRangeEmitter;
 
 impl OpEmitter for KeepRangeEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        let held = if ctx.output.push_hoist_disabled {
+        let held = if ctx.output.switches.push_hoist_disabled {
             None
         } else {
             crate::generation::hoist::keep_range_path(ctx.output.data, ctx.def_fn.name(), args)
@@ -1073,7 +1076,7 @@ impl OpEmitter for PreAllocEmitter {
             args,
         )
         .is_some_and(|path| {
-            (!ctx.output.push_hoist_disabled && ctx.output.active_push_header(&path).is_some())
+            (!ctx.output.switches.push_hoist_disabled && ctx.output.active_push_header(&path).is_some())
                     // @PLN157 § V-t — a record-push header's growth step reserves for
                     // itself, exactly as the scalar push's does.
                     || ctx.output.active_mint_push(&path).is_some()

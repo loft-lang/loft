@@ -76,7 +76,7 @@ impl Output<'_> {
             let at = std::ptr::from_ref(code) as usize;
             if self.widening != Some(at)
                 && let Some(key) = self.value_leaves.widen.get(&at).copied()
-                && let Some(layout) = self.value_records.types.get(&key)
+                && let Some(layout) = self.plan.value_records.types.get(&key)
             {
                 let n = layout.fields.len();
                 let view = match code.unspan() {
@@ -107,7 +107,7 @@ impl Output<'_> {
                 .value_leaves
                 .nulls
                 .contains(&(std::ptr::from_ref(code) as usize))
-            && let Some(layout) = self.value_records.fn_layout(self.def_nr)
+            && let Some(layout) = self.plan.value_records.fn_layout(self.def_nr)
         {
             let absent = layout.absent();
             return write!(w, "{absent}");
@@ -175,7 +175,7 @@ impl Output<'_> {
         }
         // `@FR-R-DecodeView` — a span field's write and a span text's read, in the same
         // dispatch for the same reason.
-        if !self.dv.region.is_empty()
+        if !self.plan.dv.region.is_empty()
             && let Some(code) = node.native()
             && self.dv_expr(w, code)?
         {
@@ -1654,12 +1654,12 @@ impl Output<'_> {
         // are called without a buffer (each is admitted, so `emit_user_call_args` drops it),
         // nothing is minted, and an absent fn-ref answers the null record's fields.
         let value_fields: Option<Vec<(i64, &'static str)>> = super::hoist::fnref_value(
-            &self.value_records.fnref_sites,
-            &self.value_records.fns,
+            &self.plan.value_records.fnref_sites,
+            &self.plan.value_records.fns,
             self.def_nr,
             v_nr,
         )
-        .and_then(|rec| self.value_records.types.get(&rec))
+        .and_then(|rec| self.plan.value_records.types.get(&rec))
         .map(|t| t.fields.clone());
         crate::rewrite_census::fired("R-FnRefValue", usize::from(value_fields.is_some()));
         let heap_return = value_fields.is_none()
@@ -1730,8 +1730,8 @@ impl Output<'_> {
             // `@FR-R-FnRefValue` — a parameter every arm receives as a tuple takes the tuple,
             // built as a direct call builds it (`emit_call_arg` against one arm).
             let tuple_param = super::hoist::fnref_param(
-                &self.value_records.fnref_sites,
-                &self.value_records.params,
+                &self.plan.value_records.fnref_sites,
+                &self.plan.value_records.params,
                 self.def_nr,
                 v_nr,
                 i,
@@ -2441,7 +2441,7 @@ impl Output<'_> {
     /// the record form's later read would.  A boolean getter answers the storage byte, so
     /// it is coerced to the `bool` the tuple carries.
     fn output_view_tuple(&mut self, w: &mut dyn Write, var: u16) -> std::io::Result<()> {
-        let Some(tp) = self.value_records.fns.get(&self.def_nr).copied() else {
+        let Some(tp) = self.plan.value_records.fns.get(&self.def_nr).copied() else {
             return write!(w, "()");
         };
         self.output_record_tuple(w, tp, &Value::Var(var))
@@ -2476,6 +2476,7 @@ impl Output<'_> {
         src: &Value,
     ) -> std::io::Result<()> {
         let fields = self
+            .plan
             .value_records
             .types
             .get(&tp)
@@ -2499,7 +2500,7 @@ impl Output<'_> {
                 }
             })
             .collect();
-        let through = !self.record_ptr_disabled
+        let through = !self.switches.record_ptr_disabled
             && kinds.iter().any(Option::is_some)
             && !matches!(src.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some())
             && !self.in_value_local(src);
@@ -3978,7 +3979,7 @@ impl Output<'_> {
         // prologue, because the header reads `stores`; closed before the block's brace so a
         // tail value flows out of the wrapper.
         let fn_frame = if is_fn_body
-            && !self.fn_header_disabled
+            && !self.switches.fn_header_disabled
             && (!self.hoist_disabled || self.ps_mode.is_some())
         {
             let mut memo = std::mem::take(&mut self.fn_header_memo);
@@ -4073,10 +4074,11 @@ impl Output<'_> {
                 .value_leaves
                 .objects
                 .contains(&(std::ptr::from_ref(bl) as usize))
-            && let Some(&tp) = self.value_records.fns.get(&self.def_nr)
+            && let Some(&tp) = self.plan.value_records.fns.get(&self.def_nr)
             && let Some((parts, fill)) = self.value_record_parts(bl, tp)
         {
             let kinds: Vec<&'static str> = self
+                .plan
                 .value_records
                 .fn_fields(self.def_nr)
                 .map(|f| f.iter().map(|(_, rt)| *rt).collect())
@@ -4121,6 +4123,7 @@ impl Output<'_> {
             }
             write!(w, "(")?;
             let offs: Vec<i64> = self
+                .plan
                 .value_records
                 .fn_fields(self.def_nr)
                 .map(|f| f.iter().map(|(off, _)| *off).collect())
@@ -4137,7 +4140,8 @@ impl Output<'_> {
                 // is a generator defect and not a null.
                 let Some(val) = val else {
                     let src = offs.get(i).and_then(|off| {
-                        self.value_records
+                        self.plan
+                            .value_records
                             .views
                             .get(&self.def_nr)
                             .and_then(|p| p.leaves.get(&(std::ptr::from_ref(bl) as usize, *off)))
@@ -4453,7 +4457,7 @@ impl Output<'_> {
             }
             // `@FR-R-StreamWalk` — a stream twin's dropped statement or an append it hands
             // over, a consumer's call and walk, a walked element's binding.
-            if !self.sw.is_empty() && self.sw_statement(w, operators, vnr)? {
+            if !self.plan.sw.is_empty() && self.sw_statement(w, operators, vnr)? {
                 continue;
             }
             if apart_skip.is_some_and(|next| vnr < next) {
@@ -4497,7 +4501,7 @@ impl Output<'_> {
             // one fill of the tail; the two statements stand as the fallback for a count or a
             // vector the fill refuses.
             if !self.hoist_disabled
-                && !self.push_fill_disabled
+                && !self.switches.push_fill_disabled
                 && let Some(next) = operators.get(vnr + 1)
                 && let Some(rl) = super::hoist::repeat_literal(v, next, self.data)
             {
@@ -4508,8 +4512,8 @@ impl Output<'_> {
             // `@FR-R-PushFill`'s run clause — a straight-line run of byte appends to one
             // vector reserves once and writes through one window.
             if !self.hoist_disabled
-                && !self.push_fill_disabled
-                && !self.push_window_disabled
+                && !self.switches.push_fill_disabled
+                && !self.switches.push_window_disabled
                 && !self.in_coroutine_body
                 && crate::keys::push_run_enabled()
                 && let Some(run) = super::hoist::push_run(
@@ -4766,7 +4770,7 @@ impl Output<'_> {
                     && site
                         .callees()
                         .iter()
-                        .all(|c| !self.value_records.fns.contains_key(c))
+                        .all(|c| !self.plan.value_records.fns.contains_key(c))
                 {
                     self.output_destination_site(w, &site)?;
                     repeat_skip = Some(site.last);
@@ -4818,7 +4822,7 @@ impl Output<'_> {
                 // elements; any other length empties and fills it as below.
                 let in_place = if self.refill_in_place
                     && !self.hoist_disabled
-                    && !self.push_fill_disabled
+                    && !self.switches.push_fill_disabled
                     && let (Some(first), Some(second)) =
                         (operators.get(vnr + 1), operators.get(vnr + 2))
                     && let Some(rl) = super::hoist::repeat_literal(first, second, self.data)
@@ -5543,7 +5547,7 @@ impl Output<'_> {
         // over the mint's own operands, either spelling — so the two halves of one element
         // cannot land on different holders.
         let mint_args = [Value::Var(pair.out), Value::Int(tp), Value::Int(fld)];
-        if !self.record_push_disabled
+        if !self.switches.record_push_disabled
             && let Some(target) =
                 super::hoist::mint_target(self.data, self.stores, "OpNewRecord", &mint_args, dvars)
             && let Some(header) = self.active_mint_push(&target.path).map(str::to_owned)
