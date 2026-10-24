@@ -1096,6 +1096,11 @@ pub(crate) fn run_tests(
             // "scope check panic" in place of *"Cannot break outside a loop"*, so the author
             // never saw the error.  The diagnostics collected below report it.
             let has_errors = p.diagnostics.level() >= loft::diagnostics::Level::Error;
+            // The interpreter run reports the functions it entered, and the scope pass is
+            // where `@FR-R-PureReuse`'s shared-call clause makes its variants: armed only at
+            // `compile::byte_code`, the flag came too late, so a test entered the variant
+            // and coverage named its source as never entered.
+            p.data.observes_entries = !native_mode;
             let scopes_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if !has_errors {
                     scopes::check(&mut p.data, &mut p.database);
