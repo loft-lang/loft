@@ -1,0 +1,7 @@
+fn total(v: vector<integer>) -> integer {
+  match v {
+    [] => 0,
+    [x, ..rest] => x + total(rest),
+  }
+}
+fn main() { assert(total([1, 2, 3]) == 6, "head/tail: {total([1,2,3])}"); println("ok"); }

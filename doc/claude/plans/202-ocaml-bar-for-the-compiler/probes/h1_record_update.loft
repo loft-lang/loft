@@ -1,0 +1,2 @@
+struct Unit { hp: integer, x: integer, y: integer }
+fn main() { u = Unit { hp: 10, x: 3, y: 4 }; d = Unit { hp: 0, ..u }; assert(d.hp == 0 && d.x == 3 && u.hp == 10, "update"); println("ok"); }

@@ -1,0 +1,7 @@
+struct Node { id: integer, v: integer, child: reference<Node>? }
+fn eval(n: Node) -> integer { if n.child { n.v + eval(n.child) } else { n.v } }
+fn main() {
+  nodes: hash<Node[id]> = [Node { id: 0, v: 1 }];
+  for i in 1..2000 { nodes += [Node { id: i, v: 1, child: &nodes[i - 1] }]; }
+  println("{eval(nodes[1999])} expect 2000");
+}

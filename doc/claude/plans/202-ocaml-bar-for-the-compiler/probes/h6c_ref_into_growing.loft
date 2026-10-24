@@ -1,0 +1,9 @@
+enum Expr { Lit { v: integer }, Neg { e: reference<Expr> } }
+fn eval(e: Expr) -> integer { match e { Lit { v } => v, Neg { e } => -eval(e) } }
+fn main() {
+  nodes: vector<Expr> = [Lit { v: 1 }];
+  for _ in 0..3 { nodes += [Neg { e: &nodes[len(nodes) - 1] }]; }
+  println("{eval(nodes[0])} {eval(nodes[1])} {eval(nodes[2])} {eval(nodes[3])}  expect 1 -1 1 -1");
+  a: Expr = Lit { v: 5 }; b: Expr = Neg { e: &a }; c: Expr = Neg { e: &b };
+  println("{eval(c)} expect 5");
+}
