@@ -449,6 +449,9 @@ impl<'a> FnWriter<'a> {
     /// copied, its source freed when `call_return_frees_source` says the copy owns it.  The
     /// record's store type and that flag; `None` to adopt.
     fn call_copy(&self, v: u16, x: &Value) -> Result<Option<(u16, bool)>, String> {
+        if self.join_bind(v, x).is_some() {
+            return Err("a rebind of a result fresh on one arm and borrowed on the other".into());
+        }
         use crate::data::Type;
         use crate::use_analysis as ua;
         let data = self.cx.data;
@@ -463,14 +466,6 @@ impl<'a> FnWriter<'a> {
         if !data.def(f).is_loft_defined() {
             return Ok(None);
         }
-        if crate::keys::join_own_enabled()
-            && !self.vars.is_view_elided(v)
-            && matches!(ua::ownership_of(data, self.d, x), ua::Own::Join { base } if base != u16::MAX)
-        {
-            return Err(
-                "a bind of a result that is fresh on one arm and borrowed on the other".into(),
-            );
-        }
         if data.def(f).return_adopts_fresh_store()
             || self.vars.is_view_elided(v)
             || ua::adopts_minted_at_bind(data, self.vars, v, x)
@@ -481,6 +476,30 @@ impl<'a> FnWriter<'a> {
             data.def(d).known_type(),
             ua::call_return_frees_source(data, self.d, x),
         )))
+    }
+
+    /// `v = f(…)` where the callee's result is fresh on one arm and a view of `base` on the
+    /// other (`Own::Join`): the record type and `base`, the witness `OpBindOrCopy` tests.
+    fn join_bind(&self, v: u16, x: &Value) -> Option<(u16, u16)> {
+        use crate::data::Type;
+        use crate::use_analysis as ua;
+        let data = self.cx.data;
+        let (Type::Reference(d, _) | Type::Enum(d, true, _)) =
+            ua::first_bind_shape(self.vars.tp(v)).clone()
+        else {
+            return None;
+        };
+        let f = ua::callee_of(data, self.d, x)?;
+        if !data.def(f).is_loft_defined()
+            || !crate::keys::join_own_enabled()
+            || self.vars.is_view_elided(v)
+        {
+            return None;
+        }
+        match ua::ownership_of(data, self.d, x) {
+            ua::Own::Join { base } if base != u16::MAX => Some((data.def(d).known_type(), base)),
+            _ => None,
+        }
     }
 
     /// `v = c[i]` binding an owning record variable to an element of a container: the
@@ -499,6 +518,63 @@ impl<'a> FnWriter<'a> {
     fn copyable(&self, tp: u16) -> Result<u16, String> {
         self.cx.copy_type(tp)?;
         Ok(tp)
+    }
+
+    /// `v = f(…)` whose result is fresh on one arm and borrowed on the other (`Own::Join`):
+    /// a first bind, or a rebind of a variable that owns what it displaces.  False when the
+    /// bind is not one.
+    fn join_stmt(
+        &mut self,
+        var: u16,
+        x: &Value,
+        first: bool,
+        name: &str,
+        ind: usize,
+    ) -> Result<bool, String> {
+        let join = self.join_bind(var, x);
+        // A rebind releases the store it displaces when the variable owns it, as the bytecode
+        // writer's owned reassignment does — never the base's, nor a store the call was handed.
+        let rebind_owned = !first
+            && join.is_some()
+            && self.vars.owns_displaced_store(var, x, self.cx.data)
+            && !x.reads_var(var);
+        if let Some((tp, base)) = join.filter(|_| first || rebind_owned) {
+            // OpBindOrCopy: a result in the base's store is a view, copied into a fresh store;
+            // any other is the callee's fresh store, adopted.
+            let bytes = self.copyable(tp)?;
+            let e = self.expr(x, ind)?;
+            let r = self.temp(CType::Ref);
+            let w = self.var(base);
+            let old = self.temp(CType::Ref);
+            self.line(ind, &format!("{old} = {name};"));
+            self.line(ind, &format!("{r} = {};", as_ref(e)?));
+            self.line(
+                ind,
+                &format!("if ({r}.store_nr != 0xFFFF && {r}.store_nr == {w}.store_nr) {{"),
+            );
+            self.line(ind + 1, &format!("{name} = loft_ref_null();"));
+            self.line(
+                ind + 1,
+                &format!("loft_bind_copy(loft_types, {bytes}, &{name}, {r});"),
+            );
+            self.line(ind, &format!("}} else {{ {name} = {r}; }}"));
+            if rebind_owned {
+                let mut keep = vec![
+                    format!("{old}.store_nr != {name}.store_nr"),
+                    format!("{old}.store_nr != {w}.store_nr"),
+                ];
+                for a in crate::use_analysis::protectable_ref_args(self.cx.data, self.d, x).0 {
+                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(a)));
+                }
+                self.line(
+                    ind,
+                    &format!("if ({}) loft_free_ref({old});", keep.join(" && ")),
+                );
+            }
+            self.flush(ind);
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// A rebind's copy lands in a fresh store unless `var` owns the store it displaces
@@ -567,6 +643,9 @@ impl<'a> FnWriter<'a> {
             return Err("assigns a text parameter".into());
         }
         let name = self.var(var);
+        if self.join_stmt(var, x, first, &name, ind)? {
+            return Ok(());
+        }
         if let Some((tp, frees)) = self.call_copy(var, x)? {
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
@@ -2064,6 +2143,10 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
             }
+            ("OpStoreLive", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(format!("loft_store_live({})", as_ref(r)?), K::Cond))
+            }
             ("OpDistinctStore", [_, _]) => {
                 let (a, b) = self.two(name, args, ind)?;
                 Ok(E::new(
@@ -2297,6 +2380,7 @@ const OP_BOOL: &[&str] = &[
     "OpConvBoolFromCharacter",
     "OpConvBoolFromNull",
     "OpRemoveVector",
+    "OpStoreLive",
 ];
 const OP_REF: &[&str] = &[
     "OpConstRef",

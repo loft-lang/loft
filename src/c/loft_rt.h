@@ -558,6 +558,11 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
     return r;
 }
 
+/* OpStoreLive (Stores::store_live): the reference names a record of a store not freed. */
+static int loft_store_live(loft_ref r) {
+    return r.rec != 0 && r.store_nr != 0xFFFF && r.store_nr < loft_nstores && loft_stores[r.store_nr].live;
+}
+
 static loft_ref loft_field(loft_ref r, uint32_t fld) {
     r.pos += fld;
     return r;
