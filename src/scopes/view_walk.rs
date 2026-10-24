@@ -11,8 +11,8 @@ use super::disturbance::{
     reshaped_containers,
 };
 use super::places::{
-    ParamPlace, base_container_place, call_arg_place, compose_param_place, get_record_literal_keys,
-    keyed_payload_view, peel_stack_ref, same_place, value_view_places,
+    ParamPlace, add_offset, call_arg_place, compose_param_place, get_record_literal_keys,
+    keyed_payload_view, named_place_depth, peel_stack_ref, same_place, value_view_places_depth,
 };
 use crate::data::{Data, Type, Value};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -282,6 +282,23 @@ pub(super) struct ViewWalk<'a> {
     /// which every reader must treat as *could be any key*: loft#1460's filter may only ever
     /// SPARE a view it can prove names a different record.
     view_keys: HashMap<u16, Vec<Value>>,
+    /// How many ELEMENT reads each open view sits below its root variable — `d = w.a[0]` is 1,
+    /// `d = vv[0][0]` 2, `x = o.inner` 0 ([`value_view_places_depth`], composed through the
+    /// views [`Self::resolve_view_root`] follows).
+    ///
+    /// `(B-Disturb)` ends the places INSIDE the container it disturbs, and the place alone
+    /// cannot say whether a view is inside: `vv[0]` and `vv[0][0]` both name `(vv, ANY_FIELD)`.
+    /// A disturbance of a container at depth `k` ends the views deeper than `k` — a growth of
+    /// `vv[0]` (k = 1) moves `vv[0][0]` and leaves `a = vv[0]`, which names the element slot,
+    /// re-reading the repointed handle (`(B-View-Depth)`).  A REBUILT field (`w.a = [..]`) is
+    /// the same question at k = 0: it ends the views into its elements and spares the view of
+    /// the field itself (loft#2161).  A view with no entry is treated as the deepest.
+    view_depth: HashMap<u16, u8>,
+    /// The literal index of the element read nearest each open view's root, where it has one
+    /// ([`crate::use_analysis::root_element_index`], composed through the views it follows).
+    /// The one proof a disturbance of `vv[0]` does not reach `e = vv[1][0]` — both literal and
+    /// different — read on the same terms as [`Self::view_keys`]: absent means *any element*.
+    view_index: HashMap<u16, (u32, i32)>,
     /// The bindings that name a whole CONTAINER rather than a position inside one, each with
     /// the place it names DIRECTLY — the `d = &cv.data` half of `(B-Ref-Alias)`'s
     /// in-versus-to distinction, read off the same walk that answers the place
@@ -313,20 +330,6 @@ pub(super) struct ViewWalk<'a> {
     /// this frame's own answer, which is what the REFUSAL still reads: extending it would reject
     /// programs that compile today, a separable change, and refusing less is its safe direction.
     disturbed: Option<&'a DisturbedParams>,
-    /// Every place this function REBUILDS in whole — `x.a = [9, 9]` emits an
-    /// `OpClearVector` on the field and then exactly the `OpNewRecord`s an append emits, and
-    /// the two are SEPARATE statements, so the pairing cannot be seen one statement at a time.
-    ///
-    /// `(B-Disturb)` is explicit that OVERWRITING a place is not disturbing it — *"`o.inner =
-    /// Box{…}` writes INTO the place `o.inner` already occupies, so a view of it survives"* —
-    /// and without this subtraction `c = b.vecf; b.vecf = [9, 9]` materialised `c`, which
-    /// `bind-copies-or-views-the-whole-boundary` caught on its `(B-View-Base)` cell: the
-    /// seventeen-cell guard that exists to pin exactly this line.
-    ///
-    /// Accumulated for the whole walk rather than per block, which errs the safe way: a place
-    /// cleared once and genuinely GROWN later is a MISSED disturbance, costing a materialise,
-    /// where the other direction costs a program its meaning.
-    cleared: HashSet<(u16, u32)>,
     /// The store, where the caller has one.  Only the field-NUMBER to byte-OFFSET conversion
     /// needs it (`grown_containers`): a growth names its container by field number and a view
     /// carries a byte offset, so a walk without the store cannot see a growth of a container
@@ -372,13 +375,14 @@ impl ViewWalk<'_> {
             open: vec![Vec::new()],
             bound_at: HashMap::default(),
             view_keys: HashMap::default(),
+            view_depth: HashMap::default(),
+            view_index: HashMap::default(),
             whole_container: HashMap::default(),
             shaken: HashMap::default(),
             out: HashMap::default(),
             cross_frame,
             disturbed,
             database,
-            cleared: HashSet::default(),
             line: start_line,
             rebound: None,
         };
@@ -439,11 +443,17 @@ impl ViewWalk<'_> {
                 let open_before = self.open.clone();
                 let shaken_before = self.shaken.clone();
                 let keys_before = self.view_keys.clone();
+                let depth_before = self.view_depth.clone();
+                let index_before = self.view_index.clone();
+                let mut indices = Vec::with_capacity(2);
+                let mut depths = Vec::with_capacity(2);
                 let mut ends = Vec::with_capacity(2);
                 for branch in [t.unspan(), e.unspan()] {
                     self.open.clone_from(&open_before);
                     self.shaken.clone_from(&shaken_before);
                     self.view_keys.clone_from(&keys_before);
+                    self.view_depth.clone_from(&depth_before);
+                    self.view_index.clone_from(&index_before);
                     match branch {
                         Value::Block(b) => self.scoped(&b.operators),
                         Value::Insert(ops) => self.scoped(ops),
@@ -454,6 +464,8 @@ impl ViewWalk<'_> {
                         std::mem::take(&mut self.shaken),
                         std::mem::take(&mut self.view_keys),
                     ));
+                    depths.push(std::mem::take(&mut self.view_depth));
+                    indices.push(std::mem::take(&mut self.view_index));
                 }
                 let (e_open, e_shaken, e_keys) = ends.pop().expect("an else arm");
                 let (mut open, mut shaken, t_keys) = ends.pop().expect("a then arm");
@@ -469,6 +481,22 @@ impl ViewWalk<'_> {
                 }
                 self.open = open;
                 self.shaken = shaken;
+                // A view either arm leaves open keeps the DEEPER reading: it is the one more
+                // disturbances end, which is the safe direction for a view that may be either.
+                let mut depth = depths.pop().expect("an else arm");
+                for (v, d) in depths.pop().expect("a then arm") {
+                    let e = depth.entry(v).or_insert(d);
+                    *e = (*e).max(d);
+                }
+                self.view_depth = depth;
+                // An index survives only where both paths agree, as a key does.
+                let e_index = indices.pop().expect("an else arm");
+                self.view_index = indices
+                    .pop()
+                    .expect("a then arm")
+                    .into_iter()
+                    .filter(|(v, i)| e_index.get(v) == Some(i))
+                    .collect();
                 self.view_keys = t_keys
                     .into_iter()
                     .filter(|(v, k)| e_keys.get(v) == Some(k))
@@ -527,29 +555,50 @@ impl ViewWalk<'_> {
         {
             self.rebound = Some(*v);
         }
+        // A removal ends the views deeper than its container, as a growth does; at the root's
+        // own depth through the keyed-literal filter, a container inside an element through the
+        // literal-index one (loft#2161).
+        let mut whole: HashSet<(u16, u32)> = HashSet::default();
+        for (place, at) in reshaped_containers(stmt, self.data, self.function) {
+            if at.depth == 0 {
+                whole.insert(place);
+            } else {
+                self.shake_places_deeper(place, at.depth, at.index, ViewCause::Reshaped);
+            }
+        }
         self.shake_places_keyed(
-            &reshaped_containers(stmt, self.data, self.function),
+            &whole,
             ViewCause::Reshaped,
             None,
             &keyed_removal_keys(stmt, self.data, self.function),
+            0,
         );
+        // A REBUILD (`w.a = [..]`, `w.a = f()`: an `OpClearVector` on the field, then the
+        // appends or the callee filling it) gives the container a new value.  The view OF the
+        // field survives it — `(B-Disturb)`: overwriting a place is not disturbing it — and
+        // the views INTO its elements do not, because every element they named is gone.  Read
+        // as an overwrite whole before, so `d = w.a[0]; w.a = [S{901}]` read the new vector's
+        // element and a write through `d` landed in it, and `w.a = f()` read the freed block
+        // (loft#2161).
+        let mut rebuilt: Vec<((u16, u32), u8, Option<(u32, i32)>)> = Vec::new();
         stmt.walk(&mut |v| {
             let Value::Call(d, args) = v else { return };
             if self.data.def(*d).name() != "OpClearVector" {
                 return;
             }
-            if let Some(place) = args
-                .first()
-                .and_then(|a| base_container_place(a, self.data))
-            {
-                self.cleared.insert(place);
+            let Some(arg) = args.first() else { return };
+            if let Some((place, depth)) = named_place_depth(arg, self.data) {
+                let index = crate::use_analysis::root_element_index(self.data, arg);
+                rebuilt.push((place, depth, index));
             }
         });
-        self.shake_places(
-            &grown_containers(stmt, self.data, self.function, self.database, &self.cleared),
-            ViewCause::Grown,
-            None,
-        );
+        for (place, depth, index) in rebuilt {
+            self.shake_places_deeper(place, depth, index, ViewCause::Reassigned);
+        }
+        // A growth ends the views deeper than the container it grows (`shake_places_keyed`).
+        for (place, at) in grown_containers(stmt, self.data, self.function, self.database) {
+            self.shake_places_deeper(place, at.depth, at.index, ViewCause::Grown);
+        }
         if let Some(removed) = self.cross_frame {
             for (container, callee) in reshaped_via_call(stmt, self.data, removed) {
                 self.shake(
@@ -596,11 +645,7 @@ impl ViewWalk<'_> {
                 let Some(base) = call_arg_place(arg, data) else {
                     continue;
                 };
-                // A place this frame CLEARED is being rebuilt, not disturbed — the same
-                // subtraction the inline growth makes, applied to the callee's half.
-                if let Some(place) = compose_param_place(base, inner)
-                    && !self.cleared.contains(&place)
-                {
+                if let Some(place) = compose_param_place(base, inner) {
                     hits.push((place, cause, *d));
                 }
             }
@@ -715,6 +760,8 @@ impl ViewWalk<'_> {
             // Re-read per bind, exactly as `view_keys` is: a slot rebound from an element
             // read must not keep an earlier bind's whole-container answer (loft#1543).
             self.whole_container.remove(v);
+            self.view_depth.remove(v);
+            self.view_index.remove(v);
             // Through `base()`: a nullable `S?` view is the same storage behind a
             // nullability marker (@FR-L-Null), so it is at risk exactly as its dense twin is.
             //
@@ -842,15 +889,12 @@ impl ViewWalk<'_> {
                 // `(B-Disturb)`'s growth tells them apart: it moves every ELEMENT, ending the
                 // second, while it only repoints the field SLOT the first re-reads.
                 //
-                // The `&` is what qualifies, and asking for it is not belt-and-braces: a PLAIN
-                // whole-collection bind reaches this walk too.  Off an owned base and off a
-                // borrowed PARAMETER it copies at parse time into its own `__vdb_N` backing,
-                // whose container is compiler-generated and already unnamed — but off a LOOP
-                // VARIABLE it aliases, and `for b in bv { c = b.vecf; b.vecf += [9] }`
-                // materialises `c` today.  `(B-View)` says it must keep doing so: a plain bind
-                // already meant value semantics, so losing write-through is consistent with
-                // what it asked for, and only a `&` is the ownership decision loft may not
-                // quietly downgrade.  Measured before this was written.
+                // Only a `&` link and a payload binding are entered here.  The REASSIGNMENT this
+                // map stands out for is the one event a view at its container's own depth
+                // meets; a growth, removal or rebuild ends only the views deeper than the
+                // container ([`Self::view_depth`]), so a PLAIN whole-collection view off a loop
+                // variable (`for b in bv { c = b.vecf; b.vecf += [9] }`) keeps its alias and
+                // sees the growth, as `c = o.inner.v` and `a = vv[0]` do (loft#2161).
                 // A `match` PAYLOAD binding (`_mv_<field>`) is the other reference TO a
                 // container: the parser routes a write through it to the payload's own field
                 // (`items += [x]` appends to `e.items`), so it re-reads that slot exactly as a
@@ -866,15 +910,30 @@ impl ViewWalk<'_> {
                 {
                     self.whole_container.insert(*v, place);
                 }
-                let mut places = value_view_places(rhs, self.data, self.function);
+                let mut places = value_view_places_depth(rhs, self.data, self.function);
                 if places.is_empty() && self.function.text_payload_views.contains(v) {
-                    places.extend(text_payload_place(rhs, self.data, self.function));
+                    places
+                        .extend(text_payload_place(rhs, self.data, self.function).map(|p| (p, 0)));
                 }
-                for (container, field) in places {
-                    let (container, field) = self.resolve_view_root(container, field);
+                let mut deepest: Option<u8> = None;
+                let mut index = crate::use_analysis::root_element_index(self.data, rhs);
+                for ((container, field), elems) in places {
+                    let ((container, field), outer, outer_index) =
+                        self.resolve_view_root(container, field);
+                    let d = elems.saturating_add(outer);
+                    deepest = Some(deepest.map_or(d, |m| m.max(d)));
+                    if let Some(i) = outer_index {
+                        index = i;
+                    }
                     if !self.open[idx].contains(&(*v, container, field)) {
                         self.open[idx].push((*v, container, field));
                     }
+                }
+                if let Some(d) = deepest {
+                    self.view_depth.insert(*v, d);
+                }
+                if let Some(i) = index {
+                    self.view_index.insert(*v, i);
                 }
             }
         }
@@ -885,13 +944,23 @@ impl ViewWalk<'_> {
     /// A view whose container is itself a view names a place inside the OUTER container, so a
     /// disturbance of that outer one ends it: `t = dv.tiles; prev = t.proto` makes `prev` a
     /// place inside `dv`, exactly as the single-expression `prev = dv.tiles.proto` does.  The
-    /// FIELD that survives is the outermost one — the one a disturbance of the root can name —
-    /// which is the rule [`base_container_place`] states for a chain inside one expression.
+    /// FIELD is the one `base_container_place` gives that single expression: field runs on
+    /// either side of a view that read no element ADD, and through an element view the outer
+    /// place stands.  The second half of the answer is the element reads the followed views
+    /// add, so the binding's [`Self::view_depth`] counts the whole chain.
     ///
     /// Bounded, and it stops at the first container that is not an open view: a view rebound
     /// to name a chain that leads back to itself would otherwise walk forever, and a lower
     /// bound is what this walk answers everywhere else.
-    fn resolve_view_root(&self, mut container: u16, mut field: u32) -> (u16, u32) {
+    fn resolve_view_root(
+        &self,
+        mut container: u16,
+        mut field: u32,
+    ) -> ((u16, u32), u8, Option<Option<(u32, i32)>>) {
+        let mut depth: u8 = 0;
+        // The root index belongs to the FIRST element view followed, whose own entry is
+        // already composed to the root; `None` here keeps the binding's own.
+        let mut index: Option<Option<(u32, i32)>> = None;
         for _ in 0..16 {
             let Some(&(_, outer, outer_field)) = self
                 .open
@@ -899,7 +968,7 @@ impl ViewWalk<'_> {
                 .flatten()
                 .find(|(view, _, _)| *view == container)
             else {
-                return (container, field);
+                return ((container, field), depth, index);
             };
             // Stop at a COMPILER-GENERATED container.  A vector local is bound to its own
             // backing store — `v = OpGetField(__vdb_1, 0, …)` — so it is an open "view" of a
@@ -908,12 +977,25 @@ impl ViewWalk<'_> {
             // under a live link then had no container to match and stopped firing.  A place
             // is only inside a container the author can reassign.
             if outer == container || self.function.is_compiler_generated(outer) {
-                return (container, field);
+                return ((container, field), depth, index);
             }
+            // Through a view that read no element (`t = o.inner`) the field runs ADD, as they
+            // do inside one expression — `t.a` is the slot `off_inner + off_a` of `o` — so the
+            // two spellings name one place.  Through an element view (`x = v[0]`) the inner
+            // field is in the element's record, and the outer place stands.
+            let outer_depth = self.view_depth.get(&container).copied().unwrap_or(0);
+            field = if outer_depth == 0 {
+                add_offset(outer_field, field)
+            } else {
+                outer_field
+            };
+            if outer_depth > 0 && index.is_none() {
+                index = Some(self.view_index.get(&container).copied());
+            }
+            depth = depth.saturating_add(outer_depth);
             container = outer;
-            field = outer_field;
         }
-        (container, field)
+        ((container, field), depth, index)
     }
 
     /// Note where each variable is first BOUND, which is [`Self::leaf`]'s frame for a view of it.
@@ -943,7 +1025,58 @@ impl ViewWalk<'_> {
     /// growth of one FIELD does not end the places inside its siblings.  A view and a
     /// disturbance match when [`same_place`] says they name the same storage.
     fn shake_places(&mut self, places: &HashSet<(u16, u32)>, cause: ViewCause, via: Option<u32>) {
-        self.shake_places_keyed(places, cause, via, &HashMap::default());
+        self.shake_places_keyed(places, cause, via, &HashMap::default(), 0);
+    }
+
+    /// [`Self::shake_places`] for a container `depth` element reads below its root: only the
+    /// views DEEPER than it are inside it ([`Self::view_depth`]), so only they are shaken.
+    /// `index` is the literal index of the container's element read nearest the root, with the
+    /// field run it reads out of; a view whose own reads the SAME run at a different literal
+    /// index names another element of one container and is spared.
+    fn shake_places_deeper(
+        &mut self,
+        place: (u16, u32),
+        depth: u8,
+        index: Option<(u32, i32)>,
+        cause: ViewCause,
+    ) {
+        let spared: Vec<u16> = match index {
+            Some((run, i)) => self
+                .open
+                .iter()
+                .flatten()
+                .filter(|(view, c, _)| {
+                    *c == place.0
+                        && self
+                            .view_index
+                            .get(view)
+                            .is_some_and(|&(r, j)| r == run && j != i)
+                })
+                .map(|(view, _, _)| *view)
+                .collect(),
+            None => Vec::new(),
+        };
+        let before: Vec<(u16, Option<Disturbance>)> = spared
+            .iter()
+            .map(|v| (*v, self.shaken.get(v).copied()))
+            .collect();
+        self.shake_places_keyed(
+            &HashSet::from_iter([place]),
+            cause,
+            None,
+            &HashMap::default(),
+            depth.saturating_add(1),
+        );
+        for (view, prior) in before {
+            match prior {
+                Some(d) => {
+                    self.shaken.insert(view, d);
+                }
+                None => {
+                    self.shaken.remove(&view);
+                }
+            }
+        }
     }
 
     /// Does `view` name the CONTAINER at `place` itself, so that `cause` does not end it?
@@ -977,10 +1110,27 @@ impl ViewWalk<'_> {
         cause: ViewCause,
         via: Option<u32>,
         removal_keys: &HashMap<(u16, u32), Vec<Value>>,
+        min_depth: u8,
     ) {
         if places.is_empty() {
             return;
         }
+        // `(B-Disturb)` ends the places INSIDE the container.  A removal, a growth and a
+        // rebuild move ELEMENTS, so they end the views deeper than the container and never one
+        // at its own depth: that view names the container's slot (`c = o.inner.v`, `a =
+        // vv[0]`) or a struct around it (`x = o.inner`, which shares an address with its first
+        // member), and re-reads the repointed slot.  Only re-establishing the root itself
+        // (`Reassigned` at depth 0) leaves the slot with nothing to point at.  Before, a view
+        // at the container's own depth was shaken by the root-level events and spared by the
+        // ones nobody collected, so `c = b.vecf; b.vecf += [9]` copied `c` while `c =
+        // o.inner.v; o.inner.v += [9]` kept it (loft#2161).
+        let min_depth = if cause == ViewCause::Reassigned {
+            min_depth
+        } else {
+            min_depth.max(1)
+        };
+        let deep_enough =
+            |view: u16| self.view_depth.get(&view).copied().unwrap_or(u8::MAX) >= min_depth;
         let spared = |view: u16, place: (u16, u32)| -> bool {
             let (Some(removed), Some(held)) = (removal_keys.get(&place), self.view_keys.get(&view))
             else {
@@ -993,11 +1143,12 @@ impl ViewWalk<'_> {
             .iter()
             .flatten()
             .filter(|(view, container, field)| {
-                places.iter().any(|&p| {
-                    same_place((*container, *field), p)
-                        && !spared(*view, p)
-                        && !self.names_container_itself(*view, p, cause)
-                })
+                deep_enough(*view)
+                    && places.iter().any(|&p| {
+                        same_place((*container, *field), p)
+                            && !spared(*view, p)
+                            && !self.names_container_itself(*view, p, cause)
+                    })
             })
             .copied()
             .collect();
