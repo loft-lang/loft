@@ -1,8 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 76e655ca7..10c8ef3ff 100644
+index 96a9f455..c3be8de3 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -21817,7 +21817,7 @@ impl Parser {
+@@ -21927,7 +21927,7 @@ impl Parser {
              // Non-void returns are not handled here — they require a temp to hold
              // the return value while writing back, which is left for A5.6 (1.1+).
              if matches!(*ret_type, Type::Void)
@@ -12,10 +12,10 @@ index 76e655ca7..10c8ef3ff 100644
              {
                  let n_attrs = self.data.attributes(closure_rec_d);
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index ecd1207e3..28fe882e9 100644
+index 11dae10e..97e32658 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -9911,10 +9911,7 @@ use a separate collection or add after the loop"
+@@ -9982,10 +9982,7 @@ use a separate collection or add after the loop"
                  }
                  self.last_closure_lambda = u32::MAX;
                  if op == "=" && self.last_closure_work_var != u16::MAX && var_nr != u16::MAX {
@@ -28,11 +28,11 @@ index ecd1207e3..28fe882e9 100644
                          .set_closure_var_of(var_nr, self.last_closure_work_var);
                      self.last_closure_work_var = u16::MAX;
 diff --git a/src/parser/members.rs b/src/parser/members.rs
-index ecdd7a624..b832a1264 100644
+index cf7bc113..99ea7843 100644
 --- a/src/parser/members.rs
 +++ b/src/parser/members.rs
-@@ -956,7 +956,7 @@ impl Parser {
-                     Value::FnRef(d_nr, _, _) => Value::Int(d_nr),
+@@ -1007,7 +1007,7 @@ impl Parser {
+                     }
                      Value::Var(v)
                          if matches!(self.vars.tp(v), Type::Function(..))
 -                            && self.vars.closure_var_of(v).is_none() =>
@@ -41,10 +41,10 @@ index ecdd7a624..b832a1264 100644
                          Value::FnRefDnr(v)
                      }
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 297a78de4..202364a47 100644
+index 14310c6a..7627ba4f 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -1289,6 +1289,7 @@ pub struct Parser {
+@@ -1331,6 +1331,7 @@ pub struct Parser {
      /// a header meeting an already-claimed spelling can tell "the same variable again" from
      /// "a second variable that happens to be spelled the same".
      pub(crate) type_var_bounds: std::collections::HashMap<u32, String>,
@@ -52,7 +52,7 @@ index 297a78de4..202364a47 100644
      // last closure work variable created by emit_lambda_code (transient).
      pub(crate) last_closure_work_var: u16,
      // closure allocation expression to inject at the call site.
-@@ -1990,6 +1991,7 @@ impl Parser {
+@@ -2068,6 +2069,7 @@ impl Parser {
              context_type_template: u32::MAX,
              type_var_holders: std::collections::HashMap::new(),
              type_var_bounds: std::collections::HashMap::new(),
