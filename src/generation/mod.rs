@@ -3370,11 +3370,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
-        if self.bounded_nest_disabled
-            || self.hoist_disabled
-            || self.release_pass_probe
-            || self.in_coroutine_body
-        {
+        if self.bounded_nest_disabled || self.hoist_disabled || self.in_coroutine_body {
             return Ok(false);
         }
         let fn_name = self.data.def(self.def_nr).name().to_string();
@@ -3568,11 +3564,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<ChainGuard> {
-        if self.chain_guard_disabled
-            || self.hoist_disabled
-            || self.release_pass_probe
-            || self.in_coroutine_body
-        {
+        if self.chain_guard_disabled || self.hoist_disabled || self.in_coroutine_body {
             return Ok(ChainGuard::None);
         }
         let data = self.data;
