@@ -73,7 +73,7 @@ open is the exact trust-break above.
 | 9 | Embeddable + sandboxable | hosts running player scripts / mods | a script escapes, or its effects can't be rolled back |
 | 10 | Ships and is legible | a newcomer who just discovered loft | they install, hit a library that fights them, and leave |
 | 11 | The method is the moat | contributors who value a project that fixes the class | the rough-spot lists stop shrinking |
-| 12 | Keeps running under fault | game/server authors who can't take a crash-on-fault | it isn't built yet (still halts); a degraded null can be hard to trace to its source |
+| 12 | Keeps running under fault | game/server authors who can't take a crash-on-fault | a degraded null can be hard to trace to its source |
 | 13 | Layout control with a safety net | performance-conscious devs turned off by "only C++ is valid" | the cache win only shows on `--native`; or layout becomes a mandatory tax, not an optional power |
 
 Read top-down: the turn-offs are roughly in trust-cost order — #1–#5 break the
@@ -402,17 +402,16 @@ A **game** dev iterating on something half-working (one bad mob doesn't freeze t
 stopping *is* a dead machine. Termination is the larger failure for any long-running system, so
 availability-as-a-default — not a framework bolted on — wins all of them.
 
-**The turn-off.** Two, on the same topic. First, **it isn't built yet**: the runtime still
-traps/halts on these faults in development (the old @C66 behaviour, tracked as
-[operational.md D-op-4](formal/operational.md)) — the promise is *decided, not delivered*.
-Second, the inherent one: **silent degradation can hide the cause** — you see a null
+**The turn-off.** The inherent one: **silent degradation can hide the cause** — you see a null
 *downstream*, not *where* it first arose, the mirror image of Rust's halt-at-the-source
 pinpointing the bug. The person who loves "keeps running" is the same one who curses a null they
-can't trace.
+can't trace. The report covers part of it: with a logger attached, an unguarded divide-by-zero
+or out-of-range read logs one warning line at its site, while an overflow stays silent
+([formal/operational.md § E-Report](formal/operational.md)).
 
-**Raise it higher.** Land D-op-4 (uncomputable → null + continue in every mode), then close the
-second turn-off with the **opt-in debug log + null provenance** — when the programmer asks, show
-*where* a degraded value first went null, so "keeps running" never costs them the root cause.
+**Raise it higher.** Close the turn-off with **null provenance** — when the programmer asks, show
+*where* a degraded value first went null, overflow included, so "keeps running" never costs them
+the root cause.
 *Check:* a deliberate `s/0` deep in a call chain keeps the program running AND, with the debug
 log on, names the originating site.
 
