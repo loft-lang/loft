@@ -369,10 +369,21 @@ impl LoftStore {
     /// Returns the (possibly updated) `vec_rec` — the record may have moved.
     unsafe fn vector_grow(&mut self, vec_rec: u32, elem_size: u32) -> u32 {
         let length = unsafe { self.get_int(vec_rec, 0, 4) as u32 };
-        let needed_words = ((length + 1) * elem_size + 15) / 8;
-        let new_rec = unsafe { self.resize(vec_rec, needed_words) };
-        // resize() already called reload(), ptr is fresh
-        new_rec
+        let needed_words = (u64::from(length) + 1) * u64::from(elem_size) + 15;
+        let needed_words = (needed_words / 8) as u32;
+        // The record's claim, in words, is its first word (the store's header).  While it
+        // covers one more element the push needs no call into the host at all: crossing the
+        // bridge per element was most of `rand_indices`' time.
+        let claim = unsafe { self.get_int(vec_rec, 0, 0) };
+        if claim > 0 && needed_words <= claim as u32 {
+            return vec_rec;
+        }
+        // Out of room: about twice the elements, as the runtime's own append grows
+        // (`vector.rs`, P5), so pushes are amortised O(1) and the store does not fragment.
+        let grown = (u64::from(length.max(11)) * 2 * u64::from(elem_size) + 15) / 8;
+        let words = u32::try_from(grown).unwrap_or(u32::MAX).max(needed_words);
+        // resize() reloads `ptr`, so the store is fresh after it.
+        unsafe { self.resize(vec_rec, words) }
     }
 
     /// Append an `i32` to a vector of integers.
@@ -1246,6 +1257,60 @@ mod tests {
             reload_fn: None,
             resize_fn: None,
             foreign_fn: None,
+        }
+    }
+
+    /// The words each mock resize was asked for.
+    static RESIZES: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+    /// A host resize over the test buffer (its base in `ctx`): records the request and
+    /// writes the grown claim into the record's header word, as `Store::resize` does in place.
+    unsafe extern "C" fn mock_resize(ctx: LoftStoreCtx, rec: u32, words: u32) -> u32 {
+        RESIZES.lock().unwrap().push(words);
+        let base = ctx._opaque.cast::<u8>();
+        unsafe {
+            base.add(rec as usize * 8)
+                .cast::<i32>()
+                .write_unaligned(words as i32);
+        }
+        rec
+    }
+
+    unsafe extern "C" fn mock_reload(ctx: LoftStoreCtx, out_ptr: *mut *mut u8, _out: *mut u32) {
+        unsafe { *out_ptr = ctx._opaque.cast::<u8>() };
+    }
+
+    #[test]
+    fn a_push_into_room_never_calls_the_host_and_a_full_vector_grows_about_twice() {
+        let mut buf = vec![0u8; 512];
+        let mut store = test_store(&mut buf);
+        store.ctx._opaque = buf.as_mut_ptr().cast();
+        store.resize_fn = Some(mock_resize);
+        store.reload_fn = Some(mock_reload);
+        RESIZES.lock().unwrap().clear();
+        // A vector record at rec 1 claiming 3 words: the header word and room for 2 longs.
+        unsafe {
+            store.set_int(1, 0, 0, 3);
+            store.set_int(1, 0, 4, 0);
+        }
+        let mut vec = LoftRef {
+            store_nr: 0,
+            rec: 1,
+            pos: 8,
+        };
+        unsafe {
+            store.vector_push_long(&mut vec, 10);
+            store.vector_push_long(&mut vec, 11);
+        }
+        assert!(RESIZES.lock().unwrap().is_empty(), "a push into room crossed the bridge");
+        // The third does not fit: one resize, to ~2x the minimum of 11 longs (23 words).
+        for v in 12..32 {
+            unsafe { store.vector_push_long(&mut vec, v) };
+        }
+        assert_eq!(*RESIZES.lock().unwrap(), vec![23]);
+        assert_eq!(unsafe { store.vector_len(&vec) }, 22);
+        for (i, want) in (10..32).enumerate() {
+            assert_eq!(unsafe { store.get_long(1, 8 + i as u32 * 8, 0) }, want);
         }
     }
 
