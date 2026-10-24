@@ -7,6 +7,7 @@
 //! admission, totality, raw-write and complexity reports a host reads before running it.
 
 use super::{Parser, Value};
+use std::collections::HashMap;
 
 impl Parser {
     /// @PLN86 step 1.2 — install the host's sandbox policy before parsing.  The
@@ -29,7 +30,34 @@ impl Parser {
     /// apply the totality / capability rules only to sandboxed defs.
     #[must_use]
     pub fn def_sandbox_profile(&self, def_nr: u32) -> Option<&str> {
+        let def_nr = self
+            .data
+            .variant_origin
+            .get(&def_nr)
+            .copied()
+            .unwrap_or(def_nr);
         self.def_sandbox.get(&def_nr).map(String::as_str)
+    }
+
+    /// The designations the admission walk judges by: the parser's `def_sandbox`, plus every
+    /// compiler-made variant of a designated function under that function's profile.
+    /// (Cap-Trusted) reads `restricted` as "inside a sandbox-designated def", and a variant
+    /// IS such a def's code — made after parsing (`@FR-R-PureReuse`'s shared-call clause), so
+    /// the parse never saw it to designate (loft#2158).  Read as an undesignated helper, it
+    /// was refused, or, behind an allowed library, would have escaped the walk.
+    fn designations(&self) -> std::borrow::Cow<'_, HashMap<u32, String>> {
+        let adopted: Vec<(u32, String)> = self
+            .data
+            .variant_origin
+            .iter()
+            .filter_map(|(v, o)| self.def_sandbox.get(o).map(|p| (*v, p.clone())))
+            .collect();
+        if adopted.is_empty() {
+            return std::borrow::Cow::Borrowed(&self.def_sandbox);
+        }
+        let mut all = self.def_sandbox.clone();
+        all.extend(adopted);
+        std::borrow::Cow::Owned(all)
     }
 
     /// @PLN86 step 1.3 — the sandbox-reachable set: every def reachable from the
@@ -38,7 +66,7 @@ impl Parser {
     /// the non-sandboxed members.  Call after parsing, when bodies are resolved.
     #[must_use]
     pub fn sandbox_reachable_set(&self) -> std::collections::HashSet<u32> {
-        crate::sandbox::reachable_set(&self.data, &self.def_sandbox, &self.sandbox_fn_refs)
+        crate::sandbox::reachable_set(&self.data, &self.designations(), &self.sandbox_fn_refs)
     }
 
     /// @PLN86 step 1.4 — external `[native]` cdylib bridges reachable from the
@@ -70,7 +98,7 @@ impl Parser {
         crate::sandbox::admit_capabilities(
             &self.data,
             &self.sandbox,
-            &self.def_sandbox,
+            &self.designations(),
             &self.sandbox_fn_refs,
         )
     }
@@ -98,7 +126,7 @@ impl Parser {
     pub fn sandbox_totality(&self) -> Vec<crate::sandbox::TotalityViolation> {
         crate::sandbox::admit_totality(
             &self.data,
-            &self.def_sandbox,
+            &self.designations(),
             &self.sandbox_unbounded_loops,
             &self.sandbox_fn_refs,
         )
@@ -109,7 +137,7 @@ impl Parser {
     /// goes through an allow-listed `*.write` op.
     #[must_use]
     pub fn sandbox_raw_writes(&self) -> Vec<crate::sandbox::RawWriteViolation> {
-        crate::sandbox::raw_write_violations(&self.def_sandbox, &self.sandbox_raw_writes)
+        crate::sandbox::raw_write_violations(&self.designations(), &self.sandbox_raw_writes)
     }
 
     /// @PLN86 P6.1 — true iff `group` (the part before `#` in a `group#right`
@@ -209,7 +237,7 @@ impl Parser {
     #[must_use]
     pub fn sandbox_admission_errors(&self) -> Vec<String> {
         let caps = self.sandbox_admit().into_iter().map(|v| {
-            crate::sandbox::describe_violation(&self.data, &self.sandbox, &self.def_sandbox, &v)
+            crate::sandbox::describe_violation(&self.data, &self.sandbox, &self.designations(), &v)
         });
         let totality = self
             .sandbox_totality()
@@ -221,14 +249,14 @@ impl Parser {
             .map(|v| crate::sandbox::describe_raw_write_violation(&self.data, &v));
         let field_reads = crate::sandbox::field_read_violations(
             &self.sandbox,
-            &self.def_sandbox,
+            &self.designations(),
             &self.sandbox_field_reads,
         )
         .into_iter()
         .map(|v| crate::sandbox::describe_field_read_violation(&self.data, &v));
         let field_updates = crate::sandbox::field_update_violations(
             &self.sandbox,
-            &self.def_sandbox,
+            &self.designations(),
             &self.member_access,
             &self.sandbox_field_updates,
         )
@@ -236,7 +264,7 @@ impl Parser {
         .map(|v| crate::sandbox::describe_field_update_violation(&self.data, &v));
         let field_appends = crate::sandbox::field_append_violations(
             &self.sandbox,
-            &self.def_sandbox,
+            &self.designations(),
             &self.member_access,
             &self.sandbox_field_appends,
         )
@@ -244,7 +272,7 @@ impl Parser {
         .map(|v| crate::sandbox::describe_field_append_violation(&self.data, &v));
         let param_locks = crate::sandbox::param_lock_violations(
             &self.sandbox,
-            &self.def_sandbox,
+            &self.designations(),
             &self.sandbox_param_overrides,
         )
         .into_iter()
@@ -255,10 +283,13 @@ impl Parser {
         let undeclared = self.sandbox_undeclared_links();
         // @PLN86 §8 (F11) — the data envelope: the proven peak-heap footprint must fit
         // the profile's declared data_budget (or be provable at all).
-        let data_env =
-            crate::sandbox::data_envelope_violations(&self.data, &self.sandbox, &self.def_sandbox)
-                .into_iter()
-                .map(|v| crate::sandbox::describe_data_violation(&v));
+        let data_env = crate::sandbox::data_envelope_violations(
+            &self.data,
+            &self.sandbox,
+            &self.designations(),
+        )
+        .into_iter()
+        .map(|v| crate::sandbox::describe_data_violation(&v));
         // #631 — a profile that allow-lists the library its own sandboxed code lives
         // in.  Listed FIRST: it disables the checks that produce the other findings,
         // so any verdict computed under it is unsound and fixing it comes before
@@ -266,7 +297,7 @@ impl Parser {
         let self_allow = crate::sandbox::self_allow_list_violations(
             &self.data,
             &self.sandbox,
-            &self.def_sandbox,
+            &self.designations(),
         )
         .into_iter()
         .map(|v| crate::sandbox::describe_self_allow_list_violation(&self.data, &v));
@@ -304,7 +335,7 @@ impl Parser {
     /// so no single frame stalls (L5).
     #[must_use]
     pub fn sandbox_complexity_degree(&self) -> u32 {
-        crate::sandbox::sandbox_complexity_degree(&self.data, &self.def_sandbox)
+        crate::sandbox::sandbox_complexity_degree(&self.data, &self.designations())
     }
 
     /// @PLN86 space budget — the worst-case SPACE (peak-heap) degree of the
@@ -312,7 +343,7 @@ impl Parser {
     /// inputs against it so a bounded loop building a structure cannot OOM.
     #[must_use]
     pub fn sandbox_space_degree(&self) -> u32 {
-        crate::sandbox::sandbox_space_degree(&self.data, &self.def_sandbox)
+        crate::sandbox::sandbox_space_degree(&self.data, &self.designations())
     }
 
     /// @PLN86 P7.1 (F9) — the worst-case peak-heap footprint `(degree, coeff)`: peak
@@ -321,7 +352,7 @@ impl Parser {
     /// compares `coeff · max_input_n^degree` against the profile's `data_budget`.
     #[must_use]
     pub fn sandbox_space_footprint(&self) -> (u32, u32) {
-        crate::sandbox::sandbox_space_footprint(&self.data, &self.def_sandbox)
+        crate::sandbox::sandbox_space_footprint(&self.data, &self.designations())
     }
 
     /// @PLN86 prevention #3 — host capabilities that are NOT total: every
