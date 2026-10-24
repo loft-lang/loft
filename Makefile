@@ -309,6 +309,16 @@ install:
 	@# The production binary, built with the runtime beside it (scripts/lean_build.sh):
 	@# no development aids, and one feature set for the interpreter and `--native`.
 	@$(SUDO) install -m 755 target/install-lib/release/loft $(PREFIX)/bin/loft
+	@# The commit this install was built from, so the installed loft is a KNOWN build that a
+	@# tool can use as a control (`scripts/falsify.sh --installed`).  `dirty` when the tree had
+	@# changes under src/, default/, lib/ or the manifest; absent outside a git checkout.
+	@if git rev-parse --verify -q HEAD >/dev/null 2>&1; then \
+		st=clean; \
+		[ -z "$$(git status --porcelain -- src default lib Cargo.toml Cargo.lock)" ] || st=dirty; \
+		printf '%s %s\n' "$$(git rev-parse HEAD)" "$$st" | $(SUDO) tee $(PREFIX)/share/loft/SOURCE >/dev/null; \
+	else \
+		$(SUDO) rm -f $(PREFIX)/share/loft/SOURCE; \
+	fi
 	@smoke="$${TMPDIR:-/tmp}/loft-install-smoke.loft"; \
 	printf 'fn main() {\n    println("loft install smoke ok")\n}\n' > "$$smoke"; \
 	if ! $(PREFIX)/bin/loft --interpret "$$smoke" >/dev/null 2>"$$smoke.err"; then \
@@ -427,6 +437,27 @@ install-native:
 
 install-user-fast:
 	@$(MAKE) --no-print-directory install PREFIX=$(HOME)/.local NATIVE_ONLY=1
+
+# The installed loft as the build `origin/main` is: fetched, checked out in a worktree of its
+# own and installed from there like `install-user-fast`.  The worktree persists, so the next
+# install after main moves rebuilds only what changed.  `make falsify` without a REF scores
+# a guard against this build (GUARDS.md § The control is installed main).
+LOFT_MAIN_TREE ?= $(HOME)/.cache/loft-main
+install-main:  ## Install origin/main for this user (~/.local) from a persistent worktree
+	@git fetch -q origin main
+	@# `--force`: the tree is this target's own, and a build may rewrite a tracked derived file.
+	@if [ -d "$(LOFT_MAIN_TREE)" ]; then \
+		git -C "$(LOFT_MAIN_TREE)" checkout -q --force --detach origin/main; \
+	else \
+		git worktree add -q --detach "$(LOFT_MAIN_TREE)" origin/main; \
+	fi
+	@echo "install-main: building $$(git -C "$(LOFT_MAIN_TREE)" log --oneline -1)"
+	@$(MAKE) -C "$(LOFT_MAIN_TREE)" --no-print-directory install-user-fast
+	@# Stamped here as well, so the stamp does not depend on the INSTALLED tree's Makefile.
+	@st=clean; \
+	[ -z "$$(git -C "$(LOFT_MAIN_TREE)" status --porcelain -- src default lib Cargo.toml Cargo.lock)" ] || st=dirty; \
+	printf '%s %s\n' "$$(git -C "$(LOFT_MAIN_TREE)" rev-parse HEAD)" "$$st" > $(HOME)/.local/share/loft/SOURCE; \
+	echo "install-main: $(HOME)/.local/bin/loft is $$(cat $(HOME)/.local/share/loft/SOURCE)"
 
 uninstall:
 	$(SUDO) rm -f $(PREFIX)/bin/loft
@@ -2031,19 +2062,22 @@ o-proxy-check:  ## @FR-O-Proxy: does every free on the empty-deps proxy consult 
 	@python3 scripts/o_proxy_check.py
 
 .PHONY: ir-schema-check ir-schema-regen
-falsify:  ## Run a guard against the build it was written to catch: GUARD=<file> REF=<commit>
+falsify:  ## Run a guard against the build it was written to catch: GUARD=<file> [REF=<commit>]
 	@# A guard that passes on the build it was written for proves nothing, and the ways
 	@# that happens are not exotic — the wrong ENTRY POINT, a success marker the error
 	@# report echoes, a leak gate that is monotone, a cell that never reaches its code
-	@# path.  This builds REF, runs GUARD on both trees through the entry point the
-	@# corpus runner would pick, and compares four channels apart so the verdict names
+	@# path.  This runs GUARD on the control and on this tree through the entry point the
+	@# corpus runner would pick, and compares the channels apart so the verdict names
 	@# WHICH one moved.  Paste its line into the guard; `doc_hygiene::
 	@# every_new_guard_records_its_control` requires one on every new file.
-	@if [ -z "$(GUARD)" ] || [ -z "$(REF)" ]; then \
-		echo "usage: make falsify GUARD=tests/scripts/<file>.loft REF=<commit-before-the-fix>"; \
+	@# Without REF the control is the INSTALLED loft (`make install-main`): no build.
+	@if [ -z "$(GUARD)" ]; then \
+		echo "usage: make falsify GUARD=<file>.loft [REF=<commit-before-the-fix>]"; \
+		echo "       without REF the control is the installed loft — make install-main"; \
 		exit 2; \
 	fi
-	@./scripts/falsify.sh "$(GUARD)" "$(REF)"
+	@if [ -n "$(REF)" ]; then ./scripts/falsify.sh "$(GUARD)" "$(REF)"; \
+	else ./scripts/falsify.sh "$(GUARD)" --installed; fi
 
 ir-schema-check:  ## Is src/ir_schema_gen.rs still what tools/ir_schema/ir.loft generates?
 	@# The generated file IS the store layout (record sizes, field offsets, the Node

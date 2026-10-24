@@ -85,14 +85,16 @@ has the ladder; re-measure a number before it decides anything):
   emitted Rust (`--native-emit`) of the failing function, pointing at the node or line that
   is wrong.  A fix built on a hypothesis the artefact never showed is a build that may change
   nothing.
-- **One heavy job at a time**: a build, a gate (`ci-run.sh start`), `make falsify` (two dev
-  builds), the drop gate (every core for an hour), a native corpus census, a `cargo test` of
+- **One heavy job at a time**: a build, a gate (`ci-run.sh start`), `make falsify` (one dev
+  build against the installed main, two against a `REF`), the drop gate (every core for an hour), a native corpus census, a `cargo test` of
   many binaries.  Beside one another they slow every one of them and the one waited on most
   of all.
   While a build runs, read the next unit's code; wait on its pid or output file, never a
   sleep loop (CLAUDE.md § Never wait on a process by NAME).
 - **Receipts last**: `make falsify` builds the working tree, so it runs after the fix is
-  committed and while no edit is pending — not in the middle of a fix.
+  committed and while no edit is pending — not in the middle of a fix.  Without `REF` its
+  control is the installed main (`make install-main`), so it builds nothing else; score
+  before the branch is joined, while main still lacks the fix.
 
 ## The agent debug surface — `loft debug <file> --rpc` (drive a live session, don't println)
 

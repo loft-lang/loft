@@ -113,11 +113,15 @@ make release-gate                        # every nightly against THIS commit in 
                                          #   reads it by HEAD's sha).  The 03:00 daily starts
                                          #   03:34–14:45 UTC on whatever main was; this does not
                                          #   excuse a red nightly — fix those the day they appear
-make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the build it was
+make falsify GUARD=<guard.loft> [REF=<commit>]  # does this guard FAIL on the build it was
                                          #   written to catch?  Compares exit/asserts/leak/
                                          #   panic apart and names the channel that moved.
                                          #   Every new tests/scripts file records its answer
-                                         #   (`@falsified-at:`, gated) — GUARDS.md
+                                         #   (`@falsified-at:`, gated) — GUARDS.md.  Without
+                                         #   REF the control is the INSTALLED main, no build:
+                                         #   `make install-main` once per main change, and
+                                         #   score BEFORE the branch is joined (once main has
+                                         #   the fix, REF= and a full build per control)
 make speed                               # what got slower/faster — a REPORT, never a gate
 make speed-gate                          # the one speed GATE: a test 3x and +5 s slower than on
                                          #   main (median speed divided out) that is STILL that slow
