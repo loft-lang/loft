@@ -30,6 +30,7 @@ mod dispatch;
 mod emit;
 pub mod file_hold;
 pub use crate::fnref;
+pub mod fault_flag;
 pub mod hand_over;
 pub mod hoist;
 pub mod kept;
@@ -891,6 +892,19 @@ pub struct Output<'a> {
     pub chain_guard_disabled: bool,
     /// `LOFT_TRACE_CHAIN=1` — name every loop whose chains are guarded, and why one is not.
     pub chain_trace: bool,
+    /// `@FR-R-FaultFlag` — the flag a `for` statement's FAST copy is being emitted under:
+    /// each fault form in it sets this local instead of branching, raising or reporting
+    /// ([`fault_flag`]).  `None` outside a fast copy.
+    pub fault_flag: Option<String>,
+    /// `@FR-R-FaultFlag` — the next statement number, so each site's flag and counter are distinct.
+    pub fault_flag_next: u32,
+    /// `LOFT_NO_FAULT_FLAG=1` — no `for` statement runs a fast copy under a fault flag.
+    pub fault_flag_disabled: bool,
+    /// `LOFT_TRACE_FAULT_FLAG=1` — name every `for` statement admitted, and why one is not.
+    pub fault_flag_trace: bool,
+    /// `@FR-R-FaultFlag` — the `for` statements whose EXACT copy is being emitted, so the
+    /// ordinary path does not admit them a second time.
+    pub fault_flag_exact: HashSet<usize>,
     /// `LOFT_NO_DISTINCT_GROWTH=1` — a loop that grows ANY store binds no element base and a
     /// remainder that grows one binds no record address, as before `@FR-R-Base`'s growth
     /// clause; the bisect step for a wrong element or field read in a loop that appends
@@ -2449,6 +2463,11 @@ impl<'a> Output<'a> {
             chains_suspended: 0,
             chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
             chain_trace: std::env::var("LOFT_TRACE_CHAIN").is_ok_and(|v| v != "0"),
+            fault_flag: None,
+            fault_flag_next: 0,
+            fault_flag_disabled: std::env::var("LOFT_NO_FAULT_FLAG").is_ok_and(|v| v != "0"),
+            fault_flag_trace: std::env::var("LOFT_TRACE_FAULT_FLAG").is_ok_and(|v| v != "0"),
+            fault_flag_exact: HashSet::new(),
             distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
                 .is_ok_and(|v| v != "0"),
             placed_locals: HashSet::new(),

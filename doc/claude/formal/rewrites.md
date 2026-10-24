@@ -2169,6 +2169,42 @@ c1–c6, pins `tests/guarded_chain.rs`.  Sites: `Output::chain_fast_path`,
 `Output::in_plain_chain`, `hoist::nested_counted_loops`, `hoist::written_vars`, the chain
 arm in `ops::int_arith`, the loop hook in `emit.rs`.
 
+### A `for` statement runs fast under a fault flag, and as written when it faults
+
+```
+  (R-FaultFlag)  a `for` statement whose every node is a literal, a local, a `Set` of a
+                 scalar local nothing takes the address of, a block, an `if`, a loop, a
+                 `break` / `continue` that stays inside it, or an OPERATOR whose `#rust`
+                 template touches no state once its recoverable raise is taken out, and
+                 which holds at least one FAULT FORM, runs a fast copy first.  In it a
+                 `??` / `?` discharge (`if not-null(n) { n } else { d }`) sets a flag where
+                 `n` is null and answers `n`; a template's `s.raise_recoverable(k)` sets the
+                 flag instead of raising; `+ - *` and negation wrap and set the flag on a
+                 null operand or an overflow; `& | ^` set it on a null operand.  Each fault
+                 form answers exactly the exact form's value while the flag stays clear.
+                 After the copy a set flag restores every written local declared before the
+                 statement and runs the statement as written, so a fault is answered and
+                 reported once, by the exact statement.  The copy is skipped under
+                 `--dev-soft-halt` (an overflow REPORTS there) and at a site that has rerun
+                 8 times.  Inside the copy a constant range of 1 to 64 rounds over a body
+                 free of loops, `break`, `continue` and `return`, of at most 48 nodes, is
+                 unrolled, the counters left where the loop leaves them.
+```
+
+**In words.** A discharge or a checked operator compiles to a select or a branch on a loop's
+critical path, and a select in a constant loop's body keeps LLVM from unrolling it, so one
+call's divisions cannot overlap the next call's.  The fast copy moves every such test off the
+path into one flag, read once after the statement.  Its only effect is on the statement's
+scalar locals, which a rerun restores, so a set flag leaves no trace: this is @C120's rule
+kept (every observable value as the interpreter answers it, faults included), with the fact
+established after a speculative run instead of before the arithmetic.  `06_newton_sqrt`:
+1.67× → 1.14× of Rust.  Switch `LOFT_NO_FAULT_FLAG=1`; `LOFT_TRACE_FAULT_FLAG=1` names each
+admission and each decline with its reason.  Sites: `generation/fault_flag.rs`
+(`fault_flag_admits`, `fault_flag_statement`, `fault_flag_unrolled`), the fault forms in
+`emit.rs` (the discharge), `calls.rs` (the raise) and `ops/int_arith.rs` (the operators),
+the runtime helpers `ops::fault_flag_*` and `ops::ff_*`.  Guard
+`loft-suite/rules/rewrites/R-FaultFlag/a-for-statement-run-under-a-fault-flag-answers-as-written.loft`.
+
 ### A dying temporary's elements move into the append that consumes them
 
 ```

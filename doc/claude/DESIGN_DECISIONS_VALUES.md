@@ -174,7 +174,8 @@ Holds at `(T-Absent)`, [formal/tuples.md](formal/tuples.md).
 **Decision.** `+`, `-` or `*` over non-null operands is not proven non-null, so after an overflow
 native carries null exactly as the interpreter does.  A plain operator is emitted only where a fact
 established BEFORE the arithmetic rules out a fault (`(R-Range)`, `(R-GuardedChain)`,
-`(R-BoundedNest)`).  A published library always keeps the checks; a check-free release pass for a
+`(R-BoundedNest)`), or where a fault flag rules it out AFTER a speculative run whose only
+effect is on locals that are restored before the exact statement reruns (`(R-FaultFlag)`).  A published library always keeps the checks; a check-free release pass for a
 game with fault-free checked runs may come, never as a default.  **Why.** A rewrite must leave every
 observable value as the interpreter answers it, faults included.
 
