@@ -39,7 +39,7 @@ pub(crate) mod ops;
 mod pre_eval;
 pub use crate::opt::range;
 mod ranged_call;
-pub mod stream_walk;
+pub use crate::lower::stream_walk;
 mod stream_walk_emit;
 mod text;
 pub mod view_return;
