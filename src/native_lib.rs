@@ -30,11 +30,11 @@
 //! args are already valid in it).  Args/return are passed through the uniform
 //! [`LibArg`] slot.
 
-use crate::opt::native_key::{linked_packages, native_pkg_lib};
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
 pub(crate) use crate::native_gate::is_text_work_buffer;
+use crate::opt::native_key::{linked_packages, native_pkg_lib};
 use crate::platform::process::{Program, Spawn};
 use std::collections::{BTreeSet, HashMap, HashSet};
 

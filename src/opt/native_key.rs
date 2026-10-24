@@ -420,7 +420,10 @@ pub(crate) fn linked_packages(data: &Data, export_set: &HashSet<u32>) -> Vec<(St
 /// the crate name; it is read from the manifest (the SAME stem the interpreter resolves with),
 /// falling back to the crate name.  `None` when the cdylib cannot be resolved
 /// ([`crate::extensions::resolve_native_lib`] already printed why).
-pub(crate) fn native_pkg_lib(crate_name: &str, pkg_dir: &str) -> Option<(String, std::path::PathBuf)> {
+pub(crate) fn native_pkg_lib(
+    crate_name: &str,
+    pkg_dir: &str,
+) -> Option<(String, std::path::PathBuf)> {
     let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
         .and_then(|m| m.native)
         .unwrap_or_else(|| crate_name.replace('-', "_"));
