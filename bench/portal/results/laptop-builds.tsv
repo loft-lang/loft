@@ -1,7 +1,7 @@
 # host=laptop
 # arch=x86_64-linux
 # date=2026-10-24
-# commit=eca7f7dc3
+# commit=5dcd2a524
 # dirty=yes
 # rustc=rustc 1.97.0 (2d8144b78 2026-07-07)
 # samples=7
@@ -115,24 +115,24 @@ assets	ship-release	2.75	2.84	249	5	b62fa5828	2026-10-24
 cbor	native-release	3.58	3.65	279	5	b62fa5828	2026-10-24
 cbor	rust-rustc	0.47	0.64	136	5	b62fa5828	2026-10-24
 cbor	ship-release	3.34	3.41	274	5	b62fa5828	2026-10-24
-crypto	native-release	1.81	1.86	225	5	b62fa5828	2026-10-24
-crypto	rust-rustc	0.37	0.49	133	5	b62fa5828	2026-10-24
-crypto	ship-release	1.76	1.82	220	5	b62fa5828	2026-10-24
-drawing	native-release	75.87	76.06	438	5	eca7f7dc3	2026-10-24
-drawing	rust-rustc	1.56	1.77	159	5	eca7f7dc3	2026-10-24
-drawing	ship-release	11.60	11.67	413	5	eca7f7dc3	2026-10-24
+crypto	native-release	18.29	23.51	294	5	5dcd2a524	2026-10-24
+crypto	rust-rustc	0.37	0.49	134	5	5dcd2a524	2026-10-24
+crypto	ship-release	2.25	2.29	236	5	5dcd2a524	2026-10-24
+drawing	native-release	60.48	25.96	430	5	5dcd2a524	2026-10-24
+drawing	rust-rustc	1.59	1.79	159	5	5dcd2a524	2026-10-24
+drawing	ship-release	11.57	11.60	409	5	5dcd2a524	2026-10-24
 fixstep	native-release	2.00	2.06	225	5	b62fa5828	2026-10-24
 fixstep	rust-rustc	0.32	0.33	123	5	b62fa5828	2026-10-24
 fixstep	ship-release	1.96	2.02	222	5	b62fa5828	2026-10-24
-game_protocol	native-release	1.46	1.55	212	5	b62fa5828	2026-10-24
-game_protocol	rust-rustc	0.25	0.26	122	5	b62fa5828	2026-10-24
-game_protocol	ship-release	1.41	1.47	213	5	b62fa5828	2026-10-24
+game_protocol	native-release	1.53	1.58	213	5	5dcd2a524	2026-10-24
+game_protocol	rust-rustc	0.25	0.26	123	5	5dcd2a524	2026-10-24
+game_protocol	ship-release	1.66	1.71	212	5	5dcd2a524	2026-10-24
 glb	native-release	26.90	26.98	265	5	b62fa5828	2026-10-24
 glb	rust-rustc	0.61	0.62	139	5	b62fa5828	2026-10-24
 glb	ship-release	4.51	4.57	266	5	b62fa5828	2026-10-24
-graphics	native-release	4.24	4.29	267	5	b62fa5828	2026-10-24
-graphics	rust-rustc	0.49	0.67	135	5	b62fa5828	2026-10-24
-graphics	ship-release	4.03	4.09	252	5	b62fa5828	2026-10-24
+graphics	native-release	34.97	35.16	266	5	5dcd2a524	2026-10-24
+graphics	rust-rustc	0.48	0.66	136	5	5dcd2a524	2026-10-24
+graphics	ship-release	4.02	4.08	247	5	5dcd2a524	2026-10-24
 gridmesh	native-release	2.58	2.64	249	5	b62fa5828	2026-10-24
 gridmesh	rust-rustc	0.47	0.83	141	5	b62fa5828	2026-10-24
 gridmesh	ship-release	2.46	2.52	232	5	b62fa5828	2026-10-24
@@ -187,36 +187,36 @@ markdown	ship-release	2.97	3.04	248	5	b62fa5828	2026-10-24
 mesh3d	native-release	3.22	3.27	236	5	b62fa5828	2026-10-24
 mesh3d	rust-rustc	0.38	0.40	126	5	b62fa5828	2026-10-24
 mesh3d	ship-release	3.18	3.25	234	5	b62fa5828	2026-10-24
-pluginabi	native-release	7.19	7.38	317	5	b62fa5828	2026-10-24
-pluginabi	rust-rustc	0.50	0.81	140	5	b62fa5828	2026-10-24
-pluginabi	ship-release	3.76	3.82	308	5	b62fa5828	2026-10-24
-random	native-release	1.48	1.56	213	5	b62fa5828	2026-10-24
-random	rust-rustc	0.32	0.33	125	5	b62fa5828	2026-10-24
-random	ship-release	1.45	1.53	212	5	b62fa5828	2026-10-24
-server	native-release	1.44	1.51	219	5	b62fa5828	2026-10-24
-server	rust-rustc	0.31	0.32	123	5	b62fa5828	2026-10-24
-server	ship-release	1.44	1.51	221	5	b62fa5828	2026-10-24
+pluginabi	native-release	19.43	29.17	307	5	5dcd2a524	2026-10-24
+pluginabi	rust-rustc	0.47	0.75	141	5	5dcd2a524	2026-10-24
+pluginabi	ship-release	3.60	3.67	315	5	5dcd2a524	2026-10-24
+random	native-release	1.95	1.99	210	5	5dcd2a524	2026-10-24
+random	rust-rustc	0.33	0.34	126	5	5dcd2a524	2026-10-24
+random	ship-release	1.72	1.78	214	5	5dcd2a524	2026-10-24
+server	native-release	13.42	37.13	454	5	5dcd2a524	2026-10-24
+server	rust-rustc	0.31	0.32	124	5	5dcd2a524	2026-10-24
+server	ship-release	1.56	1.59	216	5	5dcd2a524	2026-10-24
 shapes	native-release	1.37	1.42	215	5	b62fa5828	2026-10-24
 shapes	rust-rustc	0.32	0.33	121	5	b62fa5828	2026-10-24
 shapes	ship-release	1.29	1.35	213	5	b62fa5828	2026-10-24
-ssh	native-release	1.35	1.38	212	5	b62fa5828	2026-10-24
-ssh	rust-rustc	0.24	0.25	121	5	b62fa5828	2026-10-24
-ssh	ship-release	1.36	1.41	211	5	b62fa5828	2026-10-24
-stage	native-release	15.35	15.47	320	5	b62fa5828	2026-10-24
-stage	rust-rustc	0.56	0.57	131	5	b62fa5828	2026-10-24
-stage	ship-release	6.06	6.14	309	5	b62fa5828	2026-10-24
-text2d	native-release	3.82	3.90	251	5	b62fa5828	2026-10-24
-text2d	rust-rustc	0.48	0.68	136	5	b62fa5828	2026-10-24
-text2d	ship-release	3.81	3.87	246	5	b62fa5828	2026-10-24
+ssh	native-release	50.43	189.70	596	5	5dcd2a524	2026-10-24
+ssh	rust-rustc	0.34	0.35	121	5	5dcd2a524	2026-10-24
+ssh	ship-release	1.58	1.64	277	5	5dcd2a524	2026-10-24
+stage	native-release	39.90	40.14	318	5	5dcd2a524	2026-10-24
+stage	rust-rustc	0.54	0.54	132	5	5dcd2a524	2026-10-24
+stage	ship-release	5.82	5.89	300	5	5dcd2a524	2026-10-24
+text2d	native-release	22.60	4.02	251	5	5dcd2a524	2026-10-24
+text2d	rust-rustc	0.52	0.70	137	5	5dcd2a524	2026-10-24
+text2d	ship-release	3.99	4.03	240	5	5dcd2a524	2026-10-24
 time	native-release	1.57	1.63	219	5	b62fa5828	2026-10-24
 time	rust-rustc	0.39	0.40	123	5	b62fa5828	2026-10-24
 time	ship-release	1.48	1.54	216	5	b62fa5828	2026-10-24
 tween	native-release	1.73	1.76	214	5	b62fa5828	2026-10-24
 tween	rust-rustc	0.36	0.38	127	5	b62fa5828	2026-10-24
 tween	ship-release	1.67	1.73	213	5	b62fa5828	2026-10-24
-web	native-release	1.48	1.53	217	5	b62fa5828	2026-10-24
-web	rust-rustc	0.34	0.36	127	5	b62fa5828	2026-10-24
-web	ship-release	1.36	1.45	215	5	b62fa5828	2026-10-24
+web	native-release	1.51	1.55	216	5	5dcd2a524	2026-10-24
+web	rust-rustc	0.32	0.33	127	5	5dcd2a524	2026-10-24
+web	ship-release	1.56	1.54	228	5	5dcd2a524	2026-10-24
 zttext	native-release	4.90	4.98	294	5	b62fa5828	2026-10-24
 zttext	rust-rustc	0.71	1.03	147	5	b62fa5828	2026-10-24
 zttext	ship-release	4.70	4.77	292	5	b62fa5828	2026-10-24
