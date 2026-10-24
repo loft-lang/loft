@@ -34,15 +34,13 @@
 # check costs the guard's run and nothing else.  Score before the branch is joined: once main
 # holds the fix, the installed build passes too and the guard reads INERT.
 #
-# ⚠ ONE CHANNEL IS BLIND, and it is blind for the corpus's usual guard shape.  The leak column
-# is read off the run's stderr ("stores not freed at program exit"), which only a `main`-ful
-# run under `--interpret` prints: `--tests` does not leak-check at all (the corpus leak gate
-# lives in `tests/wrap.rs`, which this does not run).  So a `main`-less guard — the standard
-# form — reports `leak none` on BOTH trees whatever it leaks, and a guard written to catch a
-# LEAK is therefore recorded INERT, i.e. mislabelled a lock.  Measured 2026-08-27 on
-# `a-nullable-return-joins-its-branch-arms.loft`, whose leaking cell `make ci` failed on while
-# this reported `0|0|none|none|0` for both trees (QUALITY-history.md B6p).  Until `--tests` grows a leak
-# check, score a leak guard by giving it a `main` and running it under `--interpret`.
+# ⚠ THE LEAK CHANNEL NEEDS ITS SWITCH.  A `main`-ful run under `--interpret` prints "stores not
+# freed at program exit" by itself; `--tests` — the `main`-less guard, the standard form —
+# checks each test's stores only under `LOFT_LEAK_CHECK=1` and then fails the test with "store(s)
+# not freed at exit", which the suite runner arms for every cell.  So arm it the same way
+# (`LOFT_LEAK_CHECK=1 make falsify …`); it is passed through like the arena instruments.
+# Unarmed, a guard written to catch a LEAK reads `leak none` on both trees and is recorded
+# INERT, i.e. mislabelled a lock (QUALITY-history.md B6p).
 #
 # ⚠ A SECOND CHANNEL IS BLIND, for the mirror-image reason.  `expect_channel` counts only
 # `@EXPECT_ERROR` / `@EXPECT_FAIL`, and `entry_modes` routes only those two to `--tests`.  A
@@ -180,9 +178,7 @@ elif [ -n "$INSTALLED_BIN" ]; then
   if [ -n "$main_sha" ] && [ "$main_sha" != "$RESOLVED_SHA" ]; then
     echo "  note: origin/main is $(git rev-parse --short "$main_sha") — make install-main refreshes it" >&2
   fi
-  INSTALLED_ANCESTOR=yes
   if ! git merge-base --is-ancestor "$RESOLVED_SHA" HEAD; then
-    INSTALLED_ANCESTOR=no
     echo "  note: $SHA is not an ancestor of this tree, so the two sides also differ by commits" >&2
     echo "  this branch lacks; rebase onto it, or read a moved channel with that in mind" >&2
   fi
@@ -432,10 +428,13 @@ signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|lea
   out=$(cd "$tree" && bound -k 5 "$((lim + 20))" env LOFT_NATIVE_LEAK_CHECK=1 LOFT_TIMEOUT="$lim" \
         ${LOFT_POISON:+LOFT_POISON="$LOFT_POISON"} \
         ${LOFT_STRICT_STORES:+LOFT_STRICT_STORES="$LOFT_STRICT_STORES"} \
+        ${LOFT_LEAK_CHECK:+LOFT_LEAK_CHECK="$LOFT_LEAK_CHECK"} \
         "$bin" "$@" ${extra[@]+"${extra[@]}"} "$file" 2>&1); rc=$?
   local asserts leak panic refusals
   asserts=$(echo "$out" | grep -c "assertion failed")
-  leak=$(echo "$out" | grep -oE "stores not freed at program exit: .*" | head -1 | sed 's/.*exit: //')
+  # Two spellings of one report: a program's exit ("stores not freed at program exit: …") and
+  # a test's under `LOFT_LEAK_CHECK=1` ("store(s) not freed at exit: …").
+  leak=$(echo "$out" | grep -oE "store(s|\(s\)) not freed at (program )?exit: .*" | head -1 | sed 's/.*exit: //')
   panic=$(echo "$out" | grep -oE "panicked at [^:]*" | head -1)
   refusals=$(echo "$out" | grep -c "BUG (#306)")
   echo "$rc|$asserts|${leak:-none}|${panic:-none}|$refusals|$(expect_channel "$file" "$out")"
@@ -714,6 +713,16 @@ elif [ $falsified_any -eq 1 ]; then
     # and the diff applies by construction; later it is hand-reconstruction, and for two thirds
     # of the corpus it is already too late.  So the durable form is offered at the only moment
     # it costs nothing.
+    #
+    # A control that is a commit of MAIN — the installed build's — never decays: main keeps
+    # every commit.  So there is nothing to rescue, and a per-fix patch would cost the very
+    # control build `--installed` exists to avoid.
+    if [ -n "$INSTALLED_BIN" ]; then
+      echo
+      echo "note: no patch written — the control is main's $SHA, which stays resolvable, so this"
+      echo "      receipt does not decay."
+      exit 0
+    fi
     pdir="$ROOT/tests/falsified"
     pbase=$(basename "$GUARD" .loft)
     mkdir -p "$pdir"
@@ -736,15 +745,7 @@ elif [ $falsified_any -eq 1 ]; then
     # reintroduces everything fixed in between and cannot say which one the guard caught.  A
     # measured 47079-line "receipt" is the shape of that mistake.  The recorded receipts run
     # 17 to 203 lines, so a bound well above them separates the two uses without tuning.
-    if [ "${INSTALLED_ANCESTOR:-yes}" = no ]; then
-      rm -f "$new"
-      echo
-      echo "note: no durable patch written — the installed build is not an ancestor of this tree,"
-      echo "      so a diff against it would also reverse commits this branch never had."
-      if [ "$kept" = yes ]; then
-        echo "      The EXISTING tests/falsified/$pbase.patch is untouched."
-      fi
-    elif [ "${plines:-0}" -eq 0 ]; then
+    if [ "${plines:-0}" -eq 0 ]; then
       rm -f "$new"
       echo
       echo "note: no durable patch written — the fix touches nothing under src/, default/ or lib/,"
@@ -772,8 +773,8 @@ elif [ $falsified_any -eq 1 ]; then
       echo "…and the receipt that does not decay — written to tests/falsified/$pbase.patch."
       echo "Score it with: scripts/falsify.sh $GUARD --patch tests/falsified/$pbase.patch"
       echo "// @falsified-by: tests/falsified/$pbase.patch — $CHANNELS"
-      # The patch is this TREE against the control.  Against the installed main that is the
-      # whole branch, so with more than one fix on it the patch reverts them all.
+      # The patch is this TREE against the control, so with more than one fix since the control
+      # it reverts them all.
       nfix=$(git -C "$ROOT" rev-list --count "$SHA"..HEAD -- src/ default/ lib/ 2>/dev/null || echo 0)
       if [ "${nfix:-0}" -gt 1 ]; then
         echo "note: $nfix commits since $SHA touch the source, so this patch reverts all of them."
