@@ -31,6 +31,14 @@ impl Cx<'_> {
                 fields.iter().try_for_each(|f| self.show_type(f.content))
             }
             Parts::Vector(elem) => self.show_type(*elem),
+            Parts::Sorted(elem, _)
+            | Parts::Hash(elem, _)
+            | Parts::Index(elem, _)
+            | Parts::Ordered(elem, _)
+            | Parts::Array(elem) => {
+                self.keys_of(tp);
+                self.show_type(*elem)
+            }
             Parts::Byte(..)
             | Parts::Short(..)
             | Parts::ShortRaw(..)
@@ -151,7 +159,24 @@ impl Cx<'_> {
                 );
             }
             Parts::Enum(values) => self.enum_body(out, &t.name, values, complex),
-            Parts::Vector(elem) => {
+            Parts::Hash(elem, _)
+            | Parts::Index(elem, _)
+            | Parts::Ordered(elem, _)
+            | Parts::Array(elem) => {
+                // A hash renders in key order (`hash::records_sorted`); an index, an ordered
+                // and an array in their own.
+                let e = &self.stores.types[*elem as usize];
+                let (keys, n) = self.keys_of(tp);
+                let _ = writeln!(
+                    out,
+                    "    loft_show_keyed(s, r, fmt, ind, {}, {keys}, {n}, {}, {}, {});",
+                    i32::from(matches!(t.parts, Parts::Hash(..))),
+                    i32::from(e.is_complex()),
+                    i32::from(matches!(e.parts, Parts::Struct(_) | Parts::EnumValue(..))),
+                    Self::show_fn(*elem)
+                );
+            }
+            Parts::Vector(elem) | Parts::Sorted(elem, _) => {
                 let e = &self.stores.types[*elem as usize];
                 let _ = writeln!(
                     out,

@@ -290,3 +290,83 @@ fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
         );
     }
 }
+
+/// The keyed collections as C (`src/c/loft_keyed.h`): a hash keeps the latest record per key and
+/// walks in key order; a descending sorted range runs in the declared order and stops at an
+/// inclusive bound; an index walks a range reversed; a linked group files every record in each
+/// member, and a key collision in the hash leaves the vector member holding both.  Each value is
+/// computed by hand, and the interpreter and the C must both answer it.
+#[test]
+fn keyed_collections_written_as_c_answer_the_hand_computed_values() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct P { k: integer, v: text }
+struct F { k: integer, t: text }
+struct G { es: vector<F>, byk: hash<F[k]> }
+fn main() {
+  h: hash<P[v]> = [P { k: 1, v: "b" }, P { k: 2, v: "a" }, P { k: 3, v: "b" }];
+  t = "";
+  for p in h { t += "{p.v}{p.k},"; }
+  println("{len(h)} {t}");
+  s: sorted<P[-k]> = [P { k: 1, v: "x" }, P { k: 5, v: "y" }, P { k: 3, v: "z" }];
+  u = "";
+  for p in s[4..=1] { u += "{p.k},"; }
+  println(u);
+  ix: index<P[k]> = [P { k: 10, v: "p" }, P { k: 20, v: "q" }, P { k: 30, v: "r" }];
+  w = "";
+  for p in rev(ix[15..]) { w += "{p.v},"; }
+  println("{w} {ix[20].v}");
+  g = G {};
+  g.es += [F { k: 1, t: "a" }, F { k: 2, t: "b" }, F { k: 1, t: "c" }];
+  println("{len(g.es)} {len(g.byk)} {g.byk[1].t}");
+}
+"#;
+    // h: "b" twice, the later (k 3) wins; key order a, b.  s walks 5, 3, 1 (descending): from 4
+    // (the first key at or past it is 3) to 1 inclusive.  ix from 15: 20, 30, reversed.  The
+    // group: the vector member keeps all three records, the hash member one per key, k 1 the
+    // later "c".
+    let want = "2 a2,b3,\n3,1,\nr,q, q\n3 2 c\n";
+    let dir = scratch("keyed");
+    let file = dir.join("keyed.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(String::from_utf8_lossy(&interp.stdout), want, "the interpreter");
+    let c = dir.join("keyed.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "the keyed program is carried: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let exe = dir.join("keyed");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the keyed C:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the keyed C program");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
+}

@@ -26,7 +26,11 @@ use crate::database::Stores;
 use std::fmt::Write as _;
 
 /// The C runtime every unit starts with.
-const RUNTIME: &str = concat!(include_str!("loft_cc.h"), include_str!("loft_rt.h"));
+const RUNTIME: &str = concat!(
+    include_str!("loft_cc.h"),
+    include_str!("loft_rt.h"),
+    include_str!("loft_keyed.h")
+);
 
 /// Why a function cannot be written as C yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +123,20 @@ pub(crate) struct Cx<'a> {
     fn_values: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// Every type the unit compares by content (`loft_eq{tp}`), by type number.
     eq_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// Every keyed collection type whose key parts the unit names (`loft_keys{tp}`).
+    key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+}
+
+/// The record collections beside a plain vector the C carries; each layout is described in
+/// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
+/// their element type is shared (`@FR-Col-Group`, a stored reference).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Keyed {
+    Hash,
+    Sorted,
+    Index,
+    Ordered,
+    Array,
 }
 
 impl<'a> Cx<'a> {
@@ -136,7 +154,31 @@ impl<'a> Cx<'a> {
             fn_sigs: std::cell::RefCell::new(Vec::new()),
             fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
+    }
+
+    /// The kind of record collection type `tp` and its element type, or `None` for any other
+    /// type — a plain vector among them.
+    pub(crate) fn keyed(&self, tp: u16) -> Option<(Keyed, u16)> {
+        use crate::database::Parts;
+        match self.stores.types.get(tp as usize).map(|t| &t.parts)? {
+            Parts::Hash(c, _) => Some((Keyed::Hash, *c)),
+            Parts::Sorted(c, _) => Some((Keyed::Sorted, *c)),
+            Parts::Index(c, _) => Some((Keyed::Index, *c)),
+            Parts::Ordered(c, _) => Some((Keyed::Ordered, *c)),
+            Parts::Array(c) => Some((Keyed::Array, *c)),
+            _ => None,
+        }
+    }
+
+    /// The C name of keyed collection type `tp`'s key parts (`loft_keys{tp}`) and their count.
+    pub(crate) fn keys_of(&self, tp: u16) -> (String, usize) {
+        self.key_types.borrow_mut().insert(tp);
+        (
+            format!("loft_keys{tp}"),
+            self.stores.types[tp as usize].keys.len(),
+        )
     }
 
     /// The C name of plain enum type `tp`'s value names, indexed by value (1-based).
@@ -178,7 +220,12 @@ impl<'a> Cx<'a> {
             Type::Character => Some(CType::Char),
             Type::Function(..) => Some(CType::Fn),
             Type::Text(_) => Some(CType::Text),
-            Type::Reference(..) | Type::Vector(..) | Type::Enum(_, true, _) => Some(CType::Ref),
+            Type::Reference(..)
+            | Type::Vector(..)
+            | Type::Hash(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Enum(_, true, _) => Some(CType::Ref),
             Type::Enum(_, false, _) => Some(CType::Enum),
             Type::Tuple(elems) => {
                 // A text inside a tuple would be copied with the tuple and freed twice.
@@ -253,11 +300,24 @@ impl<'a> Cx<'a> {
             .get(tp as usize)
             .ok_or("an unknown type")?;
         self.copy_types.borrow_mut().insert(tp);
-        match &t.parts {
+        let r = match &t.parts {
+            // A linked group's members name one record set, which a field-by-field copy
+            // would split into one per member.
+            Parts::Struct(fields) | Parts::EnumValue(_, fields)
+                if fields.iter().any(|f| !f.other_indexes().is_empty()) =>
+            {
+                Err("a copy of a record holding a linked group".to_string())
+            }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 fields.iter().try_for_each(|f| self.copy_type(f.content))
             }
-            Parts::Vector(c) | Parts::ChildRec(c) => self.copy_type(*c),
+            Parts::Vector(c)
+            | Parts::ChildRec(c)
+            | Parts::Sorted(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Array(c) => self.copy_type(*c),
             Parts::Enum(values) => values
                 .iter()
                 .filter(|(v, _)| *v != u16::MAX)
@@ -270,7 +330,6 @@ impl<'a> Cx<'a> {
             | Parts::ShortRaw(..)
             | Parts::DbRef => Ok(()),
             other => {
-                self.copy_types.borrow_mut().remove(&tp);
                 let kind = format!("{other:?}");
                 Err(format!(
                     "a copy of a record that owns a {}",
@@ -280,7 +339,11 @@ impl<'a> Cx<'a> {
                         .to_lowercase()
                 ))
             }
+        };
+        if r.is_err() {
+            self.copy_types.borrow_mut().remove(&tp);
         }
+        r
     }
 
     /// May a value of type `tp` move to another store whole (@FR-H-SwapIn)?  Not when its tree
@@ -353,7 +416,13 @@ impl<'a> Cx<'a> {
                         fields.len()
                     )
                 }
-                Parts::Vector(c) => format!("{{ LOFT_T_VECTOR, {size}, {c}, 0, 0, 0 }}"),
+                Parts::Vector(c) | Parts::Sorted(c, _) => {
+                    format!("{{ LOFT_T_VECTOR, {size}, {c}, 0, 0, 0 }}")
+                }
+                Parts::Hash(c, _) => format!("{{ LOFT_T_HASH, {size}, {c}, 0, 0, 0 }}"),
+                Parts::Index(c, _) | Parts::Ordered(c, _) | Parts::Array(c) => {
+                    format!("{{ LOFT_T_INDEX, {size}, {c}, 0, 0, 0 }}")
+                }
                 Parts::ChildRec(c) => format!("{{ LOFT_T_CHILD, {size}, {c}, 0, 0, 0 }}"),
                 Parts::Enum(values) if values.iter().any(|(v, _)| *v != u16::MAX) => {
                     let list: Vec<String> = values.iter().map(|(v, _)| v.to_string()).collect();
@@ -383,7 +452,24 @@ impl<'a> Cx<'a> {
 
     /// The tuple structs, each after the ones it holds, and the default images.
     fn typedefs(&self) -> String {
-        let mut out = self.copy_table();
+        let mut out = String::new();
+        for tp in self.key_types.borrow().iter() {
+            let parts: Vec<String> = self.stores.types[*tp as usize]
+                .keys
+                .iter()
+                .map(|k| format!("{{ {}, {}, {} }}", k.type_nr, k.position, k.start))
+                .collect();
+            let _ = writeln!(
+                out,
+                "static const loft_key loft_keys{tp}[] = {{ {} }};",
+                if parts.is_empty() {
+                    "{ 0, 0, 0 }".into()
+                } else {
+                    parts.join(", ")
+                }
+            );
+        }
+        out.push_str(&self.copy_table());
         for tp in self.enum_names.borrow().iter() {
             let count = match &self.stores.types[*tp as usize].parts {
                 crate::database::Parts::Enum(values) => values.len(),
@@ -505,6 +591,8 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "t_4text_trim_end" => Some("loft_trim_end"),
         "t_4text_replace" => Some("loft_replace"),
         "t_4text_byte_at" => Some("loft_byte_at"),
+        "n_hash_sorted" => Some("loft_hash_sorted"),
+        "t_4hash_len" => Some("loft_hash_len"),
         _ => None,
     }
 }

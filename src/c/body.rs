@@ -8,6 +8,8 @@
 //! still in scope where it is freed.  An owned text temporary is freed after the statement
 //! that made it; every `return` first copies its value out, then frees the function's texts.
 
+mod keyed;
+
 use super::{CType, Cx, c_name, held, is_operator, type_word};
 use crate::data::{Block, Value};
 use crate::variables::Function;
@@ -50,6 +52,17 @@ enum K {
     Tup(u32),
     /// No value.
     Void,
+}
+
+/// The collection a new record is added to (`FnWriter::record_collection`).
+enum Coll {
+    /// A plain vector.
+    Vector,
+    /// A record collection of this type (`Cx::keyed`).
+    Keyed(u16),
+    /// A member of a linked group: the parent read once, and each member's byte position and
+    /// type, the one written first.
+    Group(String, Vec<(u16, u16)>),
 }
 
 /// A C expression and the shape of its value.
@@ -794,6 +807,12 @@ impl<'a> FnWriter<'a> {
         // `OpRefIsNull(v)`.
         let lazy = self.vars.is_lazy_buffer(var);
         if matches!(x.unspan(), Value::Null)
+            && crate::parser::vectors::owns_keyed_store(self.vars.tp(var))
+        {
+            self.keyed_null(var, first, ind);
+            return Ok(());
+        }
+        if matches!(x.unspan(), Value::Null)
             && let crate::data::Type::Vector(_, dep) = self.vars.tp(var)
             && dep.is_empty()
             && (if lazy {
@@ -864,9 +883,60 @@ impl<'a> FnWriter<'a> {
             );
             return Ok(());
         }
+        if !first && c == CType::Ref && self.displacing_rebind(var, x, &name, ind)? {
+            return Ok(());
+        }
         self.assign(x, &name, c, ind)?;
         self.flush(ind);
         Ok(())
+    }
+
+    /// A keyed local bound to null gets a store too, unless it borrows one
+    /// (`gen_keyed_null`); a later bind to null empties that store in place (@P302).
+    fn keyed_null(&mut self, var: u16, first: bool, ind: usize) {
+        let name = self.var(var);
+        if first {
+            self.line(ind, &format!("{name} = loft_ref_null();"));
+        }
+        if !(self.vars.is_inline_ref(var) || self.vars.is_overwritten_view(var)) {
+            self.line(ind, &format!("loft_database(&{name}, 8);"));
+        }
+    }
+
+    /// A rebind of an owned reference from an expression that produces a store releases the
+    /// store it displaces, unless the new value or the call's buffer lives there (native's
+    /// `owned_ref_reassign`; the interpreter's post-Set `OpFreeRefIfDistinct`).  False when
+    /// the rebind displaces nothing it owns.
+    fn displacing_rebind(
+        &mut self,
+        var: u16,
+        x: &Value,
+        name: &str,
+        ind: usize,
+    ) -> Result<bool, String> {
+        if self.vars.is_argument(var)
+            || !matches!(
+                x.unspan(),
+                Value::Call(..)
+                    | Value::CallRef(..)
+                    | Value::Insert(_)
+                    | Value::Block(_)
+                    | Value::If(..)
+            )
+            || !self.vars.owns_displaced_store(var, x, self.cx.data)
+        {
+            return Ok(false);
+        }
+        let old = self.temp(CType::Ref);
+        self.line(ind, &format!("{old} = {name};"));
+        self.assign(x, name, CType::Ref, ind)?;
+        let mut keep = format!("{old}.store_nr != {name}.store_nr");
+        if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
+            let _ = write!(keep, " && {old}.store_nr != {}.store_nr", self.var(buf));
+        }
+        self.line(ind, &format!("if ({keep}) loft_free_ref({old});"));
+        self.flush(ind);
+        Ok(true)
     }
 
     fn block_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
@@ -1216,6 +1286,9 @@ impl<'a> FnWriter<'a> {
             return self.operator(cx.data.def(d).name(), args, ind);
         }
         let def = cx.data.def(d);
+        if let Some(e) = self.keyed_native(def.name(), args, ind)? {
+            return Ok(e);
+        }
         let callee = def.original_name();
         let ret = cx
             .ctype(def.returned())
@@ -1401,6 +1474,9 @@ impl<'a> FnWriter<'a> {
         if !self.headers.is_empty()
             && let Some(e) = self.held_access(name, args, ind)?
         {
+            return Ok(e);
+        }
+        if let Some(e) = self.keyed_operator(name, args, ind)? {
             return Ok(e);
         }
         let arith = match name {
@@ -2164,16 +2240,17 @@ impl<'a> FnWriter<'a> {
         }
     }
 
-    /// The vector `OpNewRecord`/`OpFinishRecord` add to, and its element type: the parent
-    /// itself when `fld` is `u16::MAX`, else the parent's field — a plain vector in both cases
-    /// (`Stores::record_new`'s two short paths); any other collection is refused.
+    /// The collection `OpNewRecord`/`OpFinishRecord` add to and its element type: the parent
+    /// itself when `fld` is `u16::MAX`, else the parent's field.  A vector, any record
+    /// collection `Cx::keyed` names, or a member of a linked group (`@FR-Col-Group`), whose
+    /// record enters every member; any other collection is refused.
     fn record_collection(
         &mut self,
         data: &Value,
         ptp: &Value,
         fld: &Value,
         ind: usize,
-    ) -> Result<(String, u16), String> {
+    ) -> Result<(String, u16, Coll), String> {
         use crate::database::Parts;
         let stores = self.cx.stores;
         let ptp = u16::try_from(Self::literal(ptp, "type")?)
@@ -2183,27 +2260,69 @@ impl<'a> FnWriter<'a> {
         let data = self.expr(data, ind)?;
         let data = as_ref(data)?;
         if fld == u16::MAX {
-            let Parts::Vector(c) = stores.types[ptp as usize].parts else {
+            if let Parts::Vector(c) = stores.types[ptp as usize].parts {
+                return Ok((data, c, Coll::Vector));
+            }
+            let Some((_, c)) = self.cx.keyed(ptp) else {
                 return Err("a new record in a collection other than a vector".into());
             };
-            return Ok((data, c));
+            return Ok((data, c, Coll::Keyed(ptp)));
         }
-        if !matches!(stores.types[ptp as usize].parts, Parts::Struct(_)) {
+        let Parts::Struct(fields) = &stores.types[ptp as usize].parts else {
             return Err("a new record in a field of a non-struct".into());
-        }
+        };
         let vtp = stores.field_type(ptp, fld);
-        let Some(Parts::Vector(c)) = stores.types.get(vtp as usize).map(|t| &t.parts) else {
+        let pos = stores.field_position(ptp, fld);
+        let others: Vec<u16> = fields
+            .get(fld as usize)
+            .map(|f| {
+                f.other_indexes()
+                    .iter()
+                    .copied()
+                    .filter(|m| *m != u16::MAX)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !others.is_empty() {
+            // The parent is named twice — the primary's place and every sibling's — so it is
+            // read once.
+            let parent = self.temp(CType::Ref);
+            self.line(ind, &format!("{parent} = {data};"));
+            let mut members = vec![(pos, vtp)];
+            for m in others {
+                members.push((stores.field_position(ptp, m), stores.field_type(ptp, m)));
+            }
+            let Some((_, c)) = self.cx.keyed(vtp) else {
+                return Err(
+                    "a new record in a linked group member that is not a collection".into(),
+                );
+            };
+            return Ok((
+                format!("loft_field({parent}, {pos})"),
+                c,
+                Coll::Group(parent, members),
+            ));
+        }
+        let place = format!("loft_field({data}, {pos})");
+        if let Some(Parts::Vector(c)) = stores.types.get(vtp as usize).map(|t| &t.parts) {
+            return Ok((place, *c, Coll::Vector));
+        }
+        let Some((_, c)) = self.cx.keyed(vtp) else {
             return Err("a new record in a field that is not a vector".into());
         };
-        let pos = stores.field_position(ptp, fld);
-        Ok((format!("loft_field({data}, {pos})"), *c))
+        Ok((place, c, Coll::Keyed(vtp)))
     }
 
     /// The operators over vectors.
     fn vector_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
             ("OpNewRecord", [data, ptp, fld]) => {
-                let (v, elem) = self.record_collection(data, ptp, fld, ind)?;
+                let (v, elem, coll) = self.record_collection(data, ptp, fld, ind)?;
+                match coll {
+                    Coll::Keyed(tp) => return self.keyed_new(&v, tp, ind),
+                    Coll::Group(_, members) => return self.keyed_new(&v, members[0].1, ind),
+                    Coll::Vector => {}
+                }
                 let size = self.cx.stores.size(elem);
                 let (image, n) = self.cx.default_image(elem);
                 let t = self.temp(CType::Ref);
@@ -2211,8 +2330,21 @@ impl<'a> FnWriter<'a> {
                 self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
                 Ok(E::new(t, K::Ref))
             }
-            ("OpFinishRecord", [data, _rec, ptp, fld]) => {
-                let (v, _) = self.record_collection(data, ptp, fld, ind)?;
+            ("OpFinishRecord", [data, rec, ptp, fld]) => {
+                let (v, _, coll) = self.record_collection(data, ptp, fld, ind)?;
+                match coll {
+                    Coll::Keyed(tp) => {
+                        let rec = self.expr(rec, ind)?;
+                        let rec = as_ref(rec)?;
+                        return self.keyed_finish(&v, &rec, tp);
+                    }
+                    Coll::Group(parent, members) => {
+                        let rec = self.expr(rec, ind)?;
+                        let rec = as_ref(rec)?;
+                        return self.group_finish(&parent, &rec, &members);
+                    }
+                    Coll::Vector => {}
+                }
                 Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
             }
             ("OpClearVector", [v]) => {
