@@ -7,6 +7,7 @@
     scripts/c_sweep.py FILE...          # these programs
     scripts/c_sweep.py --verbose        # also every differing program's two outputs
     scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
+    scripts/c_sweep.py --all            # every refusal reason, not the top 25
     LOFT_BIN=<loft> scripts/c_sweep.py  # another build (default target/release/loft)
 
 For each program: `loft --emit-c` writes it as C, `cc` builds it, and the C program's stdout
@@ -119,7 +120,7 @@ def main(argv: list[str]) -> int:
             print(f"      C           exit {cc}: {co[:300]!r}")
     if reasons:
         print("refused, by reason:")
-        for why, n in reasons.most_common(25):
+        for why, n in reasons.most_common(None if "--all" in argv else 25):
             print(f"  {n:5}  {why}")
     return 1 if bad else 0
 

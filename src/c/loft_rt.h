@@ -363,6 +363,109 @@ static loft_str loft_text_sub(loft_str v, int64_t from64, int64_t till64) {
     return loft_lit(v.p + from, (size_t) len);
 }
 
+/* The text natives (src/native.rs t_4text_*): Rust's `str` methods on the raw bytes, the
+ * null text included as the one byte it is. */
+static int loft_mem_at(loft_str s, size_t at, loft_str v) {
+    return at + v.len <= s.len && (v.len == 0 || memcmp(s.p + at, v.p, v.len) == 0);
+}
+
+static uint8_t loft_starts_with(loft_str s, loft_str v) { return (uint8_t) loft_mem_at(s, 0, v); }
+
+static uint8_t loft_ends_with(loft_str s, loft_str v) {
+    return (uint8_t) (v.len <= s.len && loft_mem_at(s, s.len - v.len, v));
+}
+
+static int64_t loft_find(loft_str s, loft_str v) {
+    for (size_t at = 0; at + v.len <= s.len; at++) if (loft_mem_at(s, at, v)) return (int64_t) at;
+    return LOFT_NULL;
+}
+
+static int64_t loft_rfind(loft_str s, loft_str v) {
+    if (v.len > s.len) return LOFT_NULL;
+    for (size_t at = s.len - v.len + 1; at-- > 0;) if (loft_mem_at(s, at, v)) return (int64_t) at;
+    return LOFT_NULL;
+}
+
+static uint8_t loft_contains(loft_str s, loft_str v) { return (uint8_t) (loft_find(s, v) != LOFT_NULL); }
+
+/* char::is_whitespace, for the code point at the UTF-8 bytes `p` of `n` bytes. */
+static int loft_is_space(uint32_t c) {
+    return (c >= 9 && c <= 13) || c == 32 || c == 0x85 || c == 0xA0 || c == 0x1680
+        || (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 || c == 0x202F
+        || c == 0x205F || c == 0x3000;
+}
+
+/* The code point starting at byte `at` and its length in bytes. */
+static uint32_t loft_decode(loft_str s, size_t at, size_t *n) {
+    const unsigned char *b = (const unsigned char *) s.p + at;
+    size_t left = s.len - at;
+    if (b[0] < 0x80 || left < 2) { *n = 1; return b[0]; }
+    if (b[0] < 0xE0) { *n = 2; return ((uint32_t) (b[0] & 0x1F) << 6) | (b[1] & 0x3F); }
+    if (b[0] < 0xF0 || left < 4) {
+        *n = left < 3 ? left : 3;
+        return ((uint32_t) (b[0] & 0x0F) << 12) | ((uint32_t) (b[1] & 0x3F) << 6) | (left > 2 ? (b[2] & 0x3F) : 0);
+    }
+    *n = 4;
+    return ((uint32_t) (b[0] & 0x07) << 18) | ((uint32_t) (b[1] & 0x3F) << 12) | ((uint32_t) (b[2] & 0x3F) << 6) | (b[3] & 0x3F);
+}
+
+static loft_str loft_trim_start_view(loft_str s) {
+    size_t at = 0, n;
+    while (at < s.len && loft_is_space(loft_decode(s, at, &n))) at += n;
+    return loft_lit(s.p + at, s.len - at);
+}
+
+static loft_str loft_trim_end_view(loft_str s) {
+    size_t end = s.len;
+    while (end > 0) {
+        size_t st = end - 1, n;
+        while (st > 0 && (((const unsigned char *) s.p)[st] & 0xC0) == 0x80) st--;
+        if (!loft_is_space(loft_decode(s, st, &n))) break;
+        end = st;
+    }
+    return loft_lit(s.p, end);
+}
+
+static loft_text loft_trim(loft_str s) { return loft_text_own(loft_trim_end_view(loft_trim_start_view(s))); }
+static loft_text loft_trim_start(loft_str s) { return loft_text_own(loft_trim_start_view(s)); }
+static loft_text loft_trim_end(loft_str s) { return loft_text_own(loft_trim_end_view(s)); }
+
+/* str::replace: every non-overlapping `v` left to right; an empty `v` matches before every
+ * character and at the end. */
+static loft_text loft_replace(loft_str s, loft_str v, loft_str w) {
+    loft_text out = { 0, 0, 0 };
+    size_t at = 0;
+    if (v.len == 0) {
+        while (at < s.len) {
+            size_t n;
+            loft_decode(s, at, &n);
+            loft_push(&out, w.p, w.len);
+            loft_push(&out, s.p + at, n);
+            at += n;
+        }
+        loft_push(&out, w.p, w.len);
+        return out;
+    }
+    while (at < s.len) {
+        if (loft_mem_at(s, at, v)) {
+            loft_push(&out, w.p, w.len);
+            at += v.len;
+        } else {
+            loft_push_char(&out, s.p[at]);
+            at++;
+        }
+    }
+    return out;
+}
+
+/* Stores::text_byte_at_native: the byte at `i` (negative from the end), 0 outside. */
+static int64_t loft_byte_at(loft_str s, int64_t i) {
+    int64_t len = (int64_t) s.len;
+    int64_t at = i < 0 ? i + len : i;
+    if (i == LOFT_NULL || at < 0 || at >= len) return 0;
+    return ((const unsigned char *) s.p)[at];
+}
+
 /* Characters: a code point, 0 the null character. */
 static uint32_t loft_char_of(int64_t v) {
     if (v == LOFT_NULL || v < 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) return 0;
