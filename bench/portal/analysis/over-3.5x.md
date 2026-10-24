@@ -65,9 +65,25 @@ every test holds, then copies with a slice zip that LLVM vectorises.
 
 Lever: the bounds are monotone in `px`, so the range where they hold is computed once per row,
 and inside it the reads and writes go unchecked.  This is an index-set split, and
-`ranged-call` already looked at this loop and declined: "no call gains".  Widening that clause to
-an inlined callee's guard is the lever, ≈ −45 % → ≈ 2.0×.  It is the same shape as `canvas` and
-`fill_polygon`, so it would move those too.
+`ranged-call` already looked at this loop and declined: "no call gains".  It is the same shape as
+`canvas` and `fill_polygon`, so it would move those too.
+
+**Priced 2026-10-24** (`hand_price.sh` on the production runtime, one pinned core, hash
+`becf0b85` unchanged in every run; the timed loop calls `n_draw_quads__inv`, not
+`n_draw_quads`, so a price on the plain function measures one call in 401):
+
+| form, in `n_draw_quads__inv`'s row loop | µs/op | vs base |
+|---|---:|---:|
+| base | 650 | — |
+| split, accessors without their bounds test, ONE loop with a per-pixel interval test (v4) | 840 | +29 % |
+| split into three loops, the middle calling guard-true accessors (v5) | 743 | +14 % |
+| split, middle loop reading and writing the elements directly: the row index computed once and stepped, both `len` limits folded into the interval's end (v3) | 266 | **−59 %** |
+
+So widening `ranged-call` to the callee's guard is NOT the lever: LLVM already folds the chained
+bounds tests well, and what remains per pixel is the checked `gy * w + gx`, the `len` test and
+`get_elem_at`'s own test, which block vectorising.  The −59 % is loop bounds-check elimination
+over an affine index into an invariant vector: the index strength-reduced to `row + px`, the
+bounds folded into the trip count, the access direct.  ≈ 1.5× if built; a rule of its own.
 
 ### hex_terrain `terrain_relief_pass` — 3.60×
 
