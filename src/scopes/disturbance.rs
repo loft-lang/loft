@@ -7,7 +7,8 @@
 //! why a view had to be copied out of its container.
 
 use super::places::{
-    ParamPlace, base_container_place, call_arg_place, compose_param_place, peel_stack_ref,
+    ParamPlace, add_offset, base_container_place, call_arg_place, compose_param_place,
+    named_place_depth, peel_stack_ref,
 };
 use crate::data::{Data, Type, Value};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -95,9 +96,10 @@ pub(super) fn disturbance_via(data: &Data, cause: &Disturbance) -> Option<String
 /// separate test: the walk runs in ORDER and only shakes views that are already open, so an
 /// op running before any view of that container exists reaches nothing.
 ///
-/// Only a container named by a plain `Var` is collected; a reshape reached through some
-/// other expression is not recognised, so the answer is a lower bound and a missed case
-/// keeps today's behaviour rather than inventing a new one.
+/// A container is named through [`named_place_depth`] — a variable, a field run, or a chain
+/// through elements, each with its depth — and a container reached any other way (a call
+/// result) is not recognised: the answer is a lower bound there, and a missed case keeps
+/// today's behaviour rather than inventing a new one.
 /// **This frame only.** What a CALLEE disturbs is [`disturbed_params_map`]'s answer, unioned in
 /// beside this one by [`ViewWalk::disturb_via_calls`] — kept apart because the two are read off
 /// different bodies, not because the events differ.
@@ -113,7 +115,7 @@ pub(super) fn reshaped_containers(
     code: &Value,
     data: &Data,
     function: &Function,
-) -> HashSet<(u16, u32)> {
+) -> HashMap<(u16, u32), ContainerAt> {
     let mut out = places_named_by(code, data, &|name| match name {
         "OpRemove" => Some(1),
         "OpRemoveVector" | "OpKeepVectorRange" | "OpPrependVector" => Some(0),
@@ -138,11 +140,11 @@ pub(super) fn reshaped_containers(
     // Read off the container VARIABLE's type, so a `sorted` reached through a FIELD is not
     // collected — a lower bound, kept because the projection carries its element type rather
     // than its collection kind and guessing there would shake the dense kinds' siblings.
-    for place in places_named_by(code, data, &|name| match name {
+    for (place, at) in places_named_by(code, data, &|name| match name {
         "OpHashRemove" => Some(0),
         _ => None,
     }) {
-        if place.1 != ANY_FIELD {
+        if place.1 != ANY_FIELD || at.depth != 0 {
             continue;
         }
         // `sorted` is collected WHOLE, for the reason above: it is the inline kind, so a
@@ -167,7 +169,7 @@ pub(super) fn reshaped_containers(
                 | Type::Radix(_, _, _)
                 | Type::Trie(_, _, _)
         ) {
-            out.insert(place);
+            out.insert(place, at);
         }
     }
     out
@@ -185,96 +187,118 @@ pub(super) fn reshaped_containers(
 /// request a literal and a sized append make), `OpAppendVector` (`v += w`), `OpInsertVector`
 /// (an insert, which also shifts every later element) and `OpHashAdd` (which can rehash and
 /// move records).
+///
+/// Each place comes with its container's DEPTH — the element reads between it and its root
+/// variable ([`named_place_depth`]) — because a growth ends only the places INSIDE the
+/// container it grows: `vv[0] += [x]` is a depth-1 container, so it ends `vv[0][0]` (depth 2)
+/// and leaves `a = vv[0]` (depth 1, the element SLOT) re-reading the repointed handle.  A place
+/// grown at two depths keeps the shallower one, which ends more.
+///
+/// A REBUILT field (`w.a = [..]`, an `OpClearVector` and then these same appends) is not
+/// subtracted here: what a rebuild spares is the view OF the field, not the views into its
+/// elements, and only the caller holds the views to tell the two apart.
 pub(super) fn grown_containers(
     code: &Value,
     data: &Data,
     function: &Function,
     database: Option<&crate::database::Stores>,
-    cleared: &HashSet<(u16, u32)>,
-) -> HashSet<(u16, u32)> {
-    let mut out: HashSet<(u16, u32)> = HashSet::default();
+) -> HashMap<(u16, u32), ContainerAt> {
+    let mut out: HashMap<(u16, u32), ContainerAt> = HashMap::default();
+    let mut add = |place: (u16, u32), depth: u8, index: Option<(u32, i32)>| {
+        let g = out.entry(place).or_insert(ContainerAt { depth, index });
+        g.depth = g.depth.min(depth);
+        if g.index != index {
+            g.index = None;
+        }
+    };
     code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let name = data.def(*d).name();
-        // @PLN157 § V-m — a fused scalar append (`OpPush<Kind>`) grows its container: the
-        // variable itself in the plain form, a FIELD of it when the container is the field
-        // access `OpGetField(var, off, _)` — the same two answers `OpNewRecord` gives below.
-        if name.starts_with("OpPush") {
-            match args.first().map(Value::unspan) {
-                Some(Value::Var(c)) => {
-                    out.insert((*c, ANY_FIELD));
-                }
-                Some(Value::Call(g, gargs))
-                    if data.def(*g).name() == "OpGetField"
-                        && let Some(Value::Var(c)) = gargs.first().map(Value::unspan)
-                        && let Some(Value::Int(off)) = gargs.get(1).map(Value::unspan)
-                        && let Ok(off) = u32::try_from(*off)
-                        && !cleared.contains(&(*c, off)) =>
-                {
-                    out.insert((*c, off));
-                }
-                _ => {}
-            }
+        // @PLN157 § V-m — a fused scalar append (`OpPush<Kind>`) grows its container, named at
+        // arg 0 as every spelling below names it.
+        let fused = name.starts_with("OpPush");
+        if !fused
+            && !matches!(
+                name,
+                "OpNewRecord"
+                    | "OpPreAllocVector"
+                    | "OpAppendVector"
+                    | "OpInsertVector"
+                    | "OpHashAdd"
+            )
+        {
             return;
         }
-        if !matches!(
-            name,
-            "OpNewRecord" | "OpPreAllocVector" | "OpAppendVector" | "OpInsertVector" | "OpHashAdd"
-        ) {
-            return;
-        }
-        // `OpNewRecord(parent, tp, fld)` names its container in TWO parts, and only the
-        // whole-variable form belongs here: `fld == u16::MAX` is an append to the variable
-        // itself (`v += [x]` emits `OpNewRecord(v, tp, 65535)`), while any other `fld` is an
-        // append to that variable's FIELD (`s.us_redo += [x]` emits `OpNewRecord(s, tp, 1)`).
-        //
-        // Collecting the parent for the second shape shakes every view rooted at the same
-        // variable whichever field it names.  Measured on `moros_editor`'s `undo_pop`:
-        // `e = s.us_entries[idx]` was materialised because the SIBLING field `s.us_redo` grew,
-        // so each undo entry was read out of a copy, the stack silently stopped recording, and
-        // `undo_depth` answered 0 where 3 was due.  A field-qualified growth is left
-        // UNCOLLECTED rather than compared field-wise, which keeps this function the lower
-        // bound its sibling's doc claims: a missed disturbance costs a materialise, a spurious
-        // one costs a program its meaning.
-        let Some(Value::Var(c)) = args.first().map(Value::unspan) else {
+        // The container is named through the ONE resolver the view side uses, whatever its
+        // spelling: a variable (`v += …`), a field (`w.a += …`), a field of a field
+        // (`o.inner.a += …`) or a container inside an element (`vv[0] += …`).  Each spelling
+        // matched its own shape here before, and only `OpNewRecord` and the fused push took a
+        // field at all — so `w.a += other`, `w.a.insert(…)`, `o.inner.a += [x]` and
+        // `vv[0] += [x]` moved the elements under a live view and the view read the freed
+        // block, on both backends and in silence (loft#2161).
+        let Some(arg) = args.first() else { return };
+        let Some((parent, depth)) = named_place_depth(arg, data) else {
             return;
         };
+        let index = crate::use_analysis::root_element_index(data, arg);
+        if fused || name != "OpNewRecord" {
+            add(parent, depth, index);
+            return;
+        }
         // `OpNewRecord(parent, tp, fld)` names its container in TWO parts: `fld == u16::MAX`
-        // is an append to the variable itself (`v += [x]`), any other `fld` an append to that
-        // variable's FIELD (`w.a += [x]`).  The field is a NUMBER and a view carries a byte
-        // OFFSET, so the two are converted here — `Stores::field_position` against the
-        // parent's own struct type — and the place is `(w, offset)`.
+        // is an append to `parent` itself (`v += [x]`), any other `fld` an append to that
+        // FIELD of it (`w.a += [x]` emits `OpNewRecord(w, tp, 1)`).  The field is a NUMBER and
+        // a place carries a byte OFFSET, so it is converted — `Stores::field_position` on
+        // `tp`, the parent's own struct type — and added to the parent's offset.
         //
         // Without the store the conversion cannot be made, and the field-qualified growth is
         // left UNCOLLECTED rather than widened to the parent: reading the parent alone shakes
         // every view rooted at it whichever field it names, which silently emptied
-        // `moros_editor`'s undo stack when loft#1373 first shipped.  A missed disturbance
-        // costs a materialise; a spurious one costs a program its meaning.
-        let mut place = ANY_FIELD;
-        if name == "OpNewRecord" {
-            let fld = match args.get(2).map(Value::unspan) {
-                Some(Value::Int(f)) => *f,
-                _ => return,
-            };
-            if fld != i32::from(u16::MAX) {
-                let Some(db) = database else { return };
-                let parent = data.type_def_nr(function.tp(*c).base());
-                if parent == u32::MAX {
-                    return;
-                }
-                let off = db.field_position(data.def(parent).known_type(), fld as u16);
-                if off == u16::MAX {
-                    return;
-                }
-                place = u32::from(off);
-                if cleared.contains(&(*c, place)) {
-                    return;
-                }
-            }
+        // `moros_editor`'s undo stack when loft#1373 first shipped.
+        let fld = match args.get(2).map(Value::unspan) {
+            Some(Value::Int(f)) => *f,
+            _ => return,
+        };
+        if fld == i32::from(u16::MAX) {
+            add(parent, depth, index);
+            return;
         }
-        out.insert((*c, place));
+        let Some(db) = database else { return };
+        let tp = match (arg.unspan(), args.get(1).map(Value::unspan)) {
+            (Value::Var(c), _) => {
+                let def = data.type_def_nr(function.tp(*c).base());
+                if def == u32::MAX {
+                    return;
+                }
+                data.def(def).known_type()
+            }
+            (_, Some(Value::Int(tp))) => match u16::try_from(*tp) {
+                Ok(tp) => tp,
+                Err(_) => return,
+            },
+            _ => return,
+        };
+        let off = db.field_position(tp, fld as u16);
+        if off == u16::MAX {
+            return;
+        }
+        add(
+            (parent.0, add_offset(parent.1, u32::from(off))),
+            depth,
+            index,
+        );
     });
     out
+}
+
+/// Where a growth or a removal reached its container: the element reads between the container
+/// and its root ([`named_place_depth`]), and the literal index of the one nearest the root when
+/// every event at that place used the same one ([`crate::use_analysis::root_element_index`]) —
+/// the proof a view of a DIFFERENT element is spared on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContainerAt {
+    pub depth: u8,
+    pub index: Option<(u32, i32)>,
 }
 
 /// The PLACES `code` disturbs at the argument `which` picks, for the ops it picks.
@@ -290,26 +314,34 @@ pub(super) fn grown_containers(
 /// field was not a disturbance at all: `c = p.va[1]; p.va.remove(0)` read the element that
 /// shifted in, on both backends and in silence, where the same code with `va` in a local
 /// materialises and says so.  The VIEW side already named the place `(p, off_va)` —
-/// [`value_view_place`] resolves a projection chain to its outermost field — so only this half
-/// was short and the two never met.
+/// [`value_view_place`] resolves a projection chain to its place — so only this half was short
+/// and the two never met.
 ///
-/// A container reached through anything else — a call result, an element of an element — is
-/// still uncollected, and that stays the lower bound it always was: a missed disturbance costs
-/// a materialise, a spurious one costs a program its meaning.
+/// A container reached through a CALL result is still uncollected, and that stays the lower
+/// bound it always was.
+///
+/// Each place comes with where its container sits ([`ContainerAt`]) — `vv[0].remove(0)` is a
+/// container one element read deep, which ends `vv[0][1]` and leaves `a = vv[1]` and the slot
+/// view `a = vv[0]` alone, the answer a growth of the same container gives (loft#2161).
 fn places_named_by(
     code: &Value,
     data: &Data,
     which: &dyn Fn(&str) -> Option<usize>,
-) -> HashSet<(u16, u32)> {
-    let mut out: HashSet<(u16, u32)> = HashSet::default();
+) -> HashMap<(u16, u32), ContainerAt> {
+    let mut out: HashMap<(u16, u32), ContainerAt> = HashMap::default();
     code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let Some(at) = which(data.def(*d).name()) else {
             return;
         };
         let Some(arg) = args.get(at) else { return };
-        if let Some(place) = named_place(arg, data) {
-            out.insert(place);
+        if let Some((place, depth)) = named_place_depth(arg, data) {
+            let index = crate::use_analysis::root_element_index(data, arg);
+            let c = out.entry(place).or_insert(ContainerAt { depth, index });
+            c.depth = c.depth.min(depth);
+            if c.index != index {
+                c.index = None;
+            }
         }
     });
     out
@@ -509,7 +541,7 @@ pub type DisturbedParams = HashMap<u32, HashMap<ParamPlace, ViewCause>>;
 /// only this frame's own half, which is the pre-C3 reach and never more.
 ///
 /// The answer is a LOWER bound in exactly the ways its producers are — a container named by
-/// something other than a variable or a one-step projection is not collected — so a caller that
+/// something other than a variable or a projection chain is not collected — so a caller that
 /// must be conservative has to treat an unresolvable place as disturbed itself.  What it never
 /// does is report a disturbance that did not happen: every place here comes from a growth, a
 /// removal or a re-establishment the code spells.
@@ -522,8 +554,12 @@ pub fn places_disturbed_by(
     disturbed: Option<&DisturbedParams>,
 ) -> HashSet<ParamPlace> {
     let function = &data.def(def_nr).variables;
-    let mut out = grown_containers(code, data, function, database, &HashSet::default());
-    out.extend(reshaped_containers(code, data, function));
+    // Every depth, as the root place: this consumer must be conservative, and a growth of a
+    // container inside an element is still a disturbance of a place rooted where it is.
+    let mut out: HashSet<ParamPlace> = grown_containers(code, data, function, database)
+        .into_keys()
+        .collect();
+    out.extend(reshaped_containers(code, data, function).into_keys());
     if let Some(map) = disturbed {
         code.walk(&mut |v| {
             let Value::Call(d, args) = v else { return };
@@ -546,11 +582,10 @@ pub fn places_disturbed_by(
 ///
 /// Read through the same two producers the inline walk uses ([`grown_containers`],
 /// [`reshaped_containers`]), so a callee's growth and the caller's own growth cannot be
-/// answered by two different readers, and the `OpClearVector` subtraction comes with them: a
-/// callee that REBUILDS the field it was handed (`sc.els = [x]` lowers to a clear and then the
-/// appends) disturbs nothing, exactly as the same statement written inline disturbs nothing —
-/// `(B-Disturb)` is explicit that overwriting a place is not disturbing it, and the pair was
-/// measured to agree.
+/// answered by two different readers.  A callee that REBUILDS the field it was handed
+/// (`sc.els = [x]` lowers to a clear and then the appends) ends the caller's views into its
+/// elements and spares its view of the field, exactly as the same statement written inline
+/// does — the caller's walk spares every view at the container's own depth.
 ///
 /// Only places rooted at a VISIBLE argument slot are kept. A container the callee minted itself
 /// dies with the callee and no caller can hold a view into it; and the callee's own hidden
@@ -570,29 +605,41 @@ fn disturbed_param_places(
         return out;
     }
     let function = &def.variables;
-    // Accumulated over the WHOLE body, as the inline walk accumulates it, so a field cleared
-    // anywhere is subtracted everywhere: a missed disturbance costs a materialise.
+    // A REBUILD of a field the callee was handed (`p.els = [x]`: a clear, then the appends)
+    // ends the caller's views into its elements and not its view of the field, which is the
+    // depth rule the caller's walk applies to every event read off this map — so the clear is
+    // reported as what it does to those elements, a removal of all of them.  Subtracted as an
+    // overwrite before, which spared the views into the elements too (loft#2161).
     let mut cleared: HashSet<ParamPlace> = HashSet::default();
     def.code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         if data.def(*d).name() != "OpClearVector" {
             return;
         }
-        if let Some(place) = args.first().and_then(|a| base_container_place(a, data)) {
+        if let Some((place, 0)) = args.first().and_then(|a| named_place_depth(a, data)) {
             cleared.insert(place);
         }
     });
     // A hidden attribute is COMPILER-GENERATED, which is the one test that covers the return
     // buffer and every other `__`-named slot alike; a user parameter is never one.
     let visible = |v: u16| function.is_argument(v) && !function.is_compiler_generated(v);
-    for place in grown_containers(&def.code, data, function, database, &cleared) {
-        if visible(place.0) {
+    // Depth 0 only: a caller's view meets this place through `compose_param_place`, which
+    // carries no depth, so a growth of a container INSIDE an element of a parameter
+    // (`p[0] += …`) would read as a growth of the parameter itself and end the caller's views
+    // of every element.  Left uncollected, the lower bound this map has always kept.
+    for (place, at) in grown_containers(&def.code, data, function, database) {
+        if at.depth == 0 && visible(place.0) {
             out.insert(place, ViewCause::Grown);
         }
     }
     // Recorded LAST and unconditionally, because a place reached by both reports the RESHAPE —
     // the cause with something to act on at the container ([`record_cause`]).
-    for place in reshaped_containers(&def.code, data, function) {
+    for (place, at) in reshaped_containers(&def.code, data, function) {
+        if at.depth == 0 && visible(place.0) {
+            out.insert(place, ViewCause::Reshaped);
+        }
+    }
+    for place in cleared {
         if visible(place.0) {
             out.insert(place, ViewCause::Reshaped);
         }

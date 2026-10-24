@@ -108,6 +108,21 @@ pub(crate) fn value_view_places(
     data: &Data,
     function: &Function,
 ) -> Vec<(u16, u32)> {
+    value_view_places_depth(value, data, function)
+        .into_iter()
+        .map(|(place, _)| place)
+        .collect()
+}
+
+/// [`value_view_places`] with each place's DEPTH — the element reads between the viewed value
+/// and its root ([`crate::use_analysis::view_source_place_depth`]).  A place two arms reach at
+/// different depths keeps the DEEPER one: a disturbance ends a view deeper than its container,
+/// so the deeper reading is the one that is ended by more.
+pub(crate) fn value_view_places_depth(
+    value: &Value,
+    data: &Data,
+    function: &Function,
+) -> Vec<((u16, u32), u8)> {
     let mut out = Vec::new();
     view_place_in(value, data, function, &[], 0, &mut out);
     out
@@ -128,7 +143,7 @@ fn view_place_in<'a>(
     function: &Function,
     env: &[(u16, &'a Value)],
     depth: u32,
-    out: &mut Vec<(u16, u32)>,
+    out: &mut Vec<((u16, u32), u8)>,
 ) {
     // Bounded on both axes: the depth stops a self-referential binding (`Set(x, Var(x))`) from
     // walking forever, and the width stops a deeply nested branch from making the open-view
@@ -170,11 +185,13 @@ fn view_place_in<'a>(
         // nothing in the program can reassign a `__vdb_N`; `Self::resolve_view_root` stops at
         // one for the same reason and says so.
         other => {
-            if let Some(place) = crate::use_analysis::view_source_place(data, other)
-                .filter(|(c, _)| !function.is_compiler_generated(*c))
-                && !out.contains(&place)
+            if let Some((place, elems)) = crate::use_analysis::view_source_place_depth(data, other)
+                .filter(|((c, _), _)| !function.is_compiler_generated(*c))
             {
-                out.push(place);
+                match out.iter_mut().find(|(p, _)| *p == place) {
+                    Some((_, d)) => *d = (*d).max(elems),
+                    None => out.push((place, elems)),
+                }
             }
         }
     }
@@ -198,7 +215,7 @@ fn block_tail_place<'a>(
     function: &Function,
     env: &[(u16, &'a Value)],
     depth: u32,
-    out: &mut Vec<(u16, u32)>,
+    out: &mut Vec<((u16, u32), u8)>,
 ) {
     let Some(tail) = ops
         .iter()
@@ -244,18 +261,39 @@ pub type ParamPlace = (u16, u32);
 /// `base` is where the argument came from in the caller (`f(sc)` gives `(sc, ANY_FIELD)`,
 /// `f(sc.els)` gives `(sc, off_els)`); `inner` is the field offset the callee disturbed
 /// inside its parameter (`p.els += […]` gives `off_els`, `p += […]` on a `&vector` gives
-/// `ANY_FIELD`). One of the two must be the whole thing, because the place model carries ONE
-/// field offset and a projection of a projection needs two.
-///
-/// `None` is the lower bound and the safe direction: a missed disturbance costs a materialise,
-/// a spurious one costs a program its meaning (the measurement [`grown_containers`] records).
-/// Widening `f(o.inner)` + `p.els` to `(o, off_inner)` would shake every view rooted at
-/// `o.inner`, siblings of `els` included, which is exactly that mistake.
+/// `ANY_FIELD`).  When both name a field the offsets ADD — `f(o.inner)` with `p.els` is the
+/// slot `off_inner + off_els` of `o`'s record — which is the answer
+/// [`crate::use_analysis::projection_container_place`] gives the one-expression spelling
+/// `o.inner.els`, so the caller's views and the callee's disturbance meet on one number.
+/// Widening to `(o, off_inner)` instead would shake every view rooted at `o.inner`, siblings of
+/// `els` included (loft#2161).
 pub fn compose_param_place(base: (u16, u32), inner: u32) -> Option<ParamPlace> {
-    match (base.1, inner) {
-        (_, ANY_FIELD) => Some(base),
-        (ANY_FIELD, off) => Some((base.0, off)),
-        _ => None,
+    Some((base.0, add_offset(base.1, inner)))
+}
+
+/// The offset of a field `inner` read inside a place at offset `base` of the same record —
+/// their sum, with [`ANY_FIELD`] on either side meaning *no field read there*.
+///
+/// One home for the arithmetic every composition of two places does: a struct member is laid
+/// out inside its owner, so a field of a field is one slot of the root's record.
+#[must_use]
+pub fn add_offset(base: u32, inner: u32) -> u32 {
+    match (base, inner) {
+        (ANY_FIELD, off) | (off, ANY_FIELD) => off,
+        (b, i) => b + i,
+    }
+}
+
+/// The CONTAINER an op argument names, with the number of element reads between it and its
+/// root variable — [`named_place`] with the depth `(B-Disturb)` needs to tell a container
+/// INSIDE an element (`vv[0] += …`, depth 1) from the root one (`vv += …`, depth 0).
+///
+/// A bare variable is the whole of itself at depth 0; anything else is the one resolver's
+/// answer, so a growth and the views it ends cannot disagree about what a place is.
+pub fn named_place_depth(arg: &Value, data: &Data) -> Option<((u16, u32), u8)> {
+    match arg.unspan() {
+        Value::Var(c) => Some(((*c, ANY_FIELD), 0)),
+        other => crate::use_analysis::projection_place_depth(data, other),
     }
 }
 
