@@ -1,8 +1,8 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 4bd5cd562..36329d646 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -2077,7 +2077,7 @@ fn body_writes(
+diff --git a/src/opt/body_writes.rs b/src/opt/body_writes.rs
+index e29ec2f31..6369e81cb 100644
+--- a/src/opt/body_writes.rs
++++ b/src/opt/body_writes.rs
+@@ -528,7 +528,7 @@ pub(crate) fn body_writes(
                  {
                      Target::Record(chain) => {
                          for (tp, base) in chain {

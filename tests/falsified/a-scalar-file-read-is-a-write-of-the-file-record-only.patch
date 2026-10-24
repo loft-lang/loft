@@ -1,8 +1,8 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index f5a5d6e66..93ed843e9 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -1886,7 +1886,7 @@ fn body_writes(
+diff --git a/src/opt/body_writes.rs b/src/opt/body_writes.rs
+index e29ec2f31..46e2e731b 100644
+--- a/src/opt/body_writes.rs
++++ b/src/opt/body_writes.rs
+@@ -637,7 +637,7 @@ pub(crate) fn body_writes(
                  // `@FR-R-InPlace`'s read clause, typed: a scalar `f#read` writes the File
                  // record's own fields (its cursor, its handle on first use) and a local — a
                  // write of that whole record type, and of no other.

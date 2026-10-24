@@ -1,5 +1,5 @@
 diff --git a/src/return_field.rs b/src/return_field.rs
-index 577e664b..d404b733 100644
+index 577e664b0..d404b7335 100644
 --- a/src/return_field.rs
 +++ b/src/return_field.rs
 @@ -31,7 +31,6 @@
@@ -98,11 +98,11 @@ index 577e664b..d404b733 100644
      }
  
 diff --git a/src/scopes/buffers.rs b/src/scopes/buffers.rs
-index 1a8b2c70..f68adea9 100644
+index 481b84b5b..06df726db 100644
 --- a/src/scopes/buffers.rs
 +++ b/src/scopes/buffers.rs
-@@ -151,20 +151,6 @@ pub(super) fn reuse_record_buffers(
-             decline(av, "its result local is assigned more than once");
+@@ -216,20 +216,6 @@ pub(super) fn reuse_record_buffers(
+             );
              continue;
          }
 -        if !ungated
@@ -123,10 +123,10 @@ index 1a8b2c70..f68adea9 100644
              decline(av, "no top-level null-init");
              continue;
 diff --git a/src/scopes/scan_set.rs b/src/scopes/scan_set.rs
-index 36061731..f92c1d17 100644
+index fac1abac2..45e43627d 100644
 --- a/src/scopes/scan_set.rs
 +++ b/src/scopes/scan_set.rs
-@@ -133,34 +133,6 @@ impl Scopes<'_> {
+@@ -190,34 +190,6 @@ impl Scopes<'_> {
                  if per_path_stops(function, data, v, *src) == Some(v))
      }
  
@@ -161,7 +161,7 @@ index 36061731..f92c1d17 100644
      #[expect(clippy::too_many_lines, reason = "inherited")]
      pub(super) fn scan_set(
          &mut self,
-@@ -1933,7 +1905,6 @@ impl Scopes<'_> {
+@@ -2053,7 +2025,6 @@ impl Scopes<'_> {
                  // a mint that reads the local does.  Every copy into a witnessed local lands in
                  // a fresh store (`(O-Witness)`), so the identity guard declines nothing here.
                  WitnessSet::Mint | WitnessSet::MintReading => {
@@ -170,10 +170,10 @@ index 36061731..f92c1d17 100644
                      witness_ops.push(witness_points_at(w, v, data));
                  }
 diff --git a/src/scopes/witness.rs b/src/scopes/witness.rs
-index 26f98826..e998a9a2 100644
+index c15338500..cdb161816 100644
 --- a/src/scopes/witness.rs
 +++ b/src/scopes/witness.rs
-@@ -487,9 +487,6 @@ pub(super) fn witness_set_kind(
+@@ -523,9 +523,6 @@ pub(super) fn witness_set_kind(
      own: &mut impl FnMut(&Value) -> crate::use_analysis::Own,
  ) -> WitnessSet {
      let reads = value.reads_var(v) || value.reads_var(ov);
@@ -183,7 +183,7 @@ index 26f98826..e998a9a2 100644
      let mints = match value.unspan() {
          Value::Var(src) => {
              *src != v
-@@ -544,47 +541,6 @@ pub(super) fn witness_set_kind(
+@@ -580,47 +577,6 @@ pub(super) fn witness_set_kind(
      }
  }
  
@@ -232,10 +232,10 @@ index 26f98826..e998a9a2 100644
  /// unit, because `OpFreeRef` of a variable does not reset its slot on the interpreter, and a
  /// witness left naming a freed store would release whatever the allocator hands that slot
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 1dfef7df..00ee9a90 100644
+index 398bab9c1..7d0a85c17 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -4563,23 +4563,6 @@ impl State {
+@@ -4634,23 +4634,6 @@ impl State {
              self.code_add(var_pos);
              return Type::Void;
          }

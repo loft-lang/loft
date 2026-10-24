@@ -1,8 +1,8 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 451f243a..9902b47d 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -15628,21 +15628,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+diff --git a/src/opt/value_records/mod.rs b/src/opt/value_records/mod.rs
+index 8a15de0e8..6cde5a647 100644
+--- a/src/opt/value_records/mod.rs
++++ b/src/opt/value_records/mod.rs
+@@ -870,21 +870,8 @@ pub(crate) fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
                  return None;
              }
              let tp = vars.tp(*var);

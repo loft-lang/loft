@@ -1,8 +1,8 @@
-diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
-index f6a22b21e..269d26de0 100644
---- b/src/generation/hoist.rs
-+++ a/src/generation/hoist.rs
-@@ -11375,11 +11375,11 @@ impl ValueTuple {
+diff --git a/src/opt/value_records/layout.rs b/src/opt/value_records/layout.rs
+index 8ee9f7e70..fdc863940 100644
+--- a/src/opt/value_records/layout.rs
++++ b/src/opt/value_records/layout.rs
+@@ -115,11 +115,11 @@ impl ValueTuple {
              .fields
              .iter()
              .map(|(_, rt)| match *rt {
