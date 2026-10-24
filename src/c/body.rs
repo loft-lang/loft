@@ -944,11 +944,12 @@ impl<'a> FnWriter<'a> {
             n => n,
         };
         let arith = match name {
-            "OpAddInt" | "OpAddLong" => Some("loft_add"),
-            "OpMinInt" | "OpMinLong" => Some("loft_sub"),
-            "OpMulInt" | "OpMulLong" => Some("loft_mul"),
-            "OpDivInt" | "OpDivLong" => Some("loft_div"),
-            "OpRemInt" | "OpRemLong" => Some("loft_rem"),
+            // The `Nullable` forms answer the same values; only the overflow report differs.
+            "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
+            "OpMinInt" | "OpMinLong" | "OpMinIntNullable" => Some("loft_sub"),
+            "OpMulInt" | "OpMulLong" | "OpMulIntNullable" => Some("loft_mul"),
+            "OpDivInt" | "OpDivLong" | "OpDivIntNullable" => Some("loft_div"),
+            "OpRemInt" | "OpRemLong" | "OpRemIntNullable" => Some("loft_rem"),
             "OpLandInt" | "OpLandLong" => Some("loft_and"),
             "OpLorInt" | "OpLorLong" => Some("loft_or"),
             "OpEorInt" | "OpEorLong" => Some("loft_xor"),
@@ -1414,6 +1415,18 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpNullRefSentinel", []) => Ok(E::new("loft_ref_null()", K::Ref)),
+            ("OpPutRef", [Value::Var(v), x]) => {
+                let x = self.expr(x, ind)?;
+                Ok(E::new(
+                    format!("{} = {}", self.var(*v), as_ref(x)?),
+                    K::Void,
+                ))
+            }
+            ("OpConstRef", [d]) => {
+                let d = u32::try_from(Self::literal(d, "constant")?)
+                    .map_err(|_| "a constant out of range")?;
+                Ok(E::new(self.cx.const_ref(d)?, K::Ref))
+            }
             ("OpConvBoolFromRef", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("({}.rec != 0)", as_ref(r)?), K::Cond))
@@ -1662,23 +1675,6 @@ impl<'a> FnWriter<'a> {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_clear({})", as_ref(v)?), K::Void))
             }
-            ("OpAppendVector", [v, other, tp]) => {
-                let tp = u16::try_from(Self::literal(tp, "element type")?)
-                    .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    return Err("an append of a linked element type".into());
-                }
-                self.cx.copy_type(tp)?;
-                let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
-                Ok(E::new(
-                    format!(
-                        "loft_vec_add(loft_types, {tp}, {}, {})",
-                        as_ref(v)?,
-                        as_ref(other)?
-                    ),
-                    K::Void,
-                ))
-            }
             ("OpLengthVector", [v]) => {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
@@ -1714,7 +1710,7 @@ impl<'a> FnWriter<'a> {
                     K::Ref,
                 ))
             }
-            _ => self.slot_operator(name, args, ind),
+            _ => self.collection_operator(name, args, ind),
         }
     }
 
@@ -1776,6 +1772,79 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             _ => Err(format!("operator {name}")),
+        }
+    }
+
+    /// The whole-vector operators: append, replace, remove, repeat — each with the deep
+    /// copies its store method makes.
+    fn collection_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match (name, args) {
+            ("OpAppendVector", [v, other, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) {
+                    return Err("an append of a linked element type".into());
+                }
+                self.cx.copy_type(tp)?;
+                let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_add(loft_types, {tp}, {}, {})",
+                        as_ref(v)?,
+                        as_ref(other)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpReplaceVector", [v, other, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) {
+                    return Err("a replace of a linked element type".into());
+                }
+                self.cx.copy_type(tp)?;
+                let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_replace(loft_types, {tp}, {}, {})",
+                        as_ref(v)?,
+                        as_ref(other)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpRemoveVector", [v, tp, idx]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) {
+                    return Err("a remove from a linked element type".into());
+                }
+                let size = self.cx.stores.size(tp);
+                let (v, idx) = self.two(name, &[(*v).clone(), (*idx).clone()], ind)?;
+                Ok(E::new(
+                    format!("loft_vec_remove({}, {size}, {})", as_ref(v)?, as_int(idx)?),
+                    K::Cond,
+                ))
+            }
+            ("OpAppendCopy", [v, count, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "vector type")?)
+                    .map_err(|_| "a vector type out of range")?;
+                let ctp = self.cx.stores.content(tp);
+                if self.cx.stores.is_linked(ctp) {
+                    return Err("a repeat of a linked element type".into());
+                }
+                self.cx.copy_type(ctp)?;
+                let (v, count) = self.two(name, &[(*v).clone(), (*count).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_append_copy(loft_types, {ctp}, {}, {})",
+                        as_ref(v)?,
+                        as_int(count)?
+                    ),
+                    K::Void,
+                ))
+            }
+            _ => self.slot_operator(name, args, ind),
         }
     }
 
@@ -2012,6 +2081,11 @@ const OP_INT: &[&str] = &[
     "OpSRightLong",
     "OpConvIntFromCharacter",
     "OpLengthCharacter",
+    "OpAddIntNullable",
+    "OpMinIntNullable",
+    "OpMulIntNullable",
+    "OpDivIntNullable",
+    "OpRemIntNullable",
 ];
 const OP_BOOL: &[&str] = &[
     "OpEqInt",
@@ -2038,8 +2112,10 @@ const OP_BOOL: &[&str] = &[
     "OpConvBoolFromText",
     "OpConvBoolFromCharacter",
     "OpConvBoolFromNull",
+    "OpRemoveVector",
 ];
 const OP_REF: &[&str] = &[
+    "OpConstRef",
     "OpGetField",
     "OpGetVector",
     "OpGetVectorNullable",

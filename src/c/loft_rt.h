@@ -410,7 +410,7 @@ static void loft_push_code(loft_text *t, uint32_t c) {
 typedef struct { uint16_t store_nr; uint32_t rec; uint32_t pos; } loft_ref;
 
 /* `known`: the type a wrapper mint gave the store's first record, 0xFFFF for any other. */
-typedef struct { uint8_t *buf; uint32_t words; uint32_t top; int live; uint16_t known; } loft_store_t;
+typedef struct { uint8_t *buf; uint32_t words; uint32_t top; int live; uint16_t known; int pinned; } loft_store_t;
 
 static loft_store_t *loft_stores = 0;
 static uint32_t loft_nstores = 0;
@@ -447,6 +447,7 @@ static uint32_t loft_store_new(void) {
     s->top = 1; /* word 0 is never a record: rec 0 is the null reference */
     s->live = 1;
     s->known = 0xFFFF;
+    s->pinned = 0;
     return nr;
 }
 
@@ -518,8 +519,28 @@ static void loft_database_wrapper(loft_ref *var, uint32_t bytes, uint16_t tp) {
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return;
     loft_store_t *s = &loft_stores[r.store_nr];
+    if (s->pinned) return;
     s->live = 0;
     s->top = 1;
+}
+
+/* A constant built at compile time (compile.rs build_const_vectors): its store's words as the
+ * interpreter laid them out, loaded once and pinned for the whole run.  The vector is the
+ * field at byte 8 of the store's first record. */
+static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
+    uint32_t nr = loft_store_new();
+    loft_store_t *s = &loft_stores[nr];
+    if (n > s->words) {
+        uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) n * 8);
+        if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+        s->buf = b;
+        s->words = n;
+    }
+    memcpy(s->buf, words, (size_t) n * 8);
+    s->top = n;
+    s->pinned = 1;
+    loft_ref r = { (uint16_t) nr, 1, 8 };
+    return r;
 }
 
 static loft_ref loft_field(loft_ref r, uint32_t fld) {
@@ -927,6 +948,70 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
     loft_copy_bytes(dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, dst);
     if (free_source && src.store_nr != dst.store_nr) loft_free_ref(src);
+}
+
+/* OpRemoveVector (vector::remove_vector): the element at `index` (negative from the end) goes,
+ * its successors move down; false for a null vector or an index outside it. */
+static int loft_vec_remove(loft_ref v, uint32_t size, int64_t index) {
+    if (v.store_nr == 0xFFFF) return 0;
+    int64_t len = loft_vec_len(v);
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (index == LOFT_NULL) return 0;
+    int64_t i = index < 0 ? index + len : index;
+    if (i >= len || i < 0 || r == 0) return 0;
+    if (len - i > 1) {
+        memmove(loft_at(s, r, 8 + (uint32_t) i * size), loft_at(s, r, 8 + (uint32_t) (i + 1) * size),
+                (size_t) (len - i - 1) * size);
+    }
+    loft_set_u32(s, r, 4, (uint32_t) (len - 1));
+    return 1;
+}
+
+/* OpReplaceVector (Stores::vector_replace): `v = o` for a vector — an absent source leaves
+ * the destination absent, the same vector is left alone, anything else is cleared and
+ * refilled with deep copies of the source's elements. */
+static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o);
+
+static void loft_vec_replace(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+    int absent = o.store_nr == 0xFFFF
+        || (o.rec != 0 && o.pos != 0 && loft_u32(loft_store_of(o), o.rec, o.pos) == 0xFFFFFFFFu);
+    if (absent) {
+        loft_vec_clear(v);
+        if (v.store_nr != 0xFFFF && v.rec != 0 && v.pos != 0) loft_set_u32(loft_store_of(v), v.rec, v.pos, 0xFFFFFFFFu);
+        return;
+    }
+    if (v.store_nr == o.store_nr) {
+        uint32_t dr = loft_u32(loft_store_of(v), v.rec, v.pos);
+        if (dr != 0 && dr == loft_u32(loft_store_of(o), o.rec, o.pos)) return;
+    }
+    loft_vec_clear(v);
+    loft_vec_add(T, tp, v, o);
+}
+
+/* OpAppendCopy (State::append_copy): `[x; n]` — the template is the vector's last element and
+ * `n` counts it, so n - 1 deep copies of it follow; n <= 0 removes the template too. */
+static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, int64_t count) {
+    uint32_t multiply = count <= 0 ? 0 : count > (int64_t) UINT32_MAX ? UINT32_MAX : (uint32_t) count;
+    if (v.store_nr == 0xFFFF || v.rec == 0) return;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (multiply == 0) {
+        if (r != 0) {
+            uint32_t len = loft_u32(s, r, 4);
+            loft_set_u32(s, r, 4, len == 0 ? 0 : len - 1);
+        }
+        return;
+    }
+    uint32_t length = (uint32_t) loft_vec_len(v);
+    uint32_t size = T[ctp].size;
+    for (uint32_t i = 1; i < multiply; i++) {
+        loft_ref e = loft_vec_append(v, size);
+        loft_ref a = { v.store_nr, loft_collection_rec(loft_store_of(v), v.rec, v.pos), 8 + (length - 1) * size };
+        loft_copy_bytes(e, 0, a, 0, size);
+        if (T[ctp].kind != LOFT_T_SCALAR) loft_copy_claims(T, ctp, a, e);
+        loft_vec_finish(v);
+    }
 }
 
 /* OpClear (Stores::remove_claims): the record releases what it owns — every text, vector and
