@@ -333,6 +333,7 @@ impl Output<'_> {
         // was handed, with the tuple written into it as the callee's record form would have.
         // Keyed by the argument list's address, which is the slice this call was handed.
         let forward = self
+            .plan
             .value_records
             .fns
             .contains_key(&self.current_call_def)
@@ -422,6 +423,7 @@ impl Output<'_> {
         }
         if let Some(buf) = forward {
             let tp = self
+                .plan
                 .value_records
                 .fns
                 .get(&callee_nr)
@@ -464,7 +466,7 @@ impl Output<'_> {
         // signature had dropped it).  `current_call_def` is what `output_call_inner`
         // threads here for exactly this reason.
         let callee_nr = self.current_call_def;
-        let drop_buf = (self.vr_drop_buf || self.value_records.fns.contains_key(&callee_nr))
+        let drop_buf = (self.vr_drop_buf || self.plan.value_records.fns.contains_key(&callee_nr))
             .then(|| super::hoist::ret_buffer_attr(def_fn))
             .flatten();
         for (idx, v) in vals.iter().enumerate() {
@@ -596,7 +598,10 @@ impl Output<'_> {
         // field at the site, which is what the callee's own first reads would have done.
         if (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
-            && let Some(tp) = self.value_records.param_type(self.current_call_def, idx)
+            && let Some(tp) = self
+                .plan
+                .value_records
+                .param_type(self.current_call_def, idx)
         {
             // A fn-ref dispatch's arm is handed `_farg_N`, which the dispatch already bound to
             // the tuple (`@FR-R-FnRefValue`).
@@ -606,6 +611,7 @@ impl Output<'_> {
             // `@FR-N-Road` — a NULLABLE tuple parameter takes the fields and then whether the
             // argument is there (`@FR-N-Store`: a null handed in is absent in the callee).
             let presence = self
+                .plan
                 .value_records
                 .types
                 .get(&tp)
@@ -613,7 +619,7 @@ impl Output<'_> {
             // A `null` argument — written, or a parameter's default — is the absent tuple:
             // every field's null, and for a nullable parameter the presence word `false`.
             if (matches!(v.unspan(), Value::Null) || super::hoist::is_null_sentinel(self.data, v))
-                && let Some(layout) = self.value_records.types.get(&tp)
+                && let Some(layout) = self.plan.value_records.types.get(&tp)
             {
                 let absent = layout.absent();
                 return write!(w, "{absent}");
@@ -621,7 +627,7 @@ impl Output<'_> {
             match super::hoist::arg_tuple_form(
                 self.data,
                 self.def_nr,
-                &self.value_records,
+                &self.plan.value_records,
                 &self.value_record_locals,
                 v,
                 tp,

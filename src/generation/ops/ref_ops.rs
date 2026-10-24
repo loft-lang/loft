@@ -543,6 +543,7 @@ impl OpCopyRecordEmitter {
             super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
         let presence = ctx
             .output
+            .plan
             .value_records
             .types
             .get(&d)
@@ -602,7 +603,7 @@ impl OpCopyRecordEmitter {
         };
         if let Value::Var(v) = src.unspan()
             && let Some(d) = ctx.output.value_record_locals.get(v).copied()
-            && ctx.output.value_records.types.contains_key(&d)
+            && ctx.output.plan.value_records.types.contains_key(&d)
         {
             return Self::materialise_local(ctx, *v, d, dst, tp_val, Some(sub));
         }
@@ -656,7 +657,7 @@ impl OpCopyRecordEmitter {
             // without a call, a buffer or a whole-record copy.
             if let Value::Var(v) = src.unspan()
                 && let Some(d) = ctx.output.value_record_locals.get(v).copied()
-                && ctx.output.value_records.types.contains_key(&d)
+                && ctx.output.plan.value_records.types.contains_key(&d)
             {
                 // `@FR-R-RecPtr`'s element clause: the element derived in place, its
                 // reference and its address both from the record and the index.
@@ -698,6 +699,7 @@ impl OpCopyRecordEmitter {
                 && let Some(d) = ctx.output.value_record_locals.get(&root).copied()
                 && let Some(fields) = ctx
                     .output
+                    .plan
                     .value_records
                     .types
                     .get(&d)
@@ -715,7 +717,8 @@ impl OpCopyRecordEmitter {
                 ctx.emit(dst)?;
                 write!(ctx.w, "; ")?;
                 for (off, rt) in fields.iter().filter(|(o, _)| *o >= base && *o < end) {
-                    let Some(idx) = ctx.output.value_records.index.get(&(d, *off)).copied() else {
+                    let Some(idx) = ctx.output.plan.value_records.index.get(&(d, *off)).copied()
+                    else {
                         panic!(
                             "sub-record at +{base} of value local `{name}` has no element at +{off}"
                         );
@@ -947,6 +950,7 @@ impl OpEmitter for PresenceEmitter {
             && let Some(key) = ctx.output.value_record_locals.get(v).copied()
             && let Some(at) = ctx
                 .output
+                .plan
                 .value_records
                 .types
                 .get(&key)

@@ -261,7 +261,7 @@ impl OpEmitter for IntArithEmitter {
         }
         // `@FR-R-Range` — the result provably fits the type, so no operation can fault and
         // the processor's operator answers exactly what the checked template would.
-        if !ctx.output.nn_fast_disabled
+        if !ctx.output.switches.nn_fast_disabled
             && let Some(form) = crate::generation::range::plain_form(ctx.def_fn.name(), args.len())
             && ctx.output.op_range(ctx.def_fn.name(), args).is_some()
         {
@@ -284,7 +284,7 @@ impl OpEmitter for IntArithEmitter {
         }
         // The census's half of the decline: why this operator keeps its checks.  Not under
         // the switch, nor while a verified operator's checked copy is emitted.
-        if !ctx.output.nn_fast_disabled
+        if !ctx.output.switches.nn_fast_disabled
             && ctx.output.range_suspended == 0
             && crate::generation::range::plain_form(ctx.def_fn.name(), args.len()).is_some()
             && crate::rewrite_census::declines_wanted()
@@ -292,7 +292,7 @@ impl OpEmitter for IntArithEmitter {
             let why = ctx.output.range_blocker(args);
             crate::rewrite_census::declined("R-Range", &format!("{:p}", args.as_ptr()), why);
         }
-        if !ctx.output.nn_fast_disabled
+        if !ctx.output.switches.nn_fast_disabled
             && let Some(sym) = literal_divisor_form(ctx.def_fn.name(), args)
         {
             crate::rewrite_census::fired("R-LitDiv", 1);
@@ -308,7 +308,7 @@ impl OpEmitter for IntArithEmitter {
         let Some(fast) = fast_form(ctx.def_fn.name(), args) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        if ctx.output.nn_fast_disabled || !ctx.output.non_sentinel_args(args) {
+        if ctx.output.switches.nn_fast_disabled || !ctx.output.non_sentinel_args(args) {
             return super::default::DefaultEmitter.emit(ctx, args);
         }
         if ctx.output.nn_verify {

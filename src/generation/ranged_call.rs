@@ -120,7 +120,7 @@ impl super::Output<'_> {
     /// variant (it is then not worth its duplicated code).
     pub(super) fn range_guard_for(&mut self, bl: &Block) -> Option<(String, Ranges)> {
         if !range::ranged_calls_enabled()
-            || self.range_arith_disabled
+            || self.switches.range_arith_disabled
             || self.hoist_disabled
             || self.in_coroutine_body
             || bl.operators.iter().any(|op| {
@@ -516,7 +516,7 @@ impl super::Output<'_> {
     /// emitted after the program's functions.
     pub(super) fn ranged_call(&mut self, d: u32, args: &[Value], twin: bool, kept: bool) -> bool {
         if !range::ranged_calls_enabled()
-            || self.range_arith_disabled
+            || self.switches.range_arith_disabled
             || self.in_coroutine_body
             || (d as usize) >= self.data.definitions.len()
             || !self.variant_gains(d, 0)
