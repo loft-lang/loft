@@ -10,6 +10,36 @@ use super::{CType, E, FnWriter, K, as_int, as_ref, as_view};
 use crate::data::Value;
 
 impl FnWriter<'_> {
+    /// The Unicode natives — a text's case mapping, a character's class — or `None`.
+    pub(super) fn unicode_native(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        match (name, args) {
+            ("t_4text_to_lowercase" | "t_4text_to_uppercase", [t]) => {
+                let f = self.cx.unicode_case(name == "t_4text_to_uppercase");
+                let t = self.expr(t, ind)?;
+                let r = self.temp(CType::Text);
+                self.line(ind, &format!("loft_text_free(&{r});"));
+                self.line(ind, &format!("{r} = {f}({});", as_view(t)?));
+                Ok(Some(self.held(r, CType::Text)))
+            }
+            (n, [c]) if n.starts_with("t_9character_is_") => {
+                let Some(f) = self.cx.unicode_class(&n["t_9character_is_".len()..]) else {
+                    return Ok(None);
+                };
+                let c = self.expr(c, ind)?;
+                Ok(Some(E::new(
+                    format!("{f}({})", super::as_char(c)?),
+                    K::Bool,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// The remaining operators, or the refusal that names one.
     pub(super) fn misc_operator(
         &mut self,
@@ -18,6 +48,20 @@ impl FnWriter<'_> {
         ind: usize,
     ) -> Result<E, String> {
         match (name, args) {
+            ("OpCastFloatFromText", [t]) => {
+                let t = self.expr(t, ind)?;
+                Ok(E::new(
+                    format!("loft_float_of_text({})", as_view(t)?),
+                    K::Float,
+                ))
+            }
+            ("OpCastSingleFromText", [t]) => {
+                let t = self.expr(t, ind)?;
+                Ok(E::new(
+                    format!("loft_single_of_text({})", as_view(t)?),
+                    K::Single,
+                ))
+            }
             ("OpAbsInt", [v]) => {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_abs({})", as_int(v)?), K::Int))

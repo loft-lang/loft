@@ -21,6 +21,7 @@ mod eq;
 mod files;
 mod fnval;
 mod show;
+mod unicode;
 
 use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
@@ -129,6 +130,8 @@ pub(crate) struct Cx<'a> {
     key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every type the unit writes to or reads from a file (`loft_ser{tp}` / `loft_de{tp}`).
     ser_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The Unicode tables the unit reads (`crate::c::unicode`).
+    unicode: std::cell::RefCell<std::collections::BTreeSet<String>>,
     /// The generators' frames and prototypes, written before the unit's functions.
     gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
@@ -164,6 +167,7 @@ impl<'a> Cx<'a> {
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             ser_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
         }
@@ -524,6 +528,7 @@ impl<'a> Cx<'a> {
         out.push_str(&self.show_code());
         out.push_str(&self.eq_code());
         out.push_str(&self.ser_code());
+        out.push_str(&self.unicode_code());
         out.push_str(&self.const_code());
         out
     }
@@ -593,6 +598,14 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_panic" => Some("loft_panic"),
         "n_exit" => Some("loft_exit"),
         "n_protect_store_frees" => Some("loft_protect"),
+        "t_4text_to_lowercase" | "t_4text_to_uppercase" => Some("loft_unicode"),
+        "t_9character_is_lowercase"
+        | "t_9character_is_uppercase"
+        | "t_9character_is_numeric"
+        | "t_9character_is_alphanumeric"
+        | "t_9character_is_alphabetic"
+        | "t_9character_is_whitespace"
+        | "t_9character_is_control" => Some("loft_unicode"),
         "n_unprotect_store_frees" => Some("loft_unprotect"),
         "n_ticks" => Some("loft_ticks"),
         "n_arguments" => Some("loft_arguments"),

@@ -1368,6 +1368,9 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.par_native(def.name(), args, ind)? {
             return Ok(e);
         }
+        if let Some(e) = self.unicode_native(def.name(), args, ind)? {
+            return Ok(e);
+        }
         let callee = def.original_name();
         let ret = cx
             .ctype(def.returned())
