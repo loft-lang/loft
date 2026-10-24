@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! The binary form of a value in C — what `f += v` writes and `f#read(n) as T` reads into a
 //! value, which the interpreter writes with `Stores::read_data` and reads with
 //! `Stores::write_data` (`src/database/io.rs`).  The emitter writes one `loft_ser{tp}` /

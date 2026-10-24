@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! Content equality in C — `OpEqContent`, which the interpreter answers with
 //! `Stores::eq_content` (`src/database/equality.rs`, `@FR-E-Eq`).  The emitter writes one
 //! `loft_eq{tp}` per type a program compares; two absent values are equal, an absent one

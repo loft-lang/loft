@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! Unicode in C: a character class (`c.is_alphabetic()`, …) and a text's case mapping
 //! (`t.to_lowercase()`) answer what Rust's `char` answers, because the emitter computes their
 //! tables from Rust's own functions when it writes the unit — only the tables a program uses.

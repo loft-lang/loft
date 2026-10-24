@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! Rendering a value of a store as text in C — the `{v}` of a record or a vector, which the
 //! interpreter writes with `ShowDb` (`src/database/format.rs`).  The emitter writes one
 //! `loft_show{tp}` per type a program renders, with the type's field and variant names in

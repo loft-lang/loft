@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 //! Function values in C.  A value is a `loft_fn` — the definition it names and the closure
 //! record a capturing lambda reads — and a call through one goes to the dispatcher of its
 //! signature, `loft_call{n}`, which switches on the definition number as the interpreter's
@@ -42,9 +43,9 @@ impl Cx<'_> {
             .attributes()
             .iter()
             .filter(|a| !a.hidden && a.name != "__closure")
-            .map(|a| match a.typedef {
+            .map(|a| match a.typedef.base() {
                 Type::RefVar(_) => None,
-                ref tp => self.ctype(tp).filter(|c| *c != CType::Void),
+                tp => self.ctype(tp).filter(|c| *c != CType::Void),
             })
             .collect::<Option<Vec<_>>>()?;
         Some((params, self.ctype(def.returned())?))
@@ -134,7 +135,8 @@ impl Cx<'_> {
             } else if !a.hidden {
                 args.push(format!("a{visible}"));
                 visible += 1;
-            } else if matches!(&a.typedef, Type::RefVar(t) if matches!(**t, Type::Text(_))) {
+            } else if matches!(a.typedef.base(), Type::RefVar(t) if matches!(t.base(), Type::Text(_)))
+            {
                 let w = format!("w{}", buffers.len());
                 args.push(format!("&{w}"));
                 buffers.push(w);
