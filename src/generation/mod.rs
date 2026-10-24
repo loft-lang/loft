@@ -36,6 +36,7 @@ pub use crate::lower::keyed_entry;
 pub use crate::lower::keyed_place;
 pub use crate::opt::non_sentinel;
 pub(crate) mod ops;
+pub mod par_rows;
 mod pre_eval;
 pub use crate::opt::range;
 mod ranged_call;
