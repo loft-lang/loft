@@ -105,6 +105,12 @@ struct Walk<'a> {
     data: &'a Data,
     writes: HashSet<u16>,
     fault_forms: usize,
+    /// The locals the statement reads.
+    reads: HashSet<u16>,
+    /// The `Set`s whose right-hand side is being walked, innermost last.
+    set_stack: Vec<u16>,
+    /// The locals a discharge's value is written into (through any enclosing `Set`).
+    discharge_targets: HashSet<u16>,
     /// Walking a CALLEE: its raise would report from inside the fast copy, so a raising
     /// template declines; its `return` ends only its own frame.
     callee: bool,
@@ -129,11 +135,17 @@ impl Walk<'_> {
             | Value::Single(_)
             | Value::Boolean(_)
             | Value::Enum(..)
-            | Value::Text(_)
-            | Value::Var(_) => Ok(()),
+            | Value::Text(_) => Ok(()),
+            Value::Var(x) => {
+                self.reads.insert(*x);
+                Ok(())
+            }
             Value::Set(x, e) => {
                 self.writes.insert(*x);
-                self.node(e, depth)
+                self.set_stack.push(*x);
+                let r = self.node(e, depth);
+                self.set_stack.pop();
+                r
             }
             Value::Drop(e) => self.node(e, depth),
             Value::Block(b) => self.all(&b.operators, depth),
@@ -149,6 +161,7 @@ impl Walk<'_> {
             Value::If(t, a, b) => {
                 if !self.callee && is_discharge(self.data, t, a) {
                     self.fault_forms += 1;
+                    self.discharge_targets.extend(self.set_stack.iter().copied());
                 }
                 self.node(t, depth)?;
                 self.node(a, depth)?;
@@ -226,6 +239,9 @@ impl Walk<'_> {
             data: self.data,
             writes: HashSet::new(),
             fault_forms: 0,
+            reads: HashSet::new(),
+            set_stack: Vec::new(),
+            discharge_targets: HashSet::new(),
             callee: true,
             calls: self.calls + 1,
             pure: self.pure,
@@ -350,6 +366,9 @@ impl Output<'_> {
             data,
             writes: HashSet::new(),
             fault_forms: 0,
+            reads: HashSet::new(),
+            set_stack: Vec::new(),
+            discharge_targets: HashSet::new(),
             callee: false,
             calls: 0,
             pure: &self.fault_flag_pure,
@@ -359,6 +378,14 @@ impl Output<'_> {
         }
         if walk.fault_forms == 0 {
             return decline("nothing in it can fault");
+        }
+        // Profitability: the fast copy pays where a discharge's select sat on a LOOP-CARRIED
+        // chain — its value written into a local the statement also reads (`guess = (guess +
+        // (x / guess)?) / 2`).  A discharge that only feeds a condition was a select off that
+        // path, and a raise is a predicted branch: duplicating the statement for them costs
+        // the function its inlining and buys nothing (`count_ink`, `if v ?? 0 == ink`, +42 %).
+        if !walk.discharge_targets.iter().any(|t| walk.reads.contains(t)) {
+            return decline("no discharge feeds a local the statement reads back");
         }
         let variables = data.def(self.def_nr).variables();
         let mut escaped: HashSet<u16> = HashSet::new();
