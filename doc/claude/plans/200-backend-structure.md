@@ -482,46 +482,42 @@ not the route.  This retires the bump allocator and `loft_keyed.h`'s own layouts
 image IS the layout (`store_persist_copy` writes a store's raw words; the paged loaders and
 the browser read them), so a layout is observable.
 
-- **The invariant.**  For every program, the sequence of allocator events — a store made or
-  freed, and each claim (size → position), delete and resize in it — is the interpreter's,
-  store by store; so every store holds the same bytes at the same positions.  Store NUMBERS
-  are not part of it: stores are named by the order they were made, the interpreter's first
-  two (its value stack, made in `State::new`, and its constant store) left out.  The
-  interpreter is the reference because the C is written from the same operations it runs.
-  `--native` is NOT event-identical to the interpreter and need not be: its rewrites change
-  what is claimed (measured: a 20-element vector claimed whole up front where the
-  interpreter grows it by `resize`, a hash table placed at 55 where the interpreter places
-  it at 76).  What every backend shares is the allocator, the layouts and the image format.
+- **The invariant.**  What every loft backend shares, and the C must too: the allocator, the
+  keyed layouts and the image format.  Not the allocation SEQUENCE: the interpreter and
+  `--native` already differ there, because their lowerings differ (measured: native claims a
+  20-element vector whole where the interpreter grows it by `resize`, and places a hash table
+  at 55 where the interpreter places it at 76) — and so does the C wherever it lowers as
+  native does (a rebind from a call keeps the result's store and frees the one it displaces,
+  where the bytecode writer mints the variable's store again and moves the result into it).
+  A layout is observable through the image, so the image is where the backends must agree:
+  a store file one writes, each other reads, and the data read back is the data written.
 - **What carries it.**  The allocator's decisions read state outside the store's bytes too:
   the claims bitset, the parked lists (`@FR-H-Park`), the lazy-free set and its sweep bound
   (`@FR-H-LazyFree`), the wilderness (`@FR-H-Wilderness`), the scan index
   (`@FR-H-ScanIndex`), the referenced/removed sets (`@FR-H-Removed`), and a store's CAPACITY,
   which a reused slot keeps and the growth rule (×7/3) sets.  Each is ported with the
-  default of its switch; the switches themselves stay on the Rust side.
-- **How it breaks.**  (1) a ported routine that differs — caught in isolation by replaying one
-  seeded sequence of claims, deletes and resizes through `Store` and through the C, comparing
-  every position and the final bytes; (2) a free the C makes at another moment than the
-  interpreter, or not at all — the C frees nothing today; (3) a keyed collection that sizes,
-  hashes or rebalances differently; (4) store reuse and capacity.  (2)–(4) are caught by the
-  event trace below on every corpus program.
-- **The instruments.**  The allocator alone: `tests/c_emit.rs` replays one seeded sequence of
+  default of its switch; the switches themselves stay on the Rust side.  The routines above
+  the allocator that decide what is claimed and deleted (`vector_add`, `clear_vector_release`,
+  `remove_claims`, `Stores::clear`) are ported with it, so a construct the C lowers as the
+  bytecode writer does allocates as the interpreter does.
+- **The instruments.**  The allocator: `tests/c_emit.rs` replays one seeded sequence of
   claims, deletes, resizes and tombstones through `Store` and through `loft_store.h` and
-  compares every position and every byte (DEFINED stores, no payload written).  A program:
-  `LOFT_ALLOC_TRACE=<file>` writes the event sequence from `Store` and `Stores` and from the C
-  runtime, and `scripts/c_sweep.py` compares the C's with the interpreter's.  Never a program
-  store's whole buffer: a claim promises no value (`@FR-H-Claim`), so its unwritten bytes
-  differ between runs by design.  The CONTENT is compared by walking it from the store's root
-  by its type, as a format change is checked — `Stores::live_digest`, the bytes the walk
-  reaches with their positions — written with the store-freed event.
-- **Steps.**  (a) the trace on the Rust side, interpreter against native; (b) the allocator
-  ported, proved by the replay; (c) the C frees where the interpreter frees, until every
-  carried program's trace matches; (d) the keyed layouts ported (hash, index, sorted, then
-  spatial and trie); (e) the image — `store_persist_copy`, `store_load`, a file-backed store
-  over POSIX `mmap` (a whole-file read under `-DLOFT_NO_POSIX`), the paged loaders.  Its
-  acceptance (owner): a C program reads the store files the interpreter and a `--native`
-  program wrote — mapped, loaded and paged — and they read the C's; a cell per direction.
-  `store_memory()` and `store_reclaim` then answer as the interpreter's do, bar the
-  interpreter-only creation site, which reads 0 as on native.
+  compares every position and every byte (DEFINED stores, no payload written).  The routines
+  above it: `scripts/c_alloc_diff.py` compares a program's allocator events, C against
+  interpreter (`LOFT_ALLOC_TRACE`, the `op-census` build) — exact wherever the lowerings
+  agree, and the first differing event names the routine or the lowering that departs.  A
+  debugging instrument, not the bar.  The image: files crossing backends, compared by WALKING
+  the data from the root by its type, as a format change is checked — never a store's whole
+  buffer, whose unwritten bytes a claim leaves as they were (`@FR-H-Claim`).
+- **Steps.**  (a) the trace on the Rust side; (b) the allocator ported, proved by the replay;
+  (c) the release and growth routines above it ported, measured by the trace; (d) the keyed
+  layouts ported (hash, index, sorted, then spatial and trie); (e) the image —
+  `store_persist_copy`, `store_load`, a file-backed store over POSIX `mmap` (a whole-file
+  read under `-DLOFT_NO_POSIX`), the paged loaders.  Its acceptance (owner): a C program
+  reads the store files the interpreter and a `--native` program wrote — mapped, loaded and
+  paged — and they read the C's; a cell per direction.  `store_memory()` and
+  `store_reclaim` then answer as the interpreter's do, bar the interpreter-only creation
+  site, which reads 0 as on native.
 
 ## B6 — optional: a minimal binary
 
