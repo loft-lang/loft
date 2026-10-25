@@ -375,32 +375,41 @@ pub fn preferred_runtime_rlib(
 /// derives the search path from that directory.  A cargo on the per-unit layout writes the
 /// rlib only to `<profile>/build/loft/<unit>/out/` and does not uplift it, so that path is
 /// either missing (a fresh tree) or a file an older toolchain left there (a restored cache),
-/// and every compile against it fails with `E0514`.  When the uplifted rlib is missing or
-/// was written by another rustc, and a per-unit one was written by this rustc, the newest
+/// and every compile against it fails with `E0514` (or, when the same rustc wrote it from older
+/// source, with `E0425` on the runtime functions it lacks).  When the uplifted rlib is missing,
+/// was written by another rustc, or is older than a per-unit one this rustc wrote, the newest
 /// such unit is linked into place — the rlib and its `.rmeta` — through a temporary name and
 /// a rename, so a concurrent reader sees the old file or the new one.  Otherwise nothing is
 /// touched: a tree cargo still uplifts in is left exactly as cargo left it.
 pub fn refresh_runtime_uplift(profile: &std::path::Path) {
     let uplifted = profile.join("libloft.rlib");
-    if crate::file_access::exists(&uplifted) && !rlib_from_other_rustc(&uplifted) {
-        return;
-    }
     let Ok(units) = crate::file_access::read_dir(profile.join("build").join("loft")) else {
         return;
+    };
+    let modified = |p: &std::path::Path| {
+        crate::file_access::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
     };
     let fresh = units
         .iter()
         .map(|u| u.os_spelling().join("out").join("libloft.rlib"))
         .filter(|r| crate::file_access::exists(r) && rlib_meta_header(r).is_some())
         .filter(|r| !rlib_from_other_rustc(r))
-        .max_by_key(|r| {
-            crate::file_access::metadata(r)
-                .and_then(|m| m.modified())
-                .ok()
-        });
+        .max_by_key(|r| modified(r));
     let Some(unit_rlib) = fresh else {
         return;
     };
+    // The uplift stands when this rustc wrote it and no unit is newer: either it IS that unit
+    // (cargo's hard link, or this function's) or it is the newer build.  An uplift this same
+    // rustc wrote from OLDER source is as stale as one from another rustc — the generated
+    // code then names runtime functions it lacks (`E0425`) instead of failing on the version.
+    if crate::file_access::exists(&uplifted)
+        && !rlib_from_other_rustc(&uplifted)
+        && (same_file(&unit_rlib, &uplifted) || modified(&unit_rlib) <= modified(&uplifted))
+    {
+        return;
+    }
     let unit_rmeta = crate::file_access::with_extension(&unit_rlib, "rmeta");
     let sibling_rmeta = profile.join("libloft.rmeta");
     if crate::file_access::exists(&unit_rmeta) {
@@ -2175,16 +2184,39 @@ mod rmeta_identity_tests {
         let Some(live) = crate::toolchain::rustc_version() else {
             return;
         };
+        // This rustc's uplift, NEWER than every unit: the newer build stands.
         let p = scratch("uplift_current");
+        let older = unit(&p, "dddd", live, true);
         let current = rlib(&blob(0x22, live));
         crate::file_access::write(p.join("libloft.rlib"), &current).unwrap();
-        unit(&p, "dddd", live, true);
+        let now = std::time::SystemTime::now();
+        crate::file_access::set_modified(&older, now - std::time::Duration::from_secs(60)).unwrap();
+        crate::file_access::set_modified(p.join("libloft.rlib"), now).unwrap();
         super::refresh_runtime_uplift(&p);
         assert_eq!(
             crate::file_access::read(p.join("libloft.rlib")).unwrap(),
             current
         );
         assert!(!crate::file_access::exists(p.join("libloft.rmeta")));
+
+        // This rustc's uplift from OLDER source than a unit it also wrote (`E0425` in a run):
+        // the newer unit replaces it.
+        let o = scratch("uplift_same_rustc_older");
+        let stale = rlib(&blob(0x33, live));
+        crate::file_access::write(o.join("libloft.rlib"), &stale).unwrap();
+        let newer = unit(&o, "gggg", live, true);
+        crate::file_access::set_modified(
+            o.join("libloft.rlib"),
+            now - std::time::Duration::from_secs(60),
+        )
+        .unwrap();
+        crate::file_access::set_modified(&newer, now).unwrap();
+        super::refresh_runtime_uplift(&o);
+        assert!(super::same_file(&o.join("libloft.rlib"), &newer));
+        // …and placed, it is that unit: a second refresh changes nothing.
+        super::refresh_runtime_uplift(&o);
+        assert!(super::same_file(&o.join("libloft.rlib"), &newer));
+        let _ = crate::file_access::remove_dir_all(&o);
 
         let q = scratch("uplift_none_fresh");
         crate::file_access::write(q.join("libloft.rlib"), rlib(&blob(0x11, OTHER))).unwrap();
