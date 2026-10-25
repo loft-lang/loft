@@ -508,10 +508,14 @@ the browser read them), so a layout is observable.
   agree, and the first differing event names the routine or the lowering that departs.  A
   debugging instrument, not the bar.  The image: files crossing backends, compared by WALKING
   the data from the root by its type, as a format change is checked — never a store's whole
-  buffer, whose unwritten bytes a claim leaves as they were (`@FR-H-Claim`).
+  buffer, whose unwritten bytes a claim leaves as they were (`@FR-H-Claim`).  Each keyed
+  layout gets a replay of its own beside the allocator's: the hash's runs one seeded sequence
+  of inserts, replacements, removals, lookups and reservations through `hash.rs` and
+  `loft_hash.h` on an integer-keyed, a text-keyed, a borrowing and a demoted table.
 - **Steps.**  (a) the trace on the Rust side; (b) the allocator ported, proved by the replay;
   (c) the release and growth routines above it ported, measured by the trace; (d) the keyed
-  layouts ported (hash, index, sorted, then spatial and trie); (e) the image —
+  layouts ported — the hash is (`loft_hash.h`); next the index (`btree.rs`), the sorted, then
+  spatial and trie; (e) the image —
   `store_persist_copy`, `store_load`, a file-backed store over POSIX `mmap` (a whole-file
   read under `-DLOFT_NO_POSIX`), the paged loaders.  Its acceptance (owner): a C program
   reads the store files the interpreter and a `--native` program wrote — mapped, loaded and

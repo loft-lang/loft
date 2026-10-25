@@ -51,8 +51,11 @@ macros against Rust's checked arithmetic in every mode.
 | `body/files.rs` | files: a `File`'s description and text, a value written or read in its binary form, the filesystem operations |
 | `files.rs` | the binary form of each record and vector type a program writes or reads: one `loft_ser{tp}` / `loft_de{tp}` pair |
 | `loft_cc.h` | the macro layer — the ONLY place the C names a compiler — pasted first into every unit |
+| `loft_store.h` | `src/store.rs`' allocator, ported: the free tree, parked lists, lazy frees, tombstones |
 | `loft_rt.h` | the C runtime, pasted after it |
-| `loft_keyed.h` | the keyed collections' runtime, pasted after `loft_rt.h` |
+| `loft_keys.h` | key parts, their compare, and the per-table SipHash-1-3 digest of `src/siphash.rs` |
+| `loft_hash.h` | `src/hash.rs` and `src/arena.rs`, ported, and the `Stores` routines over a hash |
+| `loft_keyed.h` | the other keyed collections, the walks, renders and keyed writes |
 | `loft_io.h` | files and the filesystem, pasted last |
 
 ## The macro modes
@@ -91,12 +94,11 @@ function holds.  The null text is the one byte `"\0"`, as in the interpreter.
 **Stores.**  `loft_rt.h` ports the store model the IR addresses: a store is an array of 8-byte
 words, a record a run of words whose first word is its claimed size, a reference names a store,
 a record and a byte position, and `rec == 0` is null.  Vectors keep their claim at byte 0, their
-length at byte 4 and their elements from byte 8, with the interpreter's growth rule.  The
-allocator is still a bump allocator, which is being replaced: the memory model is loft's — the
-allocator, the keyed layouts and the image ported from the Rust store, so a store holds the
-same bytes at the same positions on every backend ([@PLN200 B5](plans/200-backend-structure.md),
-owner).  Until then a store's words
-go back together when the store is freed.  The default bytes of a new record are captured by
+length at byte 4 and their elements from byte 8, with the interpreter's growth rule.  The memory
+model is loft's ([@PLN200 B5](plans/200-backend-structure.md), owner): the allocator is
+`src/store.rs`' (`loft_store.h`), and the routines above it that decide what is claimed and
+deleted — `vector_add`, `clear_vector_release`, `remove_claims`, `Stores::clear` — are ported
+with it.  The default bytes of a new record are captured by
 running `Stores::set_default_value` on a scratch copy of the stores.
 
 **Copies.**  Where the bytecode writer copies a record, the C copies it, decided by the same
@@ -117,12 +119,12 @@ writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`
 `LOFT_VERIFY` catches a held vector that changed.  `LOFT_NO_VECTOR_HOIST=1` holds none and
 `LOFT_NO_WRITE_HOIST=1` none in a loop that writes, as for the Rust writer.
 
-**Keyed collections.**  A hash, a sorted and an index keep the interpreter's ORDERS and
-answers, for now in layouts of the C runtime's own (`loft_keyed.h`), to be replaced by ports
-of the interpreter's (a persisted image carries the layout, so it is observable).
-A hash is an open-addressed table of record numbers, its entries records of their own; an index
-and an `ordered` are a key-ordered array of record numbers; a sorted is a vector kept in key
-order, read by a vector's readers.  The key compare, the range search and the sorted insert are
+**Keyed collections.**  A persisted image carries a collection's layout, so the layouts are
+loft's.  A hash is `src/hash.rs` ported (`loft_hash.h`): the seeded table, inline and arena
+entries, a linked type's borrowed records, and its `Stores` routines — the one-probe insert and
+replace, `remove_owned`, `reserve_hash`, the copy and the release.  An index and an `ordered`
+are still a key-ordered array of record numbers of the C's own, until `src/btree.rs` is ported;
+a sorted is a vector kept in key order, read by a vector's readers.  The key compare, the range search and the sorted insert are
 ports of `keys::compare`, `vector::sorted_search` and `vector::sorted_finish`.  A record type
 shared by several collections of one struct (`@FR-Col-Group`) turns its vector into an `array`
 and its sorted into an `ordered`; a record finished into one member enters every member, and a
