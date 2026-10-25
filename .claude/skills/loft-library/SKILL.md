@@ -1,5 +1,5 @@
 ---
-name: loft-ship
+name: loft-library
 description: >-
   Write, bridge, verify, and publish a loft library so it behaves IDENTICALLY on all four
   targets — the interpreter, --native, --native-wasm, and --html (browser). Use this skill
@@ -12,7 +12,7 @@ description: >-
   are exactly where this work silently goes wrong.
 ---
 
-# loft-ship — one source, four targets, identical behavior
+# loft-library — one source, four targets, identical behavior
 
 A loft library ships to **four targets**, and the runtime — not the consumer — picks the
 variant ([PACKAGES_BUILD.md § Target matrix](../../../doc/claude/PACKAGES_BUILD.md)):

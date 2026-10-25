@@ -95,7 +95,7 @@ consumer's loft itself carries the needed compiler support.)
      (`scripts/vet-lib.sh`) and folds + re-signs atomically (REGISTRY_SUBMIT.md § 4 (recommended); a
      direct `index.json` PR still works but is the older route). Preview your entry
      first with `loft publish --dry-run`; the maintainer-side wrapper for the whole
-     fold-and-sign run is `loft ship`.
+     fold-and-sign run is `loft maintain-registry`.
    Either way, editing the JSON:
    - **Match the index's CURRENT unicode convention** when editing with a script: check whether
      descriptions carry raw `—` or escaped `\uXXXX` and pass the matching `ensure_ascii` to

@@ -110,7 +110,7 @@ borrower KEEPS the copy). Starting points found this session:
 >
 > **REMAINING is NOT core — registry-gated + environmental:** multiplayer(v2/v3/v5) + viewer_markdown
 > fail on DN1 rejects in the `web-0.2.1` / `server-0.2.0` REGISTRY libs (`return null` into `-> text`) —
-> needs the `text?` migration + a touch-gated republish (loft-ship; USER-GATED). `html_asyncify` (chrome +
+> needs the `text?` migration + a touch-gated republish (loft-library; USER-GATED). `html_asyncify` (chrome +
 > stale GL cdylib) + `error_messages::38_import_unknown` (sandbox DNS) are environmental.
 >
 > The compiler-side green gate is MET. Continue with the index flip (Steps 2-6 below), OR the registry republish.

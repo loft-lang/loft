@@ -5565,7 +5565,7 @@ fn api_surface_of(
     Ok((surface, identity))
 }
 
-/// @PLN102 @C96 — `loft ship [args…]`: the maintainer ship verb.  Locates
+/// @PLN102 @C96 — `loft maintain-registry [args…]`: the maintainer's registry verb.  Locates
 /// `scripts/registry_maintain.sh` (env override, exe-relative, or CWD) and runs it.
 /// On a KEY-PRESENT machine (`~/.loft/trust-root/registry-signing-key.bin` exists) it
 /// defaults the local file signer + non-interactive `--yes` — autonomous package →
@@ -5574,9 +5574,9 @@ fn api_surface_of(
 /// routine in review mode (which reports what a key holder must fold in).  Explicit
 /// `LOFT_REGISTRY_SIGNER` / passing `--dry-run` / `--yes` are respected as given.
 /// Exit code is the script's.
-fn run_ship_command(args: &[String]) -> i32 {
+fn run_maintain_registry_command(args: &[String]) -> i32 {
     use std::path::PathBuf;
-    let script = std::env::var("LOFT_SHIP_SCRIPT")
+    let script = std::env::var("LOFT_MAINTAIN_REGISTRY_SCRIPT")
         .ok()
         .map(PathBuf::from)
         .filter(|p| fa::is_file(p))
@@ -5598,7 +5598,7 @@ fn run_ship_command(args: &[String]) -> i32 {
         });
     let Some(script) = script else {
         eprintln!(
-            "loft ship: cannot find scripts/registry_maintain.sh — run from the loft repo, or set LOFT_SHIP_SCRIPT."
+            "loft maintain-registry: cannot find scripts/registry_maintain.sh — run from the loft repo, or set LOFT_MAINTAIN_REGISTRY_SCRIPT."
         );
         return 1;
     };
@@ -5620,7 +5620,7 @@ fn run_ship_command(args: &[String]) -> i32 {
         }
     } else {
         eprintln!(
-            "loft ship: no trust-root key here (~/.loft/trust-root/registry-signing-key.bin) — this machine cannot sign."
+            "loft maintain-registry: no trust-root key here (~/.loft/trust-root/registry-signing-key.bin) — this machine cannot sign."
         );
         eprintln!(
             "           Prepare a submission for a key holder to fold in (see REGISTRY_SUBMIT.md); running in review mode below."
@@ -5635,7 +5635,10 @@ fn run_ship_command(args: &[String]) -> i32 {
     match cmd.status() {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => {
-            eprintln!("loft ship: failed to run {}: {e}", script.display());
+            eprintln!(
+                "loft maintain-registry: failed to run {}: {e}",
+                script.display()
+            );
             1
         }
     }
@@ -8778,13 +8781,13 @@ fn main() {
                 eprintln!("loft pin: this binary was built without the `registry` feature.");
                 std::process::exit(1);
             }
-        } else if a == "ship" {
-            // @C96 — the maintainer ship verb.  On a key-present machine (the local
+        } else if a == "maintain-registry" {
+            // @C96 — the maintainer's registry verb.  On a key-present machine (the local
             // trust-root file key exists) it packages + signs + pushes every own lib
             // newer than the index, autonomously; a key-absent machine can only defer
             // to a submission.  Wraps scripts/registry_maintain.sh (which chains the
             // CAS-retry sign+push in registry-sign.sh).
-            std::process::exit(run_ship_command(&argv[i..]));
+            std::process::exit(run_maintain_registry_command(&argv[i..]));
         } else if a == "registry" {
             handle_registry(&argv, &mut i);
             return;

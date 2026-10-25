@@ -154,7 +154,7 @@ they're ecosystem-completeness, republished from their loft-libs-* source (the c
   fix: `as integer?` / `?? 0`.
 
 **Step E (remaining).** For hex_terrain + server: convert in the loft-libs-* source, bump version,
-re-sign, publish (loft-ship skill — touch-gated signing). Tracks the `registry-validation` CI leg.
+re-sign, publish (loft-library skill — touch-gated signing). Tracks the `registry-validation` CI leg.
 The touch-gated signing is an owner action.
 
 ---

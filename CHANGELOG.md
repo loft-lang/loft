@@ -23,6 +23,10 @@ builds every compiled target the same way — `--ship --native-wasm`, `--ship --
 `--ship --native-android` — where `--native-release` changed only the host binary.  Every
 fault check stays in a shipped build.
 
+**A registry maintainer runs `loft maintain-registry`.**  It is the command `loft ship` was —
+publish every own library newer than the index, fold in the submissions, sign — renamed so it
+is not mistaken for the `--ship` build.  `LOFT_SHIP_SCRIPT` is `LOFT_MAINTAIN_REGISTRY_SCRIPT`.
+
 **A store image is read only beside its `.dschema` sidecar.**  `store_load`,
 `store_load_untrusted`, `store_load_url` and the paged loaders (`store_load_key`, `store_load_box`,
 `store_load_prefix`, …) refuse an image with no sidecar beside it, and over HTTP one whose sidecar

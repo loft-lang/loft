@@ -215,7 +215,7 @@ version; it never forbids a break. It ORCHESTRATES the loft CLI; it does not re-
   against the *new* implementation (`loft test`, `src/main.rs:4123`). A failure is a break. (As
   strong as the lib's tests — COMPATIBILITY.md is explicit about the limit.)
 - **C2.3 — sandboxed all-target build + run.** `loft build`/`test` on interpret · `--native` ·
-  `--native-wasm` · `--html` (the loft-ship parity gate). Verify, don't trust a claimed pass — *the
+  `--native-wasm` · `--html` (the loft-library parity gate). Verify, don't trust a claimed pass — *the
   registry produces the pass*. Bound with `LOFT_TIMEOUT`.
 - **C2.4 — store more than the author made** (C3): the built cross-target artifacts + a captured
   behavioural/API baseline (reuse `src/ss.rs`), frozen at acceptance.
@@ -242,7 +242,7 @@ version; it never forbids a break. It ORCHESTRATES the loft CLI; it does not re-
 - **C3.3 — surface it to the consumer.** `src/registry.rs` (`PackageStatus`) gains a compat-aware
   variant so `loft install`/a new `loft upgrade` can print *"0.3.0 is a drop-in over 0.2.0"* vs
   *"0.3.0 is a breaking change — migration needed"* before the user moves. Re-sign the index (the
-  loft-ship re-sign foot-gun — editing `index.json` without re-signing breaks every install).
+  loft-library re-sign foot-gun — editing `index.json` without re-signing breaks every install).
 
 ### C-app — "Am I in danger?": the application's upgrade-risk tools · TIER 2, DEFERRED · repo: loft
 

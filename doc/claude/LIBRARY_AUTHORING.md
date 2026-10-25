@@ -100,7 +100,7 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     produce a wrong result; library CI runs with `LOFT_DENY_WARNINGS=1`.  A diagnostic reaches
     only whoever can act on its cure.  [DIAGNOSTICS.md](DIAGNOSTICS.md)
 19. **Claim only the targets you have passed**: interpret, native, wasm and browser give one
-    answer on every claimed target.  loft-ship skill § the parity gate
+    answer on every claimed target.  loft-library skill § the parity gate
 20. **Ship lean**: every cdylib is built `--ship` (`opt-level=3`,
     `codegen-units=1`), and a performance number comes from that tier only.
     [NATIVE.md](NATIVE.md) § Optimisation tiers
@@ -127,7 +127,7 @@ the detail, and that place wins if the two ever differ — fix this line, not th
 27. **Our libraries publish through `registry_maintain.sh`, signed by the maintainer**: the
     hardware key when present, else the key file after a typed `yes` or under a checked
     `--expect <pkg>@<ver>`.  An external author signs nothing.  [§ 4](LIBRARY_PUBLISH.md#4-publish),
-    loft-ship skill (`references/publish.md`)
+    loft-library skill (`references/publish.md`)
 28. **Healthy means** no open branches, `main` green against the current loft, zero warnings.
     [§ 5](LIBRARY_PUBLISH.md#5-maintain)
 
@@ -149,7 +149,7 @@ and the library work done there was being crowded out by that suite.  So:
 - a consumer that needs something the library does not do **reports the gap** (an issue in the
   library's repo, or a message), and the loft stream builds it — in the library, for every
   consumer;
-- the loft stream edits the `loft-libs-*` repos and republishes them (the **loft-ship
+- the loft stream edits the `loft-libs-*` repos and republishes them (the **loft-library
   skill**) — through a PR per change, since every library `main` requires one (admins
   included): push a branch, `gh pr create`, `gh pr merge --auto --squash`, and publish from the
   merged `main`.  No owner wait: the required `ci / <pkg>` checks are the merge rule.  The
@@ -216,7 +216,7 @@ native, guide, WASM cross-build, compatibility, transitive deps), set up in five
    `docs/*.loft` guide with `--interpret` and `--native`, and `LOFT_DENY_WARNINGS=1 loft
    --check` over every `examples/*.loft` and `docs/*.loft` (an example is compiled, not run:
    most need a peer, a window or a port).  A library that claims the browser
-   also runs its `--native-wasm` / `--html` gate (loft-ship skill § the parity gate).
+   also runs its `--native-wasm` / `--html` gate (loft-library skill § the parity gate).
    ⚠ A `use`d library with a native crate runs as its cdylib **even under `--interpret`**, so
    the two runs measure one binary twice; set `LOFT_NO_NATIVE_LIBS=1` on the interpreter run
    when the question is the library's loft source.
@@ -746,7 +746,7 @@ release whose `loft` floor names the first loft build that has it.  The steps, i
    the loft whose resolver reads the floor (`registry_index::floor_admits`) on; an older loft
    resolves the release and its load refuses it, naming the floor, so a user there pins the
    previous version.
-4. **Publish through a library PR with auto-merge**, then the loft-ship skill.  A release that
+4. **Publish through a library PR with auto-merge**, then the loft-library skill.  A release that
    already went out with a floor too low is corrected by a follow-up release with the right
    floor, and the earlier one is yanked when lofts it does not fit would otherwise resolve to
    it ([LIBRARY_PUBLISH.md § 5b](LIBRARY_PUBLISH.md#5b-yank-a-vulnerable-version)).

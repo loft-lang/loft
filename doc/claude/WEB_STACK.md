@@ -654,7 +654,7 @@ Publishing has its own rails, and this design uses them rather than adding relea
 | are its diagnostics clean enough to gate? | `LOFT_DENY_WARNINGS=1`, the `warning` tier |
 | is a function documented, and has it moved since? | `make libraries-review`, `scripts/doc-review.sh --since` |
 | does the catalogue know these features exist? | `@F` entries via `make features-fetch && make features-gen` |
-| how does it get signed and published? | the **loft-ship** skill |
+| how does it get signed and published? | the **loft-library** skill |
 
 ### What performance claims are allowed to say
 

@@ -52,7 +52,7 @@ C92	code	src/parser/expressions.rs::a compound assign evaluates its place ONCE	o
 C93	code	src/parser/collections.rs::captured state is READ-ONLY; src/scopes/par_writes.rs	ok	-	
 C94	code	src/ops.rs::fn op_div_long; src/ops.rs::fn op_rem_long; default/01_code.loft::fn floor_mod	ok	cite	its default/ site is cited with the next compiled-stdlib regeneration (any default/*.loft byte re-derives it)
 C95	code	src/data.rs::let shadowed_method	ok	-	shares its refusal with C123 inside `Data::add_fn`
-C96	code	src/main.rs::fn run_ship_command	ok	-	tests/registry_sign_scope.rs: the key-present and key-absent routing cells
+C96	code	src/main.rs::fn run_maintain_registry_command	ok	-	tests/registry_sign_scope.rs: the key-present and key-absent routing cells
 C97	code	src/data.rs::defines its public symbols MODULE-SCOPED	ok	-	
 C98	code	src/data.rs; src/parser/mod.rs	ok	-	
 C99	code	src/parser/fields.rs::fn parse_key	ok	-	

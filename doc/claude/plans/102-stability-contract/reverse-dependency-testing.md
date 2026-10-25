@@ -116,7 +116,7 @@ nothing."
 - **`reverse-dep-test.yml`** on L's `<name>-v<version>` tag — symmetric with
   `revalidate-libs.yml`, reusing its discover + build-and-test steps almost verbatim.
   Post-hoc, lighter to add.
-- **The `loft ship` pre-publish gate** — fold the reverse-dep run into the ship
+- **The `loft maintain-registry` pre-publish gate** — fold the reverse-dep run into the ship
   transaction *before* signing `L@new`, so a break **blocks** the publish rather than
   reporting after. Stronger, where absolute compat wants it, but heavier (the ship
   command now waits on N consumer suites).
@@ -141,13 +141,13 @@ Because the check is mechanical (§ the principle), the same operation serves bo
 ## Reuse vs build
 
 - **Reuse:** discover (the `index.json` read from `revalidate-libs`); build-and-test
-  (`library-ci-reusable`); the pre-publish hook (`loft ship` / `registry_maintain.sh`).
+  (`library-ci-reusable`); the pre-publish hook (`loft maintain-registry` / `registry_maintain.sh`).
 - **Build (small):**
   1. **A resolver dep-override** — build P with L forced to `@new` instead of its locked
      version (`--override L=<ver>` / a temp lockfile edit), exposed as `loft test
      --against`. This is the one genuinely new primitive.
   2. **App opt-in discovery** — `consumers.json` in the registry (a `repo@ref` list).
-  3. **The gate** — `reverse-dep-test.yml`, or fold into `loft ship`; **record the
+  3. **The gate** — `reverse-dep-test.yml`, or fold into `loft maintain-registry`; **record the
      attestation** on the registry entry.
 
 ## Invariant + verification

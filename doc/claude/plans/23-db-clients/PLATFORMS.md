@@ -436,7 +436,7 @@ call (wasm32 is ILP32, so the host-width extern is a signature mismatch), and
 `c_library_available` — the query a library is told to ask before calling into an
 optional backend — did not compile under `--html`.
 
-The fix is the one loft-ship's cross-target gate wants: a declared-unsupported
+The fix is the one loft-library's cross-target gate wants: a declared-unsupported
 column rather than a claimed-but-broken one. Nothing `#c` is emitted on a wasm
 target, and the refusal sits at the CALL, which scopes it to reachability for
 free.

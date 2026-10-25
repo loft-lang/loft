@@ -69,7 +69,7 @@ Three invariants make concurrent lib landings safe:
    staging dir (tarball + printed entry + provenance), which the ship transaction
    drains. So a foreign PR and a maintain run can never conflict on the signed file.
 
-The transaction (`loft ship`, i.e. `registry_maintain.sh` evolved):
+The transaction (`loft maintain-registry`, i.e. `registry_maintain.sh` evolved):
 
 ```
 loop:
@@ -142,7 +142,7 @@ until then the above is the whole surface.
 
 ## Implementation delta (small, on existing scripts)
 
-1. **DONE — `loft ship` verb** (`src/main.rs::run_ship_command`): locates
+1. **DONE — `loft maintain-registry` verb** (`src/main.rs::run_maintain_registry_command`): locates
    `scripts/registry_maintain.sh`; on a key-present machine defaults the local file
    signer + `--yes` (autonomous), on a key-absent one runs review-only and points at
    the submission path. `LOFT_REGISTRY_SIGNER` / `--dry-run` / `--yes` respected as given.
@@ -166,5 +166,5 @@ until then the above is the whole surface.
 
 ## See also
 
-- [PKG_REGISTRY.md](../../PKG_REGISTRY.md) · [REGISTRY_SUBMIT.md](../../REGISTRY_SUBMIT.md) · [COMPATIBILITY.md](../../COMPATIBILITY.md) · the publish runbook (loft-ship skill, `references/publish.md`)
+- [PKG_REGISTRY.md](../../PKG_REGISTRY.md) · [REGISTRY_SUBMIT.md](../../REGISTRY_SUBMIT.md) · [COMPATIBILITY.md](../../COMPATIBILITY.md) · the publish runbook (loft-library skill, `references/publish.md`)
 - The trigger: adding stdlib `floor_mod` (@C94) broke shipped `shapes`/`time` (@C95) — the case for V3 + V4 + @C97.

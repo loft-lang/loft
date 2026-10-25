@@ -169,7 +169,7 @@ load the skills in `.claude/skills/`). None of these needs a maintainer's help.
 2. Scaffold a fresh one: `loft new <name>` (writes `loft.toml` + `src/`).
 3. Write the `.loft`, adapting the nearest example. Have the agent load the `loft-write`
    skill for syntax; the reference is `doc/claude/LOFT.md` + `STDLIB.md`.
-4. Make it work on every target: load the `loft-ship` skill and confirm identical
+4. Make it work on every target: load the `loft-library` skill and confirm identical
    behaviour on the interpreter, `--native`, `--native-wasm`, and `--html`.
 5. Test it, then publish: `loft publish` (a touch-gated signature) — or keep it local
    with `loft install <dir>`.

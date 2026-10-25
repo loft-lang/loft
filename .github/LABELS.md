@@ -257,7 +257,7 @@ on every field a consumer reads, @PLN187), a retired spelling they use (the user
 freeze — the same item can carry `contract:before-1` too, and then both halves are owed.
 
 The label is what a library sweep is built from: the migration lands as one pass over every
-library (a branch, a PR with auto-merge, a republish per library — the loft-ship skill), in the
+library (a branch, a PR with auto-merge, a republish per library — the loft-library skill), in the
 order the item's own steps need, usually before the change that enforces it.  When the change is a
 layout or format move under libraries that did not change, each library's release floors
 `loft` on the daily build that carries it — LIBRARY_AUTHORING.md § 3, *When loft moves the
