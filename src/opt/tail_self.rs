@@ -175,7 +175,7 @@ pub(crate) fn admit_frame(
         ));
     }
     for v in 0..vars.count() {
-        if matches!(vars.tp(v), Type::RefVar(_)) && !params.contains(&v) {
+        if matches!(vars.tp(v).base(), Type::RefVar(_)) && !params.contains(&v) {
             return Err(format!("local `{}` is a `&` reference", vars.name(v)));
         }
     }
@@ -220,7 +220,7 @@ pub(crate) fn admit_frame(
     // pointer, so the write is no rebind.
     for &p in params {
         let tp = vars.tp(p);
-        if is_scalar(tp) || matches!(tp, Type::RefVar(_)) {
+        if is_scalar(tp) || matches!(tp.base(), Type::RefVar(_)) {
             continue;
         }
         if writes_variable(code, p, data) {
@@ -428,7 +428,7 @@ impl Finder<'_> {
                 if *x < self.vars.count()
                     && self.vars.is_argument(*x)
                     && self.vars.name(*x).starts_with("__")
-                    && matches!(self.vars.tp(*x), Type::RefVar(_)) =>
+                    && matches!(self.vars.tp(*x).base(), Type::RefVar(_)) =>
             {
                 self.value(e, at, out);
             }
