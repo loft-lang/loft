@@ -133,7 +133,6 @@ fn the_advice_names_the_callee_the_disturbance_came_through() {
     for quiet in [
         "c_alias_callee",
         "c_other_callee",
-        "c_rebuild_callee",
         "c_sibling_callee",
         "c_unrelated_callee",
     ] {
@@ -174,15 +173,16 @@ fn the_summary_admits_the_disturbing_callees_and_no_others() {
             "n_grow_field",
             "n_grow_sibling",
             "n_grow_vec",
+            // `sc.els = [x]` REBUILDS the field: the views inside it end, as on a growth
+            // (`(B-Disturb)`), so the rebuild is a disturbance of the caller's container.
+            "n_rebuild_field",
             "n_remove_first",
             "n_remove_last",
         ],
         "the summary must name every definition that disturbs a caller's container through a \
-         parameter, and nothing else.  The three absences are the load-bearing half: `n_mk` \
-         GROWS `__retbuf.els` building its own result, and counting a hidden return buffer \
-         would report a disturbance at every call to every record-returning function; \
-         `n_rebuild_field` writes `sc.els = [x]`, a clear and then the appends, which \
-         `(B-Disturb)` says is an overwrite and not a disturbance; `n_touch_nothing` and \
-         `n_write_other_field` do nothing to a container at all:\n{err}"
+         parameter, and nothing else.  The absences are the load-bearing half: `n_mk` GROWS \
+         `__retbuf.els` building its own result, and counting a hidden return buffer would \
+         report a disturbance at every call to every record-returning function; \
+         `n_touch_nothing` and `n_write_other_field` do nothing to a container at all:\n{err}"
     );
 }
