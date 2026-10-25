@@ -62,6 +62,78 @@ impl FnWriter<'_> {
                     K::Single,
                 ))
             }
+            ("OpBitNotSingleInt", [v]) => {
+                let v = self.expr(v, ind)?;
+                Ok(E::new(format!("(~{})", as_int(v)?), K::Int))
+            }
+            ("OpSizeStruct", [r, sz]) => {
+                let sz = Self::literal(sz, "size")?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("((void) {}, INT64_C({sz}))", as_ref(r)?),
+                    K::Int,
+                ))
+            }
+            ("OpSizeHash", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_hash_table_bytes({})", as_ref(r)?),
+                    K::Int,
+                ))
+            }
+            ("OpReserveVector", [v, count, size]) => {
+                let size = Self::literal(size, "element size")?;
+                let (v, count) = self.two(name, &[(*v).clone(), (*count).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_reserve({}, {}, {size})",
+                        as_ref(v)?,
+                        as_int(count)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpInsertVector", [v, size, index, tp]) => {
+                let size = Self::literal(size, "element size")?;
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) {
+                    return Err("an insert of a linked element type".into());
+                }
+                let (v, index) = self.two(name, &[(*v).clone(), (*index).clone()], ind)?;
+                let (image, n) = self.cx.default_image(tp);
+                let t = self.temp(CType::Ref);
+                self.line(
+                    ind,
+                    &format!(
+                        "{t} = loft_vec_insert({}, {size}, {});",
+                        as_ref(v)?,
+                        as_int(index)?
+                    ),
+                );
+                self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
+                Ok(E::new(t, K::Ref))
+            }
+            ("OpKeepRange", [v, lo, hi, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) || self.cx.stores.type_owns_heap(tp) {
+                    return Err("a kept range of elements that own records".into());
+                }
+                let size = self.cx.stores.size(tp);
+                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
+                let [v, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a kept range without three operands".to_string())?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_keep_range({}, {}, {}, {size})",
+                        as_ref(v)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
+                    K::Void,
+                ))
+            }
             ("OpAbsInt", [v]) => {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_abs({})", as_int(v)?), K::Int))

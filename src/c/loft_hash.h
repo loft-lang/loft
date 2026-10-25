@@ -219,6 +219,16 @@ static loft_hhdr loft_h_hdr(loft_store_t *s, uint32_t claim) {
     return h;
 }
 
+/* OpSizeHash (hash::table_bytes): the bytes of a hash's full bucket table, holes included. */
+static int64_t loft_hash_table_bytes(loft_ref h) {
+    if (h.store_nr == 0xFFFF || h.rec == 0) return 0;
+    loft_store_t *s = loft_store_of(h);
+    uint32_t claim = loft_collection_rec(s, h.rec, h.pos);
+    if (claim == 0) return 0;
+    loft_hhdr hd = loft_h_hdr(s, claim);
+    return (int64_t) (hd.inl ? hd.count * (8 + hd.stride) : hd.count * hd.sb);
+}
+
 static int loft_h_is_inline(loft_store_t *s, uint32_t claim) {
     return (loft_u32(s, claim, LOFT_H_STRIDE_FLD) & LOFT_H_INLINE) != 0;
 }

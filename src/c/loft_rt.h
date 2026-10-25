@@ -1655,6 +1655,106 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
     if (free_source && src.store_nr != dst.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
 
+/* OpInsertVector (vector::insert_vector): room for one element of `size` at `index` (negative
+ * from the end), the elements from there on shifted up; the null reference for an index outside
+ * 0..=len.  The caller writes the element's defaults (`insert_vector_element`). */
+static loft_ref loft_vec_insert(loft_ref v, uint32_t size, int64_t index) {
+    if (v.store_nr == 0xFFFF || v.rec == 0) return loft_ref_null();
+    int64_t len = loft_vec_len(v);
+    int64_t real = index < 0 ? index + len : index;
+    if (real < 0 || real > len) return loft_ref_null();
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    uint32_t nl;
+    if (r == 0) {
+        r = loft_claim(s, loft_vec_cap_words(11, size));
+        loft_set_u32(s, v.rec, v.pos, r);
+        nl = 1;
+    } else {
+        nl = (uint32_t) len + 1;
+        uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(nl, size));
+        if (nr != r) {
+            loft_set_u32(s, v.rec, v.pos, nr);
+            r = nr;
+        }
+        if (len > real)
+            memmove(loft_at(s, r, 8 + (uint32_t) (real + 1) * size), loft_at(s, r, 8 + (uint32_t) real * size),
+                    (size_t) (len - real) * size);
+    }
+    loft_set_u32(s, r, 4, nl);
+    loft_ref e = { v.store_nr, r, 8 + (uint32_t) real * size };
+    return e;
+}
+
+/* OpReserveVector (vector::reserve_vector): room for `count` elements (at least 11), the record
+ * moved if it has to grow; a negative count reserves nothing. */
+static void loft_vec_reserve(loft_ref v, int64_t count, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+    if (count < 0 || count > (int64_t) UINT32_MAX) return;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t words = loft_vec_cap_words(count < 11 ? 11 : (uint32_t) count, size);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) {
+        r = loft_claim(s, words);
+        loft_set_u32(s, v.rec, v.pos, r);
+        loft_set_u32(s, r, 4, 0);
+        return;
+    }
+    uint32_t nr = loft_st_resize(s, r, words);
+    if (nr != r) loft_set_u32(s, v.rec, v.pos, nr);
+}
+
+#ifdef LOFT_FOREIGN
+static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size);
+#endif
+
+/* OpKeepRange (Stores::vector_keep_range): `v = v[lo..hi]` of scalar elements, kept in place —
+ * the span moved to the front of its record and the length set.  A foreign view takes the copy
+ * form: the span copied out, the view dropped, the span appended (`append_span`). */
+static void loft_vec_keep_range(loft_ref v, int64_t lo, int64_t hi, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+    int64_t n = loft_vec_len(v);
+    lo = lo < 0 ? 0 : lo > n ? n : lo;
+    hi = hi < lo ? lo : hi > n ? n : hi;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return;
+    size_t bytes = (size_t) (hi - lo) * size;
+#ifdef LOFT_FOREIGN
+    if (loft_st_is_foreign(s)) {
+        uint8_t *span = (uint8_t *) malloc(bytes ? bytes : 1);
+        if (!span) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(span, loft_at(s, r, 8 + (uint32_t) lo * size), bytes);
+        loft_vec_clear(v);
+        if (hi > lo) {
+            loft_ref e = loft_vec_append(v, size);
+            loft_vec_set_size(v, (uint32_t) (hi - lo), size);
+            loft_store_t *d = loft_store_of(v);
+            memcpy(loft_at(d, loft_collection_rec(d, v.rec, v.pos), e.pos), span, bytes);
+        }
+        free(span);
+        return;
+    }
+#endif
+    if (bytes) memmove(loft_at(s, r, 8), loft_at(s, r, 8 + (uint32_t) lo * size), bytes);
+    loft_set_u32(s, r, 4, (uint32_t) (hi - lo));
+}
+
+/* OpMoveField (Stores::move_field_out): a field's value moved into `dst` — within one store its
+ * bytes relocate; across two the destination takes a deep copy and the source releases what it
+ * held.  Either way the source is left zeroed. */
+static void loft_move_field(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst) {
+    if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0
+        || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return;
+    uint32_t size = T[tp].size;
+    loft_copy_bytes(dst, 0, src, 0, size);
+    if (src.store_nr != dst.store_nr) {
+        loft_copy_claims(T, tp, src, dst);
+        loft_remove_claims(T, tp, src);
+    }
+    if (size) memset(loft_at(loft_store_of(src), src.rec, src.pos), 0, size);
+}
+
 /* OpRemoveVector (vector::remove_vector): the element at `index` (negative from the end) goes,
  * its successors move down; false for a null vector or an index outside it. */
 static int loft_vec_remove(loft_ref v, uint32_t size, int64_t index) {

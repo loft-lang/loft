@@ -2256,6 +2256,20 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
+            ("OpMoveField", [src, dst, tp]) => {
+                let tp = Self::literal(tp, "type")?;
+                let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
+                let tp = self.copyable(tp)?;
+                let (src, dst) = self.two(name, &[(*src).clone(), (*dst).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_move_field(loft_types, {tp}, {}, {})",
+                        as_ref(src)?,
+                        as_ref(dst)?
+                    ),
+                    K::Void,
+                ))
+            }
             ("OpGetField", [r, fld, _tp]) => {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
@@ -3183,6 +3197,9 @@ const OP_INT: &[&str] = &[
     "OpLengthText",
     "OpSizeText",
     "OpMinSingleInt",
+    "OpBitNotSingleInt",
+    "OpSizeStruct",
+    "OpSizeHash",
     "OpMinSingleLong",
     "OpConvIntFromNull",
     "OpConvLongFromNull",
@@ -3255,6 +3272,7 @@ const OP_REF: &[&str] = &[
     "OpGetVector",
     "OpGetVectorNullable",
     "OpNullRefSentinel",
+    "OpInsertVector",
 ];
 const OP_ENUM: &[&str] = &[
     "OpGetEnum",
