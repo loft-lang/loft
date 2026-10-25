@@ -588,6 +588,9 @@ if d is North { hit = true; }       // true
 assert(!(d is South));       // negation
 ```
 
+A unit variant has no fields and so no capture list: the `{` after `d is North` always opens
+the block, whatever the block starts with (`if d is North { hit = true; }`).
+
 For struct-enums, `is` can also capture variant fields into local variables:
 
 <!-- from tests/reference/is-check.loft -->

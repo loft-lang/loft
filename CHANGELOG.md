@@ -263,6 +263,11 @@ git do.
 
 ### Bug fixes
 
+**`if t is A { … }` compiles.**  Testing a unit variant of a struct-enum right before a block
+was an internal compiler error, and `if t is A { v } else { 0 }` read `{ v }` as a capture list.
+A unit variant has no fields and so no capture list: its `{` opens the block, whatever the block
+starts with.  A payload variant's `{ x }` is still its capture list (loft#2168).
+
 **A `&` assigned into a `reference<T>` field stores the pointer.**  `d.r = &p` now stores
 the link exactly as the literal `Rec { r: &p }` and the plain `d.r = p` do; it used to store a
 stack address on the interpreter (a garbage record on read, nothing said) and failed to

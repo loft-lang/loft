@@ -8310,8 +8310,13 @@ impl Parser {
         let Some(field) = field else {
             return false;
         };
-        let is_field = self.data.def(variant_def_nr).attributes[1..]
+        // The first attribute is the discriminant; a unit variant has none at all (loft#2168).
+        let is_field = self
+            .data
+            .def(variant_def_nr)
+            .attributes
             .iter()
+            .skip(1)
             .any(|a| a.name == field);
         if !is_field || !self.lexer.has_token(":") {
             return false;
@@ -13690,7 +13695,13 @@ impl Parser {
             self.cl("OpConvIntFromEnum", std::slice::from_ref(code))
         };
         let disc_check = self.cl("OpEqInt", &[disc_expr, Value::Int(disc)]);
-        let is_field_capture = is_struct && self.lexer.peek_token("{") && {
+        // loft#2168 — a UNIT variant has no fields, so it has no capture list: the `{` after
+        // its test opens the block that follows, however that block starts.  Asked of it, the
+        // capture reader took the block's first name for a field (`if t is A { v } …`) and
+        // sliced the attributes of a variant that has none — an internal compiler error on
+        // `if t is A { … }`.  A payload variant's `{` IS its capture list, as documented.
+        let has_fields = is_struct && self.data.def(variant_def_nr).attributes().len() > 1;
+        let is_field_capture = has_fields && self.lexer.peek_token("{") && {
             let link = self.lexer.link();
             self.lexer.token("{");
             let first = self.lexer.has_identifier();
