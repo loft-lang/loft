@@ -250,6 +250,11 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   itself (`bx = T{…}` leaves the place with nothing to point at).
                   Overwriting a place is NOT disturbing it: `o.inner = Box{…}` writes
                   INTO the place `o.inner` already occupies, so a view of it survives.
+                  A COLLECTION field given a new value (`sc.els = [x]`, `w.a = f()`) is
+                  its container REASSIGNED: the places INSIDE it end, while a view OF the
+                  field (`c = sc.els`) names the slot and re-reads it.  The literal and
+                  the call spelling answer alike: `w.a = f()` leaves the old elements
+                  freed, so a view into them cannot survive one spelling and not the other.
                   ANY growth disturbs, not only one that provably crosses the capacity:
                   whether it reallocates is an allocator fact the author cannot see, and
                   a rule that answered differently on either side of it would give one

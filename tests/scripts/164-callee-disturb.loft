@@ -17,9 +17,9 @@
 //
 // The controls are half the file and they are what keeps the rule from becoming
 // over-approximation: a callee that touches nothing, one that writes an unrelated field, one
-// that REBUILDS the field it was handed (`(B-Disturb)`: overwriting a place is not disturbing
-// it) and one that grows a container nobody views must all leave the view ALIASING, and the
-// cells prove it by writing through the view and reading the container back.
+// that grows a SIBLING field and one that grows a container nobody views must all leave the
+// view ALIASING, and the cells prove it by writing through the view and reading the container
+// back.
 //
 // `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and
 // `LOFT_NATIVE_LEAK_CHECK=1`: all fifteen pairs are clean under every one of them, on both
@@ -177,11 +177,14 @@ fn c_other_callee() -> integer {
   sc.els[0]?.a
 }
 
-// c10 — CONTROL: the callee REBUILDS the field it was handed.  `sc.els = [x]` lowers to a
-// clear and then the appends, and `(B-Disturb)` is explicit that overwriting a place is not
-// disturbing it — so the view survives and reads the NEW element 0: 7 + 7 = 14.  Inline and
-// callee must agree, and the cell exists because the growth this rewrite emits is exactly
-// what would make a careless reader of the appends call it a disturbance.
+// c10 — the callee REBUILDS the field it was handed.  `sc.els = [x]` gives the CONTAINER a new
+// value — a clear and then the appends — which is `(B-Disturb)`'s fourth event for the places
+// inside it, so the view materialises and keeps element 0: 1 + 2 = 3.  This cell read 14 (the
+// new element 0, the view surviving as if the field were a place overwritten in place) until
+// loft#2161: that reading held only for a literal rebuild, and the same view across
+// `sc.els = f()` read the freed block (4294967407) on both backends — one program, two
+// meanings, decided by how the new value was spelled.  A view OF the field (`c = sc.els`) is
+// the place that survives; it re-reads the slot.
 fn c_rebuild_inline() -> integer {
   sc = mk(); e = sc.els[0]?;
   sc.els = [El { nm: "r", a: 7, b: 7 }];
@@ -282,7 +285,7 @@ fn main() {
   // write through it reaches the container.
   pair("c8 callee touches nothing", c_alias_inline(), c_alias_callee(), 60);
   pair("c9 unrelated field written", c_other_inline(), c_other_callee(), 61);
-  pair("c10 field rebuilt", c_rebuild_inline(), c_rebuild_callee(), 14);
+  pair("c10 field rebuilt", c_rebuild_inline(), c_rebuild_callee(), 3);
   pair("c13 sibling field grown", c_sibling_inline(200), c_sibling_callee(200), 62);
   pair("c14 container nobody views", c_unrelated_inline(200), c_unrelated_callee(200), 63);
 
