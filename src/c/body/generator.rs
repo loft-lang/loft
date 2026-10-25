@@ -52,7 +52,8 @@ impl FnWriter<'_> {
         match (name, args) {
             // The next value: the iterator's element type, its null when the generator has
             // run to its end.
-            ("OpCoroutineNext", [g, _]) => {
+            // A tuple's transport kinds follow the size: only `--native`'s channel reads them.
+            ("OpCoroutineNext", [g, _, ..]) => {
                 let Value::Var(v) = g.unspan() else {
                     return Err("a generator step on a value that is not a variable".into());
                 };
@@ -62,8 +63,12 @@ impl FnWriter<'_> {
                 let c = self
                     .cx
                     .ctype(elem)
-                    .filter(|c| !matches!(c, CType::Void | CType::Tuple(_)))
-                    .ok_or("a generator of tuples")?;
+                    .filter(|c| match c {
+                        CType::Void => false,
+                        CType::Tuple(id) => self.cx.tuple_is_plain(*id),
+                        _ => true,
+                    })
+                    .ok_or("a generator of tuples holding text or records")?;
                 let g = self.var(*v);
                 let t = self.temp(c);
                 if c == CType::Text {
@@ -92,8 +97,14 @@ impl FnWriter<'_> {
         if self.links.iter().any(|l| *l) {
             return Err("a generator with a & parameter".into());
         }
-        if self.shapes.iter().any(|c| matches!(c, CType::Tuple(_))) {
-            return Err("a generator with a tuple local".into());
+        // A frame saves and restores a tuple local as a struct copy: a move only for plain
+        // scalars.
+        if self
+            .shapes
+            .iter()
+            .any(|c| matches!(c, CType::Tuple(id) if !self.cx.tuple_is_plain(*id)))
+        {
+            return Err("a generator with a tuple local holding text or records".into());
         }
         let code = self.code;
         self.stmt(code, 1)?;

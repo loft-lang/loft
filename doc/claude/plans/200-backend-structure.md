@@ -508,16 +508,30 @@ the browser read them), so a layout is observable.
   agree, and the first differing event names the routine or the lowering that departs.  A
   debugging instrument, not the bar.  The image: files crossing backends, compared by WALKING
   the data from the root by its type, as a format change is checked — never a store's whole
-  buffer, whose unwritten bytes a claim leaves as they were (`@FR-H-Claim`).
+  buffer, whose unwritten bytes a claim leaves as they were (`@FR-H-Claim`).  Each keyed
+  layout gets a replay of its own beside the allocator's: the hash's runs one seeded sequence
+  of inserts, replacements, removals, lookups and reservations through `hash.rs` and
+  `loft_hash.h` on an integer-keyed, a text-keyed, a borrowing and a demoted table; the
+  index's through `btree.rs` and `loft_btree.h` on an integer, a shared-prefix text and a
+  two-part key, with exact and partial lookups and bounded walks; the trees' through
+  `radix_db.rs` / `trie_db.rs` and `loft_radix.h`, with outward, box and prefix walks.  Each is
+  falsified by mutating the C.  A program's stores are checked by the poison modes as well
+  (`c_sweep.py --poison`): a sanitizer sees a store as one allocation, so a stale read inside
+  it is invisible to it, and only the store's own poison makes one fail.
 - **Steps.**  (a) the trace on the Rust side; (b) the allocator ported, proved by the replay;
   (c) the release and growth routines above it ported, measured by the trace; (d) the keyed
-  layouts ported (hash, index, sorted, then spatial and trie); (e) the image —
-  `store_persist_copy`, `store_load`, a file-backed store over POSIX `mmap` (a whole-file
-  read under `-DLOFT_NO_POSIX`), the paged loaders.  Its acceptance (owner): a C program
+  layouts ported — the hash (`loft_hash.h`), the index (`loft_btree.h`), the sorted, the
+  ordered, the spatial and the trie (`loft_radix.h`); (e) the image — `store_persist_copy` and
+  `store_load` carried (`loft_image.h`; a file written by any backend read by every backend, the
+  C's image the interpreter's byte for byte) and the paged loaders (`loft_paged.h`,
+  `loft_paged_load.h`; the tree walks shared with the resident ones); still to come: a
+  file-backed store over POSIX `mmap` (a whole-file read under `-DLOFT_NO_POSIX`), the
+  reference remap of a loaded image, compaction on load.  Its acceptance (owner): a C program
   reads the store files the interpreter and a `--native` program wrote — mapped, loaded and
-  paged — and they read the C's; a cell per direction.  `store_memory()` and
-  `store_reclaim` then answer as the interpreter's do, bar the interpreter-only creation
-  site, which reads 0 as on native.
+  paged — and they read the C's; a cell per direction.  `store_memory()` is carried
+  (`Store::usage` and `Stores::memory_report`; the creation site reads `bc:0` as on native), and
+  `store_verify` (`Stores::verify_graph_ok`, the bounds-checked claim walk); `store_reclaim` is
+  still to come.  The bytes every reader keeps are [formal/structures.md](../formal/structures.md).
 
 ## B6 — optional: a minimal binary
 

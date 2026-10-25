@@ -202,6 +202,52 @@ jobs:
             dist/DAILY-BUILD-INFO.txt
           if-no-files-found: error
           retention-days: 30
+
+      # The runtime library the bundle deliberately leaves out — `libloft.rlib`, its `deps/`
+      # and the standard library, in the installed layout (scripts/runtime_bundle.sh) — so
+      # `make install-main` installs main's loft with `--native` working, without compiling it
+      # (scripts/install_main_ci.sh).  The same target directory as the bundle's binary: the
+      # library is already built as that binary's dependency, and the pair must be one build.
+      - name: Package the runtime library
+        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          CARGO_INCREMENTAL=0 scripts/lean_build.sh --lib --bin loft --target ${{ matrix.target }}
+          scripts/runtime_bundle.sh ${{ matrix.target }} dist
+
+      # A runtime that cannot link a program is the one failure the download exists to avoid,
+      # so each leg that can run its own artefact compiles one with `--native` against it.
+      - name: Smoke-test the runtime (--native)
+        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          set -e
+          case "${{ matrix.target }}" in
+            x86_64-apple-darwin)
+              echo "cross leg (Apple Silicon runner builds x86_64): not executing the runtime"
+              exit 0 ;;
+          esac
+          rm -rf _rt && mkdir _rt
+          tar -C _rt -xzf dist/loft-runtime-${{ matrix.target }}.tar.gz
+          root="_rt/loft-runtime-${{ matrix.target }}"
+          exe="$root/bin/loft"
+          case "${{ matrix.target }}" in *windows*) exe="$root/bin/loft.exe";; esac
+          echo 'fn main() { println("daily runtime ok"); }' > _rt/hello.loft
+          out=$(LOFT_TIMEOUT=600 "$exe" --native _rt/hello.loft)
+          echo "$out"
+          [ "$out" = "daily runtime ok" ] || { echo "the runtime did not compile and run its own program"; exit 1; }
+
+      - name: Upload the runtime
+        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loft-daily-runtime-${{ matrix.target }}
+          path: dist/loft-runtime-*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
       - name: Save cargo cache (main only)
         if: steps.want.outputs.run == 'yes' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

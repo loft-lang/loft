@@ -167,6 +167,20 @@ pub fn validate(decls: &[EmbedDecl]) -> Result<Vec<PageFile>, String> {
             None => out.push(entry),
         }
     }
+    // A store image is read only beside its layout sidecar (`@FR-S-Gate`): an image declared
+    // without one would be refused in the page as bare.  The sidecar `store_persist_copy` wrote
+    // beside the source travels with it under the same page name plus `.dschema`, unless the
+    // manifest names that page path itself.
+    let sidecars: Vec<PageFile> = out
+        .iter()
+        .filter_map(|f| {
+            let source = crate::schema_sidecar::dschema_path(&f.source);
+            let page_path = format!("{}.dschema", f.page_path);
+            (crate::file_access::is_file(&source) && !out.iter().any(|p| p.page_path == page_path))
+                .then_some(PageFile { page_path, source })
+        })
+        .collect();
+    out.extend(sidecars);
     if errors.is_empty() {
         Ok(out)
     } else {
@@ -305,6 +319,20 @@ mod tests {
         assert_eq!(mine[0].source, root.join(&rel));
         let elsewhere = validate(&[decl(&rel, None, "/nowhere")]);
         assert!(elsewhere.is_err(), "a root with no such file must refuse");
+    }
+
+    #[test]
+    fn a_store_image_carries_the_sidecar_beside_it() {
+        let (root, rel) = fixture("image", b"image-bytes");
+        let side = crate::schema_sidecar::dschema_path(&Path::new(&root).join(&rel));
+        crate::file_access::write(&side, b"LOFT-DSCHEMA v2\n").expect("write sidecar");
+        let files = validate(&[decl(&rel, None, &root.to_string_lossy())]).expect("valid");
+        assert_eq!(files.len(), 2, "the image and its sidecar: {files:?}");
+        assert_eq!(
+            files[1].page_path,
+            format!("{}.dschema", files[0].page_path)
+        );
+        assert_eq!(files[1].source, side);
     }
 
     #[test]

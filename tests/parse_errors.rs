@@ -3185,7 +3185,7 @@ fn keyed_partial_key_removal_through_a_nullable_collection_is_error() {
 #[test]
 fn vector_match_not_exhaustive() {
     code!("fn f(v: vector<integer>) -> integer { match v { [a] => a, [a, b] => a + b } }\nfn test() { f([1]); }")
-        .error("match on vector is not exhaustive — a slice pattern can fail (a length no arm matches); add a '_ =>' or a bare-binding final arm at vector_match_not_exhaustive:1:78");
+        .error("match on vector is not exhaustive — a slice pattern can fail (a length no arm matches); add a '_ =>' or a bare-binding final arm, or arms that together cover every length (`[]` and `[x, ..rest]`) at vector_match_not_exhaustive:1:78");
 }
 
 // @PLN35 Phase 3 (L3.7, P-Multi): comma-separated multi-pattern arms bind their captures from

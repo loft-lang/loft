@@ -445,6 +445,42 @@ struct SliceSubject<'a> {
 /// `(n, _, true) if n > 10` compared `0 > 10` and the arm silently did not match — which
 /// is why enabling the parse alone would have turned a clean compile error into a wrong
 /// answer (loft#839).
+/// `(M-Total)`'s vector clause — what one slice pattern covers: the lengths it admits (`min`
+/// alone when `exact`, every length from `min` otherwise) and whether its element patterns
+/// are total (bare names, `_`, a type capture), so the arm set can be asked whether it covers
+/// every length.  `None` from the reader where a predictive dispatch, a sub-rule or a cursor
+/// built the arm: those are not length-shaped.
+#[derive(Clone, Copy, Debug)]
+struct SliceShape {
+    min: i32,
+    exact: bool,
+    total: bool,
+}
+
+/// Do these arms, in order, cover every length a vector can have?  An exact arm covers its
+/// length, a rest arm every length from its minimum, and an arm counts only with total
+/// element patterns and no guard (`total(pat if cond) = false`).  The LAST arm must be one of
+/// them: the chain drops its test as the fallback.  The fallback is `false`: an arm set this
+/// cannot read keeps today's refusal, which names its cure.
+fn slice_arms_cover_every_length(arms: &[(Option<SliceShape>, bool)]) -> bool {
+    let Some((Some(last), false)) = arms.last() else {
+        return false;
+    };
+    if !last.total {
+        return false;
+    }
+    let total: Vec<&SliceShape> = arms
+        .iter()
+        .filter(|(_, guarded)| !guarded)
+        .filter_map(|(shape, _)| shape.as_ref())
+        .filter(|shape| shape.total)
+        .collect();
+    let Some(open_from) = total.iter().filter(|s| !s.exact).map(|s| s.min).min() else {
+        return false;
+    };
+    (0..open_from).all(|n| total.iter().any(|s| s.exact && s.min == n))
+}
+
 struct PatternArm {
     /// The pattern test — a length check, element literals, or `None` for a total pattern.
     cond: Option<Value>,
@@ -6291,7 +6327,7 @@ impl Parser {
             | Type::Text(_) => {
                 // @PLN25 DN1: a scalar match's `_` arm is USER-written (no synthesised default),
                 // so the value-level widen is safe — a `_ => null` arm makes the match nullable.
-                let tp = self.parse_scalar_match(subject, &subject_type, code);
+                let tp = self.parse_scalar_match(subject, &subject_type, code, &match_pos);
                 return self.dn1_widen_branch_null(tp, code);
             }
             // vector types — dispatch to vector match handler.
@@ -7563,6 +7599,11 @@ impl Parser {
             *result_type = joined;
         } else if !self.first_pass
             && arm_type != Type::Void
+            // loft#2170 — a `_ => null` arm is the null arm every named arm may be: it takes
+            // the result's typed null once the result type is final (`type_null_arms`), so it
+            // is not unified here.  Asked, it was refused as "cannot unify: integer and null"
+            // while `Var { .. } => null` beside the same arms was accepted.
+            && arm_type != Type::Null
             && arm_type != Type::Never
             && !self.arm_convert_reported
             && !self.match_arms_unify(result_type, &arm_type)
@@ -8310,8 +8351,13 @@ impl Parser {
         let Some(field) = field else {
             return false;
         };
-        let is_field = self.data.def(variant_def_nr).attributes[1..]
+        // The first attribute is the discriminant; a unit variant has none at all (loft#2168).
+        let is_field = self
+            .data
+            .def(variant_def_nr)
+            .attributes
             .iter()
+            .skip(1)
             .any(|a| a.name == field);
         if !is_field || !self.lexer.has_token(":") {
             return false;
@@ -11265,6 +11311,7 @@ impl Parser {
         subject: Value,
         subject_type: &Type,
         code: &mut Value,
+        match_pos: &crate::lexer::Position,
     ) -> Type {
         // Store subject in a temp var to avoid re-evaluation.
         let v = self.create_unique("match_subj", subject_type);
@@ -11461,6 +11508,53 @@ impl Parser {
                 arms.iter()
                     .any(|(pat, _, _, _)| matches!(pat, Some(Value::Boolean(x)) if x == b))
             });
+        // `(M-Total)` — a SCALAR subject's coverage is not decidable, so a match with no total
+        // arm MAY select nothing: as an expression it answers null and its type says so (`τ?`),
+        // as a statement it does nothing.  That is the rule's answer, not a fault — but a hole
+        // the author did not mean is invisible at the match itself (a lexer's `match c { 'a' =>
+        // …, 'b' => … }` skips every other character in silence), so it is said there, as
+        // ADVICE: the result is what the language promises, and the type carries the null to
+        // whoever reads the value.  `LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet
+        // (loft-lang/plans#202 P3).
+        if !self.first_pass
+            && !has_wildcard
+            && !bool_exhaustive
+            && matches!(
+                subject_type.base(),
+                Type::Integer(_) | Type::Character | Type::Text(_)
+            )
+            && crate::keys::scalar_hole_lint_enabled()
+        {
+            let names = arms.len();
+            let plural = if names == 1 { "" } else { "s" };
+            let subject_name = subject_type.source_name(&self.data);
+            let what = if matches!(result_type.base(), Type::Void | Type::Null) {
+                "the statement does nothing".to_string()
+            } else {
+                format!(
+                    "the match answers null (its type is `{}?`)",
+                    result_type.base().source_name(&self.data)
+                )
+            };
+            diagnostic_at!(
+                self.lexer,
+                match_pos,
+                Level::Advice,
+                code = "match-scalar-hole",
+                "this `match` over {subject_name} names {names} value{plural} and no `_` arm — \
+                 a value none of them names selects no arm, and {what}"
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: "add a `_ =>` arm for the values the arms do not name".to_string(),
+                condition: Some(
+                    "every value the arms do not name should take that arm's answer".to_string(),
+                ),
+                edit: None,
+                concept: "pattern matching",
+                concept_ref: "@F29",
+            });
+        }
         let has_null_arm = std::mem::replace(&mut self.null_literal_arms, saved_null_arms) > 0;
         let chain = self.build_scalar_chain(
             v,
@@ -11995,6 +12089,9 @@ impl Parser {
         // loft#1682 — a `PatternArm` carries no type; the join reconverts by this list.
         let mut arm_types: Vec<Type> = Vec::new();
         let mut has_wildcard = false;
+        // `(M-Total)`'s vector clause — each arm's length shape beside whether it is guarded, in
+        // the arms' order, so the set can be asked whether it covers every length.
+        let mut shapes: Vec<(Option<SliceShape>, bool)> = Vec::new();
         // @PLN35 PC2 — statements hoisted BEFORE the arm if-chain (evaluated once, at match-level
         // scope so a binding is visible to every arm body — native scopes cond sub-blocks away).
         // A sub-rule call goes here: `name = rule(cursor)` runs unconditionally, then each arm's
@@ -12017,6 +12114,7 @@ impl Parser {
             // `@FR-P-Multi` — the further `|` / `,` slice patterns of this arm, each its own
             // bindings and condition; the body runs under whichever matched (loft#2107).
             let mut alternatives: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
+            let mut arm_shapes: Vec<Option<SliceShape>> = Vec::new();
             if self.lexer.has_token("[") {
                 let subject = SliceSubject {
                     v,
@@ -12025,13 +12123,13 @@ impl Parser {
                     borrow_src,
                 };
                 let first_names = self.pattern_binds_pending.len();
-                self.parse_slice_pattern(
+                arm_shapes.push(self.parse_slice_pattern(
                     &subject,
                     &mut bindings,
                     &mut cond,
                     &mut elem_conds,
                     &mut prechain,
-                );
+                ));
                 alternatives = self.parse_pattern_alternatives(
                     first_names,
                     &mut bindings,
@@ -12039,13 +12137,13 @@ impl Parser {
                     |p, binds, conds| {
                         let mut cond_i = None;
                         let mut elem_i = Vec::new();
-                        p.parse_slice_pattern(
+                        arm_shapes.push(p.parse_slice_pattern(
                             &subject,
                             binds,
                             &mut cond_i,
                             &mut elem_i,
                             &mut prechain,
-                        );
+                        ));
                         conds.extend(cond_i);
                     },
                 );
@@ -12101,6 +12199,12 @@ impl Parser {
             }
             if is_total && guard_opt.is_none() {
                 has_wildcard = true;
+            }
+            // The arm's shapes, one per alternative, in the order the arms are pushed below.
+            if arm_shapes.is_empty() {
+                shapes.push((None, guard_opt.is_some()));
+            } else {
+                shapes.extend(arm_shapes.drain(..).map(|s| (s, guard_opt.is_some())));
             }
             self.expect_match_arm_arrow();
             let mut arm_code = Value::Null;
@@ -12201,24 +12305,29 @@ impl Parser {
         }
         self.lexer.token("}");
 
-        // @PLN35 Phase 2 (F6 / M-Total): a slice pattern is length-constrained, so it is
-        // non-total — a well-typed vector can always have a length no fixed arm matches.
-        // The match is exhaustive only if its final arm is total (a `_` or a bare binding,
-        // both of which set `has_wildcard` and force the arm last). Without one, a subject
-        // would fall through with no arm selected; reject it statically, mirroring the enum
-        // exhaustiveness gate in `parse_match`.
-        if !self.first_pass && !has_wildcard {
+        // @PLN35 Phase 2 (F6 / M-Total): one slice pattern is length-constrained, so it is
+        // non-total — a well-typed vector can always have a length that arm does not match.
+        // The match is exhaustive when its final arm is total (a `_` or a bare binding, both of
+        // which set `has_wildcard` and force the arm last), or — `(M-Total)`'s vector clause,
+        // loft-lang/plans#202 P4 — when the slice arms together cover every length: `[]` and
+        // `[x, ..rest]`.  The last arm's test is then dropped as the fallback, as a `_`'s is,
+        // so the join is not nullable.  Without either, a subject would fall through with no
+        // arm selected; reject it statically, mirroring the enum exhaustiveness gate.
+        let lengths_total =
+            !has_wildcard && self.match_cursor.is_none() && slice_arms_cover_every_length(&shapes);
+        let exhaustive = has_wildcard || lengths_total;
+        if !self.first_pass && !exhaustive {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "match on vector is not exhaustive — a slice pattern can fail (a length no arm matches); add a '_ =>' or a bare-binding final arm"
+                "match on vector is not exhaustive — a slice pattern can fail (a length no arm matches); add a '_ =>' or a bare-binding final arm, or arms that together cover every length (`[]` and `[x, ..rest]`)"
             );
         }
 
         // Build if-else chain from arms
         let has_null_arm = std::mem::replace(&mut self.null_literal_arms, saved_null_arms) > 0;
         self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
-        let fallback = if has_wildcard {
+        let fallback = if exhaustive {
             arms.pop().unwrap().code
         } else {
             self.null_value(&result_type)
@@ -12250,13 +12359,16 @@ impl Parser {
         cond: &mut Option<Value>,
         elem_conds: &mut Vec<Value>,
         prechain: &mut Vec<Value>,
-    ) {
+    ) -> Option<SliceShape> {
         let SliceSubject {
             v,
             elm_tp,
             elm_size,
             borrow_src,
         } = *subject;
+        // `(M-Total)` — an element sub-pattern that can fail adds a condition here; the arm's
+        // elements are total when none did.
+        let conds_at_entry = elem_conds.len();
         // Parse slice pattern elements
         // @PLN35 Phase 4.3: set when a whole-slice MULTI-element alternation built the
         // arm `cond` itself (predictive dispatch); suppresses the fixed-length gate below.
@@ -12837,6 +12949,7 @@ impl Parser {
                 }
             }
         } // end `if !multi_alt`
+        let elements_total = elem_conds.len() == conds_at_entry;
         // @PLN35 L2 — AND element sub-pattern conditions into the arm condition AFTER the
         // length check, so `&&` short-circuit never reads past the end.
         for ec in elem_conds.drain(..) {
@@ -12846,6 +12959,16 @@ impl Parser {
                 Some(c) => *cond = Some(v_if(c, ec, Value::Boolean(false))),
                 None => *cond = Some(ec),
             }
+        }
+        if multi_alt || self.match_cursor.is_some() {
+            None
+        } else {
+            let fixed = (head.len() + tail.len()) as i32;
+            Some(SliceShape {
+                min: if has_rest { fixed + rest_min } else { fixed },
+                exact: !has_rest,
+                total: elements_total,
+            })
         }
     }
 
@@ -13690,7 +13813,13 @@ impl Parser {
             self.cl("OpConvIntFromEnum", std::slice::from_ref(code))
         };
         let disc_check = self.cl("OpEqInt", &[disc_expr, Value::Int(disc)]);
-        let is_field_capture = is_struct && self.lexer.peek_token("{") && {
+        // loft#2168 — a UNIT variant has no fields, so it has no capture list: the `{` after
+        // its test opens the block that follows, however that block starts.  Asked of it, the
+        // capture reader took the block's first name for a field (`if t is A { v } …`) and
+        // sliced the attributes of a variant that has none — an internal compiler error on
+        // `if t is A { … }`.  A payload variant's `{` IS its capture list, as documented.
+        let has_fields = is_struct && self.data.def(variant_def_nr).attributes().len() > 1;
+        let is_field_capture = has_fields && self.lexer.peek_token("{") && {
             let link = self.lexer.link();
             self.lexer.token("{");
             let first = self.lexer.has_identifier();

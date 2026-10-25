@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN IMAGE WITHOUT ITS SIDECAR IS REFUSED (`@FR-S-Gate`, `@FR-L-Sound`, loft#2174).  An image's
+// `.dschema` sidecar is the only record of the layout its bytes were written with, so an image
+// with none is never read raw: a reader declaring its fields in another order would otherwise
+// read every value at another field's offset, silently.  The cell writes an image, removes its
+// sidecar, and asks every loader for it — whole (`store_load`), untrusted
+// (`store_load_untrusted`) and paged (`store_load_key`) — each must answer false and load
+// nothing.  The control writes the pair again and loads it: the same calls answer true with the
+// value written.  Held fixed: one hash of one record, a local path.
+//
+// Values hand-computed: the record written is k 1, v 10; refused loads leave length 0.
+//
+// @falsified-at: b36d0449f — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the asserts.
+// ARMED: no instrument.
+// WITNESS: each message names the loader, its answer and the length it left.
+// HOLDS: `tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft` (the pair
+//        is written together, so a bare image comes only from outside the writer).
+
+struct R { k: integer, v: integer }
+
+fn main() {
+  p = "{temp_dir() ?? "/tmp"}/loft_2174_{now()}_{ticks()}.store";
+  h: hash<R[k]> = [R { k: 1, v: 10 }];
+  assert(store_persist_copy(h, p), "the image is written");
+  delete("{p}.dschema");
+
+  w: hash<R[k]> = [];
+  whole = store_load(w, p);
+  u: hash<R[k]> = [];
+  untrusted = store_load_untrusted(u, p);
+  k: hash<R[k]> = [];
+  paged = store_load_key(k, p, 1);
+
+  assert(store_persist_copy(h, p), "the pair is written again");
+  cw: hash<R[k]> = [];
+  c_whole = store_load(cw, p);
+  ck: hash<R[k]> = [];
+  c_paged = store_load_key(ck, p, 1);
+  delete(p);
+  delete("{p}.dschema");
+
+  assert(!whole && len(w) == 0, "store_load of a bare image: {whole}, length {len(w)}");
+  assert(!untrusted && len(u) == 0, "store_load_untrusted of a bare image: {untrusted}, length {len(u)}");
+  assert(!paged && len(k) == 0, "store_load_key of a bare image: {paged}, length {len(k)}");
+  assert(c_whole && cw[1].v ?? -1 == 10, "store_load with its sidecar: {c_whole}, v {cw[1].v ?? -1}");
+  assert(c_paged && ck[1].v ?? -1 == 10, "store_load_key with its sidecar: {c_paged}, v {ck[1].v ?? -1}");
+}

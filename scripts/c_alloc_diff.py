@@ -59,7 +59,7 @@ def c(prog, d):
     return program_events(open(t, encoding="utf-8")), None
 
 def main():
-    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+    if len(sys.argv) < 2 or any(a in ("-h", "--help") for a in sys.argv[1:]):
         print(__doc__)
         return 0
     for prog in sys.argv[1:]:

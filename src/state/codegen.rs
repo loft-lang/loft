@@ -1899,7 +1899,7 @@ impl State {
         // (mirrors set_var's tuple dispatch around codegen.rs:2339).
         // The function-entry frame reserve ensures every element slot
         // is addressable.
-        let Type::Tuple(elems) = stack.function.tp(v).clone() else {
+        let Type::Tuple(elems) = stack.function.tp(v).base().clone() else {
             return;
         };
         let tuple_var_base = stack.function.stack(v);
@@ -3775,7 +3775,7 @@ impl State {
             && *value == Value::Null
         {
             self.gen_set_first_keyed_null(stack, v);
-        } else if matches!(stack.function.tp(v), Type::Tuple(_)) && *value == Value::Null {
+        } else if matches!(stack.function.tp(v).base(), Type::Tuple(_)) && *value == Value::Null {
             self.gen_set_first_tuple_null(stack, v);
         } else if matches!(stack.function.tp(v), Type::Function(..)) {
             // Plan-04 Phase B.3 atomic bundle: push the 20-byte fn-ref

@@ -123,6 +123,30 @@ static uint32_t loft_bits_next_at_or_after(const loft_bits *b, uint32_t from, in
     }
 }
 
+#ifdef LOFT_FOREIGN
+/* `FOREIGN_REC` (@PLN174): the one synthetic record id a FOREIGN store serves its bytes under —
+ * a vector handle names it in its collection slot exactly as it names a claimed record, and
+ * `loft_at` answers it from the foreign bytes.  Past any record a store can hold.  The emitter
+ * defines `LOFT_FOREIGN` only for a unit that reaches `file_map`, so no other unit pays the
+ * test in `loft_at`. */
+#define LOFT_FOREIGN_REC 0x7FFFFFF0u
+
+/* `ForeignOwner`: what keeps the foreign bytes alive, released with the last span over them. */
+typedef struct {
+    uint32_t refs;
+    void *bytes;
+    size_t n;
+    void (*release)(void *bytes, size_t n);
+} loft_fowner;
+
+/* `ForeignSpan`: `len` elements of `elem` bytes at `base`, and their owner (shared). */
+typedef struct { const uint8_t *base; uint32_t len, elem; loft_fowner *owner; } loft_fspan;
+
+/* `Foreign`: the span a store serves, the header (size word, length) a vector read expects at
+ * +0 and +4 of the record, and the collection slot that names `LOFT_FOREIGN_REC`. */
+typedef struct { loft_fspan span; uint8_t header[8]; uint32_t slot_rec, slot_pos; } loft_foreign;
+#endif
+
 /* `loft_store_t`: the `Store` fields the allocator reads, and the C runtime's own beside them
  * (`known`: the type a wrapper mint gave the store's first record, 0xFFFF for any other;
  * `protect`: the calls in flight that hold this store as an argument). */
@@ -141,6 +165,17 @@ typedef struct {
     int needs_coalesce, lazy;
     /* `Store::defined`: the buffer was zeroed when made, and a growth zeroes its new tail. */
     int defined;
+    /* `Store::park` off — a store loaded from an image parks nothing (`Store::load`). */
+    int no_park;
+    /* `Store::placed_foreign` (`@FR-H-RootExtent`): the live records placed here that are not
+     * elements of the root collection; while any lives, a clear does not reset the store and
+     * no exchange takes its content. */
+    uint32_t *placed, nplaced, placed_cap;
+#ifdef LOFT_FOREIGN
+    /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
+     * every ordinary store. */
+    loft_foreign foreign;
+#endif
 } loft_store_t;
 
 static loft_store_t *loft_stores = 0;
@@ -607,14 +642,34 @@ static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
     uint64_t inc64 = (uint64_t) s->size * 7;
     uint32_t inc = inc64 > UINT32_MAX ? UINT32_MAX / 3 : (uint32_t) (inc64 / 3);
     uint32_t size = to_size > inc ? to_size : inc;
+#ifdef LOFT_POISON
+    /* `LOFT_POISON`: the growth always MOVES the bytes and scribbles the block it leaves, which
+     * is kept, never handed back — an address taken into the store before the growth then reads
+     * the scribble instead of bytes a `realloc` would have left readable and equal. */
+    uint8_t *b = (uint8_t *) malloc((size_t) size * 8);
+    if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(b, s->buf, (size_t) s->size * 8);
+    memset(s->buf, 0xA5, (size_t) s->size * 8);
+#else
     uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) size * 8);
     if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+#endif
     if (s->defined) memset(b + (size_t) s->size * 8, 0, (size_t) (size - s->size) * 8);
     s->buf = b;
     s->size = size;
 }
 
 /* ---- claims ---- */
+
+/* `Store::poison_range` (`LOFT_POISON_CLAIM`): `len` bytes at byte `pos` of `rec` read
+ * 0xDEADBEEF, whole words only — a record id, a handle or a length read out of a claim nothing
+ * wrote is then loud.  Compiled only into a poison build. */
+#ifdef LOFT_POISON_CLAIM
+static void loft_st_poison_range(loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t len) {
+    const uint32_t v = 0xDEADBEEFu;
+    for (uint32_t i = 0; i < len / 4; i++) memcpy(s->buf + (size_t) rec * 8 + pos + 4 * i, &v, 4);
+}
+#endif
 
 static uint32_t loft_claim_block(loft_store_t *s, uint32_t pos, uint32_t size) {
     int32_t req = (int32_t) size;
@@ -812,6 +867,9 @@ static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size) {
 static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
     uint32_t pos = loft_st_claim_inner(s, size);
     LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
+#ifdef LOFT_POISON_CLAIM
+    loft_st_poison_range(s, pos, 4, (uint32_t) loft_st_i32(s, pos, 0) * 8 - 4);
+#endif
     return pos;
 }
 
@@ -835,12 +893,16 @@ static void loft_entomb(loft_store_t *s, uint32_t rec) {
 /* `Store::delete`. */
 static void loft_st_delete(loft_store_t *s, uint32_t rec) {
     LOFT_TRACE("D %llu %u\n", (unsigned long long) s->serial, rec);
+    for (uint32_t i = 0; i < s->nplaced;) {
+        if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];
+        else i++;
+    }
     if (loft_bits_remove(&s->referenced, rec)) {
         loft_entomb(s, rec);
         return;
     }
     int32_t words = loft_st_i32(s, rec, 0);
-    if (words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
+    if (!s->no_park && words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
         loft_bits_remove(&s->claims, rec);
         loft_park_block(s, rec, words);
         return;
@@ -874,6 +936,10 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
             } else {
                 loft_st_set_i32(s, rec, 0, claim - next_size);
             }
+#ifdef LOFT_POISON_CLAIM
+            /* The absorbed region promises nothing, as a claim's payload does not. */
+            loft_st_poison_range(s, rec, (uint32_t) claim * 8, (uint32_t) (loft_st_i32(s, rec, 0) - claim) * 8);
+#endif
             LOFT_TRACE("R %llu %u %d %u\n", (unsigned long long) s->serial, rec, loft_st_i32(s, rec, 0), rec);
             return rec;
         }
@@ -909,10 +975,81 @@ static void loft_st_init(loft_store_t *s) {
     s->dead_words = 0;
     loft_bits_clear(&s->lazy_free);
     loft_parked_clear(s);
+    s->nplaced = 0;
     s->needs_coalesce = 0;
     s->claimed_end = 0;
     loft_fl_insert(s, LOFT_ST_PRIMARY);
 }
+
+/* `Store::note_placed_foreign` (`@FR-H-RootExtent`). */
+static void loft_st_note_placed(loft_store_t *s, uint32_t rec) {
+    if (s->nplaced == s->placed_cap) {
+        s->placed_cap = s->placed_cap ? s->placed_cap * 2 : 4;
+        s->placed = (uint32_t *) realloc(s->placed, (size_t) s->placed_cap * 4);
+        if (!s->placed) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    s->placed[s->nplaced++] = rec;
+}
+
+#ifdef LOFT_FOREIGN
+static int loft_st_is_foreign(const loft_store_t *s) { return s->foreign.span.owner != 0; }
+
+/* `Store::foreign_addr`: field `byte` of the foreign record — the header below 8, the foreign
+ * bytes past it. */
+static uint8_t *loft_foreign_at(loft_store_t *s, uint32_t byte) {
+    if (byte < 8) return s->foreign.header + byte;
+    return (uint8_t *) (uintptr_t) (s->foreign.span.base + (byte - 8));
+}
+
+/* `Store::foreign_span`: elements [lo, hi) of the foreign bytes, clamped, the owner shared; a
+ * span with no owner when the store serves none. */
+static loft_fspan loft_st_foreign_span(loft_store_t *s, uint32_t lo, uint32_t hi) {
+    loft_fspan sp;
+    memset(&sp, 0, sizeof sp);
+    if (!loft_st_is_foreign(s)) return sp;
+    const loft_fspan *f = &s->foreign.span;
+    if (lo > f->len) lo = f->len;
+    if (hi < lo) hi = lo;
+    if (hi > f->len) hi = f->len;
+    sp.base = f->base + (size_t) lo * f->elem;
+    sp.len = hi - lo;
+    sp.elem = f->elem;
+    sp.owner = f->owner;
+    sp.owner->refs++;
+    return sp;
+}
+
+/* `Store::make_foreign`: the slot at (rec, pos) names `LOFT_FOREIGN_REC`, the header presents
+ * the span's elements, and the span (its owner reference taken) is the store's.  A record the
+ * slot named before goes back to the free tree. */
+static void loft_st_make_foreign(loft_store_t *s, uint32_t rec, uint32_t pos, loft_fspan span) {
+    if (loft_st_is_foreign(s)) { fputs("loft: make_foreign on a store that is already foreign\n", stderr); abort(); }
+    uint32_t old = loft_st_u32(s, rec, pos);
+    if (old != 0) loft_st_delete(s, old);
+    loft_st_set_u32(s, rec, pos, LOFT_FOREIGN_REC);
+    uint64_t bytes = (uint64_t) span.len * span.elem;
+    uint64_t w = (bytes + 7) / 8 + 1;
+    uint32_t words = w > UINT32_MAX ? UINT32_MAX : (uint32_t) w;
+    memcpy(s->foreign.header, &words, 4);
+    memcpy(s->foreign.header + 4, &span.len, 4);
+    s->foreign.span = span;
+    s->foreign.slot_rec = rec;
+    s->foreign.slot_pos = pos;
+}
+
+/* `Store::release_foreign`: the store stops serving the bytes, its slot names the empty vector
+ * again, and the owner goes with the last span over it. */
+static void loft_st_release_foreign(loft_store_t *s) {
+    if (!loft_st_is_foreign(s)) return;
+    loft_fowner *o = s->foreign.span.owner;
+    s->foreign.span.owner = 0;
+    loft_st_set_u32(s, s->foreign.slot_rec, s->foreign.slot_pos, 0);
+    if (--o->refs == 0) {
+        if (o->release) o->release(o->bytes, o->n);
+        free(o);
+    }
+}
+#endif
 
 /* `Store::note_referenced` (`@FR-H-Removed`). */
 static void loft_st_note_referenced(loft_store_t *s, uint32_t rec) {
@@ -921,6 +1058,53 @@ static void loft_st_note_referenced(loft_store_t *s, uint32_t rec) {
 
 static int loft_st_is_removed(const loft_store_t *s, uint32_t rec) {
     return loft_bits_contains(&s->removed, rec);
+}
+
+/* `StoreUsage`: a store's space, from a walk of its block chain. */
+typedef struct {
+    uint32_t capacity_words, claimed_words, claimed_count, free_words, free_count;
+    uint32_t largest_free_words, mergeable_free_pairs, live_end_words;
+    int walk_complete;
+} loft_usage;
+
+/* `Store::usage`: a negative header is a free block of `-size` words, a positive one a claimed
+ * record; a run of free blocks holding a parked one is the one block its flush leaves
+ * (`@FR-H-Park`), and a removed record's header word is held space, not a record. */
+static loft_usage loft_st_usage(const loft_store_t *s) {
+    loft_usage u;
+    memset(&u, 0, sizeof u);
+    u.capacity_words = s->size;
+    if (!s->live || s->size <= LOFT_ST_PRIMARY) return u;
+    uint32_t pos = LOFT_ST_PRIMARY, run_words = 0;
+    int prev_was_free = 0, run_parked = 0;
+    while (pos < s->size) {
+        int32_t claim = loft_st_i32(s, pos, 0);
+        if (claim == 0) break;
+        uint32_t sz = claim < 0 ? (uint32_t) -(int64_t) claim : (uint32_t) claim;
+        if (claim < 0) {
+            u.free_words += sz;
+            int parked = s->parked_count != 0 && loft_bits_contains(&s->parked_set, pos);
+            if (prev_was_free && (run_parked || parked)) {
+                run_words += sz;
+                run_parked = 1;
+            } else {
+                if (prev_was_free) u.mergeable_free_pairs++;
+                u.free_count++;
+                run_words = sz;
+                run_parked = parked;
+            }
+            if (run_words > u.largest_free_words) u.largest_free_words = run_words;
+            prev_was_free = 1;
+        } else {
+            u.claimed_words += sz;
+            u.claimed_count += !loft_st_is_removed(s, pos);
+            prev_was_free = 0;
+        }
+        pos += sz;
+        if (claim > 0) u.live_end_words = pos;
+    }
+    u.walk_complete = pos == s->size;
+    return u;
 }
 
 /* `Store::claim_at`: the record at exactly `pos`, `size` words, carved out of the free blocks

@@ -123,6 +123,68 @@ static void loft_text_free(loft_text *t) {
     t->cap = 0;
 }
 
+static double loft_usage_pct(uint64_t a, uint64_t b) {
+    return b == 0 ? 0.0 : 100.0 * (double) a / (double) b;
+}
+
+/* `Stores::memory_report` (`store_memory()`): every live store's space, then the eight largest
+ * by capacity (ties in store order) with their type's name from `names`; a compiled program
+ * has no bytecode positions, so the creation site reads `bc:0` as on `--native`. */
+static loft_text loft_store_memory(const char *const *names, uint32_t nnames) {
+    uint32_t live = 0;
+    uint64_t cap = 0, data = 0, fr = 0, recs = 0, free_blk = 0, mergeable = 0;
+    uint32_t *rows = (uint32_t *) malloc(sizeof(uint32_t) * (loft_nstores ? loft_nstores : 1));
+    loft_usage *us = (loft_usage *) malloc(sizeof(loft_usage) * (loft_nstores ? loft_nstores : 1));
+    if (!rows || !us) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (uint32_t i = 0; i < loft_nstores; i++) {
+        if (!loft_stores[i].live) continue;
+        loft_usage u = loft_st_usage(&loft_stores[i]);
+        us[i] = u;
+        live++;
+        cap += u.capacity_words;
+        data += u.claimed_words;
+        fr += u.free_words;
+        recs += u.claimed_count;
+        free_blk += u.free_count;
+        mergeable += u.mergeable_free_pairs;
+        /* A stable insertion by descending capacity, as `sort_by_key(Reverse(..))` orders. */
+        uint32_t at = live - 1;
+        while (at > 0 && us[rows[at - 1]].capacity_words < u.capacity_words) {
+            rows[at] = rows[at - 1];
+            at--;
+        }
+        rows[at] = i;
+    }
+    char line[512];
+    loft_text out = { 0, 0, 0 };
+#define LOFT_MB(w) ((double) (w) * 8.0 / 1048576.0)
+    int n = snprintf(line, sizeof line,
+        "stores: %u live | cap %.2f MB | data %.2f MB (%.0f%%) | free %.2f MB | records %llu | free-blocks %llu | mergeable-pairs %llu",
+        live, LOFT_MB(cap), LOFT_MB(data), loft_usage_pct(data, cap), LOFT_MB(fr),
+        (unsigned long long) recs, (unsigned long long) free_blk, (unsigned long long) mergeable);
+    loft_push(&out, line, (size_t) n);
+    for (uint32_t k = 0; k < live && k < 8; k++) {
+        uint32_t i = rows[k];
+        loft_usage u = us[i];
+        uint16_t kt = loft_stores[i].known;
+        const char *tname = kt < nnames && names[kt] ? names[kt] : "?";
+        char idx[16];
+        snprintf(idx, sizeof idx, "%u", i);
+        n = snprintf(line, sizeof line,
+            "\n  #%-5s %8.3f MB  used %3.0f%%  recs %-5u free-blk %-4u mergeable %-4u largest-free %-7uw  tail %3.0f%% inner %3.0f%%  type %s bc:0",
+            idx, LOFT_MB(u.capacity_words), loft_usage_pct(u.claimed_words, u.capacity_words),
+            u.claimed_count, u.free_count, u.mergeable_free_pairs, u.largest_free_words,
+            loft_usage_pct(u.capacity_words > u.live_end_words ? u.capacity_words - u.live_end_words : 0, u.capacity_words),
+            loft_usage_pct(u.live_end_words > u.claimed_words ? u.live_end_words - u.claimed_words : 0, u.capacity_words),
+            tname);
+        loft_push(&out, line, (size_t) n < sizeof line ? (size_t) n : sizeof line - 1);
+    }
+#undef LOFT_MB
+    free(rows);
+    free(us);
+    return out;
+}
+
 /* The order of two texts, byte by byte, a shorter prefix first (Rust's `str` order). */
 static int loft_str_cmp(loft_str a, loft_str b) {
     size_t n = a.len < b.len ? a.len : b.len;
@@ -632,17 +694,31 @@ static uint32_t loft_store_new(void) {
 }
 
 /* A record of `words` words, its payload zeroed: the C runtime's callers build on zeroed
- * records, where `Store::claim` promises no value (`@FR-H-Claim`). */
+ * records, where `Store::claim` promises no value (`@FR-H-Claim`).  `LOFT_POISON_CLAIM` leaves
+ * the claim's poison in place, so a caller that relies on the zeroing where the interpreter's
+ * does not fails there. */
 static uint32_t loft_claim(loft_store_t *s, uint32_t words) {
     if (words < 1) words = 1;
     uint32_t rec = loft_st_claim(s, words);
+#ifndef LOFT_POISON_CLAIM
     int32_t got = loft_st_i32(s, rec, 0);
     memset(s->buf + (size_t) rec * 8 + 4, 0, (size_t) got * 8 - 4);
+#endif
     return rec;
 }
 
 LOFT_HOT_INLINE uint8_t *loft_at(loft_store_t *s, uint32_t rec, uint32_t byte) {
+#ifdef LOFT_FOREIGN
+    /* `Store::read`'s intercept: the foreign record is served from the foreign bytes. */
+    if (LOFT_UNLIKELY(rec == LOFT_FOREIGN_REC)) return loft_foreign_at(s, byte);
+#endif
     return s->buf + (size_t) rec * 8 + byte;
+}
+
+/* `Store::elem_base`: where vector record `rec`'s elements begin, past its header — the foreign
+ * bytes themselves for the foreign record. */
+LOFT_HOT_INLINE uint8_t *loft_elem_base(loft_store_t *s, uint32_t rec) {
+    return loft_at(s, rec, 8);
 }
 
 LOFT_HOT_INLINE uint32_t loft_u32(loft_store_t *s, uint32_t rec, uint32_t byte) {
@@ -665,26 +741,36 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
          * which keeps its serial — its tombstones kept. */
         nr = var->store_nr;
         loft_store_t *s = &loft_stores[nr];
+#ifdef LOFT_FOREIGN
+        /* A store made again while it serves a view stops serving it. */
+        if (!s->pinned) loft_st_release_foreign(s);
+#endif
         if (s->live) kept = loft_st_kept_positions(s, &nkept);
         loft_st_init(s);
         s->live = 1;
     } else {
         nr = loft_store_new();
     }
-    uint32_t rec = loft_claim(&loft_stores[nr], (bytes + 15) / 8);
-    loft_st_entomb_kept(&loft_stores[nr], kept, nkept);
+    /* `alloc_record_into`: the root claimed, its payload zeroed — a fresh store's collection
+     * handles must read "none" — and its type tag at byte 4 (none yet). */
+    loft_store_t *s = &loft_stores[nr];
+    uint32_t rec = loft_st_claim(s, (bytes + 15) / 8);
+    memset(s->buf + (size_t) rec * 8 + 4, 0, (size_t) loft_st_i32(s, rec, 0) * 8 - 4);
+    loft_set_u32(s, rec, 4, 0xFFFFu);
+    loft_st_entomb_kept(s, kept, nkept);
     free(kept);
-    loft_stores[nr].known = 0xFFFF;
+    s->known = 0xFFFF;
     var->store_nr = (uint16_t) nr;
     var->rec = rec;
     var->pos = 8;
 }
 
-/* OpDatabase of a record type: the store remembers the type its root was minted as, which
- * tells a move (`loft_swap_in`) its own store from another. */
+/* OpDatabase of a record type: the root carries the type it was minted as, which tells a move
+ * (`loft_swap_in`) its own store from another. */
 static void loft_database_typed(loft_ref *var, uint32_t bytes, uint16_t tp) {
     loft_database(var, bytes);
     loft_stores[var->store_nr].known = tp;
+    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, tp);
 }
 
 /* OpDatabase of a vector wrapper (`main_vector<T>`, Stores::mint_at_place, @FR-R-Place): a
@@ -726,6 +812,18 @@ static void loft_free_ref(loft_ref r) {
     if (s->pinned || !s->live) return;
     s->live = 0;
     LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
+#ifdef LOFT_FOREIGN
+    /* A foreign store's bytes go with the handle: the owner drops here. */
+    loft_st_release_foreign(s);
+#endif
+#ifdef LOFT_POISON
+    /* `LOFT_POISON` (free_named): every byte past the first word reads 0xDEADBEEF, so a stale
+     * reference into the freed store reads loud garbage. */
+    {
+        static const uint8_t poison[4] = { 0xEF, 0xBE, 0xAD, 0xDE };
+        for (size_t off = 8; off < (size_t) s->size * 8; off++) s->buf[off] = poison[off & 3];
+    }
+#endif
 }
 
 /* ── Generators (@F34, the interpreter's coroutines) ──
@@ -1085,6 +1183,7 @@ LOFT_HOT_INLINE loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
  * base, read once before a loop that writes no store but in place — no record moves and no
  * length changes inside it — so an element read is one bounds test and one load. */
 typedef struct { uint16_t store_nr; uint32_t rec; int64_t len; uint8_t *base; } loft_vh;
+/* `base` is the element base (`Store::elem_base`), past the record's header. */
 
 LOFT_HOT_INLINE loft_vh loft_vh_of(loft_ref v) {
     loft_vh h;
@@ -1098,7 +1197,7 @@ LOFT_HOT_INLINE loft_vh loft_vh_of(loft_ref v) {
     if (r == 0) return h;
     h.rec = r;
     h.len = loft_u32(s, r, 4);
-    h.base = loft_at(s, r, 0);
+    h.base = loft_elem_base(s, r);
     return h;
 }
 
@@ -1129,28 +1228,28 @@ LOFT_HOT_INLINE int64_t loft_vh_get_int(loft_vh h, uint32_t size, int64_t from, 
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return LOFT_NULL;
     int64_t v;
-    memcpy(&v, h.base + 8 + (size_t) f * size + fld, 8);
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
     return v;
 }
 
 LOFT_HOT_INLINE void loft_vh_set_int(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return;
-    memcpy(h.base + 8 + (size_t) f * size + fld, &v, 8);
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
 LOFT_HOT_INLINE double loft_vh_get_float(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return (double) NAN;
     double v;
-    memcpy(&v, h.base + 8 + (size_t) f * size + fld, 8);
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
     return v;
 }
 
 LOFT_HOT_INLINE void loft_vh_set_float(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return;
-    memcpy(h.base + 8 + (size_t) f * size + fld, &v, 8);
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
 /* ops::op_negate_long: null stays null. */
@@ -1189,10 +1288,43 @@ static void loft_free_displaced(loft_ref displaced, loft_ref witness) {
     loft_free_ref(displaced);
 }
 
+/* OpFreeRef of a variable: its store released and the variable reset to the null sentinel, as
+ * native's emitter resets it (and the bytecode writer's `OpInitRefSentinel` after an owned
+ * rebind's free): a later free of the same variable — the next pass's pre-build free — is then
+ * a no-op, where it would otherwise release whatever store reused the slot meanwhile. */
+static void loft_free_var(loft_ref *v) {
+    if (v->store_nr == 0xFFFF) return;
+    loft_free_ref(*v);
+    v->store_nr = 0xFFFF;
+}
+
+/* OpFreeRefIfDistinct of a variable: released and reset when it names another store than the
+ * witness (native's `OpFreeRefIfDistinctEmitter`). */
+static void loft_free_var_distinct(loft_ref *v, loft_ref witness) {
+    if (v->store_nr == witness.store_nr || v->store_nr == 0xFFFF) return;
+    if (!loft_free_protected(*v)) loft_free_ref(*v);
+    v->store_nr = 0xFFFF;
+}
+
+/* `State::bind_fn_ref_result` / native's `cr_fnref_minted`: was the record a call through a
+ * function value handed back MINTED by that call — a store made after `since` — rather than an
+ * argument or a capture that predates it (or the closure's own record)?  A null is adopted as
+ * the null it is. */
+static int loft_fnref_minted(loft_ref r, uint64_t since, loft_ref clos) {
+    if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= loft_nstores) return 1;
+    if (clos.store_nr != 0xFFFF && r.store_nr == clos.store_nr) return 0;
+    if (!loft_stores[r.store_nr].live) return 1;
+    return loft_stores[r.store_nr].serial > since;
+}
+
 /* vector::clear_vector: an absent slot becomes the empty vector; a present one length 0. */
 static void loft_vec_clear(loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
     loft_store_t *s = loft_store_of(v);
+#ifdef LOFT_FOREIGN
+    /* A view of foreign bytes is dropped by its clear, never written. */
+    if (loft_st_is_foreign(s)) { loft_st_release_foreign(s); return; }
+#endif
     if (loft_u32(s, v.rec, v.pos) == 0xFFFFFFFFu) { loft_set_u32(s, v.rec, v.pos, 0); return; }
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r != 0) loft_set_u32(s, r, 4, 0);
@@ -1251,12 +1383,20 @@ static int loft_vec_absent(loft_ref v) {
 
 /* OpGetText (Store::get_str): the field holds a string record — its length at byte 4, its
  * bytes from byte 8 — and 0 for the null text. */
+/* Store::get_str: the string record `srec` (its length @4, its bytes from @8); null for no
+ * record and for a length that runs past the store, so a corrupt record reads as null, never
+ * past the buffer. */
+static loft_str loft_store_str(loft_store_t *s, uint32_t srec) {
+    if (srec == 0 || srec > 0x7FFFFFFFu) return loft_null_text();
+    uint32_t len = loft_u32(s, srec, 4);
+    if (len / 8 + srec > s->size) return loft_null_text();
+    return loft_lit((const char *) loft_at(s, srec, 8), len);
+}
+
 static loft_str loft_get_text(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return loft_null_text();
     loft_store_t *s = loft_store_of(r);
-    uint32_t srec = loft_u32(s, r.rec, r.pos + fld);
-    if (srec == 0 || srec > 0x7FFFFFFFu) return loft_null_text();
-    return loft_lit((const char *) loft_at(s, srec, 8), loft_u32(s, srec, 4));
+    return loft_store_str(s, loft_u32(s, r.rec, r.pos + fld));
 }
 
 /* OpSetText (Store::set_str): a new string record in the record's store.  A value that lives
@@ -1269,7 +1409,35 @@ static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
         copy = loft_text_own(v);
         v = loft_view(&copy);
     }
-    uint32_t srec = loft_claim(s, (uint32_t) ((v.len + 15) / 8));
+    uint32_t srec = loft_st_claim(s, (uint32_t) ((v.len + 15) / 8));
+    loft_set_u32(s, srec, 4, (uint32_t) v.len);
+    if (v.len) memcpy(loft_at(s, srec, 8), v.p, v.len);
+    loft_set_u32(s, r.rec, r.pos + fld, srec);
+    loft_text_free(&copy);
+}
+
+/* OpSetTextReplace (`Store::refill_str`): the text the field held is overwritten where it lies
+ * when the new one fits its record, and released otherwise (`@FR-H-TextReplace`). */
+static void loft_refill_text(loft_ref r, uint32_t fld, loft_str v) {
+    if (r.rec == 0) return;
+    loft_store_t *s = loft_store_of(r);
+    loft_text copy = { 0, 0, 0 };
+    if (v.len && v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
+        copy = loft_text_own(v);
+        v = loft_view(&copy);
+    }
+    uint32_t old = loft_u32(s, r.rec, r.pos + fld);
+    if (old != 0) {
+        int32_t words = loft_st_i32(s, old, 0);
+        if (words > 0 && v.len + 8 <= (size_t) words * 8) {
+            loft_set_u32(s, old, 4, (uint32_t) v.len);
+            if (v.len) memcpy(loft_at(s, old, 8), v.p, v.len);
+            loft_text_free(&copy);
+            return;
+        }
+        loft_st_delete(s, old);
+    }
+    uint32_t srec = loft_st_claim(s, (uint32_t) ((v.len + 15) / 8));
     loft_set_u32(s, srec, 4, (uint32_t) v.len);
     if (v.len) memcpy(loft_at(s, srec, 8), v.p, v.len);
     loft_set_u32(s, r.rec, r.pos + fld, srec);
@@ -1287,8 +1455,20 @@ static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
 #define LOFT_T_CHILD 5
 #define LOFT_T_HASH 6
 #define LOFT_T_INDEX 7
+#define LOFT_T_ORDERED 8
+#define LOFT_T_RADIX 9
+#define LOFT_T_TRIE 10
+/* A stored reference: copied and released as a scalar, its store number checked by a verify. */
+#define LOFT_T_DBREF 11
 
-typedef struct { uint16_t pos; uint16_t type; } loft_fld;
+/* A key part (keys::Key): its kind (negative: descending), its byte position in the element and
+ * the start a narrow width counts from. */
+typedef struct { int8_t type; uint16_t pos; int32_t start; } loft_key;
+
+/* A struct field: its byte position, its type, whether it is a VIEW — a member of a linked
+ * group that borrows its records from a sibling (`other_indexes`' marker) — and whether it is
+ * hidden (a `#`-named field, which `type_at` passes over). */
+typedef struct { uint16_t pos; uint16_t type; uint8_t view; uint8_t hidden; } loft_fld;
 typedef struct {
     uint8_t kind;
     uint16_t size;             /* the type's bytes */
@@ -1297,7 +1477,19 @@ typedef struct {
     const loft_fld *fields;    /* a struct's fields */
     const uint16_t *variants;  /* a struct-enum's variant types, 0xFFFF for a unit variant */
     uint8_t owns_heap;         /* Stores::type_owns_heap: a value of it owns a claim of its own */
+    const loft_key *keys;      /* a keyed collection's key parts */
+    uint8_t nk;
+    uint8_t linked;            /* Type::linked: a sibling or a stored reference names it by record */
 } loft_tdesc;
+
+/* The hash's, the index's and the trees' halves of a copy and a release (loft_hash.h,
+ * loft_btree.h, loft_radix.h). */
+static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to);
+static void loft_hash_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
+static void loft_ix_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to);
+static void loft_ix_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
+static void loft_rx_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to);
+static void loft_rx_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
 
 /* Copy `n` bytes between two places that may share a buffer a claim could move. */
 static void loft_copy_bytes(loft_ref to, uint32_t to_off, loft_ref from, uint32_t from_off, size_t n) {
@@ -1313,9 +1505,9 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
     case LOFT_T_TEXT: {
         uint32_t cur = loft_u32(fs, from.rec, from.pos);
         if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
-        loft_text tmp = loft_text_own(loft_lit((const char *) loft_at(fs, cur, 8), loft_u32(fs, cur, 4)));
+        loft_text tmp = loft_text_own(loft_store_str(fs, cur));
         loft_store_t *ts = loft_store_of(to);
-        uint32_t srec = loft_claim(ts, (uint32_t) ((tmp.len + 15) / 8));
+        uint32_t srec = loft_st_claim(ts, (uint32_t) ((tmp.len + 15) / 8));
         loft_set_u32(ts, srec, 4, (uint32_t) tmp.len);
         if (tmp.len) memcpy(loft_at(ts, srec, 8), tmp.p, tmp.len);
         loft_set_u32(ts, to.rec, to.pos, srec);
@@ -1332,12 +1524,12 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         if (cur == 0 || cur == 0xFFFFFFFFu) { loft_set_u32(loft_store_of(to), to.rec, to.pos, cur); return; }
         uint32_t len = loft_u32(fs, cur, 4);
         uint32_t size = T[d->elem].size;
-        uint32_t into = loft_claim(loft_store_of(to), 1 + (uint32_t) (((uint64_t) size * len + 7) / 8));
+        uint32_t into = loft_st_claim(loft_store_of(to), 1 + (uint32_t) (((uint64_t) size * len + 7) / 8));
         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
         loft_ref src_v = { from.store_nr, cur, 0 };
         loft_ref dst_v = { to.store_nr, into, 0 };
         loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);
-        if (T[d->elem].kind == LOFT_T_SCALAR) return;
+        if (T[d->elem].kind == LOFT_T_SCALAR || T[d->elem].kind == LOFT_T_DBREF) return;
         for (uint32_t i = 0; i < len; i++) {
             loft_ref a = { from.store_nr, cur, 8 + i * size };
             loft_ref b = { to.store_nr, into, 8 + i * size };
@@ -1351,29 +1543,35 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         return;
     }
     case LOFT_T_HASH:
-    case LOFT_T_INDEX: {
-        /* The table (or the key-ordered array) is copied as it is — the same keys hash to the
-         * same slots — and each entry it names is copied into a record of the destination's. */
+        loft_hash_copy_claims(T, tp, from, to);
+        return;
+    case LOFT_T_INDEX:
+        loft_ix_copy_claims(T, tp, from, to);
+        return;
+    case LOFT_T_RADIX:
+    case LOFT_T_TRIE:
+        loft_rx_copy_claims(T, tp, from, to);
+        return;
+    case LOFT_T_ORDERED: {
+        /* Stores::copy_claims_array_body: a slot list of the source's length, each record it
+         * names copied into a record of the destination's. */
         uint32_t cur = loft_u32(fs, from.rec, from.pos);
         if (cur == 0 || cur == 0xFFFFFFFFu) { loft_set_u32(loft_store_of(to), to.rec, to.pos, cur); return; }
-        int32_t claimed;
-        memcpy(&claimed, loft_at(fs, cur, 0), 4);
-        uint32_t into = loft_claim(loft_store_of(to), (uint32_t) claimed);
-        memmove(loft_at(loft_store_of(to), into, 4), loft_at(fs, cur, 4), (size_t) claimed * 8 - 4);
+        uint32_t len = loft_u32(fs, cur, 4), size = T[d->elem].size;
+        uint32_t into = loft_st_claim(loft_store_of(to), 1 + (len + 1) / 2);
         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
-        int hash = d->kind == LOFT_T_HASH;
-        uint32_t first = hash ? 16 : 8;
-        uint32_t count = loft_u32(loft_store_of(to), into, hash ? 8 : 4);
-        uint32_t size = T[d->elem].size;
-        for (uint32_t i = 0; i < count; i++) {
-            uint32_t r = loft_u32(loft_store_of(to), into, first + i * 4);
-            if (r == 0 || r == 0xFFFFFFFFu) continue;
-            uint32_t nr = loft_claim(loft_store_of(to), 1 + (size + 7) / 8);
-            loft_ref a = { from.store_nr, r, 8 };
-            loft_ref b = { to.store_nr, nr, 8 };
+        loft_set_u32(loft_store_of(to), into, 4, len);
+        for (uint32_t i = 0; i < len; i++) {
+            uint32_t elm = loft_u32(loft_store_of(from), cur, 8 + 4 * i);
+            if (elm == 0) {
+                loft_set_u32(loft_store_of(to), into, 8 + 4 * i, 0);
+                continue;
+            }
+            loft_ref a = { from.store_nr, elm, 8 };
+            loft_ref b = { to.store_nr, loft_st_claim(loft_store_of(to), 1 + (size + 7) / 8), 8 };
             loft_copy_bytes(b, 0, a, 0, size);
+            loft_set_u32(loft_store_of(to), into, 8 + 4 * i, b.rec);
             loft_copy_claims(T, d->elem, a, b);
-            loft_set_u32(loft_store_of(to), into, first + i * 4, nr);
         }
         return;
     }
@@ -1381,7 +1579,7 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         uint32_t cur = loft_u32(fs, from.rec, from.pos);
         if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
         uint32_t size = T[d->elem].size;
-        uint32_t into = loft_claim(loft_store_of(to), size);
+        uint32_t into = loft_st_claim(loft_store_of(to), size);
         loft_ref a = { from.store_nr, cur, 8 };
         loft_ref b = { to.store_nr, into, 8 };
         loft_copy_bytes(b, 0, a, 0, size);
@@ -1406,7 +1604,7 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
     if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
     if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
-    if (a->protect || b->protect) return 0;
+    if (a->protect || b->protect || a->nplaced || b->nplaced) return 0;
     if (!loft_st_holds_only_root(b)) return 0;
     /* `Store::swap_contents`: the content moves, each slot keeps its serial. */
     loft_store_t t = *a;
@@ -1419,15 +1617,142 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
     return 1;
 }
 
+static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
+
 /* OpCopyRecord's flags: bit 0 frees the source, bit 1 says the type may move (loft_swap_in). */
+#ifdef LOFT_FOREIGN
+static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o);
+#endif
+
 static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst, int flags) {
-    int free_source = flags & 1;
+    int free_source = flags & 1, fresh_dest = flags & 4;
     if (src.store_nr == dst.store_nr && src.rec == dst.rec && src.pos == dst.pos) return;
-    if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0) return;
+    if (src.store_nr == 0xFFFF) {
+        /* `Stores::copy_null_into`: a fresh destination is written absent. */
+        if (fresh_dest && dst.store_nr != 0xFFFF && dst.rec != 0)
+            memset(loft_at(loft_store_of(dst), dst.rec, dst.pos), 0, T[tp].size);
+        return;
+    }
+    if (dst.store_nr == 0xFFFF || dst.rec == 0) {
+        if (free_source && dst.store_nr != src.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+        return;
+    }
+    if (src.rec == 0) return;
+#ifdef LOFT_FOREIGN
+    /* `@FR-Const-Foreign` (State::do_copy_record): a vector read out of a foreign store is copied
+     * element by element, as a bind of it copies — its bytes lie outside the store's blocks,
+     * where the record copy would read a record that is not there. */
+    if (T[tp].kind == LOFT_T_VECTOR && loft_st_is_foreign(loft_store_of(src))) {
+        loft_vec_add(T, T[tp].elem, dst, src);
+        return;
+    }
+#endif
     if (free_source && (flags & 2) && loft_swap_in(tp, src, dst)) return;
+    /* The destination's previous content goes first, unless it is fresh (`COPY_FRESH_DEST`). */
+    if (!fresh_dest) loft_remove_claims(T, tp, dst);
     loft_copy_bytes(dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, dst);
     if (free_source && src.store_nr != dst.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+}
+
+/* OpInsertVector (vector::insert_vector): room for one element of `size` at `index` (negative
+ * from the end), the elements from there on shifted up; the null reference for an index outside
+ * 0..=len.  The caller writes the element's defaults (`insert_vector_element`). */
+static loft_ref loft_vec_insert(loft_ref v, uint32_t size, int64_t index) {
+    if (v.store_nr == 0xFFFF || v.rec == 0) return loft_ref_null();
+    int64_t len = loft_vec_len(v);
+    int64_t real = index < 0 ? index + len : index;
+    if (real < 0 || real > len) return loft_ref_null();
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    uint32_t nl;
+    if (r == 0) {
+        r = loft_claim(s, loft_vec_cap_words(11, size));
+        loft_set_u32(s, v.rec, v.pos, r);
+        nl = 1;
+    } else {
+        nl = (uint32_t) len + 1;
+        uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(nl, size));
+        if (nr != r) {
+            loft_set_u32(s, v.rec, v.pos, nr);
+            r = nr;
+        }
+        if (len > real)
+            memmove(loft_at(s, r, 8 + (uint32_t) (real + 1) * size), loft_at(s, r, 8 + (uint32_t) real * size),
+                    (size_t) (len - real) * size);
+    }
+    loft_set_u32(s, r, 4, nl);
+    loft_ref e = { v.store_nr, r, 8 + (uint32_t) real * size };
+    return e;
+}
+
+/* OpReserveVector (vector::reserve_vector): room for `count` elements (at least 11), the record
+ * moved if it has to grow; a negative count reserves nothing. */
+static void loft_vec_reserve(loft_ref v, int64_t count, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+    if (count < 0 || count > (int64_t) UINT32_MAX) return;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t words = loft_vec_cap_words(count < 11 ? 11 : (uint32_t) count, size);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) {
+        r = loft_claim(s, words);
+        loft_set_u32(s, v.rec, v.pos, r);
+        loft_set_u32(s, r, 4, 0);
+        return;
+    }
+    uint32_t nr = loft_st_resize(s, r, words);
+    if (nr != r) loft_set_u32(s, v.rec, v.pos, nr);
+}
+
+#ifdef LOFT_FOREIGN
+static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size);
+#endif
+
+/* OpKeepRange (Stores::vector_keep_range): `v = v[lo..hi]` of scalar elements, kept in place —
+ * the span moved to the front of its record and the length set.  A foreign view takes the copy
+ * form: the span copied out, the view dropped, the span appended (`append_span`). */
+static void loft_vec_keep_range(loft_ref v, int64_t lo, int64_t hi, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+    int64_t n = loft_vec_len(v);
+    lo = lo < 0 ? 0 : lo > n ? n : lo;
+    hi = hi < lo ? lo : hi > n ? n : hi;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return;
+    size_t bytes = (size_t) (hi - lo) * size;
+#ifdef LOFT_FOREIGN
+    if (loft_st_is_foreign(s)) {
+        uint8_t *span = (uint8_t *) malloc(bytes ? bytes : 1);
+        if (!span) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(span, loft_at(s, r, 8 + (uint32_t) lo * size), bytes);
+        loft_vec_clear(v);
+        if (hi > lo) {
+            loft_ref e = loft_vec_append(v, size);
+            loft_vec_set_size(v, (uint32_t) (hi - lo), size);
+            loft_store_t *d = loft_store_of(v);
+            memcpy(loft_at(d, loft_collection_rec(d, v.rec, v.pos), e.pos), span, bytes);
+        }
+        free(span);
+        return;
+    }
+#endif
+    if (bytes) memmove(loft_at(s, r, 8), loft_at(s, r, 8 + (uint32_t) lo * size), bytes);
+    loft_set_u32(s, r, 4, (uint32_t) (hi - lo));
+}
+
+/* OpMoveField (Stores::move_field_out): a field's value moved into `dst` — within one store its
+ * bytes relocate; across two the destination takes a deep copy and the source releases what it
+ * held.  Either way the source is left zeroed. */
+static void loft_move_field(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst) {
+    if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0
+        || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return;
+    uint32_t size = T[tp].size;
+    loft_copy_bytes(dst, 0, src, 0, size);
+    if (src.store_nr != dst.store_nr) {
+        loft_copy_claims(T, tp, src, dst);
+        loft_remove_claims(T, tp, src);
+    }
+    if (size) memset(loft_at(loft_store_of(src), src.rec, src.pos), 0, size);
 }
 
 /* OpRemoveVector (vector::remove_vector): the element at `index` (negative from the end) goes,
@@ -1489,7 +1814,7 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
         loft_ref e = loft_vec_append(v, size);
         loft_ref a = { v.store_nr, loft_collection_rec(loft_store_of(v), v.rec, v.pos), 8 + (length - 1) * size };
         loft_copy_bytes(e, 0, a, 0, size);
-        if (T[ctp].kind != LOFT_T_SCALAR) loft_copy_claims(T, ctp, a, e);
+        if (T[ctp].kind != LOFT_T_SCALAR && T[ctp].kind != LOFT_T_DBREF) loft_copy_claims(T, ctp, a, e);
         loft_vec_finish(v);
     }
 }
@@ -1499,9 +1824,11 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
 /* Stores::remove_claims (`remove_claims_mode`, `remove_struct_claims` and the owned walk): every
  * claim the value of type `tp` at `r` owns is deleted, children before the record that holds
  * them, and each collection field is left empty — the order the interpreter deletes in, which
- * decides where later claims land.  The hash and index tables are the C's own until their
- * layouts are ported: their field is emptied and their records kept. */
-static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+ * decides where later claims land.  A `borrowed` collection — a view member of a linked group —
+ * releases its own storage and none of the records it names. */
+static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
+
+static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     const loft_tdesc *d = &T[tp];
     loft_store_t *s = loft_store_of(r);
@@ -1513,16 +1840,17 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
         }
         return;
     }
-    if (d->kind == LOFT_T_VECTOR || d->kind == LOFT_T_CHILD || d->kind == LOFT_T_HASH || d->kind == LOFT_T_INDEX) {
+    if (d->kind == LOFT_T_VECTOR || d->kind == LOFT_T_CHILD || d->kind == LOFT_T_HASH || d->kind == LOFT_T_INDEX ||
+        d->kind == LOFT_T_ORDERED || d->kind == LOFT_T_RADIX || d->kind == LOFT_T_TRIE) {
         /* An absent collection slot owns nothing and reads as empty afterwards. */
         if (loft_u32(s, r.rec, r.pos) == 0xFFFFFFFFu) { loft_set_u32(s, r.rec, r.pos, 0); return; }
     }
-    if (!d->owns_heap) return;
+    if (!borrowed && !d->owns_heap) return;
     switch (d->kind) {
     case LOFT_T_STRUCT:
         for (uint16_t i = 0; i < d->n; i++) {
-            if (!T[d->fields[i].type].owns_heap) continue;
-            loft_remove_claims(T, d->fields[i].type, loft_field(r, d->fields[i].pos));
+            if (!d->fields[i].view && !T[d->fields[i].type].owns_heap) continue;
+            loft_remove_claims_mode(T, d->fields[i].type, loft_field(r, d->fields[i].pos), d->fields[i].view);
         }
         return;
     case LOFT_T_VECTOR: {
@@ -1556,13 +1884,39 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
         return;
     }
     case LOFT_T_HASH:
+        loft_hash_remove_claims(T, tp, r, borrowed);
+        return;
     case LOFT_T_INDEX:
+        loft_ix_remove_claims(T, tp, r, borrowed);
+        return;
+    case LOFT_T_RADIX:
+    case LOFT_T_TRIE:
+        loft_rx_remove_claims(T, tp, r, borrowed);
+        return;
+    case LOFT_T_ORDERED: {
+        /* Every record the slot list names (not a view's), then the list. */
+        uint32_t cur = loft_u32(s, r.rec, r.pos);
+        if (cur != 0) {
+            if (!borrowed) {
+                for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
+                    uint32_t elm = loft_u32(s, cur, 8 + 4 * i);
+                    if (elm == 0) continue;
+                    loft_ref e = { r.store_nr, elm, 8 };
+                    loft_remove_claims(T, d->elem, e);
+                    loft_st_delete(s, elm);
+                }
+            }
+            loft_st_delete(s, cur);
+        }
         loft_set_u32(s, r.rec, r.pos, 0);
         return;
+    }
     default:
         return;
     }
 }
+
+static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) { loft_remove_claims_mode(T, tp, r, 0); }
 
 /* vector::reached_capacity: the elements `v`'s claim holds room for, 0 when it has none. */
 static uint32_t loft_vec_reached(loft_ref v, uint32_t size) {
@@ -1581,6 +1935,10 @@ static uint32_t loft_vec_reached(loft_ref v, uint32_t size) {
 static void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
     loft_store_t *s = loft_store_of(v);
+#ifdef LOFT_FOREIGN
+    /* A local bound to a view: the clear drops it, and the store is an ordinary empty one. */
+    if (loft_st_is_foreign(s)) { loft_st_release_foreign(s); return; }
+#endif
     if (v.rec == 1) {
         uint16_t kt = s->known;
         int one_field = kt < loft_ntypes && T[kt].kind == LOFT_T_STRUCT && T[kt].n == 1;
@@ -1593,10 +1951,11 @@ static void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, lo
         uint16_t elem = vec_tp < loft_ntypes && T[vec_tp].kind == LOFT_T_VECTOR ? T[vec_tp].elem : 0xFFFF;
         if (elem != 0xFFFF && T[elem].owns_heap) {
             uint32_t size = T[elem].size;
-            if (one_field) {
+            if (one_field && s->nplaced == 0) {
                 uint32_t reached = loft_vec_reached(v, size);
                 loft_st_init(s);
-                uint32_t root = loft_claim(s, 1 + (T[kt].size + 7u) / 8);
+                uint32_t root = loft_st_claim(s, 1 + (T[kt].size + 7u) / 8);
+                memset(s->buf + (size_t) root * 8 + 4, 0, (size_t) loft_st_i32(s, root, 0) * 8 - 4);
                 loft_set_u32(s, root, 4, kt);
                 loft_vec_prealloc(v, reached, size);
                 return;
@@ -1746,9 +2105,7 @@ static int loft_cmp_text_rec(const void *a, const void *b) {
     memcpy(&x, a, 4);
     memcpy(&y, b, 4);
     loft_store_t *s = loft_sort_store;
-    loft_str p = x ? loft_lit((const char *) loft_at(s, x, 8), loft_u32(s, x, 4)) : loft_null_text();
-    loft_str q = y ? loft_lit((const char *) loft_at(s, y, 8), loft_u32(s, y, 4)) : loft_null_text();
-    return loft_str_cmp(p, q);
+    return loft_str_cmp(loft_store_str(s, x), loft_store_str(s, y));
 }
 
 /* OpSortVector (vector::sort_vector, sort_text_vector): ascending, by the element's width and
@@ -2625,8 +2982,26 @@ static loft_text loft_text_from_bytes(loft_ref v) {
     return out;
 }
 
-/* OpSliceVector / OpSliceView (Stores::vector_slice; C has no foreign stores, so a view is the
- * copy): the elements [lo, hi) of `o`, clamped to it, appended to `v`.  Scalar elements only. */
+/* text_from_byte_range (Stores::text_from_bytes_range): the bytes [lo, hi) of a vector<u8> as a
+ * text, a negative bound counting from the end as `bytes[lo..hi]` does (@FR-Slice-Value); bytes
+ * that are not UTF-8, or an empty range, give the empty text. */
+static loft_text loft_text_from_byte_range(loft_ref v, int64_t lo, int64_t hi) {
+    loft_text out = { 0, 0, 0 };
+    int64_t n = loft_vec_len(v);
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0 || n == 0) return out;
+    lo = lo < 0 ? (lo + n < 0 ? 0 : lo + n) : (lo > n ? n : lo);
+    hi = hi < 0 ? (hi + n < 0 ? 0 : hi + n) : (hi > n ? n : hi);
+    if (hi <= lo) return out;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return out;
+    const unsigned char *p = loft_elem_base(s, r) + lo;
+    if (loft_utf8_valid(p, (size_t) (hi - lo))) loft_push(&out, (const char *) p, (size_t) (hi - lo));
+    return out;
+}
+
+/* OpSliceVector (Stores::vector_slice): the elements [lo, hi) of `o`, clamped to it, appended to
+ * `v`.  Scalar elements only. */
 static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || o.store_nr == 0xFFFF || o.rec == 0 || o.pos == 0) return;
     int64_t n = loft_vec_len(o);
@@ -2642,9 +3017,35 @@ static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint3
     }
 }
 
+/* OpSliceView (Stores::vector_slice_view): `v = o[lo..hi]` bound to a local that owns its store —
+ * when `o` serves foreign bytes the local's store becomes a VIEW of the span, no copy, the span
+ * sharing the owner; otherwise the copy loft_vec_slice makes.  `-DLOFT_NO_FOREIGN_VIEW` is the
+ * interpreter's LOFT_NO_FOREIGN_VIEW: the copy everywhere. */
+static void loft_vec_slice_view(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint32_t size) {
+#if defined(LOFT_FOREIGN) && !defined(LOFT_NO_FOREIGN_VIEW)
+    if (v.store_nr != 0xFFFF && v.rec != 0 && v.pos != 0 && o.store_nr != 0xFFFF && o.rec != 0
+        && o.pos != 0 && v.store_nr != o.store_nr) {
+        int64_t n = loft_vec_len(o);
+        int64_t l = lo < 0 ? 0 : lo > n ? n : lo;
+        int64_t h = hi < l ? l : hi > n ? n : hi;
+        if (h > l && loft_st_is_foreign(loft_store_of(o))) {
+            loft_fspan span = loft_st_foreign_span(loft_store_of(o), (uint32_t) l, (uint32_t) h);
+            loft_store_t *s = loft_store_of(v);
+            loft_st_release_foreign(s);
+            loft_st_make_foreign(s, v.rec, v.pos, span);
+            return;
+        }
+    }
+#endif
+    loft_vec_slice(v, o, lo, hi, size);
+}
+
 /* OpPlaceRecord (Stores::place_record_prefilled): a `tp` record claimed inside the host's store,
- * prefilled with its defaults, or in a fresh store of its own when there is no host. */
-static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n) {
+ * prefilled with its defaults, or in a fresh store of its own when there is no host.  `foreign`:
+ * the host's root is a vector of another element type, so the record is noted
+ * (`@FR-H-RootExtent`). */
+static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n,
+                                  int foreign) {
     loft_ref r;
     if (host.store_nr == 0xFFFF || host.rec == 0 || host.store_nr >= loft_nstores) {
         r = loft_ref_null();
@@ -2653,6 +3054,7 @@ static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, con
         r.store_nr = host.store_nr;
         r.rec = loft_claim(loft_store_of(host), 1 + (size + 7) / 8);
         r.pos = 8;
+        if (foreign) loft_st_note_placed(loft_store_of(r), r.rec);
     }
     loft_set_u32(loft_store_of(r), r.rec, 4, tp);
     loft_fill(r, image, n);
@@ -2660,8 +3062,31 @@ static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, con
 }
 
 /* OpFreeRecordIn (Stores::free_record_in): a store's root record frees the store; a placed
- * record's words go back with its store. */
-static void loft_free_record_in(loft_ref r) {
+ * record releases what it owns and its block goes back to the host's store (`@FR-R-Place`). */
+static void loft_free_record_in(const loft_tdesc *T, uint16_t tp, loft_ref r) {
     if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= loft_nstores) return;
-    if (r.rec == 1 && r.pos == 8) loft_free_ref(r);
+    if (r.rec == 1 && r.pos == 8) {
+        loft_free_ref(r);
+        return;
+    }
+    loft_remove_claims(T, tp, r);
+    loft_st_delete(&loft_stores[r.store_nr], r.rec);
+}
+
+/* OpClear with `@FR-R-Reuse`'s reset flag (Stores::reset_pool_root): a pooled call buffer at its
+ * store's root, the store minted for it, is made again as OpDatabase mints it and prefilled
+ * with its type's defaults; answers 0, and the caller walks, for any other buffer.
+ * `-DLOFT_NO_POOL_RESET` is the interpreter's LOFT_NO_POOL_RESET. */
+static int loft_reset_pool_root(loft_ref r, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n) {
+#ifdef LOFT_NO_POOL_RESET
+    (void) r; (void) tp; (void) size; (void) image; (void) n;
+    return 0;
+#else
+    if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= loft_nstores) return 0;
+    loft_store_t *s = &loft_stores[r.store_nr];
+    if (!s->live || s->pinned || s->known != tp) return 0;
+    loft_database_typed(&r, size, tp);
+    loft_fill(r, image, n);
+    return 1;
+#endif
 }

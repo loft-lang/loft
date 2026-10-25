@@ -207,9 +207,11 @@ lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS
 
 A bug is filed and fixed only when main has it ([CLAUDE.md § Bug-filing policy](../../CLAUDE.md)),
 so while a fix is unmerged, main IS the build without it — for every guard on the branch at
-once.  `make install-main` installs `origin/main` into `~/.local` from a persistent worktree
-(`LOFT_MAIN_TREE`, default `~/.cache/loft-main`), so after main moves only what changed is
-rebuilt; `make falsify GUARD=<file>` without `REF` (`falsify.sh <guard> --installed [<loft>]`)
+once.  `make install-main` installs `origin/main` into `~/.local`: from main's daily build when
+it can (`scripts/install_main_ci.sh` — the binary with the runtime library `--native` links,
+taken only when this machine's rustc is the one that built it), else built in a persistent
+worktree (`make install-main-build`; `LOFT_MAIN_TREE`, default `~/.cache/loft-main`) where
+after main moves only what changed is rebuilt; `make falsify GUARD=<file>` without `REF` (`falsify.sh <guard> --installed [<loft>]`)
 then scores the guard against that binary with no build at all.  A ref control costs a full
 debug build of its commit, and one per fix adds up to hours on a loaded box.
 

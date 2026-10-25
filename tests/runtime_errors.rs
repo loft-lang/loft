@@ -800,13 +800,17 @@ fn i1056_a_fault_inside_a_lazy_driver_is_contained_on_both_backends() {
 /// `runaway1058(helper1058(n))` is what makes the difference visible: the call being
 /// refused is `helper1058`, the function running is `runaway1058`, and they are
 /// different names.  Plain self-recursion cannot tell the two readings apart.
+///
+/// The recursion is written as an OPERAND (`1 + runaway1058(…)`), here and in the two lazy
+/// driver tests below: a self-call in tail position is a jump since `@FR-R-TailSelf`, so the
+/// tail spelling loops instead of overflowing, and these tests are about the overflow.
 #[test]
 fn i1058_an_overflow_reports_the_running_function_on_both_backends() {
     let (out, err) = rendering_shared_by_both_backends(
         "i1058_running",
         "fn helper1058(n: integer) -> integer { n + 1 }\n\
          \n\
-         fn runaway1058(n: integer) -> integer { return runaway1058(helper1058(n)); }\n\
+         fn runaway1058(n: integer) -> integer { return 1 + runaway1058(helper1058(n)); }\n\
          fn main() { println(\"go1058\"); x = runaway1058(1); println(\"{x}\"); }\n",
     );
     assert!(
@@ -887,7 +891,7 @@ fn i1058_an_overflow_inside_a_lazy_driver_is_contained_on_both_backends() {
     let (out, _err) = rendering_shared_by_both_backends(
         "i1058_driver",
         "struct LzQ { const id: integer, v: integer }\n\
-         fn spin1058(n: integer) -> integer { return spin1058(n + 1); }\n\
+         fn spin1058(n: integer) -> integer { return 1 + spin1058(n + 1); }\n\
          fn lazy_fetch(coll: hash<LzQ[id]>, source: text, key_int: integer, key_text: text) -> integer {\n\
          \x20 return spin1058(0);\n\
          }\n\
@@ -926,7 +930,7 @@ fn i1058_after_a_contained_overflow_the_call_stack_is_balanced() {
     let (out, _err) = rendering_shared_by_both_backends(
         "i1058_balance",
         "struct LzB { const id: integer, v: integer }\n\
-         fn spin1058b(n: integer) -> integer { return spin1058b(n + 1); }\n\
+         fn spin1058b(n: integer) -> integer { return 1 + spin1058b(n + 1); }\n\
          fn lazy_fetch(coll: hash<LzB[id]>, source: text, key_int: integer, key_text: text) -> integer {\n\
          \x20 return spin1058b(0);\n\
          }\n\

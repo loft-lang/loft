@@ -71,10 +71,11 @@ const loft_io = {
       ac.suspend(); // stop_rewind, continue past the yield
       return fakeBytes.length;
     }
-    // The layout sidecar a whole-image load asks for first (`<url>.dschema`) is answered as a
-    // server without one answers it — a 404, without suspending — so the frame boundary stays
-    // the image fetch itself.
-    if (dec.decode(new Uint8Array(mem.buffer, ptr, len)).endsWith(".dschema")) return 0xffffffff;
+    // The frame boundary is the load's FIRST fetch, which is the layout sidecar
+    // (`<url>.dschema`): a load whose sidecar is missing is refused before the image is asked
+    // for (`@FR-S-Gate`), so a boundary kept at the image fetch was never reached.  The fake
+    // bytes answer the sidecar on the rewind and read as unreadable; the load answers false,
+    // which this test does not read.
     // Cross-frame read: reconstruct every exposed value from the memory as it stands AFTER the
     // yield (re-deriving mem.buffer inside readLoftValue — the fetch may have grown it).
     for (const [tag, h] of exposed) {

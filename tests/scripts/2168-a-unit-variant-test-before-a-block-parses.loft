@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A UNIT VARIANT TEST BEFORE A BLOCK PARSES (loft#2168).  `t is A` on a unit variant of a
+// struct-enum has no capture list, so the `{` after it opens the block — however the block
+// starts.  The capture reader asked every struct-enum variant for one: it took the block's
+// first name for a field (`if t is A { v } else { 0 }`) and sliced the attributes of a variant
+// that has none, so `if t is A { … }` was an internal compiler error on both backends.  A
+// payload variant's `{` is still its capture list (`is B { x }`), with the block after it.
+//
+// @falsified-at: b36d0449f — interpret exit 1 -> 0, native exit 1 -> 0 (`make falsify`): the
+//   compile stops there with "range start index 1 out of range for slice of length 0" on
+//   `test_a_block_body` and `test_a_block_starting_with_a_name`.
+// CHANNEL: the exit code (the compile panics), then the asserts.
+// ARMED: no instrument.
+// WITNESS: each message prints the value the block answered.
+// HOLDS: `test_a_payload_capture` — the documented capture list on a payload variant.
+
+enum T { A, B { x: integer } }
+enum Plain { P, Q }
+
+struct Peeker { t: T }
+fn peek(self: Peeker) -> T { self.t }
+
+fn test_a_block_body() {
+  t: T = A;
+  hit = 0;
+  if t is A { hit = 1; }
+  assert(hit == 1, "the block after a unit-variant test ran: {hit}");
+}
+
+fn test_a_block_starting_with_a_name() {
+  t: T = A;
+  v = 7;
+  r = if t is A { v } else { 0 };
+  assert(r == 7, "`{{ v }}` after `is A` is the block, reading the local: {r}");
+}
+
+fn test_a_while_over_two_tests() {
+  t: T = A;
+  n = 0;
+  while t is A || t is B { n += 1; t = B { x: n }; if n > 1 { break; } }
+  assert(n == 2, "two rounds: {n}");
+}
+
+fn test_a_method_receiver() {
+  p = Peeker { t: A };
+  hit = 0;
+  if p.peek() is A || p.peek() is B { hit = 1; }
+  assert(hit == 1, "a call's result tested: {hit}");
+}
+
+fn test_a_payload_capture() {
+  t: T = B { x: 3 };
+  got = 0;
+  if t is B { x } { got = x; }
+  assert(got == 3, "the capture list binds the field: {got}");
+}
+
+fn test_a_plain_enum() {
+  p: Plain = Q;
+  hit = 0;
+  if p is Q { hit = 1; }
+  assert(hit == 1, "a plain enum's variant: {hit}");
+}

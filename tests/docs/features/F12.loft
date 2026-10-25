@@ -12,4 +12,6 @@ fn main() {
     println("{a.id} {a.name} {a.balance}");   // 7 unnamed 250
     a.balance = 300;                          // an ordinary field changes
     println("balance {a.balance}");           // balance 300
+    b = Account { balance: 400, ..a };        // a copy of `a` with one field changed
+    println("{b.id} {b.name} {b.balance} {a.balance}");   // 7 unnamed 400 300
 }

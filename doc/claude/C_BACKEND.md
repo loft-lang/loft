@@ -19,6 +19,7 @@ loft --emit-c out.c prog.loft      # write the C; exit 2 with "does not carry th
 cc -std=c99 out.c -o prog -lm && ./prog
 python3 scripts/c_sweep.py         # every corpus program: C against the interpreter
 python3 scripts/c_sweep.py --asan  # the same, built with AddressSanitizer + UBSan
+python3 scripts/c_sweep.py --poison  # the store poison modes, against the interpreter's
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
@@ -29,12 +30,24 @@ it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at
 builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`) or `refused`, and ranks the
 refusals by reason — that ranking is the work list.
 `differ`, `cc-error` and `sanitizer` are defects of the backend and must stay at 0; a change
-that grows `match` is measured by the sweep and by `--asan` before it is committed.  A program
+that grows `match` is measured by the sweep, by `--asan` and by `--poison` before it is
+committed.  A sanitizer cannot see inside a store — a store is one allocation — so a read of a
+freed store, of a record a growth moved, or of a claim nothing wrote is valid memory to it; the
+poison modes are the store's own falsifiers, ported from `src/store.rs`: `-DLOFT_POISON` (a
+freed store reads `0xDEADBEEF`, a growth moves the buffer and scribbles the one it leaves) and
+`-DLOFT_POISON_CLAIM` (a claim and a grown tail read `0xDEADBEEF`, and `loft_claim` stops
+zeroing), each against the interpreter under `LOFT_POISON=1` / `LOFT_POISON_CLAIM=1`.  A program
 without `main` is its tests: the C runs every test the way `loft --tests` picks them, and the
-two exit statuses are compared.  `tests/c_emit.rs` is the cargo guard: a scalar program checked
+two exit statuses are compared.  A printed `store_memory()` report is compared without its
+lines, which name the interpreter's own stores (its value stack, its constants) and bytecode
+positions; the programs that READ the report's counts — a store census before and after a
+thousand rounds — are the sweep's leak check, since a release the C skips leaves a record
+behind and nothing else fails.  `tests/c_emit.rs` is the cargo guard: a scalar program checked
 against hand-computed values on both the interpreter and the C, a keyed program (hash, sorted,
 index, a linked group) checked the same way, a refusal naming its construct, and the overflow
-macros against Rust's checked arithmetic in every mode.
+macros against Rust's checked arithmetic in every mode — and the memory model's replays: the
+allocator, the hash, the index and the trees each run one seeded sequence through the Rust
+module and the C header and compare every answer and every byte of the store.
 
 ## The parts
 
@@ -51,8 +64,18 @@ macros against Rust's checked arithmetic in every mode.
 | `body/files.rs` | files: a `File`'s description and text, a value written or read in its binary form, the filesystem operations |
 | `files.rs` | the binary form of each record and vector type a program writes or reads: one `loft_ser{tp}` / `loft_de{tp}` pair |
 | `loft_cc.h` | the macro layer — the ONLY place the C names a compiler — pasted first into every unit |
+| `loft_store.h` | `src/store.rs`' allocator, ported: the free tree, parked lists, lazy frees, tombstones |
 | `loft_rt.h` | the C runtime, pasted after it |
-| `loft_keyed.h` | the keyed collections' runtime, pasted after `loft_rt.h` |
+| `loft_keys.h` | key parts, their compare, and the per-table SipHash-1-3 digest of `src/siphash.rs` |
+| `loft_hash.h` | `src/hash.rs` and `src/arena.rs`, ported, and the `Stores` routines over a hash |
+| `loft_btree.h` | `src/btree.rs`, ported: the index, and the `Stores` routines over it |
+| `loft_radix.h` | `src/radix_tree.rs`'s layout and key bits: the constants, a key's composed bits, the Morton helpers |
+| `loft_radix_walk.h` | the tree's walks (descend, seek, step, the box and prefix walks), pasted twice: over a store (`loft_rx_*`) and over a paged image (`loft_prx_*`), as the Rust walks are generic over `TreeNodes` |
+| `loft_radix_db.h` | `radix_db.rs` and `trie_db.rs`, ported: the spatial and trie collections over a store |
+| `loft_image.h` | store images: `store_persist_copy` and `store_load` (`Stores::persist_copy`, `load_path`) |
+| `loft_paged.h` | `src/paged_reader.rs`, ported: an image read a page at a time, every read past its end 0 |
+| `loft_paged_load.h` | the working-set loaders (`store_load_key`, `_keys`, `_key_text`, `_keys_text`, `_prefix`, `_box`, `_range`) and their relocating copy |
+| `loft_keyed.h` | sorted and ordered (`src/vector.rs`), the walks, renders and keyed writes |
 | `loft_io.h` | files and the filesystem, pasted last |
 
 ## The macro modes
@@ -91,12 +114,11 @@ function holds.  The null text is the one byte `"\0"`, as in the interpreter.
 **Stores.**  `loft_rt.h` ports the store model the IR addresses: a store is an array of 8-byte
 words, a record a run of words whose first word is its claimed size, a reference names a store,
 a record and a byte position, and `rec == 0` is null.  Vectors keep their claim at byte 0, their
-length at byte 4 and their elements from byte 8, with the interpreter's growth rule.  The
-allocator is still a bump allocator, which is being replaced: the memory model is loft's — the
-allocator, the keyed layouts and the image ported from the Rust store, so a store holds the
-same bytes at the same positions on every backend ([@PLN200 B5](plans/200-backend-structure.md),
-owner).  Until then a store's words
-go back together when the store is freed.  The default bytes of a new record are captured by
+length at byte 4 and their elements from byte 8, with the interpreter's growth rule.  The memory
+model is loft's ([@PLN200 B5](plans/200-backend-structure.md), owner): the allocator is
+`src/store.rs`' (`loft_store.h`), and the routines above it that decide what is claimed and
+deleted — `vector_add`, `clear_vector_release`, `remove_claims`, `Stores::clear` — are ported
+with it.  The default bytes of a new record are captured by
 running `Stores::set_default_value` on a scratch copy of the stores.
 
 **Copies.**  Where the bytecode writer copies a record, the C copies it, decided by the same
@@ -117,17 +139,64 @@ writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`
 `LOFT_VERIFY` catches a held vector that changed.  `LOFT_NO_VECTOR_HOIST=1` holds none and
 `LOFT_NO_WRITE_HOIST=1` none in a loop that writes, as for the Rust writer.
 
-**Keyed collections.**  A hash, a sorted and an index keep the interpreter's ORDERS and
-answers, for now in layouts of the C runtime's own (`loft_keyed.h`), to be replaced by ports
-of the interpreter's (a persisted image carries the layout, so it is observable).
-A hash is an open-addressed table of record numbers, its entries records of their own; an index
-and an `ordered` are a key-ordered array of record numbers; a sorted is a vector kept in key
-order, read by a vector's readers.  The key compare, the range search and the sorted insert are
+**Keyed collections.**  A persisted image carries a collection's layout, so the layouts are
+loft's.  A hash is `src/hash.rs` ported (`loft_hash.h`): the seeded table, inline and arena
+entries, a linked type's borrowed records, and its `Stores` routines — the one-probe insert and
+replace, `remove_owned`, `reserve_hash`, the copy and the release.  An index is `src/btree.rs`
+ported (`loft_btree.h`): the node arena, the key parts and text prefixes, the walk's
+record cursors.  A sorted is a vector kept in key order (`sorted_new`, `sorted_finish`), and an
+`ordered` and an `array` a vector of record numbers (`ordered_finish`), each with the release
+`remove_owned` and `remove_vector_at` give it.  A `spatial` and a `trie` are
+`src/radix_tree.rs` ported (`loft_radix.h`) under `radix_db.rs`' Morton oracle and
+`trie_db.rs`' text oracle, with their walks — the outward walk from a point, the box walk by
+BIGMIN, the prefix walk — snapshotted as `build_rec_scratch` lays them out.
+
+**Store images.**  `store_persist_copy` is `Stores::persist_copy` ported: the root deep-copied
+into a scratch store, its trees laid out in van Emde Boas order (`rtree_relayout`), the store
+written from word 0 to past its last live record, padded to the 1024-word floor, and the
+`.dschema` sidecar beside it — its text prepared at emit time per root type
+(`LayoutIdentity::of_store`), the slot line filled in at run time.  `store_load` is `load_path`:
+the sidecar gated (`classify`: the same hash and dump, `Release::admits`), the image adopted
+into the slot as `Store::load` builds one (no parked lists, no lazy frees, the allocator state
+re-derived from the blocks).  A file of another layout is refused, where the interpreter
+converts it; a store holding references is refused at emit time until the reference remap
+(`rebase_stored_refs`) is ported; compaction on load is not done (it declines for an image
+`store_persist_copy` wrote, which is already dense).  `tests/c_emit.rs` crosses a file written
+by each backend with every reader — the interpreter, the C, `--native` — on a store of every
+collection kind, and checks the C's image and sidecar against the interpreter's byte for byte.
+
+**Paged loads.**  The working-set loaders read an image a page at a time (`loft_paged.h`, the
+port of `paged_reader.rs`): a 64 KiB page is read from the file when a walk first touches it,
+a byte past the end reads as 0, and a size or a count is trusted only as far as the record that
+holds it (`@FR-S-Paged`), so a malformed image answers and never faults.  A hash entry is found
+by the port of `find_hash_entry`, a sorted range by its binary search; a trie or a spatial walk
+is the C's own tree walk, the same source pasted over the paged reader, with the fuel and node
+bound `PagedTrie` adds.  The entry is copied as `Stores::copy_entry` copies it — its bytes, its
+texts and vectors relocated, then filed by the collection's own insert.  Which collections a
+loader serves and which entry types it can copy is the Rust store's answer
+(`collection_type_of_store`, `is_copyable_entry`), asked when the program is written to C; a
+loader that cannot serve its collection runs and answers 0, saying why on stderr, as the
+interpreter does.  An `http(s)://` source is not carried.  `tests/c_emit.rs` crosses every
+loader with every writer and reader, and
+`tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft` mutates every record of
+each image.  The key compare, the range search and the sorted insert are
 ports of `keys::compare`, `vector::sorted_search` and `vector::sorted_finish`.  A record type
 shared by several collections of one struct (`@FR-Col-Group`) turns its vector into an `array`
 and its sorted into an `ordered`; a record finished into one member enters every member, and a
 record a key collision displaces leaves every keyed member.  A walk over a hash walks a snapshot
 in key order; an entry a write displaces or removes while the walk runs drops out of it.
+
+**Mapped files.**  `file_map` answers a FOREIGN store, as `Stores::fs_file_map` does (@PLN174):
+a store of its own whose root slot names the one synthetic record `LOFT_FOREIGN_REC`, the
+file mapped read-only (`mmap`) behind it, the mapping released with the last span over it.
+`loft_at` serves that record from the mapping — the header (size word, length) below byte 8,
+the file's bytes past it — so every vector read, the hoisted ones included (`loft_vh.base` is
+the element base, `Store::elem_base`), reads a mapping as it reads a record.  A slice bound to
+a local of its own (`OpSliceView`) is a VIEW sharing the owner; a clear, a rebind or the free
+drops it; a mapped vector copied as a record's field is copied element by element
+(`@FR-Const-Foreign`).  Without POSIX the file is read as `read_bytes` reads it, as the
+interpreter does without `mmap`.  The emitter defines `LOFT_FOREIGN` only for a unit that
+reaches `file_map`, so no other program pays the record test in `loft_at`.
 
 **Files.**  A `File` record keeps the interpreter's fields (size, positions, path, handle,
 format); its handle indexes a table of open `FILE *`s, opened on first use, flushed after every
@@ -177,14 +246,16 @@ only by failing with one of its messages — the annotations are read by the sam
    included.  A constant operand (a type number, a format) is read at emit time.
 3. Probe it in a scratch program on both: the interpreter's output and the C's must be
    byte-identical, and under `-fsanitize=address,undefined` the C must be silent.
-4. Sweep, then sweep with `--asan`; both at 0 `differ`, 0 `cc-error`, 0 `sanitizer`.
+4. Sweep, then sweep with `--asan` and `--poison`; all at 0 `differ`, 0 `cc-error`, 0
+   `sanitizer`.
 5. A sweep that turns up a `differ` is a defect to fix before going on — it is usually an
    older rule the new construct now reaches.
 
 ## Not carried yet
 
 The sweep's ranking is the current list.  The large families: text parsed into a typed value
-(`T.parse`, `as vector<T>`, JSON), the spatial and trie collections, the persistent stores,
+(`T.parse`, `as vector<T>`, JSON), the image loaders over a URL, a lazy binding
+(`store_bind_lazy`), `store_reclaim`, a linked group with a spatial or trie member,
 `parallel { }` blocks, and the native library calls; of the generators, one held in a record
 field and one of tuples; of the `&` locals, a link into a store place; of `par`, a worker over
 tuples or function values.  A record holding a linked group is not copied yet: its members name one record set,

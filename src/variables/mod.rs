@@ -3072,7 +3072,12 @@ impl Function {
             amp_container_link: self.variables[var as usize].amp_container_link,
             iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
-            skip_free: false,
+            // The never-free mark is the binding's, set before the scope pass splits it: a
+            // `??` temp whose block value views it is the same temp in a sibling scope.
+            // Dropped, the copy took a scope-exit free inside its own `??` block, before the
+            // consumer read the value — the second alternative of a tuple or-pattern read
+            // freed text (loft#2175).
+            skip_free: self.variables[var as usize].skip_free,
             captured: false,
             first_def: u32::MAX,
             last_use: 0,

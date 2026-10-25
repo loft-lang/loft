@@ -795,6 +795,19 @@ pub fn omitted_field_lint_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_OMITTED_FIELD"))
 }
 
+/// `match-scalar-hole` (loft-lang/plans#202 P3): a `match` over an integer, text or character
+/// subject that names some values and has no `_` arm — a value none of them names selects no
+/// arm, so the match answers null (`(M-Total)`) or, as a statement, does nothing.  ADVICE: the
+/// null is the rule's answer and the type carries it; the hole is said at the match because
+/// a lexer's unhandled character is otherwise silent.
+///
+/// **Default ON**; `LOFT_NO_SCALAR_HOLE` opts out. One cached env read.
+#[must_use]
+pub fn scalar_hole_lint_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SCALAR_HOLE"))
+}
+
 /// @C127 — a compound step whose result does not fit a DECLARED narrow range takes that
 /// type's DEFAULT, and nothing at the site says so.
 ///
@@ -4012,6 +4025,7 @@ pub fn ints_hash(values: &[i64], seed: u64) -> u64 {
     hasher.finish()
 }
 
+/// The digest `@FR-S-Digest` defines: SipHash-1-3 over the seed and the decoded key fields.
 #[inline]
 #[must_use]
 pub fn key_hash(key: &[Content], seed: u64) -> u64 {

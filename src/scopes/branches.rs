@@ -567,6 +567,14 @@ pub(super) fn needs_pre_init(tp: &Type) -> bool {
     // previous frame left there); first assigned inside a loop body, it stayed scoped
     // to the body and the read after the loop was a use-after-free on the interpreter
     // and an unresolved `var_x` under rustc.  Both backends, every nullable kind.
+    // A TUPLE owns what its members own: one holding a text or a store needs them
+    // initialised on every path, as a local of that type would.  Left out, a tuple
+    // capture bound in each alternative of an or-pattern was first bound by the first
+    // alternative only, and the second's bind cleared a text no path had initialised
+    // (loft#2175).
+    if let Type::Tuple(members) = tp.base() {
+        return members.iter().any(needs_pre_init);
+    }
     matches!(
         tp.base(),
         Type::Text(_) | Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)

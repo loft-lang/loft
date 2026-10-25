@@ -26,6 +26,7 @@ not that — they are the language basics, kept short. The games live here:
 | [`collections.loft`](collections.loft) | `vector<T>` and `hash<T[key]>` over the same records | [run](https://loft-lang.org/loft/playground.html?example=ex_collections) |
 | [`match.loft`](match.loft) | Pattern matching, including destructuring | [run](https://loft-lang.org/loft/playground.html?example=ex_match) |
 | [`files.loft`](files.loft) | Reading and writing files | [run](https://loft-lang.org/loft/playground.html?example=ex_files) |
+| [`front_end.loft`](front_end.loft) | A loft front end in loft: a lexer over a character cursor, a recursive-descent parser building an arena AST, total matches over tokens and nodes, constant folding, a dispatch table of `fn` values — what a compiler written in loft leans on | — |
 
 ## Running them
 

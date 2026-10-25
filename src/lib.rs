@@ -380,6 +380,7 @@ pub mod shared_call;
 pub mod single_use;
 pub mod siphash;
 pub mod slot_alias;
+pub mod tail_frame;
 pub mod take_local;
 pub mod text_run;
 pub mod tuple_links;
@@ -413,7 +414,7 @@ pub mod parser;
 #[cfg(feature = "png")]
 mod png_store;
 pub mod profiler;
-mod radix_db;
+pub mod radix_db;
 mod radix_tree;
 pub mod runtime_abi;
 pub mod rust_spelling;

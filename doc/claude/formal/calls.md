@@ -119,7 +119,10 @@ argument, `@FR-F-Ret`).
              needs that `;`: `{ a + 10 } b = 5` is a syntax error, while a block whose last
              statement has no value ends its statement by itself (loft#2040's suite cell).
   (F-Rec)    a call to the same (or a mutually-recursive) function gets its OWN fresh frame —
-             recursion is ordinary, bounded only by the stack.
+             recursion is ordinary, bounded only by the stack.  EXCEPTION: a SELF-call in
+             tail position reuses the frame, `(R-TailSelf)` (rewrites.md) — it is a jump,
+             bounded by nothing; a self-call that is an operand, or whose value is bound to a
+             local before it is returned (`r = f(…); r`), is a call under this rule.
 ```
 
 **In words.** Calling runs the body in a fresh frame with the parameters bound, and the value the

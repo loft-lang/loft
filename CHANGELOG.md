@@ -16,6 +16,13 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**A store image is read only beside its `.dschema` sidecar.**  `store_load`,
+`store_load_untrusted`, `store_load_url` and the paged loaders (`store_load_key`, `store_load_box`,
+`store_load_prefix`, …) refuse an image with no sidecar beside it, and over HTTP one whose sidecar
+the server does not serve, instead of reading its bytes under the program's own layout — which
+read wrong values whenever a struct had changed since the image was written.  `store_persist_copy`
+writes both files: copy, ship and serve them together.
+
 **A collection is no longer bound to a file.**  `store_persist_bind`, `store_release`,
 `store_durable_check` and `store_durable_seal` are gone.  Save a collection with
 `store_persist_copy(collection, path)` — call it again whenever the state is worth saving — and
@@ -144,6 +151,36 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A self-call in tail position runs to any depth.**  `fn count(n: integer, acc: integer) ->
+integer { if n == 0 { acc } else { count(n - 1, acc + 1) } }` no longer stops at 10 000 frames:
+in a function whose parameters are scalars, a self-call that is the last thing the function
+does becomes a jump to its entry, on both backends; a local held in a store (a text, a vector,
+a record) is released before the jump.  A self-call anywhere else is still a call.
+`LOFT_NO_TAIL_SELF` keeps the calls.  (loft-lang/plans#202)
+
+**A tail self-call that cannot be a jump is a compile error.**  A function that calls itself
+in tail position handing a store-held parameter a fresh value (`f(n - 1, acc + "x")`) or a
+local, rebinding such a parameter in its body, or returning a text or record, used to compile
+and stop at 10 000 frames; it is now refused at the call, naming the variable and the cure.  A
+parameter passed through (`f(v, i + 1)`, `f(r.next, n)`) jumps like a scalar one.  A self-call
+that is an operand, or bound to a local before it is returned (`r = f(…); r`), is unchanged.
+
+**`[]` and `[x, ..rest]` are a complete match.**  Slice arms that together cover every length
+— an exact arm for each short length, a rest arm from there on, no guards — need no `_`:
+`match v { [] => 0, [x, ..rest] => x + total(rest) }` is the list recursion.  A set that leaves
+a length out is still refused.  (loft-lang/plans#202)
+
+**A scalar `match` with a hole says so.**  `match c { 'a' => …, 'b' => … }` names some values and
+no `_`: a value none of them names selects no arm — the match answers null, or does nothing as a
+statement — which is what the language promises, and now an advice (`match-scalar-hole`) at the
+match says where.  `LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet.  (loft-lang/plans#202)
+
+**A record with some fields changed, in one expression.**  `d = Unit { hp: 0, ..u }` is a copy
+of `u` with `hp` written — what `d = u; d.hp = 0;` does, so `u` keeps its value, a `text` or
+collection field releases what the copy brought, and a `const` field is refused.  `..base` is the
+last entry; the base must be a `Unit` and present.  A variant is not updated this way: `match` on
+it and build the variant from its fields.  (loft-lang/plans#202)
+
 **A loop that discharges a null or divides runs faster.**  This is visible only as speed,
 under `--native`.  A `for` loop that changes nothing but its own numbers and booleans first
 runs without testing each `?`, `??` or division as it goes.  It notes once whether any of them
@@ -262,6 +299,40 @@ web service checks a server against the bundled roots and the machine's own stor
 git do.
 
 ### Bug fixes
+
+**A `_ => null` arm joins an enum match as nullable.**  `match n { Lit { v } => v, _ => null }`
+is an `integer?`, as the named spelling `Var { name } => null` already was; the wildcard arm
+was refused with "cannot unify: integer and null" (loft#2170).
+
+**`if t is A { … }` compiles.**  Testing a unit variant of a struct-enum right before a block
+was an internal compiler error, and `if t is A { v } else { 0 }` read `{ v }` as a capture list.
+A unit variant has no fields and so no capture list: its `{` opens the block, whatever the block
+starts with.  A payload variant's `{ x }` is still its capture list (loft#2168).
+
+**A `&` assigned into a `reference<T>` field stores the pointer.**  `d.r = &p` now stores
+the link exactly as the literal `Rec { r: &p }` and the plain `d.r = p` do; it used to store a
+stack address on the interpreter (a garbage record on read, nothing said) and failed to
+compile natively.  A `&` into a field that holds its record inline (`struct Rec { o: Other }`,
+`d.o = &p` or `Rec { o: &p }`) is refused — it has nothing to bind; write `d.o = p` to copy
+the record, or declare the field `reference<Other>` to hold a link (loft#2166).
+**A paged load reads an enum field's payload right.**  An entry loaded with `store_load_key`,
+`store_load_prefix`, `store_load_box`, `store_load_range` or their siblings read a struct-enum
+variant's text or vector wrong — an empty or another record's value, or a crash — while
+`store_load` read it right.  The variant's fields are now copied with the entry.
+
+**A paged load of a damaged image answers instead of crashing.**  `store_load_key`,
+`store_load_keys`, `store_load_range` and the other paged loaders could stop the program, or
+leave a collection `store_verify` rejects, when an image held a length or a size that ran past
+its own record — a truncated or corrupted download whose sidecar still matched.  Such an entry
+now reads as absent, or its field as null.
+
+**A paged lookup finds a narrow key.**  `store_load_key`, `store_load_keys` and a lazily bound hash
+answered "absent" for a key the image held when the key field was a `limit(…)` range not starting
+at 0, or a one-byte range at 128 and above; they now find it, as `store_load` always did.
+
+**`store_persist_copy` answers false when it could not write the image's sidecar.**  It answered
+true and left the new image beside no sidecar, or beside the previous write's.  The image and its
+sidecar are now written together: a failed write leaves the previous pair as it was.
 
 **A sandbox may use the safe stdlib without a grant.**  Arithmetic, text, collections, JSON and
 the other stdlib functions that compute only on their arguments are admitted under every sandbox

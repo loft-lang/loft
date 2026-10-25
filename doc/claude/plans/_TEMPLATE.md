@@ -147,6 +147,27 @@ When this plan depends on or cooperates with sibling plans,
 list them here as a bullet list with one-line rationale.
 Helps the dependency graph stay visible.
 
+## Documentation (REQUIRED)
+
+What this plan must update OUTSIDE itself when it finishes — the plan is not closed until
+every line here is done (owner, 2026-10-25).  One line per item, naming the doc and the
+sentence, row or page it needs; mark each with the commit that did it.  The usual set:
+
+- the user docs — `LOFT.md`'s index and the `LOFT_*.md` page the feature lives on, `STDLIB.md`
+  / `INTERFACES.md` where a limitation they state is lifted;
+- the reference pages that RUN — `tests/docs/*.loft` (a worked example of the new spelling, a
+  sentence that stopped being true), regenerated with `cargo run --bin gendoc`;
+- `DIAGNOSTICS.md` for a new or changed code, its `LOFT_NO_*` switch, the pin in
+  `tests/e1_code_set.rs`;
+- the formal chapter whose rule the work keeps or extends (`doc/claude/formal/`), and its
+  `OPEN:` line;
+- `CHANGELOG.md` (New / May need a change / Bug fixes);
+- the bars the work moves (`doc/claude/bars/`), the subjects page, the feature catalogue
+  (the `@F` issue, then `make features-fetch && make features-gen`);
+- the skills — `loft-write` for a spelling or a struck known bug, `loft-test` for a test
+  convention, `loft-codegen` for a compiler method — and `make skills-review` reading clean;
+- the library docs where a published library's README states the old behaviour.
+
 ## See also (REQUIRED)
 
 - Reference doc(s) that this plan implements / extends.

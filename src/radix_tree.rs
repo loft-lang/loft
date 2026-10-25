@@ -165,6 +165,7 @@ const CAP: u32 = 16;
 /// Head of the free-node list, `0` when empty.
 const FREE: u32 = 20;
 /// First node sits here; a multiple of 8, so nodes stay word-aligned.
+/// The header and node bytes are `@FR-S-Tree`.
 const HDR: u32 = 24;
 /// `bit: u32`, `parent: u32`, `false: i32`, `true: i32` — exactly two store words.
 const NODE_SIZE: u32 = 16;
@@ -199,6 +200,7 @@ impl<F: Fn(u32) -> u64> View<F> {
 /// the same tree has to compose the string EXACTLY the same way or it descends to a
 /// different leaf.  A paged walk over a persisted image is such a reader
 /// (`paged_reader`, @PLN134), and this is the one place the rule is written.
+/// `@FR-S-TreeKey`.
 pub(crate) fn composed_bit(word: impl FnOnce(u32) -> u64, bits: u32, id: u32, b: u32) -> bool {
     if b < bits {
         (word(b / 64) >> (63 - b % 64)) & 1 == 1
@@ -784,7 +786,7 @@ fn set_top(store: &mut Store, tree: u32, c: Child) {
     store.set_i32_raw(tree, TOP, c.encode());
 }
 
-fn cap_for_words(words: u32) -> u32 {
+pub(crate) fn cap_for_words(words: u32) -> u32 {
     (words * 8).saturating_sub(HDR) / NODE_SIZE
 }
 

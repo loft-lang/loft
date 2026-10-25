@@ -1,0 +1,137 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A MALFORMED IMAGE ANSWERS EVERY PAGED LOAD (`@FR-S-Paged`, loft#2177).  S-Paged: "a byte past
+// the end of the image reads as 0, and every walk is bounded by the counts in the bytes it read"
+// — so a size or a count a malformed image holds is trusted only as far as the record that holds
+// it, and a load answers (an entry absent, a field null) instead of panicking, claiming without
+// bound, or leaving a heap `store_verify` rejects.  Each cell writes a hash (text, a vector of
+// integers, a nested struct, a vector of structs), a trie, a spatial index and a sorted with
+// pointer fields to images, then for EVERY claimed record of each image writes two variants: its
+// length word set to 0x7FFFFFFF, and its size word set to 0x7FFFFFF0 — every count and every
+// size the reader can meet, one at a time.  Each variant is loaded by every paged loader its
+// kind serves.  The axes moved are the collection kind, the record mutated (the root, the table
+// or tree record, an arena chunk, an entry, a string, a vector) and the word mutated (a length,
+// a size).
+//
+// Values hand-computed: every variant loads (no panic, no runaway claim), `store_verify` accepts
+// the loaded heap, and every field of every loaded entry reads; the count printed is the number
+// of variants, 2 per claimed record.  The unmutated images answer their own values first.
+//
+// @falsified-at: b36d0449f — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the asserts (a panic on the variant, or `store_verify` false naming kind and variant).
+// ARMED: no instrument.
+// WITNESS: the assert names the kind and the variant number.
+// HOLDS: `tests/scripts/golden-images-paged.loft` (the well-formed half: a frozen image set read
+//        a page at a time).
+
+struct Item { tag: text, n: integer }
+struct Rec { id: integer, name: text, tags: vector<integer>, sub: Item, items: vector<Item> }
+struct Word { w: text, n: integer }
+struct Pt { x: integer, y: integer, label: text }
+struct Sv { k: integer, s: text, v: vector<integer> }
+
+fn i32_at(b: const vector<u8>, at: integer) -> integer {
+  v = b[at]? + b[at + 1]? * 256 + b[at + 2]? * 65536 + b[at + 3]? * 16777216;
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+
+// Every claimed record of the image at `p` (the S-Frame chain from word 1), each written twice:
+// as `{p}.{2i}` with its length word huge, as `{p}.{2i + 1}` with its size word huge — each
+// beside a copy of the image's sidecar.  Answers the number of variants.
+fn variants(p: text) -> integer {
+  img = read_bytes(p) ?? [];
+  side = read_bytes("{p}.dschema") ?? [];
+  words = len(img) / 8;
+  rec = 1;
+  n = 0;
+  while rec < words {
+    size = i32_at(img, rec * 8);
+    if size == 0 { break }
+    if size > 0 {
+      for word in [4, 0] {
+        m: vector<u8> = [];
+        for x in img { m += [x]; }
+        at = rec * 8 + word;
+        m[at] = if word == 4 { 255 } else { 240 };
+        m[at + 1] = 255;
+        m[at + 2] = 255;
+        m[at + 3] = 127;
+        assert(write_bytes("{p}.{n}", m) && write_bytes("{p}.{n}.dschema", side), "write variant {n} of {p}");
+        n += 1;
+      }
+    }
+    rec += if size < 0 { -size } else { size };
+  }
+  n
+}
+
+fn main() {
+  base = "{temp_dir() ?? "/tmp"}/loft_2177_{now()}_{ticks()}";
+  h: hash<Rec[id]> = [];
+  for i in 0..6 {
+    h += Rec { id: i, name: "rec{i}", tags: [i, i + 1], sub: Item { tag: "s{i}", n: -i }, items: [Item { tag: "a{i}", n: i }, Item { tag: "b{i}", n: 2 * i }] };
+  }
+  tr: trie<Word[w]> = [];
+  for i in 0..6 { tr += Word { w: "word{i}", n: i }; }
+  sp: spatial<Pt[x, y]> = [];
+  for i in 0..6 { sp += Pt { x: i % 3, y: i / 3, label: "p{i}" }; }
+  so: sorted<Sv[k]> = [];
+  for i in 0..6 { so += Sv { k: i, s: "s{i}", v: [i] }; }
+  assert(store_persist_copy(h, "{base}.h") && store_persist_copy(tr, "{base}.tr"), "write the images");
+  assert(store_persist_copy(sp, "{base}.sp") && store_persist_copy(so, "{base}.so"), "write the images");
+
+  // The well-formed images answer their own values.
+  h1: hash<Rec[id]> = [];
+  assert(store_load_key(h1, "{base}.h", 3) && h1[3].items[1].tag == "b3" && h1[3].tags[1] == 4, "hash");
+  t1: trie<Word[w]> = [];
+  assert(store_load_prefix(t1, "{base}.tr", "word", -1) == 6, "trie");
+  s1: spatial<Pt[x, y]> = [];
+  assert(store_load_box(s1, "{base}.sp", [0, 0], [9, 9], -1) == 6, "spatial");
+  o1: sorted<Sv[k]> = [];
+  assert(store_load_range(o1, "{base}.so", 2, 4) == 3 && o1[3].s == "s3", "sorted");
+
+  made = 0;
+  seen = 0;
+  for kind in ["h", "tr", "sp", "so"] { made += variants("{base}.{kind}"); }
+  for j in 0..100000 {
+    p = "{base}.h.{j}";
+    if !is_file(p) { break }
+    mh: hash<Rec[id]> = [];
+    _a = store_load_key(mh, p, 3);
+    _b = store_load_keys(mh, p, [0, 5, 9]);
+    assert(store_verify(mh), "hash variant {j}");
+    for r in mh { s = "{r.name}{r.sub.tag}"; for t in r.tags { s += "{t}"; } for x in r.items { s += "{x.tag}"; } }
+    seen += 1;
+  }
+  for j in 0..100000 {
+    p = "{base}.tr.{j}";
+    if !is_file(p) { break }
+    mt: trie<Word[w]> = [];
+    _a = store_load_key_text(mt, p, "word3");
+    _b = store_load_prefix(mt, p, "word", -1);
+    assert(store_verify(mt), "trie variant {j}");
+    for w in mt { s = "{w.w}{w.n}"; }
+    seen += 1;
+  }
+  for j in 0..100000 {
+    p = "{base}.sp.{j}";
+    if !is_file(p) { break }
+    ms: spatial<Pt[x, y]> = [];
+    _a = store_load_box(ms, p, [0, 0], [9, 9], -1);
+    assert(store_verify(ms), "spatial variant {j}");
+    for q in ms { s = "{q.label}{q.x}"; }
+    seen += 1;
+  }
+  for j in 0..100000 {
+    p = "{base}.so.{j}";
+    if !is_file(p) { break }
+    mo: sorted<Sv[k]> = [];
+    _a = store_load_range(mo, p, 0, 100);
+    assert(store_verify(mo), "sorted variant {j}");
+    for v in mo { s = "{v.s}"; for x in v.v { s += "{x}"; } }
+    seen += 1;
+  }
+  assert(seen == made && made > 100, "answered {seen} of {made} variants");
+  println("answered every variant");
+}

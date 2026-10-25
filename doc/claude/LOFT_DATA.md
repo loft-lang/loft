@@ -351,6 +351,16 @@ Nullable fields default to `null`. A **bare (non-`Optional`) enum field is the o
 has no zero value (an enum's 0 is `null`, which a non-null field may not hold), so omitting it is a
 compile error — provide it, give it `= <variant>`, or type it `E?` (@PLN116).
 
+**A record with some fields changed is an UPDATE**: `d = Unit { hp: 0, ..u }` binds `d` to a copy
+of `u` and then writes the named fields — exactly what `d = u; d.hp = 0;` does, in one expression.
+`u` keeps its value (`(B-Copy)`, [formal/binding.md](formal/binding.md)); the named fields are
+written as the assignments they stand for, so a `text` or collection field releases what the copy
+brought and a `const` field is refused; and each field reads the BASE, never the half-written
+copy (`Unit { y: u.hp, hp: u.y, ..u }` swaps).  `..base` is the last entry.  The base is a `Unit`
+and never absent — discharge a `Unit?` first (`..(u ?? Unit { … })`).  A variant is not updated
+this way: `match` on it and build the variant from its fields, since its tag would have to be
+checked against the base's.
+
 **A nullable STRUCT-enum (`Shape?`) works** as a local, a parameter, a return, a struct FIELD and
 a `vector<Shape?>` element — `= null`, `== null`, truthiness, `??`, `match` and reassignment in
 both directions all behave (loft#1065, loft#1071). How absence is STORED follows the slot, as the
@@ -652,6 +662,18 @@ signature of something handed out as a VALUE is a breaking change ([INTERFACES.m
 Catalogue: @F17.
 
 ---
+
+**A function that calls itself as its last step runs to any depth.**  `count(n - 1, acc + 1)`
+as the value an `if` arm answers, the value a `return` hands back, or the last statement of a
+void function, is a jump to the function's entry, not a call: the recursion a loop would
+express — a cursor and an accumulator carried through — reaches 100 000 where a call stops at
+10 000 frames, on both backends.  A local held in a store (a text, a vector, a record) is
+released before the jump; a vector or record parameter is passed through as the pointer the
+call would share — itself, another parameter, a part of one (`r.next`, `v[i]`) — and a text or
+`&` parameter as itself.  What the jump cannot bind the way a call does is refused at the call,
+naming the variable and the cure: an argument that makes a fresh value (`f(n - 1, acc + "x")`)
+or names a local, a parameter the body rebinds, and a text or record result.  A self-call that is an operand (`1 + f(n - 1)`), or whose value is bound to a local
+before it is returned (`r = f(n - 1); r`), is an ordinary call and keeps its frame.
 
 ## Assertions
 

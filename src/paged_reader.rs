@@ -492,11 +492,10 @@ impl PageProvider for PageSource {
 /// The layout-identity gate for a working-set load (@PLN97 3b.5). Given the
 /// store `spec` (a local path or an `http(s)://` URL), read the `.dschema`
 /// sidecar beside it and compare its recorded layout with the running program's
-/// `current` identity. An ABSENT sidecar (a legacy / pre-3b.5 store) or an
-/// unreachable remote yields [`SchemaVerdict::Fresh`] — the caller proceeds and
-/// the post-copy `store_verify` stays the backstop; a PRESENT sidecar that is
-/// mismatched or unparseable yields a non-raw-safe verdict the caller rejects
-/// on, so foreign-layout bytes are never range-read at schema-derived offsets.
+/// `current` identity (`@FR-S-Gate`).  An ABSENT sidecar, an unreachable one and one
+/// that cannot be read all yield a verdict that is not raw-safe ([`SchemaVerdict::Bare`],
+/// [`SchemaVerdict::Unreadable`]): an image whose layout nothing records is never
+/// range-read at schema-derived offsets, and neither is a mismatched one.
 #[must_use]
 pub fn check_sidecar(
     spec: &str,
@@ -507,11 +506,11 @@ pub fn check_sidecar(
     if spec.starts_with("http://") || spec.starts_with("https://") {
         match crate::net::fetch_text(&format!("{spec}.dschema")) {
             Some(text) => crate::schema_sidecar::verdict_for_sidecar_text(&text, current, release),
-            None => SchemaVerdict::Fresh, // 404 / unreachable → proceed (store_verify backstop)
+            None => SchemaVerdict::Bare,
         }
     } else {
         crate::schema_sidecar::check_beside(std::path::Path::new(spec), current, release)
-            .unwrap_or(SchemaVerdict::Fresh) // IO error (not NotFound) → proceed (backstop)
+            .unwrap_or(SchemaVerdict::Unreadable)
     }
 }
 
@@ -1009,6 +1008,48 @@ impl<P: PageProvider> PagedReader<P> {
     pub fn record_words(&mut self, rec: u32) -> u32 {
         self.u32_at(rec, 0)
     }
+
+    /// The words of the record at `rec` when the image holds one there — a claimed block
+    /// (`@FR-S-Frame`: a positive size word) that ends inside the image — else `None`.
+    ///
+    /// The one bound on what an image can make a reader do (`@FR-S-Paged`, loft#2177): a size or
+    /// a count read from the image is trusted only as far as the record that holds it, so a
+    /// malformed image makes a copy claim no more than its source holds and a walk stop at the
+    /// record's end — an entry reads as absent, never a panic or a runaway claim.
+    pub fn record_extent(&mut self, rec: u32) -> Option<u32> {
+        let size = self.i32_at(rec, 0);
+        self.extent_of(rec, size)
+    }
+
+    /// [`record_extent`](PagedReader::record_extent) for a size word already read.
+    #[must_use]
+    pub fn extent_of(&self, rec: u32, size: i32) -> Option<u32> {
+        let end = (u64::from(rec) + u64::from(size.unsigned_abs())) * 8;
+        (rec != 0 && size > 0 && end <= self.size()).then_some(size.unsigned_abs())
+    }
+
+    /// The record's size word and the word beside it (a string's or a vector's length), read
+    /// as one request: every flat record needs both.
+    pub fn head(&mut self, rec: u32) -> (i32, u32) {
+        let mut b = [0u8; 8];
+        self.read_into(u64::from(rec) * 8, &mut b);
+        (
+            i32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
+            u32::from_ne_bytes([b[4], b[5], b[6], b[7]]),
+        )
+    }
+
+    /// The bytes of the string record `rec` (its length @4, its bytes from @8) — empty for no
+    /// record, and for one whose length runs past its own record (loft#2177).
+    pub fn str_bytes(&mut self, rec: u32) -> Vec<u8> {
+        let (size, len) = self.head(rec);
+        match self.extent_of(rec, size) {
+            Some(words) if u64::from(len) + 8 <= u64::from(words) * 8 => {
+                self.resolve(u64::from(rec) * 8 + 8, len as usize)
+            }
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// Where a hash's entry for `key` lives in the paged image, as `(record, byte
@@ -1022,6 +1063,7 @@ impl<P: PageProvider> PagedReader<P> {
 /// decoded through [`crate::arena`] — or, for a table that borrows its records, the
 /// record number itself.  A pre-@PLN135-arc-H image cannot reach here: the placement
 /// token refuses it at load.
+/// `@FR-S-Paged`: every address computed from the key and the table's own bytes.
 pub fn find_hash_entry<P: PageProvider>(
     reader: &mut PagedReader<P>,
     root_rec: u32,
@@ -1030,10 +1072,9 @@ pub fn find_hash_entry<P: PageProvider>(
     keys: &[crate::keys::Key],
 ) -> (u32, u32) {
     let claim = reader.u32_at(root_rec, root_pos);
-    if claim == 0 {
+    let Some(room) = reader.record_extent(claim) else {
         return (0, 0);
-    }
-    let room = reader.record_words(claim);
+    };
     if room < crate::hash::RESERVED_WORDS {
         return (0, 0);
     }
@@ -1052,6 +1093,13 @@ pub fn find_hash_entry<P: PageProvider>(
     } else {
         crate::hash::slots_in(room - crate::hash::RESERVED_WORDS, sb)
     };
+    // An inline table's count comes from its flags: its buckets and entries must fit the record.
+    if inline
+        && u64::from(crate::hash::BUCKET0) + u64::from(elms) * (8 + u64::from(stride))
+            > u64::from(room) * 8
+    {
+        return (0, 0);
+    }
     let seed = reader.i64_at(claim, crate::hash::SEED_FLD) as u64;
     let hash_val = crate::keys::key_hash(key, seed);
     let mut index = crate::hash::home_bucket(hash_val, elms);
@@ -1092,11 +1140,11 @@ fn entry_at<P: PageProvider>(
         return (slot & !crate::hash::SLOT_RECORD, 8);
     }
     let dir = reader.u32_at(claim, crate::arena::DIR_FLD);
-    if dir == 0 {
+    let Some(dir_words) = reader.record_extent(dir) else {
         return (0, 0);
-    }
+    };
     let (k, off) = crate::arena::locate(slot, stride);
-    let cap = (reader.record_words(dir) - 1) * 2;
+    let cap = (dir_words - 1) * 2;
     if k >= cap {
         return (0, 0);
     }
@@ -1156,24 +1204,54 @@ pub fn hash_bucket_addrs<P: PageProvider>(
 }
 
 /// Read the string at string-record `rec` over the paged reader (fld 4 = length,
-/// fld 8.. = UTF-8 bytes). A `rec == 0` / out-of-range yields the empty string —
-/// `resolve` zero-pads, so this never faults on a wild pointer.
+/// fld 8.. = UTF-8 bytes). A `rec == 0`, or a record the image does not hold whole, yields the
+/// empty string ([`PagedReader::str_bytes`]).
 fn read_reader_str<P: PageProvider>(reader: &mut PagedReader<P>, rec: u32) -> String {
-    if rec == 0 {
-        return String::new();
+    String::from_utf8_lossy(&reader.str_bytes(rec)).into_owned()
+}
+
+/// An integer key or axis field's value at byte `p` of record `rec` in the paged image —
+/// the paged spelling of the `Store` reader its `type_nr` names, `key.start` included
+/// (`@FR-Col-Axis`, `@FR-L-Narrow-Decode`): the narrow widths store `value - start`, so a
+/// decode that assumed a zero bias, or read a byte signed, answers another value than the
+/// resident store for the same bytes (`@FR-S-Paged-Same`).  The ONE paged decode, read by
+/// the hash lookup and the spatial walk alike.
+fn field_value<P: PageProvider>(
+    reader: &mut PagedReader<P>,
+    rec: u32,
+    p: u32,
+    key: &crate::keys::Key,
+) -> i64 {
+    let start = i64::from(key.start);
+    match key.type_nr.unsigned_abs() {
+        // 4-byte signed (`int<…>`), as `Store::get_i32_raw` reads it.
+        8 => i64::from(reader.i32_at(rec, p)),
+        // 4-byte UNSIGNED (`int_raw<…>`, @FR-L-Narrow-Enc), as `Store::get_u32_raw` reads
+        // it.  Raw like the signed 4-byte arm above, so it takes no bias.
+        12 => i64::from(reader.u32_at(rec, p)),
+        // 2-byte, `start`-biased with `0` reserved for null (`Store::get_short`).
+        9 => {
+            let raw = reader.u16_at(rec, p);
+            if raw == 0 {
+                i64::from(i32::MIN)
+            } else {
+                i64::from(raw) + start - 1
+            }
+        }
+        // 1-byte, `start`-biased (`Store::get_byte`).
+        10 => i64::from(reader.u8_at(rec, p)) + start,
+        // 2-byte direct, `start`-biased (`Store::get_short_full`).
+        11 => i64::from(reader.u16_at(rec, p)) + start,
+        // `integer` (1), `long` (2), and any other integer default.
+        _ => reader.i64_at(rec, p),
     }
-    let len = reader.u32_at(rec, 4) as usize;
-    let bytes = reader.resolve(u64::from(rec) * 8 + 8, len);
-    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Compare `key` against the key fields of the entry at `(rec, pos)` in the
-/// paged image — the reader port of `keys::compare_key` for the fixed-width
-/// numeric key types (1/2 = i64 `integer`/`long`, 8/9/10/11 = narrow ints) and
-/// text keys (6).
-/// Text/float keys (types 6/3/4) are a follow-up (they need a string-record
-/// read / float compare); an unsupported type returns `Greater` so it never
-/// falsely matches.
+/// paged image — the reader port of `keys::compare_key` for the integer key
+/// types (1/2 = `integer`/`long`, 8–12 = the narrow widths, through
+/// [`field_value`]) and text keys (6).  A float key returns `Greater`, so it
+/// never matches.
 fn key_compare_reader<P: PageProvider>(
     reader: &mut PagedReader<P>,
     key: &[crate::keys::Content],
@@ -1187,24 +1265,7 @@ fn key_compare_reader<P: PageProvider>(
         let k = &keys[k_nr];
         let p = pos + u32::from(k.position);
         let c = match (val, k.type_nr.abs()) {
-            (Content::Long(v), 1 | 2) => v.cmp(&reader.i64_at(rec, p)),
-            (Content::Long(v), 8) => v.cmp(&i64::from(reader.i32_at(rec, p))),
-            (Content::Long(v), 12) => v.cmp(&i64::from(reader.u32_at(rec, p))),
-            (Content::Long(v), 9) => {
-                let mut b = [0u8; 2];
-                reader.read_into(u64::from(rec) * 8 + u64::from(p), &mut b);
-                v.cmp(&i64::from(i16::from_ne_bytes(b)))
-            }
-            (Content::Long(v), 10) => {
-                let mut b = [0u8; 1];
-                reader.read_into(u64::from(rec) * 8 + u64::from(p), &mut b);
-                v.cmp(&i64::from(b[0] as i8))
-            }
-            (Content::Long(v), 11) => {
-                let mut b = [0u8; 2];
-                reader.read_into(u64::from(rec) * 8 + u64::from(p), &mut b);
-                v.cmp(&i64::from(u16::from_ne_bytes(b) as i16))
-            }
+            (Content::Long(v), 1 | 2 | 8..=12) => v.cmp(&field_value(reader, rec, p, k)),
             // text key (3b.6): the field holds a `u32` pointer to a string record
             // (fld 4 = length, fld 8.. = UTF-8 bytes). Read it over the reader and
             // compare as strings. `key_hash` already hashes the `Content::Str`.
@@ -1240,10 +1301,13 @@ pub fn sorted_range_positions<P: PageProvider>(
 ) -> (u32, Vec<u32>) {
     use std::cmp::Ordering;
     let inner = reader.u32_at(root_rec, root_pos);
-    if inner == 0 || esize == 0 {
+    let Some(words) = reader.record_extent(inner) else {
+        return (inner, Vec::new());
+    };
+    let length = reader.u32_at(inner, 4);
+    if esize == 0 || 8 + u64::from(length) * u64::from(esize) > u64::from(words) * 8 {
         return (inner, Vec::new());
     }
-    let length = reader.u32_at(inner, 4);
     // Binary search for the FIRST index whose key is >= lo.
     let (mut left, mut right) = (0u32, length);
     while left < right {
@@ -1285,6 +1349,22 @@ const ELEM_PAYLOAD: u32 = 8;
 /// number as a string.
 const TRIE_TEXT_TYPE: i8 = 6;
 
+/// The tree a collection slot names in the image, and the nodes it minted — no more than its
+/// record holds, so a walk's fuel is bounded by the bytes it reads (loft#2177); `(0, 0)` when
+/// the image holds no tree record there.
+fn tree_at<P: PageProvider>(
+    reader: &mut PagedReader<P>,
+    root_rec: u32,
+    root_pos: u32,
+) -> (u32, u32) {
+    let tree = reader.u32_at(root_rec, root_pos);
+    let Some(words) = reader.record_extent(tree) else {
+        return (0, 0);
+    };
+    let nodes = reader.u32_at(tree, crate::radix_tree::NODES);
+    (tree, nodes.min(crate::radix_tree::cap_for_words(words)))
+}
+
 /// The tree's node array and key oracle, read out of a PAGED image.
 ///
 /// This is the whole of what a paged trie query adds: the descent, the split point,
@@ -1325,12 +1405,7 @@ impl<'a, P: PageProvider> PagedTrie<'a, P> {
     /// Open the tree rooted in the image at `(root_rec, root_pos)` — the same
     /// 4-byte claim slot a resident trie keeps its tree id in.
     fn open(reader: &'a mut PagedReader<P>, root_rec: u32, root_pos: u32, key_pos: u32) -> Self {
-        let tree = reader.u32_at(root_rec, root_pos);
-        let nodes = if tree == 0 {
-            0
-        } else {
-            reader.u32_at(tree, crate::radix_tree::NODES)
-        };
+        let (tree, nodes) = tree_at(reader, root_rec, root_pos);
         Self {
             reader,
             tree,
@@ -1346,16 +1421,7 @@ impl<'a, P: PageProvider> PagedTrie<'a, P> {
     fn key_bytes(&mut self, rec: u32) -> &[u8] {
         if self.cached.as_ref().is_none_or(|(r, _)| *r != rec) {
             let ptr = self.reader.u32_at(rec, self.key_pos);
-            let len = if ptr == 0 {
-                0
-            } else {
-                self.reader.u32_at(ptr, 4) as usize
-            };
-            let bytes = if len == 0 {
-                Vec::new()
-            } else {
-                self.reader.resolve(u64::from(ptr) * 8 + 8, len)
-            };
+            let bytes = self.reader.str_bytes(ptr);
             self.cached = Some((rec, bytes));
         }
         self.cached.as_ref().map_or(&[], |(_, b)| b.as_slice())
@@ -1546,12 +1612,7 @@ impl<'a, P: PageProvider> PagedSpatial<'a, P> {
         root_pos: u32,
         keys: &[crate::keys::Key],
     ) -> Self {
-        let tree = reader.u32_at(root_rec, root_pos);
-        let nodes = if tree == 0 {
-            0
-        } else {
-            reader.u32_at(tree, crate::radix_tree::NODES)
-        };
+        let (tree, nodes) = tree_at(reader, root_rec, root_pos);
         Self {
             reader,
             tree,
@@ -1572,34 +1633,12 @@ impl<'a, P: PageProvider> PagedSpatial<'a, P> {
     /// _resident_one` drives every width through both readers and compares the
     /// answers, which is what holds them in step.
     fn axis_value(&mut self, rec: u32, key: &crate::keys::Key) -> i64 {
-        let p = ELEM_PAYLOAD + u32::from(key.position);
-        // Each arm is the paged spelling of the `Store` reader `radix_db::axis_i64` calls
-        // for the same `type_nr`, `key.start` included: the narrow widths store
-        // `value - start`, so a decode that assumed a zero bias would give this storage a
-        // different Morton code than the resident one for the same record.
-        let start = i64::from(key.start);
-        match key.type_nr.unsigned_abs() {
-            // 4-byte signed (`int<…>`), as `Store::get_i32_raw` reads it.
-            8 => i64::from(self.reader.i32_at(rec, p)),
-            // 4-byte UNSIGNED (`int_raw<…>`, @FR-L-Narrow-Enc), as `Store::get_u32_raw`
-            // reads it.  Raw like the signed 4-byte arm above, so it takes no bias.
-            12 => i64::from(self.reader.u32_at(rec, p)),
-            // 2-byte, `start`-biased with `0` reserved for null (`Store::get_short`).
-            9 => {
-                let raw = self.reader.u16_at(rec, p);
-                if raw == 0 {
-                    i64::from(i32::MIN)
-                } else {
-                    i64::from(raw) + start - 1
-                }
-            }
-            // 1-byte, `start`-biased (`Store::get_byte`).
-            10 => i64::from(self.reader.u8_at(rec, p)) + start,
-            // 2-byte direct, `start`-biased (`Store::get_short_full`).
-            11 => i64::from(self.reader.u16_at(rec, p)) + start,
-            // `integer` (1), `long` (2), and any other integer default.
-            _ => self.reader.i64_at(rec, p),
-        }
+        field_value(
+            self.reader,
+            rec,
+            ELEM_PAYLOAD + u32::from(key.position),
+            key,
+        )
     }
 
     /// The record's axis codes, order-preserving, kept until another record is asked

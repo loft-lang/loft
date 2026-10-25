@@ -111,6 +111,7 @@ pub const OWNER_FLD: u32 = 4;
 /// `index` is 1-based, so 0 is free to mean "no entry" in a bucket slot and in the free
 /// list. Both halves are arithmetic — `chunk_of` is a `leading_zeros`, not a search —
 /// because this runs on every lookup that hits.
+/// The chunk tiling `@FR-S-Arena` defines.
 #[inline]
 #[must_use]
 pub fn locate(index: u32, stride: u32) -> (u32, u32) {

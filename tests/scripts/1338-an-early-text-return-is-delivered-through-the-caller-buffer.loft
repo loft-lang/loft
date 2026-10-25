@@ -83,7 +83,7 @@ fn c13(n: integer) -> text { for i in 0..3 { if i == n { return lo(i) ?? "" } } 
 // early returns two arms deep
 fn c14(w: boolean, v: boolean, n: integer) -> text { if w { if v { return lo(n) ?? "" } return lo_n(n + 10) } return lo(n + 1) ?? ""; }
 // a recursion whose tail is the self-call and whose base case is an early owned return
-fn c15(n: integer) -> text { if n == 0 { return lo(0) ?? "" } c15(n - 1) }
+fn c15(n: integer) -> text { if n == 0 { return lo(0) ?? "" } t = c15(n - 1); t }
 // a chained `??` and a right-nested `??` in an early return
 fn d1(w: boolean, n: integer) -> text { if w { return none(n) ?? lo(n) ?? "z" } return lo_n(n + 1); }
 fn d2(w: boolean, n: integer) -> text { if w { return none(n) ?? (none(n + 1) ?? "y{n}") } "x{n}" }

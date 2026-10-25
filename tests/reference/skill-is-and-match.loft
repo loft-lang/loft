@@ -82,6 +82,17 @@ fn test_match_on_a_variant_a_payload_a_tuple_and_a_pair_of_variants() {
   assert("{world.removed}" == "[4]", "a scalar payload bound by name");
 }
 
+fn total(v: vector<integer>) -> integer {
+  match v {
+    [] => 0,
+    [x, ..rest] => x + total(rest),
+  }
+}
+
+fn test_head_and_tail_arms_cover_every_length() {
+  assert(total([1, 2, 3]) == 6 && total([]) == 0, "the list recursion needs no `_`");
+}
+
 fn route(a: Spell, b: Spell, world: World) {
   // An enum element names a VARIANT — by tag, or with its payload bound.  A record payload
   // bound this way is a view of the MATCHED VALUE; a scalar payload is a copy.  `a` and `b`

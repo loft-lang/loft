@@ -65,6 +65,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // inlined bodies) — after the value records, so a leaf it inlines is final.
     crate::leaf_inline::rewrite_program(data);
     laps.lap("leaf_inline");
+    // `@FR-R-TailSelf` — a self-call in tail position of a scalar function is a jump to its
+    // entry, after the inlining that may leave such a call as a body's tail.
+    crate::opt::tail_self::rewrite_program(data);
+    laps.lap("tail_self");
     // `@FR-R-ZeroCount` — a character count compared with zero reads the byte count, after
     // the inlining that may leave `len` as its operator.
     crate::zero_count::rewrite_program(data);

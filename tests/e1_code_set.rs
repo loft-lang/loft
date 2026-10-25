@@ -27,6 +27,12 @@ const CODES: &[(&str, &str)] = &[
         "both-receiver-deprecated",
         "fn twice(both: integer) -> integer { both * 2 }\nfn main() { print(\"{twice(2)}\"); }",
     ),
+    // loft-lang/plans#202 P3 — a scalar match with a hole: the null is the rule's answer, the
+    // advice says where the hole is.
+    (
+        "match-scalar-hole",
+        "fn main() { k = match 7 { 1 => \"one\", 2 => \"two\" }; print(\"{k}\"); }",
+    ),
     // @PLN131 — the copy notice is the diagnostic the suggestions work attaches to, so it
     // got the first of this arc's codes. `s` survives the construction, so the copy is
     // avoidable rather than forced.

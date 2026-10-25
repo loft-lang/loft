@@ -55,6 +55,7 @@ pub const STRING_NULL: &str = "\0";
 
 #[allow(dead_code)]
 static A: System = System;
+/// The first word of every store and image (`@FR-S-Frame`): a reader refuses a file without it.
 const SIGNATURE: u32 = 0x53_74_6f_31;
 pub const PRIMARY: u32 = 1;
 
@@ -1306,6 +1307,7 @@ impl Store {
         )
     }
 
+    /// A store over a file's whole length, its free-block indexes in the file (`@FR-S-Mapped`).
     #[cfg(feature = "mmap")]
     fn open_mapped(path: &str, read_surface: bool) -> Store {
         let mut file = MmapStorage::open(path).expect("Opening file");

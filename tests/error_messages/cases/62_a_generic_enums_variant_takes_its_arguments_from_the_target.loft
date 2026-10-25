@@ -1,0 +1,6 @@
+// loft-lang/plans#202 P8 — `Slot.Empty` with no target: the refusal names the typed-target cure,
+// where the spelling used to answer a value of no type ("Unknown type null").  A generic enum
+// without a self-reference: one that holds `reference<Slot<T>>` and that nothing instantiates
+// trips the two-pass contract on its own (loft#2171).
+enum Slot<T> { Empty, Full { v: T } }
+fn main() { a = Slot.Empty; println("x"); }

@@ -52,6 +52,13 @@
     <span class="en">Rect</span> { w, h } =&gt; <span class="st">"rect"</span>,
   }
 }</code></pre>
+<p>A slice match whose arms together cover every length needs no <code>_</code>: <code>[]</code> covers the empty vector and <code>[x, ..rest]</code> every other length — the list recursion.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">total</span>(v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+  match v {
+    [] =&gt; <span class="nm">0</span>,
+    [x, ..rest] =&gt; x + <span class="fn-call">total</span>(rest),
+  }
+}</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">direction_name</span>(<span class="en">North</span>) == <span class="st">"north"</span>, <span class="st">"simple enum match"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">direction_name</span>(<span class="en">West</span>) == <span class="st">"west"</span>, <span class="st">"west"</span>);</code></pre>
@@ -173,8 +180,12 @@
     _ =&gt; <span class="st">"other"</span>,
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bigger == <span class="st">"rect"</span>, <span class="st">"variants inside a tuple pattern: {bigger}"</span>);</code></pre>
+<h2 id="slice-arms-that-cover-every-length">Slice arms that cover every length</h2>
+<p>One slice arm is length-constrained, so it never covers every length on its own; the ARMS do when an exact arm covers each short length and a rest arm every length from there on, each with plain element bindings and no guard. Then no <code>_</code> is needed and the match is not nullable. A set that leaves a length out — <code>[x, ..rest]</code> alone — is refused ("a slice pattern can fail").</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">total</span>([]) == <span class="nm">0</span>, <span class="st">"the empty arm: {total([])}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">total</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>]) == <span class="nm">6</span>, <span class="st">"the recursion over the rest: {total([1, 2, 3])}"</span>);</code></pre>
 <h2 id="when-nothing-matches">When nothing matches</h2>
-<p>This match names no <code>_</code>, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with <code>??</code>, or add a <code>_</code> arm — the compiler will not remind you.</p>
+<p>This match names no <code>_</code>, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with <code>??</code>, or add a <code>_</code> arm.  The compiler advises at the match (<code>match-scalar-hole</code>); <code>LOFT_NO_SCALAR_HOLE</code> keeps a deliberate hole quiet.</p>
 <pre><code>  unmatched = match <span class="nm">7</span> {
     <span class="nm">1</span> =&gt; <span class="st">"one"</span>,
     <span class="nm">2</span> =&gt; <span class="st">"two"</span>,
@@ -246,6 +257,15 @@ fn size_of(s: Shape) -&gt; text {
     Circle { radius } =&gt; "small circle",
     Rect { w, h } if w == h =&gt; "square",
     Rect { w, h } =&gt; "rect",
+  }
+}
+
+// A slice match whose arms together cover every length needs no `_`: `[]` covers the
+// empty vector and `[x, ..rest]` every other length — the list recursion.
+fn total(v: vector&lt;integer&gt;) -&gt; integer {
+  match v {
+    [] =&gt; 0,
+    [x, ..rest] =&gt; x + total(rest),
   }
 }
 
@@ -404,11 +424,20 @@ fn main() {
   };
   assert(bigger == "rect", "variants inside a tuple pattern: {bigger}");
 
+  // ## Slice arms that cover every length
+  // One slice arm is length-constrained, so it never covers every length on its own; the
+  // ARMS do when an exact arm covers each short length and a rest arm every length from
+  // there on, each with plain element bindings and no guard. Then no `_` is needed and the
+  // match is not nullable. A set that leaves a length out — `[x, ..rest]` alone — is
+  // refused ("a slice pattern can fail").
+  assert(total([]) == 0, "the empty arm: {total([])}");
+  assert(total([1, 2, 3]) == 6, "the recursion over the rest: {total([1, 2, 3])}");
   // ## When nothing matches
   // This match names no `_`, and 7 is none of its arms.  On an enum that would
   // not compile; on a scalar there is no finite set to check, so the match
   // answers null and the null travels on.  Give the result a fallback with `??`,
-  // or add a `_` arm — the compiler will not remind you.
+  // or add a `_` arm.  The compiler advises at the match (`match-scalar-hole`);
+  // `LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet.
   unmatched = match 7 {
     1 =&gt; "one",
     2 =&gt; "two",

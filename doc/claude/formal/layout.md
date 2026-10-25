@@ -15,19 +15,21 @@ motivated it), #399 (narrow-int storage).
 > DEFINES that `field_offset`. The two meet at every access — heap.md's semantics operate on the
 > bytes this doc lays out.
 >
-> **One format — no in-memory / on-disk split.** loft's store is ONE thing: the durable file is
-> bit-for-bit identical to the in-memory store (`src/store.rs`: *"durability is a metadata layer,
-> not a payload-layout change"*). So `layout(τ)` is a single relation, and its rules hold equally
-> for the bytes in RAM and the bytes on disk. `layout` is computed once, in `src/data.rs`
+> **One format — no in-memory / on-disk split.** A store image has the store's own format — the
+> same frame and the same record bytes as the store in memory — so `layout(τ)` is a single
+> relation, and its rules hold equally for the bytes in RAM and the bytes on disk.  An image is a
+> rebuilt copy of one value rather than the live store's bytes; what it holds beside the records,
+> and what a reader of one may rely on, is [structures.md](structures.md). `layout` is computed once, in `src/data.rs`
 > (`element_size` / `element_align` / `element_offsets`) and `Stores::finish` (struct positions);
 > **both backends read the same offsets from the one type table** — a divergence is a bug, not a
 > second layout.
 
 ## The store byte model (the ground the rules stand on)
 
-- **`Store`** — a word-addressed byte region (`src/store.rs`): a fixed header
-  `[0 = SIGNATURE (4 B), 4 = free-space index (4 B), 8 = record size (4 B), 12 = content …]`, then
-  records. `layout(τ)` governs the CONTENT bytes of a record; the header is a fixed store frame.
+- **`Store`** — a word-addressed byte region (`src/store.rs`): word 0 is a fixed header
+  `[0 = SIGNATURE (4 B), 4 = written 1, read by no reader (4 B)]`, then records from word 1
+  (structures.md `S-Frame`). `layout(τ)` governs the CONTENT bytes of a record; the header is a
+  fixed store frame.
 - **arena frame** — records live in one arena. **Record 0** is the header (above); **record 1 =
   PRIMARY** is the root container (the program's top `hash` / `sorted` / struct value), its type-id
   at `(rec = 1, pos = 8)`. Every record begins with an `i32` **size word** (in 8-byte words; a
@@ -38,8 +40,8 @@ motivated it), #399 (narrow-int storage).
   working-set range-reader. The multi-byte words (the `i32` size, the `u32` sub-references, the
 signature) are written **native-endian** (`store.rs` `to_ne_bytes`/`from_ne_bytes`), so a store
 is portable among **like-endian** hosts — every current target (native and wasm) is
-little-endian; a big-endian reader needs a byte-swap (only the `.dcache` sidecar is fixed
-little-endian). Endianness is thus a **physical-encoding** detail, outside the frozen logical
+little-endian; a big-endian reader needs a byte-swap, and the layout identity's `@endian` line
+refuses one that has none. Endianness is thus a **physical-encoding** detail, outside the frozen logical
 layout contract (which pins field/enum identity + order, not byte encoding).
 - **record** — a value of type τ occupies `size(τ)` contiguous bytes; a field/element sits at a
   fixed byte offset within it. `H[r ⊕ n]` (heap.md) reads at `r.pos + n`.
@@ -420,7 +422,9 @@ under the falsifier list already records for the sentinel half.
   (L-Sound)   a reader whose layout identity id(P) differs from a store's RECORDED identity MUST
               reject-or-migrate, NEVER read the bytes raw.  A raw handoff is admitted ONLY when the
               two identities are equal.  Discharged by the .dschema sidecar (schema_sidecar): the
-              stored id is compared on load; a mismatch is CorruptReason::SchemaMismatch → rebuild.
+              stored id is compared before a byte is read; a mismatch is converted by a
+              whole-image load or refused by a paged one (structures.md S-Gate).  An image with
+              NO sidecar records no identity and is refused.
 ```
 
 **In words.** The layout is allowed to change between builds — but a store written under an old

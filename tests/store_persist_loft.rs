@@ -1476,8 +1476,10 @@ fn store_load_url_trusted_fetches_over_http_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write keys=7,13,42"), "write: {out_w:?}");
 
-    // Serve the store over HTTP (a plain GET → 200 whole file).
-    let url = serve_ranges(fa::read(&path).unwrap(), None);
+    // Serve the store and its sidecar over HTTP (a plain GET → 200 whole file): an image is
+    // read only beside its sidecar (`@FR-S-Gate`).
+    let sidecar = fa::read(format!("{}.dschema", path.display())).ok();
+    let url = serve_ranges(fa::read(&path).unwrap(), sidecar);
 
     for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(loft_bin())

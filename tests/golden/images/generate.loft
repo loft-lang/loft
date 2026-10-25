@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Writes one GOLDEN IMAGE SET: an image (and its `.dschema` sidecar) of every stored structure
+// formal/structures.md defines, which `tests/scripts/golden-images-whole.loft` and
+// `tests/scripts/golden-images-paged.loft` then read with every later build (`S-Format`'s
+// cross-release half).  Run it through `scripts/golden_images.sh <set>`, which runs it once per
+// hash layout and refuses a set that exists: a committed image is never written again.  A new
+// set is made when a placement token changes; the old set stays, and its reader says what this
+// build does with it (reads it as written, or refuses it).
+//
+// The values are formulas of the record's position, written again in the readers, so a reader
+// checks every record against a hand-derivable value rather than against another build.
+//
+// Env: LOFT_GOLDEN_DIR (the set directory, created by the script), LOFT_GOLDEN_HASH
+// (inline | tagged | untagged: which hash image this run writes; `inline` also writes the rest).
+
+struct GRec { k: integer, name: text, tags: vector<integer>, v: integer }
+struct GText { name: text, v: integer }
+struct GNarrow { k: integer limit(1000, 1200), v: integer }
+struct GPin { x: integer, y: integer, n: integer }
+struct GWord { w: text, hits: integer }
+enum GKind { Plain, Named { label: text, n: integer } }
+struct GInner { a: integer, b: text }
+struct GRoot { title: text, nums: vector<integer>, inner: GInner, kind: GKind, f: float, small: integer limit(-100, 100) }
+
+fn rec(i: integer) -> GRec { GRec { k: i * 7 - 1000, name: "rec-{i}", tags: [i % 5, i % 7], v: i * i } }
+
+fn write(ok: boolean, what: text) {
+  assert(ok, "writing {what}");
+}
+
+fn main() {
+  dir = env_variable("LOFT_GOLDEN_DIR") ?? "";
+  variant = env_variable("LOFT_GOLDEN_HASH") ?? "inline";
+  assert(dir != "", "LOFT_GOLDEN_DIR names the set directory");
+  h: hash<GRec[k]> = [];
+  for i in 0..300 { h += [rec(i)]; }
+  write(store_persist_copy(h, "{dir}/hash-{variant}.store"), "hash-{variant}");
+  if variant != "inline" { return }
+
+  ht: hash<GText[name]> = [];
+  for i in 0..200 { ht += [GText { name: "key{i}", v: i * 3 + 1 }]; }
+  write(store_persist_copy(ht, "{dir}/hash-text.store"), "hash-text");
+
+  hn: hash<GNarrow[k]> = [];
+  for i in 0..60 { hn += [GNarrow { k: (1000 + i * 3) ?? 1000, v: i * 11 }]; }
+  write(store_persist_copy(hn, "{dir}/hash-narrow.store"), "hash-narrow");
+
+  ix: index<GRec[k]> = [];
+  for i in 0..300 { ix += [rec(i)]; }
+  write(store_persist_copy(ix, "{dir}/index-int.store"), "index-int");
+
+  it: index<GText[name]> = [];
+  for i in 0..200 { it += [GText { name: "street-{i}", v: i * 3 + 1 }]; }
+  write(store_persist_copy(it, "{dir}/index-text.store"), "index-text");
+
+  so: sorted<GRec[k]> = [];
+  for i in 0..300 { so += [rec(i)]; }
+  write(store_persist_copy(so, "{dir}/sorted.store"), "sorted");
+
+  sp: spatial<GPin[x, y]> = [];
+  for i in 0..300 { sp += [GPin { x: (i % 20) * 9 - 90, y: (i / 20) * 13 - 100, n: i }]; }
+  write(store_persist_copy(sp, "{dir}/spatial.store"), "spatial");
+
+  tr: trie<GWord[w]> = [];
+  for i in 0..50 { tr += [GWord { w: "kerk{i}", hits: i }]; }
+  for i in 0..30 { tr += [GWord { w: "kerkweg{i}", hits: 100 + i }]; }
+  for i in 0..40 { tr += [GWord { w: "lon{i}", hits: 200 + i }]; }
+  write(store_persist_copy(tr, "{dir}/trie.store"), "trie");
+
+  r = GRoot { title: "golden", nums: [3, 1, 4, 1, 5, 9, 2, 6], inner: GInner { a: -42, b: "inner text" },
+              kind: Named { label: "named", n: 7 }, f: 2.5, small: -77 ?? 0 };
+  write(store_persist_copy(r, "{dir}/root.store"), "root");
+}

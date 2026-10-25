@@ -9,12 +9,16 @@
     scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
     scripts/c_sweep.py --all            # every refusal reason, not the top 25
     scripts/c_sweep.py --mode default   # one macro mode (strict, default, verify) instead of all
+    scripts/c_sweep.py --poison         # the store poison modes instead: the C built with
+                                        # -DLOFT_POISON / -DLOFT_POISON_CLAIM against the
+                                        # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1
     LOFT_BIN=<loft> scripts/c_sweep.py  # another build (default target/release/loft)
 
 For each program: `loft --emit-c` writes it as C, `cc` builds it in each macro mode of
 src/c/loft_cc.h — `-DLOFT_STRICT` (pure C99, `-pedantic -Werror`), the default, and
 `-DLOFT_VERIFY` (every proof the generator relied on checked again) — and each build's stdout
-and exit status are compared with `loft --interpret`'s; a program without `main` is its tests,
+and exit status are compared with `loft --interpret`'s (a printed `store_memory()` report's
+lines aside: they name the interpreter's own stores); a program without `main` is its tests,
 and the C's exit status is compared with `loft --tests`'s.  A mode changes speed, never a
 value, so a difference between modes is a defect of a macro's fallback.  Every program lands
 in one bucket:
@@ -44,6 +48,13 @@ MODES = {
     "default": ["-w"],
     "verify": ["-DLOFT_VERIFY", "-w"],
 }
+# The store's own falsifiers, which a sanitizer cannot be: a store is one allocation, so a read
+# of a freed store, of a record a growth moved, or of a claim nothing wrote is valid memory to
+# it.  Each mode is the C's build flag beside the switch the interpreter honours the same way.
+POISON_MODES = {
+    "poison": (["-DLOFT_POISON", "-w"], {"LOFT_POISON": "1"}),
+    "poison-claim": (["-DLOFT_POISON_CLAIM", "-w"], {"LOFT_POISON_CLAIM": "1"}),
+}
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
@@ -54,10 +65,15 @@ def corpus() -> list[str]:
     return [l for l in r.stdout.split("\n") if l.strip()]
 
 
-def run(cmd, timeout, cwd=None):
+# The interpreter is the oracle, and the slowest of the runs: a program near a minute on it
+# (tests/scripts/2177-…, ~60 s alone) timed out under a full sweep's load and read as a differ.
+ORACLE_TIMEOUT = 180
+
+
+def run(cmd, timeout, cwd=None, env=None):
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=timeout, cwd=cwd,
-                           env={**os.environ, "LOFT_TIMEOUT": str(timeout)})
+                           env={**os.environ, "LOFT_TIMEOUT": str(timeout), **(env or {})})
         return r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         return "timeout", b"", b""
@@ -69,6 +85,17 @@ def reason(stderr: bytes) -> str:
     why = line.split("yet: ", 1)[-1]
     why = why.split(": ", 1)[-1] if ": " in why else why
     return re.sub(r"\d+", "N", why)
+
+
+REPORT = re.compile(rb"^stores: \d+ live \|.*(\n  #\d+ .* bc:\d+)*$", re.M)
+
+
+def unreported(out: bytes) -> bytes:
+    """A program's stdout without the lines of a printed `store_memory()` report: they name
+    the interpreter's own stores (its value stack, its constants) and its bytecode positions,
+    which no compiled program has.  The programs that read the report's counts check those
+    themselves."""
+    return REPORT.sub(b"<store report>", out)
 
 
 def one(path: str, asan: bool = False, modes=tuple(MODES)):
@@ -84,9 +111,14 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
         tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
         # A program without `main` is its tests: the C runs them as `loft --tests` does,
         # and the two exit statuses say whether every test passed.
-        i_out = run([LOFT, "--tests" if tests else "--interpret", str(src)], 60, cwd=src.parent)
+        interp = [LOFT, "--tests" if tests else "--interpret", str(src)]
+        i_plain = None
         for mode in modes:
-            code, _, err = run(CC + MODES[mode] + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
+            flags, env = POISON_MODES.get(mode, (MODES.get(mode), None))
+            i_out = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env=env) if env else i_plain
+            if i_out is None:
+                i_out = i_plain = run(interp, ORACLE_TIMEOUT, cwd=src.parent)
+            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
             if code != 0:
                 first = err.decode(errors="replace").strip().split("\n")[0]
                 return path, "cc-error", f"[{mode}] {first}", None
@@ -95,7 +127,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
                 line = next((l for l in c_out[2].decode(errors="replace").split("\n")
                              if "Sanitizer" in l or "runtime error:" in l), "")
                 return path, "sanitizer", f"[{mode}] {line.strip()[:200]}", None
-            same = c_out[0] == i_out[0] if tests else (c_out[0], c_out[1]) == (i_out[0], i_out[1])
+            same = c_out[0] == i_out[0] if tests else \
+                (c_out[0], unreported(c_out[1])) == (i_out[0], unreported(i_out[1]))
             if not same:
                 return path, "differ", f"[{mode}]", (i_out, c_out)
         return path, "match", "", None
@@ -106,7 +139,7 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 0
     verbose = "--verbose" in argv
-    modes = tuple(MODES)
+    modes = tuple(POISON_MODES) if "--poison" in argv else tuple(MODES)
     if "--mode" in argv:
         i = argv.index("--mode")
         modes = (argv[i + 1],)

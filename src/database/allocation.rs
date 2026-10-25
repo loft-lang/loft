@@ -5240,6 +5240,11 @@ impl Stores {
     /// store builtin.
     #[cfg(feature = "mmap")]
     pub fn persist_copy(&mut self, slot: u16, path: &std::path::Path) -> bool {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = path.to_str().and_then(|p| self.image_path(p)) else {
+            return false;
+        };
+        let path = std::path::Path::new(&resolved);
         let idx = slot as usize;
         if idx >= self.allocations.len() || self.allocations[idx].free {
             return false;
@@ -5276,18 +5281,35 @@ impl Stores {
             return false;
         };
         drop(rebuilt);
-        if std::fs::write(path, &padded).is_err() {
-            return false;
-        }
-        // The layout sidecar: a paged or remote loader gates on it BEFORE
-        // range-reading foreign bytes.
+        // `@FR-S-Pair` — the image and its layout sidecar are one write: both are staged
+        // beside the target, and only when both are written do they replace what is there,
+        // so a failure leaves the previous pair as it was.  An image without its sidecar
+        // reads as raw-safe to every loader, and one beside an earlier write's sidecar
+        // reads under that write's layout.
         // The slot the image's references name is the rebuilt store's (`@FR-L-Ref-Slot`).
         let id = crate::schema_sidecar::LayoutIdentity::of_store(self, dst_slot, tp);
-        if id.write_beside(path).is_err() && std::env::var_os("LOFT_LOADER_STATS").is_some() {
-            crate::loft_eprintln!(
-                "store_persist_copy: could not write layout sidecar beside {}",
-                path.display()
-            );
+        let mut staged = path.as_os_str().to_owned();
+        staged.push(".tmp");
+        let staged = std::path::PathBuf::from(staged);
+        let image = (|| -> std::io::Result<()> {
+            use std::io::Write as _;
+            let mut f = crate::file_access::create(&staged)?;
+            f.write_all(&padded)?;
+            f.sync_all()
+        })();
+        let sidecar = image.and_then(|()| id.stage_beside(path));
+        let Ok(sidecar) = sidecar else {
+            let _ = crate::file_access::remove_file(&staged);
+            if std::env::var_os("LOFT_LOADER_STATS").is_some() {
+                crate::loft_eprintln!("store_persist_copy: not written — {}", path.display());
+            }
+            return false;
+        };
+        if crate::file_access::rename(&staged, path).is_err()
+            || crate::file_access::rename(&sidecar, crate::schema_sidecar::dschema_path(path))
+                .is_err()
+        {
+            return false;
         }
         if std::env::var_os("LOFT_LOADER_STATS").is_some() {
             crate::loft_eprintln!(
@@ -5306,6 +5328,18 @@ impl Stores {
         false
     }
 
+    /// The file a store builtin names by `raw`: a relative path re-homed against the
+    /// program's anchor, as every file builtin's is (`resolve_path`), and a URL left as it
+    /// is.  Read raw, a relative image path resolved against the process's working
+    /// directory, which the CLI moves to the anchor before a run — and an in-process host
+    /// (the test runner, the REPL) does not: the image was looked for beside the caller.
+    fn image_path(&self, raw: &str) -> Option<String> {
+        if raw.starts_with("http://") || raw.starts_with("https://") {
+            return Some(raw.to_string());
+        }
+        self.resolve_path(raw)
+    }
+
     /// Load a persisted store image at `path` into `slot`, HEAP-backed.  There is
     /// no mmap, so it works on **every** backend.  The slot's empty store is replaced by a heap
     /// store copied from the file, keeping the slot bookkeeping.  Returns
@@ -5313,6 +5347,11 @@ impl Stores {
     /// `Store::load` signature check under `catch_unwind`), never a misread.
     /// @PLN97 arc G Phase 1 (#522).
     pub fn load_path(&mut self, slot: u16, path: &std::path::Path) -> bool {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = path.to_str().and_then(|p| self.image_path(p)) else {
+            return false;
+        };
+        let path = std::path::Path::new(&resolved);
         let slot_idx = slot as usize;
         if slot_idx >= self.allocations.len() {
             return false;
@@ -6911,6 +6950,11 @@ impl Stores {
     }
 
     pub fn load_path_untrusted(&mut self, slot: u16, path: &std::path::Path) -> bool {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = path.to_str().and_then(|p| self.image_path(p)) else {
+            return false;
+        };
+        let path = std::path::Path::new(&resolved);
         // An older layout converts in memory, as `store_load` does (@PLN196); the converter
         // validates the image's structure before it reads a record.
         if self.layout_changed(slot, path) {
@@ -6951,9 +6995,8 @@ impl Stores {
     ///
     /// The `.dschema` sidecar already records the layout the file was written with, and
     /// the paged loaders already gate on it — this is the same gate on the whole-image
-    /// paths.  A store with no sidecar (legacy, or written by another tool) still loads:
-    /// the check can only report what it knows, and refusing every unlabelled store would
-    /// break programs that are reading their own correct data.
+    /// paths.  A store with no sidecar is refused (`@FR-S-Gate`): nothing records the
+    /// layout it was written with, so a raw read is a guess at every stride.
     ///
     /// `builtin` names the call in the refusal, so the reader is sent to the line that
     /// asked.
@@ -6961,13 +7004,10 @@ impl Stores {
         let Some(current) = self.slot_layout_identity(slot) else {
             return true; // untyped store — no identity to compare against
         };
-        // An unreadable sidecar (an I/O failure, not a layout answer) tells us nothing
-        // about the layout, so it neither passes nor fails the store: keep the previous
-        // behaviour rather than refuse a load on a filesystem hiccup.
-        let Ok(verdict) = crate::schema_sidecar::check_beside(path, &current, self.release())
-        else {
-            return true;
-        };
+        // A sidecar that cannot be read tells nothing about the layout, so the image is
+        // read under no recorded layout — refused, as a missing one is.
+        let verdict = crate::schema_sidecar::check_beside(path, &current, self.release())
+            .unwrap_or(crate::schema_sidecar::SchemaVerdict::Unreadable);
         Self::layout_verdict_ok(&verdict, &path.display().to_string(), builtin)
     }
 
@@ -6999,11 +7039,9 @@ impl Stores {
 
     /// The layout gate ([`schema_gate_ok`](Self::schema_gate_ok)) for a store image fetched from `url`: the
     /// sidecar is `<url>.dschema`, read over the same transport as the image.  A fetch
-    /// that fails is an absent sidecar — a server answers 404 for one it does not have,
-    /// and a missing `file://` sidecar is the same answer — so it passes, as a local
-    /// store with no sidecar does.  The image's SHA-256 pin does not cover the sidecar
-    /// and does not need to: a sidecar can only refuse a load, never admit a misread
-    /// that its absence would not.
+    /// that fails — a 404, an unreachable server — leaves the image with no recorded
+    /// layout, and it is refused as a local image with no sidecar is (`@FR-S-Gate`).
+    /// The image's SHA-256 pin does not cover the sidecar.
     #[cfg(any(
         feature = "registry",
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
@@ -7028,7 +7066,7 @@ impl Stores {
                 ),
                 Err(_) => (crate::schema_sidecar::SchemaVerdict::Unreadable, None),
             },
-            Err(_) => (crate::schema_sidecar::SchemaVerdict::Fresh, None),
+            Err(_) => (crate::schema_sidecar::SchemaVerdict::Bare, None),
         };
         if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
             return Ok(text);
@@ -7048,8 +7086,12 @@ impl Stores {
             .then(|| crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]))
     }
 
-    /// May a store whose sidecar gave `verdict` be read raw (`@FR-L-Sound`)?  Only an
-    /// absent sidecar or a matching one says yes.  Every other answer is refused, with
+    /// Why an image with no sidecar is refused, as every loader says it.
+    const BARE_IMAGE: &'static str = "it has no layout sidecar (`.dschema`) beside it, so nothing records the \
+         layout its records were written with; write it with store_persist_copy, which writes both";
+
+    /// May a store whose sidecar gave `verdict` be read raw (`@FR-L-Sound`)?  Only a
+    /// matching sidecar says yes.  Every other answer is refused, with
     /// what changed, on stderr: a refused load otherwise reads as "the file is missing",
     /// which sends the reader to the wrong half of their program.
     fn layout_verdict_ok(
@@ -7062,6 +7104,10 @@ impl Stores {
         }
         if let crate::schema_sidecar::SchemaVerdict::Refused(why) = verdict {
             crate::loft_eprintln!("{builtin}: refusing {what} — {why}.");
+            return false;
+        }
+        if *verdict == crate::schema_sidecar::SchemaVerdict::Bare {
+            crate::loft_eprintln!("{builtin}: refusing {what} — {}.", Self::BARE_IMAGE);
             return false;
         }
         let detail = match verdict {
@@ -7094,8 +7140,8 @@ impl Stores {
     /// differs from THIS program's collection type — so the loader never
     /// range-reads foreign-layout bytes at schema-derived offsets (a silent
     /// corruption / wild-pointer hazard the post-hoc `store_verify` should not be
-    /// the only guard against). An ABSENT sidecar (a legacy / pre-3b.5 store) or
-    /// an untyped local store passes; `store_verify` stays the backstop. `path`
+    /// the only guard against). An ABSENT sidecar is refused too (`@FR-S-Gate`); an
+    /// untyped local store has no identity to compare and passes. `path`
     /// is a local file or an `http(s)://` URL — the sidecar is read from beside
     /// it (`<path>.dschema`), over the same transport.
     #[cfg(paged_store)]
@@ -7114,10 +7160,14 @@ impl Stores {
         // `refuse_paged` rather than its own `eprintln`, so the program can read
         // it back too: a refusal reachable by one route and not another is the
         // same silence in a different place (loft#802).
-        let reason = format!(
-            "its recorded layout differs from this program's (verdict: \
-             {verdict:?}); not range-reading foreign bytes"
-        );
+        let reason = if verdict == crate::schema_sidecar::SchemaVerdict::Bare {
+            Self::BARE_IMAGE.to_string()
+        } else {
+            format!(
+                "its recorded layout differs from this program's (verdict: \
+                 {verdict:?}); not range-reading foreign bytes"
+            )
+        };
         self.refuse_paged(path, &reason);
         false
     }
@@ -7134,6 +7184,11 @@ impl Stores {
     /// structural root position in the image), NOT the raw bytes.
     #[cfg(paged_store)]
     pub fn load_range(&mut self, local: &DbRef, path: &str, lo: i64, hi: i64) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         if !self.layout_gate_ok(path, local) {
             return 0;
         }
@@ -7316,8 +7371,7 @@ impl Stores {
     /// relocate. Text (type 5) is a POINTER; vectors /
     /// nested structs / keyed collections are heap-owned — all need the
     /// relocating graph-copy (3b.2+), so they are NOT inline.
-    #[cfg(paged_store)]
-    fn is_inline_scalar(&self, tp: u16) -> bool {
+    pub(crate) fn is_inline_scalar(&self, tp: u16) -> bool {
         match self.types[tp as usize].parts {
             Parts::Int(..) | Parts::Byte(..) | Parts::Short(..) | Parts::ShortRaw(..) => true,
             // Base covers the numeric primitives, character(6) and text(5); all
@@ -7333,8 +7387,7 @@ impl Stores {
     /// scalar-vector are BOTH a single flat sub-record behind a `u32` pointer, so
     /// they relocate with identical code. A `vector<struct>` / `vector<text>` /
     /// nested struct / reference still needs the recursive copy (3b.4+).
-    #[cfg(paged_store)]
-    fn is_copyable_field(&self, tp: u16) -> bool {
+    pub(crate) fn is_copyable_field(&self, tp: u16) -> bool {
         if self.is_inline_scalar(tp) || tp == 5 {
             return true;
         }
@@ -7407,8 +7460,7 @@ impl Stores {
     /// cost them the whole saving — and the same is true of a `spatial` since
     /// @PLN136. When the root is anything else, it is the #632 wrapper-struct trap
     /// and the declaration IS the fix.
-    #[cfg(paged_store)]
-    fn wrong_collection_reason(&self, tp: u16, want: &str) -> String {
+    pub(crate) fn wrong_collection_reason(&self, tp: u16, want: &str) -> String {
         let name = self.type_name(tp);
         let parts = self.types.get(tp as usize).map(|t| &t.parts);
         if matches!(parts, Some(Parts::Trie(..))) {
@@ -7454,8 +7506,7 @@ impl Stores {
     /// reported as a nested vector for as long as the enum arm was missing from
     /// [`Stores::is_copyable_field`]. A refusal a reader cannot act on is barely
     /// better than a silent one.
-    #[cfg(paged_store)]
-    fn not_copyable_reason(&self, content_tp: u16) -> String {
+    pub(crate) fn not_copyable_reason(&self, content_tp: u16) -> String {
         let culprit = match &self.types[content_tp as usize].parts {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields
                 .iter()
@@ -7536,8 +7587,7 @@ impl Stores {
     /// True when an entry of type `content_tp` can be partially loaded today —
     /// every field is [copyable](Stores::is_copyable_field). Otherwise the
     /// collection is refused (safe-refusal, never a broken heap).
-    #[cfg(paged_store)]
-    fn is_copyable_entry(&self, content_tp: u16) -> bool {
+    pub(crate) fn is_copyable_entry(&self, content_tp: u16) -> bool {
         match &self.types[content_tp as usize].parts {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 fields.iter().all(|f| self.is_copyable_field(f.content))
@@ -7845,6 +7895,11 @@ impl Stores {
     /// -keyed copyable hash.
     #[cfg(paged_store)]
     pub fn load_key_text(&mut self, local: &DbRef, path: &str, key: &str) -> bool {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return false;
+        };
+        let path = resolved.as_str();
         if !self.layout_gate_ok(path, local) {
             return false;
         }
@@ -7911,6 +7966,11 @@ impl Stores {
     /// stepping at the cap, so the untaken tail is never fetched.
     #[cfg(paged_store)]
     pub fn load_prefix(&mut self, local: &DbRef, path: &str, pre: &str, limit: i64) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         if !self.layout_gate_ok(path, local) {
             return 0;
         }
@@ -7999,6 +8059,11 @@ impl Stores {
         till: &[i64],
         limit: i64,
     ) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         if !self.layout_gate_ok(path, local) {
             return 0;
         }
@@ -8084,6 +8149,11 @@ impl Stores {
     /// FLAT-struct restriction (scalar fields only — no relocation yet).
     #[cfg(paged_store)]
     pub fn load_keys(&mut self, local: &DbRef, path: &str, keys_vals: &[i64]) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         let key_sets: Vec<Vec<crate::keys::Content>> = keys_vals
             .iter()
             .map(|&kv| vec![crate::keys::Content::Long(kv)])
@@ -8106,6 +8176,11 @@ impl Stores {
     /// the shape the batch form is for.
     #[cfg(paged_store)]
     pub fn load_keys_text(&mut self, local: &DbRef, path: &str, keys_vals: &[&str]) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         let key_sets: Vec<Vec<crate::keys::Content>> = keys_vals
             .iter()
             .map(|k| vec![crate::keys::Content::Str(crate::keys::Str::new(k))])
@@ -8352,7 +8427,8 @@ impl Stores {
             // Both tree kinds store an element as a claimed RECORD with its payload
             // at offset 8, so the copy is the same claim; only the linker differs.
             PagedKind::Trie | PagedKind::Radix => {
-                let size = reader.record_words(src_rec);
+                // A record the image does not hold whole is not an entry (loft#2177).
+                let size = reader.record_extent(src_rec).unwrap_or(0);
                 if size < 2 {
                     return false;
                 }
@@ -8467,6 +8543,12 @@ impl Stores {
             ) {
                 // Inline nested struct: same records, deeper bases.
                 self.relocate_ptr_fields(reader, dst_rec, dst_off, src_rec, src_off, ftp, store_nr);
+            } else if let Some(variant) = self.enum_variant_at(ftp, store_nr, dst_rec, dst_off) {
+                // An enum: its payload is the variant's fields at the same position, as
+                // `copy_claims` walks it (loft#2178).
+                self.relocate_ptr_fields(
+                    reader, dst_rec, dst_off, src_rec, src_off, variant, store_nr,
+                );
             } else if let Parts::Vector(elem_tp) = self.types[ftp as usize].parts {
                 // vector<struct>: copy the inner record + recurse each element.
                 let src_sub = self.src_ptr(reader, dst_rec, dst_off, src_rec, src_off, store_nr);
@@ -8509,6 +8591,8 @@ impl Stores {
                 Parts::Struct(_) | Parts::EnumValue(_, _)
             ) {
                 self.collect_sub_records(dst_rec, dst_off, ftp, store_nr, out);
+            } else if let Some(variant) = self.enum_variant_at(ftp, store_nr, dst_rec, dst_off) {
+                self.collect_sub_records(dst_rec, dst_off, variant, store_nr, out);
             } else if ftp == 5 || matches!(self.types[ftp as usize].parts, Parts::Vector(_)) {
                 let sub = self.allocations[store_nr as usize].get_u32_raw(dst_rec, dst_off);
                 if sub != 0 {
@@ -8516,6 +8600,19 @@ impl Stores {
                 }
             }
         }
+    }
+
+    /// The struct-enum variant an enum field of type `tp` at `(rec, pos)` of the local copy holds
+    /// — read from its tag byte as `copy_claims` reads it — or `None` for a type that is not
+    /// an enum, a unit variant, or a null value.
+    #[cfg(paged_store)]
+    fn enum_variant_at(&self, tp: u16, store_nr: u16, rec: u32, pos: u32) -> Option<u16> {
+        let Parts::Enum(values) = &self.types[tp as usize].parts else {
+            return None;
+        };
+        let e_nr = self.allocations[store_nr as usize].get_byte(rec, pos, -1);
+        let variant = values.get(usize::try_from(e_nr).ok()?)?.0;
+        (variant != u16::MAX).then_some(variant)
     }
 
     /// The SOURCE pointer stored in a field, read from the local copy rather than
@@ -8549,6 +8646,10 @@ impl Stores {
     /// Copy a FLAT record (a string or a `vector<scalar>` inner record — no
     /// interior pointers) at `src_rec` into a fresh local claim; the size header
     /// (fld 0) is set by `claim`, so copy the length + payload from fld 4 on.
+    ///
+    /// 0 — the field reads as absent — for a source the image does not hold whole, or whose
+    /// length runs past its own record: the copy never claims more than its source holds, and
+    /// the length it keeps never names bytes the copy did not take (loft#2177).
     #[cfg(paged_store)]
     fn copy_flat_subrecord<P: crate::paged_reader::PageProvider>(
         &mut self,
@@ -8561,9 +8662,13 @@ impl Stores {
         // flat sub-record needs both. Read as ONE 8-byte request instead of two 4-byte
         // ones: on a 100×250 `vector<Named>` that was 25 000 requests, the second of the
         // three this path issued per element. Same bytes, same page, half the calls.
-        let head = reader.resolve(u64::from(src_rec) * 8, 8);
-        let ssz = u32::from_ne_bytes([head[0], head[1], head[2], head[3]]);
-        let head_len = u32::from_ne_bytes([head[4], head[5], head[6], head[7]]);
+        let (size, head_len) = reader.head(src_rec);
+        let Some(ssz) = reader.extent_of(src_rec, size) else {
+            return 0;
+        };
+        if elem_size > 0 && 8 + u64::from(head_len) * u64::from(elem_size) > u64::from(ssz) * 8 {
+            return 0;
+        }
         // loft#729 — claim what the LENGTH needs, not what the source's CAPACITY
         // is.
         //
@@ -8636,7 +8741,7 @@ impl Stores {
         let esize = u32::from(self.size(elem_tp));
         let new_inner = self.copy_flat_subrecord(reader, src_inner, store_nr, esize);
         let length = reader.u32_at(src_inner, 4);
-        if esize == 0 {
+        if esize == 0 || new_inner == 0 {
             return new_inner;
         }
         // loft#782 — warm every element's sub-record in ONE batch before relocating, so the
@@ -8753,6 +8858,7 @@ impl Stores {
 /// track the data.  Interior free blocks still remain: reclaiming those means
 /// relocating records and rewriting every `DbRef`, which is compaction, not
 /// this.
+/// Where an image ends: the last claimed block (`@FR-S-Image`).
 #[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
     // PRIMARY = 1 is the first record's word position.
@@ -8795,6 +8901,7 @@ pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
 ///
 /// Returns `None` if the source bytes don't describe a walkable record chain,
 /// or if `target_words` would cut into live data.
+/// The image's floor: one free block pads it to 1024 words (`@FR-S-Image`).
 #[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 pub(super) fn build_padded_store_image(
     src: &[u8],

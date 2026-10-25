@@ -509,8 +509,8 @@ fn store_upgrade_routine(tp: integer, old: integer, version: integer);
 /// a hash mismatch REFUSES the load (returns false, loads nothing). The
 /// fetch→verify→trust discipline the registry install uses, bridged onto the store
 /// loader; `url` may be `http(s)://` or `file://`. Like `store_load`, it refuses
-/// an image whose `<url>.dschema` records a different layout than `r`'s type (a
-/// missing `.dschema` is not checked). Whole-file counterpart of the paged
+/// an image whose `<url>.dschema` records a different layout than `r`'s type, and
+/// an image with no `.dschema` at all. Whole-file counterpart of the paged
 /// `store_load_key(s)`/`store_load_range` loaders.
 ///   h: hash<Rec[id]> = []
 ///   store_load_url(h, "https://cdn.example/world.store", "<sha256-hex>")

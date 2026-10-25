@@ -46,6 +46,8 @@ fn test_a_struct_literal_and_a_field_write() {
   item = Item { name: "foo", count: 0 };
   item.count += 1;
   assert(item.count == 1, "the write landed");
+  more = Item { count: 5, ..item };       // a copy of `item` with `count` written; `item` keeps its value
+  assert(more.name == "foo" && more.count == 5 && item.count == 1, "the update copies, the base stays");
 }
 
 enum Color { Red, Green, Blue }

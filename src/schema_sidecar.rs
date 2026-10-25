@@ -120,6 +120,7 @@ impl LayoutIdentity {
     /// store (the only on-disk addition; the payload stays byte-identical). A
     /// `schema=` line is emitted only when non-empty, so an all-non-null program
     /// round-trips byte-identically with the pre-F9 format.
+    /// The text is `@FR-S-Sidecar`'s grammar.
     #[must_use]
     pub fn to_sidecar(&self) -> String {
         let schema_line = if self.schema.is_empty() {
@@ -243,6 +244,7 @@ pub enum Handoff {
 /// dump → [`Handoff::Identical`] (the raw-handoff fast path); otherwise a
 /// structured per-type diff. This is the handoff decision variable @PLN97 exists
 /// to make sound — never a silent raw handoff across a changed layout.
+/// The comparison `@FR-S-Gate` runs before a byte of an image is read under it.
 #[must_use]
 pub fn classify(old: &LayoutIdentity, new: &LayoutIdentity) -> Handoff {
     // @C152 — a store whose hashes were written under a placement this build reads
@@ -319,6 +321,23 @@ impl LayoutIdentity {
     /// creates the parent dir if needed). Shared by `write_beside` (the store
     /// sidecar) and `write_baseline` (the project layout lockfile).
     fn write_to(&self, path: &Path) -> std::io::Result<()> {
+        let tmp = self.stage_to(path)?;
+        crate::file_access::rename(&tmp, path)
+    }
+
+    /// The first half of [`Self::write_beside`]: the sidecar text written and synced to
+    /// `<store>.dschema.tmp`, whose path is answered for the caller to rename into place.
+    /// A store writer stages its image the same way and commits the two together, so a
+    /// failure before the commit leaves the previous image and sidecar as they were
+    /// (`@FR-S-Pair`).
+    ///
+    /// # Errors
+    /// Propagates any `io::Error` creating, writing or syncing the temp file.
+    pub fn stage_beside(&self, store_path: &Path) -> std::io::Result<PathBuf> {
+        self.stage_to(&dschema_path(store_path))
+    }
+
+    fn stage_to(&self, path: &Path) -> std::io::Result<PathBuf> {
         use std::io::Write as _;
         if let Some(parent) = path.parent() {
             crate::file_access::create_dir_all(parent)?;
@@ -327,12 +346,10 @@ impl LayoutIdentity {
         let mut tmp = path.as_os_str().to_owned();
         tmp.push(".tmp");
         let tmp = PathBuf::from(tmp);
-        {
-            let mut f = crate::file_access::create(&tmp)?;
-            f.write_all(self.to_sidecar().as_bytes())?;
-            f.sync_all()?;
-        }
-        crate::file_access::rename(&tmp, path)
+        let mut f = crate::file_access::create(&tmp)?;
+        f.write_all(self.to_sidecar().as_bytes())?;
+        f.sync_all()?;
+        Ok(tmp)
     }
 }
 
@@ -340,9 +357,12 @@ impl LayoutIdentity {
 /// layout identity — Phase D's load-time gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaVerdict {
-    /// No `.dschema` beside the store — a legacy / brand-new store. Nothing to
-    /// check; the caller writes one on persist.
+    /// No recorded identity yet where none is owed: a project's first layout baseline.
+    /// Never the answer for a store image — see [`SchemaVerdict::Bare`].
     Fresh,
+    /// No `.dschema` beside a store image, or none that could be fetched: the image
+    /// records no layout, so it is never read raw (`@FR-S-Gate`, `@FR-L-Sound`).
+    Bare,
     /// The stored layout matches the running program's — safe RAW handoff.
     Match,
     /// The stored layout differs — never read raw; an upgrade (@PLN196) or a rebuild
@@ -368,7 +388,7 @@ impl SchemaVerdict {
 /// `current`. Used for a store's REMOTE `.dschema` fetched over HTTP (#522),
 /// where there is no local path to hand [`check_file`]. `Unreadable` when `text`
 /// is not a valid sidecar; the ABSENT case (no sidecar at all) is the caller's
-/// to map to [`SchemaVerdict::Fresh`].
+/// to map to [`SchemaVerdict::Bare`].
 ///
 /// `release` is the reading program's: a store written by a release older than the oldest
 /// it reads is [`SchemaVerdict::Refused`] whatever its layout (@PLN196 step 9).
@@ -436,15 +456,21 @@ fn host_sidecar_text(_path: &Path) -> Option<String> {
 /// safety gate for a REMOTE store read (#522): a working-set loader must reject
 /// a remote store whose layout identity differs, never range-read it raw.
 ///
+/// An image with no sidecar is [`SchemaVerdict::Bare`]: it records no layout, so
+/// nothing may read it raw (`@FR-S-Gate`).
+///
 /// # Errors
 /// Propagates an `io::Error` reading the sidecar (other than not-found, which
-/// yields [`SchemaVerdict::Fresh`]).
+/// yields [`SchemaVerdict::Bare`]).
 pub fn check_beside(
     store_path: &Path,
     current: &LayoutIdentity,
     release: &crate::database::Release,
 ) -> std::io::Result<SchemaVerdict> {
-    check_file(&dschema_path(store_path), current, release)
+    check_file(&dschema_path(store_path), current, release).map(|v| match v {
+        SchemaVerdict::Fresh => SchemaVerdict::Bare,
+        v => v,
+    })
 }
 
 // ── Phase F — the committed layout baseline (developer surface) ─────────────
@@ -685,11 +711,10 @@ mod tests {
         let _ = crate::file_access::remove_file(&side);
 
         let a = id(111, "W\tsize=4\tstruct{x@0:integer}\n");
-        // No sidecar yet → Fresh (a brand-new / legacy store).
-        assert_eq!(
-            check_beside(&store, &a, &crate::database::Release::default()).unwrap(),
-            SchemaVerdict::Fresh
-        );
+        // No sidecar → Bare: an image that records no layout is never read raw.
+        let v = check_beside(&store, &a, &crate::database::Release::default()).unwrap();
+        assert_eq!(v, SchemaVerdict::Bare);
+        assert!(!v.is_raw_safe());
 
         // Persist the identity beside the store.
         a.write_beside(&store).unwrap();

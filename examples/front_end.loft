@@ -1,0 +1,256 @@
+// front_end.loft — a loft front end, in loft.
+//
+// A lexer over a character cursor, a recursive-descent parser that builds an AST in an
+// arena, a total-match evaluator, a constant folder (the rewrite that copies a node with
+// one field changed), and a dispatch table of plain `fn` values for the prefix operators.
+//
+// This is what a compiler written in loft leans on — the entries of the OCaml bar measured
+// for the compiler (doc/claude/bars/OCAML_BAR.md, loft-lang/plans#202):
+//   - an enum of token kinds whose every `match` is total, so adding a kind breaks each
+//     match that forgot it (`parse_atom`, `kind_of`, `eval`);
+//   - a `text` read character by character and sliced into tokens (`lex`);
+//   - an AST whose children are INDICES into one `vector<Node>`: the arena.  Never a
+//     `reference<Node>` into a vector that later grows — the records move (loft#2163);
+//   - keyed collections for the symbol table and for a table of `fn` values;
+//   - a record with some fields changed, in one expression: `Opts { fold: false, ..opts }`
+//     for the driver's options, `Binding { uses: b.uses + 1, ..b }` to update a symbol-table
+//     entry in place (the keyed insert replaces the record with that key).
+//
+// Writing it found two compiler defects, both fixed: `if t is Plus { … }` on a unit variant
+// was an internal compiler error (loft#2168), and `_ => null` in an enum match was refused
+// (loft#2170).  Both spellings below are the natural ones.
+//
+// Run: loft --interpret examples/front_end.loft   (or `loft examples/front_end.loft`)
+
+enum Tok { Num { v: integer }, Name { s: text }, Plus, Minus, Star, LParen, RParen, End }
+
+fn is_digit(c: character) -> boolean { c >= '0' && c <= '9' }
+fn is_alpha(c: character) -> boolean { (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' }
+
+// A punctuation character's token, or null for a character the language has no token for.
+fn punct(c: character) -> Tok? {
+  match c {
+    '+' => Plus,
+    '-' => Minus,
+    '*' => Star,
+    '(' => LParen,
+    ')' => RParen,
+    _ => null,
+  }
+}
+
+fn lex(src: text) -> vector<Tok> {
+  toks: vector<Tok> = [];
+  i = 0;
+  n = len(src);
+  while i < n {
+    c = src[i];
+    if c == ' ' { i += 1; continue; }
+    if is_digit(c) {
+      v = 0;
+      while i < n && is_digit(src[i]) {
+        v = v * 10 + ((src[i] as integer) - ('0' as integer));
+        i += 1;
+      }
+      toks += [Num { v: v }];
+    } else if is_alpha(c) {
+      start = i;
+      while i < n && is_alpha(src[i]) { i += 1; }
+      toks += [Name { s: src[start..i] }];
+    } else {
+      t = punct(c);
+      if t == null { println("unexpected character `{c}` at {i}"); exit(2); }
+      toks += [t ?? End];
+      i += 1;
+    }
+  }
+  toks += [End];
+  toks
+}
+
+// The token kind as the key of a dispatch table.  Total: a new kind must be named here.
+fn kind_of(t: Tok) -> text {
+  match t {
+    Num { v } => "num",
+    Name { s } => "name",
+    Plus => "+",
+    Minus => "-",
+    Star => "*",
+    LParen => "(",
+    RParen => ")",
+    End => "end",
+  }
+}
+
+enum Op { Add, Sub, Mul }
+
+// The AST.  A child is an index into the parser's `nodes` arena.
+enum Node {
+  Lit { v: integer },
+  Var { name: text },
+  Neg { e: integer },
+  Bin { op: Op, l: integer, r: integer },
+}
+
+// A prefix operator's parser, looked up by the token kind that starts it.
+struct Prefix { kind: text, parse: fn(Parser) -> integer }
+
+struct Parser { toks: vector<Tok>, pos: integer, nodes: vector<Node>, prefix: hash<Prefix[kind]> }
+
+fn new_parser(toks: vector<Tok>) -> Parser {
+  Parser {
+    toks: toks,
+    pos: 0,
+    nodes: [],
+    prefix: [Prefix { kind: "-", parse: parse_neg }, Prefix { kind: "(", parse: parse_group }],
+  }
+}
+
+fn peek(self: Parser) -> Tok { t: Tok = self.toks[self.pos] ?? End; t }
+fn advance(self: Parser) { self.pos += 1; }
+fn add(self: Parser, n: Node) -> integer { self.nodes += [n]; len(self.nodes) - 1 }
+fn fail(self: Parser, msg: text) -> integer { println("{msg} at token {self.pos}"); exit(2); 0 }
+
+// expr = term (('+' | '-') term)*
+fn parse_expr(self: Parser) -> integer {
+  l = self.parse_term();
+  while self.peek() is Plus || self.peek() is Minus {
+    op: Op = if self.peek() is Plus { Add } else { Sub };
+    self.advance();
+    r = self.parse_term();
+    l = self.add(Bin { op: op, l: l, r: r });
+  }
+  l
+}
+
+// term = atom ('*' atom)*
+fn parse_term(self: Parser) -> integer {
+  l = self.parse_atom();
+  while self.peek() is Star {
+    self.advance();
+    r = self.parse_atom();
+    l = self.add(Bin { op: Mul, l: l, r: r });
+  }
+  l
+}
+
+// atom = number | name | <prefix operator>
+fn parse_atom(self: Parser) -> integer {
+  t = self.peek();
+  match t {
+    Num { v } => { self.advance(); self.add(Lit { v: v }) },
+    Name { s } => { self.advance(); self.add(Var { name: s }) },
+    Minus | LParen | Plus | Star | RParen | End => {
+      p = self.prefix[kind_of(t)];
+      if p { p.parse(self) } else { self.fail("expected a number, a name, `-` or `(`") }
+    },
+  }
+}
+
+fn parse_neg(p: Parser) -> integer { p.advance(); e = p.parse_atom(); p.add(Neg { e: e }) }
+
+fn parse_group(p: Parser) -> integer {
+  p.advance();
+  e = p.parse_expr();
+  if p.peek() is RParen { p.advance(); } else { p.fail("expected `)`"); }
+  e
+}
+
+// A symbol-table entry: its value, and how often the program read it.
+struct Binding { name: text, value: integer, uses: integer }
+
+fn apply(op: Op, a: integer, b: integer) -> integer {
+  match op { Add => a + b, Sub => a - b, Mul => a * b }
+}
+
+fn eval(nodes: vector<Node>, i: integer, env: hash<Binding[name]>) -> integer {
+  match nodes[i] {
+    Lit { v } => v,
+    Var { name } => {
+      b = env[name];
+      if b {
+        v = b.value;
+        // The entry with one field changed, put back under its key.
+        env += [Binding { uses: b.uses + 1, ..b }];
+        v
+      } else { 0 }
+    },
+    Neg { e } => -eval(nodes, e, env),
+    Bin { op, l, r } => apply(op, eval(nodes, l, env), eval(nodes, r, env)),
+  }
+}
+
+fn show(nodes: vector<Node>, i: integer) -> text {
+  match nodes[i] {
+    Lit { v } => "{v}",
+    Var { name } => name,
+    Neg { e } => "-{show(nodes, e)}",
+    Bin { op, l, r } => {
+      s = match op { Add => "+", Sub => "-", Mul => "*" };
+      "({show(nodes, l)} {s} {show(nodes, r)})"
+    },
+  }
+}
+
+// The literal a node is, or null.
+fn lit_of(nodes: vector<Node>, i: integer) -> integer? {
+  match nodes[i] { Lit { v } => v, _ => null }
+}
+
+// Constant folding: a node over literals becomes a literal; any other node is copied with
+// its children replaced by their folded twins — the copy-with-one-field-changed every
+// rewrite does.  The arena only grows: the folded tree is new nodes beside the old ones.
+// A node is a VARIANT, so its copy spells every field (`Bin { op: op, l: fl, r: fr }`): the
+// update `Bin { l: fl, r: fr, ..node }` would need the base's tag checked against `Bin`'s,
+// which is loft-lang/plans#202 P2b — on a struct it is `S { l: fl, r: fr, ..node }` today.
+fn fold(p: Parser, i: integer) -> integer {
+  match p.nodes[i] {
+    Lit { v } => i,
+    Var { name } => i,
+    Neg { e } => {
+      fe = fold(p, e);
+      v = lit_of(p.nodes, fe);
+      if v != null { p.add(Lit { v: -(v ?? 0) }) } else { p.add(Neg { e: fe }) }
+    },
+    Bin { op, l, r } => {
+      fl = fold(p, l);
+      fr = fold(p, r);
+      a = lit_of(p.nodes, fl);
+      b = lit_of(p.nodes, fr);
+      if a != null && b != null {
+        p.add(Lit { v: apply(op, a ?? 0, b ?? 0) })
+      } else {
+        p.add(Bin { op: op, l: fl, r: fr })
+      }
+    },
+  }
+}
+
+// The driver's options: a record, so a call changes one with `..defaults`.
+struct Opts { show_tree: boolean, fold: boolean }
+
+fn run(src: text, env: hash<Binding[name]>, o: Opts) -> integer {
+  p = new_parser(lex(src));
+  root = p.parse_expr();
+  if !(p.peek() is End) { p.fail("trailing input"); }
+  value = eval(p.nodes, root, env);
+  if o.show_tree { println("{src}  =>  {show(p.nodes, root)}  =  {value}"); } else { println("{src}  =  {value}"); }
+  if o.fold {
+    folded = fold(p, root);
+    println("    folded: {show(p.nodes, folded)}");
+  }
+  value
+}
+
+fn main() {
+  env: hash<Binding[name]> = [Binding { name: "x", value: 10, uses: 0 }, Binding { name: "y", value: 3, uses: 0 }];
+  defaults = Opts { show_tree: true, fold: true };
+  assert(run("1 + 2 * (3 - x)", env, defaults) == -13, "1 + 2 * (3 - 10)");
+  assert(run("-(4 + 5) * 2", env, defaults) == -18, "-(9) * 2");
+  assert(run("2 * 3 + x * y", env, Opts { fold: false, ..defaults }) == 36, "6 + 30, not folded");
+  assert(run("x - y - 1", env, Opts { show_tree: false, ..defaults }) == 6, "left-associative: (10 - 3) - 1");
+  x = env["x"];
+  y = env["y"];
+  assert(x != null && x.uses == 3 && y != null && y.uses == 2, "the symbol table counted the reads: x {x.uses} y {y.uses}");
+  println("x read {x.uses} times, y {y.uses}");
+}

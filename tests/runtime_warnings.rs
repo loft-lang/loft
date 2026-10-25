@@ -413,7 +413,7 @@ fn main() {
 fn f4f_stack_overflow_raises_typed_error() {
     let source = "\
 fn recurse(n: integer) -> integer {
-  return recurse(n + 1);
+  return 1 + recurse(n + 1);
 }
 
 fn main() {

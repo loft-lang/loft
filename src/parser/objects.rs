@@ -664,11 +664,15 @@ impl Parser {
         // working once variants are no longer globally keyed (step 4).
         let qualifier_enum = if qualified && source == u16::MAX {
             let q = self.data.def_nr(name);
-            if q != u32::MAX && self.data.def_type(q) == DefType::Enum {
-                q
-            } else {
-                u32::MAX
-            }
+            // A GENERIC enum's template qualifies its variants too (`Tree.Leaf`): the instance
+            // the variant belongs to comes from the target, in `parse_constant_value`
+            // (loft-lang/plans#202 P8).  Asked only of a plain enum, the spelling fell through
+            // to a value of no type ("Unknown type null").
+            let is_enum = q != u32::MAX
+                && (self.data.def_type(q) == DefType::Enum
+                    || (self.data.def_type(q) == DefType::TypeTemplate
+                        && self.data.variant_of(q, &nm) != u32::MAX));
+            if is_enum { q } else { u32::MAX }
         } else {
             u32::MAX
         };
@@ -1647,7 +1651,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "bare variant '{name}' has no type here — qualify it as \
-                             '{enum_name}.{name}', or give the target an enum type"
+                             '{declared}.{name}', or give the target an enum type"
                         );
                     } else {
                         let names: Vec<String> = variant_enums
@@ -1658,7 +1662,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "ambiguous variant '{name}' (a variant of {}) — qualify it, \
-                             e.g. '{enum_name}.{name}'",
+                             e.g. '{declared}.{name}'",
                             names.join(", ")
                         );
                     }
@@ -2597,6 +2601,25 @@ impl Parser {
         if qualifier_enum != u32::MAX {
             d_nr = self.data.variant_of(qualifier_enum, name);
         }
+        // `Tree.Leaf` — a GENERIC enum's template followed by `.` and one of its variants
+        // (loft-lang/plans#202 P8).  The plain enum's dot road reads `Color` as its TYPE and
+        // `.Red` as a member of it; a template has no enum type to carry that, so the name
+        // answered no type and the member read failed as "Unknown type null".  Qualify the
+        // variant with the template and resolve it below, where the target names the instance.
+        if qualifier_enum == u32::MAX
+            && d_nr != u32::MAX
+            && self.data.def_type(d_nr) == DefType::TypeTemplate
+            && self.lexer.peek_token(".")
+        {
+            let link = self.lexer.link();
+            self.lexer.cont();
+            if let Some(vname) = self.lexer.has_identifier()
+                && self.data.variant_of(d_nr, &vname) != u32::MAX
+            {
+                return self.parse_constant_value(code, source, &vname, name_pos, d_nr);
+            }
+            self.lexer.revert(link);
+        }
         // @PLN22 Phase 1 — a library-qualified `lib::Variant` falls back to the
         // variant_in_source chokepoint.  Harmless for non-variant `lib::name`
         // (no enum has the variant → MAX → falls through).
@@ -2758,6 +2781,54 @@ impl Parser {
                 }
                 self.data.variant_of(inst, name)
             };
+        }
+        // A UNIT variant of a generic enum, QUALIFIED (`Tree.Leaf`): its instance comes from the
+        // target, as a literal's does above — the template's own variant has no layout, and
+        // left as the value it reached the binding as "Unknown type null" (loft-lang/plans#202
+        // P8).  With no target the refusal names the typed-target cure; the bare spelling keeps
+        // its own road.
+        if literal_template != u32::MAX
+            && qualifier_enum != u32::MAX
+            && d_nr != u32::MAX
+            && self.data.def_type(d_nr) == DefType::EnumValue
+            && !self.lexer.peek_token("{")
+        {
+            let template = literal_template;
+            let in_template =
+                self.context != u32::MAX && self.data.def_type(self.context) == DefType::Generic;
+            let expected = match self.expected.base() {
+                Type::Reference(inst, _) | Type::Enum(inst, _, _)
+                    if self.data.def(*inst).instance_of == template
+                        && (in_template || !self.data.is_open_instance(*inst)) =>
+                {
+                    *inst
+                }
+                _ => u32::MAX,
+            };
+            if expected == u32::MAX {
+                if !self.first_pass {
+                    let declared = self.data.def(template).name().to_string();
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{declared}.{name}` is a variant of a generic enum, whose type arguments \
+                         come from the target — bind it to a typed local (`x: {declared}<…> = \
+                         {name}`) or pass it where a `{declared}<…>` is expected"
+                    );
+                }
+                // Recover as the `::` road's unknown variant does (#493): a null value typed
+                // as the enum, so a read of it afterwards is an ordinary error — a `Never`
+                // here met the two-pass contract's refusal (loft#2171).
+                *code = Value::Null;
+                return self.data.def(template).returned().clone();
+            }
+            if !self.data.is_open_instance(expected) {
+                self.lay_out_instance(expected);
+                for v in self.data.children_of(expected).collect::<Vec<_>>() {
+                    self.lay_out_instance(v);
+                }
+            }
+            d_nr = self.data.variant_of(expected, name);
         }
         if d_nr != u32::MAX {
             self.data.def_used(d_nr);
@@ -5318,6 +5389,11 @@ impl Parser {
             let td_base = td.base().clone();
             let pos = self.field_position(td_nr, &field);
             found_fields.insert(field.clone());
+            // `@FR-B-Ref-StoredRef` (loft#2166) — only a `&` this field's own value spells is
+            // this field's to resolve.  A `&` reaching the literal from outside (`&Lit { v: 1 }`
+            // as another field's value) is refused by `parse_operators` as a non-place once the
+            // literal is read; the fields inside it must not read it as their own.
+            self.amp_pending = false;
             // loft#926 — is this collection field being given records, or is it the
             // `field: []` that constructing a linked group writes for every member?  An
             // empty literal is exactly two tokens, so the question is answered by looking
@@ -5559,6 +5635,17 @@ impl Parser {
                 // so the `&` is consumed here.  Left pending, it reached the enclosing
                 // binding (`b: Box = Hold { l: &leaf }`), which then read itself as `b = &…`,
                 // took the link marker and was never given a stack slot.
+                //
+                // `@FR-B-Ref-StoredRef` (loft#2166) — the head above opens for every record
+                // field, and only a `reference<T>` field (the pointer marker) can hold the
+                // link; an inline record field holds the record itself, so a `&` there is
+                // refused — as the assignment `d.o = &p` is — never copied in silence.
+                if !self.first_pass
+                    && self.amp_pending
+                    && !matches!(td.base(), Type::Reference(_, deps) if deps.is_pointer_marker())
+                {
+                    self.refuse_link_into_record_place(&value_pos);
+                }
                 self.amp_pending = false;
                 t
             };
@@ -6180,6 +6267,31 @@ impl Parser {
         // the answer was DISCARDED — and declining the hint outright loses the `&`-link
         // reshape refusal, which is derived from the in-place construction.
         let hint_is_the_whole_value = !self.prefix_operand && !self.inplace_hint_declined;
+        // `@FR-B-Copy` — the destination a `S { f: e, ..base }` UPDATE binds (loft-lang/plans#202
+        // P2): the user's own variable when the literal is its whole right-hand side, else none
+        // and the update builds a temporary.  Taken here, before the roads below replace
+        // `code` with a work reference of their own.
+        let update_dest = match code {
+            Value::Var(v)
+                if hint_is_the_whole_value
+                    && *v != u16::MAX
+                    && !self.vars.is_compiler_generated(*v) =>
+            {
+                Some(*v)
+            }
+            _ => None,
+        };
+        // Pass 1 met this literal's `..base` after its fields; pass 2 takes the update road
+        // here, before the roads below mint a work reference for a record the update never
+        // builds.
+        if !self.first_pass
+            && self
+                .update_literals
+                .contains(&(self.context, literal_pos.line, literal_pos.pos))
+        {
+            self.lexer.revert(link);
+            return self.parse_object_update(td_nr, code, update_dest, &literal_pos);
+        }
         // A literal written into a PROJECTION place (`o.f = S { … }`) builds THERE — the field
         // writes take the place as their receiver and there is no temporary — so its
         // initialisers need @FR-R-InPlaceLiteral's staging exactly as a whole-variable rebind's
@@ -6435,6 +6547,18 @@ impl Parser {
             if self.lexer.peek_token("}") {
                 break;
             }
+            // `@FR-B-Copy` — `S { f: e, ..base }` is an UPDATE: a copy of `base` with the named
+            // fields written over it, `d = base; d.f = e;` in one expression (loft-lang/plans#202
+            // P2).  The fields read so far were built as a fresh record's; the literal is parsed
+            // again as the two statements it stands for, through the roads a retry takes.
+            if self.lexer.peek_token("..") {
+                self.update_literals
+                    .insert((self.context, literal_pos.line, literal_pos.pos));
+                self.lexer.revert(link);
+                self.vars.clean_work_refs(work);
+                self.vars.clean_work_refs_p2(work_p2);
+                return self.parse_object_update(td_nr, code, update_dest, &literal_pos);
+            }
             if !self.parse_object_field(
                 td_nr,
                 code,
@@ -6577,6 +6701,246 @@ impl Parser {
         } else {
             *code = Value::Insert(list);
             Type::Rewritten(Box::new(Type::Reference(td_nr, crate::data::Deps::none())))
+        }
+    }
+
+    /// `@FR-B-Copy` — `S { f₁: e₁, …, ..base }`, the record UPDATE (loft-lang/plans#202 P2):
+    /// the value is a COPY of `base` with the named fields written over it, and it lowers to
+    /// the two statements it stands for — `dest = base;` then `dest.fᵢ = eᵢ;` for each named
+    /// field, in order — through the assignment path those statements take, so a `text` or
+    /// collection field releases what the copy brought (`OpSetTextReplace`, `OpClearVector`),
+    /// a `const` field is refused, and the IR is the two statements' own.  `dest` is the
+    /// variable the literal is bound to when it is the whole right-hand side (the update then
+    /// IS the assignment: `Value::Insert`, `Type::Rewritten`), else a work reference the
+    /// value is answered from.  `..base` is the last entry; the base is a `S`, not absent;
+    /// a variant is not updated this way (its tag would need checking against the base's).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one road: the destination, the named fields as assignments, the base and its three refusals, the bind"
+    )]
+    fn parse_object_update(
+        &mut self,
+        td_nr: u32,
+        code: &mut Value,
+        dest: Option<u16>,
+        literal_pos: &crate::lexer::Position,
+    ) -> Type {
+        let link = self.lexer.link();
+        let work = self.vars.work_ref();
+        let work_p2 = self.vars.work_ref_p2();
+        self.lexer.token("{");
+        let name = self.data.def(td_nr).name().to_string();
+        let ret = self.data.def(td_nr).returned().clone();
+        if self.data.def_type(td_nr) != DefType::Struct {
+            if !self.first_pass {
+                self.lexer.pos_diagnostic(
+                    Level::Error,
+                    literal_pos,
+                    &format!(
+                        "`..base` completes a struct literal, and `{name}` is a variant — \
+                         `match` on the base and build the variant from its fields"
+                    ),
+                );
+            }
+            self.skip_object_body();
+            *code = Value::Null;
+            return Type::Never;
+        }
+        self.data.set_referenced(td_nr, self.context, Value::Null);
+        let (dest, fresh) = match dest {
+            Some(v) => (v, false),
+            None => (self.vars.work_refs_p2(&ret, &mut self.lexer), true),
+        };
+        if !self.first_pass && self.vars.tp(dest).is_unknown() {
+            self.change_var_type(dest, &ret);
+        }
+        let parent_tp = Type::Reference(td_nr, crate::data::Deps::none()).depending(dest);
+        // The named fields, each as the assignment `dest.f = e`.
+        let mut writes: Vec<Value> = Vec::new();
+        loop {
+            if self.lexer.peek_token("..") {
+                break;
+            }
+            let Some(field) = self
+                .lexer
+                .has_identifier()
+                .or_else(|| self.lexer.has_cstring())
+            else {
+                if !self.first_pass {
+                    diagnostic!(self.lexer, Level::Error, "Expect a field name or `..base`");
+                }
+                self.skip_object_body();
+                *code = Value::Null;
+                return Type::Never;
+            };
+            self.lexer.token(":");
+            let nr = self.data.attr(td_nr, &field);
+            if nr == usize::MAX {
+                if !self.first_pass {
+                    if let Some(s) = self.suggest_field_name(td_nr, &field) {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Unknown field {name}.{field} — did you mean '{s}'?"
+                        );
+                    } else {
+                        diagnostic!(self.lexer, Level::Error, "Unknown field {name}.{field}");
+                    }
+                }
+                let mut discard = Value::Null;
+                self.expression(&mut discard);
+            } else {
+                self.check_visibility("literal-field", td_nr, nr);
+                let f_type = self.data.attr_type(td_nr, nr);
+                let to = self.get_field(td_nr, nr, Value::Var(dest));
+                let mut target = to.clone();
+                self.parse_assign_op(
+                    &mut target,
+                    "=",
+                    &f_type,
+                    &to,
+                    parent_tp.clone(),
+                    u16::MAX,
+                    false,
+                );
+                writes.push(target);
+            }
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        // The base, last.
+        if !self.lexer.has_token("..") {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`..base` is the last entry of the literal — write the named fields before it"
+                );
+            }
+            self.skip_object_body();
+            *code = Value::Null;
+            return Type::Never;
+        }
+        let base_pos = *self.lexer.peek_pos();
+        let mut base = Value::Null;
+        let base_tp = self.expression(&mut base);
+        self.lexer.has_token(",");
+        if !self.lexer.peek_token("}") {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`..base` is the last entry of the literal — write the named fields before it"
+                );
+            }
+            self.skip_object_body();
+            *code = Value::Null;
+            return Type::Never;
+        }
+        self.lexer.token("}");
+        // Both passes judge the base; pass 2 says so.  A pass-1 bind of a base of another type
+        // would type `dest` as that type, and pass 2 then reported the mismatch in the
+        // assignment's words instead of these.
+        let is_same = matches!(base_tp.base(), Type::Reference(d, _) if *d == td_nr);
+        let absent = is_same && matches!(base_tp, Type::Optional(_));
+        let judged = !matches!(base_tp.base(), Type::Never | Type::Unknown(_));
+        if judged && (absent || !is_same) {
+            if absent && !self.first_pass {
+                self.lexer.pos_diagnostic(
+                    Level::Error,
+                    &base_pos,
+                    &format!(
+                        "the base after `..` may be absent ({}) — discharge it first, \
+                         `..(base ?? …)` or `..base?`",
+                        base_tp.source_name(&self.data)
+                    ),
+                );
+            } else if !absent && !self.first_pass {
+                self.lexer.pos_diagnostic(
+                    Level::Error,
+                    &base_pos,
+                    &format!(
+                        "the base after `..` must be a `{name}`, the literal's own type — got {}",
+                        base_tp.source_name(&self.data)
+                    ),
+                );
+            }
+            // The bind would report the same mismatch again, in its own words.
+            *code = Value::Null;
+            return Type::Never;
+        }
+        // A postfix on the literal (`m = S { … }.f(…)`) makes it a sub-expression, which the
+        // user's variable is not the destination of (loft#1304): built again as a temporary.
+        let ends_here = self.lexer.peek_token(";")
+            || self.lexer.peek_token("}")
+            || self.lexer.peek_token(",")
+            || self.lexer.peek_token(")");
+        if !fresh && !ends_here {
+            self.lexer.revert(link);
+            self.vars.clean_work_refs(work);
+            self.vars.clean_work_refs_p2(work_p2);
+            return self.parse_object_update(td_nr, code, None, literal_pos);
+        }
+        // The bind `dest = base`, first — the copy the named fields are written over.  A base
+        // that IS the destination (`d = S { f: e, ..d }`) binds nothing, as `d = d;` emits
+        // nothing: the named fields are written over the record `d` already holds.
+        let mut ops = Vec::new();
+        if !matches!(base.unspan(), Value::Var(v) if *v == dest) {
+            // The statement that holds this update records the write of `dest` (its own
+            // `Set`); the bind inside it is that same write, not one before it, so the
+            // dead-store lint's record of it is undone — left standing, the statement's
+            // write read as overwriting it.
+            let writes_before = self.vars.save_and_clear_write_state();
+            let mut bind = Value::Var(dest);
+            // The copy OWNS (`(B-Copy)`): the base's type as read carries the borrow of the
+            // place it was read from, and a destination typed from that is a view the scope
+            // pass never frees — a temporary built this way leaked its record.
+            self.preset_rhs = Some((base, base_tp.without_deps()));
+            self.parse_assign_op(
+                &mut bind,
+                "=",
+                &ret,
+                &Value::Var(dest),
+                Type::Null,
+                dest,
+                false,
+            );
+            self.preset_rhs = None;
+            if !fresh {
+                self.vars.restore_write_state(&writes_before);
+            }
+            ops.push(bind);
+        }
+        ops.append(&mut writes);
+        if fresh {
+            ops.push(Value::Var(dest));
+            *code = v_block(
+                ops,
+                Type::Reference(td_nr, crate::data::Deps::frame1(dest)),
+                "Object",
+            );
+            Type::Reference(td_nr, crate::data::Deps::none())
+        } else {
+            *code = Value::Insert(ops);
+            Type::Rewritten(Box::new(Type::Reference(td_nr, crate::data::Deps::none())))
+        }
+    }
+
+    /// Consume the rest of a `{ … }` body after an error inside it, so the parser continues at
+    /// the token after the closing brace instead of cascading.
+    fn skip_object_body(&mut self) {
+        let mut depth = 1;
+        while depth > 0 {
+            if self.lexer.has_token("{") {
+                depth += 1;
+            } else if self.lexer.has_token("}") {
+                depth -= 1;
+            } else if self.lexer.peek().has == crate::lexer::LexItem::None {
+                break;
+            } else {
+                self.lexer.cont();
+            }
         }
     }
 

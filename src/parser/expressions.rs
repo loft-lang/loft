@@ -3886,6 +3886,32 @@ use a separate collection or add after the loop"
             })
     }
 
+    /// `@FR-B-Ref-StoredRef` / `@FR-B-Ref-Reshape` (loft#2166) — a `&` reached a record place
+    /// that is not a stored reference: a plain record field, an element, a tuple member.  Such
+    /// a place holds the record itself, so a link has nothing to bind there, and loft refuses
+    /// it rather than copying in its place.  The struct literal and the assignment both ask
+    /// this, so the two spellings of one field write answer alike.
+    /// Is this place a stored reference — a `reference<τ>` field, read as the whole DbRef it
+    /// holds (`OpGetDbRef`, `(L-Ref)`)?  An inline record field reads as `OpGetField`, an
+    /// element as `OpGetVector`; neither holds a pointer, so neither can take a link.  The
+    /// FALLBACK is `false`: a place this does not recognise is treated as holding its record,
+    /// and a `&` into it is refused rather than stored — the conservative answer, since a
+    /// refusal names its cure and a stored stack address names nothing.
+    pub(crate) fn is_stored_ref_read(&self, place: &Value) -> bool {
+        matches!(place.unspan(), Value::Call(d, _) if self.data.def(*d).name() == "OpGetDbRef")
+    }
+
+    pub(crate) fn refuse_link_into_record_place(&mut self, at: &crate::lexer::Position) {
+        diagnostic_at!(
+            self.lexer,
+            at,
+            Level::Error,
+            "`&` has nothing to bind here: this place holds the record itself, not a link to \
+             one — assign the record (a copy), or declare the field `reference<T>` to hold a \
+             link"
+        );
+    }
+
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     pub(crate) fn parse_assign_op(
         &mut self,
@@ -4565,7 +4591,25 @@ use a separate collection or add after the loop"
         // where a leading `&` binds a reference, so open the head there.  A COMPOUND
         // assignment (`b += &a`) is excluded on purpose: it mutates `b`, it does not
         // give `b` a reference type, so it is not a bind site.
-        self.amp_head = if op == "=" {
+        // `@FR-B-Ref-StoredRef` (loft#2166) — a FIELD or ELEMENT place of a record type is
+        // the struct literal's third `&` position, met on an assignment: `d.r = &p`.  Open the
+        // field head, so the `&` is read as the literal reads it; whether the place honours
+        // the link (a `reference<τ>` field) or refuses it (a place holding the record itself)
+        // is decided once the right side is parsed, below — the two answers
+        // `parse_object_field` gives.  A VARIABLE destination keeps the plain head: `a = &b`
+        // is a link binding.  Opened as `AssignRhs`, the `&` reached the stack-link lowering,
+        // which has no field destination: the interpreter stored a stack address where the
+        // field holds a DbRef, and `--native` did not compile.
+        let record_place =
+            op == "=" && var_nr == u16::MAX && matches!(f_type.base(), Type::Reference(_, _));
+        // Whether that place holds a POINTER is read off the place itself: a `reference<τ>`
+        // field is read as `OpGetDbRef(rec, pos)`, the 12-byte DbRef the layout gives it
+        // (`(L-Ref)`), where an inline record field is read as `OpGetField`.  The field's
+        // declared type carried the pointer marker; the type a READ of it answers does not.
+        let stored_ref_place = record_place && self.is_stored_ref_read(to);
+        self.amp_head = if record_place {
+            AmpHead::StoredRefField
+        } else if op == "=" {
             AmpHead::AssignRhs
         } else {
             AmpHead::No
@@ -4638,6 +4682,18 @@ use a separate collection or add after the loop"
         } else {
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
+        // `@FR-B-Ref-StoredRef` (loft#2166) — the `&` a record place was handed, resolved as
+        // the struct literal resolves it: a `reference<τ>` field (the pointer marker) holds
+        // the link, so the write below stores the source's DbRef exactly as `d.r = p` does
+        // and the `&` is consumed here; any other record place holds the record itself, so
+        // there is nothing the `&` can bind — refused, never a silent copy
+        // (`@FR-B-Ref-Reshape`).
+        if record_place && self.amp_pending {
+            self.amp_pending = false;
+            if !stored_ref_place && !self.first_pass {
+                self.refuse_link_into_record_place(&rhs_pos);
+            }
+        }
         // `@FR-T-Sub` / `@FR-C-Var` — a plain enum converts to its integer tag at EVERY checking
         // position, and a local DECLARED `integer` is one: the argument, return, field and
         // element positions took `Colour.Green` as 2 while `y: integer = Colour.Green` (and a

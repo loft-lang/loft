@@ -87,7 +87,11 @@ Use when the deliverable is a feature ship or a fix landing.
    returned number: `<id>-<slug>.md`, or the directory form `<id>-<slug>/` with a README
    when it has companions (a probe-bearing investigation always does).
 3. **Fill Status + Goal first.**  Add Sub-arcs / Phase ordering / Open questions /
-   Cross-arc dependencies / See-also as the design clarifies.  Link the source
+   Cross-arc dependencies / See-also as the design clarifies — and **Documentation**
+   (REQUIRED): what the work must update OUTSIDE the plan when it finishes (the user
+   docs and the reference pages that run, `DIAGNOSTICS.md`, the formal chapter, the
+   changelog, the bars and the catalogue, the skills, the library docs), one line per
+   item.  The template lists the usual set.  Link the source
    issue(s) and carry the plan id in the body.
 4. **Label the issue** — one `subject:*` + one `status:*` (`future` planned · `next`
    queued · `active` in progress; the full set: `gh label list -R loft-lang/plans`).  No
@@ -164,8 +168,9 @@ can see that.
 ## Closing or deferring a plan
 
 **Close the moment the work is FINISHED — do NOT gate on merging to main.**  "Finished"
-means design + build + tests + docs are all done (on the branch); at *that* moment the plan
-closes.  A plan issue is a claim about the DESIGN being settled and delivered, not about the
+means design + build + tests + docs are all done (on the branch) — "docs" being every line of
+the plan's **Documentation** section, each marked with its commit; at *that* moment the plan
+closes.  A plan with an open Documentation line is not finished, however green its code.  A plan issue is a claim about the DESIGN being settled and delivered, not about the
 commit having reached the trunk — the code lands on main later, on its own clock, usually
 **batched** with other work.  So:
 

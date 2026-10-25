@@ -23,7 +23,8 @@ The part is the FIRST key field as an order-preserving i64:
 
 * an integer is itself;
 * a float is its total-order bits (-0.0 = 0.0);
-* a text is its first 8 bytes, big-endian;
+* a text is its first 8 bytes after the node's shared prefix, big-endian, zero-padded, with the
+  top bit flipped so the part orders as a signed i64;
 * a descending field is bitwise-negated.
 
 A part tie reads the record and compares with `keys::compare` / `keys::key_compare`, the collection's defined order.  For a one-field non-text key a part tie IS equality, so no record is read.
@@ -59,7 +60,7 @@ Tests: `tests/btree.rs` checks the tree against a model (records sorted by `keys
 
 ## Open-Addressing Hash Table (`src/hash.rs`)
 
-Used for `hash<T>` and the hash component of `index<T>`.
+Used for `hash<T>`; its bytes are [formal/structures.md](formal/structures.md) `S-Hash`.
 
 ### Record Layout
 

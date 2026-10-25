@@ -343,65 +343,28 @@ item = Item { name: "foo", count: 0 };
 item.count += 1;
 ```
 
+A record with some fields changed is one expression, `..base` last:
+
+<!-- from tests/reference/skill-declarations.loft -->
+```loft
+more = Item { count: 5, ..item };       // a copy of `item` with `count` written; `item` keeps its value
+```
+
+`d = Unit { hp: 0, ..u }` is `d = u; d.hp = 0;`: the named fields are written as assignments (a
+`text` or collection field releases what the copy brought; a `const` field is refused), each
+reads the BASE, and the base must be an `Item` and present (discharge an `Item?` first).  A
+variant is not updated this way — `match` on it and build the variant from its fields.
+
 Field names may overlap across structs — lookups are type-scoped.
 
 ---
 
 ## Tuples
 
-Anonymous, fixed-arity, stack-allocated compound values.  Use them to
-return multiple values without naming a struct.  See
-[doc/claude/TUPLES.md](../../../doc/claude/TUPLES.md).
-
-<!-- from tests/reference/skill-tuples.loft -->
-```loft
-// Type notation — two or more element types (single-element tuples
-// are not allowed; use the bare type instead).
-t: (integer, text) = (3, "hi");
-
-// Literal
-pair = (1, "hello");
-
-// Element access (zero-based integer literal — NOT a variable index).
-a = pair.0;        // integer
-b = pair.1;        // text
-
-// Element assignment
-pair.0 = 5;
-pair.0 += 3;
-
-// Destructuring
-(lo, hi) = min_max(values);
-```
-<!-- from tests/reference/skill-tuples.loft -->
-```loft
-// Function return
-fn classify(t: (integer, text)) -> text {
-    match t {
-        (0, _)   => "zero",
-        (n, msg) => "{n}: {msg}",
-    }
-}
-```
-<!-- from tests/reference/skill-tuples.loft -->
-```loft
-// Nested tuples — chain the `.N` accessors.
-nested: ((integer, integer), boolean) = ((1, 2), true);
-inner_first  = nested.0.0;       // 1
-inner_second = nested.0.1;       // 2
-flag         = nested.1;          // true
-```
-
-**Restrictions:**
-- **No single-element tuples** — `(integer)` is just `integer`.
-- **No named tuple fields** — use a struct.
-- **No tuple iteration / whole-tuple formatting** — access elements one
-  by one.
-- **Scalar elements are NON-NULL by default (@PLN25 DN1)** — a tuple
-  `integer` / `text` / … element rejects `null`; append `?` to the element
-  type (`(integer?, text)`) to allow it.
-- **Compound assignment on tuple LHS is rejected** — `(a, b) += (1, 2)`
-  is a compile error; rewrite as `a += 1; b += 2;` or rebuild the tuple.
+**Read [tuples.md](tuples.md) before writing a tuple** — the type notation, element access and
+assignment, destructuring, nesting, and the five restrictions (no single-element tuple, no
+named fields, no iteration or whole-tuple formatting, non-null scalar elements, no compound
+assignment on a tuple left-hand side).
 
 ---
 
@@ -608,6 +571,9 @@ if shape is Rect { width, height } {
 }
 ```
 
+A unit variant has no fields and so no capture list: the `{` after `d is North` opens the
+block, whatever the block starts with.
+
 ---
 
 ## String / text literals
@@ -754,6 +720,25 @@ diagnostic ("match arm separator is `=>`, not `->`").  Fix any `->` arm before r
 **Scalar-match arms need commas between them**; enum and tuple match
 also accept newline-separated arms.  When in doubt, comma-separate —
 it's universally accepted.
+
+**Slice arms that together cover every length need no `_`** — `[]` with `[x, ..rest]` is the
+list recursion; a rest arm alone, or a set that leaves a length out, is refused (*"a slice
+pattern can fail"*):
+
+<!-- from tests/reference/skill-is-and-match.loft -->
+```loft
+fn total(v: vector<integer>) -> integer {
+  match v {
+    [] => 0,
+    [x, ..rest] => x + total(rest),
+  }
+}
+```
+
+**A scalar `match` with no `_` and no bare-binding arm selects nothing for a value its arms do
+not name** — the match answers null (`τ?`); a statement does nothing — and the
+`match-scalar-hole` advice says so at the match.  Add the `_` arm, or set `LOFT_NO_SCALAR_HOLE`
+for a deliberate hole.
 
 ---
 
@@ -950,6 +935,11 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 | `Cannot pass a literal or expression to a '&' parameter` | Assign to a named variable first, then pass it. `v[i]` and `s.field` work directly (P160). |
 | `match arm separator is \`=>\`, not \`->\`` | Replace `->` with `=>` in the arm. |
 | `'fn' definitions must be at file scope, not inside a function or block` | Move the helper fn out of the enclosing fn body.  Lambdas (`|x| { … }` or `fn(x: T) { … }`) are the only function-shaped values allowed inside a fn body. |
+| `` `&` has nothing to bind here: this place holds the record itself `` | A `&` into a plain record field or element — assign the record (`d.o = p`, a copy) or declare the field `reference<T>`; `d.r = &p` on a `reference<T>` field stores the pointer |
+| `` `..base` completes a struct literal, and `V` is a variant `` | A variant is not updated with `..base` — `match` on the base and build the variant from its fields |
+| `` the base after `..` may be absent `` / `` must be a `S`, the literal's own type `` | Discharge the base first (`..(b ?? …)`), and give the literal the base's type |
+| `` `E.V` is a variant of a generic enum, whose type arguments come from the target `` | Bind it to a typed local (`x: E<integer> = V`) or pass it where an `E<…>` is expected |
+| `advice[match-scalar-hole]` | A scalar `match` with no `_`: add `_ =>` for the values the arms do not name, or `LOFT_NO_SCALAR_HOLE` for a deliberate hole |
 | `compound assignment is not supported for tuple destructuring — use (a, b) = expr instead` | Rebuild the tuple: `(a, b) = (a + 1, b + 2)` — or update each element directly. |
 
 ---

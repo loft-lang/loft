@@ -449,6 +449,15 @@ The closure record (the trimmed plan README) should list the
 P-issues filed + the probe→test mapping, so a later reader sees
 where each open thread went.
 
+## Documentation (REQUIRED)
+
+What this plan must update OUTSIDE itself when it finishes — the plan is not closed until every
+line here is done (owner, 2026-10-25): the user docs and the reference pages that run, the
+formal chapter whose deviation it closes (its `OPEN:` line), `DIAGNOSTICS.md` for a code,
+`CHANGELOG.md`, the bars, the skills (`make skills-review`), the library docs.  One line per
+item, each marked with its commit.  [`_TEMPLATE.md`](_TEMPLATE.md) § Documentation has the
+usual set.
+
 ## See also (REQUIRED)
 
 - Reference doc(s) the investigation touches.

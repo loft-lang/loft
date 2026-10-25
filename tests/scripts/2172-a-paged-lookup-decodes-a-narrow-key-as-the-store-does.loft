@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A PAGED LOOKUP DECODES A NARROW KEY AS THE STORE DOES (`@FR-Col-Axis`, `@FR-S-Paged-Same`,
+// loft#2172).  Col-Axis: a key field's value is the one its declared type decodes, "and neither
+// does the storage asked (resident Store or paged image)" change it.  Each cell writes a hash
+// keyed by one narrow width to an image, then asks the paged loader (`store_load_key`) for every
+// key the image holds and for one it does not: each present key loads its own record, the
+// absent one loads nothing.  The axis moved is the key's WIDTH and BIAS — a one-byte range below
+// zero, a zero-based byte past 127, two two-byte ranges, a two-byte range above 65535, a
+// four-byte range — and the key's place in it (both edges and inside).
+//
+// Values hand-computed: a loaded key answers the `v` it was written with; the absent key 5
+// answers false and leaves the collection empty.
+//
+// @falsified-at: b36d0449f — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the asserts.
+// ARMED: no instrument.
+// WITNESS: each message names the width, the key, whether it loaded and the value read.
+// HOLDS: `rules/collections/Col-Axis/a-biased-narrow-key-finds-every-record-its-iteration-yields`
+//        (the resident half of the same rule).
+
+struct B { k: integer limit(-100, 100), v: integer }
+struct U { k: integer limit(0, 250), v: integer }
+struct S { k: integer limit(-20000, 20000), v: integer }
+struct F { k: integer limit(-30000, 35000), v: integer }
+struct W { k: integer limit(-2000000000, 2000000000), v: integer }
+struct Z { k: integer limit(5000, 70000), v: integer }
+
+fn path(tag: text) -> text { "{temp_dir() ?? "/tmp"}/loft_2172_{now()}_{ticks()}_{tag}.store" }
+
+fn done(p: text) {
+  delete(p);
+  delete("{p}.dschema");
+}
+
+fn test_a_signed_byte_key() {
+  p = path("b");
+  h: hash<B[k]> = [B { k: -100, v: 1 }, B { k: -1, v: 2 }, B { k: 100, v: 3 }];
+  assert(store_persist_copy(h, p), "b written");
+  for key in [-100, -1, 100] {
+    l: hash<B[k]> = [];
+    got = store_load_key(l, p, key);
+    assert(got && l[key ?? 0].v ?? 0 == h[key ?? 0].v ?? -1, "byte -100..100 key {key}: loaded {got}");
+  }
+  a: hash<B[k]> = [];
+  assert(!store_load_key(a, p, 5) && len(a) == 0, "byte key 5 is absent");
+  done(p);
+}
+
+fn test_an_unsigned_byte_key_past_127() {
+  p = path("u");
+  h: hash<U[k]> = [U { k: 0, v: 1 }, U { k: 127, v: 2 }, U { k: 128, v: 3 }, U { k: 250, v: 4 }];
+  assert(store_persist_copy(h, p), "u written");
+  for key in [0, 127, 128, 250] {
+    l: hash<U[k]> = [];
+    got = store_load_key(l, p, key);
+    assert(got && l[key ?? 0].v ?? 0 == h[key ?? 0].v ?? -1, "byte 0..250 key {key}: loaded {got}");
+  }
+  a: hash<U[k]> = [];
+  assert(!store_load_key(a, p, 5) && len(a) == 0, "byte key 5 is absent");
+  done(p);
+}
+
+fn test_two_byte_keys() {
+  p = path("s");
+  s: hash<S[k]> = [S { k: -20000, v: 1 }, S { k: 0, v: 2 }, S { k: 20000, v: 3 }];
+  assert(store_persist_copy(s, p), "s written");
+  for key in [-20000, 0, 20000] {
+    l: hash<S[k]> = [];
+    got = store_load_key(l, p, key);
+    assert(got && l[key ?? 0].v ?? 0 == s[key ?? 0].v ?? -1, "short -20000..20000 key {key}: loaded {got}");
+  }
+  a: hash<S[k]> = [];
+  assert(!store_load_key(a, p, 5) && len(a) == 0, "short key 5 is absent");
+  done(p);
+}
+
+fn test_a_two_byte_key_past_32767() {
+  q = path("f");
+  f: hash<F[k]> = [F { k: -30000, v: 1 }, F { k: 33000, v: 2 }];
+  assert(store_persist_copy(f, q), "f written");
+  for key in [-30000, 33000] {
+    l: hash<F[k]> = [];
+    got = store_load_key(l, q, key);
+    assert(got && l[key ?? 0].v ?? 0 == f[key ?? 0].v ?? -1, "short -30000..35000 key {key}: loaded {got}");
+  }
+  done(q);
+}
+
+fn test_a_two_byte_key_past_65535() {
+  r = path("z");
+  z: hash<Z[k]> = [Z { k: 5000, v: 1 }, Z { k: 70000, v: 2 }];
+  assert(store_persist_copy(z, r), "z written");
+  for key in [5000, 70000] {
+    l: hash<Z[k]> = [];
+    got = store_load_key(l, r, key);
+    assert(got && l[key ?? 5000].v ?? 0 == z[key ?? 5000].v ?? -1, "short 5000..70000 key {key}: loaded {got}");
+  }
+  a: hash<Z[k]> = [];
+  assert(!store_load_key(a, r, 5) && len(a) == 0, "short key 5 is absent");
+  done(r);
+}
+
+fn test_a_four_byte_key() {
+  p = path("w");
+  h: hash<W[k]> = [W { k: -2000000000, v: 1 }, W { k: 7, v: 2 }];
+  assert(store_persist_copy(h, p), "w written");
+  for key in [-2000000000, 7] {
+    l: hash<W[k]> = [];
+    got = store_load_key(l, p, key);
+    assert(got && l[key ?? 0].v ?? 0 == h[key ?? 0].v ?? -1, "int key {key}: loaded {got}");
+  }
+  a: hash<W[k]> = [];
+  assert(!store_load_key(a, p, 5) && len(a) == 0, "int key 5 is absent");
+  done(p);
+}
+
+fn main() {
+  test_a_signed_byte_key();
+  test_an_unsigned_byte_key_past_127();
+  test_two_byte_keys();
+  test_a_two_byte_key_past_32767();
+  test_a_two_byte_key_past_65535();
+  test_a_four_byte_key();
+}

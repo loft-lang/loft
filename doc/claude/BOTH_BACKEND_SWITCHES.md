@@ -407,6 +407,10 @@ reduction each; **`LOFT_NO_INLINE_APPENDER=1`** keeps the calls of a void leaf t
 record parameter's vector fields (the appender clause); **`LOFT_NO_INLINE_READER=1`** keeps
 the calls of a leaf that reads scalars from a `File` parameter (the reader clause — the first
 bisect step for a wrong value or cursor out of a small function that reads a file);
+**`LOFT_NO_TAIL_SELF=1`** keeps a scalar function's self-call in tail position a call instead
+of the jump `(R-TailSelf)` makes of it — the first bisect step for a wrong answer out of a
+recursion written as a loop, and the way to see the `MAX_CALL_DEPTH` cliff it removes;
+`LOFT_TRACE_TAIL_SELF=1` names each rewrite and each decline;
 **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
 and every reduction, per function.
 

@@ -40,7 +40,7 @@ impl FnWriter<'_> {
         }
     }
 
-    /// The remaining operators, or the refusal that names one.
+    /// The remaining operators; the vector reshapes and sizes follow.
     pub(super) fn misc_operator(
         &mut self,
         name: &str,
@@ -61,6 +61,10 @@ impl FnWriter<'_> {
                     format!("loft_single_of_text({})", as_view(t)?),
                     K::Single,
                 ))
+            }
+            // The place a store link names (`c = &v[1]`): its `loft_ref`.
+            ("OpVarRef", [Value::Var(v)]) if self.store_links[*v as usize] => {
+                Ok(E::new(super::var_name(self.vars.name(*v), *v), K::Ref))
             }
             ("OpAbsInt", [v]) => {
                 let v = self.expr(v, ind)?;
@@ -135,6 +139,132 @@ impl FnWriter<'_> {
                     ),
                     K::Void,
                 ))
+            }
+            _ => self.vector_shape_operator(name, args, ind),
+        }
+    }
+
+    /// The vector reshapes (insert, reserve, keep a range) and the size operators.
+    fn vector_shape_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        match (name, args) {
+            ("OpBitNotSingleInt", [v]) => {
+                let v = self.expr(v, ind)?;
+                Ok(E::new(format!("(~{})", as_int(v)?), K::Int))
+            }
+            ("OpSizeStruct", [r, sz]) => {
+                let sz = Self::literal(sz, "size")?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("((void) {}, INT64_C({sz}))", as_ref(r)?),
+                    K::Int,
+                ))
+            }
+            ("OpSizeHash", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_hash_table_bytes({})", as_ref(r)?),
+                    K::Int,
+                ))
+            }
+            ("OpReserveVector", [v, count, size]) => {
+                let size = Self::literal(size, "element size")?;
+                let (v, count) = self.two(name, &[(*v).clone(), (*count).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_reserve({}, {}, {size})",
+                        as_ref(v)?,
+                        as_int(count)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpInsertVector", [v, size, index, tp]) => {
+                let size = Self::literal(size, "element size")?;
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                let (v, index) = self.two(name, &[(*v).clone(), (*index).clone()], ind)?;
+                let (image, n) = self.cx.default_image(tp);
+                let t = self.temp(CType::Ref);
+                // A linked element is a record of its own, its slot the record's id.
+                let insert = if self.cx.stores.is_linked(tp) {
+                    format!(
+                        "loft_vec_insert_linked({}, {}, {})",
+                        as_ref(v)?,
+                        self.cx.stores.size(tp),
+                        as_int(index)?
+                    )
+                } else {
+                    format!(
+                        "loft_vec_insert({}, {size}, {})",
+                        as_ref(v)?,
+                        as_int(index)?
+                    )
+                };
+                self.line(ind, &format!("{t} = {insert};"));
+                self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
+                Ok(E::new(t, K::Ref))
+            }
+            ("OpKeepRange", [v, lo, hi, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) || self.cx.stores.type_owns_heap(tp) {
+                    return Err("a kept range of elements that own records".into());
+                }
+                let size = self.cx.stores.size(tp);
+                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
+                let [v, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a kept range without three operands".to_string())?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_keep_range({}, {}, {}, {size})",
+                        as_ref(v)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
+                    K::Void,
+                ))
+            }
+            _ => self.child_record_operator(name, args, ind),
+        }
+    }
+
+    /// A struct field's child record (a function value's closure, `@FR-L-CapOwn`): the end of
+    /// the operator chain, holding the refusal that names an operator not carried.
+    fn child_record_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        match (name, args) {
+            ("OpRefFromChildRec", [f]) => {
+                let f = self.expr(f, ind)?;
+                Ok(E::new(
+                    format!("loft_ref_from_child_rec({})", as_ref(f)?),
+                    K::Ref,
+                ))
+            }
+            ("OpChildRec", [f, tp]) => {
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                self.cx.name_types();
+                self.cx.describe_type(tp);
+                let (image, n) = self.cx.default_image(tp);
+                let f = self.expr(f, ind)?;
+                let t = self.temp(CType::Ref);
+                self.line(
+                    ind,
+                    &format!(
+                        "{t} = loft_new_child_rec(loft_types, {tp}, {}, {image}, {n});",
+                        as_ref(f)?
+                    ),
+                );
+                Ok(E::new(t, K::Ref))
             }
             _ => Err(format!("operator {name}")),
         }

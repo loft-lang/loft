@@ -193,12 +193,14 @@ fn test_match_with_commas() {
   assert(r == "E", "commas");
 }
 
+// @EXPECT_WARNING: selects no arm
 fn test_match_scalar_no_match() {
   x = 99;
   r = match x { 1 => 10, 2 => 20 };
   assert(r == null, "r should be null");
 }
 
+// @EXPECT_WARNING: selects no arm
 fn test_match_scalar_single_arm() {
   x = 5;
   r = match x { 5 => "five" };
