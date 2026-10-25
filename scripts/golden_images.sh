@@ -14,6 +14,9 @@
 # new table takes is the writing process's policy.  The seed is fixed so a set is reproducible.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+case "${1:-}" in
+  -h|--help) sed -n '5,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
 set_name="${1:?usage: scripts/golden_images.sh <set>   (e.g. h3-i2-r1-t1)}"
 dir="tests/golden/images/$set_name"
 if [ -e "$dir" ]; then
