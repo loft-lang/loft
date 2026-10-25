@@ -81,12 +81,18 @@ perform on a value. There is no `&` operator.
                      value-level prefix is precisely what lets the reference leak into
                      contexts that then mis-elaborate.
   (B-Ref-StoredRef)  the ONE position outside a `&τ` binding where a prefix `&` is legal
-                     is a struct-literal field whose declared type is `reference<τ>`:
-                     `Linked { link: &pool[i] }`.  That is a DIFFERENT type former from
-                     `&τ` — `Type::Reference`, a stored cross-store pointer, versus
+                     is a store into a field whose declared type is `reference<τ>` — in a
+                     struct literal, `Linked { link: &pool[i] }`, or by assignment,
+                     `n.link = &pool[i]`, which store the same pointer `n.link = pool[i]`
+                     does.  That is a DIFFERENT type former from `&τ` — `Type::Reference`
+                     with the pointer marker, a stored cross-store pointer, versus
                      `Type::RefVar`, the stack link the rest of this doc is about — and
-                     the field's type is what admits the `&`, so a `&` in a field of any
-                     other type is still B-Ref-AnnotationOnly's parse error.
+                     the field's type is what admits the `&`: a `&` into a field of any
+                     other type is refused.  Into a field that holds its record INLINE (a
+                     field declared with the record type itself), an element or a tuple
+                     member, it is refused as having nothing to bind, never read as a
+                     copy (B-Ref-Reshape); into a scalar or text field it is still
+                     B-Ref-AnnotationOnly's parse error.
   (B-Ref-NotTarget)  (instance of B-Ref-AnnotationOnly) `&x = 3` is an error — a type
                      annotation lives at a binding, not on an lvalue being written.
 ```

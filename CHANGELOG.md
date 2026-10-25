@@ -263,6 +263,13 @@ git do.
 
 ### Bug fixes
 
+**A `&` assigned into a `reference<T>` field stores the pointer.**  `d.r = &p` now stores
+the link exactly as the literal `Rec { r: &p }` and the plain `d.r = p` do; it used to store a
+stack address on the interpreter (a garbage record on read, nothing said) and failed to
+compile natively.  A `&` into a field that holds its record inline (`struct Rec { o: Other }`,
+`d.o = &p` or `Rec { o: &p }`) is refused — it has nothing to bind; write `d.o = p` to copy
+the record, or declare the field `reference<Other>` to hold a link (loft#2166).
+
 **A sandbox may use the safe stdlib without a grant.**  Arithmetic, text, collections, JSON and
 the other stdlib functions that compute only on their arguments are admitted under every sandbox
 profile; `allow_libs = ["code"]` is no longer needed to multiply.  The stdlib functions that reach

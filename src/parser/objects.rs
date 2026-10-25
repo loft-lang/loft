@@ -5318,6 +5318,11 @@ impl Parser {
             let td_base = td.base().clone();
             let pos = self.field_position(td_nr, &field);
             found_fields.insert(field.clone());
+            // `@FR-B-Ref-StoredRef` (loft#2166) — only a `&` this field's own value spells is
+            // this field's to resolve.  A `&` reaching the literal from outside (`&Lit { v: 1 }`
+            // as another field's value) is refused by `parse_operators` as a non-place once the
+            // literal is read; the fields inside it must not read it as their own.
+            self.amp_pending = false;
             // loft#926 — is this collection field being given records, or is it the
             // `field: []` that constructing a linked group writes for every member?  An
             // empty literal is exactly two tokens, so the question is answered by looking
@@ -5559,6 +5564,17 @@ impl Parser {
                 // so the `&` is consumed here.  Left pending, it reached the enclosing
                 // binding (`b: Box = Hold { l: &leaf }`), which then read itself as `b = &…`,
                 // took the link marker and was never given a stack slot.
+                //
+                // `@FR-B-Ref-StoredRef` (loft#2166) — the head above opens for every record
+                // field, and only a `reference<T>` field (the pointer marker) can hold the
+                // link; an inline record field holds the record itself, so a `&` there is
+                // refused — as the assignment `d.o = &p` is — never copied in silence.
+                if !self.first_pass
+                    && self.amp_pending
+                    && !matches!(td.base(), Type::Reference(_, deps) if deps.is_pointer_marker())
+                {
+                    self.refuse_link_into_record_place(&value_pos);
+                }
                 self.amp_pending = false;
                 t
             };
