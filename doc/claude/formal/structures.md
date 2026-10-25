@@ -321,10 +321,12 @@ computes differently from the resident store becomes a lookup that silently answ
   `tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft`;
   `tests/paged_read_alloc.rs`, `tests/paged_browser.rs`, `tests/scripts/store_load_*.loft`.
 - **`S-Pair`** — `tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft`.
-- **Every rule, across releases** — ⚠ **no test reads an image an earlier build wrote.**  Every
-  guard above writes its image and reads it with one build, so a change that moves a byte in
-  writer and reader alike passes them all, and the first reader to notice is a program opening
-  an image it published before.  The guard this chapter needs is a frozen set of images, one
-  per kind and per hash layout with its sidecar, committed beside a reader that must keep
-  answering from them through every loader — whole, paged, and the C backend's — until a token
-  bump retires one on purpose.
+- **Every rule, across releases** — the GOLDEN IMAGES: `tests/golden/images/<set>/`, one image
+  and sidecar per structure and per hash layout, written once by `scripts/golden_images.sh` (it
+  refuses a set that exists, so their bytes always come from an earlier build) and read by every
+  later one — `tests/scripts/golden-images-whole.loft` through `store_load` on the interpreter,
+  `--native` and the C backend, `tests/scripts/golden-images-paged.loft` through the paged
+  loaders.  Every other guard writes and reads with one build, so a byte that moves in writer
+  and reader alike passes it; these are the guard that does not.  A set is named after the
+  placement tokens that wrote it; a token bump adds a new set, and the old set's reader says
+  what the new build does with it.

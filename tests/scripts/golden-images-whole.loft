@@ -1,0 +1,186 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// THE GOLDEN IMAGES READ WHOLE (formal/structures.md § Conformance, `@FR-S-Format`,
+// `@FR-S-Gate`, `@FR-S-Hash`, `@FR-S-Index`, `@FR-S-Tree`, `@FR-S-Vector`).  Every image in
+// `tests/golden/images/h3-i2-r1-t1/` was written by an EARLIER build (`scripts/golden_images.sh`)
+// and is never written again, so this file is the one place a byte layout that moved in writer
+// and reader alike is seen: a same-build test writes and reads under the same rules and passes.
+// Each image is loaded whole (`store_load`) and every record is checked against the formula
+// that wrote it (`tests/golden/images/generate.loft`), every walk against its order, an absent
+// key against null, and the loaded store against `store_verify`.  The axes: the three hash
+// layouts (inline, tagged arena, untagged arena), a text and a narrow biased hash key, an
+// integer and a text index, a sorted, a spatial, a trie, and a struct root holding a text, a
+// vector, a nested record, an enum with a payload, a float and a narrow field.
+//
+// Values hand-computed from the formulas: record i of `GRec` has k = 7i − 1000, name "rec-i",
+// tags [i mod 5, i mod 7], v = i²; `GText` "key{i}" / "street-{i}" has v = 3i + 1; `GNarrow`
+// k = 1000 + 3i, v = 11i; `GPin` n = i at x = 9·(i mod 20) − 90, y = 13·(i div 20) − 100;
+// `GWord` "kerk{i}" hits i, "kerkweg{i}" 100 + i, "lon{i}" 200 + i.
+//
+// @falsified-at: none — a conformance guard; its patch receipt (an index header offset swapped in writer and reader alike, which every same-build test passes) is still to be recorded.
+// CHANNEL: the asserts.
+// ARMED: no instrument.
+// WITNESS: each message names the image, the record and the value read.
+// HOLDS: `tests/store_persist_loft.rs` (the same structures written and read by one build).
+
+struct GRec { k: integer, name: text, tags: vector<integer>, v: integer }
+struct GText { name: text, v: integer }
+struct GNarrow { k: integer limit(1000, 1200), v: integer }
+struct GPin { x: integer, y: integer, n: integer }
+struct GWord { w: text, hits: integer }
+enum GKind { Plain, Named { label: text, n: integer } }
+struct GInner { a: integer, b: text }
+struct GRoot { title: text, nums: vector<integer>, inner: GInner, kind: GKind, f: float, small: integer limit(-100, 100) }
+
+fn img(name: text) -> text { "../golden/images/h3-i2-r1-t1/{name}.store" }
+
+fn rec_ok(e: GRec, i: integer) -> boolean {
+  e.k == i * 7 - 1000 && e.name == "rec-{i}" && len(e.tags) == 2 && e.tags[0] == i % 5
+    && e.tags[1] == i % 7 && e.v == i * i
+}
+
+fn check_hash(layout: text) {
+  h: hash<GRec[k]> = [];
+  assert(store_load(h, img("hash-{layout}")), "hash-{layout} loads");
+  assert(len(h) == 300, "hash-{layout}: {len(h)} records");
+  for i in 0..300 {
+    e = h[i * 7 - 1000];
+    assert(e != null && rec_ok(e?, i), "hash-{layout} record {i}");
+  }
+  assert(h[-999] == null, "hash-{layout}: an absent key reads null");
+  assert(store_verify(h), "hash-{layout} verifies");
+}
+
+fn test_the_hash_layouts() {
+  check_hash("inline");
+  check_hash("tagged");
+  check_hash("untagged");
+}
+
+fn test_a_text_keyed_hash() {
+  h: hash<GText[name]> = [];
+  assert(store_load(h, img("hash-text")), "hash-text loads");
+  assert(len(h) == 200, "hash-text: {len(h)} records");
+  for i in 0..200 {
+    e = h["key{i}"];
+    assert(e != null && e.v == i * 3 + 1, "hash-text key{i}");
+  }
+  assert(h["key200"] == null, "hash-text: an absent key reads null");
+  assert(store_verify(h), "hash-text verifies");
+}
+
+fn test_a_narrow_keyed_hash() {
+  h: hash<GNarrow[k]> = [];
+  assert(store_load(h, img("hash-narrow")), "hash-narrow loads");
+  assert(len(h) == 60, "hash-narrow: {len(h)} records");
+  for i in 0..60 {
+    e = h[(1000 + i * 3) ?? 1000];
+    assert(e != null && e.v == i * 11, "hash-narrow key {1000 + i * 3}");
+  }
+  assert(h[1001] == null, "hash-narrow: an absent key reads null");
+}
+
+fn test_an_integer_index() {
+  ix: index<GRec[k]> = [];
+  assert(store_load(ix, img("index-int")), "index-int loads");
+  i = 0;
+  for e in ix {
+    assert(rec_ok(e?, i), "index-int walk position {i}: k {e.k}");
+    i += 1;
+  }
+  assert(i == 300, "index-int walks {i} records");
+  for j in 0..300 {
+    e = ix[j * 7 - 1000];
+    assert(e != null && e.v == j * j, "index-int key {j * 7 - 1000}");
+  }
+  assert(ix[-999] == null, "index-int: an absent key reads null");
+}
+
+fn test_a_text_index() {
+  ix: index<GText[name]> = [];
+  assert(store_load(ix, img("index-text")), "index-text loads");
+  n = 0;
+  prev = "";
+  for e in ix {
+    name = e.name ?? "";
+    i = (name[7..] as integer?) ?? -1;
+    assert(name.starts_with("street-") && e.v == i * 3 + 1, "index-text {e.name}");
+    assert(n == 0 || prev < e.name, "index-text walks in key order: {prev} then {e.name}");
+    prev = e.name;
+    n += 1;
+  }
+  assert(n == 200, "index-text walks {n} records");
+  e = ix["street-117"];
+  assert(e != null && e.v == 352, "index-text street-117");
+}
+
+fn test_a_sorted() {
+  s: sorted<GRec[k]> = [];
+  assert(store_load(s, img("sorted")), "sorted loads");
+  i = 0;
+  for e in s {
+    assert(rec_ok(e?, i), "sorted position {i}: k {e.k}");
+    i += 1;
+  }
+  assert(i == 300, "sorted holds {i} records");
+  e = s[13 * 7 - 1000];
+  assert(e != null && e.v == 169, "sorted key {13 * 7 - 1000}");
+}
+
+fn test_a_spatial() {
+  sp: spatial<GPin[x, y]> = [];
+  assert(store_load(sp, img("spatial")), "spatial loads");
+  n = 0;
+  total = 0;
+  for p in sp {
+    assert(p.x == (p.n % 20) * 9 - 90 && p.y == (p.n / 20) * 13 - 100, "spatial pin {p.n} at {p.x},{p.y}");
+    total += p.n;
+    n += 1;
+  }
+  assert(n == 300 && total == 44850, "spatial holds {n} pins summing {total}");
+  assert(store_verify(sp), "spatial verifies");
+}
+
+fn test_a_trie() {
+  tr: trie<GWord[w]> = [];
+  assert(store_load(tr, img("trie")), "trie loads");
+  n = 0;
+  prev = "";
+  for e in tr {
+    w = e.w ?? "";
+    want = if w.starts_with("kerkweg") { 100 + ((w[7..] as integer?) ?? -1000) }
+      else if w.starts_with("kerk") { (w[4..] as integer?) ?? -1000 }
+      else { 200 + ((w[3..] as integer?) ?? -1000) };
+    assert(e.hits == want, "trie {e.w}: hits {e.hits}, want {want}");
+    assert(n == 0 || prev < e.w, "trie walks in key order: {prev} then {e.w}");
+    prev = e.w;
+    n += 1;
+  }
+  assert(n == 120, "trie holds {n} words");
+  assert(store_verify(tr), "trie verifies");
+}
+
+fn test_a_struct_root() {
+  r = GRoot { title: "", nums: [], inner: GInner { a: 0, b: "" }, kind: GKind.Plain, f: 0.0, small: 0 };
+  assert(store_load(r, img("root")), "root loads");
+  assert(r.title == "golden" && "{r.nums}" == "[3,1,4,1,5,9,2,6]", "root: {r.title} {r.nums}");
+  assert(r.inner.a == -42 && r.inner.b == "inner text", "root inner: {r.inner.a} {r.inner.b}");
+  assert(r.f == 2.5 && r.small == -77, "root: f {r.f} small {r.small}");
+  match r.kind {
+    Named { label, n } => assert(label == "named" && n == 7, "root kind: {label} {n}"),
+    _ => assert(false, "root kind is Named")
+  }
+}
+
+fn main() {
+  test_the_hash_layouts();
+  test_a_text_keyed_hash();
+  test_a_narrow_keyed_hash();
+  test_an_integer_index();
+  test_a_text_index();
+  test_a_sorted();
+  test_a_spatial();
+  test_a_trie();
+  test_a_struct_root();
+}

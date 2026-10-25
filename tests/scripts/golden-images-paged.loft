@@ -1,0 +1,136 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// THE GOLDEN IMAGES READ BY PAGE (formal/structures.md § Conformance, `@FR-S-Paged`,
+// `@FR-S-Paged-Same`, `@FR-S-Digest`, `@FR-S-Probe`, `@FR-S-Arena`, `@FR-S-Inline`,
+// `@FR-S-Tree`, `@FR-S-TreeKey`).  The images in `tests/golden/images/h3-i2-r1-t1/` were written
+// by an EARLIER build and are never written again; this file reads them through the paged
+// loaders — the reader of a published image that has nothing but byte ranges — and checks every
+// record it fetches against the formula that wrote it (`tests/golden/images/generate.loft`).
+// The axes: the three hash layouts by integer key (one key and a batch), a text and a narrow
+// biased hash key, a sorted range, a spatial box, and a trie prefix at three depths.
+//
+// Values hand-computed from the formulas (the same as golden-images-whole.loft): `GRec` i has
+// k = 7i − 1000 and v = i²; a `sorted` range of k over i = 20..=99 holds 80 records; the box
+// x ∈ [−90, −54], y ∈ [−100, −48] holds the pins with i mod 20 ≤ 4 and i div 20 ≤ 4, 25 of
+// them; the trie holds 80 words under "kerk", 30 under "kerkweg", 40 under "lon", none under "x".
+//
+// @falsified-at: none — a conformance guard; its patch receipt (the tree header size moved in writer and reader alike, which every same-build test passes) is still to be recorded.
+// CHANNEL: the asserts.
+// ARMED: no instrument.
+// WITNESS: each message names the image, the key or the range, and what was loaded.
+// HOLDS: `golden-images-whole.loft` (the same images loaded whole).
+
+struct GRec { k: integer, name: text, tags: vector<integer>, v: integer }
+struct GText { name: text, v: integer }
+struct GNarrow { k: integer limit(1000, 1200), v: integer }
+struct GPin { x: integer, y: integer, n: integer }
+struct GWord { w: text, hits: integer }
+
+fn img(name: text) -> text { "../golden/images/h3-i2-r1-t1/{name}.store" }
+
+fn check_hash(layout: text) {
+  one: hash<GRec[k]> = [];
+  assert(store_load_key(one, img("hash-{layout}"), 13 * 7 - 1000), "hash-{layout}: one key loads");
+  e = one[13 * 7 - 1000];
+  assert(e != null && e.v == 169 && e.name == "rec-13" && "{e.tags}" == "[3,6]", "hash-{layout} key 13: {e}");
+  keys: vector<integer> = [];
+  for i in 0..300 { keys += [i * 7 - 1000]; }
+  keys += [-999];
+  all: hash<GRec[k]> = [];
+  got = store_load_keys(all, img("hash-{layout}"), keys);
+  assert(got == 300 && len(all) == 300, "hash-{layout}: {got} of 300 keys loaded");
+  for i in 0..300 {
+    r = all[i * 7 - 1000];
+    assert(r != null && r.v == i * i && r.name == "rec-{i}", "hash-{layout} record {i}");
+  }
+  none: hash<GRec[k]> = [];
+  assert(!store_load_key(none, img("hash-{layout}"), -999) && len(none) == 0, "hash-{layout}: an absent key loads nothing");
+}
+
+fn test_the_hash_layouts() {
+  check_hash("inline");
+  check_hash("tagged");
+  check_hash("untagged");
+}
+
+fn test_a_text_keyed_hash() {
+  names: vector<text> = [];
+  for i in 0..200 { names += ["key{i}"]; }
+  names += ["key200"];
+  h: hash<GText[name]> = [];
+  got = store_load_keys_text(h, img("hash-text"), names);
+  assert(got == 200 && len(h) == 200, "hash-text: {got} of 200 keys loaded");
+  for i in 0..200 {
+    e = h["key{i}"];
+    assert(e != null && e.v == i * 3 + 1, "hash-text key{i}");
+  }
+}
+
+fn test_a_narrow_keyed_hash() {
+  keys: vector<integer> = [];
+  for i in 0..60 { keys += [1000 + i * 3]; }
+  h: hash<GNarrow[k]> = [];
+  got = store_load_keys(h, img("hash-narrow"), keys);
+  assert(got == 60 && len(h) == 60, "hash-narrow: {got} of 60 keys loaded");
+  for i in 0..60 {
+    e = h[(1000 + i * 3) ?? 1000];
+    assert(e != null && e.v == i * 11, "hash-narrow key {1000 + i * 3}");
+  }
+}
+
+fn test_a_sorted_range() {
+  s: sorted<GRec[k]> = [];
+  got = store_load_range(s, img("sorted"), 20 * 7 - 1000, 99 * 7 - 1000);
+  assert(got == 80 && len(s) == 80, "sorted range: {got} records");
+  i = 20;
+  for e in s {
+    assert(e.k == i * 7 - 1000 && e.v == i * i, "sorted range record {i}: k {e.k}");
+    i += 1;
+  }
+}
+
+fn test_a_spatial_box() {
+  sp: spatial<GPin[x, y]> = [];
+  got = store_load_box(sp, img("spatial"), [-90, -100], [-54, -48], -1);
+  assert(got == 25, "spatial box: {got} pins");
+  n = 0;
+  for p in sp {
+    assert(p.n % 20 <= 4 && p.n / 20 <= 4, "spatial box pin {p.n} lies in the box");
+    assert(p.x == (p.n % 20) * 9 - 90 && p.y == (p.n / 20) * 13 - 100, "spatial pin {p.n} at {p.x},{p.y}");
+    n += 1;
+  }
+  assert(n == 25, "spatial box holds {n} pins");
+}
+
+fn prefix(pre: text) -> integer {
+  tr: trie<GWord[w]> = [];
+  got = store_load_prefix(tr, img("trie"), pre, -1);
+  for e in tr {
+    w = e.w ?? "";
+    assert(w.starts_with(pre), "trie prefix {pre}: {w}");
+    want = if w.starts_with("kerkweg") { 100 + ((w[7..] as integer?) ?? -1000) }
+      else if w.starts_with("kerk") { (w[4..] as integer?) ?? -1000 }
+      else { 200 + ((w[3..] as integer?) ?? -1000) };
+    assert(e.hits == want, "trie {w}: hits {e.hits}, want {want}");
+  }
+  assert(got == len(tr), "trie prefix {pre}: answered {got}, holds {len(tr)}");
+  got
+}
+
+fn test_a_trie_prefix() {
+  a = prefix("kerk");
+  b = prefix("kerkweg");
+  c = prefix("lon");
+  d = prefix("x");
+  assert(a == 80 && b == 30 && c == 40 && d == 0, "trie prefixes: kerk {a}, kerkweg {b}, lon {c}, x {d}");
+}
+
+fn main() {
+  test_the_hash_layouts();
+  test_a_text_keyed_hash();
+  test_a_narrow_keyed_hash();
+  test_a_sorted_range();
+  test_a_spatial_box();
+  test_a_trie_prefix();
+}
