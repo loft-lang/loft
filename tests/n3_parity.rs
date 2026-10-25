@@ -1103,3 +1103,65 @@ fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
 
     let _ = fa::remove_dir_all(&root);
 }
+
+/// loft#2165 — a `single` crosses the interpreter → compiled-library bridge as a `single`.
+///
+/// The interpreter keeps a `single` as an `f32`; the shared-store dispatcher read the argument
+/// and wrote the result as an `f64`, so the argument arrived as the low half of a denormal (0)
+/// and the caller read the low half of the result's `f64` bits (0).  `float`, `integer` and a
+/// mixed signature beside it are the controls.  Run on both routes a call takes: the plain run
+/// and `LOFT_PROFILE=1`, which counts each crossing.  Values hand-computed.
+// @speed 1.5
+#[test]
+fn a_single_crosses_the_library_bridge_as_a_single_2165() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable (mixed mode needs it)");
+        return;
+    }
+    let pid = std::process::id();
+    let root = std::env::temp_dir().join(format!("loft_single_bridge_{pid}"));
+    let _ = fa::remove_dir_all(&root);
+    let libdir = root.join("libs");
+    fa::create_dir_all(&libdir).unwrap();
+    let native_auto = write_lib(
+        &libdir,
+        "slib",
+        None,
+        "pub fn arg_only(f: single) -> float { f as float }\n\
+         pub fn ret_only() -> single { 0.25f }\n\
+         pub fn ident(f: single) -> single { f }\n\
+         pub fn ident_float(f: float) -> float { f }\n\
+         pub fn mixed(a: single, b: integer, c: single) -> float { a as float + b as float * 10.0 + c as float * 100.0 }\n",
+    );
+    let prog = root.join("main.loft");
+    fa::write(
+        &prog,
+        "use slib;\nfn main() {\n\
+         \x20   println(\"{slib::arg_only(0.25f)} {slib::ret_only()} {slib::ident(0.75f)} {slib::ident_float(0.5)} {slib::mixed(0.5f, 3, 0.25f)}\");\n}\n",
+    )
+    .unwrap();
+    let expect = "0.25 0.25 0.75 0.5 55.5\n";
+    let interp = run_against(&libdir, &prog, &[("LOFT_NO_NATIVE_LIBS", "1")]);
+    assert_eq!(
+        interp.stdout, expect,
+        "interpreted library:\n{}",
+        interp.stderr
+    );
+    for env in [&[][..], &[("LOFT_PROFILE", "1")][..]] {
+        // Twice: the first run after the library's source appears may interpret it.
+        for pass in 0..2 {
+            let r = run_against(&libdir, &prog, env);
+            assert!(r.success, "{env:?} pass {pass} failed:\n{}", r.stderr);
+            assert_eq!(r.stdout, expect, "{env:?} pass {pass}:\n{}", r.stderr);
+        }
+    }
+    assert!(
+        single_cdylib(&native_auto).is_some(),
+        "the library must have been compiled, or the bridge was never crossed"
+    );
+    let _ = fa::remove_dir_all(&root);
+}
