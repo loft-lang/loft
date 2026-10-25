@@ -5690,16 +5690,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         rename: &mut dyn FnMut(&mut Value),
     ) {
         // A place step: its FIRST argument is the record or vector the step reads into.
-        let steps: Vec<u32> = [
+        let steps: [u32; 5] = [
             "OpVectorRef",
             "OpVectorRefNullable",
             "OpGetVector",
             "OpGetVectorNullable",
             "OpGetField",
         ]
-        .iter()
-        .map(|n| self.data.def_nr(n))
-        .collect();
+        .map(|n| self.data.def_nr(n));
         let set_ref = self.data.def_nr("OpSetDbRef");
         // Walks each pointer-field place down its steps to the destination and hands that
         // node to `at_root`.  The second walk meets the same places in the same order: the

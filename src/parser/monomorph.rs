@@ -323,13 +323,17 @@ impl Parser {
         for v in 0..tmpl_vars.count() {
             let tmpl_tp = tmpl_vars.tp(v).clone();
             // loft#2156 — a vector backing's wrapper row: the rows the template baked for it
-            // (`OpDatabase(__vdb, main_vector<K>)`) name the placeholder's layout.
-            if let Type::Reference(stale_w, _) = &tmpl_tp
-                && let Some(Type::Reference(fresh_w, _)) =
-                    self.instance_vector_wrapper(&tmpl_tp, bindings)
+            // (`OpDatabase(__vdb, main_vector<K>)`) name the placeholder's layout.  The
+            // instance's own table already holds the wrapper `fill_monomorph_body` re-derived
+            // (`Self::instance_vector_wrapper`), at the same variable number.
+            if let Type::Reference(stale_w, _) = tmpl_tp.base()
+                && let Type::Reference(fresh_w, _) =
+                    self.data.definitions[d_nr as usize].variables.tp(v).base()
+                && stale_w != fresh_w
+                && self.data.def(*stale_w).name().starts_with("main_vector<")
             {
                 let stale = i32::from(self.data.def(*stale_w).known_type());
-                let fresh = i32::from(self.data.def(fresh_w).known_type());
+                let fresh = i32::from(self.data.def(*fresh_w).known_type());
                 note(&mut rows, stale, fresh);
                 continue;
             }
@@ -910,7 +914,7 @@ impl Parser {
         tp: &Type,
         bindings: &[(u32, Type)],
     ) -> Option<Type> {
-        let Type::Reference(w, deps) = tp else {
+        let Type::Reference(w, deps) = tp.base() else {
             return None;
         };
         if self.first_pass
@@ -919,8 +923,12 @@ impl Parser {
         {
             return None;
         }
-        let Some(Type::Vector(elem, _)) =
-            self.data.def(*w).attributes().first().map(|a| &a.typedef)
+        let Some(Type::Vector(elem, _)) = self
+            .data
+            .def(*w)
+            .attributes()
+            .first()
+            .map(|a| a.typedef.base())
         else {
             return None;
         };
@@ -933,7 +941,12 @@ impl Parser {
         let elem = Self::substitute_all((**elem).clone(), bindings);
         let fresh = self.data.vector_def(&mut self.lexer, &elem);
         self.vector_wrapper_known_type(fresh);
-        Some(Type::Reference(fresh, deps.clone()))
+        let fresh = Type::Reference(fresh, deps.clone());
+        // A nullable backing stays nullable.
+        Some(match tp {
+            Type::Optional(_) => Type::Optional(Box::new(fresh)),
+            _ => fresh,
+        })
     }
 
     /// `[T ↦ C]` over one type — @FR-G-Mono's *"applied throughout"*, for the signature
