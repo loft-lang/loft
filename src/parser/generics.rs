@@ -1356,6 +1356,14 @@ impl Parser {
         for (holder, bound_to) in bindings {
             vars.substitute_type(*holder, bound_to);
         }
+        // loft#2156 — and each vector backing's wrapper, which names the variable only
+        // through its field (`Self::instance_vector_wrapper`).
+        for v in 0..vars.count() {
+            let tp = vars.tp(v).clone();
+            if let Some(fresh) = self.instance_vector_wrapper(&tp, bindings) {
+                vars.set_type(v, fresh);
+            }
+        }
         vars.drop_scalar_deps();
         // @FR-G-Mono — a match payload binding is decided by its FIELD's type, and the template
         // decided it before that type was known: a field of type `T` reads as a record, so the

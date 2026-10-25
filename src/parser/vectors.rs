@@ -7379,7 +7379,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// through a bogus offset, corrupting the interpreter free path (a heap
     /// write that SIGSEGVs at teardown after the correct value prints).  Finish
     /// immediately so the position is laid out before codegen consumes it.
-    fn vector_wrapper_known_type(&mut self, vec_def: u32) -> u16 {
+    pub(super) fn vector_wrapper_known_type(&mut self, vec_def: u32) -> u16 {
         let tp = self.data.def(vec_def).known_type();
         if tp != u16::MAX {
             return tp;
