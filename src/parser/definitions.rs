@@ -3628,30 +3628,26 @@ impl Parser {
             // the body — the program is refused HERE, on the source shape, and never left a
             // call: a call that stops at `MAX_CALL_DEPTH` holds for small inputs and fails for
             // large ones, which is the wrong answer to ship silently.  The predicate is the
-            // pass's own (`tail_self::admit_frame`), so what compiles is what the pass makes a
+            // pass's own (`tail_frame::admit_frame`), so what compiles is what the pass makes a
             // jump.
             if !self.data.definitions[ctx].is_operator() {
                 let def = &self.data.definitions[ctx];
-                let refused = crate::opt::tail_self::tail_calls(
-                    &def.code,
-                    self.context,
-                    &self.vars,
-                    &self.data,
-                )
-                .into_iter()
-                .next()
-                .and_then(|call| {
-                    crate::opt::tail_self::admit_frame(
-                        &self.vars,
-                        def.returned(),
-                        &def.code,
-                        &self.data,
-                        &crate::opt::tail_self::declared_params(def),
-                        self.context,
-                    )
-                    .err()
-                    .map(|why| (call.at, why))
-                });
+                let refused =
+                    crate::tail_frame::tail_calls(&def.code, self.context, &self.vars, &self.data)
+                        .into_iter()
+                        .next()
+                        .and_then(|call| {
+                            crate::tail_frame::admit_frame(
+                                &self.vars,
+                                def.returned(),
+                                &def.code,
+                                &self.data,
+                                &crate::tail_frame::declared_params(def),
+                                self.context,
+                            )
+                            .err()
+                            .map(|why| (call.at, why))
+                        });
                 if let Some((at, why)) = refused {
                     let fn_name = def.name().trim_start_matches("n_").to_string();
                     let msg = format!(
