@@ -526,8 +526,8 @@ impl Scopes<'_> {
         }
         // Guarded against EVERY closure record of the frame, not the ones the deps name: a
         // fn-ref's dep names only the last record assigned to it, so `r = |…| a; r = |…| b`
-        // displaces a record its type no longer mentions, and releasing that one here freed
-        // it a second time at its own scope end, captures included.
+        // displaces a record its type does not name; that record is released at its own
+        // scope end, so releasing it here too would free it twice, captures included.
         let frame_records: Vec<u16> = (0..count)
             .filter(|&r| super::capture_builds::is_record_local(function, r))
             .collect();

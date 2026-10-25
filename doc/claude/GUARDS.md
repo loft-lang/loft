@@ -215,7 +215,7 @@ debug build of its commit, and one per fix adds up to hours on a loaded box.
   mode avoids.  It answers "fails without the branch", not "which fix cures it"; where that
   matters, score the fix's own reversed diff with `--patch`.
 - **It runs from a mirror of the tree without its `Cargo.toml`**: a loft whose runtime
-  refresh reads only the working directory (loft#2153) would take the tree for its own
+  refresh reads only the working directory would take the tree for its own
   checkout and build it before every native run.
 - **A stale install still scores, and says so**: a note when `origin/main` has moved past the
   installed commit, and a second when that commit is not an ancestor of this tree — the two
