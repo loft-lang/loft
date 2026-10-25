@@ -935,6 +935,35 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         | "n_parallel_buf_drop_narrow"
         | "n_parallel_buf_drop_fn"
         | "n_parallel_buf_drop_ref" => Some("loft_par"),
+        _ => json_native_c(name),
+    }
+}
+
+/// The C of the JSON natives (`loft_json.h`): the reader, the readers of a JsonValue tree and
+/// its builders.
+fn json_native_c(name: &str) -> Option<&'static str> {
+    match name {
+        "n_json_parse" => Some("loft_json_parse_value"),
+        "n_json_errors" => Some("loft_json_errors"),
+        "n_json_null" => Some("loft_json_null"),
+        "n_json_bool" => Some("loft_json_bool"),
+        "n_json_number" => Some("loft_json_number"),
+        "n_json_string" => Some("loft_json_string"),
+        "n_json_array" => Some("loft_json_array"),
+        "n_json_object" => Some("loft_json_object"),
+        "t_9JsonValue_fields" => Some("loft_jv_fields"),
+        "t_9JsonValue_field" => Some("loft_jv_field"),
+        "t_9JsonValue_has_field" => Some("loft_jv_has_field"),
+        "t_9JsonValue_item" => Some("loft_jv_item"),
+        "t_9JsonValue_len" => Some("loft_jv_len"),
+        "t_9JsonValue_as_text" => Some("loft_jv_as_text"),
+        "t_9JsonValue_as_number" => Some("loft_jv_as_number"),
+        "t_9JsonValue_as_long" => Some("loft_jv_as_long"),
+        "t_9JsonValue_as_bool" => Some("loft_jv_as_bool"),
+        "t_9JsonValue_kind" => Some("loft_jv_kind"),
+        "t_9JsonValue_keys" => Some("loft_jv_keys"),
+        "t_9JsonValue_to_json" => Some("loft_jv_to_json"),
+        "t_9JsonValue_to_json_pretty" => Some("loft_jv_to_json_pretty"),
         _ => None,
     }
 }
@@ -987,11 +1016,17 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
     // it compiles `loft_at` without the foreign record's test.
     let mut out = String::new();
-    if crate::opt::names::reachable_functions(data, &all)
-        .iter()
-        .any(|&d| data.def(d).name() == "n_file_map")
-    {
+    let reached = crate::opt::names::reachable_functions(data, &all);
+    if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
+    }
+    // The JSON reader and the JsonValue tree (`loft_json.h`) are compiled in for a unit that
+    // reaches a JSON native, with the tree's layout read from this program's type table.
+    if reached.iter().any(|&d| {
+        let n = data.def(d).name();
+        n.starts_with("n_json_") || n.starts_with("t_9JsonValue_")
+    }) {
+        out.push_str(&json_layout(stores));
     }
     out.push_str(RUNTIME);
     out.push('\n');
@@ -1003,6 +1038,30 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
     Ok(out)
+}
+
+/// `LOFT_JSON` and the offsets of the JsonValue tree, as `native.rs` reads them through
+/// `Stores::position`: each variant's payload, a JsonField's name and value, and the sizes of
+/// a JsonValue, a JsonField and a text.
+fn json_layout(stores: &Stores) -> String {
+    let at = |tp: &str, field: &str| stores.position(stores.name(tp), field);
+    format!(
+        "#define LOFT_JSON 1\n#define LOFT_JV_SIZE {}\n#define LOFT_JF_SIZE {}\n#define LOFT_TEXT_SIZE {}\n\
+         #define LOFT_JF_NAME {}\n#define LOFT_JF_VALUE {}\n#define LOFT_JV_BOOL_VALUE {}\n\
+         #define LOFT_JV_NUMBER_VALUE {}\n#define LOFT_JV_INT_VALUE {}\n#define LOFT_JV_STRING_VALUE {}\n\
+         #define LOFT_JV_ITEMS {}\n#define LOFT_JV_FIELDS {}\n",
+        stores.size(stores.name("JsonValue")),
+        stores.size(stores.name("JsonField")),
+        stores.size(stores.name("text")),
+        at("JsonField", "name"),
+        at("JsonField", "value"),
+        at("JBool", "value"),
+        at("JNumber", "value"),
+        at("JInteger", "value"),
+        at("JString", "value"),
+        at("JArray", "items"),
+        at("JObject", "fields"),
+    )
 }
 
 /// C99 for the whole program: [`emit_unit`] from `main`, and the C `main` that calls it.

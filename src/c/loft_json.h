@@ -831,3 +831,492 @@ static int loft_json_parse(const uint8_t *text, size_t len, int lenient, loft_jv
     return ok;
 }
 #endif
+
+#ifdef LOFT_JV_SIZE
+/* ── The JsonValue tree in a store (native.rs `json_parse_into_stores` and the readers) ──
+ * A JsonValue is an enum record: its variant's discriminant at byte 0, the payload at the
+ * offsets the emitter defines (LOFT_JV_* below) from the program's own type table.  An array's
+ * items and an object's JsonField members are vectors in the root's store, so the tree goes
+ * with it. */
+#define LOFT_JD_NULL 1
+#define LOFT_JD_BOOL 2
+#define LOFT_JD_NUMBER 3
+#define LOFT_JD_STRING 4
+#define LOFT_JD_ARRAY 5
+#define LOFT_JD_OBJECT 6
+#define LOFT_JD_INT 7
+
+/* `stores.last_json_errors`: the last `json_parse`'s error, empty after one that read. */
+static loft_text loft_json_last_error;
+
+static uint8_t loft_jd(loft_ref v) {
+    return *loft_at(loft_store_of(v), v.rec, v.pos);
+}
+
+/* `materialise_primitive_into`: tree `v` written at `slot`. */
+static void loft_jv_into(loft_ref slot, const loft_jv *v) {
+    switch (v->kind) {
+    case LOFT_JV_NULL: loft_set_byte(slot, 0, LOFT_JD_NULL); break;
+    case LOFT_JV_BOOL:
+        loft_set_byte(slot, 0, LOFT_JD_BOOL);
+        loft_set_byte(slot, LOFT_JV_BOOL_VALUE, (uint8_t) (v->b != 0));
+        break;
+    case LOFT_JV_NUMBER:
+        loft_set_byte(slot, 0, LOFT_JD_NUMBER);
+        loft_set_float(slot, LOFT_JV_NUMBER_VALUE, v->n);
+        break;
+    case LOFT_JV_INT:
+        loft_set_byte(slot, 0, LOFT_JD_INT);
+        loft_set_int(slot, LOFT_JV_INT_VALUE, v->i);
+        break;
+    case LOFT_JV_STR:
+    case LOFT_JV_IDENT:
+        loft_set_text(slot, LOFT_JV_STRING_VALUE, loft_view(&v->s));
+        loft_set_byte(slot, 0, LOFT_JD_STRING);
+        break;
+    case LOFT_JV_ARRAY: {
+        loft_set_byte(slot, 0, LOFT_JD_ARRAY);
+        loft_ref items = slot;
+        items.pos += LOFT_JV_ITEMS;
+        loft_set_u32(loft_store_of(slot), slot.rec, items.pos, 0);
+        for (size_t i = 0; i < v->nkids; i++) {
+            loft_ref e = loft_vec_append(items, LOFT_JV_SIZE);
+            loft_jv_into(e, &v->kids[i]);
+            loft_vec_finish(items);
+        }
+        break;
+    }
+    case LOFT_JV_OBJECT: {
+        loft_set_byte(slot, 0, LOFT_JD_OBJECT);
+        loft_ref fields = slot;
+        fields.pos += LOFT_JV_FIELDS;
+        loft_set_u32(loft_store_of(slot), slot.rec, fields.pos, 0);
+        for (size_t i = 0; i < v->nkids; i++) {
+            loft_ref e = loft_vec_append(fields, LOFT_JF_SIZE);
+            loft_set_text(e, LOFT_JF_NAME, loft_view(&v->keys[i]));
+            loft_ref val = e;
+            val.pos += LOFT_JF_VALUE;
+            loft_jv_into(val, &v->kids[i]);
+            loft_vec_finish(fields);
+        }
+        break;
+    }
+    case LOFT_JV_CTOR: {
+        /* Lenient only: the single-member object `{tag: body}`. */
+        loft_jv obj;
+        memset(&obj, 0, sizeof obj);
+        obj.kind = LOFT_JV_OBJECT;
+        obj.nkids = 1;
+        obj.kids = v->kids;
+        obj.keys = (loft_text *) &v->s;
+        loft_jv_into(slot, &obj);
+        break;
+    }
+    }
+}
+
+/* `jv_alloc`: a JsonValue root in a store of its own, zeroed. */
+static loft_ref loft_jv_alloc(void) {
+    loft_ref r = loft_ref_null();
+    uint32_t words = (LOFT_JV_SIZE + 7) / 8 + 1;
+    if (words < 2) words = 2;
+    loft_database(&r, (words - 1) * 8);
+    return r;
+}
+
+/* `jv_null_sentinel`: the one JNull the readers answer for a miss, in a store nothing frees. */
+static loft_ref loft_jv_null(void) {
+    static loft_ref sentinel;
+    static int made = 0;
+    if (!made) {
+        sentinel = loft_jv_alloc();
+        loft_set_byte(sentinel, 0, LOFT_JD_NULL);
+        loft_stores[sentinel.store_nr].pinned = 1;
+        made = 1;
+    }
+    return sentinel;
+}
+
+/* `json::format_error(input, err, 2, 1)`: where, the path, the message, and the lines around
+ * the fault with a caret under its column. */
+static void loft_json_format_error(loft_text *out, const uint8_t *in, size_t len, const loft_jfault *f,
+                                   loft_str path) {
+    size_t cap = f->at < len ? f->at : len;
+    size_t line = 1, col_start = 0;
+    for (size_t i = 0; i < cap; i++)
+        if (in[i] == '\n') { line++; col_start = i + 1; }
+    size_t col = cap - col_start + 1;
+    char head[160];
+    int n = snprintf(head, sizeof head, "parse error at line %zu col %zu (byte %zu):\n  path: ", line, col, f->at);
+    loft_push(out, head, (size_t) n);
+    if (path.len) loft_text_append(out, path); else loft_push_cstr(out, "(root)");
+    loft_push_cstr(out, "\n  ");
+    loft_push_cstr(out, f->msg);
+    loft_push_char(out, '\n');
+    /* `str::lines`: split at '\n', a "\r\n" ending's '\r' dropped, no line after a final '\n'. */
+    size_t nlines = 0;
+    for (size_t i = 0; i < len; i++) if (in[i] == '\n') nlines++;
+    if (len && in[len - 1] != '\n') nlines++;
+    size_t lo = line > 3 ? line - 3 : 0;
+    size_t hi = line + 1 < nlines ? line + 1 : nlines;
+    int width = snprintf(0, 0, "%zu", hi);
+    size_t at = 0;
+    for (size_t idx = 0; idx < hi; idx++) {
+        size_t e = at;
+        while (e < len && in[e] != '\n') e++;
+        if (idx >= lo) {
+            size_t ce = e;
+            if (e < len && ce > at && in[ce - 1] == '\r') ce--;
+            n = snprintf(head, sizeof head, "    %*zu \xe2\x94\x82 ", width, idx + 1);
+            loft_push(out, head, (size_t) n);
+            loft_push(out, (const char *) in + at, ce - at);
+            loft_push_char(out, '\n');
+            if (idx + 1 == line) {
+                n = snprintf(head, sizeof head, "    %*s \xe2\x94\x82 ", width, "");
+                loft_push(out, head, (size_t) n);
+                for (size_t c = 1; c < col; c++) loft_push_char(out, ' ');
+                loft_push_cstr(out, "^\n");
+            }
+        }
+        at = e + 1;
+    }
+}
+
+/* `json_parse`: the document as a fresh JsonValue tree, or JNull with the error kept. */
+static loft_ref loft_json_parse_value(loft_str raw) {
+    loft_jv v;
+    loft_jfault f;
+    loft_text path = { 0, 0, 0 };
+    int ok = loft_json_parse((const uint8_t *) raw.p, raw.len, 0, &v, &f, &path);
+    loft_ref r = loft_jv_alloc();
+    loft_json_last_error.len = 0;
+    if (ok) {
+        loft_jv_into(r, &v);
+    } else {
+        loft_set_byte(r, 0, LOFT_JD_NULL);
+        loft_json_format_error(&loft_json_last_error, (const uint8_t *) raw.p, raw.len, &f, loft_view(&path));
+    }
+    loft_jv_free(&v);
+    loft_text_free(&path);
+    return r;
+}
+
+static loft_text loft_json_errors(void) {
+    return loft_text_own(loft_view(&loft_json_last_error));
+}
+
+/* The collection record of a container's items or members, 0 for none. */
+static uint32_t loft_jv_kids(loft_ref v, uint8_t want) {
+    if (loft_jd(v) != want) return 0;
+    return loft_u32(loft_store_of(v), v.rec, v.pos + (want == LOFT_JD_ARRAY ? LOFT_JV_ITEMS : LOFT_JV_FIELDS));
+}
+
+static int64_t loft_jv_count(loft_ref v, uint32_t rec) {
+    return rec == 0 ? 0 : (int64_t) loft_u32(loft_store_of(v), rec, 4);
+}
+
+/* `field`: the member named `name` of an object, in place; the JNull sentinel otherwise. */
+static loft_ref loft_jv_field(loft_ref v, loft_str name) {
+    uint32_t fr = loft_jv_kids(v, LOFT_JD_OBJECT);
+    int64_t n = loft_jv_count(v, fr);
+    loft_store_t *s = loft_store_of(v);
+    for (int64_t i = 0; i < n; i++) {
+        uint32_t at = 8 + (uint32_t) i * LOFT_JF_SIZE;
+        if (loft_str_eq(loft_store_str(s, loft_u32(s, fr, at + LOFT_JF_NAME)), name)) {
+            loft_ref r = v;
+            r.rec = fr;
+            r.pos = at + LOFT_JF_VALUE;
+            return r;
+        }
+    }
+    return loft_jv_null();
+}
+
+static uint8_t loft_jv_has_field(loft_ref v, loft_str name) {
+    uint32_t fr = loft_jv_kids(v, LOFT_JD_OBJECT);
+    int64_t n = loft_jv_count(v, fr);
+    loft_store_t *s = loft_store_of(v);
+    for (int64_t i = 0; i < n; i++)
+        if (loft_str_eq(loft_store_str(s, loft_u32(s, fr, 8 + (uint32_t) i * LOFT_JF_SIZE + LOFT_JF_NAME)), name))
+            return 1;
+    return 0;
+}
+
+/* `item`: element `index` of an array, in place; the JNull sentinel otherwise. */
+static loft_ref loft_jv_item(loft_ref v, int64_t index) {
+    int32_t i = (int32_t) index;
+    uint32_t ir = loft_jv_kids(v, LOFT_JD_ARRAY);
+    if (i < 0 || i >= loft_jv_count(v, ir)) return loft_jv_null();
+    loft_ref r = v;
+    r.rec = ir;
+    r.pos = 8 + (uint32_t) i * LOFT_JV_SIZE;
+    return r;
+}
+
+/* `len`: an array's items or an object's members; null for anything else. */
+static int64_t loft_jv_len(loft_ref v) {
+    uint8_t d = loft_jd(v);
+    if (d != LOFT_JD_ARRAY && d != LOFT_JD_OBJECT) return LOFT_NULL;
+    return loft_jv_count(v, loft_jv_kids(v, d));
+}
+
+static loft_text loft_jv_as_text(loft_ref v) {
+    if (loft_jd(v) != LOFT_JD_STRING) return loft_text_own(loft_null_text());
+    return loft_text_own(loft_get_text(v, LOFT_JV_STRING_VALUE));
+}
+
+static double loft_jv_as_number(loft_ref v) {
+    uint8_t d = loft_jd(v);
+    if (d == LOFT_JD_NUMBER) return loft_get_float(v, LOFT_JV_NUMBER_VALUE);
+    if (d == LOFT_JD_INT) return (double) loft_get_int(v, LOFT_JV_INT_VALUE);
+    return NAN;
+}
+
+static int64_t loft_jv_as_long(loft_ref v) {
+    uint8_t d = loft_jd(v);
+    if (d == LOFT_JD_INT) return loft_get_int(v, LOFT_JV_INT_VALUE);
+    if (d == LOFT_JD_NUMBER) {
+        /* Rust's `as i64`: saturating, NaN to 0. */
+        double x = trunc(loft_get_float(v, LOFT_JV_NUMBER_VALUE));
+        if (x != x) return 0;
+        if (x >= 9223372036854775807.0) return INT64_MAX;
+        if (x <= -9223372036854775808.0) return INT64_MIN;
+        return (int64_t) x;
+    }
+    return LOFT_NULL;
+}
+
+static uint8_t loft_jv_as_bool(loft_ref v) {
+    if (loft_jd(v) != LOFT_JD_BOOL) return 255;
+    return *loft_at(loft_store_of(v), v.rec, v.pos + LOFT_JV_BOOL_VALUE) != 0;
+}
+
+static loft_text loft_jv_kind(loft_ref v) {
+    static const char *names[] = { "JUnknown", "JNull", "JBool", "JNumber", "JString", "JArray", "JObject", "JInteger" };
+    uint8_t d = loft_jd(v);
+    return loft_text_own(loft_lit(names[d <= 7 ? d : 0], strlen(names[d <= 7 ? d : 0])));
+}
+
+/* `keys`: an object's member names, in order, in a fresh vector; empty for anything else. */
+static loft_ref loft_jv_keys(loft_ref v) {
+    loft_ref vec = loft_ref_null();
+    loft_database(&vec, LOFT_TEXT_SIZE * 8 - 8);
+    loft_set_u32(loft_store_of(vec), vec.rec, vec.pos, 0);
+    uint32_t fr = loft_jv_kids(v, LOFT_JD_OBJECT);
+    int64_t n = loft_jv_count(v, fr);
+    for (int64_t i = 0; i < n; i++) {
+        loft_store_t *s = loft_store_of(v);
+        loft_text name = loft_text_own(loft_store_str(s, loft_u32(s, fr, 8 + (uint32_t) i * LOFT_JF_SIZE + LOFT_JF_NAME)));
+        loft_ref e = loft_vec_append(vec, LOFT_TEXT_SIZE);
+        loft_set_text(e, 0, loft_view(&name));
+        loft_vec_finish(vec);
+        loft_text_free(&name);
+    }
+    return vec;
+}
+
+static void loft_jv_render(loft_text *out, loft_ref v, int pretty, int depth) {
+    switch (loft_jd(v)) {
+    case LOFT_JD_BOOL:
+        loft_push_cstr(out, *loft_at(loft_store_of(v), v.rec, v.pos + LOFT_JV_BOOL_VALUE) ? "true" : "false");
+        return;
+    case LOFT_JD_NUMBER: {
+        double n = loft_get_float(v, LOFT_JV_NUMBER_VALUE);
+        if (isfinite(n)) loft_push_shortest(out, n, 0); else loft_push_cstr(out, "null");
+        return;
+    }
+    case LOFT_JD_INT: loft_push_i64(out, loft_get_int(v, LOFT_JV_INT_VALUE)); return;
+    case LOFT_JD_STRING: loft_push_json(out, loft_get_text(v, LOFT_JV_STRING_VALUE)); return;
+    case LOFT_JD_ARRAY:
+    case LOFT_JD_OBJECT: {
+        int obj = loft_jd(v) == LOFT_JD_OBJECT;
+        uint32_t kr = loft_jv_kids(v, loft_jd(v));
+        int64_t n = loft_jv_count(v, kr);
+        if (n <= 0) { loft_push_cstr(out, obj ? "{}" : "[]"); return; }
+        loft_push_char(out, obj ? '{' : '[');
+        for (int64_t i = 0; i < n; i++) {
+            if (i > 0) loft_push_char(out, ',');
+            if (pretty) loft_nl(out, depth + 1);
+            loft_ref e = v;
+            e.rec = kr;
+            if (obj) {
+                uint32_t at = 8 + (uint32_t) i * LOFT_JF_SIZE;
+                loft_store_t *s = loft_store_of(v);
+                loft_text name = loft_text_own(loft_store_str(s, loft_u32(s, kr, at + LOFT_JF_NAME)));
+                loft_push_json(out, loft_view(&name));
+                loft_text_free(&name);
+                loft_push_char(out, ':');
+                if (pretty) loft_push_char(out, ' ');
+                e.pos = at + LOFT_JF_VALUE;
+            } else {
+                e.pos = 8 + (uint32_t) i * LOFT_JV_SIZE;
+            }
+            loft_jv_render(out, e, pretty, depth + 1);
+        }
+        if (pretty) loft_nl(out, depth);
+        loft_push_char(out, obj ? '}' : ']');
+        return;
+    }
+    default: loft_push_cstr(out, "null"); return;
+    }
+}
+
+/* `dbref_to_parsed`: the tree at `src` read back into `v`, so a builder copies it whole into
+ * its own store. */
+static void loft_jv_read(loft_ref src, loft_jv *v) {
+    memset(v, 0, sizeof *v);
+    switch (loft_jd(src)) {
+    case LOFT_JD_BOOL:
+        v->kind = LOFT_JV_BOOL;
+        v->b = *loft_at(loft_store_of(src), src.rec, src.pos + LOFT_JV_BOOL_VALUE) != 0;
+        return;
+    case LOFT_JD_NUMBER: v->kind = LOFT_JV_NUMBER; v->n = loft_get_float(src, LOFT_JV_NUMBER_VALUE); return;
+    case LOFT_JD_INT: v->kind = LOFT_JV_INT; v->i = loft_get_int(src, LOFT_JV_INT_VALUE); return;
+    case LOFT_JD_STRING:
+        v->kind = LOFT_JV_STR;
+        v->s = loft_text_own(loft_get_text(src, LOFT_JV_STRING_VALUE));
+        return;
+    case LOFT_JD_ARRAY:
+    case LOFT_JD_OBJECT: {
+        int obj = loft_jd(src) == LOFT_JD_OBJECT;
+        v->kind = obj ? LOFT_JV_OBJECT : LOFT_JV_ARRAY;
+        uint32_t kr = loft_jv_kids(src, loft_jd(src));
+        int64_t n = loft_jv_count(src, kr);
+        for (int64_t i = 0; i < n; i++) {
+            loft_jv *k = loft_jv_push(v, obj);
+            loft_ref e = src;
+            e.rec = kr;
+            if (obj) {
+                uint32_t at = 8 + (uint32_t) i * LOFT_JF_SIZE;
+                loft_store_t *s = loft_store_of(src);
+                v->keys[v->nkids - 1] = loft_text_own(loft_store_str(s, loft_u32(s, kr, at + LOFT_JF_NAME)));
+                e.pos = at + LOFT_JF_VALUE;
+            } else {
+                e.pos = 8 + (uint32_t) i * LOFT_JV_SIZE;
+            }
+            loft_jv_read(e, k);
+        }
+        return;
+    }
+    default: v->kind = LOFT_JV_NULL; return;
+    }
+}
+
+/* The builders: a fresh JsonValue of their variant, the last error cleared. */
+static loft_ref loft_jv_build(const loft_jv *v) {
+    loft_ref r = loft_jv_alloc();
+    loft_jv_into(r, v);
+    loft_json_last_error.len = 0;
+    return r;
+}
+
+static loft_ref loft_json_null(void) {
+    loft_jv v;
+    memset(&v, 0, sizeof v);
+    return loft_jv_build(&v);
+}
+
+static loft_ref loft_json_bool(uint8_t b) {
+    loft_jv v;
+    memset(&v, 0, sizeof v);
+    v.kind = LOFT_JV_BOOL;
+    v.b = b;
+    return loft_jv_build(&v);
+}
+
+/* `json_number`: a non-finite value is stored as JNull, and says so in `json_errors()`. */
+static loft_ref loft_json_number(double n) {
+    loft_jv v;
+    memset(&v, 0, sizeof v);
+    if (isfinite(n)) {
+        v.kind = LOFT_JV_NUMBER;
+        v.n = n;
+        return loft_jv_build(&v);
+    }
+    loft_ref r = loft_jv_build(&v);
+    loft_push_cstr(&loft_json_last_error, "json_number: non-finite value ");
+    loft_push_cstr(&loft_json_last_error, isnan(n) ? "NaN" : n < 0 ? "-inf" : "inf");
+    loft_push_cstr(&loft_json_last_error, " stored as JNull");
+    return r;
+}
+
+static loft_ref loft_json_string(loft_str t) {
+    loft_jv v;
+    memset(&v, 0, sizeof v);
+    v.kind = LOFT_JV_STR;
+    v.s = loft_text_own(t);
+    loft_ref r = loft_jv_build(&v);
+    loft_jv_free(&v);
+    return r;
+}
+
+/* `json_array` / `json_object`: the elements of a vector of JsonValue or JsonField, copied
+ * whole into the new value's store. */
+static loft_ref loft_json_container(loft_ref vec, int obj) {
+    loft_jv v;
+    memset(&v, 0, sizeof v);
+    v.kind = obj ? LOFT_JV_OBJECT : LOFT_JV_ARRAY;
+    int64_t n = loft_vec_len(vec);
+    if (n > 0) {
+        loft_store_t *s = loft_store_of(vec);
+        uint32_t kr = loft_collection_rec(s, vec.rec, vec.pos);
+        for (int64_t i = 0; i < n; i++) {
+            loft_jv *k = loft_jv_push(&v, obj);
+            loft_ref e = vec;
+            e.rec = kr;
+            if (obj) {
+                uint32_t at = 8 + (uint32_t) i * LOFT_JF_SIZE;
+                v.keys[v.nkids - 1] = loft_text_own(loft_store_str(s, loft_u32(s, kr, at + LOFT_JF_NAME)));
+                e.pos = at + LOFT_JF_VALUE;
+            } else {
+                e.pos = 8 + (uint32_t) i * LOFT_JV_SIZE;
+            }
+            loft_jv_read(e, k);
+        }
+    }
+    loft_ref r = loft_jv_build(&v);
+    loft_jv_free(&v);
+    return r;
+}
+
+static loft_ref loft_json_array(loft_ref items) {
+    return loft_json_container(items, 0);
+}
+
+static loft_ref loft_json_object(loft_ref fields) {
+    return loft_json_container(fields, 1);
+}
+
+/* `fields`: an object's members, each value copied whole, in a fresh vector; empty for
+ * anything else. */
+static loft_ref loft_jv_fields(loft_ref v) {
+    loft_ref vec = loft_ref_null();
+    loft_database(&vec, LOFT_JF_SIZE * 8 - 8);
+    loft_set_u32(loft_store_of(vec), vec.rec, vec.pos, 0);
+    if (loft_jd(v) != LOFT_JD_OBJECT) return vec;
+    loft_jv tree;
+    loft_jv_read(v, &tree);
+    for (size_t i = 0; i < tree.nkids; i++) {
+        loft_ref e = loft_vec_append(vec, LOFT_JF_SIZE);
+        loft_set_text(e, LOFT_JF_NAME, loft_view(&tree.keys[i]));
+        loft_ref val = e;
+        val.pos += LOFT_JF_VALUE;
+        loft_jv_into(val, &tree.kids[i]);
+        loft_vec_finish(vec);
+    }
+    loft_jv_free(&tree);
+    return vec;
+}
+
+static loft_text loft_jv_to_json(loft_ref v) {
+    loft_text t = { 0, 0, 0 };
+    loft_jv_render(&t, v, 0, 0);
+    return t;
+}
+
+static loft_text loft_jv_to_json_pretty(loft_ref v) {
+    loft_text t = { 0, 0, 0 };
+    loft_jv_render(&t, v, 1, 0);
+    return t;
+}
+#endif
