@@ -157,6 +157,8 @@ typedef struct {
     uint16_t known;
     int pinned;
     int protect;
+    /* `Store::read_only` set by the author's `#lock = true` (`@FR-H-WriteLocked`). */
+    int read_only;
     uint64_t serial;
     loft_bits claims, referenced, removed, lazy_free, parked_set;
     uint32_t parked_heads[LOFT_PARK_MAX_WORDS + 1];
@@ -171,6 +173,10 @@ typedef struct {
      * elements of the root collection; while any lives, a clear does not reset the store and
      * no exchange takes its content. */
     uint32_t *placed, nplaced, placed_cap;
+    /* `Stores::frame_held` (`@FR-G-Arg-Rebind`): the live generator frames holding this store
+     * as an argument, and whether its owner released it while they did. */
+    uint32_t frame_holds;
+    int orphaned;
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */
@@ -862,9 +868,19 @@ static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size) {
     return loft_claim_scan(s, size);
 }
 
+/* `@FR-H-WriteLocked`: a write that reached a locked store (loft_rt.h).  The allocator compiled
+ * on its own (without `loft_cc.h`, as its c_emit harness compiles it) has no locks. */
+#ifdef LOFT_CC_H
+static void loft_locked_write(void);
+#define LOFT_WRITE_CHECK(s) do { if (LOFT_UNLIKELY((s)->read_only)) loft_locked_write(); } while (0)
+#else
+#define LOFT_WRITE_CHECK(s) ((void) (s))
+#endif
+
 /* `Store::claim`: a record of `size` words, its header written; the payload holds whatever the
  * block held (`@FR-H-Claim`). */
 static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
+    LOFT_WRITE_CHECK(s);
     uint32_t pos = loft_st_claim_inner(s, size);
     LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
 #ifdef LOFT_POISON_CLAIM
@@ -954,6 +970,7 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
 /* `Store::resize`: `rec` grown to `size` words, in place when the next block allows, else
  * moved (the new position answered). */
 static uint32_t loft_st_resize(loft_store_t *s, uint32_t rec, uint32_t size) {
+    LOFT_WRITE_CHECK(s);
     uint32_t nw = loft_st_resize_inner(s, rec, size);
     return nw;
 }
@@ -963,6 +980,7 @@ static uint32_t loft_st_resize(loft_store_t *s, uint32_t rec, uint32_t size) {
 /* `Store::init`: one free block spanning the store, which is its wilderness. */
 static void loft_st_init(loft_store_t *s) {
     uint32_t sig = LOFT_ST_SIGNATURE, one = 1;
+    s->read_only = 0;
     memcpy(s->buf, &sig, 4);
     memcpy(s->buf + 4, &one, 4);
     loft_set_free_header(s, LOFT_ST_PRIMARY, (int32_t) s->size - 1);

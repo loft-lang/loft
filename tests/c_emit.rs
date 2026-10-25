@@ -191,13 +191,15 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed("fn up() -> integer { t = stack_trace(); len(t) }\n");
+    let p = parsed(
+        "struct Rc { n: integer }\nfn up() -> integer { r = Rc { n: 1 }; store_reclaim(r) }\n",
+    );
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
-        .expect_err("a stack trace is not carried yet");
-    assert_eq!(refusal.function, "stack_trace");
+        .expect_err("a store reclaim is not carried yet");
+    assert_eq!(refusal.function, "store_reclaim");
     assert!(
-        refusal.why.contains("native stack_trace"),
+        refusal.why.contains("native store_reclaim"),
         "names the construct: {refusal}"
     );
 }

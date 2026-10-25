@@ -2187,7 +2187,7 @@ fn reflect_field_at(
 
 /// The `TypeKind` discriminant for a descriptor node — 1-indexed, matching the
 /// variant order in `default/07_reflect.loft`.
-fn reflect_kind(node: Option<&crate::database::LayoutNode>) -> i32 {
+pub(crate) fn reflect_kind(node: Option<&crate::database::LayoutNode>) -> i32 {
     use crate::database::{BaseKind, LayoutNode};
     match node {
         Some(LayoutNode::Base(b)) => match b {
