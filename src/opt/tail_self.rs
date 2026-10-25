@@ -108,7 +108,7 @@ fn admit(data: &Data, d: u32) -> Result<(), &'static str> {
     let vars = def.variables();
     for v in 0..vars.count() {
         let tp = vars.tp(v);
-        if matches!(tp, Type::RefVar(_)) {
+        if matches!(tp.base(), Type::RefVar(_)) {
             return Err("a `&` parameter");
         }
         if !is_scalar(tp) {
@@ -175,7 +175,7 @@ fn count_tail(v: &Value, d: u32, arity: usize, depth: usize) -> usize {
 /// Outside tail position only an explicit `return` opens a tail position, so the count is the
 /// sum over the `return`s below — each visited once, through the immutable child walk.
 fn count_statement(v: &Value, d: u32, arity: usize, depth: usize) -> usize {
-    match v {
+    match v.unspan() {
         Value::Return(e) => count_tail(e, d, arity, depth),
         Value::Loop(b) => b
             .operators
@@ -333,6 +333,8 @@ fn tail_void(
 /// A statement outside tail position: its explicit `return`s are tail positions of their own,
 /// and a loop below it is one level the jump has to count.
 fn statement(v: &mut Value, d: u32, params: &[u16], temps: &[u16], depth: usize, n: &mut usize) {
+    // The node under any `Span`, so a rewritten `return` keeps its line.
+    let v = v.unspan_mut();
     match v {
         Value::Return(e) => {
             let inner = std::mem::replace(&mut **e, Value::Null);

@@ -6844,7 +6844,7 @@ impl Parser {
         // assignment's words instead of these.
         let is_same = matches!(base_tp.base(), Type::Reference(d, _) if *d == td_nr);
         let absent = is_same && matches!(base_tp, Type::Optional(_));
-        let judged = !matches!(base_tp, Type::Never | Type::Unknown(_));
+        let judged = !matches!(base_tp.base(), Type::Never | Type::Unknown(_));
         if judged && (absent || !is_same) {
             if absent && !self.first_pass {
                 self.lexer.pos_diagnostic(
