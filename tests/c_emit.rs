@@ -191,15 +191,13 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed(
-        "struct Pt { x: integer, y: integer }\nfn up() -> integer { s: spatial<Pt[x, y]> = [Pt { x: 1, y: 2 }]; len(s) }\n",
-    );
+    let p = parsed("fn up() -> integer { v = \"[1,2]\" as vector<integer>; len(v) }\n");
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
-        .expect_err("a spatial collection is not carried yet");
+        .expect_err("text parsed into a vector is not carried yet");
     assert_eq!(refusal.function, "up");
     assert!(
-        refusal.why.contains("Radix"),
+        refusal.why.contains("OpCastVectorFromText"),
         "names the construct: {refusal}"
     );
 }
@@ -973,6 +971,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
         include_str!("../src/c/loft_keys.h"),
         include_str!("../src/c/loft_hash.h"),
         include_str!("../src/c/loft_btree.h"),
+        include_str!("../src/c/loft_radix.h"),
     ] {
         c.push_str(part);
     }
@@ -1256,6 +1255,7 @@ fn the_c_index_files_every_record_where_btree_does() {
         include_str!("../src/c/loft_keys.h"),
         include_str!("../src/c/loft_hash.h"),
         include_str!("../src/c/loft_btree.h"),
+        include_str!("../src/c/loft_radix.h"),
     ] {
         c.push_str(part);
     }
@@ -1404,4 +1404,457 @@ int main(int argc, char **argv) {
         "the C stopped early: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// The spatial and trie collections in C (`src/c/loft_radix.h`) are `radix_tree.rs` under
+/// `radix_db.rs`' Morton oracle and `trie_db.rs`' text oracle: one seeded sequence of point
+/// inserts and removals, word inserts (a repeated word displaces its record, as
+/// `Stores::insert_record` does for a trie) and removals, lookups, outward walks, box walks and
+/// prefix walks runs through both, and every answer, both trees' order and every byte of the
+/// store agree.  Points repeat, so records share a cell and differ only in their id suffix.
+/// Falsified: the terminator width, the axis interleave, the coordinate sign flip, the outward
+/// walk's tie, the tree growth, the free-node list, BIGMIN's low update, the seek's step past,
+/// the sibling's parent link and the trie's displacement each fail it.
+#[test]
+fn the_c_trees_place_every_record_where_radix_tree_does() {
+    use loft::keys::{Content, DbRef, Key, Str};
+    use loft::store::Store;
+    use loft::{radix_db, trie_db};
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let mut seed: u64 = 0x5eed_7ad1_0000_0004;
+    let mut next = |n: u64| {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 33) % n
+    };
+    let key = |type_nr: i8, position: u16| Key {
+        type_nr,
+        position,
+        start: 0,
+    };
+    let axes = [key(1, 0), key(1, 8)];
+    let word_key = [key(6, 0)];
+    let mut stores = vec![Store::new_in_use_defined(100)];
+    let root = stores[0].claim(3);
+    let pts = DbRef {
+        store_nr: 0,
+        rec: root,
+        pos: 8,
+    };
+    let words = DbRef {
+        store_nr: 0,
+        rec: root,
+        pos: 12,
+    };
+    // Coordinates from -20..20 so the sign bit and shared cells both occur; words with shared
+    // prefixes, so prefix walks and the terminator ordering ("ab" before "abc") both occur.
+    let word = |k: u64| match k % 3 {
+        0 => format!("w{}", k / 3),
+        1 => format!("w{}x", k / 3),
+        _ => format!("prefix{k}"),
+    };
+    let text = |w: String| Content::Str(Str::new(Box::leak(w.into_boxed_str())));
+    let point = |x: i64, y: i64| [Content::Long(x), Content::Long(y)];
+    let ids = |recs: Vec<u32>| recs.iter().map(|r| format!(" {r}")).collect::<String>();
+    let (mut script, mut want) = (String::new(), String::new());
+    for _ in 0..5000 {
+        let pick = next(100);
+        let (x, y) = (next(40) as i64 - 20, next(40) as i64 - 20);
+        let k = next(150);
+        if pick < 30 {
+            let rec = stores[0].claim(3);
+            stores[0].set_u32_raw(rec, 4, root);
+            stores[0].set_int(rec, 8, x);
+            stores[0].set_int(rec, 16, y);
+            radix_db::add(
+                &pts,
+                &DbRef {
+                    store_nr: 0,
+                    rec,
+                    pos: 8,
+                },
+                &mut stores,
+                &axes,
+            );
+            let _ = writeln!(script, "P {x} {y}");
+        } else if pick < 40 {
+            let found = radix_db::find(&pts, &stores, &axes, &point(x, y));
+            if found.rec != 0 {
+                radix_db::remove(&pts, &found, &mut stores, &axes);
+                stores[0].delete(found.rec);
+            }
+            let _ = writeln!(script, "Q {x} {y}");
+        } else if pick < 65 {
+            let rec = stores[0].claim(2);
+            stores[0].set_u32_raw(rec, 4, root);
+            let t = stores[0].set_str(&word(k));
+            stores[0].set_u32_raw(rec, 8, t);
+            let e = DbRef {
+                store_nr: 0,
+                rec,
+                pos: 8,
+            };
+            // Stores::dedup_keyed for a trie: the record under the word goes first.
+            let existing = trie_db::find(&words, &stores, &word_key, &[text(word(k))]);
+            if existing.rec != 0 && existing.rec != rec {
+                trie_db::remove(&words, &existing, &mut stores, &word_key);
+                stores[0].delete(existing.rec);
+            }
+            trie_db::add(&words, &e, &mut stores, &word_key);
+            let _ = writeln!(script, "T {k}");
+        } else if pick < 72 {
+            let found = trie_db::find(&words, &stores, &word_key, &[text(word(k))]);
+            if found.rec != 0 {
+                trie_db::remove(&words, &found, &mut stores, &word_key);
+                stores[0].delete(found.rec);
+            }
+            let _ = writeln!(script, "U {k}");
+        } else if pick < 82 {
+            let p = radix_db::find(&pts, &stores, &axes, &point(x, y)).rec;
+            let w = trie_db::find(&words, &stores, &word_key, &[text(word(k))]).rec;
+            let _ = writeln!(script, "F {x} {y} {k}");
+            let _ = writeln!(want, "{p} {w}");
+        } else if pick < 88 {
+            let lim = next(12);
+            let near = radix_db::near_range(&pts, &stores, &axes, &[x, y], Some(lim as usize));
+            let _ = writeln!(script, "N {x} {y} {lim}");
+            let _ = writeln!(want, "n{}", ids(near));
+        } else if pick < 94 {
+            let (tx, ty) = (x + next(15) as i64 - 3, y + next(15) as i64 - 3);
+            let found = radix_db::box_range(&pts, &stores, &axes, &[x, y], &[tx, ty], None);
+            let _ = writeln!(script, "B {x} {y} {tx} {ty}");
+            let _ = writeln!(want, "b{}", ids(found));
+        } else {
+            let pre = word(k);
+            let pre = &pre[..pre.len().min(1 + next(3) as usize)];
+            let found = trie_db::prefix(&words, &stores, &word_key, pre.as_bytes(), None);
+            let _ = writeln!(script, "X {pre}");
+            let _ = writeln!(want, "x{}", ids(found));
+        }
+    }
+    let _ = writeln!(want, "p{}", ids(radix_db::records(&pts, &stores)));
+    let _ = writeln!(want, "t{}", ids(trie_db::records(&words, &stores)));
+    let store = &stores[0];
+    let _ = writeln!(want, "size {}", store.capacity_words());
+    let mut fnv: u64 = 0xcbf2_9ce4_8422_2325;
+    for w in 0..store.capacity_words() {
+        for b in store.read::<u64>(w, 0).to_le_bytes() {
+            fnv = (fnv ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    let _ = writeln!(want, "bytes {fnv:016x}");
+    let mut c = String::new();
+    for part in [
+        include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_store.h"),
+        include_str!("../src/c/loft_rt.h"),
+        include_str!("../src/c/loft_keys.h"),
+        include_str!("../src/c/loft_hash.h"),
+        include_str!("../src/c/loft_btree.h"),
+        include_str!("../src/c/loft_radix.h"),
+    ] {
+        c.push_str(part);
+    }
+    c.push_str(
+        r#"
+static void loft_init(void) {}
+static const loft_tdesc T[1] = { { LOFT_T_STRUCT, 16, 0, 0, 0, 0, 0, 0, 0, 0 } };
+static const loft_key K_AXES[2] = { { 1, 0, 0 }, { 1, 8, 0 } };
+static const loft_key K_WORD[1] = { { 6, 0, 0 } };
+static loft_store_t st;
+
+static int word_of(char *out, unsigned k) {
+    if (k % 3 == 0) return sprintf(out, "w%u", k / 3);
+    if (k % 3 == 1) return sprintf(out, "w%ux", k / 3);
+    return sprintf(out, "prefix%u", k);
+}
+
+static void ids(const char *tag, uint32_t *r, uint32_t n) {
+    printf("%s", tag);
+    for (uint32_t i = 0; i < n; i++) printf(" %u", r[i]);
+    printf("\n");
+    free(r);
+}
+
+int main(int argc, char **argv) {
+    st.size = 100;
+    st.buf = (uint8_t *) calloc(st.size, 8);
+    st.defined = 1;
+    st.live = 1;
+    loft_st_init(&st);
+    loft_stores = &st;
+    loft_nstores = 1;
+    uint32_t root = loft_st_claim(&st, 3);
+    loft_ref pts = { 0, root, 8 }, words = { 0, root, 12 };
+    FILE *f = fopen(argv[argc - 1], "r");
+    char op, buf[64];
+    long long x, y, tx, ty;
+    unsigned k, lim;
+    uint32_t n;
+    while (fscanf(f, " %c", &op) == 1) {
+        if (op == 'P' || op == 'Q') {
+            if (fscanf(f, "%lld %lld", &x, &y) != 2) return 2;
+            if (op == 'P') {
+                loft_ref e = { 0, loft_st_claim(&st, 3), 8 };
+                int64_t xx = x, yy = y;
+                loft_set_u32(&st, e.rec, 4, root);
+                memcpy(loft_at(&st, e.rec, 8), &xx, 8);
+                memcpy(loft_at(&st, e.rec, 16), &yy, 8);
+                (void) loft_rx_insert_record(T, 0, pts, e, K_AXES, 2, 0, 0);
+            } else {
+                loft_kv kv[2] = { loft_kv_int(x), loft_kv_int(y) };
+                loft_ref found = loft_rx_find(pts, K_AXES, 2, 0, kv, 2);
+                if (found.rec != 0) loft_rx_remove_owned(T, 0, pts, found, K_AXES, 2, 0, 0);
+            }
+        } else if (op == 'T' || op == 'U') {
+            if (fscanf(f, "%u", &k) != 1) return 2;
+            int len = word_of(buf, k);
+            if (op == 'T') {
+                loft_ref e = { 0, loft_st_claim(&st, 2), 8 };
+                loft_set_u32(&st, e.rec, 4, root);
+                uint32_t t = loft_st_claim(&st, (uint32_t) (len + 15) / 8);
+                loft_set_u32(&st, t, 4, (uint32_t) len);
+                memcpy(loft_at(&st, t, 8), buf, (size_t) len);
+                loft_set_u32(&st, e.rec, 8, t);
+                (void) loft_rx_insert_record(T, 0, words, e, K_WORD, 1, 1, 0);
+            } else {
+                loft_kv kv = loft_kv_text(loft_lit(buf, (size_t) len));
+                loft_ref found = loft_rx_find(words, K_WORD, 1, 1, &kv, 1);
+                if (found.rec != 0) loft_rx_remove_owned(T, 0, words, found, K_WORD, 1, 1, 0);
+            }
+        } else if (op == 'F') {
+            if (fscanf(f, "%lld %lld %u", &x, &y, &k) != 3) return 2;
+            loft_kv kv[2] = { loft_kv_int(x), loft_kv_int(y) };
+            int len = word_of(buf, k);
+            loft_kv kw = loft_kv_text(loft_lit(buf, (size_t) len));
+            printf("%u %u\n", loft_rx_find(pts, K_AXES, 2, 0, kv, 2).rec, loft_rx_find(words, K_WORD, 1, 1, &kw, 1).rec);
+        } else if (op == 'N') {
+            if (fscanf(f, "%lld %lld %u", &x, &y, &lim) != 3) return 2;
+            int64_t from[2] = { x, y };
+            ids("n", loft_rx_near(pts, K_AXES, 2, from, lim, &n), n);
+        } else if (op == 'B') {
+            if (fscanf(f, "%lld %lld %lld %lld", &x, &y, &tx, &ty) != 4) return 2;
+            int64_t from[2] = { x, y }, till[2] = { tx, ty };
+            ids("b", loft_rx_box(pts, K_AXES, 2, from, till, SIZE_MAX, &n), n);
+        } else if (op == 'X') {
+            if (fscanf(f, "%63s", buf) != 1) return 2;
+            ids("x", loft_rx_prefix(words, K_WORD, loft_lit(buf, strlen(buf)), SIZE_MAX, &n), n);
+        }
+    }
+    ids("p", loft_rx_records(pts, &n), n);
+    ids("t", loft_rx_records(words, &n), n);
+    printf("size %u\n", st.size);
+    uint64_t fnv = UINT64_C(0xcbf29ce484222325);
+    for (size_t i = 0; i < (size_t) st.size * 8; i++) fnv = (fnv ^ st.buf[i]) * UINT64_C(0x100000001b3);
+    printf("bytes %016llx\n", (unsigned long long) fnv);
+    return 0;
+}
+"#,
+    );
+    let dir = scratch("radix");
+    let (src, ops, exe) = (dir.join("radix.c"), dir.join("ops.txt"), dir.join("radix"));
+    fa::write(&src, &c).expect("write C");
+    fa::write(&ops, &script).expect("write ops");
+    let cc = loft::platform::process::harness_command("cc")
+        .args([
+            "-std=c99",
+            "-O2",
+            "-pedantic",
+            "-Werror",
+            "-Wno-unused-function",
+        ])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected loft_radix.h:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .arg(&ops)
+        .output()
+        .expect("run the tree program");
+    let got = String::from_utf8_lossy(&out.stdout);
+    if let Some((i, (w, g))) = want
+        .lines()
+        .zip(got.lines())
+        .enumerate()
+        .find(|(_, (w, g))| w != g)
+    {
+        panic!("line {i}: radix_tree.rs answers {w:?}, the C {g:?}");
+    }
+    assert_eq!(
+        got.lines().count(),
+        want.lines().count(),
+        "the C stopped early: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The program a store image is written and read with: every collection kind in one root, its
+/// reader rendering the loaded value whole (a walk by type, never the raw buffer) and querying
+/// each kind — a lookup, an outward spatial walk, a trie prefix walk.
+const IMAGE_PROGRAM: &str = r#"struct Rec { id: integer, val: integer, name: text }
+struct Pt { x: integer, y: integer, tag: text }
+struct Ix { tag: text, z: integer }
+struct Wd { word: text, n: integer }
+struct Tw { word: text, n: integer }
+struct Sv { n: integer, s: text }
+struct W { recs: hash<Rec[id]>, ix: index<Ix[tag]>, pts: spatial<Pt[x, y]>, all: vector<Wd>, t: trie<Tw[word]>, s: sorted<Sv[n]> }
+
+fn main() {
+  path = env_variable("LOFT_PERSIST_TEST_PATH");
+  mode = env_variable("LOFT_PERSIST_TEST_MODE");
+  w = W {};
+  if mode == "write" {
+    for i in 0..60 {
+      w.recs += Rec { id: i * 7 % 53, val: i, name: "r{i % 9}" };
+      w.ix += Ix { tag: "k{i}", z: -i };
+      w.pts += Pt { x: i % 5 - 2, y: i / 5, tag: "p{i}" };
+      w.all += [Wd { word: "w{i}", n: i }];
+      w.t += Tw { word: "word{i % 17}x{i}", n: i };
+      w.s += Sv { n: 100 - i, s: "s{i}" };
+    }
+    if !store_persist_copy(w, path) { println("FAIL write"); return }
+    small: hash<Rec[id]> = [Rec { id: 1, val: 2, name: "one" }, Rec { id: 3, val: 4, name: "three" }];
+    if !store_persist_copy(small, "{path}.small") { println("FAIL small"); return }
+    println("written");
+  } else {
+    if !store_load(w, path) { println("FAIL load"); return }
+    small: hash<Rec[id]> = [];
+    if !store_load(small, "{path}.small") { println("FAIL small"); return }
+    println("{w}");
+    sm = "";
+    for r in small { sm += "{r.id}:{r.val}:{r.name} "; }
+    println("small {sm}");
+    println("lookups {w.recs[13].name} {w.ix["k7"].z} {w.t["word3x20"].n} {len(w.pts)} {len(w.s)}");
+    out = "";
+    for p in w.pts[(0, 3)..:4] { out += "{p.tag} "; }
+    println("near {out}");
+    pre = "";
+    for t in w.t["word1"..] { pre += "{t.n} "; }
+    println("prefix {pre}");
+  }
+}
+"#;
+
+/// The owner's acceptance for the image (@PLN200 B5 step (e)): a store file written by any
+/// backend is read by every backend — the interpreter, the C, and `--native` where `rustc` is
+/// on PATH — and each reader renders the same data.  The C's image is also the interpreter's,
+/// byte for byte (a fixed hash seed; the sidecar's slot line names each writer's own scratch).
+#[test]
+fn a_store_image_crosses_every_backend() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("image");
+    let src = dir.join("rw.loft");
+    fa::write(&src, IMAGE_PROGRAM).expect("write program");
+    let (c_src, exe) = (dir.join("rw.c"), dir.join("rw"));
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c_src)
+        .arg(&src)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "emit: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-w"])
+        .arg(&c_src)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let native = loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    let mut backends = vec!["interpret", "c"];
+    if native {
+        backends.push("native");
+    }
+    let run = |backend: &str, mode: &str, path: &std::path::Path| -> String {
+        let mut cmd = if backend == "c" {
+            loft::platform::process::harness_command(&exe)
+        } else {
+            let mut c = loft::platform::process::harness_command(loft);
+            c.arg(format!("--{backend}")).arg(&src);
+            c
+        };
+        let out = cmd
+            .env("LOFT_PERSIST_TEST_MODE", mode)
+            .env("LOFT_PERSIST_TEST_PATH", path)
+            .env("LOFT_HASH_SEED", "0x0123456789abcdef")
+            .env("LOFT_TIMEOUT", "300")
+            .output()
+            .expect("run a backend");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for w in &backends {
+        assert_eq!(
+            run(w, "write", &dir.join(format!("{w}.store"))),
+            "written\n",
+            "{w} writes"
+        );
+    }
+    let want = run("interpret", "load", &dir.join("interpret.store"));
+    assert!(
+        want.contains("lookups r8 -7 20 60 60"),
+        "the reader answers: {want}"
+    );
+    assert!(
+        want.contains("small 1:2:one 3:4:three"),
+        "the small store reads back: {want}"
+    );
+    for w in &backends {
+        for r in &backends {
+            let got = run(r, "load", &dir.join(format!("{w}.store")));
+            assert_eq!(got, want, "{r} reading {w}'s image");
+        }
+    }
+    // Both images — one past the image floor, one padded up to it — and the sidecars, whose
+    // one line that may differ names the slot each writer's scratch store took.
+    let read = |name: String| fa::read(dir.join(name)).expect("read a written file");
+    for suffix in ["store", "store.small"] {
+        assert_eq!(
+            read(format!("c.{suffix}")),
+            read(format!("interpret.{suffix}")),
+            "the C's {suffix} image is the interpreter's"
+        );
+        let sidecar = |w: &str| -> String {
+            String::from_utf8_lossy(&read(format!("{w}.{suffix}.dschema")))
+                .lines()
+                .map(|l| if l.starts_with("slot=") { "slot=" } else { l })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(
+            sidecar("c"),
+            sidecar("interpret"),
+            "the {suffix} sidecars agree"
+        );
+        assert!(
+            sidecar("c").contains("\nslot="),
+            "the C's {suffix} sidecar names its slot"
+        );
+    }
 }

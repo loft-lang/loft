@@ -1075,12 +1075,13 @@ static void loft_hash_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r
     loft_set_u32(s, r.rec, r.pos, 0);
 }
 
-/* ── iteration scratches (Stores::build_ref_scratch, vector::step_ordered) ──
- * A walk over a hash reads a snapshot taken when it starts, kept in the hash's store: a header
- * record (@4 the pair vector, @8 the entries' store, @12 the tag 0x5C4A0008) and a vector of
- * (record, offset) pairs.  An entry that leaves the hash mid-walk reads 0 there
- * (`forget_in_scratches`, loft#1710), which a step passes. */
-#define LOFT_SCRATCH_TAG 0x5C4A0008u
+/* ── iteration scratches (Stores::build_ref_scratch / build_rec_scratch, vector::step_ordered)
+ * A walk over a hash, a spatial or a trie reads a snapshot taken when it starts, kept in the
+ * collection's store: a header record (@4 the element vector, @8 the elements' store, @12 the
+ * tag 0x5C4A0000 | the element width) and a vector of elements — a hash's (record, offset)
+ * pairs, 8 bytes each, or a tree's record numbers, 4 bytes each.  An element that leaves the
+ * collection mid-walk reads 0 there (`forget_in_scratches`, loft#1710), which a step passes. */
+#define LOFT_SCRATCH_MARK 0x5C4A0000u
 
 typedef struct { loft_ref source, scratch; } loft_live_scratch;
 static loft_live_scratch *loft_scratches = 0;
@@ -1092,25 +1093,32 @@ static void loft_forget_in_scratches(loft_ref c, loft_ref e) {
         if (w->source.store_nr != c.store_nr || w->source.rec != c.rec || w->source.pos != c.pos) continue;
         loft_store_t *s = loft_store_of(w->scratch);
         uint32_t vec = loft_u32(s, w->scratch.rec, 4), len = loft_u32(s, vec, 4);
+        uint32_t width = loft_u32(s, w->scratch.rec, 12) & 0xFFFFu;
         for (uint32_t j = 0; j < len; j++) {
-            if (loft_u32(s, vec, 8 + j * 8) == e.rec && loft_u32(s, vec, 12 + j * 8) == e.pos)
-                loft_set_u32(s, vec, 8 + j * 8, 0);
+            if (loft_u32(s, vec, 8 + j * width) == e.rec && (width == 4 || loft_u32(s, vec, 12 + j * 8) == e.pos))
+                loft_set_u32(s, vec, 8 + j * width, 0);
         }
     }
 }
 
-static loft_ref loft_ref_scratch(loft_ref c, const loft_ref *e, uint32_t n) {
+/* The snapshot of `n` elements `width` bytes each — (record, offset) pairs, or record numbers. */
+static loft_ref loft_scratch_of(loft_ref c, const loft_ref *e, const uint32_t *recs, uint32_t n, uint32_t width) {
     loft_store_t *s = loft_store_of(c);
-    uint32_t vec = loft_st_claim(s, (n * 8 + 8 + 7) / 8);
+    uint32_t words = (n * width + 8 + 7) / 8;
+    uint32_t vec = loft_st_claim(s, words < 1 ? 1 : words);
     uint32_t header = loft_st_claim(s, 2);
     loft_set_u32(s, vec, 4, n);
     for (uint32_t i = 0; i < n; i++) {
-        loft_set_u32(s, vec, 8 + i * 8, e[i].rec);
-        loft_set_u32(s, vec, 12 + i * 8, e[i].pos);
+        if (width == 4) {
+            loft_set_u32(s, vec, 8 + i * 4, recs[i]);
+        } else {
+            loft_set_u32(s, vec, 8 + i * 8, e[i].rec);
+            loft_set_u32(s, vec, 12 + i * 8, e[i].pos);
+        }
     }
     loft_set_u32(s, header, 4, vec);
     loft_set_u32(s, header, 8, c.store_nr);
-    loft_set_u32(s, header, 12, LOFT_SCRATCH_TAG);
+    loft_set_u32(s, header, 12, LOFT_SCRATCH_MARK | width);
     loft_ref x = { c.store_nr, header, 4 };
     if (loft_nscratches == loft_scratch_cap) {
         loft_scratch_cap = loft_scratch_cap ? loft_scratch_cap * 2 : 8;
@@ -1122,6 +1130,10 @@ static loft_ref loft_ref_scratch(loft_ref c, const loft_ref *e, uint32_t n) {
     loft_nscratches++;
     return x;
 }
+
+static loft_ref loft_ref_scratch(loft_ref c, const loft_ref *e, uint32_t n) { return loft_scratch_of(c, e, 0, n, 8); }
+
+static loft_ref loft_rec_scratch(loft_ref c, const uint32_t *recs, uint32_t n) { return loft_scratch_of(c, 0, recs, n, 4); }
 
 /* n_hash_sorted / n_hash_unsorted (Stores::build_hash_sorted_vec / build_hash_unsorted_vec):
  * the walk's snapshot, in key order or in slot order. */

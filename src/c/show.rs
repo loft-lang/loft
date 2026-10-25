@@ -36,7 +36,9 @@ impl Cx<'_> {
             | Parts::Hash(elem, _)
             | Parts::Index(elem, _)
             | Parts::Ordered(elem, _)
-            | Parts::Array(elem) => {
+            | Parts::Array(elem)
+            | Parts::Radix(elem, _)
+            | Parts::Trie(elem, _) => {
                 self.keys_of(tp);
                 self.show_type(*elem)
             }
@@ -163,9 +165,11 @@ impl Cx<'_> {
             Parts::Hash(elem, _)
             | Parts::Index(elem, _)
             | Parts::Ordered(elem, _)
-            | Parts::Array(elem) => {
-                // A hash renders in key order (`hash::records_sorted`); an index, an ordered
-                // and an array in their own.
+            | Parts::Array(elem)
+            | Parts::Radix(elem, _)
+            | Parts::Trie(elem, _) => {
+                // A hash renders in key order (`hash::records_sorted`); an index, a spatial, a
+                // trie, an ordered and an array in their own.
                 let e = &self.stores.types[*elem as usize];
                 let (keys, n) = self.keys_of(tp);
                 let _ = writeln!(
@@ -174,6 +178,7 @@ impl Cx<'_> {
                     match t.parts {
                         Parts::Hash(..) => 1,
                         Parts::Index(..) => 2,
+                        Parts::Radix(..) | Parts::Trie(..) => 3,
                         _ => 0,
                     },
                     i32::from(e.is_complex()),

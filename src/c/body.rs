@@ -886,7 +886,9 @@ impl<'a> FnWriter<'a> {
             return Err("assigns a text parameter".into());
         }
         let name = self.var(var);
-        if self.join_stmt(var, x, first, &name, ind)? {
+        if self.join_stmt(var, x, first, &name, ind)?
+            || self.opaque_callref_stmt(var, x, first, &name, ind)?
+        {
             return Ok(());
         }
         if let Some((tp, frees)) = self.call_copy(var, x)? {
@@ -993,8 +995,82 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("{name} = loft_ref_null();"));
         }
         if !(self.vars.is_inline_ref(var) || self.vars.is_overwritten_view(var)) {
-            self.line(ind, &format!("loft_database(&{name}, 8);"));
+            // The store is minted AS the collection type, as `gen_keyed_null`'s `OpDatabase`
+            // mints it: its root is that type's record and carries its tag.
+            match self.cx.keyed_local_type(self.vars.tp(var)) {
+                Some(tp) => {
+                    let size = self.cx.stores.enum_parent_size(tp);
+                    self.cx.describe_type(tp);
+                    self.line(ind, &format!("loft_database_typed(&{name}, {size}, {tp});"));
+                }
+                None => self.line(ind, &format!("loft_database(&{name}, 8);")),
+            }
         }
+    }
+
+    /// `v = f(…)` through a function value whose target nothing here resolves
+    /// (`use_analysis::opaque_callref_bind`, `@FR-O-Unknown`): the record handed back is adopted
+    /// when the call minted its store, and copied into one of `v`'s own when it predates the
+    /// call — an argument or a capture, owned further up (`State::bind_fn_ref_result`, native's
+    /// `cr_fnref_adopt`).  False when the bind is not one.
+    fn opaque_callref_stmt(
+        &mut self,
+        var: u16,
+        x: &Value,
+        first: bool,
+        name: &str,
+        ind: usize,
+    ) -> Result<bool, String> {
+        let data = self.cx.data;
+        let Value::CallRef(fv, _) = x.unspan() else {
+            return Ok(false);
+        };
+        let Some(rec) =
+            crate::use_analysis::opaque_callref_bind(data, self.d, self.vars.tp(var), x.unspan())
+        else {
+            return Ok(false);
+        };
+        let tp = self.copyable(data.def(rec).known_type())?;
+        let size = self.cx.stores.enum_parent_size(tp);
+        let witnessed = self.vars.owner_witness(var).is_some();
+        let (dst, src, since) = (
+            self.temp(CType::Ref),
+            self.temp(CType::Ref),
+            self.temp(CType::Int),
+        );
+        let clos = format!("{}.clos", self.var(*fv));
+        self.line(ind, &format!("{dst} = {name};"));
+        self.line(ind, &format!("{since} = (int64_t) loft_stores_allocated;"));
+        let e = self.expr(x, ind)?;
+        self.line(ind, &format!("{src} = {};", as_ref(e)?));
+        self.line(
+            ind,
+            &format!("if (loft_fnref_minted({src}, (uint64_t) {since}, {clos})) {{"),
+        );
+        if !witnessed {
+            self.line(
+                ind + 1,
+                &format!(
+                    "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src}.store_nr) loft_free_ref({dst});"
+                ),
+            );
+        }
+        self.line(ind + 1, &format!("{name} = {src};"));
+        self.line(ind, "} else {");
+        if witnessed && !first {
+            self.line(ind + 1, &format!("{name} = loft_ref_null();"));
+        }
+        self.line(
+            ind + 1,
+            &format!("loft_database_typed(&{name}, {size}, {tp});"),
+        );
+        self.line(
+            ind + 1,
+            &format!("loft_copy_record(loft_types, {tp}, {src}, {name}, 0);"),
+        );
+        self.line(ind, "}");
+        self.flush(ind);
+        Ok(true)
     }
 
     /// A rebind of an owned reference from an expression that produces a store releases the
@@ -2046,7 +2122,53 @@ impl<'a> FnWriter<'a> {
     }
 
     /// The operators over stores: records and their fields, vectors.
+    /// The frees of a store, or `None` for another operator.
+    fn free_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let e = match (name, args) {
+            // A function variable's scope-exit free reads its definition number as a
+            // reference and releases nothing: its closure record is freed through its own.
+            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Fn => {
+                Ok(E::new("(void) 0", K::Void))
+            }
+            // A variable's free resets it to the sentinel, as native's does: the next pass's
+            // pre-build free of it is then a no-op instead of a release of a reused slot.
+            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Ref => {
+                Ok(E::new(format!("loft_free_var(&{})", self.var(*v)), K::Void))
+            }
+            ("OpFreeRef", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(format!("loft_free_ref({})", as_ref(r)?), K::Void))
+            }
+            ("OpFreeRefIfDistinct", [Value::Var(v), w])
+                if self.shapes[*v as usize] == CType::Ref =>
+            {
+                let w = self.expr(w, ind)?;
+                Ok(E::new(
+                    format!("loft_free_var_distinct(&{}, {})", self.var(*v), as_ref(w)?),
+                    K::Void,
+                ))
+            }
+            ("OpFreeRefIfDistinct", [_, _]) => {
+                let (p, w) = self.two(name, args, ind)?;
+                Ok(E::new(
+                    format!("loft_free_displaced({}, {})", as_ref(p)?, as_ref(w)?),
+                    K::Void,
+                ))
+            }
+            _ => return Ok(None),
+        };
+        e.map(Some)
+    }
+
     fn store_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        if let Some(e) = self.free_operator(name, args, ind)? {
+            return Ok(e);
+        }
         match (name, args) {
             ("OpDatabase", [Value::Var(v), tp]) => {
                 let tp = Self::literal(tp, "type")?;
@@ -2065,15 +2187,6 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            // A function variable's scope-exit free reads its definition number as a
-            // reference and releases nothing: its closure record is freed through its own.
-            ("OpFreeRef", [Value::Var(v)]) if self.shapes[*v as usize] == CType::Fn => {
-                Ok(E::new("(void) 0", K::Void))
-            }
-            ("OpFreeRef", [r]) => {
-                let r = self.expr(r, ind)?;
-                Ok(E::new(format!("loft_free_ref({})", as_ref(r)?), K::Void))
-            }
             ("OpRefIsNull", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
@@ -2087,13 +2200,6 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("({}.rec != 0)", as_ref(r)?), K::Cond))
             }
             ("OpRefAlias", [r]) => self.expr(r, ind),
-            ("OpFreeRefIfDistinct", [_, _]) => {
-                let (p, w) = self.two(name, args, ind)?;
-                Ok(E::new(
-                    format!("loft_free_displaced({}, {})", as_ref(p)?, as_ref(w)?),
-                    K::Void,
-                ))
-            }
             ("OpGetInt", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;

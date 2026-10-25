@@ -114,7 +114,12 @@ impl FnWriter<'_> {
             CType::Float => format!("loft_b[loft_i].f = {call};"),
             CType::Single => format!("loft_b[loft_i].g = {call};"),
             CType::Text => format!("loft_b[loft_i].t = {call};"),
-            CType::Ref => format!("loft_b[loft_i].r = {call};"),
+            // A result is ADOPTED when the worker made its store (`n_parallel_buf_drop_ref`
+            // frees only those); a pass-through of the element names the source's.
+            CType::Ref => format!(
+                "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; \
+                 loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(loft_b[loft_i].r, loft_s, loft_ref_null()); }}"
+            ),
             CType::Fn => format!("loft_b[loft_i].fn = {call};"),
             CType::Void => format!("{call};"),
             CType::Tuple(_) => return Err("a par worker returning a tuple".into()),

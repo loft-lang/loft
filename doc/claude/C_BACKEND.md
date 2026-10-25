@@ -19,6 +19,7 @@ loft --emit-c out.c prog.loft      # write the C; exit 2 with "does not carry th
 cc -std=c99 out.c -o prog -lm && ./prog
 python3 scripts/c_sweep.py         # every corpus program: C against the interpreter
 python3 scripts/c_sweep.py --asan  # the same, built with AddressSanitizer + UBSan
+python3 scripts/c_sweep.py --poison  # the store poison modes, against the interpreter's
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
@@ -29,12 +30,20 @@ it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at
 builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`) or `refused`, and ranks the
 refusals by reason — that ranking is the work list.
 `differ`, `cc-error` and `sanitizer` are defects of the backend and must stay at 0; a change
-that grows `match` is measured by the sweep and by `--asan` before it is committed.  A program
+that grows `match` is measured by the sweep, by `--asan` and by `--poison` before it is
+committed.  A sanitizer cannot see inside a store — a store is one allocation — so a read of a
+freed store, of a record a growth moved, or of a claim nothing wrote is valid memory to it; the
+poison modes are the store's own falsifiers, ported from `src/store.rs`: `-DLOFT_POISON` (a
+freed store reads `0xDEADBEEF`, a growth moves the buffer and scribbles the one it leaves) and
+`-DLOFT_POISON_CLAIM` (a claim and a grown tail read `0xDEADBEEF`, and `loft_claim` stops
+zeroing), each against the interpreter under `LOFT_POISON=1` / `LOFT_POISON_CLAIM=1`.  A program
 without `main` is its tests: the C runs every test the way `loft --tests` picks them, and the
 two exit statuses are compared.  `tests/c_emit.rs` is the cargo guard: a scalar program checked
 against hand-computed values on both the interpreter and the C, a keyed program (hash, sorted,
 index, a linked group) checked the same way, a refusal naming its construct, and the overflow
-macros against Rust's checked arithmetic in every mode.
+macros against Rust's checked arithmetic in every mode — and the memory model's replays: the
+allocator, the hash, the index and the trees each run one seeded sequence through the Rust
+module and the C header and compare every answer and every byte of the store.
 
 ## The parts
 
@@ -56,6 +65,8 @@ macros against Rust's checked arithmetic in every mode.
 | `loft_keys.h` | key parts, their compare, and the per-table SipHash-1-3 digest of `src/siphash.rs` |
 | `loft_hash.h` | `src/hash.rs` and `src/arena.rs`, ported, and the `Stores` routines over a hash |
 | `loft_btree.h` | `src/btree.rs`, ported: the index, and the `Stores` routines over it |
+| `loft_radix.h` | `src/radix_tree.rs`, `radix_db.rs` and `trie_db.rs`, ported: spatial and trie |
+| `loft_image.h` | store images: `store_persist_copy` and `store_load` (`Stores::persist_copy`, `load_path`) |
 | `loft_keyed.h` | sorted and ordered (`src/vector.rs`), the walks, renders and keyed writes |
 | `loft_io.h` | files and the filesystem, pasted last |
 
@@ -127,7 +138,24 @@ replace, `remove_owned`, `reserve_hash`, the copy and the release.  An index is 
 ported (`loft_btree.h`): the node arena, the key parts and text prefixes, the walk's
 record cursors.  A sorted is a vector kept in key order (`sorted_new`, `sorted_finish`), and an
 `ordered` and an `array` a vector of record numbers (`ordered_finish`), each with the release
-`remove_owned` and `remove_vector_at` give it.  The key compare, the range search and the sorted insert are
+`remove_owned` and `remove_vector_at` give it.  A `spatial` and a `trie` are
+`src/radix_tree.rs` ported (`loft_radix.h`) under `radix_db.rs`' Morton oracle and
+`trie_db.rs`' text oracle, with their walks — the outward walk from a point, the box walk by
+BIGMIN, the prefix walk — snapshotted as `build_rec_scratch` lays them out.
+
+**Store images.**  `store_persist_copy` is `Stores::persist_copy` ported: the root deep-copied
+into a scratch store, its trees laid out in van Emde Boas order (`rtree_relayout`), the store
+written from word 0 to past its last live record, padded to the 1024-word floor, and the
+`.dschema` sidecar beside it — its text prepared at emit time per root type
+(`LayoutIdentity::of_store`), the slot line filled in at run time.  `store_load` is `load_path`:
+the sidecar gated (`classify`: the same hash and dump, `Release::admits`), the image adopted
+into the slot as `Store::load` builds one (no parked lists, no lazy frees, the allocator state
+re-derived from the blocks).  A file of another layout is refused, where the interpreter
+converts it; a store holding references is refused at emit time until the reference remap
+(`rebase_stored_refs`) is ported; compaction on load is not done (it declines for an image
+`store_persist_copy` wrote, which is already dense).  `tests/c_emit.rs` crosses a file written
+by each backend with every reader — the interpreter, the C, `--native` — on a store of every
+collection kind, and checks the C's image and sidecar against the interpreter's byte for byte.  The key compare, the range search and the sorted insert are
 ports of `keys::compare`, `vector::sorted_search` and `vector::sorted_finish`.  A record type
 shared by several collections of one struct (`@FR-Col-Group`) turns its vector into an `array`
 and its sorted into an `ordered`; a record finished into one member enters every member, and a
@@ -182,14 +210,16 @@ only by failing with one of its messages — the annotations are read by the sam
    included.  A constant operand (a type number, a format) is read at emit time.
 3. Probe it in a scratch program on both: the interpreter's output and the C's must be
    byte-identical, and under `-fsanitize=address,undefined` the C must be silent.
-4. Sweep, then sweep with `--asan`; both at 0 `differ`, 0 `cc-error`, 0 `sanitizer`.
+4. Sweep, then sweep with `--asan` and `--poison`; all at 0 `differ`, 0 `cc-error`, 0
+   `sanitizer`.
 5. A sweep that turns up a `differ` is a defect to fix before going on — it is usually an
    older rule the new construct now reaches.
 
 ## Not carried yet
 
 The sweep's ranking is the current list.  The large families: text parsed into a typed value
-(`T.parse`, `as vector<T>`, JSON), the spatial and trie collections, the persistent stores,
+(`T.parse`, `as vector<T>`, JSON), the image loaders beyond `store_load` (paged, by key,
+over a URL) and a store bound to a file, a linked group with a spatial or trie member,
 `parallel { }` blocks, and the native library calls; of the generators, one held in a record
 field and one of tuples; of the `&` locals, a link into a store place; of `par`, a worker over
 tuples or function values.  A record holding a linked group is not copied yet: its members name one record set,

@@ -141,6 +141,8 @@ typedef struct {
     int needs_coalesce, lazy;
     /* `Store::defined`: the buffer was zeroed when made, and a growth zeroes its new tail. */
     int defined;
+    /* `Store::park` off — a store loaded from an image parks nothing (`Store::load`). */
+    int no_park;
 } loft_store_t;
 
 static loft_store_t *loft_stores = 0;
@@ -607,14 +609,34 @@ static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
     uint64_t inc64 = (uint64_t) s->size * 7;
     uint32_t inc = inc64 > UINT32_MAX ? UINT32_MAX / 3 : (uint32_t) (inc64 / 3);
     uint32_t size = to_size > inc ? to_size : inc;
+#ifdef LOFT_POISON
+    /* `LOFT_POISON`: the growth always MOVES the bytes and scribbles the block it leaves, which
+     * is kept, never handed back — an address taken into the store before the growth then reads
+     * the scribble instead of bytes a `realloc` would have left readable and equal. */
+    uint8_t *b = (uint8_t *) malloc((size_t) size * 8);
+    if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(b, s->buf, (size_t) s->size * 8);
+    memset(s->buf, 0xA5, (size_t) s->size * 8);
+#else
     uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) size * 8);
     if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+#endif
     if (s->defined) memset(b + (size_t) s->size * 8, 0, (size_t) (size - s->size) * 8);
     s->buf = b;
     s->size = size;
 }
 
 /* ---- claims ---- */
+
+/* `Store::poison_range` (`LOFT_POISON_CLAIM`): `len` bytes at byte `pos` of `rec` read
+ * 0xDEADBEEF, whole words only — a record id, a handle or a length read out of a claim nothing
+ * wrote is then loud.  Compiled only into a poison build. */
+#ifdef LOFT_POISON_CLAIM
+static void loft_st_poison_range(loft_store_t *s, uint32_t rec, uint32_t pos, uint32_t len) {
+    const uint32_t v = 0xDEADBEEFu;
+    for (uint32_t i = 0; i < len / 4; i++) memcpy(s->buf + (size_t) rec * 8 + pos + 4 * i, &v, 4);
+}
+#endif
 
 static uint32_t loft_claim_block(loft_store_t *s, uint32_t pos, uint32_t size) {
     int32_t req = (int32_t) size;
@@ -812,6 +834,9 @@ static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size) {
 static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
     uint32_t pos = loft_st_claim_inner(s, size);
     LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
+#ifdef LOFT_POISON_CLAIM
+    loft_st_poison_range(s, pos, 4, (uint32_t) loft_st_i32(s, pos, 0) * 8 - 4);
+#endif
     return pos;
 }
 
@@ -840,7 +865,7 @@ static void loft_st_delete(loft_store_t *s, uint32_t rec) {
         return;
     }
     int32_t words = loft_st_i32(s, rec, 0);
-    if (words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
+    if (!s->no_park && words >= LOFT_MIN_FREE_TREE && words <= LOFT_PARK_MAX_WORDS && rec + (uint32_t) words != s->size) {
         loft_bits_remove(&s->claims, rec);
         loft_park_block(s, rec, words);
         return;
@@ -874,6 +899,10 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
             } else {
                 loft_st_set_i32(s, rec, 0, claim - next_size);
             }
+#ifdef LOFT_POISON_CLAIM
+            /* The absorbed region promises nothing, as a claim's payload does not. */
+            loft_st_poison_range(s, rec, (uint32_t) claim * 8, (uint32_t) (loft_st_i32(s, rec, 0) - claim) * 8);
+#endif
             LOFT_TRACE("R %llu %u %d %u\n", (unsigned long long) s->serial, rec, loft_st_i32(s, rec, 0), rec);
             return rec;
         }

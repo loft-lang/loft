@@ -9,6 +9,9 @@
     scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
     scripts/c_sweep.py --all            # every refusal reason, not the top 25
     scripts/c_sweep.py --mode default   # one macro mode (strict, default, verify) instead of all
+    scripts/c_sweep.py --poison         # the store poison modes instead: the C built with
+                                        # -DLOFT_POISON / -DLOFT_POISON_CLAIM against the
+                                        # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1
     LOFT_BIN=<loft> scripts/c_sweep.py  # another build (default target/release/loft)
 
 For each program: `loft --emit-c` writes it as C, `cc` builds it in each macro mode of
@@ -44,6 +47,13 @@ MODES = {
     "default": ["-w"],
     "verify": ["-DLOFT_VERIFY", "-w"],
 }
+# The store's own falsifiers, which a sanitizer cannot be: a store is one allocation, so a read
+# of a freed store, of a record a growth moved, or of a claim nothing wrote is valid memory to
+# it.  Each mode is the C's build flag beside the switch the interpreter honours the same way.
+POISON_MODES = {
+    "poison": (["-DLOFT_POISON", "-w"], {"LOFT_POISON": "1"}),
+    "poison-claim": (["-DLOFT_POISON_CLAIM", "-w"], {"LOFT_POISON_CLAIM": "1"}),
+}
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
@@ -54,10 +64,10 @@ def corpus() -> list[str]:
     return [l for l in r.stdout.split("\n") if l.strip()]
 
 
-def run(cmd, timeout, cwd=None):
+def run(cmd, timeout, cwd=None, env=None):
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=timeout, cwd=cwd,
-                           env={**os.environ, "LOFT_TIMEOUT": str(timeout)})
+                           env={**os.environ, "LOFT_TIMEOUT": str(timeout), **(env or {})})
         return r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         return "timeout", b"", b""
@@ -84,9 +94,14 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
         tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
         # A program without `main` is its tests: the C runs them as `loft --tests` does,
         # and the two exit statuses say whether every test passed.
-        i_out = run([LOFT, "--tests" if tests else "--interpret", str(src)], 60, cwd=src.parent)
+        interp = [LOFT, "--tests" if tests else "--interpret", str(src)]
+        i_plain = None
         for mode in modes:
-            code, _, err = run(CC + MODES[mode] + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
+            flags, env = POISON_MODES.get(mode, (MODES.get(mode), None))
+            i_out = run(interp, 60, cwd=src.parent, env=env) if env else i_plain
+            if i_out is None:
+                i_out = i_plain = run(interp, 60, cwd=src.parent)
+            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
             if code != 0:
                 first = err.decode(errors="replace").strip().split("\n")[0]
                 return path, "cc-error", f"[{mode}] {first}", None
@@ -106,7 +121,7 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 0
     verbose = "--verbose" in argv
-    modes = tuple(MODES)
+    modes = tuple(POISON_MODES) if "--poison" in argv else tuple(MODES)
     if "--mode" in argv:
         i = argv.index("--mode")
         modes = (argv[i + 1],)

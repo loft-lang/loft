@@ -35,6 +35,8 @@ const RUNTIME: &str = concat!(
     include_str!("loft_keys.h"),
     include_str!("loft_hash.h"),
     include_str!("loft_btree.h"),
+    include_str!("loft_radix.h"),
+    include_str!("loft_image.h"),
     include_str!("loft_keyed.h"),
     include_str!("loft_io.h")
 );
@@ -139,6 +141,8 @@ pub(crate) struct Cx<'a> {
     eq_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every keyed collection type whose key parts the unit names (`loft_keys{tp}`).
     key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The root types a `store_persist_copy` writes an image of: one sidecar each.
+    sidecars: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every type the unit writes to or reads from a file (`loft_ser{tp}` / `loft_de{tp}`).
     ser_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The Unicode tables the unit reads (`crate::c::unicode`).
@@ -151,7 +155,8 @@ pub(crate) struct Cx<'a> {
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
-/// their element type is shared (`@FR-Col-Group`, a stored reference).
+/// their element type is shared (`@FR-Col-Group`, a stored reference).  A `spatial` and a
+/// `trie` are radix trees (`loft_radix.h`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Keyed {
     Hash,
@@ -159,6 +164,8 @@ pub(crate) enum Keyed {
     Index,
     Ordered,
     Array,
+    Spatial,
+    Trie,
 }
 
 impl<'a> Cx<'a> {
@@ -179,6 +186,7 @@ impl<'a> Cx<'a> {
             fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            sidecars: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             ser_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
@@ -196,6 +204,8 @@ impl<'a> Cx<'a> {
             Parts::Index(c, _) => Some((Keyed::Index, *c)),
             Parts::Ordered(c, _) => Some((Keyed::Ordered, *c)),
             Parts::Array(c) => Some((Keyed::Array, *c)),
+            Parts::Radix(c, _) => Some((Keyed::Spatial, *c)),
+            Parts::Trie(c, _) => Some((Keyed::Trie, *c)),
             _ => None,
         }
     }
@@ -207,6 +217,110 @@ impl<'a> Cx<'a> {
             format!("loft_keys{tp}"),
             self.stores.types[tp as usize].keys.len(),
         )
+    }
+
+    /// The collection type a keyed local's store is minted as (`gen_keyed_null`: the
+    /// `database.hash/sorted/index/spatial/trie` registration of its content and key), asked of
+    /// a scratch copy of the stores so the real table is never written; `None` for a type the
+    /// parse did not register.
+    pub(crate) fn keyed_local_type(&self, tp: &Type) -> Option<u16> {
+        let mut scratch = self.scratch.borrow_mut();
+        let s = scratch.get_or_insert_with(|| {
+            let mut s = self.stores.clone();
+            s.max = 0;
+            s
+        });
+        let known = |td: u32| self.data.def(td).known_type();
+        let nr = match tp.base() {
+            Type::Sorted(td, key, _) => s.sorted(known(*td), key),
+            Type::Hash(td, key, _) => s.hash(known(*td), key),
+            Type::Index(td, key, _) => s.index(known(*td), key),
+            Type::Radix(td, key, _) => s.spatial(known(*td), key),
+            Type::Trie(td, key, _) => s.trie(known(*td), key),
+            _ => return None,
+        };
+        (usize::from(nr) < self.stores.types.len()).then_some(nr)
+    }
+
+    /// The root type a store holding a value of `tp` is minted as — a keyed local's collection,
+    /// a record's type, a vector's `main_vector<T>` — or `None`.
+    pub(crate) fn root_type(&self, tp: &Type, source: u16) -> Option<u16> {
+        match tp.base() {
+            Type::Reference(d, _) | Type::Enum(d, true, _) => Some(self.data.def(*d).known_type()),
+            Type::Vector(elm, _) => {
+                let nr = self.data.owned_vector_type(elm, source);
+                (nr != u16::MAX).then_some(nr)
+            }
+            other => self.keyed_local_type(other),
+        }
+    }
+
+    /// Can a value of `tp` hold a stored reference (`Parts::DbRef`) — a field an image's
+    /// loader must remap to the slot it lands in (`rebase_stored_refs`)?
+    pub(crate) fn holds_stored_refs(&self, tp: u16) -> bool {
+        use crate::database::Parts;
+        fn walk(s: &Stores, tp: u16, seen: &mut Vec<u16>) -> bool {
+            if seen.contains(&tp) || usize::from(tp) >= s.types.len() {
+                return false;
+            }
+            seen.push(tp);
+            match &s.types[tp as usize].parts {
+                Parts::DbRef => true,
+                Parts::Struct(f) | Parts::EnumValue(_, f) => {
+                    f.iter().any(|f| walk(s, f.content, seen))
+                }
+                Parts::Enum(v) => v.iter().any(|(t, _)| *t != u16::MAX && walk(s, *t, seen)),
+                Parts::Vector(c)
+                | Parts::Sorted(c, _)
+                | Parts::Hash(c, _)
+                | Parts::Index(c, _)
+                | Parts::Ordered(c, _)
+                | Parts::Array(c)
+                | Parts::ChildRec(c)
+                | Parts::Radix(c, _)
+                | Parts::Trie(c, _) => walk(s, *c, seen),
+                _ => false,
+            }
+        }
+        walk(self.stores, tp, &mut Vec::new())
+    }
+
+    /// The C name of the sidecar a `store_persist_copy` of a store minted as `tp` writes.
+    pub(crate) fn sidecar_of(&self, tp: u16) -> String {
+        self.sidecars.borrow_mut().insert(tp);
+        format!("&loft_sidecar{tp}")
+    }
+
+    /// The sidecars: each type's `.dschema` text split where its slot line goes, and the
+    /// layout the loader gates on.  Byte arrays rather than literals: a layout dump passes the
+    /// 4095 characters a C99 literal is guaranteed.
+    fn sidecar_table(&self) -> String {
+        let bytes = |t: &str| -> String {
+            let mut v: Vec<String> = t.bytes().map(|b| b.to_string()).collect();
+            v.push("0".into());
+            format!("{{ {} }}", v.join(", "))
+        };
+        let mut out = String::new();
+        for &tp in self.sidecars.borrow().iter() {
+            let id = crate::schema_sidecar::LayoutIdentity::of_store(self.stores, u16::MAX, tp);
+            let text = id.to_sidecar();
+            let marker = format!("slot={}\n", u16::MAX);
+            let (before, after) = text.split_once(&marker).unwrap_or((&text, ""));
+            let _ = writeln!(out, "static const char loft_scb{tp}[] = {};", bytes(before));
+            let _ = writeln!(out, "static const char loft_sca{tp}[] = {};", bytes(after));
+            let _ = writeln!(
+                out,
+                "static const char loft_scd{tp}[] = {};",
+                bytes(&id.dump)
+            );
+            let _ = writeln!(
+                out,
+                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {} }};",
+                id.layout_hash,
+                body::c_string(&self.stores.release().oldest)
+            );
+        }
+        out
     }
 
     /// The C name of plain enum type `tp`'s value names, indexed by value (1-based).
@@ -253,6 +367,8 @@ impl<'a> Cx<'a> {
             | Type::Hash(..)
             | Type::Sorted(..)
             | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..)
             | Type::Iterator(..)
             | Type::Enum(_, true, _) => Some(CType::Ref),
             Type::Enum(_, false, _) => Some(CType::Enum),
@@ -316,8 +432,8 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// Register type `tp`, and every type it reaches, in the unit's copy table — or the
-    /// kind of collection the C copy does not walk yet, for a refusal.
+    /// Register type `tp`, and every type it reaches, in the unit's copy table — or refuse a
+    /// record holding a linked group, which a field-by-field copy would split.
     pub(crate) fn copy_type(&self, tp: u16) -> Result<(), String> {
         use crate::database::Parts;
         if self.copy_types.borrow().contains(&tp) {
@@ -346,7 +462,9 @@ impl<'a> Cx<'a> {
             | Parts::Hash(c, _)
             | Parts::Index(c, _)
             | Parts::Ordered(c, _)
-            | Parts::Array(c) => self.copy_type(*c),
+            | Parts::Array(c)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _) => self.copy_type(*c),
             Parts::Enum(values) => values
                 .iter()
                 .filter(|(v, _)| *v != u16::MAX)
@@ -358,16 +476,6 @@ impl<'a> Cx<'a> {
             | Parts::IntRaw(..)
             | Parts::ShortRaw(..)
             | Parts::DbRef => Ok(()),
-            other => {
-                let kind = format!("{other:?}");
-                Err(format!(
-                    "a copy of a record that owns a {}",
-                    kind.split(['(', ' '])
-                        .next()
-                        .unwrap_or("collection")
-                        .to_lowercase()
-                ))
-            }
         };
         if r.is_err() {
             self.copy_types.borrow_mut().remove(&tp);
@@ -501,6 +609,8 @@ impl<'a> Cx<'a> {
                 }
                 Parts::Hash(c, _) => format!("{{ LOFT_T_HASH, {size}, {c}, 0, 0, 0 }}"),
                 Parts::Index(c, _) => format!("{{ LOFT_T_INDEX, {size}, {c}, 0, 0, 0 }}"),
+                Parts::Radix(c, _) => format!("{{ LOFT_T_RADIX, {size}, {c}, 0, 0, 0 }}"),
+                Parts::Trie(c, _) => format!("{{ LOFT_T_TRIE, {size}, {c}, 0, 0, 0 }}"),
                 Parts::Ordered(c, _) | Parts::Array(c) => {
                     format!("{{ LOFT_T_ORDERED, {size}, {c}, 0, 0, 0 }}")
                 }
@@ -522,7 +632,10 @@ impl<'a> Cx<'a> {
             // `owns_heap`: the Rust store's own answer (`Stores::type_owns_heap`), never re-derived;
             // a hash's or an index's key parts, which its copy re-files by; `linked`, the type's
             // own flag.
-            let keys = if matches!(t.parts, Parts::Hash(..) | Parts::Index(..)) {
+            let keys = if matches!(
+                t.parts,
+                Parts::Hash(..) | Parts::Index(..) | Parts::Radix(..) | Parts::Trie(..)
+            ) {
                 let (name, n) = self.keys_of(tp);
                 format!("{name}, {n}")
             } else {
@@ -573,6 +686,7 @@ impl<'a> Cx<'a> {
             );
         }
         out.push_str(&table);
+        out.push_str(&self.sidecar_table());
         for tp in self.enum_names.borrow().iter() {
             let count = match &self.stores.types[*tp as usize].parts {
                 crate::database::Parts::Enum(values) => values.len(),
@@ -710,6 +824,17 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "t_4text_byte_at" => Some("loft_byte_at"),
         "n_hash_sorted" => Some("loft_hash_sorted"),
         "n_hash_unsorted" => Some("loft_hash_unsorted"),
+        "n_radix_sorted" => Some("loft_radix_sorted"),
+        "n_spatial_range" => Some("loft_spatial_range"),
+        "n_trie_prefix" => Some("loft_trie_prefix"),
+        "n_store_persist_copy" => Some("loft_image_write"),
+        "n_store_load" => Some("loft_image_load"),
+        "n_store_upgrade_owed_next" => Some("loft_store_upgrade_owed_next"),
+        "n_store_upgrade_owed_record" => Some("loft_store_upgrade_owed_record"),
+        "n_store_upgrade_owed_old" => Some("loft_store_upgrade_owed_old"),
+        "n_store_upgrade_owed_from" => Some("loft_store_upgrade_owed_from"),
+        "n_store_upgrade_owed_finish" => Some("loft_store_upgrade_owed_finish"),
+        "n_store_upgrade_routine" => Some("loft_store_upgrade_routine"),
         "t_4hash_len" => Some("loft_hash_len"),
         "n_read_bytes" => Some("loft_read_bytes"),
         "n_write_bytes" => Some("loft_write_bytes"),

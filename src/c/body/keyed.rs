@@ -60,6 +60,15 @@ impl FnWriter<'_> {
         Ok((kind, elem, self.cx.stores.size(elem)))
     }
 
+    /// The static type of a variable read, the one shape a persisted value takes; `None` for
+    /// any other value.
+    fn value_type(&self, v: &Value) -> Option<crate::data::Type> {
+        match v.unspan() {
+            Value::Var(var) => Some(self.vars.tp(*var).clone()),
+            _ => None,
+        }
+    }
+
     /// The kind of type `tp` in a word, for a refusal.
     fn kind_word(&self, tp: u16) -> String {
         self.cx.stores.types.get(tp as usize).map_or_else(
@@ -121,6 +130,14 @@ impl FnWriter<'_> {
                     };
                     format!("(void) {insert}(loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)")
                 }
+                Keyed::Spatial | Keyed::Trie => {
+                    self.cx.name_types();
+                    self.cx.describe_type(elem);
+                    format!(
+                        "(void) loft_rx_insert_record(loft_types, {elem}, {c}, {rec}, {keys}, {n}, {}, 0)",
+                        u8::from(kind == Keyed::Trie)
+                    )
+                }
                 Keyed::Array => format!("loft_array_append({c}, {rec})"),
             },
             K::Void,
@@ -145,6 +162,9 @@ impl FnWriter<'_> {
                 Keyed::Index => "LOFT_M_INDEX",
                 Keyed::Ordered => "LOFT_M_ORDERED",
                 Keyed::Sorted => return Err("a sorted member of a linked group".into()),
+                Keyed::Spatial | Keyed::Trie => {
+                    return Err("a tree member of a linked group".into());
+                }
             };
             rows.push(format!("{{ {pos}, {kind}, {keys}, {n} }}"));
         }
@@ -181,6 +201,84 @@ impl FnWriter<'_> {
                 Ok(Some(E::new(
                     format!("loft_hash_unsorted({})", as_ref(h)?),
                     K::Ref,
+                )))
+            }
+            ("n_radix_sorted", [r, _]) => {
+                let r = self.expr(r, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_radix_sorted({})", as_ref(r)?),
+                    K::Ref,
+                )))
+            }
+            ("n_spatial_range", [r, tp, rest @ ..]) if rest.len() == 8 => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let (keys, n) = self.cx.keys_of(tp);
+                let mut all = vec![r.clone()];
+                all.extend(rest.iter().cloned());
+                let mut es = self.args(&all, ind)?.into_iter();
+                let r = as_ref(es.next().ok_or("a slice without its collection")?)?;
+                let ints = es.map(as_int).collect::<Result<Vec<_>, _>>()?;
+                Ok(Some(E::new(
+                    format!("loft_spatial_range({r}, {keys}, {n}, {})", ints.join(", ")),
+                    K::Ref,
+                )))
+            }
+            ("n_trie_prefix", [r, tp, pre, limit]) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let (keys, _) = self.cx.keys_of(tp);
+                let mut es = self
+                    .args(&[r.clone(), pre.clone(), limit.clone()], ind)?
+                    .into_iter();
+                let r = as_ref(es.next().ok_or("a slice without its collection")?)?;
+                let pre = as_view(es.next().ok_or("a slice without its prefix")?)?;
+                let limit = as_int(es.next().ok_or("a slice without its limit")?)?;
+                Ok(Some(E::new(
+                    format!("loft_trie_prefix({r}, {keys}, {pre}, {limit})"),
+                    K::Ref,
+                )))
+            }
+            ("n_store_persist_copy", [r, path]) => {
+                // The image's sidecar is the store's root type's: the value's static type
+                // names it, and the runtime writes nothing for a store minted otherwise.
+                let tp = self
+                    .value_type(r)
+                    .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+                    .ok_or("a persisted value whose store type is not known here")?;
+                // The image is a deep copy of the store's root: a type the copy cannot walk
+                // is refused here, as every copy refuses it.
+                self.cx.copy_type(tp)?;
+                self.cx.name_types();
+                let sc = self.cx.sidecar_of(tp);
+                let (r, path) = self.two(name, &[r.clone(), path.clone()], ind)?;
+                Ok(Some(E::new(
+                    format!(
+                        "(uint8_t) loft_image_write(loft_types, loft_ntypes, {}, {}, {sc})",
+                        as_ref(r)?,
+                        as_view(path)?
+                    ),
+                    K::Bool,
+                )))
+            }
+            ("n_store_load", [r, path]) => {
+                // The gate reads the layout of the store's root type, the value's static type.
+                let tp = self
+                    .value_type(r)
+                    .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+                    .ok_or("a loaded value whose store type is not known here")?;
+                if self.cx.holds_stored_refs(tp) {
+                    return Err("a loaded store holding references".into());
+                }
+                let sc = self.cx.sidecar_of(tp);
+                let (r, path) = self.two(name, &[r.clone(), path.clone()], ind)?;
+                Ok(Some(E::new(
+                    format!(
+                        "(uint8_t) loft_image_load({}, {}, {sc})",
+                        as_ref(r)?,
+                        as_view(path)?
+                    ),
+                    K::Bool,
                 )))
             }
             ("t_4hash_len", [h]) => {
@@ -244,6 +342,13 @@ impl FnWriter<'_> {
                 Ok(Some(E::new(
                     format!("loft_free_scratch({})", as_ref(x)?),
                     K::Void,
+                )))
+            }
+            ("OpLengthSpatial" | "OpLengthTrie", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_rx_count({})", as_ref(r)?),
+                    K::Int,
                 )))
             }
             ("OpLengthHash", [h]) => {
@@ -440,6 +545,8 @@ impl FnWriter<'_> {
             Keyed::Index => "LOFT_KEYED_INDEX",
             Keyed::Ordered => "LOFT_KEYED_ORDERED",
             Keyed::Array => return Err("a keyed write into an array".into()),
+            Keyed::Spatial => "LOFT_KEYED_SPATIAL",
+            Keyed::Trie => "LOFT_KEYED_TRIE",
         };
         Ok(E::new(
             format!(
@@ -486,6 +593,10 @@ impl FnWriter<'_> {
                 Keyed::Sorted => format!("loft_seq_find({data}, {size}, {keys}, {nk}, {kv}, {n})"),
                 Keyed::Index => format!("loft_ix_find({data}, {keys}, {nk}, {kv}, {n})"),
                 Keyed::Ordered => format!("loft_seq_find({data}, 0, {keys}, {nk}, {kv}, {n})"),
+                Keyed::Spatial | Keyed::Trie => format!(
+                    "loft_rx_find({data}, {keys}, {nk}, {}, {kv}, {n})",
+                    u8::from(kind == Keyed::Trie)
+                ),
                 Keyed::Array => return Err("a keyed lookup in an array".into()),
             },
             K::Ref,
@@ -592,6 +703,10 @@ impl FnWriter<'_> {
                 Keyed::Ordered | Keyed::Array => format!(
                     "loft_ordered_remove(loft_types, {elem}, {data}, {rec}, {}, {view})",
                     u8::from(kind == Keyed::Array)
+                ),
+                Keyed::Spatial | Keyed::Trie => format!(
+                    "loft_rx_remove_owned(loft_types, {elem}, {data}, {rec}, {keys}, {nk}, {}, {view})",
+                    u8::from(kind == Keyed::Trie)
                 ),
             },
             K::Void,

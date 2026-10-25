@@ -44,7 +44,9 @@ impl Cx<'_> {
             | Parts::Hash(elem, _)
             | Parts::Index(elem, _)
             | Parts::Ordered(elem, _)
-            | Parts::Array(elem) => {
+            | Parts::Array(elem)
+            | Parts::Radix(elem, _)
+            | Parts::Trie(elem, _) => {
                 self.keys_of(tp);
                 self.eq_type(*elem)
             }
@@ -54,7 +56,7 @@ impl Cx<'_> {
             | Parts::Int(..)
             | Parts::IntRaw(..)
             | Parts::DbRef => Ok(()),
-            other => {
+            other @ Parts::Base => {
                 let kind = format!("{other:?}");
                 Err(format!(
                     "a comparison of a {}",
@@ -126,7 +128,9 @@ impl Cx<'_> {
                 Parts::Hash(elem, _)
                 | Parts::Index(elem, _)
                 | Parts::Ordered(elem, _)
-                | Parts::Array(elem) => {
+                | Parts::Array(elem)
+                | Parts::Radix(elem, _)
+                | Parts::Trie(elem, _) => {
                     let (keys, n) = self.keys_of(tp);
                     let _ = writeln!(
                         out,
@@ -134,6 +138,7 @@ impl Cx<'_> {
                         match t.parts {
                             Parts::Hash(..) => 1,
                             Parts::Index(..) => 2,
+                            Parts::Radix(..) | Parts::Trie(..) => 3,
                             _ => 0,
                         },
                         Self::eq_fn(*elem)

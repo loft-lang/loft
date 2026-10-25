@@ -513,13 +513,19 @@ the browser read them), so a layout is observable.
   of inserts, replacements, removals, lookups and reservations through `hash.rs` and
   `loft_hash.h` on an integer-keyed, a text-keyed, a borrowing and a demoted table; the
   index's through `btree.rs` and `loft_btree.h` on an integer, a shared-prefix text and a
-  two-part key, with exact and partial lookups and bounded walks.
+  two-part key, with exact and partial lookups and bounded walks; the trees' through
+  `radix_db.rs` / `trie_db.rs` and `loft_radix.h`, with outward, box and prefix walks.  Each is
+  falsified by mutating the C.  A program's stores are checked by the poison modes as well
+  (`c_sweep.py --poison`): a sanitizer sees a store as one allocation, so a stale read inside
+  it is invisible to it, and only the store's own poison makes one fail.
 - **Steps.**  (a) the trace on the Rust side; (b) the allocator ported, proved by the replay;
   (c) the release and growth routines above it ported, measured by the trace; (d) the keyed
-  layouts ported — the hash (`loft_hash.h`), the index (`loft_btree.h`), the sorted and the
-  ordered are; next spatial (`radix_tree.rs`) and trie (`trie_db.rs`); (e) the image —
-  `store_persist_copy`, `store_load`, a file-backed store over POSIX `mmap` (a whole-file
-  read under `-DLOFT_NO_POSIX`), the paged loaders.  Its acceptance (owner): a C program
+  layouts ported — the hash (`loft_hash.h`), the index (`loft_btree.h`), the sorted, the
+  ordered, the spatial and the trie (`loft_radix.h`); (e) the image — `store_persist_copy` and
+  `store_load` carried (`loft_image.h`; a file written by any backend read by every backend, the
+  C's image the interpreter's byte for byte); still to come: a file-backed store over POSIX
+  `mmap` (a whole-file read under `-DLOFT_NO_POSIX`), the paged loaders, the reference remap
+  of a loaded image, compaction on load.  Its acceptance (owner): a C program
   reads the store files the interpreter and a `--native` program wrote — mapped, loaded and
   paged — and they read the C's; a cell per direction.  `store_memory()` and
   `store_reclaim` then answer as the interpreter's do, bar the interpreter-only creation

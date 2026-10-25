@@ -305,28 +305,31 @@ static loft_ref loft_scratch_step(int64_t *state, loft_ref x, int reverse) {
         int64_t at = loft_iter_next(state, reverse);
         if (at < 0) return loft_ref_null();
         loft_store_t *s = loft_store_of(x);
-        uint32_t vec = loft_u32(s, x.rec, 4);
-        uint32_t r = loft_u32(s, vec, 8 + (uint32_t) at * 8);
+        uint32_t vec = loft_u32(s, x.rec, 4), width = loft_u32(s, x.rec, 12) & 0xFFFFu;
+        uint32_t r = loft_u32(s, vec, 8 + (uint32_t) at * width);
         if (r == 0) continue;
         loft_ref e;
         e.store_nr = (uint16_t) loft_u32(s, x.rec, 8);
         e.rec = r;
-        e.pos = loft_u32(s, vec, 12 + (uint32_t) at * 8);
+        e.pos = width == 8 ? loft_u32(s, vec, 12 + (uint32_t) at * 8) : 8;
         return e;
     }
 }
 
 /* ── copies, renders and equality over the entries ── */
 
-/* The elements of a hash (kind 1, in key order), an index (2, in key order), or an ordered or an
- * array (0, in their own), as references; `*n` their count. */
+/* The elements of a hash (kind 1, in key order), an index (2, in key order), a spatial or a trie
+ * (3, in tree order), or an ordered or an array (0, in their own), as references; `*n` their
+ * count. */
 static loft_ref *loft_keyed_refs(loft_ref c, int kind, const loft_key *keys, int nk, uint32_t *n) {
     *n = 0;
     uint32_t *recs = 0;
     uint32_t count = 0;
     if (kind == 1) return loft_hash_refs(c, keys, nk, 0, n);
-    if (kind == 2) {
-        recs = c.store_nr == 0xFFFF || c.rec == 0 ? (uint32_t *) calloc(1, 4) : loft_bt_records(c, &count);
+    if (kind == 2 || kind == 3) {
+        recs = c.store_nr == 0xFFFF || c.rec == 0 ? (uint32_t *) calloc(1, 4)
+               : kind == 2                         ? loft_bt_records(c, &count)
+                                                   : loft_rx_records(c, &count);
         if (!recs) { fputs("loft: out of memory\n", stderr); abort(); }
     } else {
         uint32_t r = loft_keyed_rec(c);
@@ -379,6 +382,9 @@ static void loft_show_keyed(loft_text *s, loft_ref r, int fmt, int ind, int kind
 
 static int loft_eq_keyed(loft_ref a, loft_ref b, int kind, const loft_key *keys, int nk, loft_eq_fn f) {
     uint32_t na, nb;
+    /* Stores::eq_absent_collections: an absent collection equals an absent one only. */
+    int aa = loft_vec_absent(a), ab = loft_vec_absent(b);
+    if (aa || ab) return aa && ab;
     loft_ref *ea = loft_keyed_refs(a, kind, keys, nk, &na);
     loft_ref *eb = loft_keyed_refs(b, kind, keys, nk, &nb);
     int same = na == nb;
@@ -454,12 +460,15 @@ static void loft_key_set(loft_ref e, const loft_key *k, loft_kv v) {
 #define LOFT_KEYED_SORTED 1
 #define LOFT_KEYED_INDEX 2
 #define LOFT_KEYED_ORDERED 3
+#define LOFT_KEYED_SPATIAL 4
+#define LOFT_KEYED_TRIE 5
 
 /* The element of collection `c` (of kind `kind`) whose key parts equal the `n` given. */
 static loft_ref loft_keyed_find(loft_ref c, int kind, uint32_t size, const loft_key *keys, int nk,
                                 const loft_kv *kv, int n) {
     if (kind == LOFT_KEYED_HASH) return loft_h_find(c, keys, kv, n);
     if (kind == LOFT_KEYED_INDEX) return loft_ix_find(c, keys, nk, kv, n);
+    if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE) return loft_rx_find(c, keys, nk, kind == LOFT_KEYED_TRIE, kv, n);
     return loft_seq_find(c, kind == LOFT_KEYED_SORTED ? size : 0, keys, nk, kv, n);
 }
 
@@ -497,6 +506,8 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
         if (kind == LOFT_KEYED_HASH) loft_hash_remove(T, etp, c, existing, keys, nk, 0);
         else if (kind == LOFT_KEYED_SORTED) loft_sorted_remove(c, existing, size);
         else if (kind == LOFT_KEYED_INDEX) loft_ix_remove(T, etp, c, existing, keys, nk, 0);
+        else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
+            loft_rx_remove_owned(T, etp, c, existing, keys, nk, kind == LOFT_KEYED_TRIE, 0);
         else loft_ordered_remove(T, etp, c, existing, 0, 0);
     }
     loft_ref e = kind == LOFT_KEYED_SORTED ? loft_sorted_new(c, size)
@@ -508,6 +519,8 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     if (kind == LOFT_KEYED_HASH) (void) loft_hash_insert(T, etp, c, e, keys, nk, 0);
     else if (kind == LOFT_KEYED_SORTED) loft_sorted_finish(c, size, keys, nk);
     else if (kind == LOFT_KEYED_INDEX) (void) loft_ix_insert(T, etp, c, e, keys, nk, 0);
+    else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
+        (void) loft_rx_insert_record(T, etp, c, e, keys, nk, kind == LOFT_KEYED_TRIE, 0);
     else (void) loft_ordered_insert(T, etp, c, e, keys, nk, 0);
     for (int i = 0; i < n; i++) loft_text_free(&own[i]);
     if (tmp.store_nr != 0xFFFF) loft_free_ref(tmp);
@@ -658,7 +671,7 @@ static void loft_group_finish(loft_ref parent, loft_ref rec, const loft_member *
  * by row.  The C runs the worker over the rows one after another — each row's result is the
  * one a thread would compute — into a buffer on a stack the loop reads (`parallel_buf_get*`)
  * and pops (`parallel_buf_drop*`). */
-typedef struct { int64_t i; double f; float g; loft_text t; loft_ref r; loft_fn fn; } loft_par_slot;
+typedef struct { int64_t i; double f; float g; loft_text t; loft_ref r; loft_fn fn; uint8_t adopted; } loft_par_slot;
 typedef struct { loft_par_slot *rows; int64_t n; } loft_par_buf;
 static loft_par_buf *loft_par_bufs = 0;
 static int loft_npar = 0, loft_par_cap = 0;
@@ -703,7 +716,9 @@ static void loft_par_drop(int refs) {
     loft_par_buf *b = &loft_par_bufs[--loft_npar];
     for (int64_t i = 0; i < b->n; i++) {
         loft_text_free(&b->rows[i].t);
-        if (refs) loft_free_ref(b->rows[i].r);
+        /* n_parallel_buf_drop_ref frees the ADOPTED stores — the ones a worker made — never a
+         * result that names a store which was there before (a pass-through of its element). */
+        if (refs && b->rows[i].adopted) loft_free_ref(b->rows[i].r);
     }
     free(b->rows);
 }
