@@ -54,6 +54,7 @@ pub(crate) fn loft_lib_dir_for_shaped(
                     .join("release"),
                 None => dir.join("target").join(triple).join("release"),
             };
+            loft::native_lib::refresh_runtime_uplift(&candidate);
             if crate::file_access::exists(candidate.join("libloft.rlib")) {
                 return Some(candidate);
             }
@@ -83,6 +84,7 @@ pub(crate) fn loft_lib_dir_for_shaped(
     // with `cache::rlib_candidates` and `native_lib::find_loft_rlib`.
     // The order itself — and when a stale `deps/` copy yields — is `preferred_runtime_rlib`'s.
     let deps = exe_dir.join("deps");
+    loft::native_lib::refresh_runtime_uplift(&exe_dir);
     if let Some(rlib) = loft::native_lib::preferred_runtime_rlib(
         &deps.join("libloft.rlib"),
         &exe_dir.join("libloft.rlib"),

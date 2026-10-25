@@ -369,6 +369,61 @@ pub fn preferred_runtime_rlib(
     has_uplifted.then(|| uplifted.to_path_buf())
 }
 
+/// Make `<profile>/libloft.rlib` the runtime the live rustc built, as cargo's uplift did.
+///
+/// Every lookup links the rlib at `<profile>/libloft.rlib` (and its `.rmeta` beside it), and
+/// derives the search path from that directory.  A cargo on the per-unit layout writes the
+/// rlib only to `<profile>/build/loft/<unit>/out/` and no longer uplifts it, so that path is
+/// either missing (a fresh tree) or a file an older toolchain left there (a restored cache),
+/// and every compile against it fails with `E0514`.  When the uplifted rlib is missing or
+/// was written by another rustc, and a per-unit one was written by this rustc, the newest
+/// such unit is linked into place — the rlib and its `.rmeta` — through a temporary name and
+/// a rename, so a concurrent reader sees the old file or the new one.  Otherwise nothing is
+/// touched: a tree cargo still uplifts in is left exactly as cargo left it.
+pub fn refresh_runtime_uplift(profile: &std::path::Path) {
+    let uplifted = profile.join("libloft.rlib");
+    if crate::file_access::exists(&uplifted) && !rlib_from_other_rustc(&uplifted) {
+        return;
+    }
+    let Ok(units) = crate::file_access::read_dir(profile.join("build").join("loft")) else {
+        return;
+    };
+    let fresh = units
+        .iter()
+        .map(|u| u.os_spelling().join("out").join("libloft.rlib"))
+        .filter(|r| crate::file_access::exists(r) && rlib_meta_header(r).is_some())
+        .filter(|r| !rlib_from_other_rustc(r))
+        .max_by_key(|r| {
+            crate::file_access::metadata(r)
+                .and_then(|m| m.modified())
+                .ok()
+        });
+    let Some(unit_rlib) = fresh else {
+        return;
+    };
+    let unit_rmeta = crate::file_access::with_extension(&unit_rlib, "rmeta");
+    let sibling_rmeta = profile.join("libloft.rmeta");
+    if crate::file_access::exists(&unit_rmeta) {
+        let _ = place(&unit_rmeta, &sibling_rmeta);
+    } else {
+        // A leftover `.rmeta` beside a self-contained rlib is a second candidate for one crate.
+        let _ = crate::file_access::remove_file(&sibling_rmeta);
+    }
+    let _ = place(&unit_rlib, &uplifted);
+}
+
+/// `from` at `to`, by hard link where the filesystem allows one and a copy where not, through
+/// a name of this process's own so the rename is the only step a reader can observe.
+fn place(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    let ext = crate::file_access::extension(to).unwrap_or_default();
+    let tmp = crate::file_access::with_extension(to, &format!("{ext}.tmp{}", std::process::id()));
+    let _ = crate::file_access::remove_file(&tmp);
+    if crate::file_access::hard_link(from, &tmp).is_err() {
+        crate::file_access::copy(from, &tmp)?;
+    }
+    crate::file_access::rename(&tmp, to)
+}
+
 /// Are these two paths the SAME file?  Hard-link identity first (which is what an uplift
 /// produces, and is free), then content — a copy is as good as a link for this question,
 /// and answering `false` only costs the caller the metadata it was looking for.
@@ -2052,6 +2107,92 @@ mod rmeta_identity_tests {
         let _ = crate::file_access::remove_dir_all(&d);
         crate::file_access::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// A per-unit layout profile: `<profile>/build/loft/<unit>/out/libloft.rlib` written by
+    /// `rustc`, with an `.rmeta` beside it when `rmeta` is set.  Answers the unit's rlib.
+    fn unit(profile: &std::path::Path, name: &str, rustc: &str, rmeta: bool) -> std::path::PathBuf {
+        let out = profile.join("build").join("loft").join(name).join("out");
+        crate::file_access::create_dir_all(&out).unwrap();
+        let r = out.join("libloft.rlib");
+        crate::file_access::write(&r, rlib(&blob(0x31, rustc))).unwrap();
+        if rmeta {
+            crate::file_access::write(out.join("libloft.rmeta"), blob(0x31, rustc)).unwrap();
+        }
+        r
+    }
+
+    fn rustc_of(p: &std::path::Path) -> String {
+        rlib_meta_header(p).expect("an rlib header").rustc
+    }
+
+    const OTHER: &str = "rustc 0.0.1-nightly (deadbeef 2000-01-01)";
+
+    /// A cargo on the per-unit layout writes the fresh rlib under `build/loft/<unit>/out/` and
+    /// no longer uplifts it: the stale uplift a restored cache left is replaced by the unit
+    /// this rustc wrote, with its `.rmeta`; a missing uplift is created.
+    #[test]
+    fn a_stale_or_missing_uplift_takes_the_unit_this_rustc_wrote() {
+        let Some(live) = crate::toolchain::rustc_version() else {
+            return;
+        };
+        let p = scratch("uplift_stale");
+        crate::file_access::write(p.join("libloft.rlib"), rlib(&blob(0x11, OTHER))).unwrap();
+        crate::file_access::write(p.join("libloft.rmeta"), blob(0x11, OTHER)).unwrap();
+        unit(&p, "aaaa", OTHER, true);
+        let fresh = unit(&p, "bbbb", live, true);
+        super::refresh_runtime_uplift(&p);
+        assert_eq!(rustc_of(&p.join("libloft.rlib")), live);
+        assert!(super::same_file(&p.join("libloft.rlib"), &fresh));
+        assert!(super::same_file(
+            &p.join("libloft.rmeta"),
+            &crate::file_access::with_extension(&fresh, "rmeta")
+        ));
+
+        let q = scratch("uplift_missing");
+        unit(&q, "cccc", live, false);
+        super::refresh_runtime_uplift(&q);
+        assert_eq!(rustc_of(&q.join("libloft.rlib")), live);
+        assert!(!crate::file_access::exists(q.join("libloft.rmeta")));
+        let _ = crate::file_access::remove_dir_all(&p);
+        let _ = crate::file_access::remove_dir_all(&q);
+    }
+
+    /// Nothing is touched where cargo's own uplift is current, nor where no unit was written by
+    /// this rustc; and a leftover `.rmeta` is dropped when the unit placed has none, so it is
+    /// never a second candidate beside a self-contained rlib.
+    #[test]
+    fn an_uplift_is_left_alone_unless_a_fresh_unit_replaces_it() {
+        let Some(live) = crate::toolchain::rustc_version() else {
+            return;
+        };
+        let p = scratch("uplift_current");
+        let current = rlib(&blob(0x22, live));
+        crate::file_access::write(p.join("libloft.rlib"), &current).unwrap();
+        unit(&p, "dddd", live, true);
+        super::refresh_runtime_uplift(&p);
+        assert_eq!(
+            crate::file_access::read(p.join("libloft.rlib")).unwrap(),
+            current
+        );
+        assert!(!crate::file_access::exists(p.join("libloft.rmeta")));
+
+        let q = scratch("uplift_none_fresh");
+        crate::file_access::write(q.join("libloft.rlib"), rlib(&blob(0x11, OTHER))).unwrap();
+        unit(&q, "eeee", OTHER, true);
+        super::refresh_runtime_uplift(&q);
+        assert_eq!(rustc_of(&q.join("libloft.rlib")), OTHER);
+
+        let r = scratch("uplift_drop_rmeta");
+        crate::file_access::write(r.join("libloft.rlib"), rlib(&blob(0x11, OTHER))).unwrap();
+        crate::file_access::write(r.join("libloft.rmeta"), blob(0x11, OTHER)).unwrap();
+        unit(&r, "ffff", live, false);
+        super::refresh_runtime_uplift(&r);
+        assert_eq!(rustc_of(&r.join("libloft.rlib")), live);
+        assert!(!crate::file_access::exists(r.join("libloft.rmeta")));
+        for d in [p, q, r] {
+            let _ = crate::file_access::remove_dir_all(&d);
+        }
     }
 
     #[test]
