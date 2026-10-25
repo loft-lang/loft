@@ -469,6 +469,18 @@ fn respan(span: Option<Position>, v: Value) -> Value {
 /// function answers.  A block visited in `Return` position ends in a terminator on every
 /// path, so its result is `never`, as the parser types a block that ends in `return`.
 fn value(v: Value, pos: Pos, epi: &[Value], depth: usize, cx: &mut Cx) -> Value {
+    // A value with no self-call in it has nothing to jump: in `Return` position it is
+    // `return v` exactly as the parser writes one, its blocks keeping their types.  Rewritten
+    // into a block that returns from inside, an `Object` build lost the result type the
+    // value-record readers recognise it by, and a record-returning tail-recursive function
+    // fell back from its tuple to a return buffer.
+    if pos == Pos::Return && !calls(&v, cx.d) {
+        return if matches!(v.unspan(), Value::Return(_)) {
+            v
+        } else {
+            Value::Return(Box::new(v))
+        };
+    }
     match v {
         Value::Span(bx) => {
             let (p, inner) = *bx;
@@ -565,4 +577,9 @@ fn jump(args: Vec<Value>, epi: &[Value], depth: usize, cx: &Cx) -> Value {
     }
     ops.push(Value::Continue(depth as u16));
     v_block(ops, Type::Never, "tail_jump")
+}
+
+/// Does `v` call `d` anywhere?
+fn calls(v: &Value, d: u32) -> bool {
+    v.any_node(&mut |n| matches!(n, Value::Call(c, _) if *c == d))
 }
