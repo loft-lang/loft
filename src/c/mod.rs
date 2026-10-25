@@ -425,6 +425,18 @@ impl<'a> Cx<'a> {
         self.tuple_shapes(id).contains(&CType::Text)
     }
 
+    /// Is tuple struct `id` plain scalars at every depth — no text, no reference, no function
+    /// value — so that a struct copy of it is a whole move?
+    pub(crate) fn tuple_is_plain(&self, id: u32) -> bool {
+        self.tuple_shapes(id).into_iter().all(|c| match c {
+            CType::Int | CType::Bool | CType::Enum | CType::Float | CType::Single | CType::Char => {
+                true
+            }
+            CType::Tuple(inner) => self.tuple_is_plain(inner),
+            _ => false,
+        })
+    }
+
     /// The number of the tuple struct with these element shapes, made on first use.
     pub(crate) fn tuple_id(&self, shapes: Vec<CType>) -> u32 {
         let mut t = self.tuples.borrow_mut();
@@ -1095,9 +1107,15 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
     };
     let sig = format!("static {} {}({params})", held(ret), c_name(data, d));
     if let Type::Iterator(elem, _) = def.returned().base() {
+        // A tuple rides the frame and the yield as a struct copy, which is a move only for
+        // plain scalars: a text or a record a tuple yields is handed over (`(G-Own)`).
         let elem = cx
             .ctype(elem)
-            .filter(|c| !matches!(c, CType::Void | CType::Tuple(_)))
+            .filter(|c| match c {
+                CType::Void => false,
+                CType::Tuple(id) => cx.tuple_is_plain(*id),
+                _ => true,
+            })
             .ok_or_else(|| format!("a generator of {}", type_word(elem)))?;
         let (body, parts) = body::FnWriter::new(cx, d, shapes, CType::Void)
             .yielding(elem)
