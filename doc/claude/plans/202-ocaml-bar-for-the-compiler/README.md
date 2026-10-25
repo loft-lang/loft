@@ -96,6 +96,34 @@ a heap parameter asks for it.
    Recommendation: `advice`; `warning` with the opt-out if the statement case must gate, in which
    case DIAGNOSTICS.md writes the exception down.
 
+## Documentation
+
+What this plan updates outside itself; P9 is this list, and the plan closes when every line is
+marked done.
+
+- [x] LOFT_DATA.md § Structs — `..base` (`c27eb2462`); LOFT_CONTROL.md § Match — head/tail arms,
+      the vector paragraph (`943ffa89b`); § `is` — a unit variant's `{` is the block's (`2da4321bc`).
+- [x] DIAGNOSTICS.md — the `match-scalar-hole` row and `LOFT_NO_SCALAR_HOLE`; the pin in
+      `tests/e1_code_set.rs` (`943ffa89b`).
+- [x] formal/binding.md `(B-Ref-StoredRef)` — the assignment spelling, the inline refusal
+      (`7e13076ba`); formal/matching.md `(M-Total)` — the vector clause, the advice (`943ffa89b`).
+- [x] CHANGELOG.md — New: the record update, the complete slice match, the scalar-hole advice;
+      Bug fixes: loft#2166, #2168, #2170.
+- [x] tests/docs/29-match.loft — "the compiler will not remind you" rewritten, the page
+      regenerated (`943ffa89b`).
+- [x] doc/claude/bars/OCAML_BAR.md — A5, C7, C8, H1 re-measured (P7); H6 waits for P5a.
+- [ ] LOFT.md's index — a line for the record update under structs, if the index names
+      spellings (check).
+- [ ] tests/docs reference pages — a worked `..base` on the structs page; the match page's
+      head/tail arms.
+- [ ] the `loft-write` skill — `..base`, head/tail arms without `_`, the scalar-hole advice, a
+      unit variant's `{` after `is`, `d.r = &p`; the error→fix rows for the new refusals; the
+      snippets in `tests/reference/skill-*.loft`; `make skills-review` clean.
+- [ ] STDLIB.md / INTERFACES.md — any limitation they state that this plan lifted (run the
+      citation check before repeating one).
+- [ ] the feature catalogue — the `@F` issue for struct literals and for `match` (`make
+      features-fetch && make features-gen`).
+
 ## Cross-arc dependencies
 
 - **@PLN91** — the parent; strand 1a consumes every row above.

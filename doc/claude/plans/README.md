@@ -482,6 +482,13 @@ content never moved out, or the link wasn't updated when it did.
 `scripts/check_doc_drift.sh` catches the common shapes
 automatically.
 
+**Every plan carries a `## Documentation` section** (owner, 2026-10-25): the list of what the
+work must update OUTSIDE the plan when it finishes — the user docs and the reference pages that
+run, `DIAGNOSTICS.md` for a code, the formal chapter it keeps or extends, `CHANGELOG.md`, the
+bars and the catalogue, the skills (`make skills-review`), the library docs.  Closing a plan
+checks that list off; a plan with an open Documentation line is not finished, however green
+its code.  [`_TEMPLATE.md`](_TEMPLATE.md) § Documentation has the usual set.
+
 ### Authoring a new plan
 
 Open an issue in [`loft-lang/plans`](https://github.com/loft-lang/plans).  The
@@ -491,7 +498,7 @@ slot** — small plans live entirely in the issue.
 
 Use [`_TEMPLATE.md`](_TEMPLATE.md) for the issue body's shape: Status / Goal /
 Effort / Sub-arcs / Phase ordering / Open questions / Cross-arc dependencies /
-See also.  A **big multi-phase design** that needs its own document space may add
+**Documentation** (what to update outside the plan when it finishes — required) / See also.  A **big multi-phase design** that needs its own document space may add
 a local file named for the issue — `plans/<n>-<slug>.md`, or `plans/<n>-<slug>/README.md`
 when it has companion files — but the issue stays the canonical home and the file is
 optional.  Length budget: 100-300 lines;
