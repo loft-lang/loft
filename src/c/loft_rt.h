@@ -2882,6 +2882,24 @@ static loft_text loft_text_from_bytes(loft_ref v) {
     return out;
 }
 
+/* text_from_byte_range (Stores::text_from_bytes_range): the bytes [lo, hi) of a vector<u8> as a
+ * text, a negative bound counting from the end as `bytes[lo..hi]` does (@FR-Slice-Value); bytes
+ * that are not UTF-8, or an empty range, give the empty text. */
+static loft_text loft_text_from_byte_range(loft_ref v, int64_t lo, int64_t hi) {
+    loft_text out = { 0, 0, 0 };
+    int64_t n = loft_vec_len(v);
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0 || n == 0) return out;
+    lo = lo < 0 ? (lo + n < 0 ? 0 : lo + n) : (lo > n ? n : lo);
+    hi = hi < 0 ? (hi + n < 0 ? 0 : hi + n) : (hi > n ? n : hi);
+    if (hi <= lo) return out;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return out;
+    const unsigned char *p = loft_elem_base(s, r) + lo;
+    if (loft_utf8_valid(p, (size_t) (hi - lo))) loft_push(&out, (const char *) p, (size_t) (hi - lo));
+    return out;
+}
+
 /* OpSliceVector (Stores::vector_slice): the elements [lo, hi) of `o`, clamped to it, appended to
  * `v`.  Scalar elements only. */
 static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint32_t size) {

@@ -857,6 +857,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_arguments" => Some("loft_arguments"),
         "n_vector_sum_int" => Some("loft_vector_sum_int"),
         "n_text_from_bytes" => Some("loft_text_from_bytes"),
+        "n_text_from_byte_range" => Some("loft_text_from_byte_range"),
         "t_4text_starts_with" => Some("loft_starts_with"),
         "t_4text_ends_with" => Some("loft_ends_with"),
         "t_4text_find" => Some("loft_find"),

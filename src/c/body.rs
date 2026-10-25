@@ -3045,7 +3045,8 @@ impl<'a> FnWriter<'a> {
                     K::Cond,
                 ))
             }
-            _ => Err(format!("operator {name}")),
+            // The chain ends in `misc_operator`, which holds the last operators and the refusal.
+            _ => self.misc_operator(name, args, ind),
         }
     }
 }
