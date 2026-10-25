@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I64 — Bytecode compiler (IR to bytecode): the per-pass clock of a whole-program step
 
 //! `LOFT_TIMING`'s per-pass clock for a whole-program step.  Here, in `opt`, so both the
 //! compiler's own steps and the rewrites below it can time their passes.

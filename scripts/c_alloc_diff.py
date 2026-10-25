@@ -43,7 +43,7 @@ def interp(prog, d):
     t = os.path.join(d, "i.txt")
     subprocess.run([LOFT, "--interpret", prog], env={**os.environ, "LOFT_ALLOC_TRACE": t},
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
-    return program_events(open(t))
+    return program_events(open(t, encoding="utf-8"))
 
 def c(prog, d):
     src, exe, t = (os.path.join(d, x) for x in ("p.c", "p", "c.txt"))
@@ -56,11 +56,11 @@ def c(prog, d):
         return None, "cc: " + r.stderr[:300]
     subprocess.run([exe], env={**os.environ, "LOFT_ALLOC_TRACE": t}, stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL, timeout=120, cwd=d)
-    return program_events(open(t)), None
+    return program_events(open(t, encoding="utf-8")), None
 
 def main():
     for prog in sys.argv[1:]:
-        if not re.search(r"^\s*(pub\s+)?fn\s+main\s*\(", open(prog, errors="replace").read(), re.M):
+        if not re.search(r"^\s*(pub\s+)?fn\s+main\s*\(", open(prog, encoding="utf-8", errors="replace").read(), re.M):
             continue
         with tempfile.TemporaryDirectory() as d:
             try:
