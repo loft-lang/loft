@@ -7563,6 +7563,11 @@ impl Parser {
             *result_type = joined;
         } else if !self.first_pass
             && arm_type != Type::Void
+            // loft#2170 — a `_ => null` arm is the null arm every named arm may be: it takes
+            // the result's typed null once the result type is final (`type_null_arms`), so it
+            // is not unified here.  Asked, it was refused as "cannot unify: integer and null"
+            // while `Var { .. } => null` beside the same arms was accepted.
+            && arm_type != Type::Null
             && arm_type != Type::Never
             && !self.arm_convert_reported
             && !self.match_arms_unify(result_type, &arm_type)

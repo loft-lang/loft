@@ -269,6 +269,10 @@ git do.
 
 ### Bug fixes
 
+**A `_ => null` arm joins an enum match as nullable.**  `match n { Lit { v } => v, _ => null }`
+is an `integer?`, as the named spelling `Var { name } => null` already was; the wildcard arm
+was refused with "cannot unify: integer and null" (loft#2170).
+
 **`if t is A { … }` compiles.**  Testing a unit variant of a struct-enum right before a block
 was an internal compiler error, and `if t is A { v } else { 0 }` read `{ v }` as a capture list.
 A unit variant has no fields and so no capture list: its `{` opens the block, whatever the block
