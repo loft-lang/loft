@@ -143,6 +143,8 @@ pub(crate) struct Cx<'a> {
     key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The root types a `store_persist_copy` writes an image of: one sidecar each.
     sidecars: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// Whether the unit reports its stores (`store_memory()`), which names every type.
+    type_names: std::cell::Cell<bool>,
     /// Every type the unit writes to or reads from a file (`loft_ser{tp}` / `loft_de{tp}`).
     ser_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The Unicode tables the unit reads (`crate::c::unicode`).
@@ -187,6 +189,7 @@ impl<'a> Cx<'a> {
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             sidecars: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            type_names: std::cell::Cell::new(false),
             ser_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
@@ -289,6 +292,30 @@ impl<'a> Cx<'a> {
     pub(crate) fn sidecar_of(&self, tp: u16) -> String {
         self.sidecars.borrow_mut().insert(tp);
         format!("&loft_sidecar{tp}")
+    }
+
+    /// The type-name table `store_memory()` reads, by type number: the name `Stores::types`
+    /// gives each, so a store's line names its type as the interpreter's does.
+    pub(crate) fn type_names(&self) -> &'static str {
+        self.type_names.set(true);
+        "loft_tnames, loft_ntnames"
+    }
+
+    fn type_name_table(&self) -> String {
+        if !self.type_names.get() {
+            return String::new();
+        }
+        let names: Vec<String> = self
+            .stores
+            .types
+            .iter()
+            .map(|t| body::c_string(&t.name))
+            .collect();
+        format!(
+            "static const char *const loft_tnames[] = {{ {} }};\nstatic const uint32_t loft_ntnames = {};\n",
+            names.join(", "),
+            names.len()
+        )
     }
 
     /// The sidecars: each type's `.dschema` text split where its slot line goes, and the
@@ -687,6 +714,7 @@ impl<'a> Cx<'a> {
         }
         out.push_str(&table);
         out.push_str(&self.sidecar_table());
+        out.push_str(&self.type_name_table());
         for tp in self.enum_names.borrow().iter() {
             let count = match &self.stores.types[*tp as usize].parts {
                 crate::database::Parts::Enum(values) => values.len(),
@@ -829,6 +857,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_trie_prefix" => Some("loft_trie_prefix"),
         "n_store_persist_copy" => Some("loft_image_write"),
         "n_store_load" => Some("loft_image_load"),
+        "n_store_memory" => Some("loft_store_memory"),
         "n_store_upgrade_owed_next" => Some("loft_store_upgrade_owed_next"),
         "n_store_upgrade_owed_record" => Some("loft_store_upgrade_owed_record"),
         "n_store_upgrade_owed_old" => Some("loft_store_upgrade_owed_old"),

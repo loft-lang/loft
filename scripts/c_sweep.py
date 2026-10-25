@@ -17,7 +17,8 @@
 For each program: `loft --emit-c` writes it as C, `cc` builds it in each macro mode of
 src/c/loft_cc.h — `-DLOFT_STRICT` (pure C99, `-pedantic -Werror`), the default, and
 `-DLOFT_VERIFY` (every proof the generator relied on checked again) — and each build's stdout
-and exit status are compared with `loft --interpret`'s; a program without `main` is its tests,
+and exit status are compared with `loft --interpret`'s (a printed `store_memory()` report's
+lines aside: they name the interpreter's own stores); a program without `main` is its tests,
 and the C's exit status is compared with `loft --tests`'s.  A mode changes speed, never a
 value, so a difference between modes is a defect of a macro's fallback.  Every program lands
 in one bucket:
@@ -81,6 +82,17 @@ def reason(stderr: bytes) -> str:
     return re.sub(r"\d+", "N", why)
 
 
+REPORT = re.compile(rb"^stores: \d+ live \|.*(\n  #\d+ .* bc:\d+)*$", re.M)
+
+
+def unreported(out: bytes) -> bytes:
+    """A program's stdout without the lines of a printed `store_memory()` report: they name
+    the interpreter's own stores (its value stack, its constants) and its bytecode positions,
+    which no compiled program has.  The programs that read the report's counts check those
+    themselves."""
+    return REPORT.sub(b"<store report>", out)
+
+
 def one(path: str, asan: bool = False, modes=tuple(MODES)):
     src = ROOT / path
     with tempfile.TemporaryDirectory(prefix="loft-c-sweep-") as tmp:
@@ -110,7 +122,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
                 line = next((l for l in c_out[2].decode(errors="replace").split("\n")
                              if "Sanitizer" in l or "runtime error:" in l), "")
                 return path, "sanitizer", f"[{mode}] {line.strip()[:200]}", None
-            same = c_out[0] == i_out[0] if tests else (c_out[0], c_out[1]) == (i_out[0], i_out[1])
+            same = c_out[0] == i_out[0] if tests else \
+                (c_out[0], unreported(c_out[1])) == (i_out[0], unreported(i_out[1]))
             if not same:
                 return path, "differ", f"[{mode}]", (i_out, c_out)
         return path, "match", "", None

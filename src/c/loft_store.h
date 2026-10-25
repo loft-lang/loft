@@ -952,6 +952,53 @@ static int loft_st_is_removed(const loft_store_t *s, uint32_t rec) {
     return loft_bits_contains(&s->removed, rec);
 }
 
+/* `StoreUsage`: a store's space, from a walk of its block chain. */
+typedef struct {
+    uint32_t capacity_words, claimed_words, claimed_count, free_words, free_count;
+    uint32_t largest_free_words, mergeable_free_pairs, live_end_words;
+    int walk_complete;
+} loft_usage;
+
+/* `Store::usage`: a negative header is a free block of `-size` words, a positive one a claimed
+ * record; a run of free blocks holding a parked one is the one block its flush leaves
+ * (`@FR-H-Park`), and a removed record's header word is held space, not a record. */
+static loft_usage loft_st_usage(const loft_store_t *s) {
+    loft_usage u;
+    memset(&u, 0, sizeof u);
+    u.capacity_words = s->size;
+    if (!s->live || s->size <= LOFT_ST_PRIMARY) return u;
+    uint32_t pos = LOFT_ST_PRIMARY, run_words = 0;
+    int prev_was_free = 0, run_parked = 0;
+    while (pos < s->size) {
+        int32_t claim = loft_st_i32(s, pos, 0);
+        if (claim == 0) break;
+        uint32_t sz = claim < 0 ? (uint32_t) -(int64_t) claim : (uint32_t) claim;
+        if (claim < 0) {
+            u.free_words += sz;
+            int parked = s->parked_count != 0 && loft_bits_contains(&s->parked_set, pos);
+            if (prev_was_free && (run_parked || parked)) {
+                run_words += sz;
+                run_parked = 1;
+            } else {
+                if (prev_was_free) u.mergeable_free_pairs++;
+                u.free_count++;
+                run_words = sz;
+                run_parked = parked;
+            }
+            if (run_words > u.largest_free_words) u.largest_free_words = run_words;
+            prev_was_free = 1;
+        } else {
+            u.claimed_words += sz;
+            u.claimed_count += !loft_st_is_removed(s, pos);
+            prev_was_free = 0;
+        }
+        pos += sz;
+        if (claim > 0) u.live_end_words = pos;
+    }
+    u.walk_complete = pos == s->size;
+    return u;
+}
+
 /* `Store::claim_at`: the record at exactly `pos`, `size` words, carved out of the free blocks
  * that cover it (an image's tombstones are placed this way). */
 static uint32_t loft_st_claim_at(loft_store_t *s, uint32_t pos, uint32_t size) {

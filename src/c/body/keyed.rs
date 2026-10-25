@@ -281,6 +281,13 @@ impl FnWriter<'_> {
                     K::Bool,
                 )))
             }
+            ("n_store_memory", []) => {
+                let t = self.temp(CType::Text);
+                self.line(ind, &format!("loft_text_free(&{t});"));
+                let names = self.cx.type_names();
+                self.line(ind, &format!("{t} = loft_store_memory({names});"));
+                Ok(Some(self.held(t, CType::Text)))
+            }
             ("t_4hash_len", [h]) => {
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(

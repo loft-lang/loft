@@ -1066,7 +1066,7 @@ impl<'a> FnWriter<'a> {
         );
         self.line(
             ind + 1,
-            &format!("loft_copy_record(loft_types, {tp}, {src}, {name}, 0);"),
+            &format!("loft_copy_record(loft_types, {tp}, {src}, {name}, 4);"),
         );
         self.line(ind, "}");
         self.flush(ind);
@@ -2227,7 +2227,8 @@ impl<'a> FnWriter<'a> {
                     u16::try_from(raw).map_err(|_| "a type number out of range".to_string())?;
                 let tp = self.copyable(raw & crate::keys::COPY_TP_MASK)?;
                 let free = u8::from(raw & crate::keys::COPY_FREE_SOURCE != 0)
-                    | (u8::from(self.cx.swap_safe(tp)) << 1);
+                    | (u8::from(self.cx.swap_safe(tp)) << 1)
+                    | (u8::from(raw & crate::keys::COPY_FRESH_DEST != 0) << 2);
                 let (src, dst) = self.two(name, &[(*src).clone(), (*dst).clone()], ind)?;
                 Ok(E::new(
                     format!(
@@ -2315,10 +2316,13 @@ impl<'a> FnWriter<'a> {
                     K::Ref,
                 ))
             }
-            ("OpFreeRecordIn", [r, _]) => {
+            ("OpFreeRecordIn", [r, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type out of range")?;
+                self.cx.copy_type(tp)?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_free_record_in({})", as_ref(r)?),
+                    format!("loft_free_record_in(loft_types, {tp}, {})", as_ref(r)?),
                     K::Void,
                 ))
             }
@@ -2370,8 +2374,13 @@ impl<'a> FnWriter<'a> {
             ("OpSetText" | "OpSetTextReplace", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[(*r).clone(), (*val).clone()], ind)?;
+                let f = if name == "OpSetText" {
+                    "loft_set_text"
+                } else {
+                    "loft_refill_text"
+                };
                 Ok(E::new(
-                    format!("loft_set_text({}, {fld}, {})", as_ref(r)?, as_view(val)?),
+                    format!("{f}({}, {fld}, {})", as_ref(r)?, as_view(val)?),
                     K::Void,
                 ))
             }
@@ -2812,6 +2821,19 @@ impl<'a> FnWriter<'a> {
                 }
                 let size = self.cx.stores.size(tp);
                 let (v, idx) = self.two(name, &[(*v).clone(), (*idx).clone()], ind)?;
+                // An element owning heap releases it first, as `remove_vector_at` does.
+                if self.cx.stores.type_owns_heap(tp) {
+                    self.cx.name_types();
+                    self.cx.describe_type(tp);
+                    return Ok(E::new(
+                        format!(
+                            "loft_vec_remove_at(loft_types, {tp}, {}, {})",
+                            as_ref(v)?,
+                            as_int(idx)?
+                        ),
+                        K::Cond,
+                    ));
+                }
                 Ok(E::new(
                     format!("loft_vec_remove({}, {size}, {})", as_ref(v)?, as_int(idx)?),
                     K::Cond,
@@ -2941,13 +2963,22 @@ impl<'a> FnWriter<'a> {
             ("OpClear", [r, tp]) => {
                 // `@FR-R-Reuse`'s reset flag asks for a fresh root where the store allows it;
                 // the walk below is the answer the interpreter falls back to when it does not.
-                let tp = u16::try_from(Self::literal(tp, "type")?)
-                    .map_err(|_| "a type out of range")?
-                    & crate::keys::POOL_TP_MASK;
+                let raw = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type out of range")?;
+                let tp = raw & crate::keys::POOL_TP_MASK;
                 self.cx.copy_type(tp)?;
                 let r = self.expr(r, ind)?;
+                let r = as_ref(r)?;
+                let walk = format!("loft_remove_claims(loft_types, {tp}, {r})");
+                if raw & crate::keys::POOL_RESET == 0 {
+                    return Ok(E::new(walk, K::Void));
+                }
+                let size = self.cx.stores.enum_parent_size(tp);
+                let (image, n) = self.cx.default_image(tp);
                 Ok(E::new(
-                    format!("loft_remove_claims(loft_types, {tp}, {})", as_ref(r)?),
+                    format!(
+                        "if (!loft_reset_pool_root({r}, {tp}, {size}, {image}, {n})) {walk}"
+                    ),
                     K::Void,
                 ))
             }

@@ -557,6 +557,14 @@ static int loft_walk_removed_at(int64_t state, int reverse, uint32_t *at) {
 /* OpRemove in a walk over a vector (State::remove, Stores::remove_vector_at): the element's
  * claims released, then its successors shift down; forward, the index steps back to visit the
  * one that moved into its place. */
+/* OpRemoveVector (`Stores::remove_vector_at`, an inline element): the element's claims are
+ * released before the shift, since the slot it is is overwritten by its successor. */
+static int loft_vec_remove_at(const loft_tdesc *T, uint16_t elem, loft_ref v, int64_t index) {
+    loft_ref e = loft_vec_get(v, T[elem].size, index);
+    if (e.rec != 0) loft_remove_claims(T, elem, e);
+    return loft_vec_remove(v, T[elem].size, index);
+}
+
 static void loft_vec_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref v, int reverse) {
     loft_ref e = loft_vec_get(v, T[elem].size, *state);
     if (e.rec != 0) loft_remove_claims(T, elem, e);

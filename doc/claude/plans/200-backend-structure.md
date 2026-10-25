@@ -527,9 +527,9 @@ the browser read them), so a layout is observable.
   `mmap` (a whole-file read under `-DLOFT_NO_POSIX`), the paged loaders, the reference remap
   of a loaded image, compaction on load.  Its acceptance (owner): a C program
   reads the store files the interpreter and a `--native` program wrote — mapped, loaded and
-  paged — and they read the C's; a cell per direction.  `store_memory()` and
-  `store_reclaim` then answer as the interpreter's do, bar the interpreter-only creation
-  site, which reads 0 as on native.
+  paged — and they read the C's; a cell per direction.  `store_memory()` is carried
+  (`Store::usage` and `Stores::memory_report`; the creation site reads `bc:0` as on native);
+  `store_reclaim` is still to come.
 
 ## B6 — optional: a minimal binary
 

@@ -38,7 +38,11 @@ freed store reads `0xDEADBEEF`, a growth moves the buffer and scribbles the one 
 `-DLOFT_POISON_CLAIM` (a claim and a grown tail read `0xDEADBEEF`, and `loft_claim` stops
 zeroing), each against the interpreter under `LOFT_POISON=1` / `LOFT_POISON_CLAIM=1`.  A program
 without `main` is its tests: the C runs every test the way `loft --tests` picks them, and the
-two exit statuses are compared.  `tests/c_emit.rs` is the cargo guard: a scalar program checked
+two exit statuses are compared.  A printed `store_memory()` report is compared without its
+lines, which name the interpreter's own stores (its value stack, its constants) and bytecode
+positions; the programs that READ the report's counts — a store census before and after a
+thousand rounds — are the sweep's leak check, since a release the C skips leaves a record
+behind and nothing else fails.  `tests/c_emit.rs` is the cargo guard: a scalar program checked
 against hand-computed values on both the interpreter and the C, a keyed program (hash, sorted,
 index, a linked group) checked the same way, a refusal naming its construct, and the overflow
 macros against Rust's checked arithmetic in every mode — and the memory model's replays: the

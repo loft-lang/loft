@@ -123,6 +123,68 @@ static void loft_text_free(loft_text *t) {
     t->cap = 0;
 }
 
+static double loft_usage_pct(uint64_t a, uint64_t b) {
+    return b == 0 ? 0.0 : 100.0 * (double) a / (double) b;
+}
+
+/* `Stores::memory_report` (`store_memory()`): every live store's space, then the eight largest
+ * by capacity (ties in store order) with their type's name from `names`; a compiled program
+ * has no bytecode positions, so the creation site reads `bc:0` as on `--native`. */
+static loft_text loft_store_memory(const char *const *names, uint32_t nnames) {
+    uint32_t live = 0;
+    uint64_t cap = 0, data = 0, fr = 0, recs = 0, free_blk = 0, mergeable = 0;
+    uint32_t *rows = (uint32_t *) malloc(sizeof(uint32_t) * (loft_nstores ? loft_nstores : 1));
+    loft_usage *us = (loft_usage *) malloc(sizeof(loft_usage) * (loft_nstores ? loft_nstores : 1));
+    if (!rows || !us) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (uint32_t i = 0; i < loft_nstores; i++) {
+        if (!loft_stores[i].live) continue;
+        loft_usage u = loft_st_usage(&loft_stores[i]);
+        us[i] = u;
+        live++;
+        cap += u.capacity_words;
+        data += u.claimed_words;
+        fr += u.free_words;
+        recs += u.claimed_count;
+        free_blk += u.free_count;
+        mergeable += u.mergeable_free_pairs;
+        /* A stable insertion by descending capacity, as `sort_by_key(Reverse(..))` orders. */
+        uint32_t at = live - 1;
+        while (at > 0 && us[rows[at - 1]].capacity_words < u.capacity_words) {
+            rows[at] = rows[at - 1];
+            at--;
+        }
+        rows[at] = i;
+    }
+    char line[512];
+    loft_text out = { 0, 0, 0 };
+#define LOFT_MB(w) ((double) (w) * 8.0 / 1048576.0)
+    int n = snprintf(line, sizeof line,
+        "stores: %u live | cap %.2f MB | data %.2f MB (%.0f%%) | free %.2f MB | records %llu | free-blocks %llu | mergeable-pairs %llu",
+        live, LOFT_MB(cap), LOFT_MB(data), loft_usage_pct(data, cap), LOFT_MB(fr),
+        (unsigned long long) recs, (unsigned long long) free_blk, (unsigned long long) mergeable);
+    loft_push(&out, line, (size_t) n);
+    for (uint32_t k = 0; k < live && k < 8; k++) {
+        uint32_t i = rows[k];
+        loft_usage u = us[i];
+        uint16_t kt = loft_stores[i].known;
+        const char *tname = kt < nnames && names[kt] ? names[kt] : "?";
+        char idx[16];
+        snprintf(idx, sizeof idx, "%u", i);
+        n = snprintf(line, sizeof line,
+            "\n  #%-5s %8.3f MB  used %3.0f%%  recs %-5u free-blk %-4u mergeable %-4u largest-free %-7uw  tail %3.0f%% inner %3.0f%%  type %s bc:0",
+            idx, LOFT_MB(u.capacity_words), loft_usage_pct(u.claimed_words, u.capacity_words),
+            u.claimed_count, u.free_count, u.mergeable_free_pairs, u.largest_free_words,
+            loft_usage_pct(u.capacity_words > u.live_end_words ? u.capacity_words - u.live_end_words : 0, u.capacity_words),
+            loft_usage_pct(u.live_end_words > u.claimed_words ? u.live_end_words - u.claimed_words : 0, u.capacity_words),
+            tname);
+        loft_push(&out, line, (size_t) n < sizeof line ? (size_t) n : sizeof line - 1);
+    }
+#undef LOFT_MB
+    free(rows);
+    free(us);
+    return out;
+}
+
 /* The order of two texts, byte by byte, a shorter prefix first (Rust's `str` order). */
 static int loft_str_cmp(loft_str a, loft_str b) {
     size_t n = a.len < b.len ? a.len : b.len;
@@ -1323,6 +1385,34 @@ static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
     loft_text_free(&copy);
 }
 
+/* OpSetTextReplace (`Store::refill_str`): the text the field held is overwritten where it lies
+ * when the new one fits its record, and released otherwise (`@FR-H-TextReplace`). */
+static void loft_refill_text(loft_ref r, uint32_t fld, loft_str v) {
+    if (r.rec == 0) return;
+    loft_store_t *s = loft_store_of(r);
+    loft_text copy = { 0, 0, 0 };
+    if (v.len && v.p >= (const char *) s->buf && v.p < (const char *) s->buf + (size_t) s->size * 8) {
+        copy = loft_text_own(v);
+        v = loft_view(&copy);
+    }
+    uint32_t old = loft_u32(s, r.rec, r.pos + fld);
+    if (old != 0) {
+        int32_t words = loft_st_i32(s, old, 0);
+        if (words > 0 && v.len + 8 <= (size_t) words * 8) {
+            loft_set_u32(s, old, 4, (uint32_t) v.len);
+            if (v.len) memcpy(loft_at(s, old, 8), v.p, v.len);
+            loft_text_free(&copy);
+            return;
+        }
+        loft_st_delete(s, old);
+    }
+    uint32_t srec = loft_st_claim(s, (uint32_t) ((v.len + 15) / 8));
+    loft_set_u32(s, srec, 4, (uint32_t) v.len);
+    if (v.len) memcpy(loft_at(s, srec, 8), v.p, v.len);
+    loft_set_u32(s, r.rec, r.pos + fld, srec);
+    loft_text_free(&copy);
+}
+
 /* ── Deep copies (Stores::copy_claims) ─────────────────────────────────────────────────────
  * A record's bytes are copied first; then every part it owns is copied into the destination's
  * store, walking a table of the program's types the emitter writes (`loft_types`). */
@@ -1493,12 +1583,26 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
     return 1;
 }
 
+static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
+
 /* OpCopyRecord's flags: bit 0 frees the source, bit 1 says the type may move (loft_swap_in). */
 static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst, int flags) {
-    int free_source = flags & 1;
+    int free_source = flags & 1, fresh_dest = flags & 4;
     if (src.store_nr == dst.store_nr && src.rec == dst.rec && src.pos == dst.pos) return;
-    if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0) return;
+    if (src.store_nr == 0xFFFF) {
+        /* `Stores::copy_null_into`: a fresh destination is written absent. */
+        if (fresh_dest && dst.store_nr != 0xFFFF && dst.rec != 0)
+            memset(loft_at(loft_store_of(dst), dst.rec, dst.pos), 0, T[tp].size);
+        return;
+    }
+    if (dst.store_nr == 0xFFFF || dst.rec == 0) {
+        if (free_source && dst.store_nr != src.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+        return;
+    }
+    if (src.rec == 0) return;
     if (free_source && (flags & 2) && loft_swap_in(tp, src, dst)) return;
+    /* The destination's previous content goes first, unless it is fresh (`COPY_FRESH_DEST`). */
+    if (!fresh_dest) loft_remove_claims(T, tp, dst);
     loft_copy_bytes(dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, dst);
     if (free_source && src.store_nr != dst.store_nr && !loft_free_protected(src)) loft_free_ref(src);
@@ -2764,8 +2868,31 @@ static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, con
 }
 
 /* OpFreeRecordIn (Stores::free_record_in): a store's root record frees the store; a placed
- * record's words go back with its store. */
-static void loft_free_record_in(loft_ref r) {
+ * record releases what it owns and its block goes back to the host's store (`@FR-R-Place`). */
+static void loft_free_record_in(const loft_tdesc *T, uint16_t tp, loft_ref r) {
     if (r.store_nr == 0xFFFF || r.rec == 0 || r.store_nr >= loft_nstores) return;
-    if (r.rec == 1 && r.pos == 8) loft_free_ref(r);
+    if (r.rec == 1 && r.pos == 8) {
+        loft_free_ref(r);
+        return;
+    }
+    loft_remove_claims(T, tp, r);
+    loft_st_delete(&loft_stores[r.store_nr], r.rec);
+}
+
+/* OpClear with `@FR-R-Reuse`'s reset flag (Stores::reset_pool_root): a pooled call buffer at its
+ * store's root, the store minted for it, is made again as OpDatabase mints it and prefilled
+ * with its type's defaults; answers 0, and the caller walks, for any other buffer.
+ * `-DLOFT_NO_POOL_RESET` is the interpreter's LOFT_NO_POOL_RESET. */
+static int loft_reset_pool_root(loft_ref r, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n) {
+#ifdef LOFT_NO_POOL_RESET
+    (void) r; (void) tp; (void) size; (void) image; (void) n;
+    return 0;
+#else
+    if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= loft_nstores) return 0;
+    loft_store_t *s = &loft_stores[r.store_nr];
+    if (!s->live || s->pinned || s->known != tp) return 0;
+    loft_database_typed(&r, size, tp);
+    loft_fill(r, image, n);
+    return 1;
+#endif
 }
