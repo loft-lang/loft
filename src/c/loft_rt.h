@@ -1360,12 +1360,20 @@ static int loft_vec_absent(loft_ref v) {
 
 /* OpGetText (Store::get_str): the field holds a string record — its length at byte 4, its
  * bytes from byte 8 — and 0 for the null text. */
+/* Store::get_str: the string record `srec` (its length @4, its bytes from @8); null for no
+ * record and for a length that runs past the store, so a corrupt record reads as null, never
+ * past the buffer. */
+static loft_str loft_store_str(loft_store_t *s, uint32_t srec) {
+    if (srec == 0 || srec > 0x7FFFFFFFu) return loft_null_text();
+    uint32_t len = loft_u32(s, srec, 4);
+    if (len / 8 + srec > s->size) return loft_null_text();
+    return loft_lit((const char *) loft_at(s, srec, 8), len);
+}
+
 static loft_str loft_get_text(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return loft_null_text();
     loft_store_t *s = loft_store_of(r);
-    uint32_t srec = loft_u32(s, r.rec, r.pos + fld);
-    if (srec == 0 || srec > 0x7FFFFFFFu) return loft_null_text();
-    return loft_lit((const char *) loft_at(s, srec, 8), loft_u32(s, srec, 4));
+    return loft_store_str(s, loft_u32(s, r.rec, r.pos + fld));
 }
 
 /* OpSetText (Store::set_str): a new string record in the record's store.  A value that lives
@@ -1474,7 +1482,7 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
     case LOFT_T_TEXT: {
         uint32_t cur = loft_u32(fs, from.rec, from.pos);
         if (cur == 0) { loft_set_u32(loft_store_of(to), to.rec, to.pos, 0); return; }
-        loft_text tmp = loft_text_own(loft_lit((const char *) loft_at(fs, cur, 8), loft_u32(fs, cur, 4)));
+        loft_text tmp = loft_text_own(loft_store_str(fs, cur));
         loft_store_t *ts = loft_store_of(to);
         uint32_t srec = loft_st_claim(ts, (uint32_t) ((tmp.len + 15) / 8));
         loft_set_u32(ts, srec, 4, (uint32_t) tmp.len);
@@ -1957,9 +1965,7 @@ static int loft_cmp_text_rec(const void *a, const void *b) {
     memcpy(&x, a, 4);
     memcpy(&y, b, 4);
     loft_store_t *s = loft_sort_store;
-    loft_str p = x ? loft_lit((const char *) loft_at(s, x, 8), loft_u32(s, x, 4)) : loft_null_text();
-    loft_str q = y ? loft_lit((const char *) loft_at(s, y, 8), loft_u32(s, y, 4)) : loft_null_text();
-    return loft_str_cmp(p, q);
+    return loft_str_cmp(loft_store_str(s, x), loft_store_str(s, y));
 }
 
 /* OpSortVector (vector::sort_vector, sort_text_vector): ascending, by the element's width and

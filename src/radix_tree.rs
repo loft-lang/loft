@@ -786,7 +786,7 @@ fn set_top(store: &mut Store, tree: u32, c: Child) {
     store.set_i32_raw(tree, TOP, c.encode());
 }
 
-fn cap_for_words(words: u32) -> u32 {
+pub(crate) fn cap_for_words(words: u32) -> u32 {
     (words * 8).saturating_sub(HDR) / NODE_SIZE
 }
 

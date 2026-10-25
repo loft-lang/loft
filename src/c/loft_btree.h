@@ -158,11 +158,7 @@ static int64_t loft_bt_text_part_at(const uint8_t *b, size_t len, size_t skip) {
 
 /* btree::key_text: the first key field's text of the record `rec`. */
 static loft_str loft_bt_key_text(loft_store_t *s, uint32_t rec, const loft_key *k) {
-    uint32_t srec = loft_u32(s, rec, 8 + k->pos);
-    if (srec == 0 || srec > 0x7FFFFFFFu) return loft_null_text();
-    uint32_t len = loft_u32(s, srec, 4);
-    if (len / 8 + srec > s->size) return loft_null_text();
-    return loft_lit((const char *) loft_at(s, srec, 8), len);
+    return loft_store_str(s, loft_u32(s, rec, 8 + k->pos));
 }
 
 static int loft_bt_is_text(const loft_key *keys) { return keys[0].type == 6 || keys[0].type == -6; }

@@ -64,9 +64,7 @@ static loft_kv loft_key_get(loft_store_t *s, uint32_t rec, uint32_t pos, const l
         return loft_kv_float(v);
     }
     case 6: {
-        uint32_t srec = loft_u32(s, rec, at);
-        if (srec == 0 || srec > 0x7FFFFFFFu) return loft_kv_text(loft_null_text());
-        return loft_kv_text(loft_lit((const char *) loft_at(s, srec, 8), loft_u32(s, srec, 4)));
+        return loft_kv_text(loft_store_str(s, loft_u32(s, rec, at)));
     }
     case 8: {
         int32_t v;

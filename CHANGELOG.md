@@ -315,6 +315,12 @@ stack address on the interpreter (a garbage record on read, nothing said) and fa
 compile natively.  A `&` into a field that holds its record inline (`struct Rec { o: Other }`,
 `d.o = &p` or `Rec { o: &p }`) is refused — it has nothing to bind; write `d.o = p` to copy
 the record, or declare the field `reference<Other>` to hold a link (loft#2166).
+**A paged load of a damaged image answers instead of crashing.**  `store_load_key`,
+`store_load_keys`, `store_load_range` and the other paged loaders could stop the program, or
+leave a collection `store_verify` rejects, when an image held a length or a size that ran past
+its own record — a truncated or corrupted download whose sidecar still matched.  Such an entry
+now reads as absent, or its field as null.
+
 **A paged lookup finds a narrow key.**  `store_load_key`, `store_load_keys` and a lazily bound hash
 answered "absent" for a key the image held when the key field was a `limit(…)` range not starting
 at 0, or a one-byte range at 128 and above; they now find it, as `store_load` always did.

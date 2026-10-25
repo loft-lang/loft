@@ -315,7 +315,11 @@ computes differently from the resident store becomes a lookup that silently answ
   `radix_db/paged.rs` `a_paged_box_agrees_with_the_resident_one` and
   `every_axis_width_decodes_to_what_was_written`; the hash on every narrow key width,
   `tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft`;
-  `tests/paged_read_alloc.rs`, `tests/paged_browser.rs`, `tests/scripts/store_load_*.loft`.
+  `tests/paged_read_alloc.rs`, `tests/paged_browser.rs`, `tests/scripts/store_load_*.loft`;
+  the bound on a malformed image — every claimed record's length and size word made huge, one
+  at a time, under every paged loader —
+  `tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft`; the C's reader beside
+  the interpreter's and native's, `tests/c_emit.rs` `the_paged_loaders_read_every_backends_image`.
 - **`S-Pair`** — `tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft`.
 - **`S-Gate`, an image with no sidecar** —
   `tests/scripts/2174-an-image-without-its-sidecar-is-refused.loft` (whole, untrusted and paged

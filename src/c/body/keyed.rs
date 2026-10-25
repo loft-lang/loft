@@ -316,6 +316,16 @@ impl FnWriter<'_> {
                     K::Bool,
                 )))
             }
+            (
+                "n_store_load_key"
+                | "n_store_load_key_text"
+                | "n_store_load_keys"
+                | "n_store_load_keys_text"
+                | "n_store_load_prefix"
+                | "n_store_load_box"
+                | "n_store_load_range",
+                [local, ..],
+            ) => self.paged_load(name, local, &args[1..], ind).map(Some),
             ("n_store_memory", []) => {
                 let t = self.temp(CType::Text);
                 self.line(ind, &format!("loft_text_free(&{t});"));
@@ -325,6 +335,159 @@ impl FnWriter<'_> {
             }
             _ => Ok(None),
         }
+    }
+
+    /// What a working-set loader can serve, asked of the Rust store once, when the program is
+    /// written: the collection the local's store roots (`Stores::collection_type_of_store`;
+    /// `load_range` reads the root itself), whether the loader reads that kind, and whether the
+    /// entry type's every field can be copied out of the image (`Stores::is_copyable_entry`).
+    /// A loader that cannot serve its collection still runs, and answers 0 after its gate and
+    /// its open, saying why as the interpreter does.
+    fn paged_plan(&mut self, name: &str, local: &Value) -> Result<PagedPlan, String> {
+        use crate::database::Parts;
+        let root = self
+            .value_type(local)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+            .filter(|tp| (*tp as usize) < self.cx.stores.types.len())
+            .ok_or("a loaded value whose store type is not known here")?;
+        let stores = self.cx.stores;
+        let coll = if name == "n_store_load_range" {
+            root
+        } else {
+            stores.collection_type_of_store(root)
+        };
+        let parts = stores.types.get(coll as usize).map(|t| &t.parts);
+        let (want, served) = match name {
+            "n_store_load_prefix" => ("a trie", matches!(parts, Some(Parts::Trie(..)))),
+            "n_store_load_box" => ("a spatial index", matches!(parts, Some(Parts::Radix(..)))),
+            "n_store_load_range" => (
+                "a sorted collection",
+                matches!(parts, Some(Parts::Sorted(..) | Parts::Ordered(..))),
+            ),
+            _ => (
+                "a hash or a trie",
+                matches!(parts, Some(Parts::Hash(..) | Parts::Trie(..))),
+            ),
+        };
+        let content = match parts {
+            Some(
+                Parts::Hash(c, _)
+                | Parts::Trie(c, _)
+                | Parts::Radix(c, _)
+                | Parts::Sorted(c, _)
+                | Parts::Ordered(c, _),
+            ) if served => Some(*c),
+            _ => None,
+        };
+        let refusal = match content {
+            None => Some(stores.wrong_collection_reason(root, want)),
+            Some(c) if !stores.is_copyable_entry(c) => Some(stores.not_copyable_reason(c)),
+            Some(_) => None,
+        };
+        self.cx.name_types();
+        let sc = self.cx.sidecar_of(root);
+        let (content, keys, nk) = match (content, &refusal) {
+            (Some(c), None) => {
+                self.cx.describe_type(c);
+                let (keys, nk) = self.cx.keys_of(coll);
+                (c, keys, nk)
+            }
+            _ => (0, "0".to_string(), 0),
+        };
+        let kind = match parts {
+            Some(Parts::Trie(..)) => "LOFT_PG_TRIE",
+            Some(Parts::Radix(..)) => "LOFT_PG_RADIX",
+            _ => "LOFT_PG_HASH",
+        };
+        Ok(PagedPlan {
+            sc,
+            refusal: refusal.map_or_else(|| "0".to_string(), |r| super::c_string(&r)),
+            content,
+            keys,
+            nk,
+            kind,
+            coll_name: super::c_string(stores.type_name(coll)),
+        })
+    }
+
+    /// A working-set loader (`store_load_key` and its siblings, `loft_paged_load.h`): its
+    /// collection read once here (`paged_plan`), its operands evaluated in order.
+    fn paged_load(
+        &mut self,
+        name: &str,
+        local: &Value,
+        rest: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        let plan = self.paged_plan(name, local)?;
+        let PagedPlan {
+            sc,
+            refusal,
+            content,
+            keys,
+            nk,
+            kind,
+            ..
+        } = &plan;
+        let mut all = vec![local.clone()];
+        all.extend(rest.iter().cloned());
+        let mut es = self.args(&all, ind)?.into_iter();
+        let mut next = || es.next().ok_or(format!("{name} without its operands"));
+        let local = as_ref(next()?)?;
+        let path = as_view(next()?)?;
+        let head = format!("loft_types, {local}, {path}, {sc}, {refusal}, {content}, {keys}, {nk}");
+        Ok(match name {
+            "n_store_load_key" => E::new(
+                format!(
+                    "(uint8_t) (loft_pg_load_keys({head}, {kind}, (loft_kv[]) {{ loft_kv_int({}) }}, 1) > 0)",
+                    as_int(next()?)?
+                ),
+                K::Bool,
+            ),
+            "n_store_load_key_text" => E::new(
+                format!(
+                    "(uint8_t) (loft_pg_load_keys({head}, {kind}, (loft_kv[]) {{ loft_kv_text({}) }}, 1) > 0)",
+                    as_view(next()?)?
+                ),
+                K::Bool,
+            ),
+            "n_store_load_keys" | "n_store_load_keys_text" => E::new(
+                format!(
+                    "loft_pg_load_key_list({head}, {kind}, {}, {})",
+                    as_ref(next()?)?,
+                    u8::from(name == "n_store_load_keys_text")
+                ),
+                K::Int,
+            ),
+            "n_store_load_prefix" => {
+                let pre = as_view(next()?)?;
+                E::new(
+                    format!("loft_pg_load_prefix({head}, {pre}, {})", as_int(next()?)?),
+                    K::Int,
+                )
+            }
+            "n_store_load_box" => {
+                let (from, till) = (as_ref(next()?)?, as_ref(next()?)?);
+                E::new(
+                    format!(
+                        "loft_pg_load_box({head}, {from}, {till}, {}, {})",
+                        as_int(next()?)?,
+                        plan.coll_name
+                    ),
+                    K::Int,
+                )
+            }
+            _ => {
+                let lo = as_int(next()?)?;
+                E::new(
+                    format!(
+                        "loft_pg_load_range(loft_types, {local}, {path}, {sc}, {refusal}, {content}, {keys}, {lo}, {})",
+                        as_int(next()?)?
+                    ),
+                    K::Int,
+                )
+            }
+        })
     }
 
     /// The keyed operators, or `None` for another.
@@ -747,4 +910,17 @@ impl FnWriter<'_> {
             K::Void,
         ))
     }
+}
+
+/// What `paged_plan` found: the sidecar the gate reads, the refusal (a C string, or `0`), the
+/// entry type, the key parts and the collection kind the loader is handed, and the
+/// collection's name for a refusal the runtime words.
+struct PagedPlan {
+    sc: String,
+    refusal: String,
+    content: u16,
+    keys: String,
+    nk: usize,
+    kind: &'static str,
+    coll_name: String,
 }

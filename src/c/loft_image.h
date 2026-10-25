@@ -366,9 +366,9 @@ static int loft_version_triple(const char *v, size_t n, unsigned long t[3]) {
 }
 
 /* The schema gate (`check_beside`, `classify`, `Release::admits`): the sidecar beside `path`
- * against the layout the program reads its store as.  1 when the image may be read as it is:
- * no sidecar (a store written before sidecars), or one naming this layout. */
-static int loft_image_gate(const char *path, const loft_sidecar *sc) {
+ * against the layout the program reads its store as.  1 when the image may be read as it is: its
+ * sidecar names this layout.  `who` names the caller in what a refusal says. */
+static int loft_image_gate(const char *path, const loft_sidecar *sc, const char *who) {
     char *side = (char *) malloc(strlen(path) + 9);
     if (!side) { fputs("loft: out of memory\n", stderr); abort(); }
     sprintf(side, "%s.dschema", path);
@@ -376,9 +376,9 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc) {
     free(side);
     if (!f) {
         /* `@FR-S-Gate`: an image with no sidecar records no layout and is never read raw. */
-        fprintf(stderr, "store_load: refusing %s — it has no layout sidecar (`.dschema`) beside it, so nothing "
+        fprintf(stderr, "%s: refusing %s — it has no layout sidecar (`.dschema`) beside it, so nothing "
                 "records the layout its records were written with; write it with store_persist_copy, which "
-                "writes both.\n", path);
+                "writes both.\n", who, path);
         return 0;
     }
     size_t cap = 4096, n = 0, got;
@@ -422,7 +422,7 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc) {
         ok = ok && has_hash;
     }
     if (!ok) {
-        fprintf(stderr, "store_load: refusing %s — its layout sidecar cannot be read.\n", path);
+        fprintf(stderr, "%s: refusing %s — its layout sidecar cannot be read.\n", who, path);
         free(text);
         return 0;
     }
@@ -436,14 +436,14 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc) {
         loft_version_triple(sc->oldest, strlen(sc->oldest), o) &&
         (w[0] < o[0] || (w[0] == o[0] && (w[1] < o[1] || (w[1] == o[1] && w[2] < o[2]))))) {
         fprintf(stderr,
-                "store_load: refusing %s — this store was written by %.*s, and this program reads stores from %s on; "
+                "%s: refusing %s — this store was written by %.*s, and this program reads stores from %s on; "
                 "open it once with a release that reads both, then with this one.\n",
-                path, (int) version_len, version, sc->oldest);
+                who, path, (int) version_len, version, sc->oldest);
         free(text);
         return 0;
     }
     ok = hash == sc->hash && strcmp(dump, sc->dump) == 0;
-    if (!ok) fprintf(stderr, "store_load: refusing %s — it was written with a different layout, and it cannot be converted to this program's.\n", path);
+    if (!ok) fprintf(stderr, "%s: refusing %s — it was written with a different layout, and it cannot be converted to this program's.\n", who, path);
     free(text);
     return ok;
 }
@@ -455,7 +455,7 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc) {
 static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc) {
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return 0;
     char *p = loft_cpath(path, 0);
-    if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc))) {
+    if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc, "store_load"))) {
         free(p);
         return 0;
     }

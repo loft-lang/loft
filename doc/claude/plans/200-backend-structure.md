@@ -523,9 +523,10 @@ the browser read them), so a layout is observable.
   layouts ported — the hash (`loft_hash.h`), the index (`loft_btree.h`), the sorted, the
   ordered, the spatial and the trie (`loft_radix.h`); (e) the image — `store_persist_copy` and
   `store_load` carried (`loft_image.h`; a file written by any backend read by every backend, the
-  C's image the interpreter's byte for byte); still to come: a file-backed store over POSIX
-  `mmap` (a whole-file read under `-DLOFT_NO_POSIX`), the paged loaders, the reference remap
-  of a loaded image, compaction on load.  Its acceptance (owner): a C program
+  C's image the interpreter's byte for byte) and the paged loaders (`loft_paged.h`,
+  `loft_paged_load.h`; the tree walks shared with the resident ones); still to come: a
+  file-backed store over POSIX `mmap` (a whole-file read under `-DLOFT_NO_POSIX`), the
+  reference remap of a loaded image, compaction on load.  Its acceptance (owner): a C program
   reads the store files the interpreter and a `--native` program wrote — mapped, loaded and
   paged — and they read the C's; a cell per direction.  `store_memory()` is carried
   (`Store::usage` and `Stores::memory_report`; the creation site reads `bc:0` as on native), and

@@ -972,6 +972,8 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
         include_str!("../src/c/loft_hash.h"),
         include_str!("../src/c/loft_btree.h"),
         include_str!("../src/c/loft_radix.h"),
+        include_str!("../src/c/loft_radix_walk.h"),
+        include_str!("../src/c/loft_radix_db.h"),
     ] {
         c.push_str(part);
     }
@@ -1256,6 +1258,8 @@ fn the_c_index_files_every_record_where_btree_does() {
         include_str!("../src/c/loft_hash.h"),
         include_str!("../src/c/loft_btree.h"),
         include_str!("../src/c/loft_radix.h"),
+        include_str!("../src/c/loft_radix_walk.h"),
+        include_str!("../src/c/loft_radix_db.h"),
     ] {
         c.push_str(part);
     }
@@ -1556,6 +1560,8 @@ fn the_c_trees_place_every_record_where_radix_tree_does() {
         include_str!("../src/c/loft_hash.h"),
         include_str!("../src/c/loft_btree.h"),
         include_str!("../src/c/loft_radix.h"),
+        include_str!("../src/c/loft_radix_walk.h"),
+        include_str!("../src/c/loft_radix_db.h"),
     ] {
         c.push_str(part);
     }
@@ -1745,59 +1751,78 @@ fn main() {
 }
 "#;
 
-/// The owner's acceptance for the image (@PLN200 B5 step (e)): a store file written by any
-/// backend is read by every backend — the interpreter, the C, and `--native` where `rustc` is
-/// on PATH — and each reader renders the same data.  The C's image is also the interpreter's,
-/// byte for byte (a fixed hash seed; the sidecar's slot line names each writer's own scratch).
-#[test]
-fn a_store_image_crosses_every_backend() {
-    if !have_cc() {
-        eprintln!("skipped: no cc on PATH");
-        return;
+/// A program written as C, beside the loft binary: run as each backend it is crossed on — the
+/// interpreter, the C, and `--native` where `rustc` is on PATH — with the image test's mode and
+/// path in its environment and a fixed hash seed, so a hash image is byte-reproducible.
+struct Crossed {
+    loft: &'static str,
+    src: std::path::PathBuf,
+    exe: std::path::PathBuf,
+    backends: Vec<&'static str>,
+}
+
+impl Crossed {
+    /// `None` when there is no `cc` on PATH.
+    fn new(tag: &str, program: &str) -> Option<Crossed> {
+        if !have_cc() {
+            eprintln!("skipped: no cc on PATH");
+            return None;
+        }
+        let loft = env!("CARGO_BIN_EXE_loft");
+        let dir = scratch(tag);
+        let src = dir.join("rw.loft");
+        fa::write(&src, program).expect("write program");
+        let (c_src, exe) = (dir.join("rw.c"), dir.join("rw"));
+        let emit = loft::platform::process::harness_command(loft)
+            .arg("--emit-c")
+            .arg(&c_src)
+            .arg(&src)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "emit: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-w"])
+            .arg(&c_src)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let native = loft::platform::process::harness_command("rustc")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        let mut backends = vec!["interpret", "c"];
+        if native {
+            backends.push("native");
+        }
+        Some(Crossed {
+            loft,
+            src,
+            exe,
+            backends,
+        })
     }
-    let loft = env!("CARGO_BIN_EXE_loft");
-    let dir = scratch("image");
-    let src = dir.join("rw.loft");
-    fa::write(&src, IMAGE_PROGRAM).expect("write program");
-    let (c_src, exe) = (dir.join("rw.c"), dir.join("rw"));
-    let emit = loft::platform::process::harness_command(loft)
-        .arg("--emit-c")
-        .arg(&c_src)
-        .arg(&src)
-        .output()
-        .expect("run loft --emit-c");
-    assert!(
-        emit.status.success(),
-        "emit: {}",
-        String::from_utf8_lossy(&emit.stderr)
-    );
-    let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-w"])
-        .arg(&c_src)
-        .arg("-o")
-        .arg(&exe)
-        .arg("-lm")
-        .output()
-        .expect("run cc");
-    assert!(
-        cc.status.success(),
-        "cc: {}",
-        String::from_utf8_lossy(&cc.stderr)
-    );
-    let native = loft::platform::process::harness_command("rustc")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success());
-    let mut backends = vec!["interpret", "c"];
-    if native {
-        backends.push("native");
+
+    fn dir(&self) -> &std::path::Path {
+        self.src.parent().expect("the program's directory")
     }
-    let run = |backend: &str, mode: &str, path: &std::path::Path| -> String {
+
+    fn run(&self, backend: &str, mode: &str, path: &std::path::Path) -> String {
         let mut cmd = if backend == "c" {
-            loft::platform::process::harness_command(&exe)
+            loft::platform::process::harness_command(&self.exe)
         } else {
-            let mut c = loft::platform::process::harness_command(loft);
-            c.arg(format!("--{backend}")).arg(&src);
+            let mut c = loft::platform::process::harness_command(self.loft);
+            c.arg(format!("--{backend}")).arg(&self.src);
             c
         };
         let out = cmd
@@ -1808,8 +1833,21 @@ fn a_store_image_crosses_every_backend() {
             .output()
             .expect("run a backend");
         String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+}
+
+/// The owner's acceptance for the image (@PLN200 B5 step (e)): a store file written by any
+/// backend is read by every backend — the interpreter, the C, and `--native` where `rustc` is
+/// on PATH — and each reader renders the same data.  The C's image is also the interpreter's,
+/// byte for byte (a fixed hash seed; the sidecar's slot line names each writer's own scratch).
+#[test]
+fn a_store_image_crosses_every_backend() {
+    let Some(x) = Crossed::new("image", IMAGE_PROGRAM) else {
+        return;
     };
-    for w in &backends {
+    let (dir, backends) = (x.dir(), &x.backends);
+    let run = |backend: &str, mode: &str, path: &std::path::Path| x.run(backend, mode, path);
+    for w in backends {
         assert_eq!(
             run(w, "write", &dir.join(format!("{w}.store"))),
             "written\n",
@@ -1825,8 +1863,8 @@ fn a_store_image_crosses_every_backend() {
         want.contains("small 1:2:one 3:4:three"),
         "the small store reads back: {want}"
     );
-    for w in &backends {
-        for r in &backends {
+    for w in backends {
+        for r in backends {
             let got = run(r, "load", &dir.join(format!("{w}.store")));
             assert_eq!(got, want, "{r} reading {w}'s image");
         }
@@ -1855,6 +1893,139 @@ fn a_store_image_crosses_every_backend() {
         assert!(
             sidecar("c").contains("\nslot="),
             "the C's {suffix} sidecar names its slot"
+        );
+    }
+}
+
+/// The program the paged loaders are crossed with: a hash entry holding a text, a vector of
+/// integers, a nested struct and a vector of structs; a text-keyed hash; a trie; a spatial index;
+/// a sorted; an entry type the working-set copy refuses (`vector<text>`); and a three-entry hash
+/// (an inline table, where the forty-entry one has an arena).  Each loader asked once or twice.
+const PAGED_PROGRAM: &str = r#"struct Item { tag: text, n: integer }
+struct Rec { id: integer, name: text, tags: vector<integer>, sub: Item, items: vector<Item> }
+struct Word { w: text, n: integer }
+struct Pt { x: integer, y: integer, label: text }
+struct Sv { k: integer, s: text }
+struct Bad { id: integer, names: vector<text> }
+struct Small { id: integer, v: integer }
+
+fn main() {
+  path = env_variable("LOFT_PERSIST_TEST_PATH");
+  mode = env_variable("LOFT_PERSIST_TEST_MODE");
+  h: hash<Rec[id]> = [];
+  th: hash<Word[w]> = [];
+  tr: trie<Word[w]> = [];
+  sp: spatial<Pt[x, y]> = [];
+  so: sorted<Sv[k]> = [];
+  bad: hash<Bad[id]> = [];
+  sm: hash<Small[id]> = [];
+  if mode == "write" {
+    for i in 0..40 {
+      h += Rec { id: i * 3, name: "rec{i}", tags: [i, i + 1], sub: Item { tag: "s{i}", n: -i }, items: [Item { tag: "a{i}", n: i }, Item { tag: "b{i}", n: i * 2 }] };
+    }
+    for i in 0..30 {
+      th += Word { w: "w{i}", n: i * i };
+      tr += Word { w: "word{i}", n: i };
+    }
+    for i in 0..36 { sp += Pt { x: i % 6, y: i / 6, label: "p{i}" }; }
+    for i in 0..20 { so += Sv { k: i * 5, s: "s{i}" }; }
+    bad += Bad { id: 1, names: ["x", "y"] };
+    for i in 1..4 { sm += Small { id: i, v: i * 10 }; }
+    ok = store_persist_copy(h, "{path}.h") && store_persist_copy(th, "{path}.th") && store_persist_copy(tr, "{path}.tr");
+    ok = ok && store_persist_copy(sp, "{path}.sp") && store_persist_copy(so, "{path}.so");
+    ok = ok && store_persist_copy(bad, "{path}.bad") && store_persist_copy(sm, "{path}.sm");
+    if ok { println("written") } else { println("FAIL write") }
+    return
+  }
+  got = store_load_key(h, "{path}.h", 9);
+  r = h[9];
+  tg = "";
+  for t in r.tags? { tg += "{t},"; }
+  it = "";
+  for x in r.items? { it += "{x.tag}:{x.n},"; }
+  println("key9 {got} {r.name} {tg} {r.sub.tag}:{r.sub.n} {it} len={len(h)} verify={store_verify(h)}");
+  println("key10 {store_load_key(h, "{path}.h", 10)} len={len(h)}");
+  h2: hash<Rec[id]> = [];
+  n = store_load_keys(h2, "{path}.h", [0, 3, 4, 117]);
+  println("keys {n} {h2[0].name} {h2[3].name} {h2[117].name} absent4={h2[4] == null} len={len(h2)} verify={store_verify(h2)}");
+  println("text {store_load_key_text(th, "{path}.th", "w5")} {th["w5"].n} len={len(th)}");
+  th2: hash<Word[w]> = [];
+  n = store_load_keys_text(th2, "{path}.th", ["w1", "w2", "zz"]);
+  println("texts {n} {th2["w2"].n} len={len(th2)} verify={store_verify(th2)}");
+  println("trie {store_load_key_text(tr, "{path}.tr", "word12")} {tr["word12"].n} len={len(tr)}");
+  tp: trie<Word[w]> = [];
+  n = store_load_prefix(tp, "{path}.tr", "word1", 5);
+  s = 0;
+  for w in tp { s += w.n; }
+  println("prefix5 {n} {s} len={len(tp)} verify={store_verify(tp)}");
+  ta: trie<Word[w]> = [];
+  n = store_load_prefix(ta, "{path}.tr", "word1", -1);
+  s = 0;
+  for w in ta { s += w.n; }
+  println("prefix {n} {s} len={len(ta)}");
+  n = store_load_box(sp, "{path}.sp", [3, 1], [1, 0], -1);
+  s = 0;
+  for p in sp { s += p.x + 10 * p.y; }
+  println("box {n} {s} len={len(sp)} verify={store_verify(sp)}");
+  sp4: spatial<Pt[x, y]> = [];
+  println("box4 {store_load_box(sp4, "{path}.sp", [3, 1], [1, 0], 4)} len={len(sp4)}");
+  n = store_load_range(so, "{path}.so", 10, 20);
+  ks = "";
+  for v in so { ks += "{v.k}={v.s},"; }
+  println("range {n} {ks} len={len(so)} verify={store_verify(so)}");
+  println("bad {store_load_key(bad, "{path}.bad", 1)} len={len(bad)}");
+  println("small {store_load_key(sm, "{path}.sm", 2)} {sm[2].v} len={len(sm)} verify={store_verify(sm)}");
+}
+"#;
+
+/// The paged half of the owner's acceptance (@PLN200 B5 step (e)): the images every backend
+/// writes are read a page at a time by every backend — each loader, on every collection kind it
+/// serves — and each reader answers the hand-computed values.  Then the C's images are the
+/// interpreter's, byte for byte.  Id 9 is the fourth record (`i = 3`); the keys 0, 3 and 117 are
+/// present and 4 is not; the trie's keys starting `word1` are `word1` and `word10`…`word19`, the
+/// first five summing 1 + 10 + 11 + 12 + 13; the box from (3, 1) to (1, 0) holds x 1…3 by y 0…1;
+/// the sorted keys run 0, 5, …, 95.
+#[test]
+fn the_paged_loaders_read_every_backends_image() {
+    let Some(x) = Crossed::new("paged", PAGED_PROGRAM) else {
+        return;
+    };
+    let want = "key9 true rec3 3,4, s3:-3 a3:3,b3:6, len=1 verify=true
+key10 false len=1
+keys 3 rec0 rec1 rec39 absent4=true len=3 verify=true
+text true 25 len=1
+texts 2 4 len=2 verify=true
+trie true 12 len=1
+prefix5 5 47 len=5 verify=true
+prefix 11 146 len=11
+box 6 42 len=6 verify=true
+box4 4 len=4
+range 3 10=s2,15=s3,20=s4, len=3 verify=true
+bad false len=0
+small true 20 len=1 verify=true
+";
+    for w in &x.backends {
+        assert_eq!(
+            x.run(w, "write", &x.dir().join(*w)),
+            "written\n",
+            "{w} writes"
+        );
+    }
+    for w in &x.backends {
+        for r in &x.backends {
+            assert_eq!(
+                x.run(r, "load", &x.dir().join(*w)),
+                want,
+                "{r} paging {w}'s images"
+            );
+        }
+    }
+    for suffix in ["h", "th", "tr", "sp", "so", "bad", "sm"] {
+        let read = |w: &str| fa::read(x.dir().join(format!("{w}.{suffix}"))).expect("an image");
+        assert_eq!(
+            read("c"),
+            read("interpret"),
+            "the C's .{suffix} image is the interpreter's"
         );
     }
 }

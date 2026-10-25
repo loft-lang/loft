@@ -69,8 +69,12 @@ module and the C header and compare every answer and every byte of the store.
 | `loft_keys.h` | key parts, their compare, and the per-table SipHash-1-3 digest of `src/siphash.rs` |
 | `loft_hash.h` | `src/hash.rs` and `src/arena.rs`, ported, and the `Stores` routines over a hash |
 | `loft_btree.h` | `src/btree.rs`, ported: the index, and the `Stores` routines over it |
-| `loft_radix.h` | `src/radix_tree.rs`, `radix_db.rs` and `trie_db.rs`, ported: spatial and trie |
+| `loft_radix.h` | `src/radix_tree.rs`'s layout and key bits: the constants, a key's composed bits, the Morton helpers |
+| `loft_radix_walk.h` | the tree's walks (descend, seek, step, the box and prefix walks), pasted twice: over a store (`loft_rx_*`) and over a paged image (`loft_prx_*`), as the Rust walks are generic over `TreeNodes` |
+| `loft_radix_db.h` | `radix_db.rs` and `trie_db.rs`, ported: the spatial and trie collections over a store |
 | `loft_image.h` | store images: `store_persist_copy` and `store_load` (`Stores::persist_copy`, `load_path`) |
+| `loft_paged.h` | `src/paged_reader.rs`, ported: an image read a page at a time, every read past its end 0 |
+| `loft_paged_load.h` | the working-set loaders (`store_load_key`, `_keys`, `_key_text`, `_keys_text`, `_prefix`, `_box`, `_range`) and their relocating copy |
 | `loft_keyed.h` | sorted and ordered (`src/vector.rs`), the walks, renders and keyed writes |
 | `loft_io.h` | files and the filesystem, pasted last |
 
@@ -159,7 +163,23 @@ converts it; a store holding references is refused at emit time until the refere
 (`rebase_stored_refs`) is ported; compaction on load is not done (it declines for an image
 `store_persist_copy` wrote, which is already dense).  `tests/c_emit.rs` crosses a file written
 by each backend with every reader — the interpreter, the C, `--native` — on a store of every
-collection kind, and checks the C's image and sidecar against the interpreter's byte for byte.  The key compare, the range search and the sorted insert are
+collection kind, and checks the C's image and sidecar against the interpreter's byte for byte.
+
+**Paged loads.**  The working-set loaders read an image a page at a time (`loft_paged.h`, the
+port of `paged_reader.rs`): a 64 KiB page is read from the file when a walk first touches it,
+a byte past the end reads as 0, and a size or a count is trusted only as far as the record that
+holds it (`@FR-S-Paged`), so a malformed image answers and never faults.  A hash entry is found
+by the port of `find_hash_entry`, a sorted range by its binary search; a trie or a spatial walk
+is the C's own tree walk, the same source pasted over the paged reader, with the fuel and node
+bound `PagedTrie` adds.  The entry is copied as `Stores::copy_entry` copies it — its bytes, its
+texts and vectors relocated, then filed by the collection's own insert.  Which collections a
+loader serves and which entry types it can copy is the Rust store's answer
+(`collection_type_of_store`, `is_copyable_entry`), asked when the program is written to C; a
+loader that cannot serve its collection runs and answers 0, saying why on stderr, as the
+interpreter does.  An `http(s)://` source is not carried.  `tests/c_emit.rs` crosses every
+loader with every writer and reader, and
+`tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft` mutates every record of
+each image.  The key compare, the range search and the sorted insert are
 ports of `keys::compare`, `vector::sorted_search` and `vector::sorted_finish`.  A record type
 shared by several collections of one struct (`@FR-Col-Group`) turns its vector into an `array`
 and its sorted into an `ordered`; a record finished into one member enters every member, and a
@@ -222,8 +242,8 @@ only by failing with one of its messages — the annotations are read by the sam
 ## Not carried yet
 
 The sweep's ranking is the current list.  The large families: text parsed into a typed value
-(`T.parse`, `as vector<T>`, JSON), the image loaders beyond `store_load` (paged, by key,
-over a URL) and a store bound to a file, a linked group with a spatial or trie member,
+(`T.parse`, `as vector<T>`, JSON), the image loaders over a URL, a lazy binding
+(`store_bind_lazy`), `store_reclaim` and a store bound to a file, a linked group with a spatial or trie member,
 `parallel { }` blocks, and the native library calls; of the generators, one held in a record
 field and one of tuples; of the `&` locals, a link into a store place; of `par`, a worker over
 tuples or function values.  A record holding a linked group is not copied yet: its members name one record set,

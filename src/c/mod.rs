@@ -36,7 +36,12 @@ const RUNTIME: &str = concat!(
     include_str!("loft_hash.h"),
     include_str!("loft_btree.h"),
     include_str!("loft_radix.h"),
+    include_str!("loft_radix_walk.h"),
+    include_str!("loft_radix_db.h"),
     include_str!("loft_image.h"),
+    include_str!("loft_paged.h"),
+    include_str!("loft_radix_walk.h"),
+    include_str!("loft_paged_load.h"),
     include_str!("loft_keyed.h"),
     include_str!("loft_io.h")
 );
@@ -871,6 +876,13 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_store_load" => Some("loft_image_load"),
         "n_store_memory" => Some("loft_store_memory"),
         "n_store_verify" => Some("loft_store_verify"),
+        "n_store_load_key"
+        | "n_store_load_key_text"
+        | "n_store_load_keys"
+        | "n_store_load_keys_text"
+        | "n_store_load_prefix"
+        | "n_store_load_box"
+        | "n_store_load_range" => Some("loft_pg_load_keys"),
         "n_store_upgrade_owed_next" => Some("loft_store_upgrade_owed_next"),
         "n_store_upgrade_owed_record" => Some("loft_store_upgrade_owed_record"),
         "n_store_upgrade_owed_old" => Some("loft_store_upgrade_owed_old"),

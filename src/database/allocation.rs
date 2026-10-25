@@ -7339,8 +7339,7 @@ impl Stores {
     /// relocate. Text (type 5) is a POINTER; vectors /
     /// nested structs / keyed collections are heap-owned — all need the
     /// relocating graph-copy (3b.2+), so they are NOT inline.
-    #[cfg(paged_store)]
-    fn is_inline_scalar(&self, tp: u16) -> bool {
+    pub(crate) fn is_inline_scalar(&self, tp: u16) -> bool {
         match self.types[tp as usize].parts {
             Parts::Int(..) | Parts::Byte(..) | Parts::Short(..) | Parts::ShortRaw(..) => true,
             // Base covers the numeric primitives, character(6) and text(5); all
@@ -7356,8 +7355,7 @@ impl Stores {
     /// scalar-vector are BOTH a single flat sub-record behind a `u32` pointer, so
     /// they relocate with identical code. A `vector<struct>` / `vector<text>` /
     /// nested struct / reference still needs the recursive copy (3b.4+).
-    #[cfg(paged_store)]
-    fn is_copyable_field(&self, tp: u16) -> bool {
+    pub(crate) fn is_copyable_field(&self, tp: u16) -> bool {
         if self.is_inline_scalar(tp) || tp == 5 {
             return true;
         }
@@ -7430,8 +7428,7 @@ impl Stores {
     /// cost them the whole saving — and the same is true of a `spatial` since
     /// @PLN136. When the root is anything else, it is the #632 wrapper-struct trap
     /// and the declaration IS the fix.
-    #[cfg(paged_store)]
-    fn wrong_collection_reason(&self, tp: u16, want: &str) -> String {
+    pub(crate) fn wrong_collection_reason(&self, tp: u16, want: &str) -> String {
         let name = self.type_name(tp);
         let parts = self.types.get(tp as usize).map(|t| &t.parts);
         if matches!(parts, Some(Parts::Trie(..))) {
@@ -7477,8 +7474,7 @@ impl Stores {
     /// reported as a nested vector for as long as the enum arm was missing from
     /// [`Stores::is_copyable_field`]. A refusal a reader cannot act on is barely
     /// better than a silent one.
-    #[cfg(paged_store)]
-    fn not_copyable_reason(&self, content_tp: u16) -> String {
+    pub(crate) fn not_copyable_reason(&self, content_tp: u16) -> String {
         let culprit = match &self.types[content_tp as usize].parts {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields
                 .iter()
@@ -7559,8 +7555,7 @@ impl Stores {
     /// True when an entry of type `content_tp` can be partially loaded today —
     /// every field is [copyable](Stores::is_copyable_field). Otherwise the
     /// collection is refused (safe-refusal, never a broken heap).
-    #[cfg(paged_store)]
-    fn is_copyable_entry(&self, content_tp: u16) -> bool {
+    pub(crate) fn is_copyable_entry(&self, content_tp: u16) -> bool {
         match &self.types[content_tp as usize].parts {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 fields.iter().all(|f| self.is_copyable_field(f.content))
@@ -8375,7 +8370,8 @@ impl Stores {
             // Both tree kinds store an element as a claimed RECORD with its payload
             // at offset 8, so the copy is the same claim; only the linker differs.
             PagedKind::Trie | PagedKind::Radix => {
-                let size = reader.record_words(src_rec);
+                // A record the image does not hold whole is not an entry (loft#2177).
+                let size = reader.record_extent(src_rec).unwrap_or(0);
                 if size < 2 {
                     return false;
                 }
@@ -8572,6 +8568,10 @@ impl Stores {
     /// Copy a FLAT record (a string or a `vector<scalar>` inner record — no
     /// interior pointers) at `src_rec` into a fresh local claim; the size header
     /// (fld 0) is set by `claim`, so copy the length + payload from fld 4 on.
+    ///
+    /// 0 — the field reads as absent — for a source the image does not hold whole, or whose
+    /// length runs past its own record: the copy never claims more than its source holds, and
+    /// the length it keeps never names bytes the copy did not take (loft#2177).
     #[cfg(paged_store)]
     fn copy_flat_subrecord<P: crate::paged_reader::PageProvider>(
         &mut self,
@@ -8584,9 +8584,13 @@ impl Stores {
         // flat sub-record needs both. Read as ONE 8-byte request instead of two 4-byte
         // ones: on a 100×250 `vector<Named>` that was 25 000 requests, the second of the
         // three this path issued per element. Same bytes, same page, half the calls.
-        let head = reader.resolve(u64::from(src_rec) * 8, 8);
-        let ssz = u32::from_ne_bytes([head[0], head[1], head[2], head[3]]);
-        let head_len = u32::from_ne_bytes([head[4], head[5], head[6], head[7]]);
+        let (size, head_len) = reader.head(src_rec);
+        let Some(ssz) = reader.extent_of(src_rec, size) else {
+            return 0;
+        };
+        if elem_size > 0 && 8 + u64::from(head_len) * u64::from(elem_size) > u64::from(ssz) * 8 {
+            return 0;
+        }
         // loft#729 — claim what the LENGTH needs, not what the source's CAPACITY
         // is.
         //
@@ -8659,7 +8663,7 @@ impl Stores {
         let esize = u32::from(self.size(elem_tp));
         let new_inner = self.copy_flat_subrecord(reader, src_inner, store_nr, esize);
         let length = reader.u32_at(src_inner, 4);
-        if esize == 0 {
+        if esize == 0 || new_inner == 0 {
             return new_inner;
         }
         // loft#782 — warm every element's sub-record in ONE batch before relocating, so the
