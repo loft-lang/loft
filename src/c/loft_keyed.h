@@ -584,6 +584,34 @@ static int loft_walk_removed_at(int64_t state, int reverse, uint32_t *at) {
     return 1;
 }
 
+/* OpRefFromChildRec (Stores::ref_from_child_rec): the child record field `f` names, or null. */
+static loft_ref loft_ref_from_child_rec(loft_ref f) {
+    if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
+    uint32_t rec = loft_u32(loft_store_of(f), f.rec, f.pos);
+    if (rec == 0) return loft_ref_null();
+    loft_ref r = { f.store_nr, rec, 8 };
+    return r;
+}
+
+/* OpChildRec (Stores::new_child_rec): a fresh `tp` child record in field `f`'s store, filled with
+ * its defaults and named by the field; a record the field held before is released as this
+ * store's bytes.  The claim is `size` words, as the Rust's is. */
+static loft_ref loft_new_child_rec(const loft_tdesc *T, uint16_t tp, loft_ref f, const uint8_t *image,
+                                   uint32_t n) {
+    if (f.store_nr == 0xFFFF || f.rec == 0) return loft_ref_null();
+    uint32_t old = loft_u32(loft_store_of(f), f.rec, f.pos);
+    if (old != 0) {
+        loft_ref o = { f.store_nr, old, 8 };
+        loft_remove_claims(T, tp, o);
+        loft_st_delete(loft_store_of(f), old);
+    }
+    uint32_t rec = loft_claim(loft_store_of(f), T[tp].size);
+    loft_ref db = { f.store_nr, rec, 8 };
+    loft_fill(db, image, n);
+    loft_set_u32(loft_store_of(f), f.rec, f.pos, rec);
+    return db;
+}
+
 /* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
  * element record copied into a fresh record of the destination's store, its heap deep-copied, a
  * null slot kept null. */

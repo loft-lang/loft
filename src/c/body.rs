@@ -3503,6 +3503,8 @@ const OP_REF: &[&str] = &[
     "OpGetVectorNullable",
     "OpNullRefSentinel",
     "OpInsertVector",
+    "OpRefFromChildRec",
+    "OpChildRec",
 ];
 const OP_ENUM: &[&str] = &[
     "OpGetEnum",

@@ -210,6 +210,30 @@ impl FnWriter<'_> {
                 self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
                 Ok(E::new(t, K::Ref))
             }
+            ("OpRefFromChildRec", [f]) => {
+                let f = self.expr(f, ind)?;
+                Ok(E::new(
+                    format!("loft_ref_from_child_rec({})", as_ref(f)?),
+                    K::Ref,
+                ))
+            }
+            ("OpChildRec", [f, tp]) => {
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                self.cx.name_types();
+                self.cx.describe_type(tp);
+                let (image, n) = self.cx.default_image(tp);
+                let f = self.expr(f, ind)?;
+                let t = self.temp(CType::Ref);
+                self.line(
+                    ind,
+                    &format!(
+                        "{t} = loft_new_child_rec(loft_types, {tp}, {}, {image}, {n});",
+                        as_ref(f)?
+                    ),
+                );
+                Ok(E::new(t, K::Ref))
+            }
             ("OpKeepRange", [v, lo, hi, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
