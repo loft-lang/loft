@@ -98,6 +98,15 @@ ROOT=$(git rev-parse --show-toplevel)
 # (~2 GB), and `/tmp` is a RAM tmpfs on many Linux boxes — one run filled a 7.5 GB one, and
 # the build then failed as "this tree does not build" before the LRU below could run.
 CACHE="${LOFT_FALSIFY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/loft-falsify}"
+# The guard as one path both trees can read: as given when it is absolute (a scratch copy, a
+# sibling suite's cell), else under this checkout.  Prefixing the checkout to an absolute path
+# named a file that does not exist; both trees then exited 1 on it, the guard scored INERT, and
+# the run had spent its whole HERE build first.  Checked here, before anything is built.
+GUARD_PATH=""
+if [ -n "${GUARD:-}" ]; then
+  case "$GUARD" in /*) GUARD_PATH="$GUARD" ;; *) GUARD_PATH="$ROOT/$GUARD" ;; esac
+  [ -f "$GUARD_PATH" ] || { echo "no such guard: $GUARD_PATH" >&2; exit 2; }
+fi
 
 # Resolve a control ref to a commit, reaching into `refs/pull/*/head` when the clone does not
 # already hold it.
@@ -237,12 +246,13 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
     MODE_N=(--native-release)
   fi
 }
-[ -n "$BULK$SELF_TEST" ] || entry_modes "$GUARD"
+[ -n "$BULK$SELF_TEST" ] || entry_modes "$GUARD_PATH"
 
 # Every build here goes through this, and every build takes its target directory's LOCK.
 #
 # Two falsify runs are two cargo processes, and the target dirs are SHARED between runs by
-# design — `head-target-<checkout>` holds the HERE build for both the bulk and single paths, and a control
+# design — the HERE build (this checkout's `target/`, or `head-target-<checkout>` beside a running
+# gate) serves both the bulk and single paths, and a control
 # is cached per ref so a second guard against the same ref costs nothing.  That sharing is worth
 # keeping; two concurrent writers into one of them is not.  Cargo does not serialise itself
 # across processes, and what comes out is a partial or stale binary whose verdicts read as
@@ -264,10 +274,13 @@ have_flock() { command -v flock >/dev/null 2>&1; }
 locked_cargo() { # <dir> <target-dir> <cargo subcommand> <its arguments…>
   local dir="$1" tgt="$2" sub="$3"; shift 3
   mkdir -p "$(dirname "$tgt")"
+  # The checkout's own `target/` keeps its lock INSIDE it: beside it is the work tree.
+  local lock="$tgt.lock"
+  [ "$tgt" = "$ROOT/target" ] && mkdir -p "$tgt" && lock="$tgt/.falsify.lock"
   if have_flock; then
     ( flock 9 || exit 1
       cd "$dir" && cargo "$sub" --target-dir "$tgt" "$@" >/dev/null 2>&1
-    ) 9>"$tgt.lock"
+    ) 9>"$lock"
   else
     ( cd "$dir" && cargo "$sub" --target-dir "$tgt" "$@" >/dev/null 2>&1 )
   fi
@@ -448,6 +461,18 @@ mkdir -p "$CACHE"
 # had).  The lock serialises the builds, not the build-to-run window, so only separate target
 # dirs keep a verdict about the tree it names.
 HEAD_TGT="$CACHE/head-target-$(printf '%s' "$ROOT" | sha256sum | cut -c1-12)"
+# ...but by default the HERE build is the checkout's OWN `target/` (debug profile), which the
+# edit loop keeps warm: the separate one is warm only for the falsify runs, so after a change to
+# the one large crate it recompiled all of it — measured 2026-10-25, 32 minutes on a loaded box
+# for a tree whose `target/debug/loft` was already current — and each copy holds 2.5–4 GB.  A
+# gate running in this checkout keeps the separate one: its clippy step writes the same debug
+# profile, and a falsify build there would stall it.  `LOFT_FALSIFY_ISOLATED=1` always does.
+# The build-to-run window is this checkout's own: rebuilding `target/` from an EDITED tree
+# while a run is scoring mixes two trees, as editing mid-run always has.
+if [ -z "${LOFT_FALSIFY_ISOLATED:-}" ] && [ -d "$ROOT/target/debug" ] \
+  && ! "$ROOT/scripts/ci-run.sh" status 2>/dev/null | grep -qE '^(RUNNING|QUEUED)'; then
+  HEAD_TGT="$ROOT/target"
+fi
 
 # ── bulk ─────────────────────────────────────────────────────────────────────────────────
 # Retrofitting the corpus: one control build per REF rather than per guard, into a SHARED
@@ -593,8 +618,8 @@ for old in $(ls -td "$CACHE"/*-target 2>/dev/null | tail -n +$((keep + 1))); do
   rm -rf "$old" "$old.lock" "$CACHE/$sha.stub"
 done
 git -C "$ROOT" worktree prune >/dev/null 2>&1
-# A separate target dir on purpose: the main one may be mid-`make ci`, and cargo's build
-# lock is per target dir — building into it stalls a gate that is already running.
+# The checkout's own `target/` unless a gate is running in it (`HEAD_TGT`, above): cargo's build
+# lock is per target dir, and building into a gate's stalls it.
 HERE=$(build "$ROOT" "$HEAD_TGT") || { echo "this tree does not build" >&2; exit 1; }
 
 # loft#1224 — the verdict is an OR across backends, not an AND, and it names the inert side.
@@ -613,12 +638,12 @@ printf '%-12s %-10s %-46s %s\n' backend tree "exit|asserts|leak|panic|refusals|e
 for pair in "interpret ${MODE_I[*]}" "native ${MODE_N[*]}"; do
   name=${pair%% *}; args=${pair#* }
   # shellcheck disable=SC2086
-  c=$(signature "$CONTROL" "$CONTROL_TREE" "$ROOT/$GUARD" ${CONTROL_PATH[@]+"${CONTROL_PATH[@]}"} $args)
+  c=$(signature "$CONTROL" "$CONTROL_TREE" "$GUARD_PATH" ${CONTROL_PATH[@]+"${CONTROL_PATH[@]}"} $args)
   # `--path` for BOTH sides: the binary is built into its own target dir and has no
   # `default/` beside it, so without this it cannot load the stdlib and exits 1 — which
   # reads as a difference and would score every guard as falsified for the wrong reason.
   # shellcheck disable=SC2086
-  h=$(signature "$HERE" "$ROOT" "$ROOT/$GUARD" --path "$ROOT/" $args)
+  h=$(signature "$HERE" "$ROOT" "$GUARD_PATH" --path "$ROOT/" $args)
   # loft#1224 — "clean" means the guard PASSES, and for an annotation-scored file passing is a
   # refusal: it exits 1 and prints the message it declared.  Judging it by exit code alone
   # reported THIS TREE IS NOT CLEAN for a guard that was working exactly as written.  So a file

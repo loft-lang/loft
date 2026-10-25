@@ -161,11 +161,22 @@ arriving mid-build waits.  `this tree does not build`, an INERT backend with an 
 or `exit 127` in a bulk row on a checkout older than that lock means a concurrent run, not the
 tree.
 
+**This tree is built in the checkout's own `target/`** (debug profile, `--lib --bin loft`),
+which the edit loop keeps warm: a run on a current `target/debug` took 20 s where the separate
+directory took 553 s on the same tree (2026-10-25).  A commit since the last build still
+recompiles the crate, because the build bakes HEAD in.  A gate RUNNING in the checkout (`scripts/ci-run.sh status`) writes the
+same profile, so beside one — and always under `LOFT_FALSIFY_ISOLATED=1` — the build goes to
+`~/.cache/loft-falsify/head-target-<checkout>` instead, which is cold after any change to the
+crate: half an hour on a loaded box.  Do not edit the tree while a run scores it.  The guard
+may be given by an absolute path (a scratch copy, a sibling suite's cell); a missing one is
+refused before anything builds.
+
 **The control builds are cached and pruned.**  Each ref costs about 2 GB under
 `~/.cache/loft-falsify/<ref>` and `<ref>-target` — on disk, never in `TMPDIR` (often a RAM
-tmpfs; the native leg links `libloft.rlib` and its dependency rlibs) — beside a
-`head-target-<checkout>` (one per checkout: shared, a sibling's run rebuilt it from its own tree
-between this run's two legs) and a `shared-target`.  `LOFT_FALSIFY_KEEP` (default 4) most recently used controls are kept.
+tmpfs; the native leg links `libloft.rlib` and its dependency rlibs) — beside the
+`head-target-<checkout>` above (one per checkout: shared, a sibling's run rebuilt it from its
+own tree between this run's two legs) and a `shared-target`.  `LOFT_FALSIFY_KEEP` (default 4)
+most recently used controls are kept.
 A `--patch` control is cached under `patch-<patch content>-<HEAD>`, so a rebased HEAD never
 reuses a stale control.  A gate that fails on an unrelated suite right after `low space`
 lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS.md).
