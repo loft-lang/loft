@@ -1272,8 +1272,10 @@ fn shared_store_dispatch_raw(
                 scalar: (stores.get::<f64>(stack)).to_bits() as i64,
                 ..LibArg::ZERO
             },
+            // A `single` sits on the stack as an `f32` (loft#2165): reading it as an `f64`
+            // took its four bytes for the low half of a denormal, which narrows to 0.
             ArgT::F32 => LibArg {
-                scalar: i64::from((stores.get::<f64>(stack) as f32).to_bits()),
+                scalar: i64::from(stores.get::<f32>(stack).to_bits()),
                 ..LibArg::ZERO
             },
             ArgT::Bool => LibArg {
@@ -1420,7 +1422,7 @@ fn shared_store_dispatch_raw(
         None => {}
         Some(ArgT::I32 | ArgT::I64) => stores.put::<i64>(stack, ret.scalar),
         Some(ArgT::F64) => stores.put::<f64>(stack, f64::from_bits(ret.scalar as u64)),
-        Some(ArgT::F32) => stores.put::<f64>(stack, f64::from(f32::from_bits(ret.scalar as u32))),
+        Some(ArgT::F32) => stores.put::<f32>(stack, f32::from_bits(ret.scalar as u32)),
         Some(ArgT::Bool) => stores.put(stack, ret.scalar != 0),
         Some(ArgT::Ref | ArgT::Vec) => stores.put::<DbRef>(stack, ret.dbref),
         Some(ArgT::FnRef) => stores.put(stack, write_fn_ref(ret.scalar, ret.dbref)),
@@ -1627,7 +1629,8 @@ fn dispatch_via_bridge(
     for (at, &t) in sig.params.iter().enumerate().rev() {
         raw.as_mut()[at] = match t {
             ArgT::I32 | ArgT::I64 => Raw::Int(stores.get::<i64>(stack)),
-            ArgT::F32 | ArgT::F64 => Raw::Float(stores.get::<f64>(stack)),
+            ArgT::F32 => Raw::Float(f64::from(stores.get::<f32>(stack))),
+            ArgT::F64 => Raw::Float(stores.get::<f64>(stack)),
             ArgT::Bool => Raw::Bool(stores.get::<bool>(stack)),
             ArgT::Text => Raw::Text(stores.get::<Str>(stack)),
             ArgT::Ref | ArgT::Vec => Raw::Heap(stores.get::<crate::keys::DbRef>(stack)),
@@ -1719,6 +1722,8 @@ fn dispatch_via_bridge(
         // The bridge already widened i32 returns (i32::MIN → i64::MIN).
         LoftTag::I64 => stores.put::<i64>(stack, ret.as_i64()),
         LoftTag::Bool => stores.put(stack, ret.as_bool()),
+        // The bridge widens a `single` answer to F64; the slot the caller reads is an `f32`.
+        LoftTag::F64 if sig.ret == Some(ArgT::F32) => stores.put::<f32>(stack, ret.as_f64() as f32),
         LoftTag::F64 => stores.put(stack, ret.as_f64()),
         LoftTag::Text => bridge_push_str(stores, stack, ret.as_text()),
         LoftTag::Ref => bridge_push_ref(stores, stack, ret.as_ref()),
