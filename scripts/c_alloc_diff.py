@@ -59,6 +59,9 @@ def c(prog, d):
     return program_events(open(t, encoding="utf-8")), None
 
 def main():
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(__doc__)
+        return 0
     for prog in sys.argv[1:]:
         if not re.search(r"^\s*(pub\s+)?fn\s+main\s*\(", open(prog, encoding="utf-8", errors="replace").read(), re.M):
             continue

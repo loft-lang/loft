@@ -162,8 +162,8 @@ or `exit 127` in a bulk row on a checkout older than that lock means a concurren
 tree.
 
 **This tree is built in the checkout's own `target/`** (debug profile, `--lib --bin loft`),
-which the edit loop keeps warm: a run on a current `target/debug` took 20 s where the separate
-directory took 553 s on the same tree (2026-10-25).  A commit since the last build still
+which the edit loop keeps warm, so a run on a current `target/debug` rebuilds only what changed
+where a separate directory rebuilds the whole crate.  A commit since the last build still
 recompiles the crate, because the build bakes HEAD in.  A gate RUNNING in the checkout (`scripts/ci-run.sh status`) writes the
 same profile, so beside one — and always under `LOFT_FALSIFY_ISOLATED=1` — the build goes to
 `~/.cache/loft-falsify/head-target-<checkout>` instead, which is cold after any change to the

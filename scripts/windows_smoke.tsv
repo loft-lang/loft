@@ -89,3 +89,4 @@ scripts/wait_for.sh	--help
 scripts/rule_depth.py	--help
 scripts/runtime_surface.py	--help
 scripts/c_sweep.py	--help
+scripts/c_alloc_diff.py	--help
