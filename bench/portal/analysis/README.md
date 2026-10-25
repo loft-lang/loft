@@ -188,6 +188,6 @@ remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
 
 `python3 bench/stats.py --only <lane>` (one lane as statistics; `--tsv` to keep a run) ·
 `make perf-portal` (every lane, then the page) · `bench/portal/hand_price.sh` ·
-`--native-release --native-emit out.rs` · the rewrites' own traces (`LOFT_TRACE_RECPTR`,
+`--ship --native-emit out.rs` · the rewrites' own traces (`LOFT_TRACE_RECPTR`,
 `LOFT_TRACE_HOIST_DECLINE`, `LOFT_TRACE_BASE`, `LOFT_TRACE_CHAIN`, `LOFT_TRACE_PUSH_FILL`) ·
 `scripts/emission_audit.py <emitted.rs>` (one holder per path, live headers and bases).

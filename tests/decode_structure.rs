@@ -61,7 +61,7 @@ fn emitted(env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>, usize)
         std::process::id()
     ));
     let mut cmd = loft();
-    cmd.arg("--native-release")
+    cmd.arg("--ship")
         .arg("--native-emit")
         .arg(&out)
         .arg(cells());
@@ -130,11 +130,11 @@ fn the_switch_builds_every_decoded_value() {
 fn the_cells_hold_on_the_release_build() {
     for env in [("LOFT_TIMEOUT", "300"), ("LOFT_NO_DECODE_STRUCTURE", "1")] {
         let out = loft()
-            .arg("--native-release")
+            .arg("--ship")
             .arg(cells())
             .env(env.0, env.1)
             .output()
-            .expect("spawn loft --native-release");
+            .expect("spawn loft --ship");
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(

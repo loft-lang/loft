@@ -4491,7 +4491,7 @@ use a separate collection or add after the loop"
         // `OpCopyRecord` into the entry, free scratch.  Handing the parse a target of the
         // ELEMENT type removes all three: the literal writes straight into the slot
         // `OpNewRecord` carved out of the collection.  Measured on 1M `integer`-keyed
-        // inserts, `--native-release`: 933ms → 555ms.
+        // inserts, `--ship`: 933ms → 555ms.
         //
         // Gated on the RHS being a fresh literal of exactly the element type, peeked as
         // `<element-name> {`:

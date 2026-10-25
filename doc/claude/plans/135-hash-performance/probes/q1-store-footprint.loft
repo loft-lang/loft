@@ -17,9 +17,9 @@
 // both before and after the abandoned-table fix, while a single-shot run reads 49.26 MB
 // before and 34.02 MB after — the harness was measuring itself. Hence the argument.
 //
-//   loft --native-release q1-store-footprint.loft vec      1000000
-//   loft --native-release q1-store-footprint.loft reserved 1000000
-//   loft --native-release q1-store-footprint.loft grown    1000000
+//   loft --ship q1-store-footprint.loft vec      1000000
+//   loft --ship q1-store-footprint.loft reserved 1000000
+//   loft --ship q1-store-footprint.loft grown    1000000
 //
 //   vec       — `vector<Entry>`, elements inline: the dense floor, and arc H's shape
 //   reserved  — a hash pre-sized once, so the bucket table is built exactly once

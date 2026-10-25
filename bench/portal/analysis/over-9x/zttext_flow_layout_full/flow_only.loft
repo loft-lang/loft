@@ -6,7 +6,7 @@
 // workload, with a hash of what they produced.
 //
 //     loft --interpret bench/bench.loft [--n N]         the interpreter
-//     loft --native-release bench/bench.loft [--n N]    compiled
+//     loft --ship bench/bench.loft [--n N]    compiled
 //     rustc -O --edition=2021 bench/bench.rs -o bench/.build/stats_rs   the Rust twin
 //
 // One tab-separated line per routine: name, iterations, total µs, ns per op, items one op

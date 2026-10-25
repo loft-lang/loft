@@ -19,7 +19,7 @@ The dual mode is not a design to make, it is the language's steady state
 |---|---|---|---|
 | interpreted | `--interpret` | no rustc, ever; the iteration mode | ~2 ms |
 | native | `--native` (the DEFAULT) | rustc without `-O`: a fast compile, ~6× slower code than release | ~7 ms warm; a cold miss pays the compile |
-| release | `--native-release` | `-C opt-level=3 -C codegen-units=1`: what ships | ~7 ms warm; a longer compile |
+| release | `--ship` | `-C opt-level=3 -C codegen-units=1`: what ships | ~7 ms warm; a longer compile |
 
 The compiled artefact already has a home: `<dir>/.loft/cache/<name>-<source hash>/`, keyed
 on the SOURCE (@PLN166 B3) in front of a key on the generated Rust, invalidated by a source
@@ -35,8 +35,8 @@ source without the compile.
 |---|---:|
 | `--interpret` | 4.5–4.7 s |
 | `--native` (the default), warm cache | 1.1–1.2 s (first run 2.2 s: the cold compile) |
-| `--native-release`, cold (compile + run) | 3.4 s |
-| `--native-release`, warm | 0.41–0.47 s |
+| `--ship`, cold (compile + run) | 3.4 s |
+| `--ship`, warm | 0.41–0.47 s |
 | the `hello` script: `--interpret` / default warm / Python / bash | 15–22 / 32–37 / 15–19 / 5 ms |
 
 So on a real script native is ~4× the interpreter, release ~10× (2.6× native), and a cold
@@ -119,7 +119,7 @@ Defaults, overridable in `loft.toml` `[scripts]` and pinned per file by the flag
 ### Built when needed, never in the way
 
 The run that crosses the threshold is still interpreted; when it finishes, loft starts the
-`--native-release` compile DETACHED — under the build lock the native path already uses
+`--ship` compile DETACHED — under the build lock the native path already uses
 (`loft-native-build.lock`), one at a time, at low priority — so the invocation returns as it
 always did and the NEXT run finds the binary in the cache and takes it.  A build that fails
 (no rustc, a codegen refusal) leaves the script interpreted and a line in `.loft/log.txt`,
@@ -137,7 +137,7 @@ would be the worst class there is — a tool that changes its answer on a Tuesda
 language bug filed against parity, never a reason to pin the script.  A pin needs no new directive: a script's
 `#!/usr/bin/env -S loft --interpret` line carries the flag, and a flag switches the policy
 off — so a hook pins `--interpret` (2 ms start-up, never a compile) and a CI gate pins
-`--native-release` (built at its first run, foreground), in the line that already names the
+`--ship` (built at its first run, foreground), in the line that already names the
 interpreter; neither is the normal case.  The scoreboard shows each script's age, mode
 and the number that decided it.
 
@@ -151,7 +151,7 @@ test context), and the test frameworks, which already hold configuration, keep i
 three layers, each of which alone would do:
 
 1. **A backend flag switches the policy off, including its bookkeeping.**  `--interpret`,
-   `--native` and `--native-release` are measurements, not uses: no run record is written,
+   `--native` and `--ship` are measurements, not uses: no run record is written,
    no age is counted, no build is started.  Every runner passes one — the Rust harness
    already does (`run_mode("--interpret")` / `run_mode("--native")`, `tests/common/cross_mode.rs`),
    `loft test` runs in-process on its `native_mode` and never enters the program path, and
@@ -176,7 +176,7 @@ entries stay what `--native` puts there today.
 The default backend for a program invocation is native today (`src/main.rs`, `native_mode =
 true`); under the rule it becomes: the cached release binary if this hash has one, else the
 interpreter — and the policy above decides when a binary comes to exist.  `--interpret`,
-`--native` and `--native-release` keep overriding.  This is @C71's steady state ("scripts
+`--native` and `--ship` keep overriding.  This is @C71's steady state ("scripts
 interpret, libraries compile") with the promotion the owner asked for on top; the games
 under `engine_host` get it for free.  Items for the plan: the run record in the cache entry,
 the git-age query, the detached build, `loft build --aged`, the three test guards

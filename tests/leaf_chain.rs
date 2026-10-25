@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `@FR-R-LeafChain` — in the lean tier (`--native-release`) a function whose whole call
+//! `@FR-R-LeafChain` — in the lean tier (`--ship`) a function whose whole call
 //! tree is frameless carries no prelude: no depth entry and no fn-ref buffer guard.  Every
 //! user function it reaches has a loft body, none is on a cycle, and none calls a fn-ref.
 //!
@@ -115,7 +115,7 @@ fn check_guards(label: &str, rust: &str, framed: &[&str], frameless: &[&str]) {
 #[test]
 fn the_lean_tier_elides_a_frameless_tree() {
     let out = std::env::temp_dir().join("loft_leaf_chain_on.rs");
-    let rust = emit(&out, &["--native-release"], &[]);
+    let rust = emit(&out, &["--ship"], &[]);
     for name in CHAIN.iter().chain(LEAVES.iter()) {
         assert!(
             !has_frame(&rust, name),
@@ -135,7 +135,7 @@ fn the_switch_and_the_named_tier_keep_every_non_leaf_frame() {
     for (label, tier, env) in [
         (
             "LOFT_NO_LEAF_CHAIN=1",
-            &["--native-release"][..],
+            &["--ship"][..],
             &[("LOFT_NO_LEAF_CHAIN", "1")][..],
         ),
         ("the named tier", &[][..], &[][..]),
@@ -179,7 +179,7 @@ fn the_lean_build_answers_what_the_interpreter_answers() {
     let src = cells();
     let interp = loft(&["--interpret", &src], &[]);
     let lean = loft(
-        &["--native-release", &src],
+        &["--ship", &src],
         &[("LOFT_NATIVE_LEAK_CHECK", "1"), ("LOFT_STRICT_STORES", "1")],
     );
     let expected = "c1 97 99 -1 -1\nc2 3\nc3 3628800\nc4 true true false\nc5 240\nc6 41\n\
@@ -216,7 +216,7 @@ fn runaway_recursion_through_a_frameless_helper_hits_the_depth_cap() {
          fn main() { println(\"{runaway(0)}\"); }\n",
     )
     .expect("write the probe");
-    let res = loft(&["--native-release", &prog.to_string_lossy()], &[]);
+    let res = loft(&["--ship", &prog.to_string_lossy()], &[]);
     let err = String::from_utf8_lossy(&res.stderr);
     assert_eq!(
         res.status.code(),
@@ -256,7 +256,7 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native", "--native-release"] {
+        for mode in ["--native", "--ship"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
             assert_eq!(
@@ -274,7 +274,7 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
 }
 
 /// A loft-bodied METHOD is a call frame like a free function: a runaway recursion through one
-/// stops at loft's depth cap on `--native` and `--native-release` as it does on the
+/// stops at loft's depth cap on `--native` and `--ship` as it does on the
 /// interpreter, rather than overflowing Rust's own stack — alone, mutually with another
 /// method, and through a method on a generic receiver — and `stack_trace()` names its frames
 /// as the interpreter names them.
@@ -305,7 +305,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native", "--native-release"] {
+        for mode in ["--native", "--ship"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
             assert_eq!(

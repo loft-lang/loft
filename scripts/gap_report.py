@@ -114,7 +114,7 @@ def build(a, work):
     env = dict(os.environ, LOFT_NATIVE_NO_CACHE="1", LOFT_TIMEOUT="900")
     args = os.path.join(work, "native.args")
     if package:
-        run([LOFT, "--native-release", loft_src, "--n", "1"], cwd=cwd,
+        run([LOFT, "--ship", loft_src, "--n", "1"], cwd=cwd,
             env=dict(env, LOFT_NATIVE_RUSTC_ARGS=args))
     emitted = os.path.join(work, "native.rs")
     trace_env = dict(env)
@@ -122,7 +122,7 @@ def build(a, work):
         ["grep", "-rhoE", r'"LOFT_TRACE_[A-Z0-9_]+"', os.path.join(REPO, "src")], check=False).stdout))
     for n in names - NOISY_TRACES:
         trace_env[n] = "1"
-    r = run([LOFT, "--native-release", "--native-emit", emitted, loft_src], cwd=cwd, env=trace_env)
+    r = run([LOFT, "--ship", "--native-emit", emitted, loft_src], cwd=cwd, env=trace_env)
     traces = r.stderr.splitlines()
     # The kernel stays a function on both sides, so callgrind can switch collection on at its
     # entry: one call boundary per call each, the same on both.

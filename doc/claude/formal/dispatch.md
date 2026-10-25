@@ -88,7 +88,7 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
   (Disp-Closed)     selection for a call whose argument types are statically concrete runs at
                     compile time and lowers to a direct call to the selected definition — no
                     runtime table.  A member nothing calls is unreachable and absent from a
-                    `--native-release` artefact.
+                    `--ship` artefact.
 
   (Disp-Dynamic)    a call where an argument is held at an enum (dense, or nullable when the call
                     has a static selection) selects at run time on the runtime variants, through

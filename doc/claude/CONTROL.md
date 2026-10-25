@@ -59,7 +59,7 @@ program) or from the **environment / data** (not reproducible by reading it)?
     and it halts in every build today; [@PLN177](plans/177-growable-stack.md) makes it a
     development-only limit over a stack that grows in blocks.
 12. **The live/debug tier ships in every `--native` artifact** unless `--lean`; a
-    `--native-release` program and a library cdylib are lean by default (no live channel,
+    `--ship` program and a library cdylib are lean by default (no live channel,
     depth-only frames) — the shipped tier, NATIVE.md § Optimisation tiers.
 13. **`par` over a `hash` is non-deterministic in result order** — documented, and `sorted`
     is the cure. Handled correctly; listed so the axis is not re-discovered.

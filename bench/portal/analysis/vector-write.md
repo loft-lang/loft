@@ -1,7 +1,7 @@
 # vector-write — what an insertion sort's inner loop pays, and the three levers
 
 An ANALYSIS of `bench/10_sort` (3.45× its Rust twin on the 2026-10-02 macOS run), the slowest
-of the original engine benches.  Every number is `--native-release` on arm64 macOS, priced by
+of the original engine benches.  Every number is `--ship` on arm64 macOS, priced by
 editing the emitted Rust with `bench/portal/hand_price.sh`, the hash unchanged throughout.
 
 ## The finding

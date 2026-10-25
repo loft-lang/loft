@@ -316,7 +316,7 @@ identical (103641 admissions).  Where the code differs from the table:
 **Decision (owner, 2026-10-23): the C backend starts PLAIN.**  It reads the whole-program plans
 (B3.1) and emits the general form; the per-function decisions reach it family by family
 (B3.4, B3.4a first).  Measured on `total(ps: vector<P>) { for p in ps { s += p.x * p.y } }`,
-200 passes over a million records, `--native-release`:
+200 passes over a million records, `--ship`:
 
 | emission | time |
 |---|---|
@@ -536,7 +536,7 @@ the browser read them), so a layout is observable.
 ## B6 — optional: a minimal binary
 
 **Later, not now (owner, 2026-10-23).**  A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
-`--native` / `--native-release` / `--native-emit` / `--native-wasm` / `--html` /
+`--native` / `--ship` / `--native-emit` / `--native-wasm` / `--html` /
 `--native-android` / `build-native` arms (`main.rs:7835/7838/7915/7924/7945/~7934/8922`), which
 answer one line without it; `make minimal` via `scripts/lean_build.sh --minimal`.  Its artifact
 identity already equals the full build's (`cache.rs:231`: `feature_signature` (:119) lists
@@ -618,7 +618,7 @@ layout or to a signature moves the version.  It is also the interface an ANSI-C 
 | B7.2 | `cache::runtime_fingerprint()`: the content of the runtime a compiled block links — the `loft-runtime` crate's rlib once @PLN191 R makes it a crate; before that, a source stamp over the RUNTIME set's files (`scripts/crate_layers.py`) with the features, rustflags and `rustc` that shape it | a test: an edit outside the set leaves it, one inside moves it |
 | B7.3 | the native program cache keyed on the generated Rust ⊕ `runtime_fingerprint()` instead of every rlib candidate.  **Precondition:** emitted Rust names nothing outside the runtime — today it names `loft::state::` (`generation/mod.rs:513-519`, `calls.rs:1350`) and `loft::native_lib::` (`emit.rs:2100-2118`); B3.5's census lists every such name and each is moved into the runtime or the key covers it | B7.1's hit rate after a parser-only edit; the corpus on both backends |
 | B7.4 | a library artifact on a development build keyed on its generated source's hash ⊕ `runtime_fingerprint()` (a release bundle keeps its identity, B6).  @PLN199 G1 already made the generated source a function of the library alone, so the key is exact; loft#1776's stale-rlib case stays covered because the fingerprint is the runtime's content | `n3_use_native`, `registry_e2e`; B7.1 after a parser-only edit: no artifact rebuilt |
-| B7.5 | the standard library compiled ONCE for the test tier: its functions emitted as one block (ids by key, as @PLN199 G0b made library code), keyed like B7.4, and a test-tier program calls into it instead of carrying 3.3k lines — ~40 % of each test compile by the measurement above.  `--native-release` and the library cdylibs keep whole-program compilation: there the optimiser's view across functions is what ships | the corpus's output identical; B7.1's CPU time |
+| B7.5 | the standard library compiled ONCE for the test tier: its functions emitted as one block (ids by key, as @PLN199 G0b made library code), keyed like B7.4, and a test-tier program calls into it instead of carrying 3.3k lines — ~40 % of each test compile by the measurement above.  `--ship` and the library cdylibs keep whole-program compilation: there the optimiser's view across functions is what ships | the corpus's output identical; B7.1's CPU time |
 | B7.6 | narrow the runtime set (@PLN191 R2): every module that leaves it is an edit that no longer invalidates compiled blocks — the report names the runtime modules the most commits touch | B7.1 over the history |
 | B7.7 | test selection from the crate graph (after B4): `find_problems.sh --changed` maps a diff's crates to the subjects that can observe them | a diff confined to `rust` selects no interpreter-only subject |
 

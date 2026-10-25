@@ -58,8 +58,17 @@ Three tiers, and the split is deliberate (owner's rule, 2026-09-08):
 | tier | what runs it | prelude | rustc |
 |---|---|---|---|
 | **semantics** | `--native`, the test runner's native corpus and fixtures | named frames, live/debug channel | `-O` or none — the compile is the cost that matters |
-| **performance** | `bench/stats.py`, `scripts/native_ratio.sh`, `bench/run_bench.sh`, a consumer's `--native-release` bench | lean | `src/native_release_args.txt` |
-| **shipped** | `--native-release` programs, every library cdylib (`native_lib.rs`) | lean | `src/native_release_args.txt`: `-C opt-level=3 -C codegen-units=1 -C llvm-args=-align-loops=64` |
+| **performance** | `bench/stats.py`, `scripts/native_ratio.sh`, `bench/run_bench.sh`, a consumer's `--ship` bench | lean | `src/native_release_args.txt` |
+| **shipped** | `--ship` on every compiled target, every library cdylib (`native_lib.rs`) | lean | `src/native_release_args.txt`: `-C opt-level=3 -C codegen-units=1 -C llvm-args=-align-loops=64` |
+
+**`--ship` is the build a program ships as**, on whichever target the run names: the host
+binary by default, `--native-wasm`, `--html` or `--native-android`.  Each gets reachable-only
+emission, the lean tier and the shipped rustc arguments (Android: the same profile in its
+manifest); `--html` keeps its named frames.  Native libraries are linked INTO the program
+unless `--dynamic` or the program's `#link dynamic` says otherwise
+(`native_utils::link_static_unless_named`).  Every fault check stays.  `--ship` is refused
+where nothing is built: with `--interpret`, `--tests`, `--emit-c` (C source only) and an
+`--html --debug` page.
 
 A performance lane measures exactly what a shipped binary gets, and never the semantics
 build — the RUNTIME included: `bench/stats.py` (and through it the portal and `perf-check`)
@@ -91,7 +100,7 @@ always carries the checks; a game that has passed extended in-house testing unde
 checked build is compiled once more from every source it uses — its libraries recompiled
 at that level inside the game's build, never taken as published binaries — into the
 less safe artefact that ships to Steam or the browser.  A build, not a switch, and
-licensed by the testing's fault-free ledger.  Precompiled libraries serve quick
+licensed by the testing's fault-free ledger: `--ship <ledger>`.  Precompiled libraries serve quick
 development only; the release build recompiles every library from source, because the checks
 it drops live inside the library code.  Its design is @PLN201
 ([plans/201-ship-tier](plans/201-ship-tier/README.md)): a ledger of the checked runs' fault

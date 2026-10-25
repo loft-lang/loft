@@ -161,7 +161,7 @@ the floor under three other levers.  Together with R3 they address the three row
 ## Method
 
 `valgrind --tool=callgrind --toggle-collect='*::n_<routine>'` on an unstripped
-`--native-release --native-debug` build for instructions per item, both lanes;
+`--ship --native-debug` build for instructions per item, both lanes;
 `LOFT_TRACE_RECPTR=1`, `LOFT_TRACE_HOIST_DECLINE=1`, `LOFT_TRACE_BASE=1` for the reason
 each rewrite gives for declining; the emitted Rust (`--native-emit`) for what the declined
 form costs; and ONE program holding each routine beside a source variant that differs in
@@ -232,7 +232,7 @@ gap.  The rows it stands behind: `sphere` 14.5×, `mesh_to_floats` 21×, `save_g
 stage `draw_list` 4.8× (`DrawRect { UiRect }`), tween `value` 5.4×, game_protocol `msg_ping`
 11× (a nested record pair returned by value).
 
-**Hand-priced** (`--native-release`, this box) on a probe of the `sphere` shape — per vertex
+**Hand-priced** (`--ship`, this box) on a probe of the `sphere` shape — per vertex
 `p = vec3(…); n = vec3(…); add_vertex(m, vertex(p, n, u, v))`, 200 000 vertices:
 **200 → 60–100 ns per vertex**, hash unchanged, with `n_vertex` returning the eight floats as
 a tuple and `n_add_vertex` taking the tuple and writing its eight fields into the appended
@@ -599,7 +599,7 @@ borrowed slices and allocates nothing.
 
 **Counted** (`LOFT_ALLOC_REPORT=1`, one round of 2 048 checks minus the next): **26 store
 alloc/free cycles and 5.5 records per check**; live stores stay at 21 (reuse works), the
-CYCLES are the cost.  **Profiled** (`perf` over the `--native-release` child, symbols kept):
+CYCLES are the cost.  **Profiled** (`perf` over the `--ship` child, symbols kept):
 store allocation and free 27 % (`claim_block`, `claim_best_fit`, `fl_insert`, `finish_claim`,
 `set_free_header`, `free_named`, `database_named`, `op_database_inner`, `OpFreeRef`), the
 claims walks 24 % (`copy_claims` 10.7 %, `remove_claims_mode` 5.8 %, `owned_walk` 4.9 %,
@@ -675,7 +675,7 @@ placed in the local vector's store and moved out by field; `bs`, `tb`, `items`, 
 claimed in the return buffer's store and taken by a handle move.  The tree is built in ONE
 store — the outermost buffer's — and copied nowhere on the way up.
 
-**Measured** (this box, `--native-release`):
+**Measured** (this box, `--ship`):
 
 | row | before | loop clause | + exit vector |
 |---|---:|---:|---:|
@@ -785,7 +785,7 @@ backends' bind arms already read) and pairs the call's buffer through `pair_call
 `OpFreeRefIfDistinct(__ref_1, __lift_1)` exactly as the named bind's is.  The stdlib's one such
 site (`exists` lifting `file(path)`) moves with it.
 
-**Measured** (this box, `--native-release`, the check driver's 40 rounds of 2 048 checks, seven
+**Measured** (this box, `--ship`, the check driver's 40 rounds of 2 048 checks, seven
 interleaved runs each): 0.38 s → 0.34 s, −11 % (the profile's `OpCopyRecord` share was 13.9 %).
 Per cell of the guard (`tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft`,
 `LOFT_ALLOC_REPORT=1`, stores per call): the lifted form 3 → 2 (the named control's 2), a lift in
@@ -814,7 +814,7 @@ root adopted (r12) and an alias's owner (r5) are skipped, a distinct buffer is f
 The caller is not consulted: it adopts with the witnessed free or copies with the source freed
 exactly as for any buffer-carrying return.
 
-**Measured** (this box, `--native-release`, the check driver's 40 rounds, seven interleaved
+**Measured** (this box, `--ship`, the check driver's 40 rounds, seven interleaved
 runs): 0.34 s → 0.33 s, on top of item 1's 0.38 → 0.34.  In the guard's cells
 (`LOFT_ALLOC_REPORT=1` / `LOFT_COPY_DUMP=1`, stores and copies per call): `return p.a` 1
 copy → 0; the struct-enum wrapper (r9, `pa_decode`'s shape) 4 stores → 2; a pooled caller loop
@@ -848,7 +848,7 @@ header write.  Beside it,
 `holds_no_heap` learned the struct-enum field: a `Decoded` whose value moved out answered "may
 hold heap" and walked (allocating a `Vec` per record) to find nothing.
 
-**Measured** (this box, `--native-release`, the check driver's 40 rounds, three runs each,
+**Measured** (this box, `--ship`, the check driver's 40 rounds, three runs each,
 same binary, the switch as the OFF arm):
 
 | build | check_request, 40 rounds | what moved |

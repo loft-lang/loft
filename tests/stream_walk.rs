@@ -55,7 +55,7 @@ fn streamed(env: &[(&str, &str)], tag: &str) -> Vec<(String, usize)> {
     let out =
         std::env::temp_dir().join(format!("loft_stream_walk_{tag}_{}.rs", std::process::id()));
     let mut cmd = loft();
-    cmd.arg("--native-release")
+    cmd.arg("--ship")
         .arg("--native-emit")
         .arg(&out)
         .arg(cells());
@@ -114,11 +114,11 @@ fn the_switch_streams_nothing() {
 fn the_cells_hold_on_the_release_build() {
     for off in [false, true] {
         let mut cmd = loft();
-        cmd.arg("--native-release").arg(cells());
+        cmd.arg("--ship").arg(cells());
         if off {
             cmd.env("LOFT_NO_STREAM_WALK", "1");
         }
-        let out = cmd.output().expect("spawn loft --native-release");
+        let out = cmd.output().expect("spawn loft --ship");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             out.status.success() && stdout.trim_end().ends_with("c21 9"),

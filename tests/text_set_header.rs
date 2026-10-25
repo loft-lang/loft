@@ -29,7 +29,7 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
 
 #[test]
 fn the_cells_hold_under_the_hoist_falsifiers_in_both_switch_states() {
-    for mode in ["--native", "--native-release"] {
+    for mode in ["--native", "--ship"] {
         for switch in [None, Some(("LOFT_NO_TEXT_SET_HEADER", "1"))] {
             for falsifier in [("LOFT_HOIST_VERIFY", "1"), ("LOFT_POISON", "1")] {
                 let mut env = vec![falsifier];
@@ -54,11 +54,7 @@ fn a_loop_that_writes_texts_holds_and_one_that_also_pushes_declines() {
         let mut e = vec![("LOFT_TRACE_HOIST_DECLINE", "1")];
         e.extend_from_slice(env);
         let out = loft(
-            &[
-                "--native-release",
-                "--native-emit",
-                loft::platform::null_sink(),
-            ],
+            &["--ship", "--native-emit", loft::platform::null_sink()],
             &e,
         );
         String::from_utf8_lossy(&out.stderr)

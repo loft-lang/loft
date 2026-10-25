@@ -1,7 +1,7 @@
 # What to optimise next — the temporary minted per call, and the two ways to take it
 
 Taken 2026-09-25 on x86-64, after the copy-class rules, `(R-FormatAppend)` and
-`(R-ByteCopy)`.  An ANALYSIS: every number is a measurement on this box (`--native-release`,
+`(R-ByteCopy)`.  An ANALYSIS: every number is a measurement on this box (`--ship`,
 a standalone binary of the emitted Rust under `perf`), none is a promise.  Nothing in it
 is built; the second lever is a design that needs a plan number once this box can
 authenticate to GitHub again.
@@ -174,7 +174,7 @@ binary hand-patched: the text arm's span read off the frame's element base into 
 (−13.6 %)**, hash equal, two interleaved runs within 0.1 %.  The bytes arm still copies in
 that probe; a view removes it too.
 
-**F6, measured 2026-09-28** (`--native-release`, `--n 20`, two interleaved runs each, hash
+**F6, measured 2026-09-28** (`--ship`, `--n 20`, two interleaved runs each, hash
 equal on every lane).  cbor's two payload arms take their span in ONE block
 (`bytes[argpos..argpos + arg]`, `loft-libs-core` branch `174-f6-cbor-spans`), and the frame
 is either the bench's OWNED record field or a FOREIGN one — a view over a mapped image of

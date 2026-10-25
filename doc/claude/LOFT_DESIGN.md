@@ -408,7 +408,7 @@ user invoked it.
 
 ### A native build links its libraries beside the binary, or into it
 
-A native build (`--native`, `--native-release`) of a program that uses a library with Rust
+A native build (`--native`, `--ship`) of a program that uses a library with Rust
 code in it — `regex`, `crypto`, the graphics libraries — links that library's code one of two
 ways.  **Dynamic**, the default: the library is a separate file (`.so` / `.dylib` / `.dll`)
 the binary loads when it starts, so a shipped binary needs that file beside it.  **Static**:

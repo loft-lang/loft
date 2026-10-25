@@ -419,7 +419,7 @@ fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
     let _ = fa::remove_dir_all(&root);
 }
 
-/// Cell 5 — a flag that changes the binary is a different key: `--native-release` after
+/// Cell 5 — a flag that changes the binary is a different key: `--ship` after
 /// `--native` misses (and, since the binary cache keeps one entry per program, so does the
 /// `--native` run after it), and each answers correctly.
 // approved exemption: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
@@ -430,7 +430,7 @@ fn a_flag_that_changes_the_binary_is_a_different_key() {
     let script = root.join("prog.loft");
     fa::write(&script, PROG_30).expect("script");
     warm_to_a_hit(&root, &script, "sum=30");
-    let r = run_with(&root, &script, &["--native-release"], &[]);
+    let r = run_with(&root, &script, &["--ship"], &[]);
     assert!(
         r.ok && r.stdout.contains("sum=30"),
         "{}{}",
@@ -444,7 +444,7 @@ fn a_flag_that_changes_the_binary_is_a_different_key() {
         r.stderr
     );
     assert_eq!(r.binary_cache(), "miss", "{}", r.stderr);
-    let r = run_with(&root, &script, &["--native-release"], &[]);
+    let r = run_with(&root, &script, &["--ship"], &[]);
     assert_eq!(
         r.source_key(),
         "hit",

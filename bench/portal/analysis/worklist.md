@@ -353,7 +353,7 @@ handed to each wrapper's variant.  Native `request` 6.88 → 4.77 ms (−30.6 %;
 form 4.72), hash 16387f10, interpreter −25 %; `check_request` unchanged.  It fires once crypto
 declares its decoder `#pure` (the lane's crypto 0.3.11 does not): a crypto release with the
 annotation and pluginabi's lock moved to it are what put it in the lane.  Found beside it and
-fixed: a decode root calling another root did not compile on `--native-release`
+fixed: a decode root calling another root did not compile on `--ship`
 (`LOFT_NO_PURE_REUSE=1` broke the bench), loft#2091.
 
 **Focus, for now (owner, 2026-10-20).**  Everything loft does is a target for optimisation.
@@ -468,7 +468,7 @@ profile.
 `bench/stats.py`, calibrated: `check_request` 5.05×, `flow_layout_full` 4.83×, cbor `encode`
 4.69×; `pluginabi/request` 4.42× shares the decoder and the encoder.  `stage/pack_instances`
 measures 2.08× now; its committed 4.97× predates the `mesh_to_floats` fix.  The profiles are
-callgrind runs of single-row copies of each bench, loft's `--native-release` emission against
+callgrind runs of single-row copies of each bench, loft's `--ship` emission against
 its twin, with the hashes equal.  A price is cycles per op, three interleaved pinned rounds,
 of a LIBRARY-level form of the change in a scratch copy of the package.  It is the ceiling for
 the compiler rule that would make the natural spelling do the same.
@@ -988,7 +988,7 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
   attributed to `store.rs` lines.  A RUNTIME change is priced the same way: one emitted
   source compiled against a saved copy of the tip's `libloft.rlib` and against the probe's.
   On Linux the method is `perf` samples windowed by time (rustc-vs-twin.md § Method notes).
-  On macOS, `sample <pid>` over a `--native-release --names` build gives the call tree;
+  On macOS, `sample <pid>` over a `--ship --names` build gives the call tree;
   a routine's share is its `n_bench_<row>` (or op helper) subtree.  `--names` disables
   inlining, so a small helper's share is inflated.
 - `make rewrite-census` read 1–3 low on `R-ExitVector` and `R-Header` on the aarch64 box with

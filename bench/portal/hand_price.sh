@@ -2,11 +2,11 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# Compile an EMITTED Rust file the way `loft --native-release` compiles it — so a rewrite can
+# Compile an EMITTED Rust file the way `loft --ship` compiles it — so a rewrite can
 # be PRICED before it is built: emit a routine, edit its Rust to the form the rewrite would
 # produce, compile both with this, run both, compare the row and its hash.
 #
-#   loft --native-release --native-emit /tmp/b.rs bench/14_stdlib_vector/bench.loft
+#   loft --ship --native-emit /tmp/b.rs bench/14_stdlib_vector/bench.loft
 #   cp /tmp/b.rs /tmp/b_v1.rs     # …edit ONE function of b_v1.rs by script, never by hand
 #   bench/portal/hand_price.sh /tmp/b.rs /tmp/b  &&  bench/portal/hand_price.sh /tmp/b_v1.rs /tmp/b_v1
 #   /tmp/b --n 3000 | grep push ;  /tmp/b_v1 --n 3000 | grep push      # ns/op is column 4, the hash column 7
@@ -31,8 +31,8 @@
 # compile itself knows.  So that compile writes its arguments down and this replays them:
 #
 #   cd <package> && LOFT_NATIVE_NO_CACHE=1 LOFT_NATIVE_RUSTC_ARGS=/tmp/b.args \
-#       loft --native-release bench/bench.loft --n 2
-#   loft --native-release --native-emit /tmp/b.rs bench/bench.loft
+#       loft --ship bench/bench.loft --n 2
+#   loft --ship --native-emit /tmp/b.rs bench/bench.loft
 #   bench/portal/hand_price.sh /tmp/b.rs /tmp/b /tmp/b.args
 #
 # Only the source and the output are replaced, and the symbols are kept (a profile needs them).

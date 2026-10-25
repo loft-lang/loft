@@ -654,7 +654,7 @@ fn emit_program(
             out.native_collisions = linked_collisions(data, &linked_packages(data, &set));
         }
         // @PLN157 — a library cdylib is a SHIPPED binary: the lean tier, exactly as a
-        // `--native-release` program.  Its functions run under the consumer's every
+        // `--ship` program.  Its functions run under the consumer's every
         // call, and the named per-call frame push was that lane's largest cost.
         out.emit_live = false;
         out.lean_tier = true;
@@ -1739,7 +1739,7 @@ fn build_keyed_cdylib(
         tmp_so.display().to_string(),
         rs.display().to_string(),
     ];
-    // Full optimisation, as `--native-release` compiles a program: a library cdylib is a
+    // Full optimisation, as `--ship` compiles a program: a library cdylib is a
     // shipped binary (`src/native_release_args.txt`).
     args.extend(crate::cache::release_rustc_args());
     args.extend(crate::native_lib::loft_extern_args(&rlib));

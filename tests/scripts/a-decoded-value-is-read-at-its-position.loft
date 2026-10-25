@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // `@FR-R-DecodeView`'s STRUCTURE clause (@C141, read once) — a decoded value the program reads
-// once is held as its POSITION in the frame, and nothing of it is built (`--native-release`):
+// once is held as its POSITION in the frame, and nothing of it is built (`--ship`):
 // the enum tag, a number, a text and an in-order walk of a vector field are each answered by
 // running the decoder again at the position.  Every cell asserts the VALUES a hand
 // computation gives; the interpreter builds every value and is the oracle, and
@@ -40,7 +40,7 @@
 // F14 the same with a match inside an arm, over a second decode (`flag_num`): F1 → 7 (ok,
 //    n 7), F13 { "ok": false, "n": 3 } → -1, F11 (no "ok") → -99, F7 → -1000.
 //
-// @falsify-tier: native-release
+// @falsify-tier: ship
 // @falsified-by: tests/falsified/a-decoded-value-is-read-at-its-position.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 //   CHANNEL: the VALUE channel, native only — the patch hands every part of a walked entry
 //   at the key's position, so the value read is the key.

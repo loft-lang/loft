@@ -1,5 +1,5 @@
 # The rustc arguments of the SHIPPED and PERFORMANCE tiers (NATIVE.md § Optimisation tiers):
-# every `--native-release` program, every generated library cdylib, and every performance
+# every `--ship` program, every generated library cdylib, and every performance
 # lane that compiles emitted Rust itself (bench/stats.py, bench/portal/hand_price.sh,
 # scripts/native_ratio.sh, bench/run_bench.sh, scripts/interp_gap.py).  One argument per
 # line; `#` starts a comment.  `src/cache.rs` compiles this file in, the scripts read it, so

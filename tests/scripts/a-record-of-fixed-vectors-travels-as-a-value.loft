@@ -1,6 +1,6 @@
 // `@FR-R-Apart` instance 2 — a record whose every field is a `vector<float>` of one length
 // travels between the functions that build it, read and write its elements and hand it on as
-// a Rust value on `--native-release`, and meets the store once, where a function returns it
+// a Rust value on `--ship`, and meets the store once, where a function returns it
 // through its buffer to a caller that keeps it.  Every cell asserts the VALUES (and, after a
 // boundary, the LENGTH) a hand computation gives; the interpreter keeps the store and is the
 // oracle, and `LOFT_NO_APART=1` must answer the same.
@@ -14,7 +14,7 @@
 // (their two lengths disagree, so `Odd` is no apart type), and d4's values stay in the store
 // (handed to `show`, which is no twin).
 //
-// @falsify-tier: native-release
+// @falsify-tier: ship
 // @falsified-by: tests/falsified/a-record-of-fixed-vectors-travels-as-a-value.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 //   CHANNEL: the VALUE channel, native only — the patch reads a negative index as itself,
 //   so the apart read of `x.m[-1]` answers null where the store path counts from the end.

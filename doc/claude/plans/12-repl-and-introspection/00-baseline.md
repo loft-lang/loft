@@ -44,7 +44,7 @@ above.
 | Entry | Location | Notes |
 |-------|----------|-------|
 | `generation::Output::output_native(&mut f, 0, end_def)` | `src/generation/mod.rs::output_native` | Full-program native emitter — emits init() + every reachable user fn. |
-| `generation::Output::output_native_reachable()` | same | Optimised emit (`--native-release` mode) — only reachable fns. |
+| `generation::Output::output_native_reachable()` | same | Optimised emit (`--ship` mode) — only reachable fns. |
 | CLI handler | `src/main.rs:1973-2080` | The `--native-emit [out.rs]` argv branch wraps the Output emitter and writes to a file. |
 
 The generated Rust is the EXACT shape `cargo build` compiles for
@@ -80,7 +80,7 @@ arguments in the REPL.
 - `--native-emit [out.rs]`: emits Rust to file, exits.  Default
   output `.loft/<script>.rs`.
 - `--interpret`: runs in interpreter mode (native is default).
-- `--native`, `--native-release`: rustc-compile + run.
+- `--native`, `--ship`: rustc-compile + run.
 
 The introspection tool's CLI is essentially `--dump` + `--native-emit`
 + a `--dump-slots` (new) folded into one orthogonal `--introspect`

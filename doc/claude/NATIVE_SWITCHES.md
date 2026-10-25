@@ -507,7 +507,7 @@ step for a wrong element, order, length or cursor after such a push;
 `LOFT_TRACE_HAND_OVER=1` names each site admitted; cells `tests/scripts/158-rotate.loft`.
 
 **`LOFT_NO_APART_RECORDS=1`** (`@FR-R-Apart` instance 4, default-ON, generation time,
-`--native-release` only) keeps a record of record vectors built in a frame in the store —
+`--ship` only) keeps a record of record vectors built in a frame in the store —
 with it on, the frame holds its elements as bytes and its callees run as `__apr` twins that
 copy them into the collection (dryopea `truncate_to` −42 %).  The first bisect step for a
 wrong element after a frame-built record is appended; cells `tests/scripts/158-apart-records.loft`.
@@ -527,7 +527,7 @@ first bisect step for a wrong `f#next` or `f#index` after a loop that reads `f`,
 read from the wrong offset inside one.  `LOFT_HOIST_VERIFY=1` is its falsifier: every held
 read and the guard's drop assert that the record still says what it said when the hold began.
 
-**`LOFT_NO_APART=1`** (`@FR-R-Apart`, default-ON, generation time, `--native-release` and every
+**`LOFT_NO_APART=1`** (`@FR-R-Apart`, default-ON, generation time, `--ship` and every
 build that does not ship the live tier) keeps every record in the store from its construction —
 with it off, a record whose every field is a `vector<float>` of one length travels between the
 functions that build it, read and write its elements and hand it on as a Rust array, through
@@ -560,7 +560,7 @@ answer out of a decoder's caller on a release build, after `LOFT_NO_DECODE_VIEW`
 **`LOFT_TRACE_DECODE_STRUCTURE=1`** names each producer and root admitted and each decline with
 its reason; `=2` also prints each consumer's IR.
 
-**`LOFT_NO_STREAM_WALK=1`** (`@FR-R-StreamWalk`, default-ON, generation time, `--native-release`
+**`LOFT_NO_STREAM_WALK=1`** (`@FR-R-StreamWalk`, default-ON, generation time, `--ship`
 and every build that does not ship the live tier) builds every vector a caller walks once —
 with it off, a function answering a vector of records that its caller binds and walks by
 index runs as its stream twin, handing each element's fields to the walk's body at the
@@ -954,7 +954,7 @@ loop the idiom should have taken.
 **A frameless call tree carries no prelude (@PLN157 row 11, `@FR-R-LeafChain`, lean tier
 only, generation time):** N4's leaf rule made transitive — a function whose every user
 callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry and buffer
-guard in `--native-release`, since there the frame is only a depth count (parse row −12–14 %).
+guard in `--ship`, since there the frame is only a depth count (parse row −12–14 %).
 **`LOFT_NO_GUARDED_FILL=1`** (`@FR-R-Fill`'s guarded clause, default-ON, generation time,
 `--native` only) keeps the loop for a body `t = base + i; if t < N { v[t] = c }` — with it
 off, the loop is the slice fill of `lo..min(hi, N - base)` when that span holds eight or

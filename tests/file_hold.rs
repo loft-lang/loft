@@ -55,7 +55,7 @@ fn cells() -> PathBuf {
 fn holds(env: &[(&str, &str)], tag: &str) -> Vec<(String, usize)> {
     let out = std::env::temp_dir().join(format!("loft_file_hold_{tag}.rs"));
     let mut cmd = loft();
-    cmd.arg("--native-release")
+    cmd.arg("--ship")
         .arg("--native-emit")
         .arg(&out)
         .arg(cells());
@@ -147,11 +147,11 @@ fn the_cells_hold_on_the_release_build() {
         ("LOFT_HOIST_VERIFY", "1"),
     ] {
         let out = loft()
-            .arg("--native-release")
+            .arg("--ship")
             .arg(cells())
             .env(env.0, env.1)
             .output()
-            .expect("spawn loft --native-release");
+            .expect("spawn loft --ship");
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(

@@ -124,11 +124,7 @@ fn a_constructor_call_is_its_literal_where_the_cells_say_and_nowhere_else() {
 #[test]
 fn the_refill_clause_keeps_the_designed_loop_records() {
     let out = loft(
-        &[
-            "--native-release",
-            "--native-emit",
-            loft::platform::null_sink(),
-        ],
+        &["--ship", "--native-emit", loft::platform::null_sink()],
         REFILL,
         &[("LOFT_TRACE_LOOP_RECORD", "1")],
     );
@@ -156,11 +152,7 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
         "{lines:#?}"
     );
     let off = loft(
-        &[
-            "--native-release",
-            "--native-emit",
-            loft::platform::null_sink(),
-        ],
+        &["--ship", "--native-emit", loft::platform::null_sink()],
         REFILL,
         &[
             ("LOFT_TRACE_LOOP_RECORD", "1"),
@@ -178,7 +170,7 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
 #[test]
 fn the_cells_hold_in_every_mode_under_every_switch_and_the_falsifiers() {
     for file in [CTOR, REFILL] {
-        for mode in ["--interpret", "--native-release"] {
+        for mode in ["--interpret", "--ship"] {
             run_ok(&[mode], file, &[]);
             for s in SWITCHES {
                 run_ok(&[mode], file, &[(s, "1")]);
@@ -187,10 +179,6 @@ fn the_cells_hold_in_every_mode_under_every_switch_and_the_falsifiers() {
             run_ok(&[mode], file, &[("LOFT_POISON_CLAIM", "1")]);
         }
         run_ok(&["--native"], file, &[("LOFT_NATIVE_LEAK_CHECK", "1")]);
-        run_ok(
-            &["--native-release"],
-            file,
-            &[("LOFT_NATIVE_LEAK_CHECK", "1")],
-        );
+        run_ok(&["--ship"], file, &[("LOFT_NATIVE_LEAK_CHECK", "1")]);
     }
 }

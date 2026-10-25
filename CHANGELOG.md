@@ -16,6 +16,13 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**`--ship` builds the program you hand to someone; `--native-release` is gone.**  Write
+`loft --ship prog.loft` where you wrote `--native-release`: the same fully optimised binary,
+now with its native libraries linked into it (add `--dynamic` to keep them beside it).  It
+builds every compiled target the same way — `--ship --native-wasm`, `--ship --html`,
+`--ship --native-android` — where `--native-release` changed only the host binary.  Every
+fault check stays in a shipped build.
+
 **A store image is read only beside its `.dschema` sidecar.**  `store_load`,
 `store_load_untrusted`, `store_load_url` and the paged loaders (`store_load_key`, `store_load_box`,
 `store_load_prefix`, …) refuse an image with no sidecar beside it, and over HTTP one whose sidecar

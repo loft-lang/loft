@@ -1,6 +1,6 @@
 // `@FR-R-DecodeView` (@C141) instance 1 — a text or byte-string field of a decoded enum value holds a
 // span of the frame it was decoded from, inside the region of functions that decode the frame
-// and only read the result (`--native-release`).  Every cell asserts the VALUES a hand
+// and only read the result (`--ship`).  Every cell asserts the VALUES a hand
 // computation gives; the interpreter keeps every field owned and is the oracle, and
 // `LOFT_NO_DECODE_VIEW=1` must answer the same.
 //
@@ -14,7 +14,7 @@
 // `walk_values`; `bytes_len` (a byte string read), `scribble` (the frame written), `keep` (a
 // decoded value returned) and `mixed_alone` (a span variant minted alone) decline.
 //
-// @falsify-tier: native-release
+// @falsify-tier: ship
 // @falsified-by: tests/falsified/a-decoded-text-is-read-where-it-lies.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 //   CHANNEL: the VALUE channel, native only — the patch reads a span one byte late.
 //   WITNESS: under the patch c1 answers `-` where this file says `apply`: the map's keys,

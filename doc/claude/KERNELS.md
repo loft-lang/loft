@@ -68,7 +68,7 @@ alone — the interpreter pays what native pays.  `split` and `text_lines` were 
 (§ Removed).  `vector_sum_int` stays: `sum` is generic, monomorphised per program, so it cannot
 be precompiled, and its plain loop is still 4.9× the kernel compiled.
 
-| kernel | interpreted | `--native-release` |
+| kernel | interpreted | `--ship` |
 |---|--:|--:|
 | `vector_sum_int` | 246× — keep | 5.0× — keep |
 
@@ -124,8 +124,8 @@ and an interpreted program runs them compiled.  Measured at the retirement, best
 |---|--:|--:|
 | `split`, interpreted | 2.3 ms | 3.4 ms (1.5×) |
 | `lines`, interpreted | 1.5 ms | 2.0 ms (1.3×) |
-| `split`, `--native-release` | 2.3 ms | 0.6 ms (native's split rewrites apply again) |
-| `lines`, `--native-release` | 1.7 ms | 2.0 ms (1.2×) |
+| `split`, `--ship` | 2.3 ms | 0.6 ms (native's split rewrites apply again) |
+| `lines`, `--ship` | 1.7 ms | 2.0 ms (1.2×) |
 
 The ports, through the twin: `dump_ignored_tests` 626 ms → 655 ms, `opl_points` (200k lines)
 1.77 s → 1.62 s, identical on every channel.  Their guards stay, renamed for the rules they pin

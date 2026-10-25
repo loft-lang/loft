@@ -3347,7 +3347,7 @@ impl Parser {
         // Everywhere ELSE the boxing is pure cost: it turns `(float, float, float)`
         // into a store record claimed and freed on every call, so the SAME arithmetic
         // ran ~5.6x slower crossing a function boundary than inline (loft#808 measured
-        // 728ms vs 129ms on `--native-release`; the local compiles to a real Rust
+        // 728ms vs 129ms on `--ship`; the local compiles to a real Rust
         // `(f64, f64, f64)`).  A tuple return keeps Rust's tuple ABI unless it is a
         // worker's.  See `Parser::par_worker_defs` for why the set is complete here on
         // pass 2 and topped up between the passes.

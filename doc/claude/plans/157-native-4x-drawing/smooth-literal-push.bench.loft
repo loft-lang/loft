@@ -1,4 +1,4 @@
-// A CEILING PROBE, not a guard: run it by hand with `loft --native-release` on a QUIET box.
+// A CEILING PROBE, not a guard: run it by hand with `loft --ship` on a QUIET box.
 // The @PLN157 § V-ah kernel written four ways — record-returning `ctrl`/`half_chord` (A)
 // or field-returning (B), each with the per-point `pt(x, y)` CALL (shipped) or the record
 // LITERAL `Pt { ptx, pty }` in the push.  Same arithmetic, same output, so the four hashes

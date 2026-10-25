@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Charge every perf sample of a `--native-release` loft program to the loft LINE that ran it.
+"""Charge every perf sample of a `--ship` loft program to the loft LINE that ran it.
 
     scripts/native_attrib.py <binary> <emitted.rs> <perf.data>
 
@@ -16,7 +16,7 @@ The binary must carry frame pointers AND line tables, and so must the runtime rl
 otherwise every call chain stops at the runtime boundary and inclusive equals self:
 
     RUSTFLAGS=-Cforce-frame-pointers=yes cargo build --profile profiling --lib
-    loft --native-release --native-emit out.rs prog.loft
+    loft --ship --native-emit out.rs prog.loft
     rustc --edition=2024 -o prog.bin out.rs -C opt-level=3 -C codegen-units=1 \\
         -C llvm-args=-align-loops=64 \\
         -Cdebuginfo=1 -Cforce-frame-pointers=yes \\

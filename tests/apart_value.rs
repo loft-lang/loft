@@ -52,10 +52,7 @@ fn cells() -> PathBuf {
 fn emitted(src: &Path, env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>) {
     let out = std::env::temp_dir().join(format!("loft_apart_value_{tag}.rs"));
     let mut cmd = loft();
-    cmd.arg("--native-release")
-        .arg("--native-emit")
-        .arg(&out)
-        .arg(src);
+    cmd.arg("--ship").arg("--native-emit").arg(&out).arg(src);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -114,11 +111,11 @@ fn the_switch_leaves_every_record_in_the_store() {
 fn the_cells_hold_on_the_release_build() {
     for env in [("LOFT_TIMEOUT", "300"), ("LOFT_NO_APART", "1")] {
         let out = loft()
-            .arg("--native-release")
+            .arg("--ship")
             .arg(cells())
             .env(env.0, env.1)
             .output()
-            .expect("spawn loft --native-release");
+            .expect("spawn loft --ship");
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
@@ -151,15 +148,13 @@ fn an_index_out_of_range_reports_as_the_store_path_does() {
     );
     let run = |apart: bool| {
         let mut cmd = loft();
-        cmd.arg("--native-release")
-            .arg(&src)
-            .env("LOFT_DEV_SOFT_HALT", "1");
+        cmd.arg("--ship").arg(&src).env("LOFT_DEV_SOFT_HALT", "1");
         if !apart {
             // The STORE path, where `(R-Header)`'s kept clause holds `x.m`: a read through the
             // held header reports as the twin does (loft#2134).
             cmd.env("LOFT_NO_APART", "1");
         }
-        let out = cmd.output().expect("spawn loft --native-release");
+        let out = cmd.output().expect("spawn loft --ship");
         (
             String::from_utf8_lossy(&out.stdout).into_owned(),
             String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -243,7 +238,7 @@ fn inline_bodies(tier: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
 
 #[test]
 fn the_inline_buffers_are_where_the_cells_say() {
-    for tier in ["--native", "--native-release"] {
+    for tier in ["--native", "--ship"] {
         assert_eq!(
             inline_bodies(tier, &[], "on"),
             INLINE,
@@ -258,7 +253,7 @@ fn the_inline_buffers_are_where_the_cells_say() {
 
 #[test]
 fn the_vector_cells_hold_with_the_rule_off() {
-    for tier in ["--native", "--native-release"] {
+    for tier in ["--native", "--ship"] {
         let out = loft()
             .env("LOFT_NO_APART_VECTOR", "1")
             .arg(tier)

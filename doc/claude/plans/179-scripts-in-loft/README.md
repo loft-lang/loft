@@ -391,7 +391,7 @@ learn the `#!` line, and Windows has no shebang — a caller there spells `loft 
 ## Execution modes — evaluated in [`MODES.md`](MODES.md)
 
 The dual mode the owner asked for (2026-09-30) is loft's steady state already: one source,
-`--interpret` / `--native` (cached by source hash) / `--native-release`.  The compiled
+`--interpret` / `--native` (cached by source hash) / `--ship`.  The compiled
 version is never stored in git (3.5 GB a generation, stale weekly); the source-keyed cache
 is the store and CI warms it.  **The rule: a script runs interpreted; a script whose source
 has stopped changing runs optimised** — loft measures the age of the hash on two clocks

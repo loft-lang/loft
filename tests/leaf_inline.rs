@@ -138,7 +138,7 @@ fn the_appender_clause_fires_where_its_cells_say_and_holds_on_the_release_build(
     );
     for off in ["0", "1"] {
         let (out, err, ok) = loft(
-            &["--native-release"],
+            &["--ship"],
             &cells,
             &[
                 ("LOFT_NO_INLINE_APPENDER", off),
@@ -147,7 +147,7 @@ fn the_appender_clause_fires_where_its_cells_say_and_holds_on_the_release_build(
         );
         assert!(
             ok && out.trim_end().ends_with("ok"),
-            "--native-release, LOFT_NO_INLINE_APPENDER={off}:\n{out}\n{err}"
+            "--ship, LOFT_NO_INLINE_APPENDER={off}:\n{out}\n{err}"
         );
     }
 }

@@ -488,7 +488,7 @@ An unreferenced definition is absent from the stripped artifact.
   the slim artifact its whole point.
 
 **Measured, and it holds by construction:** every static site is a direct call (step 11), so an
-overload nothing calls is unreachable, and the SHIPPED lane — `--native-release`, which emits
+overload nothing calls is unreachable, and the SHIPPED lane — `--ship`, which emits
 only reachable functions — leaves it out.  On a `hit` set of four (two called, the total
 fallback and a `(Slime, Crate)` overload uncalled) the release emission holds exactly the two
 called ones; the semantics lane (`--native`, which keeps every tier by design — NATIVE.md

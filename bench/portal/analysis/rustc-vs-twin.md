@@ -1,7 +1,7 @@
 # The slow routines: loft's emitted Rust against the hand-written twin
 
 Twelve of the slowest routines on 2026-10-08 (tree `085826175`), each cut to one routine and
-built twice: loft's `--native-release` emission through `bench/portal/hand_price.sh`, and the
+built twice: loft's `--ship` emission through `bench/portal/hand_price.sh`, and the
 `bench.rs` twin with `rustc -O`.  Every pair's output hash is equal.  Counts are user-mode
 `perf stat` instructions and cycles per op; the profiles are self time.  The runs were pinned to
 efficiency cores (12–15, `cpu_atom`): instruction counts are core-independent, absolute cycles
@@ -73,7 +73,7 @@ Superseded for the x86-64 cut by [worklist.md](worklist.md) § 0's re-profile at
 
 The same rows and the others over 5× on the x86-64 laptop, on the tree rebased onto `main`
 (`f0b49ec8f`).  The ratios are `bench/portal/results/laptop.tsv`'s; the shares are user-mode
-self time of the `--native-release` binary (§ Method notes, the last item).  The steps these
+self time of the `--ship` binary (§ Method notes, the last item).  The steps these
 shares lead to are ordered in [worklist.md](worklist.md) § 0, the x86-64 list.
 
 | routine | × | self time by kind | what it says about the step |

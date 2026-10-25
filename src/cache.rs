@@ -887,7 +887,7 @@ pub fn rustflags_fingerprint() -> u64 {
 }
 
 /// `LOFT_NATIVE_RELEASE_FLAGS` — extra `rustc` arguments for the SHIPPED tier
-/// (`--native-release` and every generated library cdylib), split on whitespace: a
+/// (`--ship` and every generated library cdylib), split on whitespace: a
 /// MEASUREMENT switch for trying a code-generation flag over a whole portal run
 /// (`-C llvm-args=-align-all-functions=6`) before it is made a default.  Empty when unset.
 /// Every cache key that names a release binary folds [`native_release_flags_fingerprint`]

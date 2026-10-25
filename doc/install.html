@@ -71,7 +71,7 @@ make install-user</code></pre>
 <tr><td><code>--timeout N</code></td><td>Stop the program after N seconds; worth using the first time you run something</td></tr>
 <tr><td><code>--explain</code></td><td>Print the suggested fix under each diagnostic. It only shows the fix, so it is always safe to run</td></tr>
 <tr><td><code>--native</code></td><td>Compile to a native binary via <code>rustc</code> and run it (without Rust on PATH, loft says so and interprets)</td></tr>
-<tr><td><code>--native-release</code></td><td>Same as <code>--native</code> with full optimisations (slower to compile, fastest to run)</td></tr>
+<tr><td><code>--ship</code></td><td>Builds the program as you ship it: fully optimised, with its native libraries linked in (slower to compile, fastest to run). Add <code>--native-wasm</code>, <code>--html</code> or <code>--native-android</code> to ship that target</td></tr>
 <tr><td><code>--native-emit [out.rs]</code></td><td>Write the generated Rust source to a file without compiling it</td></tr>
 </tbody>
 </table>

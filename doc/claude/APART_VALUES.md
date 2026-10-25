@@ -12,7 +12,7 @@ meeting the store only through its ordinary constructors at a boundary.
 
 ## The problem, measured
 
-One throwaway per iteration, `--native-release` against `rustc -O`, the sums equal (arm64 macOS):
+One throwaway per iteration, `--ship` against `rustc -O`, the sums equal (arm64 macOS):
 
 | throwaway shape | loft | Rust |
 |---|--:|--:|

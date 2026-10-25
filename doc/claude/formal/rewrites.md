@@ -115,7 +115,7 @@ closed unit (every use is in the compilation; a fn-ref call is a match over know
 definitions), so every condition is decidable in it and the only boundaries left are
 where a representation is turned back into the promised one: a call into a `use`d
 library, the live-reload arm, and a record's layout in a store (@C122's corollary).
-And the UNIT is a build decision: a release copy of a program (`--native-release`)
+And the UNIT is a build decision: a release copy of a program (`--ship`)
 emits its `use`d loft libraries' reachable functions into the one program it compiles,
 so there a loft-to-loft library API is no boundary at all — a library is recompiled
 with the game rather than reused as a binary — and what remains is a package's `#rust`
@@ -2983,11 +2983,11 @@ instance 4, `LOFT_TRACE_APART=1`).  Instance 4 measured on dryopea `truncate_to`
 µs inlined the boundary with the layout's constants; the built form asks the element type's
 plan at run time.  Instance 4's guard `tests/scripts/158-apart-records.loft`, its pins
 `tests/apart_records.rs`; like instance 2 it is made only where no live tier ships
-(`--native-release`).  Not admitted yet: an
+(`--ship`).  Not admitted yet: an
 element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
 text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
 Guards `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:
-native-release`) and `a-local-float-vector-lives-in-an-inline-buffer.loft`; pins and both
+ship`) and `a-local-float-vector-lives-in-an-inline-buffer.loft`; pins and both
 out-of-range reports `tests/apart_value.rs`.  Design:
 [APART_VALUES.md](../APART_VALUES.md).
 
@@ -3125,7 +3125,7 @@ the walks; `LOFT_NO_STREAM_WALK=1`, `LOFT_TRACE_STREAM_WALK=1`).  zttext's
 **4.60× → 2.98× of Rust**, hash unchanged.  Not admitted yet: a walk by `for e in v`, a
 narrow integer, enum, boolean or character field, a body that reads the index, a walk
 that leaves early.  Guard `tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft`
-(`@falsify-tier: native-release`), pin `tests/stream_walk.rs`.
+(`@falsify-tier: ship`), pin `tests/stream_walk.rs`.
 
 ### A keyed insert writes the entry its key names
 

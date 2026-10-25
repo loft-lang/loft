@@ -5,7 +5,7 @@
 
     A0-lazy-mint-hand-patch.py in.rs out.rs
 
-`in.rs` is a `loft --native-release --native-emit` emission.  A prelude line
+`in.rs` is a `loft --ship --native-emit` emission.  A prelude line
 `var___ref_N = OpDatabase(cell,var___ref_N, T);` (before the function's first `// loft:`
 comment) is removed, its `stores.null_named(…)` declaration becomes `DbRef::NULL`, and every
 body line that hands `var___ref_N` to a call gets a null-guarded mint in front of it.  The

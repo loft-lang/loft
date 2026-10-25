@@ -109,7 +109,7 @@ build_and_run() {
   local dir="$ROOT/bench/$1" build
   build="$dir/.loft"
   mkdir -p "$build"
-  # loft-native lane — what a SHIPPED binary gets (`--native-release`): the lean tier
+  # loft-native lane — what a SHIPPED binary gets (`--ship`): the lean tier
   # and full optimisation.  A performance lane measures the optimised build; the
   # semantics runs are the test runner's.
   "$LOFT" --native-emit "$build/ratio_native.rs" --lean --path "$ROOT/" "$dir/bench.loft" > /dev/null

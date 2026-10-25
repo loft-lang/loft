@@ -322,7 +322,7 @@ for row in rows { cache += Entry { key: row.id, value: row.value }; }
 ```
 
 Filling a million-entry hash rebuilds the table 18 times without it. Measured on
-`--native-release`, 1M `integer` keys (2026-09-21): **240 → ~120 ms**, and the finished
+a `--ship` build, 1M `integer` keys: **240 → ~120 ms**, and the finished
 table is **a third smaller** (11.5 MB → 8.0 MB) — the growth ladder doubles *past* the
 trigger and lands at load 0.35, while a reserved table sits at the 0.5 it asked for. So
 it buys time and memory at once.

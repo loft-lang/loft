@@ -91,7 +91,7 @@ Alice is 30
 ```
 
 `assert(condition, message)` is the canonical "did this hold?" probe.
-It stays active in every build, `--native-release` included: a failed
+It stays active in every build, `--ship` included: a failed
 assert stops the program with its message.
 
 Loft has primitive types: `integer` (i64), `boolean`, `float` (f64),

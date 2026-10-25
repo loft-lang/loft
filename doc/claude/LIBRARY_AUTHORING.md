@@ -101,7 +101,7 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     only whoever can act on its cure.  [DIAGNOSTICS.md](DIAGNOSTICS.md)
 19. **Claim only the targets you have passed**: interpret, native, wasm and browser give one
     answer on every claimed target.  loft-ship skill § the parity gate
-20. **Ship lean**: every cdylib is built `--native-release` (`opt-level=3`,
+20. **Ship lean**: every cdylib is built `--ship` (`opt-level=3`,
     `codegen-units=1`), and a performance number comes from that tier only.
     [NATIVE.md](NATIVE.md) § Optimisation tiers
 

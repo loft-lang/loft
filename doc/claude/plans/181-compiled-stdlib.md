@@ -122,7 +122,7 @@ interpreter adapters, and the second call spelling native's split rewrites had l
 kernel (they match the loft call's buffered form, as before it).  The pins the kernel had
 restated went back to the loft call's values (`split_table`, `lazy_split`, `char_walk`, the B1b
 census).  Measured against the kernels, best of 5: `split` 1.5× and `lines` 1.3× interpreted,
-`split` 3.8× FASTER and `lines` 1.2× on `--native-release`; the ports 626 → 655 ms and
+`split` 3.8× FASTER and `lines` 1.2× on `--ship`; the ports 626 → 655 ms and
 1.77 → 1.62 s, identical output.  The guards were renamed for the rules they pin and their plants
 re-run in the loft bodies: red on both backends, the interpreted run declining the compiled body
 whose source no longer matched.

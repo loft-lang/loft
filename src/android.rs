@@ -139,6 +139,7 @@ impl AndroidTarget {
         rs_path: &Path,
         out_path: &Path,
         native_packages: &[(String, String)],
+        ship: bool,
     ) -> Result<(), String> {
         let tree = crate::native_utils::loft_source_tree().ok_or_else(|| {
             "loft: --native-android needs loft's source tree to cross-build its Android \
@@ -188,7 +189,7 @@ impl AndroidTarget {
             .map_err(|e| format!("loft: write {e}"))?;
         crate::file_access::write(
             crate_dir.join("Cargo.toml"),
-            cargo_toml(&tree, native_packages),
+            cargo_toml(&tree, native_packages, ship),
         )
         .map_err(|e| format!("loft: write {e}"))?;
 
@@ -593,7 +594,15 @@ fn highest_platform(dir: &Path) -> Option<(PathBuf, u32)> {
 /// `StableCrateId`). The empty `[workspace]` stops cargo walking up into the loft
 /// package that contains this directory. Paths are Debug-quoted via `String` (not
 /// `Path`, which the lint rejects as lossy) so they land as escaped TOML strings.
-fn cargo_toml(tree: &Path, native_packages: &[(String, String)]) -> String {
+///
+/// `ship` (`--ship`) builds the release profile as every shipped loft binary is compiled —
+/// opt-level 3 in one codegen unit (`src/native_release_args.txt`); otherwise opt-level 2.
+fn cargo_toml(tree: &Path, native_packages: &[(String, String)], ship: bool) -> String {
+    let profile = if ship {
+        "opt-level = 3\ncodegen-units = 1\n"
+    } else {
+        "opt-level = 2\n"
+    };
     let tree_s = tree.display().to_string();
     let mut pkg_deps = String::new();
     for (crate_name, pkg_dir) in native_packages {
@@ -642,7 +651,7 @@ fn cargo_toml(tree: &Path, native_packages: &[(String, String)]) -> String {
          loft = {{ path = {tree_s:?}, default-features = false, features = [{loft_features}] }}\n\
          {pkg_deps}\n\
          [profile.release]\n\
-         opt-level = 2\n\
+         {profile}\
          {patch}"
     )
 }

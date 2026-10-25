@@ -11,7 +11,7 @@
 // overflow makes the accumulator null and null propagates.  n17 is the falsifier of the
 // write filter: a bound scanned before the write would admit an overflow.
 //
-// @falsified-at: hand-measured (two sabotages, 2026-09-17, `--native-release`).  The guard's
+// @falsified-at: hand-measured (two sabotages, 2026-09-17, `--ship`).  The guard's
 //   accumulate clause replaced by `Some(0)`: n7c reads -9223372036854775779 for null, and under
 //   LOFT_HOIST_VERIFY=1 the run stops at the operator — "plain OpAddInt answered
 //   -9223372036854775779 where the checked form answers -9223372036854775808".  The write
@@ -20,7 +20,7 @@
 //   both in place every cell holds on both backends, in both switch states, under verify and
 //   the store falsifiers; the interpreter never takes the rewrite and agrees on every value.
 //   Step 2 (raw reads), hand-measured the same evening: the guard's in-range clause replaced by a
-//   no-op, n4 — the tap that reads past the end — is the first cell to fail on `--native-release`
+//   no-op, n4 — the tap that reads past the end — is the first cell to fail on `--ship`
 //   (a raw read of the claim's slack where the checked read answers 0), and under
 //   LOFT_HOIST_VERIFY=1 the run stops at the first raw read — "a raw read disagrees with the
 //   checked read".  n19 needs LOFT_POISON_CLAIM=1 to be a witness: unpoisoned, the slack it

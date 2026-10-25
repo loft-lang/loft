@@ -11,8 +11,8 @@ the text it replaces, so a stale emission fails loudly instead of pricing nothin
     L4  slice_runs holds `d.pieces`' header across its loop
 
     cd <loft-bench-libs>/loft-libs-core/zttext
-    LOFT_NATIVE_NO_CACHE=1 LOFT_NATIVE_RUSTC_ARGS=/tmp/b.args loft --native-release bench/bench.loft --n 2
-    loft --native-release --native-emit /tmp/z.rs bench/bench.loft
+    LOFT_NATIVE_NO_CACHE=1 LOFT_NATIVE_RUSTC_ARGS=/tmp/b.args loft --ship bench/bench.loft --n 2
+    loft --ship --native-emit /tmp/z.rs bench/bench.loft
     price_invert.py /tmp/z.rs /tmp/z_l1234.rs L1 L2 L3 L4
     bench/portal/hand_price.sh /tmp/z.rs /tmp/z /tmp/b.args
     bench/portal/hand_price.sh /tmp/z_l1234.rs /tmp/z_l1234 /tmp/b.args

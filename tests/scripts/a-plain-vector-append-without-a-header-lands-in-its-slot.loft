@@ -35,7 +35,7 @@
 // a literal writes each field itself and an appended copy is fresh, so the clause's edge
 // that a cell can see is its ADMISSION — a plain vector, never a keyed collection.
 //
-// @falsify-tier: native-release
+// @falsify-tier: ship
 // @falsified-by: tests/falsified/a-plain-vector-append-without-a-header-lands-in-its-slot.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 //   CHANNEL: the VALUE channel, native only — the patch admits a `sorted` collection as a
 //   plain vector, so each record lands at the end instead of at its key.

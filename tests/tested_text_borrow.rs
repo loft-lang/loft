@@ -29,7 +29,7 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
 
 #[test]
 fn the_cells_hold_under_poison_in_both_switch_states() {
-    for mode in ["--native", "--native-release"] {
+    for mode in ["--native", "--ship"] {
         for switch in [None, Some(("LOFT_NO_TESTED_BORROW", "1"))] {
             let mut env = vec![("LOFT_POISON", "1")];
             env.extend(switch);
@@ -51,11 +51,7 @@ fn an_arm_writing_only_the_result_borrows_and_one_writing_its_parameter_copies()
         let mut e = vec![("LOFT_TRACE_TEXT_BORROW", "1")];
         e.extend_from_slice(env);
         let out = loft(
-            &[
-                "--native-release",
-                "--native-emit",
-                loft::platform::null_sink(),
-            ],
+            &["--ship", "--native-emit", loft::platform::null_sink()],
             &e,
         );
         String::from_utf8_lossy(&out.stderr).into_owned()

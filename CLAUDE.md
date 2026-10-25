@@ -365,7 +365,7 @@ src/main.rs            CLI; loads default/ then user file
 - **Three optimisation tiers, kept apart** (NATIVE.md § Optimisation tiers): a SEMANTICS run
   (`--native`, the test runner) keeps every tier and a fast compile; a PERFORMANCE lane
   (`native_ratio.sh`, `run_bench.sh`, a consumer bench) and a SHIPPED binary
-  (`--native-release`, every library cdylib) are lean and fully optimised
+  (`--ship`, every library cdylib) are lean and fully optimised
   (`-C opt-level=3 -C codegen-units=1`).  A perf number taken on the semantics build
   is not a measurement of what ships.
 - **User-facing output** (anything a command PRINTS): silence when nothing needs acting
