@@ -75,7 +75,6 @@ pub fn generate_interface(data: &Data, export_set: &HashSet<u32>) -> String {
     }
     let mut fns: Vec<u32> = export_set.iter().copied().collect();
     fns.sort_unstable();
-    let decl_dups = crate::opt::names::duplicate_fn_names(data);
     for d in fns {
         let def = data.def(d);
         let name = def.name().strip_prefix("n_").unwrap_or(def.name());
@@ -95,7 +94,7 @@ pub fn generate_interface(data: &Data, export_set: &HashSet<u32>) -> String {
         let _ = writeln!(
             src,
             "#native \"loft_shared_{}\"",
-            crate::opt::names::disambiguated_fn_ident(&decl_dups, def)
+            crate::opt::names::library_bridge_ident(data, export_set, d)
         );
     }
     src
@@ -876,11 +875,20 @@ pub(crate) fn shared_cdylib_source(
     let dups = crate::opt::names::duplicate_fn_names(data);
     for &d in &entry {
         src.push('\n');
+        // loft#2180 — a library artifact is adopted by programs other than the one that built
+        // it, so its exported names are the library's own (`library_bridge_ident`); the
+        // standard library built into the host keeps the program's, which is its only reader.
+        let export_ident = if in_host {
+            crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
+        } else {
+            crate::opt::names::library_bridge_ident(data, export_set, d)
+        };
         src.push_str(&shared_bridge_wrapper(
             data,
             stores,
             &dups,
             d,
+            &export_ident,
             !in_host,
             ids.as_mut(),
         ));
@@ -974,6 +982,7 @@ fn shared_bridge_wrapper(
     stores: &Stores,
     dups: &HashSet<String>,
     d_nr: u32,
+    export_ident: &str,
     own_ids: bool,
     mut ids: Option<&mut crate::generation::SharedIds>,
 ) -> String {
@@ -1231,7 +1240,7 @@ fn shared_bridge_wrapper(
 
     format!(
         "#[unsafe(no_mangle)]\n\
-         pub extern \"C\" fn loft_shared_{inner}(\n    \
+         pub extern \"C\" fn loft_shared_{export_ident}(\n    \
          stores: *mut Stores,\n    \
          args: *const loft::native_lib::LibArg,\n    \
          n: usize,\n    \

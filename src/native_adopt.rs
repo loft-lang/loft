@@ -49,16 +49,21 @@ pub fn mark_native_exports(data: &mut Data, candidates: &HashSet<u32>) -> HashSe
 /// the library interprets (Step 2's invariant: a library that can't compile native
 /// silently interprets, no `exit`, no `OpStaticCall` to an unbuilt symbol).
 pub fn mark_exports(data: &mut Data, export: &HashSet<u32>) {
-    let dups = crate::opt::names::duplicate_fn_names(data);
     for &d in export {
-        // The disambiguated ident (#305) — must equal the cdylib wrapper's
-        // exported symbol, or `wire_shared_native_fns`' dlsym misses it.
-        let sym = format!(
-            "loft_shared_{}",
-            crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
-        );
+        let sym = bridge_symbol(data, export, d);
         data.def_mut(d).native = sym;
     }
+}
+
+/// The symbol the library artifact built for `export` exports `d`'s bridge under — the same
+/// name the cdylib wrapper is written with, or `wire_shared_native_fns`' dlsym misses it.
+/// Named over the LIBRARY's export set, not this program's definitions, because the artifact
+/// is adopted by programs other than the one that built it (loft#2180).
+fn bridge_symbol(data: &Data, export: &HashSet<u32>, d: u32) -> String {
+    format!(
+        "loft_shared_{}",
+        crate::opt::names::library_bridge_ident(data, export, d)
+    )
 }
 
 /// What proving a built cdylib against the process turned up.
@@ -135,22 +140,23 @@ pub fn probe_and_mark_exports(
         probe.unresolved = all(data);
         return probe;
     }
-    let dups = crate::opt::names::duplicate_fn_names(data);
-    let mut resolvable: HashSet<u32> = HashSet::new();
+    // Named over the WHOLE export set, then marked one by one: `mark_exports` over the
+    // resolvable subset would name them over that subset, and a pair one of whose members did
+    // not resolve would lose the suffix the artifact was built with.
+    let mut resolvable: Vec<(u32, String)> = Vec::new();
     for &d in export {
-        let sym = format!(
-            "loft_shared_{}",
-            crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
-        );
+        let sym = bridge_symbol(data, export, d);
         if crate::c_libs::bridge_symbol_resolves(&sym) {
-            resolvable.insert(d);
+            resolvable.push((d, sym));
         } else {
             probe.unresolved.push(data.def(d).original_name().clone());
         }
     }
     probe.unresolved.sort_unstable();
     probe.marked = resolvable.len();
-    mark_exports(data, &resolvable);
+    for (d, sym) in resolvable {
+        data.def_mut(d).native = sym;
+    }
     probe
 }
 
