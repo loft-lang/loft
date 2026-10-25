@@ -19,6 +19,7 @@ pub mod names;
 pub mod native_key;
 pub mod non_sentinel;
 pub mod range;
+pub mod tail_self;
 pub mod text_borrow;
 pub mod value_records;
 pub mod writes;

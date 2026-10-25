@@ -5383,6 +5383,38 @@ body's lines, runs `open_world` and keeps the call.  It reaches the stdlib too (
 `approx` inline their `min`/`max`).  `LOFT_NO_INLINE_LEAF=1`; `LOFT_TRACE_INLINE_LEAF=1` names
 each inlined call, each decline and each reduction below.
 
+### A self-call in tail position is a jump
+
+```
+  (R-TailSelf)   In a function whose parameters and locals are all scalars (integer, float,
+                 single, boolean, character, a plain enum — never a `&` parameter) and
+                 whose result is a scalar or nothing, the body is wrapped in a loop and
+                 every SELF-call in TAIL position — the value a `return` answers, the
+                 value an `if` arm or a block answers in that position, the last statement
+                 of a void body — binds its arguments to fresh temporaries, the parameters
+                 from them, and continues the loop; every other value in that position
+                 returns.  A self-call anywhere else stays a call.  A tail call inside a
+                 user loop continues the function's loop by the loops between.  In every
+                 program — an `open_world` one and a coverage run included — except a body
+                 with a generator, a `parallel` block or a closure.
+```
+
+**In words.** Applies in: the IR phase, both backends, every lane.  The recursion a compiler's
+loops are written as — a cursor and an accumulator carried through a self-call — runs to any
+depth instead of stopping at `MAX_CALL_DEPTH`; the value is the recursion's own, because the
+arguments are all read before any parameter is rebound.  Unlike `(R-InlineLeaf)` it does not
+step aside for an `open_world` program or a coverage run: the depth a program reaches is a
+property of the language and not of the lane, so an `--interpret` run, a `--native` semantics
+run (which ships the live tier and is therefore `open_world`), a shipped binary and `loft test`
+must agree on it.  A live flip reaches a tail-recursive function at its next entry from
+outside, as it reaches a `while` loop; coverage still sees the function entered by the call
+that starts the recursion.  The first clause stops at scalars so
+the frame owns no store and nothing is released before the jump; a heap parameter's rebind is
+a copy where a call hands a reference over (calls.md), which is the second clause's question
+(loft-lang/plans#202 P5b).  `LOFT_NO_TAIL_SELF=1` keeps the calls; `LOFT_TRACE_TAIL_SELF=1`
+names each rewrite and each decline, and the census (`make rewrite-census`) records the
+admissions and the declines by reason.
+
 ### A value's range removes the operations it makes redundant
 
 ```

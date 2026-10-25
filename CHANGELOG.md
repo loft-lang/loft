@@ -144,6 +144,13 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A self-call in tail position runs to any depth.**  `fn count(n: integer, acc: integer) ->
+integer { if n == 0 { acc } else { count(n - 1, acc + 1) } }` no longer stops at 10 000 frames:
+in a function whose parameters and locals are scalars, a self-call that is the last thing the
+function does becomes a jump to its entry, on both backends.  A self-call anywhere else, or
+in a function holding a record or text, is still a call.  `LOFT_NO_TAIL_SELF` keeps the
+calls.  (loft-lang/plans#202)
+
 **`[]` and `[x, ..rest]` are a complete match.**  Slice arms that together cover every length
 — an exact arm for each short length, a rest arm from there on, no guards — need no `_`:
 `match v { [] => 0, [x, ..rest] => x + total(rest) }` is the list recursion.  A set that leaves
