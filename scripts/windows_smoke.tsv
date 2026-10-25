@@ -90,3 +90,5 @@ scripts/rule_depth.py	--help
 scripts/runtime_surface.py	--help
 scripts/c_sweep.py	--help
 scripts/c_alloc_diff.py	--help
+scripts/install_main_ci.sh	--help
+scripts/runtime_bundle.sh	--help

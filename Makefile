@@ -172,7 +172,7 @@ SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$
 # skipped runtimes.  Set by `make install-native` / `install-user-fast`.
 NATIVE_ONLY ?=
 
-.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-main install-main-build install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -443,12 +443,26 @@ install-user-fast:
 # install after main moves rebuilds only what changed.  `make falsify` without a REF scores
 # a guard against this build (GUARDS.md § The control is installed main).
 LOFT_MAIN_TREE ?= $(HOME)/.cache/loft-main
-install-main:  ## Install origin/main for this user (~/.local) from a persistent worktree
-	@git fetch -q origin main
-	@# `--force`: the tree is this target's own, and a build may rewrite a tracked derived file.
+install-main:  ## Install origin/main for this user (~/.local): main's daily build, else a local build
+	@# The download first: main's daily build ships the binary with the runtime library
+	@# `--native` links (scripts/install_main_ci.sh).  It answers 3 when it cannot be used here
+	@# — no run for main's commit yet, or this machine's rustc is not the one that built the
+	@# rlib — and only then is main built locally.  LOFT_INSTALL_MAIN_BUILD=1 skips it.
+	@if [ -z "$(LOFT_INSTALL_MAIN_BUILD)" ]; then \
+		scripts/install_main_ci.sh; rc=$$?; \
+		[ $$rc -eq 0 ] && exit 0; \
+		[ $$rc -eq 3 ] || exit $$rc; \
+	fi; \
+	$(MAKE) --no-print-directory install-main-build
+
+install-main-build:  ## Install origin/main for this user (~/.local), built in a persistent worktree
+	@# The worktree may belong to ANOTHER clone's repository (it is shared by path), so main is
+	@# fetched there: a fetch here would leave the worktree's `origin/main` where it was.
 	@if [ -d "$(LOFT_MAIN_TREE)" ]; then \
+		git -C "$(LOFT_MAIN_TREE)" fetch -q origin main; \
 		git -C "$(LOFT_MAIN_TREE)" checkout -q --force --detach origin/main; \
 	else \
+		git fetch -q origin main; \
 		git worktree add -q --detach "$(LOFT_MAIN_TREE)" origin/main; \
 	fi
 	@echo "install-main: building $$(git -C "$(LOFT_MAIN_TREE)" log --oneline -1)"
