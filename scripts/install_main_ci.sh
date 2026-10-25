@@ -47,7 +47,7 @@ root="$tmp/x/loft-runtime-$triple"
 want=$(grep -E '^(release|commit-hash):' "$root/share/loft/RUSTC")
 have=$(rustc -vV | grep -E '^(release|commit-hash):')
 if [ "$want" != "$have" ]; then
-  unavailable "the runtime was built by rustc $(sed -n 's/^release: //p' <<<"$want"), this machine has $(sed -n 's/^release: //p' <<<"$have")"
+  unavailable "the runtime was built by rustc $(sed -n 's/^release: //p' <<<"$want"), this machine has $(sed -n 's/^release: //p' <<<"$have") (`rustup update stable` makes the download usable)"
 fi
 sum() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 (cd "$root" && while read -r h f; do
