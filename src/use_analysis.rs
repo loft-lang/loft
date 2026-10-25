@@ -2196,6 +2196,12 @@ pub(crate) struct Defs {
     /// one of each, and read as a plain Borrowed-of-`e`: the empty arm lowers to
     /// `OpClearVector(retbuf); OpAppendVector(retbuf, …)`, which defines nothing.
     filled: HashSet<u16>,
+    /// Vars a raw POINTER WRITE gives a store to: `OpPutRef(v, e)` binds `v` to the store `e`
+    /// names and copies nothing, so `v` may be whatever `e` was.  `(R-TailSelf)` rebinds a
+    /// parameter so at its jump; read as the pristine parameter, a `return a` after `a ← b`
+    /// named only `a`'s argument as its witness, and the caller adopted `b`'s store and freed
+    /// it (the swapped argument of the call the jump replaced made it one of several).
+    moved: HashMap<u16, Vec<Value>>,
     /// The DEFINITION each fn-ref variable in this body was assigned — what lets
     /// [`Ownership::classify`] resolve a `CallRef` through its callee's return summary,
     /// exactly as it resolves a `Call` through the definition the node names.
@@ -2220,6 +2226,7 @@ struct FillOps {
     database: u32,
     clear_vector: u32,
     append_vector: u32,
+    put_ref: u32,
 }
 
 impl FillOps {
@@ -2228,6 +2235,7 @@ impl FillOps {
             database: data.def_nr("OpDatabase"),
             clear_vector: data.def_nr("OpClearVector"),
             append_vector: data.def_nr("OpAppendVector"),
+            put_ref: data.def_nr("OpPutRef"),
         }
     }
 }
@@ -2265,6 +2273,19 @@ fn collect_defs(node: &Value, ops: &FillOps, out: &mut Defs) {
         Value::Call(d, args) if *d == ops.clear_vector || *d == ops.append_vector => {
             if let Some(Value::Var(v)) = args.first().map(Value::unspan) {
                 out.filled.insert(*v);
+            }
+            for a in args {
+                collect_defs(a, ops, out);
+            }
+        }
+        // A pointer write is a definition too ([`Defs::moved`]): the second spelling of
+        // "`v` comes to name a store", beside `Set`.
+        Value::Call(d, args) if *d == ops.put_ref => {
+            if let [dst, rhs] = args.as_slice()
+                && let Value::Var(v) = dst.unspan()
+                && !matches!(rhs.unspan(), Value::Null)
+            {
+                out.moved.entry(*v).or_default().push(rhs.unspan().clone());
             }
             for a in args {
                 collect_defs(a, ops, out);
@@ -2411,7 +2432,16 @@ impl<'a> Ownership<'a> {
         // The FUNCTION-level guard above is the one that stops genuine recursion; this
         // scoping does not weaken it.
         let outer_vars = std::mem::take(&mut self.visiting_vars);
-        let class = self.classify(tail, &def.variables, &defs);
+        // A `Loop` in tail position is no value: a body that ends in one — `(R-TailSelf)`'s
+        // frame loop, whose only exits are the `return`s inside it — delivers through those
+        // returns alone, so the tail contributes the bottom and the join below is the class.
+        // Read as a value, the loop classified as owned, the caller adopted the parameter a
+        // `return a` inside it handed back, and freed the caller's own record.
+        let class = if matches!(tail.unspan(), Value::Loop(_)) {
+            NOT_YET
+        } else {
+            self.classify(tail, &def.variables, &defs)
+        };
         // `@FR-F-Ret`, loft#1884 — every early `return` delivers as the tail does, so the
         // function's return is the JOIN of all of them: `if c { return p; } F { … }` hands back
         // its parameter on one path and a fresh value on the other, and read off the tail alone
@@ -2425,7 +2455,9 @@ impl<'a> Ownership<'a> {
         self.visiting_vars = outer_vars;
         self.frames.pop();
         self.visiting.remove(&d_nr);
-        class
+        // No site at all — a void body ending in a loop answers nothing; `Owned` is what the
+        // fallback read for that tail before, and no caller asks after a void result.
+        if class == NOT_YET { Own::Owned } else { class }
     }
 
     /// Every EARLY `return <e>` in the body of `d_nr`, classified the way
@@ -2580,13 +2612,29 @@ impl<'a> Ownership<'a> {
                             Own::Owned
                         } else if func.is_argument(*v) {
                             Own::Borrowed { base: *v }
+                        } else if defs.moved.contains_key(v) {
+                            // Given a store only by the pointer writes joined below: nothing
+                            // of its own.
+                            NOT_YET
                         } else {
                             Own::Owned
                         }
                     }
                 };
+                // Every store a pointer write gave `v` ([`Defs::moved`]) is one `v` may hold:
+                // its class is the join with each — a parameter rebound at `(R-TailSelf)`'s
+                // jump is one of several caller stores, as the swapped argument of the call
+                // it replaced made it.
+                let class = match defs.moved.get(v) {
+                    Some(moved) => moved
+                        .iter()
+                        .filter(|m| !holds_no_store(self.data, m))
+                        .map(|m| self.classify(m, func, defs))
+                        .fold(class, Own::join),
+                    None => class,
+                };
                 self.visiting_vars.remove(v);
-                class
+                if class == NOT_YET { Own::Owned } else { class }
             }
             Value::Call(d, args) => {
                 if *d == self.op_database || *d == self.op_new_record {

@@ -155,7 +155,10 @@ fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
     // Pessimistic entry: a recursive callee reads itself as unproven.
     RETURNS.with(|m| m.borrow_mut().insert(d_nr, false));
     let vars = non_sentinel_vars(data, def.variables(), def.code());
-    let mut every_exit = non_sentinel(data, &vars, def.code().tail());
+    // A `Loop` tail is no exit (`(R-TailSelf)`'s frame loop returns only from inside it), so
+    // the `return`s below are every exit.
+    let tail = def.code().tail();
+    let mut every_exit = matches!(tail.unspan(), Value::Loop(_)) || non_sentinel(data, &vars, tail);
     def.code().any_node(&mut |n| {
         if let Value::Return(inner) = n
             && !non_sentinel(data, &vars, inner)

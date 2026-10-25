@@ -670,10 +670,14 @@ express — a cursor and an accumulator carried through — reaches 100 000 wher
 10 000 frames, on both backends.  A local held in a store (a text, a vector, a record) is
 released before the jump; a vector or record parameter is passed through as the pointer the
 call would share — itself, another parameter, a part of one (`r.next`, `v[i]`) — and a text or
-`&` parameter as itself.  What the jump cannot bind the way a call does is refused at the call,
-naming the variable and the cure: an argument that makes a fresh value (`f(n - 1, acc + "x")`)
-or names a local, a parameter the body rebinds, and a text or record result.  A self-call that is an operand (`1 + f(n - 1)`), or whose value is bound to a local
-before it is returned (`r = f(n - 1); r`), is an ordinary call and keeps its frame.
+`&` parameter as itself.  A text, record, vector or generic result is delivered as the call
+would deliver it, and what the caller owns afterwards is what the call would have left it.
+What the jump cannot bind the way a call does is refused at the call, naming the variable and
+the cure: an argument that makes a fresh value (`f(n - 1, acc + "x")`) or names a local, a text
+parameter handed another text (`swap(n - 1, b, a)` over two texts), and a parameter the body
+rebinds; a generic is refused per instance (`swap<text>` where `swap<S>` jumps).  A self-call
+that is an operand (`1 + f(n - 1)`), or whose value is bound to a local before it is returned
+(`r = f(n - 1); r`), is an ordinary call and keeps its frame.
 
 ## Assertions
 

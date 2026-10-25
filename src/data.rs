@@ -5106,9 +5106,11 @@ impl Definition {
             Value::Insert(ops) => ops.last().unwrap_or(&self.code),
             other => other,
         };
+        // A `Loop` tail is no value (`(R-TailSelf)`'s frame loop): the function's values are
+        // the `return`s inside it, collected above.
         if let Value::Block(bl) = body
             && let Some(tail) = bl.operators.last()
-            && !matches!(tail.unspan(), Value::Return(_))
+            && !matches!(tail.unspan(), Value::Return(_) | Value::Loop(_))
         {
             sites.push(tail.clone());
         }

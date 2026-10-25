@@ -153,17 +153,20 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 **A self-call in tail position runs to any depth.**  `fn count(n: integer, acc: integer) ->
 integer { if n == 0 { acc } else { count(n - 1, acc + 1) } }` no longer stops at 10 000 frames:
-in a function whose parameters are scalars, a self-call that is the last thing the function
-does becomes a jump to its entry, on both backends; a local held in a store (a text, a vector,
-a record) is released before the jump.  A self-call anywhere else is still a call.
-`LOFT_NO_TAIL_SELF` keeps the calls.  (loft-lang/plans#202)
+a self-call that is the last thing the function does becomes a jump to its entry, on both
+backends, whatever the result — a number, a text, a record, a vector, a generic's — and whatever
+the parameters: a local held in a store (a text, a vector, a record) is released before the jump,
+a vector or record parameter is passed through as the pointer the call shares.  A self-call
+anywhere else is still a call.  `LOFT_NO_TAIL_SELF` keeps the calls.  (loft-lang/plans#202)
 
 **A tail self-call that cannot be a jump is a compile error.**  A function that calls itself
 in tail position handing a store-held parameter a fresh value (`f(n - 1, acc + "x")`) or a
-local, rebinding such a parameter in its body, or returning a text or record, used to compile
-and stop at 10 000 frames; it is now refused at the call, naming the variable and the cure.  A
-parameter passed through (`f(v, i + 1)`, `f(r.next, n)`) jumps like a scalar one.  A self-call
-that is an operand, or bound to a local before it is returned (`r = f(…); r`), is unchanged.
+local, handing a text parameter another text (`swap(n - 1, b, a)` over two texts), or rebinding
+such a parameter in its body, used to compile and stop at 10 000 frames; it is now refused at
+the call — a generic at each instance (`swap<text>` where `swap<S>` jumps) — naming the variable
+and the cure.  A parameter passed through (`f(v, i + 1)`, `f(r.next, n)`) jumps like a scalar
+one.  A self-call that is an operand, or bound to a local before it is returned (`r = f(…); r`),
+is unchanged.
 
 **`[]` and `[x, ..rest]` are a complete match.**  Slice arms that together cover every length
 — an exact arm for each short length, a rest arm from there on, no guards — need no `_`:

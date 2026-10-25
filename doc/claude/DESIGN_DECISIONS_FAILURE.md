@@ -163,19 +163,22 @@ and its vector form at the whole-value writes, the accessor's lowering
 **Decision.** A self-call in tail position is a jump that reuses the frame (`(R-TailSelf)`,
 [formal/rewrites.md](formal/rewrites.md)).  Where the frame cannot be reused — an argument that
 makes a fresh value or names a local for a store-held parameter, a text or `&` parameter handed
-anything but itself, a parameter the body rebinds, a `&` local, a result delivered into the
-caller's buffer, a generator, a `parallel` block or a closure in the body — the program is
-refused at the call, naming the variable and the cure
+anything but itself, a parameter the body rebinds, a `&` local, a result of a kind the scope pass
+delivers through no place (a tuple, a closure), a generator, a `parallel` block or a closure in
+the body — the program is refused at the call, and a generic at each instance, naming the
+variable and the cure
 (write the recursion as a loop, or bind the call's value to a local before returning it when a
 call is meant).
 The call is never left standing to stop at `MAX_CALL_DEPTH`.  **Why.** A recursion that works
 for small inputs and overflows at ten thousand frames is a wrong answer that arrives late, and
 a compile-time refusal is the one-way door loft may still add before the freeze
 ([COMPATIBILITY.md § The error surface is one-directional](COMPATIBILITY.md)); dropping it
-later, as the heap clause lands shape by shape, costs nothing.  The refusal and the pass share
-one predicate (`tail_frame::admit_frame`), so what compiles is exactly what jumps.
+later, as a clause lands (the text, record and vector results did), costs nothing.  The refusal
+and the pass share one predicate (`tail_frame::admit_frame`), so what compiles is exactly what
+jumps.
 **Holds at:** `@C155` — the refusal in `src/parser/definitions.rs` (pass two, beside the
-per-function lints), `admit_frame` and `declared_params` in `src/tail_frame.rs`; guards:
+per-function lints) and per instance in `src/parser/generics.rs`, `admit_frame` and
+`declared_params` in `src/tail_frame.rs`; guards:
 `tests/error_messages/cases/63_a_tail_self_call_the_frame_cannot_jump_is_refused.loft`, and in
 loft-suite `rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-is-refused.loft`.
 **Catalogue:** `formal/rewrites.md` `(R-TailSelf)` · `formal/calls.md` `(F-ParamHeap)`,
