@@ -8,10 +8,10 @@
 // that has none, so `if t is A { … }` was an internal compiler error on both backends.  A
 // payload variant's `{` is still its capture list (`is B { x }`), with the block after it.
 //
-// @falsified-at: b36d0449f — interpret and native: `test_a_block_body` and
-//   `test_a_block_starting_with_a_name` stop the compile with "range start index 1 out of
-//   range for slice of length 0" (the panic channel); the other functions parse there too.
-// CHANNEL: the compile (a panic), then the asserts.
+// @falsified-at: b36d0449f — interpret exit 1 -> 0, native exit 1 -> 0 (`make falsify`): the
+//   compile stops there with "range start index 1 out of range for slice of length 0" on
+//   `test_a_block_body` and `test_a_block_starting_with_a_name`.
+// CHANNEL: the exit code (the compile panics), then the asserts.
 // ARMED: no instrument.
 // WITNESS: each message prints the value the block answered.
 // HOLDS: `test_a_payload_capture` — the documented capture list on a payload variant.
