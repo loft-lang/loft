@@ -175,7 +175,8 @@ fn count_tail(v: &Value, d: u32, arity: usize, depth: usize) -> usize {
 /// Outside tail position only an explicit `return` opens a tail position, so the count is the
 /// sum over the `return`s below — each visited once, through the immutable child walk.
 fn count_statement(v: &Value, d: u32, arity: usize, depth: usize) -> usize {
-    match v.unspan() {
+    match v {
+        Value::Span(bx) => count_statement(&bx.1, d, arity, depth),
         Value::Return(e) => count_tail(e, d, arity, depth),
         Value::Loop(b) => b
             .operators
@@ -333,9 +334,8 @@ fn tail_void(
 /// A statement outside tail position: its explicit `return`s are tail positions of their own,
 /// and a loop below it is one level the jump has to count.
 fn statement(v: &mut Value, d: u32, params: &[u16], temps: &[u16], depth: usize, n: &mut usize) {
-    // The node under any `Span`, so a rewritten `return` keeps its line.
-    let v = v.unspan_mut();
     match v {
+        Value::Span(bx) => statement(&mut bx.1, d, params, temps, depth, n),
         Value::Return(e) => {
             let inner = std::mem::replace(&mut **e, Value::Null);
             *v = tail(inner, d, params, temps, depth, n);
