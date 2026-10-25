@@ -14805,7 +14805,7 @@ impl Parser {
     /// every path declares it and is copied by the caller instead.
     pub(crate) fn copy_param_returns_of_fresh_instance(&mut self, d_nr: u32) {
         let ret = self.data.def(d_nr).returned().clone();
-        if !matches!(ret, Type::Reference(_, _) | Type::Enum(_, true, _))
+        if !matches!(ret.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
             || !ret.depend().is_empty()
         {
             return;
@@ -14841,7 +14841,7 @@ impl Parser {
                 p.vars.is_argument(*x)
                     && !p.vars.name(*x).starts_with("__")
                     && matches!(
-                        p.vars.tp(*x),
+                        p.vars.tp(*x).base(),
                         Type::Reference(_, _) | Type::Enum(_, true, _)
                     )
             }
