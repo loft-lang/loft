@@ -1,0 +1,88 @@
+// loft#2157 — `(H-RootExtent)` with a record placed from OUTSIDE the root collection, on BOTH
+// backends.  `(R-ExitVector)` claims a vector local's wrapper in the return buffer's store; when
+// the returned struct has ONE vector field its root has the wrapper's shape, and the exit
+// literal's `OpReplaceVector` (`out` declined, a struct parameter in the frame) cleared the
+// field by resetting the whole store — the live wrapper went with it, the copy of `out` was
+// claimed on the wrapper's record, and the exit's `OpFreeRecordIn` freed the returned vector.
+// `OpPlaceRecord` now records each non-element it places (`Store::placed_foreign`) and the
+// clear walks the elements while one is live.  `c3` is the control: a two-field root is never
+// reset.  `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the channels a wrong reset shows on.
+//
+// @falsified-at: hand-measured (2026-10-24) — on main b36d0449f every cell but `c3` panics
+// `Store access out of bounds … the reference is corrupt` on the interpreter and `--native`.
+
+struct Board { notes: vector<text> }
+struct Board2 { notes: vector<text>, n: integer }
+struct Note { t: text, k: integer }
+struct NBoard { notes: vector<Note> }
+
+// C1 — the filed shape: struct param, an unused second vector<text>, literal returned.
+fn c1(b: Board) -> Board {
+  d: vector<text> = [ "A" ];
+  out: vector<text> = [];
+  out += [ "x" ];
+  return Board { notes: out };
+}
+
+// C2 — the second vector is READ before the exit; two elements in the result.
+fn c2(b: Board) -> Board {
+  d: vector<text> = [ "A", "B" ];
+  out: vector<text> = [];
+  out += [ "x{len(d)}" ];
+  out += [ "y" ];
+  return Board { notes: out };
+}
+
+// C3 — control: a two-field root is not a store-root wrapper, never reset.
+fn c3(b: Board2) -> Board2 {
+  d: vector<text> = [ "A" ];
+  out: vector<text> = [];
+  out += [ "x" ];
+  return Board2 { notes: out, n: 7 };
+}
+
+// C4 — the parameter IS read: result = b.notes ++ ["x"]; called as a rebind in a loop.
+fn c4(b: Board) -> Board {
+  d: vector<text> = [ "A" ];
+  out: vector<text> = [];
+  for t in b.notes { out += [ t ]; }
+  out += [ "x" ];
+  return Board { notes: out };
+}
+
+// C5 — a record element that owns heap (a text field).
+fn c5(b: NBoard) -> NBoard {
+  d: vector<text> = [ "A" ];
+  out: vector<Note> = [];
+  out += [ Note { t: "p", k: 1 } ];
+  out += [ Note { t: "q", k: 2 } ];
+  return NBoard { notes: out };
+}
+
+fn main() {
+  r1 = c1(Board { notes: [] });
+  assert(len(r1.notes) == 1, "c1 len {len(r1.notes)}");
+  assert(r1.notes[0] == "x", "c1 val");
+
+  r2 = c2(Board { notes: [ "z" ] });
+  assert(len(r2.notes) == 2, "c2 len {len(r2.notes)}");
+  assert(r2.notes[0] == "x2" && r2.notes[1] == "y", "c2 val {r2.notes[0]} {r2.notes[1]}");
+
+  r3 = c3(Board2 { notes: [], n: 0 });
+  assert(len(r3.notes) == 1 && r3.notes[0] == "x" && r3.n == 7, "c3");
+
+  r4 = Board { notes: [] };
+  for i in 0..20 { r4 = c4(r4); }
+  assert(len(r4.notes) == 20, "c4 len {len(r4.notes)}");
+  assert(r4.notes[0] == "x" && r4.notes[19] == "x", "c4 val");
+
+  r5 = c5(NBoard { notes: [] });
+  assert(len(r5.notes) == 2, "c5 len {len(r5.notes)}");
+  assert(r5.notes[0].t == "p" && r5.notes[1].t == "q" && r5.notes[1].k == 2, "c5 val");
+
+  // C1 repeated: a fresh buffer per call, many calls (store slot reuse).
+  total = 0;
+  for i in 0..50 { rr = c1(Board { notes: [] }); total += len(rr.notes); }
+  assert(total == 50, "c1x50 {total}");
+  println("one-field buffer ok");
+}

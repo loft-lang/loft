@@ -1,0 +1,2 @@
+fn damage(base: integer, mult: integer, armor: integer) -> integer { base * mult - armor }
+fn main() { fire = damage(10, 3, _); assert(fire(4) == 26 && fire(7) == 23, "partial"); println("ok"); }

@@ -68,12 +68,12 @@ open is the exact trust-break above.
 | 4 | Friction-free surface | refugees from Rust's lifetime ceremony | a needed shape is *refused*, or an error makes them serve the compiler |
 | 5 | Soundness | people betting a product on "it won't corrupt my data" | latent UB that passes today and corrupts after a toolchain bump |
 | 6 | One source, three backends | "write once, share a link" demo/tool authors | the browser build behaves differently from the desktop one |
-| 7 | Approachable parallelism | people who want safe parallelism without race-hunting | they ship to web and `par` silently runs sequentially |
+| 7 | Approachable parallelism | people who want safe parallelism without race-hunting | on a host without COOP/COEP headers `par` quietly runs sequentially |
 | 8 | Inherits Rust's ecosystem | people who need a crate (regex, http, decimal) *now* | the crate exists but isn't bound, and binding is painful |
 | 9 | Embeddable + sandboxable | hosts running player scripts / mods | a script escapes, or its effects can't be rolled back |
 | 10 | Ships and is legible | a newcomer who just discovered loft | they install, hit a library that fights them, and leave |
 | 11 | The method is the moat | contributors who value a project that fixes the class | the rough-spot lists stop shrinking |
-| 12 | Keeps running under fault | game/server authors who can't take a crash-on-fault | it isn't built yet (still halts); a degraded null can be hard to trace to its source |
+| 12 | Keeps running under fault | game/server authors who can't take a crash-on-fault | a degraded null can be hard to trace to its source |
 | 13 | Layout control with a safety net | performance-conscious devs turned off by "only C++ is valid" | the cache win only shows on `--native`; or layout becomes a mandatory tax, not an optional power |
 
 Read top-down: the turn-offs are roughly in trust-cost order — #1–#5 break the
@@ -260,18 +260,18 @@ about. Safe parallelism without a data-race surface. See [THREADING.md](THREADIN
 **Who it wins.** People who want to speed something up across cores without
 becoming concurrency experts or hunting races.
 
-**The turn-off.** They prototype on the desktop where `par` is parallel, then ship
-to the web — where `par` runs **sequentially**
-([C3, accepted](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially)) — and the
-speedup they designed around silently isn't there. The accepted trade-off becomes a
-broken expectation for anyone who picked loft *for* the parallelism *and* targets
-the browser.
+**The turn-off.** In the browser `par` runs in parallel on Web Workers — but only when the page
+is served with the COOP/COEP headers that grant `crossOriginIsolated`
+([C3](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially),
+[WASM.md § COOP/COEP hosting contract](WASM.md)).  On a host without them — a simple local file
+server, a plain static host — the same `par` runs **sequentially** with the same answer, and the
+speedup they designed around quietly isn't there.  `globalThis.loftThreads` and `?loftTrace=1`
+say how many workers a page got, but only to someone who looks.
 
-**Raise it higher.** Make the bound **loud, not silent** — surface WASM's
-sequential `par` where the author meets it, not only in a design-decisions doc — and
-keep the door open to real wasm threading. *Check:* a web program relying on `par`
-for throughput gets a visible signal (doc, warning, or introspection) that it runs
-sequentially, rather than discovering it by profiling.
+**Raise it higher.** Make the fallback **loud, not silent** — when a page that uses `par` runs
+without isolation, say so where the author meets it (the console on load), not only through an
+introspection value.  *Check:* a `par` page served without COOP/COEP reports on load that it runs
+sequentially, rather than the author discovering it by profiling.
 
 ---
 
@@ -402,17 +402,16 @@ A **game** dev iterating on something half-working (one bad mob doesn't freeze t
 stopping *is* a dead machine. Termination is the larger failure for any long-running system, so
 availability-as-a-default — not a framework bolted on — wins all of them.
 
-**The turn-off.** Two, on the same topic. First, **it isn't built yet**: the runtime still
-traps/halts on these faults in development (the old @C66 behaviour, tracked as
-[operational.md D-op-4](formal/operational.md)) — the promise is *decided, not delivered*.
-Second, the inherent one: **silent degradation can hide the cause** — you see a null
+**The turn-off.** The inherent one: **silent degradation can hide the cause** — you see a null
 *downstream*, not *where* it first arose, the mirror image of Rust's halt-at-the-source
 pinpointing the bug. The person who loves "keeps running" is the same one who curses a null they
-can't trace.
+can't trace. The report covers part of it: with a logger attached, an unguarded divide-by-zero
+or out-of-range read logs one warning line at its site, while an overflow stays silent
+([formal/operational.md § E-Report](formal/operational.md)).
 
-**Raise it higher.** Land D-op-4 (uncomputable → null + continue in every mode), then close the
-second turn-off with the **opt-in debug log + null provenance** — when the programmer asks, show
-*where* a degraded value first went null, so "keeps running" never costs them the root cause.
+**Raise it higher.** Close the turn-off with **null provenance** — when the programmer asks, show
+*where* a degraded value first went null, overflow included, so "keeps running" never costs them
+the root cause.
 *Check:* a deliberate `s/0` deep in a call chain keeps the program running AND, with the debug
 log on, names the originating site.
 

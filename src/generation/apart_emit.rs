@@ -52,14 +52,14 @@ impl Output<'_> {
             .map(|i| def.variables().var(&def.attributes()[i].name));
         let vecs = apart_vector::roles(self.data, def_nr).unwrap_or_default();
         let (roles, twin) = if self.apart_twin {
-            (self.apart.twin_roles.get(&def_nr)?.clone(), true)
+            (self.plan.apart.twin_roles.get(&def_nr)?.clone(), true)
         } else {
-            match self.apart.regions.get(&def_nr) {
+            match self.plan.apart.regions.get(&def_nr) {
                 Some(r) if r.profitable => (r.clone(), false),
                 _ => (Roles::default(), false),
             }
         };
-        let recs = super::apart_records::roles(self.data, &self.apr, def_nr, self.apr_twin);
+        let recs = super::apart_records::roles(self.data, &self.plan.apr, def_nr, self.apr_twin);
         if !twin && roles.is_empty() && vecs.is_empty() && recs.is_empty() {
             return None;
         }
@@ -111,7 +111,7 @@ impl Output<'_> {
 
     fn ap_layout(&self, v: u16) -> Option<ApLayout> {
         let rec = self.apart_ctx.as_ref()?.roles.apart.get(&v)?;
-        self.apart.types.get(rec).cloned()
+        self.plan.apart.types.get(rec).cloned()
     }
 
     /// The struct of every apart type, once per program.
@@ -121,7 +121,7 @@ impl Output<'_> {
         }
         self.apart_types_done = true;
         self.output_apr_types(w)?;
-        let mut types: Vec<&ApLayout> = self.apart.types.values().collect();
+        let mut types: Vec<&ApLayout> = self.plan.apart.types.values().collect();
         types.sort_by(|a, b| a.rust.cmp(&b.rust));
         for t in types {
             let fields: Vec<String> = t
@@ -151,11 +151,11 @@ impl Output<'_> {
     /// value, the return buffer not at all, every other parameter as the original has it.
     pub(super) fn apart_twin_param(&self, def_nr: u32, i: usize) -> TwinParam {
         if self.apr_twin
-            && let Some(&(_, at, rec)) = self.apr.twins.get(&def_nr)
+            && let Some(&(_, at, rec)) = self.plan.apr.twins.get(&def_nr)
             && at == i
         {
             let def = self.data.def(def_nr);
-            let t = &self.apr.types[&rec].rust;
+            let t = &self.plan.apr.types[&rec].rust;
             return TwinParam::Value(format!(
                 ", __ap_{}: &{t}",
                 sanitize(&def.attributes()[i].name)
@@ -173,15 +173,15 @@ impl Output<'_> {
         let Some(rec) = ctx.roles.apart.get(&v) else {
             return TwinParam::Same;
         };
-        let t = &self.apart.types[rec].rust;
+        let t = &self.plan.apart.types[rec].rust;
         TwinParam::Value(format!(", __ap_{}: &{t}", sanitize(&a.name)))
     }
 
     /// The twin's result type.
     pub(super) fn apart_twin_result(&self, def_nr: u32) -> Option<String> {
         self.apart_ctx.as_ref().filter(|c| c.twin)?;
-        let rec = self.apart.twins.get(&def_nr)?;
-        Some(self.apart.types[rec].rust.clone())
+        let rec = self.plan.apart.twins.get(&def_nr)?;
+        Some(self.plan.apart.types[rec].rust.clone())
     }
 
     /// The lines the body's prologue starts with: each apart local, and in a twin the return
@@ -201,7 +201,7 @@ impl Output<'_> {
             if vars.is_argument(v) && ctx.rb != Some(v) {
                 continue;
             }
-            let t = &self.apart.types[rec].rust;
+            let t = &self.plan.apart.types[rec].rust;
             let _ = write!(out, "\n  let mut {}: {t} = {t}::ZERO;", self.ap_name(v));
         }
         let mut recs: Vec<(&u16, &u32)> = ctx.recs.vars.iter().collect();
@@ -210,7 +210,7 @@ impl Output<'_> {
             if ctx.recs.param == Some(v) {
                 continue;
             }
-            let t = &self.apr.types[rec].rust;
+            let t = &self.plan.apr.types[rec].rust;
             let _ = write!(out, "\n  let mut {}: {t} = {t}::new();", self.ap_name(v));
         }
         let mut vecs: Vec<&u16> = ctx.vecs.apart.iter().collect();
@@ -278,7 +278,7 @@ impl Output<'_> {
         let ctx = self.apart_ctx.as_ref()?;
         let data = self.data;
         for (&v, rec) in &ctx.roles.apart {
-            let layout = &self.apart.types[rec];
+            let layout = &self.plan.apart.types[rec];
             if let Some(c) = apart_value::construction(data, layout, ops, at, &|u| u == v) {
                 return Some(c);
             }
@@ -376,7 +376,7 @@ impl Output<'_> {
             write!(w, "return ")?;
             return value(self, w);
         }
-        let layout = self.apart.types[&rec].clone();
+        let layout = self.plan.apart.types[&rec].clone();
         let rb = sanitize(
             self.data
                 .def(self.def_nr)
@@ -464,7 +464,7 @@ impl Output<'_> {
                         let t = self.ap_layout(*v).map(|l| l.rust).unwrap_or_default();
                         write!(w, "{name} = {t}::ZERO")?;
                     }
-                    Value::Call(g, args) if self.apart.twins.contains_key(g) => {
+                    Value::Call(g, args) if self.plan.apart.twins.contains_key(g) => {
                         write!(w, "{name} = ")?;
                         self.apart_twin_call(w, *g, args)?;
                     }
@@ -500,10 +500,10 @@ impl Output<'_> {
                         Ok(true)
                     }
                     Value::Call(g, args)
-                        if self.apart.twins.contains_key(g)
+                        if self.plan.apart.twins.contains_key(g)
                             && ctx.rb.is_some_and(|b| self.ap_apart(b)) =>
                     {
-                        let rec = self.apart.twins[g];
+                        let rec = self.plan.apart.twins[g];
                         let (g, args) = (*g, args.clone());
                         self.apart_return(w, &|s, w| s.apart_twin_call(w, g, &args), rec)?;
                         Ok(true)

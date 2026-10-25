@@ -1038,7 +1038,7 @@ fn appended_only(data: &Data, def_nr: u32, prod: &Producer) -> Result<(), String
 /// Admit `def_nr` as a producer.
 fn producer(data: &Data, stores: &Stores, dv: &DvPlan, def_nr: u32) -> Result<Producer, String> {
     let def = data.def(def_nr);
-    let Some(rb) = super::hoist::ret_buffer_attr(def) else {
+    let Some(rb) = crate::opt::attrs::ret_buffer_attr(def) else {
         return Err("answers no record through a buffer".into());
     };
     let mut prod = Producer {

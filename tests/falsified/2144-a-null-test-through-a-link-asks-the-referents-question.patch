@@ -1,0 +1,119 @@
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 7fac2e3..259ba32 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -893,15 +893,6 @@ impl Parser {
+     }
+ 
+     pub(crate) fn null_test(&mut self, operand: Value, tp: &Type, negate: bool) -> Option<Value> {
+-        // @FR-B-Ref-Uniform — a `&τ?` asks the null question its `τ?` asks: the link is the
+-        // route, never the shape, and every arm below reads the shape.  Unpeeled, a `&S?`
+-        // missed the struct arm and fell to a compare of a truthiness bit against the boolean
+-        // null, which never matched, and a `&Shape?` was refused outright (loft#2144).  The
+-        // operand needs no change: reading a link variable reads its referent.
+-        let mut tp = tp;
+-        while let Type::RefVar(inner) = tp {
+-            tp = inner;
+-        }
+         let is_null = if Self::is_collection_type(tp.base()) {
+             // A heap-owning collection TEMP (a call result) consumed by the null test
+             // would be orphaned — `OpVectorIsNull` reads the sentinel and discards the
+@@ -5852,25 +5843,9 @@ impl Parser {
+             // null` fell past this test to `OpEqRef` — a DbRef comparison against
+             // `DbRef::NULL`, which a slot POINTER can never equal, so it answered false
+             // however the field was written.  `is_collection_type` is the shared list.
+-            // @FR-B-Ref-Uniform — every null-kind gate below reads the operands' SHAPE: a `&τ?`
+-            // asks the question its `τ?` asks, so the link is peeled once here.  Unpeeled, a
+-            // `&S?` missed `ref_null` and fell to the generic `==` this block exists to keep it
+-            // from (@PLN99 A5's always-false compare, through the link), and a `&Shape?` was
+-            // refused outright (loft#2144).  `Type::Null` is never wrapped, so the null side
+-            // reads the same either way.
+-            // Borrowed, not cloned: this runs for every `==` the parser sees.
+-            fn unlink(tp: &Type) -> &Type {
+-                let mut t = tp;
+-                while let Type::RefVar(inner) = t.base() {
+-                    t = inner;
+-                }
+-                t
+-            }
+-            let lsh = unlink(ctp);
+-            let rsh = unlink(&second_type);
+             let vec_null = (operator == "==" || operator == "!=")
+-                && ((Self::is_collection_type(lsh.base()) && *rsh == Type::Null)
+-                    || (*lsh == Type::Null && Self::is_collection_type(rsh.base())));
++                && ((Self::is_collection_type(ctp.base()) && second_type == Type::Null)
++                    || (*ctp == Type::Null && Self::is_collection_type(second_type.base())));
+             // A float/single null is the NaN sentinel, and NaN compares unequal to
+             // everything (including itself), so `f == null` can't go through OpEq —
+             // it would always be false.  Test validity instead: convert(float, bool)
+@@ -5880,8 +5855,10 @@ impl Parser {
+             // OpEqFloat on the NaN sentinel (NaN != everything) → ALWAYS false (a null read as
+             // "present"). `Type::Null` itself is never wrapped, so the Null sides stay bare.
+             let float_null = (operator == "==" || operator == "!=")
+-                && ((matches!(lsh.base(), Type::Float | Type::Single) && *rsh == Type::Null)
+-                    || (*lsh == Type::Null && matches!(rsh.base(), Type::Float | Type::Single)));
++                && ((matches!(ctp.base(), Type::Float | Type::Single)
++                    && second_type == Type::Null)
++                    || (*ctp == Type::Null
++                        && matches!(second_type.base(), Type::Float | Type::Single)));
+             // A nullable enum variable holds the reference null sentinel
+             // (`store_nr==u16::MAX`), exactly like a struct reference.  Its `== null`
+             // must test that sentinel via OpEqRef — the default path reads the
+@@ -5894,10 +5871,11 @@ impl Parser {
+             // passes this gate and returns `None` for the others, and a `None` here
+             // leaves the operand in place while retyping it boolean.
+             let enum_null = (operator == "==" || operator == "!=")
+-                && (((matches!(lsh, Type::Enum(_, _, _)) || self.is_value_enum(lsh))
+-                    && *rsh == Type::Null)
+-                    || (*lsh == Type::Null
+-                        && (matches!(rsh, Type::Enum(_, _, _)) || self.is_value_enum(rsh))));
++                && (((matches!(*ctp, Type::Enum(_, _, _)) || self.is_value_enum(ctp))
++                    && second_type == Type::Null)
++                    || (*ctp == Type::Null
++                        && (matches!(second_type, Type::Enum(_, _, _))
++                            || self.is_value_enum(&second_type))));
+             // @PLN99 A5 — a nullable STRUCT-reference VARIABLE (`s: DT? = null`,
+             // typed `Optional(Reference)`) holds the reference null sentinel
+             // (`store_nr==u16::MAX`, from OpNullRefSentinel), like a nullable enum variable.
+@@ -5912,11 +5890,11 @@ impl Parser {
+             // handled correctly by the existing path — OpRefIsNull would misread it (p285).
+             // INLINE nullable struct fields are `Type::Enum(__nullable<…>)` (enum_null path).
+             let opt_ref_l =
+-                matches!(lsh, Type::Optional(_)) && matches!(lsh.base(), Type::Reference(_, _));
+-            let opt_ref_r =
+-                matches!(rsh, Type::Optional(_)) && matches!(rsh.base(), Type::Reference(_, _));
++                matches!(*ctp, Type::Optional(_)) && matches!(ctp.base(), Type::Reference(_, _));
++            let opt_ref_r = matches!(second_type, Type::Optional(_))
++                && matches!(second_type.base(), Type::Reference(_, _));
+             let ref_null = (operator == "==" || operator == "!=")
+-                && ((opt_ref_l && *rsh == Type::Null) || (*lsh == Type::Null && opt_ref_r));
++                && ((opt_ref_l && second_type == Type::Null) || (*ctp == Type::Null && opt_ref_r));
+             // loft#1065 — a nullable STRUCT-enum (`Shape?`) is the third shape that
+             // reaches here, and it was the one with no arm: `s == null` was refused
+             // outright ("No matching operator") while the bare `Shape` beside it worked.
+@@ -5935,10 +5913,11 @@ impl Parser {
+             let opt_senum = |tp: &Type| {
+                 matches!(tp, Type::Optional(_)) && matches!(tp.base(), Type::Enum(_, true, _))
+             };
+-            let opt_senum_l = opt_senum(lsh);
+-            let opt_senum_r = opt_senum(rsh);
++            let opt_senum_l = opt_senum(ctp);
++            let opt_senum_r = opt_senum(&second_type);
+             let senum_null = (operator == "==" || operator == "!=")
+-                && ((opt_senum_l && *rsh == Type::Null) || (*lsh == Type::Null && opt_senum_r));
++                && ((opt_senum_l && second_type == Type::Null)
++                    || (*ctp == Type::Null && opt_senum_r));
+             // @FR-T-Absent — a tuple has no `Optional` spelling and no sentinel of its own;
+             // its absence IS "every member null", and the rule names `t == null` and `t ?? d`
+             // as ONE question answered from one home.  Only `??` had an answer: `t == null`
+@@ -5953,8 +5932,8 @@ impl Parser {
+             // RECORD's presence — `false` for a buffer that exists holding nothing but nulls,
+             // while the stack spelling beside it answered `true` (`tuples.md` D-tup-10).
+             let tuple_null = (operator == "==" || operator == "!=")
+-                && ((Self::is_tuple_shape(&self.data, lsh) && *rsh == Type::Null)
+-                    || (*lsh == Type::Null && Self::is_tuple_shape(&self.data, rsh)));
++                && ((Self::is_tuple_shape(&self.data, ctp) && second_type == Type::Null)
++                    || (*ctp == Type::Null && Self::is_tuple_shape(&self.data, &second_type)));
+             // @PLN102 pre-freeze — a boolean and an integer are NOT comparable with `==`/`!=`.
+             // The old path coerced the integer to boolean by "is non-null", so `true == 0` was
+             // TRUE and `true == 2` was TRUE (nonsense) — while `bool < int` already errored.

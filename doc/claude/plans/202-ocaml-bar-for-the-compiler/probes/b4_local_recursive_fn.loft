@@ -1,0 +1,8 @@
+fn sum_to(n: integer) -> integer {
+  step = 1;
+  fn go(acc: integer, i: integer) -> integer {
+    if i > n { acc } else { go(acc + i, i + step) }
+  }
+  go(0, 1)
+}
+fn main() { assert(sum_to(10) == 55, "{sum_to(10)}"); println("ok"); }

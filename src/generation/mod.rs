@@ -12,37 +12,38 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 pub mod apart;
 mod apart_emit;
-pub mod apart_records;
+pub use crate::lower::apart_records;
 mod apart_records_emit;
-pub mod apart_value;
+pub use crate::lower::apart_value;
 pub mod apart_vector;
 pub mod append_twin;
 mod calls;
 mod coroutine;
-pub mod decode_structure;
+pub use crate::lower::decode_structure;
 mod decode_structure_emit;
-pub mod decode_structure_scan;
-pub mod decode_view;
+pub use crate::lower::decode_structure_scan;
+pub use crate::lower::decode_view;
 mod decode_view_emit;
-pub mod destination;
+pub use crate::lower::destination;
 mod dispatch;
 mod emit;
-pub mod file_hold;
 pub use crate::fnref;
-pub mod hand_over;
+pub use crate::lower::file_hold;
+pub use crate::lower::hand_over;
+pub mod fault_flag;
 pub mod hoist;
 pub mod kept;
-pub mod keyed_entry;
-pub mod keyed_place;
+pub use crate::lower::keyed_entry;
+pub use crate::lower::keyed_place;
 pub use crate::opt::non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
 pub use crate::opt::range;
 mod ranged_call;
-pub mod stream_walk;
+pub use crate::lower::stream_walk;
 mod stream_walk_emit;
 mod text;
-pub mod view_return;
+pub use crate::lower::view_return;
 
 /// One hoisted binding produced by `collect_pre_evals`:
 /// `(name, match_code, bind_code, counter, replace_all)` — `name` is the
@@ -485,11 +486,8 @@ pub struct Output<'a> {
     /// `@FR-R-BoundedNest` — how many admitted nests the emission is inside; above 0 the four
     /// nest operators emit their plain form ([`ops::int_arith`]).
     pub plain_nest: u32,
-    /// `LOFT_NO_BOUNDED_NEST=1` — no nest is guarded and run plain.
-    pub bounded_nest_disabled: bool,
-    /// `LOFT_NO_BOUNDED_SUM=1` — no reduction runs its plain block sum first
-    /// (`(R-BoundedNest)`'s reduction clause).
-    pub bounded_sum_disabled: bool,
+    /// The `LOFT_NO_*` switches of the compiled-target rewrites, read once (`lower::switches`).
+    pub switches: crate::lower::switches::Switches,
     /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of every
     /// `+ - *`/negation node inside a chain its guard bounds, and the guard's name: those ops
     /// emit the plain operator under the guard and the template otherwise
@@ -497,37 +495,31 @@ pub struct Output<'a> {
     pub plain_chains: Vec<(HashSet<usize>, Option<String>)>,
     /// Non-zero while a verified chain operator's CHECKED copy is emitted.
     pub chains_suspended: u32,
-    /// `LOFT_NO_GUARDED_CHAIN=1` — no counted loop's affine chains are guarded and run plain.
-    pub chain_guard_disabled: bool,
     /// `LOFT_TRACE_CHAIN=1` — name every loop whose chains are guarded, and why one is not.
     pub chain_trace: bool,
-    /// `LOFT_NO_DISTINCT_GROWTH=1` — a loop that grows ANY store binds no element base and a
-    /// remainder that grows one binds no record address, as before `@FR-R-Base`'s growth
-    /// clause; the bisect step for a wrong element or field read in a loop that appends
-    /// elsewhere.  `LOFT_HOIST_VERIFY=1` is the falsifier (each base and address re-derived).
-    pub distinct_growth_disabled: bool,
+    /// `@FR-R-FaultFlag` — the flag a `for` statement's FAST copy is being emitted under:
+    /// each fault form in it sets this local instead of branching, raising or reporting
+    /// ([`fault_flag`]).  `None` outside a fast copy.
+    pub fault_flag: Option<String>,
+    /// `@FR-R-FaultFlag` — the next statement number, so each site's flag and counter are distinct.
+    pub fault_flag_next: u32,
+    /// `LOFT_TRACE_FAULT_FLAG=1` — name every `for` statement admitted, and why one is not.
+    pub fault_flag_trace: bool,
+    /// `@FR-R-FaultFlag` — the `for` statements whose EXACT copy is being emitted, so the
+    /// ordinary path does not admit them a second time.
+    pub fault_flag_exact: HashSet<usize>,
+    /// `@FR-R-FaultFlag`'s pure-call clause — each function already asked: `None` pure,
+    /// `Some(why)` not.
+    pub fault_flag_pure: std::cell::RefCell<HashMap<u32, Option<String>>>,
     /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
     /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
     pub placed_locals: HashSet<u16>,
-    /// Every function's dead value-record buffers, computed once beside `value_records`
-    /// and handed to each function's [`hoist::HoistOwned`] for the callee walks.
-    pub dead_by_fn: std::rc::Rc<HashMap<u32, HashSet<u16>>>,
     /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
     pub nest_trace: bool,
     /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
     /// every index IN RANGE is emitted: a fused element read is a raw load through the held
     /// base, and the discharge's null select is the element itself.
     pub nest_raw_arm: bool,
-    /// `LOFT_NO_NEST_RAW_READS=1` — the plain arm keeps its bounds-tested reads and null
-    /// selects (step 1's form).
-    pub nest_raw_disabled: bool,
-    /// `LOFT_NO_TWIN_BASE=1` — a twin takes its header inputs alone again, and every element
-    /// read or write inside it resolves the store (`@FR-R-Base`'s twin clause off).
-    pub twin_base_disabled: bool,
-    /// `LOFT_NO_PLAIN_CHAIN_PTR` — the plain-chains copy of a loop binds no record address.
-    pub plain_chain_ptr_disabled: bool,
-    /// `LOFT_NO_PARAM_TWIN_PTR` — a record parameter's address serves no twin call.
-    pub param_twin_ptr_disabled: bool,
     /// `@FR-R-RecPtr` — per block, the `__pa_N` local holding the address of a record VIEW
     /// bound in it, keyed by the view variable; a field read or in-place write of that
     /// variable goes through it ([`Self::bind_record_ptr`]).
@@ -543,22 +535,6 @@ pub struct Output<'a> {
     /// ([`Self::close_ptr_windows_before`]), by the element it serves rather than by
     /// position, since an ordinary view bound inside the window sits above it.
     pub ptr_windows: Vec<(usize, usize, u16)>,
-    /// `LOFT_NO_MINT_WINDOW=1` — a minted element's field writes resolve the store again.
-    pub mint_window_disabled: bool,
-    /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
-    /// write resolves the store again.
-    pub record_ptr_disabled: bool,
-    /// `LOFT_NO_PARAM_RECORD_PTR=1` — `@FR-R-RecPtr`'s parameter clause off: a record
-    /// parameter's field accesses resolve the store each, as before the clause.
-    pub param_record_ptr_disabled: bool,
-    /// `LOFT_NO_ELEMENT_ADDRESS=1` — `@FR-R-RecPtr`'s element clause off: a value record
-    /// written into `v[i]` takes its element through `vec_get_or_raise_runtime` and its
-    /// address back out of the reference ([`Output::element_copy_dest`]).
-    pub element_address_disabled: bool,
-    /// `LOFT_NO_FIELD_HEADER=1` — `@FR-R-RecPtr`'s nested clause off: a vector field of a
-    /// record view (`v.items`) resolves its store and record again at each length or
-    /// element read ([`Output::field_header_expr`]).
-    pub field_header_disabled: bool,
     /// Set while a tuple is written into an element whose address the element clause
     /// derived beside its reference (`__cp` beside `__cd`): the tuple write takes that address
     /// instead of reading it back out of `__cd`.
@@ -596,26 +572,14 @@ pub struct Output<'a> {
     pub rg_emitted: HashSet<(u32, bool)>,
     /// Set while a ranged variant's body is emitted: its name takes `__rg`.
     pub emitting_ranged: bool,
-    /// `LOFT_NO_DISTINCT_VERSION=1` — no loop is emitted twice on a store-distinct test.
-    pub distinct_version_disabled: bool,
     /// Set while the PLAIN copy of a loop (or a loop the clause declined) is emitted, so the
     /// loop arm is not asked again for the same loop.  Nested loops inside it are asked anew.
     pub in_distinct_copy: bool,
     /// A serial for the operand locals the checking form of a plain operator binds.
     pub verify_serial: u32,
-    /// `LOFT_NO_HEADER_DBREF=1` — rebuild the vector's `DbRef` at every fused read.
-    pub header_dbref_disabled: bool,
-    /// `LOFT_NO_REFILL_KEEP=1` — a refilling buffer's entry clear releases its vector, as
-    /// before the live clause.
-    pub refill_keep_disabled: bool,
     /// `@FR-R-RefillText` — the function's pooled call sites whose release is dropped and
     /// whose call goes to the callee's refill twin.
     pub refill_text: hoist::RefillTextSites,
-    /// `LOFT_NO_REFILL_TEXT=1` — every pooled call site keeps its release and the plain callee.
-    pub refill_text_disabled: bool,
-    /// `LOFT_NO_REFILL_ELEMENTS=1` — `@FR-R-RefillText`'s collection clause off: a
-    /// heap-element refill buffer is released whole at entry and its elements claimed anew.
-    pub refill_elements_disabled: bool,
     /// The release an admitted pool statement did not emit, `(buffer, type)`: the call after
     /// it consumes it — by calling the refill twin, or by releasing first where it calls an
     /// `__inv`/`__rg` twin.  Still armed after that statement is an emission fault.
@@ -672,24 +636,8 @@ pub struct Output<'a> {
     /// Set while a refill twin's body is emitted: its return buffer, whose literal text sets
     /// refill their slots; its name takes `__rt`.
     pub refill_twin_buf: Option<u16>,
-    /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
-    pub byte_read_disabled: bool,
-    /// `LOFT_NO_BYTE_RESOLVE=1` — `@FR-R-Base`'s byte clause needs a held BASE again: a
-    /// header held without one keeps the template (the resolve clause off).
-    pub byte_resolve_disabled: bool,
     /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
     pub text_set_copy_kept: bool,
-    /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
-    /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
-    /// clause off).
-    pub base_rec_ptr_disabled: bool,
-    /// `LOFT_NO_INDEX_RECPTR=1` — a record view bound from `v[i]?` over a vector whose header
-    /// and BASE the frame holds reads its element through `get_vector_hoisted` and resolves
-    /// its address from the store again (`@FR-R-RecPtr`'s index clause off).
-    pub index_rec_ptr_disabled: bool,
-    /// `LOFT_NO_GUARDED_FILL=1` — `t = base + i; if t < N { v[t] = c }` keeps its loop
-    /// (`@FR-R-Fill`'s guarded clause off).
-    pub guarded_fill_disabled: bool,
     /// `@FR-R-RecPtr`'s index clause, per statement: the index node to emit as its prelude's
     /// `__ix_N`, the binding block to emit behind `__in_N`, and the view whose address the
     /// clause serves — each keyed as the pre-eval substitution is, by node address.
@@ -709,48 +657,18 @@ pub struct Output<'a> {
     /// enclosing frame holds is served from that frame.  Pushed and popped beside the
     /// other hoist frames.
     pub invariant_hoists: Vec<HashMap<usize, std::rc::Rc<(String, Value)>>>,
-    /// `LOFT_NO_INVARIANT_HOIST=1` — every invariant integer chain is evaluated at every
-    /// use again, as before @PLN157 § V-ao; the bisect step for a wrong index or a wrong
-    /// arithmetic value inside a loop on native.  `LOFT_HOIST_VERIFY=1` is the falsifier
-    /// (every use re-evaluates the chain and compares it with the memo).
-    pub invariant_hoist_disabled: bool,
     /// Per-definition memo behind [`hoist::may_write_store`], shared across every loop in
     /// the program so the call-graph walk runs once per callee.
     pub hoist_cache: HashMap<u32, bool>,
     /// Per-callee memo of what an admitted writing callee reaches (@PLN157 P4c), shared
     /// across every loop in the program.
     pub scalar_write_cache: hoist::WriteCache,
-    /// `LOFT_NO_SCALAR_HOIST=1` — read every record scalar field per iteration, as before
-    /// @PLN157 P4c.  One step finer than `LOFT_NO_VECTOR_HOIST` when bisecting a wrong
-    /// answer in a loop that reads a record's fields; `LOFT_HOIST_VERIFY=1` is the
-    /// falsifier (each hoisted read is re-derived and compared).
-    pub scalar_hoist_disabled: bool,
-    /// `LOFT_NO_VIEW_HOIST=1` — a `&`-bound vector view (`d = &cv.data`) derives no header
-    /// at its binding, so every later `len(d)` / `d[i]` in the block resolves the store
-    /// again, as before @PLN157 § V-n.  The bisect step for a wrong element read through
-    /// such a view outside a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
-    pub view_hoist_disabled: bool,
-    /// `LOFT_NO_WRAPPER_INLINE=1` — a call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`)
-    /// is emitted as the CALL again, as before @PLN157 § V-o, instead of as its op; the
-    /// bisect step for a wrong length or libm value on native, and the before-half of the
-    /// A/B.  See [`hoist::one_op_wrapper`].
-    pub wrapper_inline_disabled: bool,
     /// Per-definition memo of [`hoist::one_op_wrapper`].
     wrapper_cache: HashMap<u32, Option<(u32, Vec<hoist::WrapperOperand>)>>,
     /// @PLN157 § V-q — the push headers of the enclosing loops, innermost last: path → the
     /// Rust local holding its [`crate::vector::PushHeader`] (`__ph_N`); the same path is in
     /// [`Self::vec_headers`] as `__ph_N.h` for every read.  Pushed and popped beside them.
     pub push_headers: Vec<HashMap<hoist::PathKey, String>>,
-    /// `LOFT_NO_PUSH_HOIST=1` — a loop that pushes to a vector hoists nothing, as before
-    /// @PLN157 § V-q (`@FR-R-Push`); the bisect step for a wrong element or length out of a
-    /// loop that appends.  `LOFT_HOIST_VERIFY=1` is the falsifier.
-    pub push_hoist_disabled: bool,
-    /// `LOFT_NO_MINT_HOIST=1` — a loop that APPENDS a record element (the
-    /// `OpNewRecord`/`OpFinishRecord` mint group) hoists nothing, as before @PLN157 § V-s
-    /// (`@FR-R-Mint`): the bisect step for a wrong scalar read out of a loop that appends
-    /// records.  `LOFT_HOIST_VERIFY=1` is the falsifier (each hoisted scalar is re-read
-    /// and compared).
-    pub mint_hoist_disabled: bool,
     /// @PLN157 § V-t (`@FR-R-PushRec`) — the mint paths of the enclosing loops whose record
     /// APPEND emits through a push header, innermost last: path → the `__ph_N` local (the
     /// same local `push_headers`-style; the path is also in [`Self::vec_headers`] as
@@ -760,33 +678,6 @@ pub struct Output<'a> {
     /// ([`hoist::LoopHoist::apart_mint`]): [`Self::mint_reserve`] reserves nothing for them.
     /// Per function; a path kept past its loop only withholds a later reservation.
     apart_mint_paths: HashSet<hoist::PathKey>,
-    /// `LOFT_NO_RECORD_PUSH=1` — a record append keeps its mint-group templates
-    /// (`OpNewRecord`'s dispatch + prefill, `OpFinishRecord`'s dispatch) as before @PLN157
-    /// § V-t (`@FR-R-PushRec`); the bisect step for a wrong element out of a record-appending
-    /// loop.  `LOFT_HOIST_VERIFY=1` is the falsifier (the header is re-derived and compared
-    /// at the slot and at the finish).
-    pub record_push_disabled: bool,
-    /// `LOFT_NO_HEAP_RECORD_PUSH=1` — a heap-owning element keeps its mint-group templates
-    /// (`@FR-R-PushRec`'s heap clause off): the bisect step for a wrong or stale handle in an
-    /// appended record whose fields own heap.  `LOFT_POISON_CLAIM=1` is the falsifier.
-    pub heap_record_push_disabled: bool,
-    /// `LOFT_NO_FIELD_APPEND=1` (or the runtime's own `LOFT_NO_PLAIN_FIELD_APPEND=1`) — a
-    /// straight-line append to a struct's plain vector field keeps its `OpNewRecord` /
-    /// `OpFinishRecord` templates (`@FR-R-FieldAppend` off): the bisect step for a wrong
-    /// element out of `r.f += [x]` outside a loop.
-    pub field_append_disabled: bool,
-    /// `LOFT_NO_BARE_APPEND=1` — an append to a plain vector that no push header holds keeps
-    /// its `OpNewRecord` / `OpFinishRecord` templates (`@FR-R-FieldAppend`'s bare clause
-    /// off): the bisect step for a wrong element or length out of an unhoisted `v += [x]`.
-    pub bare_append_disabled: bool,
-    /// `LOFT_NO_REBOUND_MOVER=1` — a loop whose body rebinds a mover (a pushed or minted
-    /// vector) declines every hoist again, as before `(R-Mint)`'s rebound clause; the bisect
-    /// step for a wrong element or scalar read in a loop that declares a vector per pass.
-    pub rebound_mover_disabled: bool,
-    /// `LOFT_NO_GROUP_PUSH=1` — a mint group outside any held header keeps its templates
-    /// (`@FR-R-GroupPush` off); the bisect step for a wrong element out of a literal record
-    /// append.  `LOFT_HOIST_VERIFY=1` is the falsifier (header re-derived at slot and finish).
-    pub group_push_disabled: bool,
     /// `(R-Mint)`'s rebound clause — the current function's emitter-owned buffer vars: the
     /// § V-al loop buffers and the § V-z element-first witnesses, whose `OpDatabase` the
     /// loop-hoist admission lets through and whose projection a rebound mover may be bound
@@ -809,26 +700,16 @@ pub struct Output<'a> {
     /// The loop variables of the paired `For` blocks currently being emitted, innermost
     /// last — an `OpCopyRecord` whose source is one of these emits the move.
     pub active_move_vars: Vec<u16>,
-    /// `LOFT_NO_MOVE_APPEND=1` — a paired append keeps the deep copy, as before @PLN157
-    /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
-    /// `for f in call(…) {{ v += [f] }}` loop.
-    pub move_append_disabled: bool,
     /// `@FR-R-LazySplit` — the `for piece in text.split(c)` loops of the function being
     /// emitted that take their pieces straight from the text, keyed by the hidden vector
     /// variable the lazy form never declares ([`hoist::lazy_splits`]); rebuilt per function.
     pub lazy_splits: BTreeMap<u16, hoist::LazySplit>,
-    /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
-    /// the bisect step for a wrong or missing piece out of a loop over a `split`.
-    pub lazy_split_disabled: bool,
     /// `@FR-R-Base` × `@FR-I-Range` — the range ends of the function being emitted that its
     /// prelude binds ONCE from a vector's length, keyed by the end's hidden local
     /// ([`hoist::range_end_lengths`]); rebuilt per function.  Inside a loop that holds the
     /// vector's element base the end reads the held header's length, because such a loop
     /// grows no store: the length the prelude took is the length every round sees.
     pub range_end_lengths: BTreeMap<u16, hoist::PathKey>,
-    /// `LOFT_NO_RANGE_END_HEADER=1` — a range end always reads its prelude local; the bisect
-    /// step for a wrong trip count out of a `for i in 0..len(v)` loop.
-    pub range_end_header_disabled: bool,
     /// `@FR-R-SplitTable` — the `parts = text.split(c)` binds of the function being
     /// emitted whose vector is never built, keyed by the local ([`hoist::split_tables`]);
     /// rebuilt per function.  The table is `__st_<var>: Vec<&str>` at the bind.
@@ -836,16 +717,6 @@ pub struct Output<'a> {
     /// The hidden `_vector_N` of each `for p in parts` walk over a table, mapped to its
     /// table — the walk's two readers answer from the table under the alias's name.
     pub split_table_aliases: BTreeMap<u16, u16>,
-    /// `LOFT_NO_SPLIT_TABLE=1` — every such bind builds its `vector<text>` again; the
-    /// bisect step for a wrong length, piece or walk out of a split bound to a name.
-    pub split_table_disabled: bool,
-    /// `LOFT_NO_TEXT_BASE=1` — a text element read in a loop that holds the vector's header
-    /// and base resolves the store per element again (`@FR-R-Base`'s text clause off); the
-    /// bisect step for a wrong or stale text read out of `v[i]` on native.
-    pub text_base_disabled: bool,
-    /// `LOFT_NO_TEXT_FIELD=1` — `@FR-R-RecPtr`'s text clause off: a text FIELD of a held
-    /// iteration's record view resolves the store at each read, as before the clause.
-    pub text_field_disabled: bool,
     /// `@FR-R-TextBorrow` — the text LOCALS of the function being emitted whose Rust slot
     /// is a borrowed `&str` rather than an owned `String`: the loop variables of the walks
     /// of texts that borrow their element ([`hoist::borrowed_text_walks`]); rebuilt per
@@ -871,28 +742,16 @@ pub struct Output<'a> {
     /// `@FR-R-Alias`'s versioned copy only, each with the parameter the copy must have tested
     /// apart from the return buffer ([`hoist::versioned_text_walks`]); rebuilt per function.
     pub versioned_text_walks: HashMap<u16, (u16, hoist::TextBorrow)>,
-    /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
-    /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
-    /// variable of `for p in vector<text>` on native.
-    pub text_borrow_disabled: bool,
     /// `@FR-R-CharWalk` — the `for c in T` walks of the function being emitted, keyed by
     /// the loop's scope ([`hoist::char_walks`]); rebuilt per function.
     pub char_walks: BTreeMap<u16, hoist::CharWalk>,
     /// The same walks keyed by LOOP VARIABLE, for the bind in `output_set`.
     pub char_walk_binds: HashMap<u16, hoist::CharWalk>,
-    /// `LOFT_NO_CHAR_WALK=1` — every character walk takes its step as written and asks
-    /// its null test per iteration again, as before `@FR-R-CharWalk`; the bisect step for
-    /// a wrong character, a wrong byte offset or a missed fault out of `for c in text` on
-    /// native.
-    pub char_walk_disabled: bool,
     /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
     /// function that build once per activation ([`hoist::invariant_literals`]): each is
     /// pre-declared at function top and its declaration statement wrapped in an
     /// unbound-guard, so every later iteration and re-entry reuses the store.
     pub invariant_lits: hoist::LitHoist,
-    /// `LOFT_NO_LITERAL_HOIST=1` — every loop-body literal rebuilds per iteration, as
-    /// before @PLN157 § V-x; the bisect step for a wrong constant vector inside a loop.
-    pub literal_hoist_disabled: bool,
     /// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the current function's literal groups
     /// whose write set covers every field ([`hoist::complete_writes`]): their
     /// `OpDatabase`/`OpNewRecord` emit the no-prefill twin.
@@ -900,32 +759,15 @@ pub struct Output<'a> {
     /// `@FR-R-RefillBuffer` — the current function's return buffer when it refills a kept
     /// store ([`hoist::refill_buffers`]), and the vector-field zeroes that empty in place.
     pub refill: hoist::RefillBuffers,
-    /// `LOFT_NO_COMPLETE_WRITE=1` — every record keeps its default prefill, as before
-    /// @PLN157 § V-y; the bisect step for a wrong default/sentinel in a literal-built
-    /// record on native.
-    pub complete_write_disabled: bool,
-    /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the functions whose no-heap record result
-    /// is returned BY VALUE (a Rust tuple in registers, no return buffer), computed once
-    /// for the whole program because the admission asks every call site.
-    pub value_records: hoist::ValueRecords,
-    /// `@FR-R-Apart` — the program's apart types, twins and regions ([`apart_value::plan`]).
-    pub apart: apart_value::ApartPlan,
+    /// The whole-program plan (`lower::plan`): value records, their dead buffers, the apart,
+    /// decode-view, structure and stream plans — computed once before the first function,
+    /// because each asks every call site.
+    pub plan: std::rc::Rc<crate::lower::plan::ProgramPlan>,
     /// `@FR-R-Apart` — the plan for the body being emitted, whether a twin is being emitted,
     /// and whether the value structs are written.
     pub apart_ctx: Option<apart_emit::ApartCtx>,
     pub apart_twin: bool,
-    /// `@FR-R-Apart` instance 4 — the records of record vectors held apart, their twins and
-    /// owners ([`apart_records::plan`]), and whether the body being emitted is a `__apr` twin.
-    pub apr: apart_records::RecPlan,
     pub apr_twin: bool,
-    /// `@FR-R-DecodeView` — the program's plan, and whether the function being emitted is
-    /// its `__dv` twin.
-    pub dv: decode_view::DvPlan,
-    /// `@FR-R-DecodeView`'s structure clause — the positional plan, and the twin being
-    /// emitted (`decode_structure_emit`).
-    pub ps: decode_structure::PsPlan,
-    /// `@FR-R-StreamWalk` — the walks a callee's stream twin runs in place of a vector.
-    pub sw: stream_walk::SwPlan,
     /// The stream twin being emitted: its producer and twin index.
     pub sw_twin: Option<(u32, usize)>,
     /// The walks whose closures are being emitted, innermost last.
@@ -971,10 +813,6 @@ pub struct Output<'a> {
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
     pub elem_first: hoist::ElemFirstMap,
-    /// `LOFT_NO_ELEMENT_FIRST=1` — every record-literal field keeps its temp-store
-    /// build and deep copy, as before @PLN157 § V-z; the bisect step for a wrong
-    /// vector field of an appended record on native.
-    pub element_first_disabled: bool,
     /// @PLN157 § V-al — the current function's LOOP BUFFERS (`hoist::loop_buffers`): a
     /// per-site vector buffer minted inside a loop whose mint after the first is a length
     /// reset, and whose literal field zero is not emitted.
@@ -983,27 +821,11 @@ pub struct Output<'a> {
     /// plain no-heap record local declared and minted inside a loop, keyed by variable, with
     /// the loop that owns its reuse and the block that declares it.
     pub loop_records: HashMap<u16, hoist::LoopRecord>,
-    /// `LOFT_NO_LOOP_RECORD` (generation time): every such local frees its store at the
-    /// iteration's end and takes a fresh one next pass again.
-    pub loop_record_disabled: bool,
-    /// `LOFT_NO_LOOP_BUFFER_REUSE` (generation time): every such buffer re-mints per
-    /// iteration again.
-    pub loop_buffer_disabled: bool,
-    /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
-    /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
-    pub push_fill_disabled: bool,
     /// `@FR-R-RefillBuffer`'s in-place clause (`LOFT_NO_REFILL_IN_PLACE` turns it off).
     pub refill_in_place: bool,
     /// `LOFT_NO_INLINE_HINT` (generation time): loft functions carry no `#[inline]`
     /// ([`crate::keys::inline_hint_enabled`]).
     pub inline_hint: bool,
-    /// `LOFT_NO_PUSH_WINDOW` (generation time): a reserved counted push loop pushes through
-    /// its push header again, the length written back per push (`@FR-R-PushFill`'s window
-    /// clause).
-    pub push_window_disabled: bool,
-    /// `LOFT_NO_JOIN_READ` (generation time): `v[i]?.f` runs its join on every pass and
-    /// reads the result through the store again (`@FR-R-Base`'s join clause).
-    pub join_read_disabled: bool,
     /// `@FR-R-PushFill`'s window clause — the push WINDOWS open while a loop's statements
     /// are emitted: the pushed path and the `vector::PushWindow` local its pushes go
     /// through.  Opened by [`Self::push_reserve`] before the loop (and before any guarded
@@ -1012,10 +834,6 @@ pub struct Output<'a> {
     /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
     /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
     pub ret_adopt: Option<hoist::RetAdopt>,
-    /// `LOFT_NO_RETBUF_ADOPT=1` — a vector-returning function keeps its delivery copies,
-    /// as before @PLN157 § V-u; the bisect step for a wrong vector return or a leak at a
-    /// vector-returning call.
-    pub retbuf_adopt_disabled: bool,
     /// Non-zero while a `one_buffer_vec_copy` block of an ADOPTED function is being
     /// emitted — the clear/append pair inside it emits as nothing (§ V-u).
     pub in_adopt_delivery: u32,
@@ -1030,11 +848,6 @@ pub struct Output<'a> {
     /// The argument lists of the calls this function emitted as a callee's `__kh` twin: the
     /// twin keeps the holder current, so no refresh follows them.
     pub kh_twin_sites: HashSet<usize>,
-    /// `LOFT_NO_CALLEE_INPUTS=1` — no callee twin is emitted and every call keeps its plain
-    /// form, as before @PLN157 § V-p (`@FR-R-Inputs`): the bisect step for a wrong value read
-    /// through a record parameter inside a callee that a hoisting loop calls.
-    /// `LOFT_HOIST_VERIFY=1` is the falsifier — inside the twin every input is re-read.
-    pub callee_inputs_disabled: bool,
     /// The inputs of the TWIN being emitted — `Some` only while [`Self::output_function`]
     /// emits one: the extra parameters, and the frames that serve the body's reads from them.
     twin: Option<std::rc::Rc<hoist::CalleeInputs>>,
@@ -1056,34 +869,13 @@ pub struct Output<'a> {
     /// loft#885. The before-half of an A/B on one binary, and the first thing to try when
     /// a program answers differently under `--native` than under `--interpret`.
     pub hoist_disabled: bool,
-    /// `LOFT_NO_FN_HEADER=1` — `(R-Header)`'s FUNCTION clause off: a body that writes no
-    /// store and reads a vector path twice or more keeps deriving the path's header at every
-    /// read instead of once at entry.  The first bisect step for a wrong element read
-    /// outside any loop under `--native`.
-    pub fn_header_disabled: bool,
     /// [`hoist::param_untouched`]'s memo: `(function, parameter)` → left as found.
     pub fn_header_memo: HashMap<(u32, u16), bool>,
-    /// `LOFT_NO_FILL_HOIST=1` — a filling loop keeps its per-element form (@PLN157 § V-ae,
-    /// `@FR-R-Fill`): the bisect step for a wrong element or a missed write out of
-    /// `for i in lo..hi { v[base + i] = c }`.
-    pub fill_hoist_disabled: bool,
-    /// `LOFT_NO_ELEM_FUSE=1` — keep loft#885 stage 1 (the loop-invariant header) but emit
-    /// stage 2's scalar element reads unfused, as an address and then a load.
-    ///
-    /// The middle rung of the A/B, and the reason it exists: with only `LOFT_NO_VECTOR_HOIST`
-    /// the two stages can be measured together but never apart, so what stage 2 is worth on
-    /// top of the header hoist could only be estimated. It also bisects a native-only wrong
-    /// answer in a vector loop one stage further than the all-or-nothing switch does.
-    pub elem_fuse_disabled: bool,
     /// `LOFT_NN_VERIFY=1` — emit the CHECKING form of every compare the
     /// non-sentinel pass simplified: assert neither operand is NaN, then
     /// compare plain.  A wrong proof panics at the exact site instead of
     /// answering a differently-ordered boolean.  See [`non_sentinel`].
     pub nn_verify: bool,
-    /// `LOFT_NO_NN_FAST=1` — emit every float compare through its `#rust`
-    /// template, as before @PLN157 P3.  The bisect switch for a native-only
-    /// wrong boolean around floats, same contract as `LOFT_NO_VECTOR_HOIST`.
-    pub nn_fast_disabled: bool,
     /// `LOFT_RELEASE_PASS_PROBE=1` (generation time) — a MEASUREMENT instrument, never a
     /// build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
     /// division emits the processor's wrapping operator and every float comparison the
@@ -1102,14 +894,6 @@ pub struct Output<'a> {
     /// `@FR-R-Range` — the per-definition range facts ([`range::range_vars`]), computed on
     /// the first integer op a function emits and cached beside the non-sentinel ones.
     range_cache: HashMap<u32, std::rc::Rc<range::Ranges>>,
-    /// `LOFT_NO_TYPED_KEYED=1` — a lookup in a `hash` with one integer key is emitted as the
-    /// general `OpGetRecord` again instead of `OpGetHashLong` (`@FR-R-TypedKeyed`); the
-    /// bisect step for a wrong or missing record out of such a lookup on native.
-    pub typed_keyed_disabled: bool,
-    /// `LOFT_NO_RANGE_ARITH=1` — every integer operator keeps its checked template, as
-    /// before `@FR-R-Range`; the bisect step for a wrong integer value on native where the
-    /// range proof admitted a plain operator.  `LOFT_HOIST_VERIFY=1` is the falsifier.
-    pub range_arith_disabled: bool,
     /// Non-zero while the CHECKED copy of a verified operator is being emitted, so the range
     /// arm does not fire inside its own verify form.
     range_suspended: u32,
@@ -1153,29 +937,12 @@ pub struct Output<'a> {
     /// dispatch arm in it lends a candidate's work buffers from that, and anywhere else
     /// hands the null sentinel, which sends the candidate down its own null road.
     pub fnref_work: bool,
-    /// `LOFT_NO_FNREF_WORK_BUFFER=1` — a dispatch arm hands a candidate's work buffer the
-    /// null sentinel again, so the candidate mints its own on every call.  The bisect step
-    /// for a stale or shared scratch vector in a function reached through a function value.
-    pub fnref_work_disabled: bool,
     /// `@FR-R-FileHold` — the files whose cursor an enclosing loop holds, innermost last,
     /// each with the guard local that holds it.
     pub file_holds: Vec<(u16, String)>,
     /// Does any definition of the program take a work buffer (`Attribute::work_buffer`)?
     /// Asked once: a program with none lends nothing.
     any_work_buffer: std::cell::OnceCell<bool>,
-    /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
-    /// before N4.  The bisect switch for a diagnostic that lost its
-    /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
-    pub leaf_elide_disabled: bool,
-    /// `LOFT_NO_LEAF_CHAIN=1` — in the lean tier, elide the prelude on true
-    /// leaves only, not on a function whose whole call tree is frameless
-    /// (`@FR-R-LeafChain`).  The bisect step one finer than
-    /// `LOFT_NO_LEAF_PRELUDE`.
-    pub leaf_chain_disabled: bool,
-    /// `LOFT_NO_GUARD_FREE=1` — every non-leaf frame constructs its fn-ref buffer guard
-    /// again, as before `@FR-R-GuardFree`; the bisect step for a leaked or doubly-freed
-    /// fn-ref return buffer in a program with recursion.
-    pub guard_free_disabled: bool,
     /// The `--lean` tier (@PLN157): the frame push demotes to the depth-only
     /// `cr_call_push_lean`.  Keyed on the FLAG, not on `emit_live`: a default
     /// `--html` build also has `emit_live == false` (debug is opt-in there)
@@ -1183,12 +950,6 @@ pub struct Output<'a> {
     /// is a pinned contract (`html_panic_names_itself_and_its_loft_frames`),
     /// and losing it was the regression off-box CI caught on 2026-09-07.
     pub lean_tier: bool,
-    /// `LOFT_NO_WRITE_HOIST=1` — classify in-place element writes as hoist
-    /// blockers again (@PLN157 P4a), so a loop that writes keeps the pre-885
-    /// per-element form for everything.  One step finer than
-    /// `LOFT_NO_VECTOR_HOIST` when bisecting a wrong answer in a loop that
-    /// both reads and writes vectors.
-    pub write_hoist_disabled: bool,
     /// O7: number of consecutive format/append ops following the current
     /// `OpClearStackText`/`OpClearText`.  Set by `output_block` before each
     /// op is emitted; consumed (and reset to 0) by `clear_stack_text`.
@@ -2038,46 +1799,26 @@ impl<'a> Output<'a> {
             vec_bases: Vec::new(),
             vec_bounds: Vec::new(),
             plain_nest: 0,
-            bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
-            bounded_sum_disabled: !crate::keys::bounded_sum_enabled(),
+            switches: crate::lower::switches::Switches::from_env(),
             in_coroutine_body: false,
             plain_chains: Vec::new(),
             chains_suspended: 0,
-            chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
             chain_trace: std::env::var("LOFT_TRACE_CHAIN").is_ok_and(|v| v != "0"),
-            distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
-                .is_ok_and(|v| v != "0"),
+            fault_flag: None,
+            fault_flag_next: 0,
+            fault_flag_trace: std::env::var("LOFT_TRACE_FAULT_FLAG").is_ok_and(|v| v != "0"),
+            fault_flag_exact: HashSet::new(),
+            fault_flag_pure: std::cell::RefCell::new(HashMap::new()),
             placed_locals: HashSet::new(),
-            dead_by_fn: std::rc::Rc::default(),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
-            nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
-            // One rule: `LOFT_NO_VECTOR_BASE` switches its twin clause off with it.
-            param_twin_ptr_disabled: std::env::var("LOFT_NO_PARAM_TWIN_PTR")
-                .is_ok_and(|v| v != "0"),
-            plain_chain_ptr_disabled: std::env::var("LOFT_NO_PLAIN_CHAIN_PTR")
-                .is_ok_and(|v| v != "0"),
-            twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
-                || !crate::keys::vector_base_enabled(),
             rec_ptrs: Vec::new(),
             rec_ptr_spans: HashMap::new(),
             ptr_windows: Vec::new(),
-            mint_window_disabled: std::env::var("LOFT_NO_MINT_WINDOW").is_ok_and(|v| v != "0"),
-            // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
-            record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
-                || !crate::keys::vector_base_enabled(),
-            base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
-            index_rec_ptr_disabled: std::env::var("LOFT_NO_INDEX_RECPTR").is_ok_and(|v| v != "0"),
-            element_address_disabled: std::env::var("LOFT_NO_ELEMENT_ADDRESS")
-                .is_ok_and(|v| v != "0"),
-            field_header_disabled: std::env::var("LOFT_NO_FIELD_HEADER").is_ok_and(|v| v != "0"),
             element_ptr_held: false,
-            guarded_fill_disabled: std::env::var("LOFT_NO_GUARDED_FILL").is_ok_and(|v| v != "0"),
             held_index_subst: HashMap::new(),
             held_index_ncc: HashMap::new(),
             held_index_view: None,
-            param_record_ptr_disabled: std::env::var("LOFT_NO_PARAM_RECORD_PTR")
-                .is_ok_and(|v| v != "0"),
             header_dbrefs: HashMap::new(),
             param_rec_ptrs: HashSet::new(),
             assumed_distinct: Vec::new(),
@@ -2088,19 +1829,10 @@ impl<'a> Output<'a> {
             rg_gains: HashMap::new(),
             rg_emitted: HashSet::new(),
             emitting_ranged: false,
-            distinct_version_disabled: std::env::var("LOFT_NO_DISTINCT_VERSION")
-                .is_ok_and(|v| v != "0"),
             in_distinct_copy: false,
             verify_serial: 0,
-            header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
-            byte_read_disabled: std::env::var("LOFT_NO_BYTE_READ").is_ok_and(|v| v != "0"),
-            byte_resolve_disabled: std::env::var("LOFT_NO_BYTE_RESOLVE").is_ok_and(|v| v != "0"),
-            refill_keep_disabled: std::env::var("LOFT_NO_REFILL_KEEP").is_ok_and(|v| v != "0"),
             refill_text: hoist::RefillTextSites::default(),
-            refill_text_disabled: std::env::var("LOFT_NO_REFILL_TEXT").is_ok_and(|v| v != "0"),
-            refill_elements_disabled: std::env::var("LOFT_NO_REFILL_ELEMENTS")
-                .is_ok_and(|v| v != "0"),
             refill_text_pending: None,
             nk_requests: Vec::new(),
             nk_emitted: HashSet::new(),
@@ -2133,14 +1865,7 @@ impl<'a> Output<'a> {
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
-            scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
             invariant_hoists: Vec::new(),
-            invariant_hoist_disabled: std::env::var("LOFT_NO_INVARIANT_HOIST")
-                .is_ok_and(|v| v != "0"),
-            fill_hoist_disabled: !crate::keys::fill_hoist_enabled(),
-            view_hoist_disabled: std::env::var("LOFT_NO_VIEW_HOIST").is_ok_and(|v| v != "0"),
-            wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
-                .is_ok_and(|v| v != "0"),
             wrapper_cache: HashMap::new(),
             input_cache: hoist::InputCache::default(),
             kept_cache: kept::KeptCache::default(),
@@ -2148,60 +1873,33 @@ impl<'a> Output<'a> {
             kept_holders: Vec::new(),
             kh_twin_sites: HashSet::new(),
             push_headers: Vec::new(),
-            push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
-            mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             mint_push_headers: Vec::new(),
             apart_mint_paths: HashSet::new(),
-            record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
-            heap_record_push_disabled: std::env::var("LOFT_NO_HEAP_RECORD_PUSH")
-                .is_ok_and(|v| v != "0"),
-            field_append_disabled: std::env::var("LOFT_NO_FIELD_APPEND").is_ok_and(|v| v != "0")
-                || std::env::var_os("LOFT_NO_PLAIN_FIELD_APPEND").is_some(),
-            bare_append_disabled: std::env::var("LOFT_NO_BARE_APPEND").is_ok_and(|v| v != "0"),
-            rebound_mover_disabled: std::env::var("LOFT_NO_REBOUND_MOVER").is_ok_and(|v| v != "0"),
-            group_push_disabled: std::env::var("LOFT_NO_GROUP_PUSH").is_ok_and(|v| v != "0"),
             hoist_owned: hoist::HoistOwned::default(),
             group_ends: Vec::new(),
             block_serial: 0,
             move_pairs: BTreeMap::new(),
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
-            move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
             lazy_splits: BTreeMap::new(),
-            lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
             range_end_lengths: BTreeMap::new(),
-            range_end_header_disabled: std::env::var("LOFT_NO_RANGE_END_HEADER")
-                .is_ok_and(|v| v != "0"),
             split_tables: BTreeMap::new(),
             split_table_aliases: BTreeMap::new(),
-            split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
-            text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
-            text_field_disabled: std::env::var("LOFT_NO_TEXT_FIELD").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             borrowed_store_locals: HashSet::new(),
             tested_store_texts: HashMap::new(),
             work_text_locals: HashSet::new(),
             slice_borrow_count: 0,
             versioned_text_walks: HashMap::new(),
-            text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
             char_walk_binds: HashMap::new(),
-            char_walk_disabled: std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0"),
             invariant_lits: hoist::LitHoist::default(),
-            literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
             refill: hoist::RefillBuffers::default(),
-            complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
-                .is_ok_and(|v| v != "0"),
-            value_records: hoist::ValueRecords::default(),
-            apart: apart_value::ApartPlan::default(),
+            plan: std::rc::Rc::default(),
             apart_ctx: None,
             apart_twin: false,
-            apr: apart_records::RecPlan::default(),
             apr_twin: false,
-            dv: decode_view::DvPlan::default(),
-            ps: decode_structure::PsPlan::default(),
-            sw: stream_walk::SwPlan::default(),
             sw_twin: None,
             sw_frames: Vec::new(),
             sw_serial: 0,
@@ -2221,26 +1919,17 @@ impl<'a> Output<'a> {
             dead_buffers: HashSet::new(),
             forward_sites: HashMap::new(),
             elem_first: hoist::ElemFirstMap::default(),
-            element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             loop_buffers: HashSet::new(),
-            loop_buffer_disabled: !crate::keys::loop_buffer_reuse_enabled(),
             loop_records: HashMap::new(),
-            loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
-                || !crate::keys::loop_buffer_reuse_enabled(),
-            push_fill_disabled: !crate::keys::push_fill_enabled(),
             refill_in_place: crate::keys::refill_in_place_enabled(),
             rebind_buffer: None,
             rebind_buffer_used: false,
             call_bind_owns: false,
             rebind_handed: HashSet::new(),
             inline_hint: crate::keys::inline_hint_enabled(),
-            push_window_disabled: !crate::keys::push_window_enabled(),
-            join_read_disabled: !crate::keys::join_read_enabled(),
             push_windows: Vec::new(),
             ret_adopt: None,
-            retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             in_adopt_delivery: 0,
-            callee_inputs_disabled: std::env::var("LOFT_NO_CALLEE_INPUTS").is_ok_and(|v| v != "0"),
             twin: None,
             live_check_by_def: HashMap::new(),
             current_call_def: u32::MAX,
@@ -2248,16 +1937,11 @@ impl<'a> Output<'a> {
             hoist_counter: 0,
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
             hoist_disabled: std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0"),
-            fn_header_disabled: std::env::var("LOFT_NO_FN_HEADER").is_ok_and(|v| v != "0"),
             fn_header_memo: HashMap::new(),
-            elem_fuse_disabled: std::env::var("LOFT_NO_ELEM_FUSE").is_ok_and(|v| v != "0"),
             nn_verify: std::env::var("LOFT_NN_VERIFY").is_ok_and(|v| v != "0"),
-            nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
             release_pass_probe: std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
             range_cache: HashMap::new(),
-            typed_keyed_disabled: std::env::var("LOFT_NO_TYPED_KEYED").is_ok_and(|v| v != "0"),
-            range_arith_disabled: std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"),
             range_suspended: 0,
             leaf_cache: HashMap::new(),
             chain_cache: HashMap::new(),
@@ -2269,14 +1953,9 @@ impl<'a> Output<'a> {
             ckpt_cur_line: 0,
             named_frame: false,
             fnref_work: false,
-            fnref_work_disabled: std::env::var("LOFT_NO_FNREF_WORK_BUFFER").is_ok_and(|v| v != "0"),
             file_holds: Vec::new(),
             any_work_buffer: std::cell::OnceCell::new(),
-            leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
-            leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
-            guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
             lean_tier: false,
-            write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
             next_format_count: 0,
             yield_collect: false,
             yield_collect_text: false,
@@ -2578,7 +2257,7 @@ impl Output<'_> {
         self.indent = 0;
         self.placed_locals = hoist::placed_locals(self.data.def(def_nr).code(), self.data);
         // @PLN157 § V-j — the function's paired move-appends, before anything emits.
-        self.invariant_lits = if self.literal_hoist_disabled {
+        self.invariant_lits = if self.switches.literal_hoist_disabled {
             hoist::LitHoist::default()
         } else {
             hoist::invariant_literals(self.data, def_nr)
@@ -2594,50 +2273,50 @@ impl Output<'_> {
         // either table.  Measured without the second test: a `w9_key(e: const Ent, k)`
         // whose file returned no record anywhere took the tuple in its signature and read
         // `e` through the store in its body (E0609 over 75 corpus scripts).
-        if !self.value_records.fns.is_empty() || !self.value_records.params.is_empty() {
-            self.dead_buffers = hoist::dead_buffers(self.data, def_nr, &self.value_records);
+        if !self.plan.value_records.fns.is_empty() || !self.plan.value_records.params.is_empty() {
+            self.dead_buffers = hoist::dead_buffers(self.data, def_nr, &self.plan.value_records);
             self.value_record_locals = hoist::value_locals_in(
                 self.data,
                 def_nr,
-                &self.value_records.fns,
-                &self.value_records.params,
-                &self.value_records.view_offs,
-                &self.value_records.fnref_sites,
-                &self.value_records.sp,
+                &self.plan.value_records.fns,
+                &self.plan.value_records.params,
+                &self.plan.value_records.view_offs,
+                &self.plan.value_records.fnref_sites,
+                &self.plan.value_records.sp,
             );
             self.forward_sites = hoist::forward_sites(
                 self.data,
                 def_nr,
-                &self.value_records.fns,
+                &self.plan.value_records.fns,
                 &self.value_record_locals,
             );
             self.value_leaves = hoist::value_leaves(
                 self.data,
                 def_nr,
-                &self.value_records,
+                &self.plan.value_records,
                 &self.value_record_locals,
             );
-            if self.value_records.fns.contains_key(&def_nr) {
+            if self.plan.value_records.fns.contains_key(&def_nr) {
                 let def = self.data.def(def_nr);
                 self.value_phantom = hoist::ret_buffer_attr(def)
                     .map(|a| def.variables().var(&def.attributes()[a].name))
                     .filter(|v| *v != u16::MAX);
             }
         }
-        self.elem_first = if self.element_first_disabled {
+        self.elem_first = if self.switches.element_first_disabled {
             hoist::ElemFirstMap::default()
         } else {
             hoist::element_first(
                 self.data,
                 self.stores,
                 def_nr,
-                self.value_records.views.get(&def_nr),
+                self.plan.value_records.views.get(&def_nr),
             )
         };
         // The fresh-field arms are kept whatever the switch says: they are what a copy owes
         // a destination just created, not the elision the switch turns off.
         self.complete_writes = hoist::complete_writes(self.data, self.stores, def_nr);
-        if self.complete_write_disabled {
+        if self.switches.complete_write_disabled {
             self.complete_writes.db_vars.clear();
             self.complete_writes.mint_tps.clear();
         }
@@ -2659,7 +2338,7 @@ impl Output<'_> {
         // `@FR-R-RefillText`'s collection clause needs the append's no-prefill mint: a
         // prefilling one writes 0 over the kept slot's text and strands its block.
         let keep_np = self.refill.keep.as_ref().map(|k| {
-            if self.refill_elements_disabled || self.refill_keep_disabled {
+            if self.switches.refill_elements_disabled || self.switches.refill_keep_disabled {
                 Err("switched off")
             } else if k
                 .mint_tps
@@ -2694,11 +2373,11 @@ impl Output<'_> {
                 Some(w) => format!("refill-text: {name} keeps no elements — {w}"),
             });
         }
-        self.refill_text = if self.refill_text_disabled {
+        self.refill_text = if self.switches.refill_text_disabled {
             hoist::RefillTextSites::default()
         } else {
             // A value-record callee takes no buffer, so its site has none to refill.
-            let value_fns = &self.value_records.fns;
+            let value_fns = &self.plan.value_records.fns;
             hoist::refill_text_sites(
                 self.data,
                 self.stores,
@@ -2713,7 +2392,7 @@ impl Output<'_> {
                     && std::env::var("LOFT_TRACE_REFILL_TEXT").is_ok(),
             )
         };
-        self.move_pairs = if self.move_append_disabled {
+        self.move_pairs = if self.switches.move_append_disabled {
             BTreeMap::new()
         } else {
             hoist::move_appends(self.data, def_nr)
@@ -2723,17 +2402,17 @@ impl Output<'_> {
             .values()
             .map(|p| (p.loop_var, p.clone()))
             .collect();
-        self.range_end_lengths = if self.range_end_header_disabled {
+        self.range_end_lengths = if self.switches.range_end_header_disabled {
             BTreeMap::new()
         } else {
             hoist::range_end_lengths(self.data, def_nr)
         };
-        self.lazy_splits = if self.lazy_split_disabled {
+        self.lazy_splits = if self.switches.lazy_split_disabled {
             BTreeMap::new()
         } else {
             hoist::lazy_splits(self.data, def_nr)
         };
-        self.split_tables = if self.split_table_disabled {
+        self.split_tables = if self.switches.split_table_disabled {
             BTreeMap::new()
         } else {
             hoist::split_tables(self.data, def_nr)
@@ -2755,7 +2434,7 @@ impl Output<'_> {
         self.tested_store_texts.clear();
         self.work_text_locals.clear();
         self.slice_borrow_count = 0;
-        self.borrowed_text_locals = if self.text_borrow_disabled {
+        self.borrowed_text_locals = if self.switches.text_borrow_disabled {
             HashMap::new()
         } else {
             let mut walks =
@@ -2773,12 +2452,13 @@ impl Output<'_> {
             self.slice_borrow_count = store.slices.len();
             walks
         };
-        self.versioned_text_walks = if self.text_borrow_disabled || self.distinct_version_disabled {
-            HashMap::new()
-        } else {
-            hoist::versioned_text_walks(self.data, def_nr, &sliced, &self.split_tables)
-        };
-        self.char_walks = if self.char_walk_disabled {
+        self.versioned_text_walks =
+            if self.switches.text_borrow_disabled || self.switches.distinct_version_disabled {
+                HashMap::new()
+            } else {
+                hoist::versioned_text_walks(self.data, def_nr, &sliced, &self.split_tables)
+            };
+        self.char_walks = if self.switches.char_walk_disabled {
             BTreeMap::new()
         } else {
             hoist::char_walks(self.data, def_nr)
@@ -2794,7 +2474,7 @@ impl Output<'_> {
         // `@FR-R-AppendTwin` — a twin never adopts: adoption makes the result local BE the
         // buffer at emission time, which the IR the twin's eligibility read does not say, and
         // its bind clears that buffer — the caller's elements.
-        self.ret_adopt = if self.retbuf_adopt_disabled
+        self.ret_adopt = if self.switches.retbuf_adopt_disabled
             || self.append_twin_buf.is_some()
             || self.dest_twin.is_some()
         {
@@ -2807,7 +2487,7 @@ impl Output<'_> {
         // element-first pair (§ V-z), a move host (§ V-j) and the adopted result's witness
         // (§ V-u) are left to those.
         self.loop_records.clear();
-        if !self.loop_record_disabled {
+        if !self.switches.loop_record_disabled {
             let lr = hoist::loop_records(self.data, self.stores, def_nr);
             self.loop_records = lr.recs;
             // `@FR-R-Apart` instance 4 — an apart record is no store record to keep.
@@ -2818,7 +2498,7 @@ impl Output<'_> {
             self.refill.field_zeros.extend(lr.field_zeros);
         }
         self.loop_buffers.clear();
-        if !self.loop_buffer_disabled {
+        if !self.switches.loop_buffer_disabled {
             let mut lb = hoist::loop_buffers(self.data, self.stores, def_nr);
             lb.retain(|v| {
                 !self.invariant_lits.flat.contains_key(v)
@@ -2846,7 +2526,7 @@ impl Output<'_> {
             records: self.loop_records.keys().copied().collect(),
             value_locals: self.value_record_locals.keys().copied().collect(),
             dead_buffers: self.dead_buffers.clone(),
-            dead_by_fn: std::rc::Rc::clone(&self.dead_by_fn),
+            dead_by_fn: std::rc::Rc::clone(&self.plan.dead_by_fn),
             kept_elems: self
                 .refill
                 .keep
@@ -2943,11 +2623,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
-        if self.bounded_nest_disabled
-            || self.hoist_disabled
-            || self.release_pass_probe
-            || self.in_coroutine_body
-        {
+        if self.switches.bounded_nest_disabled || self.hoist_disabled || self.in_coroutine_body {
             return Ok(false);
         }
         let fn_name = self.data.def(self.def_nr).name().to_string();
@@ -3029,7 +2705,7 @@ impl Output<'_> {
         // and at `hi - 1`, spelled with wrapping operators: the magnitude bound above has
         // already proved no step overflows.  A read outside `[0, len)` at either end declines
         // the whole nest to the checked loop, where the absent element answers as it always has.
-        let raw = nest.affine && !self.nest_raw_disabled;
+        let raw = nest.affine && !self.switches.nest_raw_disabled;
         if raw {
             for (j, (path, chain)) in nest.reads.iter().enumerate() {
                 let header = self
@@ -3141,10 +2817,18 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<ChainGuard> {
-        if self.chain_guard_disabled
+        // Under the release-pass probe every chain operator is plain already, so the guarded
+        // copy is the checked copy's twin, statement for statement: a duplicated loop.  What
+        // it moved on the ship lane is the optimiser's response to the duplicate, not work
+        // removed (`slope_path_with_undo` 3.50x -> 3.65x and `draw_quads` 2.99x -> 3.18x
+        // slower, `render_stage` 2.11x -> 1.62x faster), so it declines.  The bounded nest
+        // stays: its raw element reads are work removed.  A fault-flag fast copy
+        // (`@FR-R-FaultFlag`) guards no chain either: its operators set the flag.
+        if self.switches.chain_guard_disabled
+            || self.fault_flag.is_some()
             || self.hoist_disabled
-            || self.release_pass_probe
             || self.in_coroutine_body
+            || self.release_pass_probe
         {
             return Ok(ChainGuard::None);
         }
@@ -3547,7 +3231,7 @@ impl Output<'_> {
                 self.output_code_inner(w, v)?;
                 self.indent -= 1;
                 writeln!(w, ";")?;
-                if !self.plain_chain_ptr_disabled
+                if !self.switches.plain_chain_ptr_disabled
                     && self.bind_record_ptr(w, &lp.operators, at, None)?
                 {
                     ptr_frames += 1;
@@ -3581,13 +3265,13 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
-        if self.fill_hoist_disabled {
+        if self.switches.fill_hoist_disabled {
             return Ok(false);
         }
         let Some(f) = hoist::fill_loop(lp, self.data) else {
             return Ok(false);
         };
-        if f.bound.is_some() && self.guarded_fill_disabled {
+        if f.bound.is_some() && self.switches.guarded_fill_disabled {
             return Ok(false);
         }
         let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
@@ -3744,7 +3428,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<Vec<(String, String, String)>> {
-        if self.push_fill_disabled {
+        if self.switches.push_fill_disabled {
             return Ok(Vec::new());
         }
         let Some(p) = hoist::push_loop(lp, self.data) else {
@@ -3779,7 +3463,7 @@ impl Output<'_> {
             "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@PLN157 § V-am push reserve",
             p.pushes, p.size
         )?;
-        if self.push_window_disabled
+        if self.switches.push_window_disabled
             || self.in_coroutine_body
             || self.coroutine_persistent_fields.contains_key(&p.path.0)
         {
@@ -3832,7 +3516,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<Vec<(String, String, String)>> {
-        if self.push_window_disabled || self.in_coroutine_body {
+        if self.switches.push_window_disabled || self.in_coroutine_body {
             return Ok(Vec::new());
         }
         let mut paths: Vec<(hoist::PathKey, &Value, u32)> = Vec::new();
@@ -3859,7 +3543,7 @@ impl Output<'_> {
         let Some(hdr) = self.active_push_header(path).map(str::to_owned) else {
             return Ok(Vec::new());
         };
-        let facts = (!self.distinct_growth_disabled).then_some(hoist::StoreFacts {
+        let facts = (!self.switches.distinct_growth_disabled).then_some(hoist::StoreFacts {
             vars: self.data.def(self.def_nr).variables(),
             placed: &self.placed_locals,
             adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
@@ -3956,7 +3640,7 @@ impl Output<'_> {
         writeln!(w, "{line}")?;
         crate::rewrite_census::fired("R-PushFill", 1);
         if held.len() < ps.len()
-            || self.push_window_disabled
+            || self.switches.push_window_disabled
             || self.in_coroutine_body
             || ps
                 .iter()
@@ -4012,7 +3696,7 @@ impl Output<'_> {
     /// `size(h)` then answers the reserved table (@C150); length, entries and order are the
     /// plain fill's.
     fn hash_reserve(&mut self, w: &mut dyn Write, lp: &crate::data::Block) -> std::io::Result<()> {
-        if self.push_fill_disabled || self.in_coroutine_body || !hash_reserve_enabled() {
+        if self.switches.push_fill_disabled || self.in_coroutine_body || !hash_reserve_enabled() {
             return Ok(());
         }
         let Ok((hf, hi)) = hoist::hash_fill_loop(lp, self.data, self.stores) else {
@@ -4044,7 +3728,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<Option<(String, String, String)>> {
-        if self.record_push_disabled || self.in_coroutine_body {
+        if self.switches.record_push_disabled || self.in_coroutine_body {
             return Ok(None);
         }
         let vars = self.data.def(self.def_nr).variables();
@@ -4053,7 +3737,7 @@ impl Output<'_> {
             self.data,
             self.stores,
             vars,
-            !self.heap_record_push_disabled,
+            !self.switches.heap_record_push_disabled,
         ) {
             Ok(x) => x,
             Err(why) => {
@@ -4088,7 +3772,7 @@ impl Output<'_> {
             "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@FR-R-PushFill record reservation",
             m.mints_per_pass, m.size
         )?;
-        if self.push_window_disabled {
+        if self.switches.push_window_disabled {
             return Ok(None);
         }
         if let Err(why) = hoist::mint_window_ok(
@@ -4130,7 +3814,7 @@ impl Output<'_> {
     /// is one no prefix can overflow in, so the loop's own answer is unchanged on every
     /// input; a vector of large elements, or a null one, is what the resumed loop is for.
     fn sum_fast_path(&mut self, w: &mut dyn Write, lp: &crate::data::Block) -> std::io::Result<()> {
-        if self.bounded_sum_disabled || self.hoist_disabled || self.in_coroutine_body {
+        if self.switches.bounded_sum_disabled || self.hoist_disabled || self.in_coroutine_body {
             return Ok(());
         }
         let bs = match hoist::bounded_sum(lp, self.data) {
@@ -4242,7 +3926,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
-        if self.push_fill_disabled {
+        if self.switches.push_fill_disabled {
             return Ok(false);
         }
         let Some(p) = hoist::push_loop(lp, self.data) else {
@@ -4342,9 +4026,9 @@ impl Output<'_> {
         &mut self,
         lp: &crate::data::Block,
     ) -> Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> {
-        if self.distinct_version_disabled
+        if self.switches.distinct_version_disabled
             || self.hoist_disabled
-            || self.distinct_growth_disabled
+            || self.switches.distinct_growth_disabled
             || self.in_coroutine_body
             || !self.assumed_distinct.is_empty()
             || self.loop_records.values().any(|r| r.loop_scope == lp.scope)
@@ -4481,7 +4165,7 @@ impl Output<'_> {
         params: &[u16],
         assumed: &[(u16, u16)],
     ) -> Vec<u16> {
-        if self.record_ptr_disabled || self.distinct_growth_disabled {
+        if self.switches.record_ptr_disabled || self.switches.distinct_growth_disabled {
             return Vec::new();
         }
         let root = |v: u16| self.param_root(v, params);
@@ -4527,7 +4211,7 @@ impl Output<'_> {
                     this.stores,
                     this.def_nr,
                     &mut this.hoist_cache,
-                    !this.write_hoist_disabled,
+                    !this.switches.write_hoist_disabled,
                     &twin_params,
                     Some(&hoist::StoreFacts {
                         vars: this.data.def(this.def_nr).variables(),
@@ -4562,9 +4246,9 @@ impl Output<'_> {
             &mut self.hoist_cache,
             &mut self.scalar_write_cache,
             tiers,
-            (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
+            (!self.switches.callee_inputs_disabled).then_some(&mut self.input_cache),
             Some(&self.hoist_owned),
-            (!self.distinct_growth_disabled)
+            (!self.switches.distinct_growth_disabled)
                 .then_some(hoist::StoreFacts {
                     vars: self.data.def(self.def_nr).variables(),
                     placed: &self.placed_locals,
@@ -4608,7 +4292,7 @@ impl Output<'_> {
         // nest's own cost again.  The prelude that binds it is the outermost loop whose body
         // leaves the vector alone — every enclosing loop runs this same test first, so the
         // first level that can hold the bound is the one that does.
-        let nest_paths = if self.bounded_nest_disabled
+        let nest_paths = if self.switches.bounded_nest_disabled
             || self.hoist_disabled
             || hoist::bounded_nest(lp, self.data).is_ok()
         {
@@ -4636,7 +4320,7 @@ impl Output<'_> {
             HashSet::new()
         } else if growth_free {
             candidates.iter().map(|(p, _)| p.clone()).collect()
-        } else if !self.distinct_growth_disabled && !movers.is_empty() {
+        } else if !self.switches.distinct_growth_disabled && !movers.is_empty() {
             let facts = hoist::StoreFacts {
                 vars: self.data.def(self.def_nr).variables(),
                 placed: &self.placed_locals,
@@ -4797,7 +4481,7 @@ impl Output<'_> {
             // The vector's own `DbRef`, which a fused read hands its cold path by reference:
             // bound once here, where the path is evaluated once, instead of rebuilt on the
             // stack at every read (`header_dbrefs`).
-            if !self.header_dbref_disabled {
+            if !self.switches.header_dbref_disabled {
                 let vd = format!("__vd_{}", self.hoist_counter);
                 lines.push(format!("let {vd}: DbRef = {operand};"));
                 self.header_dbrefs.insert(name.clone(), vd);
@@ -4843,7 +4527,7 @@ impl Output<'_> {
         // later use answers the memo; the pair is declared at THIS loop so its flag is clear
         // on every entry, the form LLVM peels the test out of.
         let mut invariant_frame: HashMap<usize, std::rc::Rc<(String, Value)>> = HashMap::new();
-        if !self.invariant_hoist_disabled {
+        if !self.switches.invariant_hoist_disabled {
             let trace = std::env::var("LOFT_TRACE_INVARIANT").is_ok();
             for ch in hoist::invariant_chains(lp, self.data, self.data.def(self.def_nr).variables())
             {
@@ -5070,7 +4754,7 @@ impl Output<'_> {
         stmts: &[Value],
         at: usize,
     ) -> std::io::Result<bool> {
-        if self.hoist_disabled || self.view_hoist_disabled {
+        if self.hoist_disabled || self.switches.view_hoist_disabled {
             return Ok(false);
         }
         let Some(d) = hoist::view_def_header(
@@ -5079,7 +4763,7 @@ impl Output<'_> {
             self.data,
             self.def_nr,
             &mut self.hoist_cache,
-            !self.write_hoist_disabled,
+            !self.switches.write_hoist_disabled,
         ) else {
             return Ok(false);
         };
@@ -5107,7 +4791,7 @@ impl Output<'_> {
         // input, or a growth-free loop's), the view shares it under its own key, so its
         // element reads and writes take the one-load form.  A path held without a base
         // (a loop that grows a store) shares the header alone.
-        let held_base = if self.twin_base_disabled {
+        let held_base = if self.switches.twin_base_disabled {
             None
         } else {
             held_path
@@ -5159,7 +4843,7 @@ impl Output<'_> {
     /// is on; `None` otherwise.
     /// Emits `@FR-R-Wrapper`.
     pub(super) fn wrapper_op(&mut self, def_nr: u32, vals: &[Value]) -> Option<(u32, Vec<Value>)> {
-        if self.wrapper_inline_disabled {
+        if self.switches.wrapper_inline_disabled {
             return None;
         }
         // LEAF arguments, or a PURE VECTOR PATH (`m.chunks`: constant `OpGetField`s over a
@@ -5209,7 +4893,7 @@ impl Output<'_> {
     /// has no twin or the mechanism is off.  A whole-hoist switch (`LOFT_NO_VECTOR_HOIST`)
     /// leaves no caller holding anything to hand over, so it emits no twin either.
     fn callee_inputs_of(&mut self, def_nr: u32) -> Option<std::rc::Rc<hoist::CalleeInputs>> {
-        if self.callee_inputs_disabled || self.hoist_disabled {
+        if self.switches.callee_inputs_disabled || self.hoist_disabled {
             return None;
         }
         hoist::callee_inputs(
@@ -5249,7 +4933,7 @@ impl Output<'_> {
             let Value::Call(g, _) = getter.unspan() else {
                 return None;
             };
-            if self.param_twin_ptr_disabled && self.param_rec_ptrs.contains(c) {
+            if self.switches.param_twin_ptr_disabled && self.param_rec_ptrs.contains(c) {
                 return None;
             }
             let name = self.data.def(*g).name().to_string();
@@ -5268,7 +4952,7 @@ impl Output<'_> {
         // when it grows no store, or one derived from the held header AT THE CALL — valid
         // for the call's duration either way, since an admitted callee is store-free or
         // writes only in place, so no store reallocates while it runs.
-        if !self.twin_base_disabled {
+        if !self.switches.twin_base_disabled {
             for key in &header_keys {
                 let hdr = self.active_vec_header(key)?.to_owned();
                 match self.active_vec_base(key) {
@@ -5285,7 +4969,8 @@ impl Output<'_> {
         for p in &inputs.records {
             let held = match vals.get(*p as usize)?.unspan() {
                 Value::Var(c)
-                    if !(self.param_twin_ptr_disabled && self.param_rec_ptrs.contains(c)) =>
+                    if !(self.switches.param_twin_ptr_disabled
+                        && self.param_rec_ptrs.contains(c)) =>
                 {
                     self.active_rec_ptr(*c).map(str::to_owned)
                 }
@@ -5322,7 +5007,7 @@ impl Output<'_> {
             .collect();
         // `@FR-R-Base`'s twin clause — each header's base under the same key, so the fused
         // read and write emitters find it exactly as they find a loop's.
-        let bases: HashMap<hoist::PathKey, String> = if self.twin_base_disabled {
+        let bases: HashMap<hoist::PathKey, String> = if self.switches.twin_base_disabled {
             HashMap::new()
         } else {
             t.headers
@@ -5470,7 +5155,7 @@ impl Output<'_> {
             && held
                 .as_ref()
                 .is_some_and(|(_, base, ..)| self.held_text_span(base).is_some());
-        let nested = !self.field_header_disabled && {
+        let nested = !self.switches.field_header_disabled && {
             let reads = hoist::vector_field_reads(rest, *r, self.data);
             reads >= 2 || (reads == 1 && held.is_some())
         };
@@ -5486,7 +5171,7 @@ impl Output<'_> {
     /// seen.  `None` when no address is held — a bare vector, a value local, a view the
     /// block declined — and the operand is resolved as before.
     pub fn field_header_expr(&mut self, vec: &Value) -> Option<String> {
-        if self.field_header_disabled {
+        if self.switches.field_header_disabled {
             return None;
         }
         let (root, offs) = hoist::vector_path(self.data, vec)?;
@@ -5526,8 +5211,10 @@ impl Output<'_> {
     /// `__ts_N` bound beside a FRAME's base `__vb_N` — a twin's input base carries none —
     /// unless this clause or `(R-Base)`'s text clause is switched off.
     fn held_text_span(&self, base: &str) -> Option<String> {
-        (!self.text_base_disabled && !self.text_field_disabled && base.starts_with("__vb_"))
-            .then(|| base.replacen("__vb_", "__ts_", 1))
+        (!self.switches.text_base_disabled
+            && !self.switches.text_field_disabled
+            && base.starts_with("__vb_"))
+        .then(|| base.replacen("__vb_", "__ts_", 1))
     }
 
     /// `@FR-R-RecPtr` — after statement `at` of a block was emitted: if it bound a plain
@@ -5543,7 +5230,7 @@ impl Output<'_> {
         at: usize,
         block: Option<usize>,
     ) -> std::io::Result<bool> {
-        if self.hoist_disabled || self.record_ptr_disabled {
+        if self.hoist_disabled || self.switches.record_ptr_disabled {
             return Ok(false);
         }
         let Some(Value::Set(r, _)) = stmts.get(at).map(Value::unspan) else {
@@ -5564,9 +5251,9 @@ impl Output<'_> {
             self.stores,
             self.def_nr,
             &mut self.hoist_cache,
-            !self.write_hoist_disabled,
+            !self.switches.write_hoist_disabled,
             &twin_params,
-            (!self.distinct_growth_disabled)
+            (!self.switches.distinct_growth_disabled)
                 .then_some(hoist::StoreFacts {
                     vars: self.data.def(self.def_nr).variables(),
                     placed: &self.placed_locals,
@@ -5583,7 +5270,7 @@ impl Output<'_> {
         // finish.  Only in a block whose statements this emitter walks by index.
         let mut window: Option<usize> = None;
         let verdict = match (verdict, block) {
-            (Err(_), Some(_)) if !self.mint_window_disabled => {
+            (Err(_), Some(_)) if !self.switches.mint_window_disabled => {
                 match hoist::mint_window(
                     stmts,
                     at,
@@ -5591,7 +5278,7 @@ impl Output<'_> {
                     self.stores,
                     self.def_nr,
                     &mut self.hoist_cache,
-                    !self.write_hoist_disabled,
+                    !self.switches.write_hoist_disabled,
                     Some(&self.hoist_owned),
                 ) {
                     Ok((e, finish)) => {
@@ -5653,7 +5340,11 @@ impl Output<'_> {
             // `(R-ValueLocal)` — a TUPLE PARAMETER is the same use of the address at the
             // call: the site reads the view's fields into the tuple where the twin read its
             // inputs, so the view keeps its address for them.
-            if self.value_records.param_type(g, usize::from(p)).is_some()
+            if self
+                .plan
+                .value_records
+                .param_type(g, usize::from(p))
+                .is_some()
                 || self.callee_inputs_of(g).is_some_and(|ci| {
                     ci.scalars.iter().any(|(q, _, _)| *q == p) || ci.records.contains(&p)
                 })
@@ -5673,7 +5364,10 @@ impl Output<'_> {
         w: &mut dyn Write,
         stmts: &[Value],
     ) -> std::io::Result<usize> {
-        if self.hoist_disabled || self.record_ptr_disabled || self.param_record_ptr_disabled {
+        if self.hoist_disabled
+            || self.switches.record_ptr_disabled
+            || self.switches.param_record_ptr_disabled
+        {
             return Ok(0);
         }
         // A generator's parameters persist across its yields, where the caller runs and
@@ -5686,7 +5380,7 @@ impl Output<'_> {
         let mut frames = 0;
         for (i, p) in params.into_iter().enumerate() {
             // A tuple parameter (`(R-ValueLocal)`) arrives as values, not as a place.
-            if self.value_records.param_type(self.def_nr, i).is_some()
+            if self.plan.value_records.param_type(self.def_nr, i).is_some()
                 || self.value_record_locals.contains_key(&p)
                 || self.rec_ptrs.iter().any(|f| f.contains_key(&p))
             {
@@ -5709,7 +5403,7 @@ impl Output<'_> {
             }
             // A twin call `p` is handed to is a use of the address at the call, as it is for
             // a view bound in the body: validated here, the address serves that call.
-            let twin_params = if self.param_twin_ptr_disabled {
+            let twin_params = if self.switches.param_twin_ptr_disabled {
                 HashSet::new()
             } else {
                 self.twin_params_of(stmts, p)
@@ -5721,9 +5415,9 @@ impl Output<'_> {
                 self.stores,
                 self.def_nr,
                 &mut self.hoist_cache,
-                !self.write_hoist_disabled,
+                !self.switches.write_hoist_disabled,
                 &twin_params,
-                (!self.distinct_growth_disabled)
+                (!self.switches.distinct_growth_disabled)
                     .then_some(hoist::StoreFacts {
                         vars: self.data.def(self.def_nr).variables(),
                         placed: &self.placed_locals,
@@ -5913,7 +5607,7 @@ impl Output<'_> {
     /// ([`hoist::iteration_head`]) over a path whose header AND element base an enclosing
     /// frame holds: those two locals, the index variable's name and the element size.
     fn held_iteration_base(&self, stmt: &Value) -> Option<(String, String, String, u32, u32)> {
-        if self.base_rec_ptr_disabled {
+        if self.switches.base_rec_ptr_disabled {
             return None;
         }
         let it = hoist::iteration_head(stmt, self.data)
@@ -5945,7 +5639,10 @@ impl Output<'_> {
         String,
         String,
     )> {
-        if self.index_rec_ptr_disabled || self.base_rec_ptr_disabled || self.record_ptr_disabled {
+        if self.switches.index_rec_ptr_disabled
+            || self.switches.base_rec_ptr_disabled
+            || self.switches.record_ptr_disabled
+        {
             return None;
         }
         let Value::Set(r, init) = stmt.unspan() else {
@@ -6115,13 +5812,13 @@ impl Output<'_> {
     /// the ONE spelling, so the group admission (`@FR-R-GroupPush`) asks the same question.
     fn hoist_tiers(&self) -> hoist::HoistTiers {
         hoist::HoistTiers {
-            in_place: !self.write_hoist_disabled,
-            scalars: !self.scalar_hoist_disabled,
-            push: !self.push_hoist_disabled,
-            mint: !self.mint_hoist_disabled,
-            record_push: !self.record_push_disabled,
-            heap_push: !self.heap_record_push_disabled,
-            rebound_movers: !self.rebound_mover_disabled,
+            in_place: !self.switches.write_hoist_disabled,
+            scalars: !self.switches.scalar_hoist_disabled,
+            push: !self.switches.push_hoist_disabled,
+            mint: !self.switches.mint_hoist_disabled,
+            record_push: !self.switches.record_push_disabled,
+            heap_push: !self.switches.heap_record_push_disabled,
+            rebound_movers: !self.switches.rebound_mover_disabled,
             // Never here: only `hoist::hoistable`'s header verdict admits a text set.
             text_set: false,
         }
@@ -6141,7 +5838,10 @@ impl Output<'_> {
         at: usize,
         block: usize,
     ) -> std::io::Result<()> {
-        if self.group_push_disabled || self.record_push_disabled || self.hoist_disabled {
+        if self.switches.group_push_disabled
+            || self.switches.record_push_disabled
+            || self.hoist_disabled
+        {
             return Ok(());
         }
         let Value::Call(d, args) = ops[at].unspan() else {
@@ -6246,7 +5946,7 @@ impl Output<'_> {
     #[must_use]
     pub fn local_rust_type(&self, var: u16, tp: &Type) -> String {
         if let Some(tp) = self.value_record_locals.get(&var)
-            && let Some(t) = self.value_records.types.get(tp)
+            && let Some(t) = self.plan.value_records.types.get(tp)
         {
             return t.tuple.clone();
         }
@@ -6423,12 +6123,12 @@ impl Output<'_> {
     pub fn value_tuple_zero(&self, tp: u16) -> String {
         // `@FR-R-ValueRecord`'s nullable clause — a `τ?` value local starts ABSENT, as the
         // null `DbRef` it replaces does: its presence word false, every field its null.
-        if let Some(layout) = self.value_records.types.get(&tp)
+        if let Some(layout) = self.plan.value_records.types.get(&tp)
             && layout.nullable
         {
             return layout.absent();
         }
-        let Some(fields) = self.value_records.types.get(&tp).map(|t| &t.fields) else {
+        let Some(fields) = self.plan.value_records.types.get(&tp).map(|t| &t.fields) else {
             return "Default::default()".to_string();
         };
         if !fields.iter().any(|(_, rt)| hoist::is_view_part(rt)) {
@@ -6461,7 +6161,13 @@ impl Output<'_> {
         dst: &Value,
         tuple: &str,
     ) -> std::io::Result<()> {
-        let Some(fields) = self.value_records.types.get(&tp).map(|t| t.fields.clone()) else {
+        let Some(fields) = self
+            .plan
+            .value_records
+            .types
+            .get(&tp)
+            .map(|t| t.fields.clone())
+        else {
             return Ok(());
         };
         if self.write_tuple_through_address(w, &fields, dst, tuple)? {
@@ -6529,7 +6235,7 @@ impl Output<'_> {
         &self,
         args: &'a [Value],
     ) -> Option<(&'a Value, &'a Value, u32)> {
-        if self.record_ptr_disabled || self.element_address_disabled {
+        if self.switches.record_ptr_disabled || self.switches.element_address_disabled {
             return None;
         }
         let [src, dst, _] = args else {
@@ -6539,7 +6245,7 @@ impl Output<'_> {
             return None;
         };
         let d = *self.value_record_locals.get(v)?;
-        let fields = &self.value_records.types.get(&d)?.fields;
+        let fields = &self.plan.value_records.types.get(&d)?.fields;
         if fields.iter().any(|(_, rt)| hoist::is_view_part(rt))
             || fields
                 .iter()
@@ -6587,7 +6293,7 @@ impl Output<'_> {
             .iter()
             .map(|(_, rt)| hoist::setter_kind(hoist::value_setter(rt)))
             .collect();
-        if self.record_ptr_disabled
+        if self.switches.record_ptr_disabled
             || fields.iter().any(|(_, rt)| hoist::is_view_part(rt))
             || kinds.iter().all(Option::is_none)
             || matches!(dst.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some())
@@ -6662,6 +6368,7 @@ impl Output<'_> {
         tp: u16,
     ) -> Option<(Vec<Option<Value>>, Vec<usize>)> {
         let n = self
+            .plan
             .value_records
             .index
             .keys()
@@ -6690,9 +6397,9 @@ impl Output<'_> {
             {
                 let base = i64::from(*sub_off);
                 let end = base + i64::from(self.stores.size(sub_tp));
-                let fields = self.value_records.types.get(&tp)?.fields.clone();
+                let fields = self.plan.value_records.types.get(&tp)?.fields.clone();
                 for (off, rt) in fields.iter().filter(|(o, _)| *o >= base && *o < end) {
-                    let idx = *self.value_records.index.get(&(tp, *off))?;
+                    let idx = *self.plan.value_records.index.get(&(tp, *off))?;
                     if idx >= slots.len() || slots[idx].is_some() || hoist::is_view_part(rt) {
                         return None;
                     }
@@ -6720,6 +6427,7 @@ impl Output<'_> {
             // then appended into, so the write to skip is the one at a view offset.  The
             // slot stays derived ([`hoist::leaf_source`]).
             if self
+                .plan
                 .value_records
                 .view_offs
                 .get(&tp)
@@ -6727,7 +6435,7 @@ impl Output<'_> {
             {
                 continue;
             }
-            let idx = *self.value_records.index.get(&(tp, off))?;
+            let idx = *self.plan.value_records.index.get(&(tp, off))?;
             if idx >= slots.len() || slots[idx].is_some() {
                 return None;
             }
@@ -6737,6 +6445,7 @@ impl Output<'_> {
         // A VIEW-LEAF slot is derived, not written: its own `OpAppendVector` is the copy the
         // leaf replaces, and the emitter answers the place instead.
         let views: HashSet<usize> = self
+            .plan
             .value_records
             .fn_fields(self.def_nr)
             .map(|fs| {
@@ -6860,7 +6569,7 @@ impl Output<'_> {
         &self,
         args: &'a [Value],
     ) -> Option<(String, String, String, &'a Value, &'a Value)> {
-        if self.text_base_disabled || self.hoist_disabled {
+        if self.switches.text_base_disabled || self.hoist_disabled {
             return None;
         }
         let [elem, fld] = args else { return None };
@@ -6970,7 +6679,7 @@ impl Output<'_> {
         op: &str,
         args: &'a [Value],
     ) -> Option<(hoist::FusedPush<'a>, String)> {
-        if self.push_hoist_disabled {
+        if self.switches.push_hoist_disabled {
             return None;
         }
         let fused = hoist::fused_push(self.data, op, args)?;
@@ -6992,7 +6701,7 @@ impl Output<'_> {
         getter: &str,
         args: &'a [Value],
     ) -> Option<hoist::FusedRead<'a>> {
-        if self.elem_fuse_disabled {
+        if self.switches.elem_fuse_disabled {
             return None;
         }
         let fused = hoist::fused_element_read(self.data, getter, args)?;
@@ -7011,8 +6720,8 @@ impl Output<'_> {
         let boolean = getter == "OpGetBoolean";
         let character = getter == "OpGetCharacter";
         if !(boolean || character || getter == "OpGetByte")
-            || self.byte_read_disabled
-            || self.elem_fuse_disabled
+            || self.switches.byte_read_disabled
+            || self.switches.elem_fuse_disabled
         {
             return None;
         }
@@ -7044,7 +6753,7 @@ impl Output<'_> {
         // the store AT the read, so a store that grew in between answers its new buffer.
         let base = match self.active_vec_base(&path) {
             Some(b) => b.to_owned(),
-            None if !self.byte_resolve_disabled => {
+            None if !self.switches.byte_resolve_disabled => {
                 format!("stores.allocations[{header}.store_nr as usize].elem_base({header}.rec)")
             }
             None => return None,
@@ -7073,7 +6782,10 @@ impl Output<'_> {
         getter: &str,
         args: &'a [Value],
     ) -> Option<hoist::JoinRead<'a>> {
-        if self.elem_fuse_disabled || self.join_read_disabled || self.in_coroutine_body {
+        if self.switches.elem_fuse_disabled
+            || self.switches.join_read_disabled
+            || self.in_coroutine_body
+        {
             return None;
         }
         let join = hoist::fused_join_read(self.data, getter, args)?;
@@ -7094,7 +6806,7 @@ impl Output<'_> {
         setter: &str,
         args: &'a [Value],
     ) -> Option<hoist::FusedWrite<'a>> {
-        if self.elem_fuse_disabled {
+        if self.switches.elem_fuse_disabled {
             return None;
         }
         let fused = hoist::fused_element_write(self.data, setter, args)?;
@@ -7132,7 +6844,7 @@ impl Output<'_> {
     /// current function, or `None`; computes the per-definition facts on first use.  `None`
     /// while a verified operator's checked copy is being emitted, and under the switch.
     pub fn op_range(&mut self, name: &str, args: &[Value]) -> Option<range::Range> {
-        if self.range_arith_disabled || self.range_suspended > 0 {
+        if self.switches.range_arith_disabled || self.range_suspended > 0 {
             return None;
         }
         let nn = self.nn_facts();
@@ -7176,7 +6888,7 @@ impl Output<'_> {
     /// to `[lo, i64::MAX - 1]`, since every statement of the loop runs after its test passed
     /// and before its step.  `None` for any other loop, or one already narrowed.
     pub fn while_counter_facts(&mut self, lp: &crate::data::Block) -> Option<range::Ranges> {
-        if self.range_arith_disabled
+        if self.switches.range_arith_disabled
             || !range::while_counters_enabled()
             || self.while_narrowed.contains(&lp.scope)
         {
@@ -7217,7 +6929,7 @@ impl Output<'_> {
 
     /// The range of value `v` under the current facts.
     pub fn value_range(&mut self, v: &Value) -> Option<range::Range> {
-        if self.range_arith_disabled || self.range_suspended > 0 {
+        if self.switches.range_arith_disabled || self.range_suspended > 0 {
             return None;
         }
         let nn = self.nn_facts();
@@ -7571,6 +7283,7 @@ impl Output<'_> {
         use std::fmt::Write as _;
         let mut pushes = String::new();
         let dropped = self
+            .plan
             .value_records
             .fns
             .contains_key(&self.def_nr)
@@ -7588,7 +7301,7 @@ impl Output<'_> {
             // out of the answer, which is the buffer or a view of an argument.
             if dropped == Some(i) {
                 if self.dest_twin.is_none()
-                    && let Some(key) = self.value_records.fns.get(&self.def_nr)
+                    && let Some(key) = self.plan.value_records.fns.get(&self.def_nr)
                 {
                     let tp = self.type_lit(hoist::layout_record(*key));
                     let _ = write!(
@@ -7600,8 +7313,8 @@ impl Output<'_> {
                 }
                 continue;
             }
-            if let Some(tp) = self.value_records.param_type(self.def_nr, i)
-                && let Some(layout) = self.value_records.types.get(&tp)
+            if let Some(tp) = self.plan.value_records.param_type(self.def_nr, i)
+                && let Some(layout) = self.plan.value_records.types.get(&tp)
             {
                 Self::live_tuple_param(i, &sanitize(&a.name), tp, layout, &mut pre, &mut post);
                 let _ = write!(pushes, " st.put_stack(__lp_{i});");
@@ -7661,7 +7374,7 @@ impl Output<'_> {
                 def, dt, idx, thunk, &pre, &pushes, &post,
             ));
         }
-        if let Some(layout) = self.value_records.fn_layout(self.def_nr) {
+        if let Some(layout) = self.plan.value_records.fn_layout(self.def_nr) {
             // The tuple read back out of the record: ONE spelling (`hoist::tuple_reads`),
             // shared with the cdylib bridge, the trailing comma of a 1-tuple included — and
             // for a `-> S?` the presence word, read off the same record.
@@ -10649,68 +10362,23 @@ extern crate loft;"
         // site, so it cannot be a per-function analysis.
         if !self.value_records_done {
             self.value_records_done = true;
-            self.value_records = hoist::value_records(self.data, self.stores, self.library_unit);
-            crate::rewrite_census::fired("R-ValueRecord", self.value_records.fns.len());
-            // Every function's DEAD buffers, once: a loop judging a call reads the callee's
-            // body with its own dead buffers exempt (`HoistOwned::for_callee`).
-            self.dead_by_fn = std::rc::Rc::new(
-                (0..self.data.definitions.len() as u32)
-                    .filter(|d| !matches!(self.data.def(*d).code(), Value::Null))
-                    .map(|d| (d, hoist::dead_buffers(self.data, d, &self.value_records)))
-                    .filter(|(_, s)| !s.is_empty())
-                    .collect(),
-            );
-            if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
-                for (d, set) in self.dead_by_fn.iter() {
-                    let vars = self.data.def(*d).variables();
-                    eprintln!(
-                        "[valuerec] {} dead buffers: {:?}",
-                        self.data.def(*d).name(),
-                        set.iter().map(|v| vars.name(*v)).collect::<Vec<_>>()
-                    );
-                }
-            }
-            // `@FR-R-Apart` — after the value records, whose functions it leaves alone: a
-            // function that answers a tuple, or takes one, has no buffer to convert into.
-            let value_fns: crate::fxhash::FxHashSet<u32> = self
-                .value_records
-                .fns
-                .keys()
-                .copied()
-                .chain(self.value_records.params.keys().copied())
-                .collect();
-            // A build that ships the live tier keeps every call on the function a flip
-            // reaches: a twin's call would run the native body of a function flipped to the
-            // interpreter, so that build has no plan.
-            if !self.emit_live {
-                self.apart = apart_value::plan(self.data, self.stores, &value_fns);
-                self.apr = apart_records::plan(self.data, self.stores);
-                self.dv = decode_view::plan(self.data, self.stores);
-                // A function both plans re-emit would need a twin of a twin.
-                if self
-                    .dv
-                    .region
-                    .iter()
-                    .any(|d| self.apart.twins.contains_key(d))
-                {
-                    self.dv = decode_view::DvPlan::default();
-                }
-                // `@FR-R-DecodeView`'s structure clause rides on the region the view clause
-                // admitted: its roots, its frame parameters and its view types.
-                self.ps = decode_structure::plan(self.data, self.stores, &self.dv);
-                // `@FR-R-StreamWalk` — a vector its caller walks once, streamed.
-                self.sw = stream_walk::plan(self.data, &self.reachable);
-            }
+            self.plan = std::rc::Rc::new(crate::lower::plan::plan_program(
+                self.data,
+                self.stores,
+                &self.reachable,
+                self.library_unit,
+                self.emit_live,
+            ));
             self.output_apart_types(w)?;
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
             // from the same table, so a twin never asks for a tuple parameter's fields.
-            self.input_cache.params = self.value_records.params.clone();
+            self.input_cache.params = self.plan.value_records.params.clone();
             if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
-                for (d, tp) in &self.value_records.fns {
+                for (d, tp) in &self.plan.value_records.fns {
                     eprintln!(
                         "[valuerec] {} -> {} (tp={tp})",
                         self.data.def(*d).name(),
-                        self.value_records.fn_tuple(*d).unwrap_or("?")
+                        self.plan.value_records.fn_tuple(*d).unwrap_or("?")
                     );
                 }
             }
@@ -10729,7 +10397,7 @@ extern crate loft;"
             }
             // `@FR-R-DecodeView`'s structure clause — a root whose chain holds every decoded
             // value as a position is emitted in its positional form, under its own name.
-            if self.ps.roots.contains(&dnr) {
+            if self.plan.ps.roots.contains(&dnr) {
                 self.ps_mode = Some(decode_structure_emit::PsMode::Consumer(dnr));
             }
             let r = self.output_function(w, dnr, program_store.as_ref());
@@ -10791,7 +10459,7 @@ extern crate loft;"
         dnr: u32,
         program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
     ) -> std::io::Result<()> {
-        if !self.dv.region.contains(&dnr) {
+        if !self.plan.dv.region.contains(&dnr) {
             return Ok(());
         }
         self.dv_active = true;
@@ -10909,13 +10577,13 @@ extern crate loft;"
         dnr: u32,
         program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
     ) -> std::io::Result<()> {
-        if self.apart.twins.contains_key(&dnr) {
+        if self.plan.apart.twins.contains_key(&dnr) {
             self.apart_twin = true;
             let r = self.output_function(w, dnr, program_store);
             self.apart_twin = false;
             r?;
         }
-        if self.apr.twins.contains_key(&dnr) {
+        if self.plan.apr.twins.contains_key(&dnr) {
             self.apr_twin = true;
             let r = self.output_function(w, dnr, program_store);
             self.apr_twin = false;
@@ -11821,7 +11489,7 @@ extern crate loft;"
         )?;
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.
-        let value_rec = self.value_records.fn_tuple(def_nr).map(str::to_owned);
+        let value_rec = self.plan.value_records.fn_tuple(def_nr).map(str::to_owned);
         let dropped = if self.vr_twin {
             hoist::ret_buffer_attr(def)
         } else {
@@ -11864,9 +11532,10 @@ extern crate loft;"
                 "DbRef".to_string()
             } else {
                 match self
+                    .plan
                     .value_records
                     .param_type(def_nr, i)
-                    .and_then(|t| self.value_records.types.get(&t))
+                    .and_then(|t| self.plan.value_records.types.get(&t))
                 {
                     Some(t) => t.tuple.clone(),
                     None => rust_type(&a.typedef, &Context::Argument),
@@ -11891,7 +11560,7 @@ extern crate loft;"
             }
             // `@FR-R-Base`'s twin clause — the element base of each header, valid for the
             // call because an admitted callee is store-free or writes only in place.
-            if !self.twin_base_disabled {
+            if !self.switches.twin_base_disabled {
                 for k in 0..t.headers.len() {
                     write!(w, ", __ib_{k}: *const u8")?;
                 }
@@ -12088,7 +11757,7 @@ extern crate loft;"
                     // @PLN157 § V-ah — a returned VALUE local is its tuple, bound at the
                     // tuple's zero: it never names a store.
                     if let Some(d) = self.value_record_locals.get(&v).copied()
-                        && let Some(t) = self.value_records.types.get(&d).map(|t| &t.tuple)
+                        && let Some(t) = self.plan.value_records.types.get(&d).map(|t| &t.tuple)
                     {
                         let zero = self.value_tuple_zero(d);
                         let _ = write!(
@@ -12213,6 +11882,7 @@ extern crate loft;"
             // retbuf-attr entirely).  Leading `_` suppresses the unused warning
             // for retbuf locals that are never reassigned.
             let dropped = self
+                .plan
                 .value_records
                 .fns
                 .contains_key(&def_nr)
@@ -12237,7 +11907,7 @@ extern crate loft;"
                     let av = vars.var(&a.name);
                     if av != u16::MAX
                         && let Some(d) = self.value_record_locals.get(&av).copied()
-                        && let Some(t) = self.value_records.types.get(&d).map(|t| &t.tuple)
+                        && let Some(t) = self.plan.value_records.types.get(&d).map(|t| &t.tuple)
                     {
                         use std::fmt::Write as _;
                         let zero = self.value_tuple_zero(d);
@@ -12507,11 +12177,12 @@ extern crate loft;"
                 // `@FR-R-LeafChain` widens that in the lean tier to a function whose whole
                 // call tree is frameless: there the frame carries no name, so the depth
                 // count is all it holds, and such a function cannot be re-entered.
-                let plain_leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
+                let plain_leaf =
+                    !self.switches.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
                 let chain_leaf = !plain_leaf
-                    && !self.leaf_elide_disabled
+                    && !self.switches.leaf_elide_disabled
                     && self.lean
-                    && !self.leaf_chain_disabled
+                    && !self.switches.leaf_chain_disabled
                     && self.is_frameless_chain(def_nr);
                 let leaf = plain_leaf || chain_leaf;
                 crate::rewrite_census::fired("R-Leaf", usize::from(plain_leaf));
@@ -12528,7 +12199,8 @@ extern crate loft;"
                 // a buffer is reachable, cycles included (`fib`): the guard's drop would find
                 // nothing above its mark, every time.  The depth count stays: it is the
                 // recursion cap both backends share.
-                let guard_free = leaf || (!self.guard_free_disabled && self.is_guard_free(def_nr));
+                let guard_free =
+                    leaf || (!self.switches.guard_free_disabled && self.is_guard_free(def_nr));
                 crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free && !leaf));
                 let fnref_guard = if guard_free {
                     String::new()
@@ -12538,7 +12210,7 @@ extern crate loft;"
                 self.named_frame = !leaf && !self.lean;
                 // `@FR-R-WorkBuffer`'s function-value clause — a frame that calls through
                 // a function value lends the candidates' work buffers (`FnRefWork`).
-                self.fnref_work = !self.fnref_work_disabled
+                self.fnref_work = !self.switches.fnref_work_disabled
                     && self.any_work_buffer()
                     && self.calls_a_work_buffer_candidate(def);
                 let fnref_guard = if self.fnref_work {

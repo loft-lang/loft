@@ -36,7 +36,7 @@ impl Output<'_> {
     /// The function's name suffix and generics, when it is a stream twin.
     pub(super) fn sw_signature_name(&self) -> Option<String> {
         let (_, k) = self.sw_twin_of()?;
-        let fields = &self.sw.twins[k].1;
+        let fields = &self.plan.sw.twins[k].1;
         let tys: Vec<&str> = fields.iter().map(|(_, kind)| kind.rust()).collect();
         Some(format!(
             "__sw{k}<F: FnMut(&std::cell::UnsafeCell<Stores>, {})>",
@@ -47,7 +47,7 @@ impl Output<'_> {
     /// Whether parameter `i` of `def_nr` is dropped from the twin: the result buffer.
     pub(super) fn sw_param_dropped(&self, def_nr: u32, i: usize) -> bool {
         self.sw_twin_of()
-            .is_some_and(|(pd, _)| pd == def_nr && self.sw.producers[&pd].buf_attr == i)
+            .is_some_and(|(pd, _)| pd == def_nr && self.plan.sw.producers[&pd].buf_attr == i)
     }
 
     /// Parameters written after the function's own.
@@ -68,7 +68,7 @@ impl Output<'_> {
             return String::new();
         }
         let def = self.data.def(pd);
-        let attr = &def.attributes()[self.sw.producers[&pd].buf_attr];
+        let attr = &def.attributes()[self.plan.sw.producers[&pd].buf_attr];
         let v = def.variables().var(&attr.name);
         self.declared.insert(v);
         format!(
@@ -89,7 +89,7 @@ impl Output<'_> {
         let v = &operators[vnr];
         let at = addr(v);
         if let Some((pd, k)) = self.sw_twin_of() {
-            let prod = &self.sw.producers[&pd];
+            let prod = &self.plan.sw.producers[&pd];
             if prod.drop.contains(&at) {
                 return Ok(true);
             }
@@ -105,10 +105,10 @@ impl Output<'_> {
         {
             return Ok(true);
         }
-        if let Some(&(g, idx)) = self.sw.at.get(&at)
+        if let Some(&(g, idx)) = self.plan.sw.at.get(&at)
             && g == self.def_nr
         {
-            let site = self.sw.sites[&g][idx].clone();
+            let site = self.plan.sw.sites[&g][idx].clone();
             if site.call == at {
                 return Ok(true);
             }
@@ -132,8 +132,8 @@ impl Output<'_> {
         pd: u32,
         k: usize,
     ) -> std::io::Result<()> {
-        let group = self.sw.producers[&pd].groups[&addr(&operators[vnr])].clone();
-        let fields = self.sw.twins[k].1.clone();
+        let group = self.plan.sw.producers[&pd].groups[&addr(&operators[vnr])].clone();
+        let fields = self.plan.sw.twins[k].1.clone();
         crate::rewrite_census::fired("R-StreamWalk", 1);
         self.indent(w)?;
         writeln!(w, "{{ //@FR-R-StreamWalk yield")?;
@@ -219,8 +219,8 @@ impl Output<'_> {
         else {
             return Ok(());
         };
-        let buf_attr = self.sw.producers[pd].buf_attr;
-        let fields = self.sw.twins[site.twin].1.clone();
+        let buf_attr = self.plan.sw.producers[pd].buf_attr;
+        let fields = self.plan.sw.twins[site.twin].1.clone();
         self.sw_serial += 1;
         let serial = self.sw_serial;
         let params: Vec<(i64, Kind, String)> = fields
@@ -313,7 +313,7 @@ impl Output<'_> {
             let def = self.data.def(pd);
             let buf = def
                 .variables()
-                .var(&def.attributes()[self.sw.producers[&pd].buf_attr].name);
+                .var(&def.attributes()[self.plan.sw.producers[&pd].buf_attr].name);
             if matches!(r.unspan(), Value::Var(x) if *x == buf) {
                 write!(w, "return")?;
                 return Ok(true);
@@ -343,10 +343,11 @@ impl Output<'_> {
         dnr: u32,
         program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
     ) -> std::io::Result<()> {
-        if !self.sw.producers.contains_key(&dnr) {
+        if !self.plan.sw.producers.contains_key(&dnr) {
             return Ok(());
         }
         let twins: Vec<usize> = self
+            .plan
             .sw
             .twins
             .iter()

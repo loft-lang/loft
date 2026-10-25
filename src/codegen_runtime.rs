@@ -1053,7 +1053,9 @@ pub fn OpGetHashLongAt(
         let claim = store.collection_rec(data.rec, data.pos);
         if claim != 0
             && let Some(found) =
-                crate::hash::inline_find_int(store, data.store_nr, claim, key_pos, key)
+                crate::hash::inline_find_int(store, data.store_nr, claim, key_pos, key).or_else(
+                    || crate::hash::borrowed_find_int(store, data.store_nr, claim, key_pos, key),
+                )
             && (found.rec != 0 || !stores.lazy_bound(&data))
         {
             return found.or_null();
@@ -2003,8 +2005,9 @@ pub fn OpIterate(
                 let finish = if till.is_empty() {
                     vec_len
                 } else {
-                    let (t, cmp) = vector::sorted_find(&data, ex, size, all, keys, till);
-                    if ex || cmp { t } else { t + 1 }
+                    // @FR-Slice-KeyedIter — see `State::iterate`: the search's answer is
+                    // the exclusive end.
+                    vector::sorted_find(&data, ex, size, all, keys, till).0
                 };
                 pack_iter(start, finish)
             }

@@ -113,11 +113,15 @@ make release-gate                        # every nightly against THIS commit in 
                                          #   reads it by HEAD's sha).  The 03:00 daily starts
                                          #   03:34–14:45 UTC on whatever main was; this does not
                                          #   excuse a red nightly — fix those the day they appear
-make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the build it was
+make falsify GUARD=<guard.loft> [REF=<commit>]  # does this guard FAIL on the build it was
                                          #   written to catch?  Compares exit/asserts/leak/
                                          #   panic apart and names the channel that moved.
                                          #   Every new tests/scripts file records its answer
-                                         #   (`@falsified-at:`, gated) — GUARDS.md
+                                         #   (`@falsified-at:`, gated) — GUARDS.md.  Without
+                                         #   REF the control is the INSTALLED main, no build:
+                                         #   `make install-main` once per main change, and
+                                         #   score BEFORE the branch is joined (once main has
+                                         #   the fix, REF= and a full build per control)
 make speed                               # what got slower/faster — a REPORT, never a gate
 make speed-gate                          # the one speed GATE: a test 3x and +5 s slower than on
                                          #   main (median speed divided out) that is STILL that slow
@@ -143,7 +147,11 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   library routines still waiting for a row (@PLN158).
                                          #   `perf-portal-render` re-renders from saved runs;
                                          #   PACKAGES="--package <scratch clone>/drawing=drawing"
-                                         #   adds a library's own bench.  A REPORT, never a gate
+                                         #   adds a library's own bench; ARGS="--lanes
+                                         #   native,rust,ship" adds a SHIP column per routine:
+                                         #   the program as a game's release build would be
+                                         #   compiled, fault checks dropped (@PLN201).  A
+                                         #   REPORT, never a gate
 make perf-check [ARGS="--only 16,17"]     # ONCE PER ARC, IN THE BACKGROUND, never a foreground
                                          #   wait — a commit needs the matrix, the pins, clippy
                                          #   and one targeted A/B on its own row; CI_BUDGET.md
@@ -597,6 +605,7 @@ Lua, measured (reports, never gates — and run a generator probe inside a memor
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) parser/two-pass/types ·
 [INTERMEDIATE.md](doc/claude/INTERMEDIATE.md) Value/Type/opcodes/State · [INTERNALS.md](doc/claude/INTERNALS.md) ·
 [SLOTS.md](doc/claude/SLOTS.md) stack slots · [NATIVE.md](doc/claude/NATIVE.md) `--native` codegen ·
+[C_BACKEND.md](doc/claude/C_BACKEND.md) `--emit-c`, the C backend, and `scripts/c_sweep.py` ·
 [THREADING.md](doc/claude/THREADING.md) par · [CODEGEN_METHOD.md](doc/claude/CODEGEN_METHOD.md) how to do compiler work.
 
 **Runtime / memory:** [DATABASE.md](doc/claude/DATABASE.md) stores/DbRef ·

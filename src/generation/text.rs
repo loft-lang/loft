@@ -76,7 +76,9 @@ impl Output<'_> {
                 crate::rewrite_census::fired("R-RefillText", 1);
                 return Ok(());
             }
-            if self.refill.var == Some(*nr) && !self.refill_keep_disabled && !self.refill.heap_elems
+            if self.refill.var == Some(*nr)
+                && !self.switches.refill_keep_disabled
+                && !self.refill.heap_elems
             {
                 write!(
                     w,

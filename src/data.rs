@@ -5756,6 +5756,11 @@ pub struct Data {
     /// `Type::Unknown` — sweeping by shape rewrote `vector<T>` and broke the stdlib.
     /// Drained by [`Data::resolve_adopted_stubs`] at the end of pass 1.
     adopted_stubs: Vec<u32>,
+    /// Each compiler-made VARIANT ([`Self::add_variant_fn`]) to the function it copies.  A
+    /// variant runs that function's code, so whatever was decided about the original at parse
+    /// time holds for it too; the sandbox designation is the case that needs this (loft#2158).
+    /// Not part of the program image: a sandboxed program is always parsed fresh.
+    pub variant_origin: HashMap<u32, u32>,
     /// Current source file
     pub source: u16,
     /// @PLN101 — struct def_nrs declared `value struct`: a value (copy) type stored inline
@@ -6532,6 +6537,7 @@ impl Data {
             ambiguous: HashMap::new(),
             unknown_key_fields: Vec::new(),
             adopted_stubs: Vec::new(),
+            variant_origin: HashMap::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
             user_operator_conversions: false,
@@ -6631,6 +6637,7 @@ impl Data {
                     .collect()
             };
             self.definitions.truncate(keep as usize);
+            self.variant_origin.retain(|v, _| *v < keep);
             // `Disp-Key` (@PLN162): an overload that joined a set and is now dropped must
             // leave the set too, or the name's dispatcher carries a routine number nothing
             // defines — a stale member every later selection would rank.
@@ -7208,6 +7215,8 @@ impl Data {
         def.pub_visible = false;
         def.synthetic = Some(why);
         self.definitions.push(def);
+        let origin = self.variant_origin.get(&of).copied().unwrap_or(of);
+        self.variant_origin.insert(rec, origin);
         rec
     }
 
@@ -12171,6 +12180,13 @@ impl Data {
             return self.def_nr(name);
         }
         self.def_names.get(name, source).unwrap_or(u32::MAX)
+    }
+
+    /// The type an owned vector local of element `elm` is minted as, `main_vector<elm>`: what
+    /// the bytecode writer's `OpDatabase` names for it, and every other writer with it.
+    #[must_use]
+    pub fn owned_vector_type(&self, elm: &Type, source: u16) -> u16 {
+        self.name_type(&format!("main_vector<{}>", elm.name(self)), source)
     }
 
     /** Get the definition by name

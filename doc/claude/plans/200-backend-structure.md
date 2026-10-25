@@ -274,6 +274,35 @@ contract](../INTERMEDIATE.md#the-interpreters-contract).  Where the code differs
 
 ## B3 — the compiled-target base: plans apart from the Rust writer
 
+**State (2026-10-24):** B3.1, B3.2, B3.3, B3.5 and B3.6 are done.  B3.4 waits for the first
+emitter that wants a family (B5).  Every step was checked against main's binary: `--show-rust`
+is identical on all 511 programs of `bench/` and `tests/scripts/`, and the rewrite census is
+identical (103641 admissions).  Where the code differs from the table:
+
+- **B3.1** holds seven plans, not eight: the value records, their dead buffers, and the
+  apart, record-apart, decode-view, structure and stream plans
+  (`lower::plan::ProgramPlan`, `plan_program`).  `reachable` and `dup_fn_names` stay the
+  emitter's input, because which roots it starts from is its own choice.  `dead_buffers` moved
+  to `opt::value_records` first.
+- **B3.2** moved 64 switches to `lower::switches::Switches`.  `hoist_disabled` stays on
+  `Output`, because the emitter also toggles it per function.  Eight switches set one at a
+  time change the Rust exactly as they do on main.
+- **B3.3** moved `stream_walk`, `decode_view`, `apart_value` with `apart_records`,
+  `decode_structure` with its scan, `view_return`, `hand_over`, `keyed_entry`, `keyed_place`,
+  `file_hold` and `destination` whole, each re-exported at its old path.  `destination`'s
+  two helpers went to `opt` first.
+- **`ranged_call` stays in the Rust writer.**  Its decisions read the emitter's state for the
+  loop being written (the hoisted scalars, the variants already asked for), so it is a B3.4
+  family and not a whole-program plan.
+- **B3.5** is `scripts/runtime_surface.py` (`make runtime-surface`), committed as
+  [RUNTIME_SURFACE.md](../RUNTIME_SURFACE.md).  It finds four modules outside the runtime
+  set that emitted code names, and these are B7.3's work list:
+  - `live_dispatch` (the live tier, in every default `--native` program);
+  - `state::STRING_NULL`;
+  - `native_lib::HostTable` and `native_lib::LibArg`, both `host_abi` items named through
+    `native_lib`'s re-export;
+  - `native_adopt::HOST_TABLE`, in the compiled standard library.
+
 | step | change | check |
 |---|---|---|
 | B3.1 | `src/lower/mod.rs`: `pub struct ProgramPlan { reachable, dup_fn_names, dead_by_fn, value_records, apart, dv, ps, sw }` and `pub fn plan_program(data, stores, opts) -> ProgramPlan` — the computation of `output_functions` (`mod.rs:10878-10950`) and of 9161–9217, moved; `Output` holds `plan: Rc<ProgramPlan>` and its eight fields become reads of it | protocol |
@@ -321,6 +350,174 @@ The structure is right when @PLN91's P-cemit probe — one loft function emitted
 built with `cc` — can be written as a NEW part (`src/c/` or `crates/loft-c`) that reads
 `ProgramPlan`/`FnPlan` and the runtime description, with no edit to `rust`, `interp` or `opt`.
 Every edit it would need is a defect of this plan, fixed here before strand 5 starts.
+
+**Progress (2026-10-24).**  The probe grew into a backend: `src/c/` (layer `c`, a sibling of
+`interp` and `rust`) writes whole programs — texts, stores, vectors, records, enums, floats,
+characters, narrow integers, tuples, `&` parameters and locals, function values and closures,
+deep copies and store moves, the `{v}` renderer, content equality, constants, the keyed
+collections (hash, sorted, index, and the `array` / `ordered` forms of a linked group), files
+and the filesystem, generators, `par` loops and `parallel` blocks (run in order) — and its
+tests.  It reads `use_analysis`, `scopes`, `opt` and the store layouts and edits nothing in
+`rust`, `interp` or `opt` beyond two moves into shared homes: `test_runner`'s annotation parser
+(so `--emit-c` and `--tests` read `@EXPECT_FAIL` alike) and `opt::header` (the header-hoist
+decision).  Measured with `scripts/c_sweep.py` over the 2817 corpus programs, in the three
+macro modes: 1828 match the interpreter, 0 differ, 0 fail to compile, 0 trip
+AddressSanitizer/UBSan; 989 are refused by name (355 of them do not compile in loft at
+all — expected-error programs and ones needing a library).  The largest families still
+refused: text parsed into a typed value, the spatial and trie collections, the persistent
+stores, and the native library calls.  Porting the sorted ranges turned up loft#2160 (an
+inclusive bound between two keys walked one element too far, on both backends), fixed on this
+branch; its guard cell is on the language suite's branch of the same name, so the PR bumps
+`tests/loft-suite.pin`.  How it works and how to
+extend it: [C_BACKEND.md](../C_BACKEND.md).
+
+**⚠ NEXT — the quality of the C the generator writes: read this before the next feature (owner, 2026-10-24).**
+The C backend validates the generator and gets no benchmark lanes or twins (@PLN201, owner),
+so nothing here is a speed bar.  These are defects in the emitted C, found by taking one
+program apart by hand: `bench/10_sort`'s `insertion_sort` at `7d370d10`, built `cc -std=c99 -O2`,
+ran 8.8 s where `--native` ran 0.65 s.  Forcing the access helpers inline gave 1.3 s; holding
+the vector header and element base in locals before the loop gave 0.34 s.  Removing the
+arithmetic checks alone changed nothing.
+
+1. **The hot accessors are out-of-line calls.**  gcc keeps `loft_vec_get` as a function, and its
+   12-byte `loft_ref` comes back through the stack as two narrow stores and one wide load, a
+   store-forwarding stall per element access.  `loft_set_int` is a call too.  Fix in
+   `loft_rt.h`: the accessors `LOFT_HOT_INLINE` (below), and the element access answers the
+   element's address, not a struct.
+2. **Nothing is hoisted, and the C compiler cannot do it.**  An element write is a `memcpy`
+   into the store's `uint8_t` buffer, which may alias the store table and the buffer pointer,
+   so gcc reloads table → buffer → header → length after every write.  Native holds them in
+   locals under `(R-Header)` (`vec_header` / `vec_base`).  That decision is B3.4's first
+   family: move it into `FnPlan` and emit the base and length as locals before the loop.
+3. **`loft_mul` tests overflow by DIVIDING** (`a > INT64_MAX / b`): a hardware divide per `*`.
+   Replace it with the overflow macros below.
+
+**The macro layer (`src/c/loft_cc.h`, included by `loft_rt.h`).**  The ONLY place the emitted
+C names a compiler; the generator writes these macros and never a raw `__builtin` or
+attribute.  Three compile-time modes, and a mode changes speed, never a value:
+
+| mode | meaning |
+|---|---|
+| `-DLOFT_STRICT` | pure C99, clean under `cc -std=c99 -pedantic -Werror`: every macro its exact C99 fallback |
+| default | gcc / clang / MSVC extensions where detected (`__has_builtin`, `__GNUC__`, `_MSC_VER`), the fallback otherwise |
+| `-DLOFT_VERIFY` | default, and every PROOF the generator relied on is re-checked: a false one aborts naming the site (the C twin of `LOFT_HOIST_VERIFY=1`) |
+
+Three kinds of site:
+
+- **Safe hints** — ignoring one changes speed only: `LOFT_HOT_INLINE`, `LOFT_COLD`,
+  `LOFT_LIKELY` / `LOFT_UNLIKELY`, and `LOFT_ADD_OVF` / `LOFT_SUB_OVF` / `LOFT_MUL_OVF`
+  (`__builtin_*_overflow`; the C99 fallback multiplies directly when both operands are below
+  2^31.5 and divides only above).  The CHECKED operators `loft_add` / `loft_sub` / `loft_mul`
+  sit on them with unchanged semantics: a null operand or an overflow answers null.
+- **Proof sites** — emitted only where a rewrite PROVED the fact (`(R-RangeArith)`,
+  `(R-GuardedChain)` for a plain operator, `(R-Header)` for a held base):
+  `LOFT_PLAIN_ADD/SUB/MUL(a, b, site)` and `LOFT_PROVED(cond, site)`.  A plain operator
+  computes in `uint64_t`, so a wrong proof is a wrong value and never C's undefined behaviour.
+  `restrict` and `__builtin_unreachable` / `__builtin_assume` belong here and nowhere else.
+- **Ship sites (@PLN201)** — the ship tier's dropped check, chosen PER OPERATOR by the generator
+  from the ledger exactly as the Rust generator chooses it: `LOFT_SHIP_ADD/SUB/MUL/NEG/SHL(a, b)`,
+  the operator wrapping through `uint64_t`.  NEVER a plain signed `a + b`: Rust's `wrapping_add`
+  is defined, a C signed overflow is not, and a licensed site that overflows after all must
+  answer a wrong number, never let the compiler delete code around it.  `-DLOFT_SHIP_PROBE`
+  maps every checked operator to its ship form, the C twin of `LOFT_RELEASE_PASS_PROBE=1`.
+  The checked tier never emits a ship site; the ship build composes with `LOFT_STRICT`.
+
+**What the macros become in LLVM** (clang `-O2`, read from `-emit-llvm` and the assembly;
+gcc's builtins are the same operations):
+
+| C the generator writes | LLVM IR | meaning |
+|---|---|---|
+| a plain signed `a + b` | `add nsw` | a PROMISE of no overflow: an overflow is poison and the optimiser may assume none.  Never emitted |
+| `(int64_t) ((uint64_t) a + (uint64_t) b)` — `LOFT_PLAIN_*`, `LOFT_SHIP_*` | `add` | wraps, defined; the same IR as Rust's `wrapping_add` |
+| `__builtin_*_overflow` — `LOFT_*_OVF` | `llvm.{s,u}{add,sub,mul}.with.overflow` | `{result, overflow bit}`; the same IR as Rust's `checked_*` / `overflowing_*`, so the checked C and the checked native are one operation |
+| a clamp | `llvm.sadd.sat` and siblings | saturating; clang recognises a hand-written clamp.  Not loft's semantics — a clamped value is a wrong answer that looks right |
+
+The checked multiply (`loft_mul` on the overflow macro) compiles to two compares against the
+sentinel, `imul`, and `cmovno`: the overflow test is one conditional move with no branch, and
+the two null compares cost more than it does.  LLVM has no sentinel: those compares are always
+the generator's, and only a non-null proof removes them.  A `with.overflow` intrinsic gives one
+bit per operation and the loop vectoriser does not vectorise across it, which is why
+`157-native-4x`'s fast copies find an overflow by SIGN BITS (`@FR-R-FaultFlag`); what the ship
+tier wins is the vectorised loop, not a cheaper scalar operator.  `-fwrapv` (signed overflow
+defined, compiler-wide, not standard) is NOT the substitute for the `uint64_t` casts;
+`-fsanitize=signed-integer-overflow` is a useful sweep cross-check on the emitted C, proving no
+signed `+` slipped past the macros.
+
+`scripts/c_sweep.py` runs the corpus under `LOFT_STRICT`, the default and `LOFT_VERIFY`; all
+three must match the interpreter, and a difference between modes is a bug in a macro's
+fallback.  A tested sketch of the first two kinds: 1587 operand pairs (the boundaries at 0, ±1,
+±2^31.5, ±2^32, `INT64_MAX`, `INT64_MIN`) equal a 128-bit reference in all three modes under
+gcc and clang, the strict header passes `-pedantic -Werror`, a false proof aborts under
+`LOFT_VERIFY`.
+
+Order: (1) the macro layer with the overflow macros, replacing the divide; (2) the inline
+accessors; (3) `(R-Header)` through `FnPlan` to the C generator (B3.4); (4) the ship sites,
+once @PLN201's ledger exists.  Each step checks the emitted C of `insertion_sort` (no call
+left in its inner loop after (2), no reload of the store table after (3)) and the sweep in all
+three modes.
+
+**Where the order stands (2026-10-24).**  (1) done: `src/c/loft_cc.h` holds the three modes
+and the safe-hint, proof and ship macros; `loft_rt.h` names no compiler.  The checked multiply
+sits on `LOFT_MUL_OVF` (two computed operands; a constant operand keeps the portable check,
+which folds to one compare).  `loft_add` / `loft_sub` keep the portable comparison rather than
+`LOFT_ADD_OVF` / `LOFT_SUB_OVF`: the builtin hides the operands' ranges from the optimiser,
+measured on clang as a masked accumulator's loop (`bench/02_sum_loop`'s `mix`) running 2.7×
+slower.  `tests/c_emit.rs` checks the three overflow macros against Rust's checked arithmetic at
+the boundaries in all three modes.  (2) done: the accessors are `LOFT_HOT_INLINE`; the element
+access still answers a `loft_ref`, which the forced inlining scalarises.  (3) done without
+`FnPlan`: `hoistable_vectors` and its gate moved to `opt::header` (the Rust writer re-exports
+them; `introspect_diff` identical bar an absolute address in registry-library code), and the C
+generator holds each admitted vector in a `loft_vh` before the loop with a `LOFT_PROVED` site at
+every held access — injecting a push into a held loop aborts under `LOFT_VERIFY` naming the site.
+`insertion_sort`'s inner loop has no call and no store-table reload left.  `scripts/c_sweep.py`
+runs the three modes; the strict build is `-pedantic -Werror` clean on every carried program.
+(4) waits for @PLN201's ledger.
+
+**The memory model is loft's, not the C's own (owner, 2026-10-24).**  The C runtime keeps the
+stores, the allocator, the keyed layouts and the on-disk image exactly as the interpreter and
+`--native` keep them — ported from `src/store.rs`, `src/hash.rs`, `src/btree.rs`,
+`src/radix_tree.rs`, `src/trie_db.rs` and the image code in `src/database/`, never re-derived.
+@PLN91 makes the C the floor that builds with a C compiler alone, so linking the Rust store is
+not the route.  This retires the bump allocator and `loft_keyed.h`'s own layouts: a persisted
+image IS the layout (`store_persist_copy` writes a store's raw words; the paged loaders and
+the browser read them), so a layout is observable.
+
+- **The invariant.**  What every loft backend shares, and the C must too: the allocator, the
+  keyed layouts and the image format.  Not the allocation SEQUENCE: the interpreter and
+  `--native` already differ there, because their lowerings differ (measured: native claims a
+  20-element vector whole where the interpreter grows it by `resize`, and places a hash table
+  at 55 where the interpreter places it at 76) — and so does the C wherever it lowers as
+  native does (a rebind from a call keeps the result's store and frees the one it displaces,
+  where the bytecode writer mints the variable's store again and moves the result into it).
+  A layout is observable through the image, so the image is where the backends must agree:
+  a store file one writes, each other reads, and the data read back is the data written.
+- **What carries it.**  The allocator's decisions read state outside the store's bytes too:
+  the claims bitset, the parked lists (`@FR-H-Park`), the lazy-free set and its sweep bound
+  (`@FR-H-LazyFree`), the wilderness (`@FR-H-Wilderness`), the scan index
+  (`@FR-H-ScanIndex`), the referenced/removed sets (`@FR-H-Removed`), and a store's CAPACITY,
+  which a reused slot keeps and the growth rule (×7/3) sets.  Each is ported with the
+  default of its switch; the switches themselves stay on the Rust side.  The routines above
+  the allocator that decide what is claimed and deleted (`vector_add`, `clear_vector_release`,
+  `remove_claims`, `Stores::clear`) are ported with it, so a construct the C lowers as the
+  bytecode writer does allocates as the interpreter does.
+- **The instruments.**  The allocator: `tests/c_emit.rs` replays one seeded sequence of
+  claims, deletes, resizes and tombstones through `Store` and through `loft_store.h` and
+  compares every position and every byte (DEFINED stores, no payload written).  The routines
+  above it: `scripts/c_alloc_diff.py` compares a program's allocator events, C against
+  interpreter (`LOFT_ALLOC_TRACE`, the `op-census` build) — exact wherever the lowerings
+  agree, and the first differing event names the routine or the lowering that departs.  A
+  debugging instrument, not the bar.  The image: files crossing backends, compared by WALKING
+  the data from the root by its type, as a format change is checked — never a store's whole
+  buffer, whose unwritten bytes a claim leaves as they were (`@FR-H-Claim`).
+- **Steps.**  (a) the trace on the Rust side; (b) the allocator ported, proved by the replay;
+  (c) the release and growth routines above it ported, measured by the trace; (d) the keyed
+  layouts ported (hash, index, sorted, then spatial and trie); (e) the image —
+  `store_persist_copy`, `store_load`, a file-backed store over POSIX `mmap` (a whole-file
+  read under `-DLOFT_NO_POSIX`), the paged loaders.  Its acceptance (owner): a C program
+  reads the store files the interpreter and a `--native` program wrote — mapped, loaded and
+  paged — and they read the C's; a cell per direction.  `store_memory()` and
+  `store_reclaim` then answer as the interpreter's do, bar the interpreter-only creation
+  site, which reads 0 as on native.
 
 ## B6 — optional: a minimal binary
 

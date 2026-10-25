@@ -1,0 +1,3 @@
+fn inc(x: integer) -> integer { x + 1 }
+struct Rule { name: text, apply: fn(integer) -> integer }
+fn main() { table: hash<Rule[name]> = [Rule { name: "inc", apply: inc }]; r = table["inc"]; assert(r.apply(1) == 2, "dispatch"); println("ok fn literal"); }

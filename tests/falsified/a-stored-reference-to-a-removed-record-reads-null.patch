@@ -1,9 +1,9 @@
 diff --git a/src/store.rs b/src/store.rs
-index 3e1e43f8f..7c7fd907b 100644
+index ff36b344..b737225b 100644
 --- a/src/store.rs
 +++ b/src/store.rs
-@@ -2127,7 +2127,7 @@ impl Store {
-         self.valid(rec, 4);
+@@ -2498,7 +2498,7 @@ impl Store {
+         }
          // `@FR-H-Removed` — a record a stored reference named keeps its position: every
          // removal of one (a vector's, a keyed collection's, its parent's release) ends here.
 -        if self.referenced.remove(rec) && tombstones_enabled() {

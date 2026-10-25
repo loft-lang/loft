@@ -128,8 +128,14 @@ slower than the compiled program on the same code. So:
 
 - **A new rule for the shape at hand.** It makes this routine fast while the mechanism stays
   slow everywhere else, and every such rule is one more place a wrong answer can hide and one
-  more condition the next change must respect. Look for the mechanism first; build a
-  shape-specific rule only as a recorded stopgap.
+  more condition the next change must respect. Never build one, not even as a stopgap (owner
+  ruling): the goal is a language that is quick overall, and the bench against its Rust twin is
+  the instrument that measures it, not the target. Rules fitted to the bench routines store fast
+  copies of those routines and leave the language as slow as it was. Before building, name the
+  programs beyond the bench the rewrite reaches: grep the consumers and the `loft-libs-*`
+  libraries for its shape. A `par`-only row mapper was built, measured −49 % on its one bench
+  row, then removed when that grep found no `par` anywhere outside the bench. A general
+  mechanism it contained (a loop unroll, a range proof) is built on its own, for every loop.
 - **A new combined instruction for the hot line.** Fusing a few operations into one special
   opcode makes exactly that operand pattern faster and nothing next to it; it grows the
   instruction set and helps only the interpreter. It is a hand-written kernel in disguise. Change
@@ -137,6 +143,11 @@ slower than the compiled program on the same code. So:
 - **A hand-written Rust routine standing in for a loop.** It fixes one function name, not the
   pattern, and users' own loops of the same shape stay slow. Make the loft code fast; loft
   compiles through Rust, so it can be.
+- **A fix for code layout.** A routine that moved because its code moved (alignment, function
+  order, a branch predictor's luck) is noted, not fixed, unless the remedy is easy and gains
+  consistently across routines and runs (owner): processors are fickle, and a layout tweak that
+  helps one routine on one core costs another elsewhere.  Name the cause as layout with
+  evidence (identical emitted Rust, the same instruction count) before setting a row aside.
 - **Trusting the first profile.** A profile says what a symbol costs, not what removing it saves,
   and an operation-count profile overstates cheap work. Confirm in real time, then confirm the
   prize by hand (step 4).

@@ -1,0 +1,10 @@
+struct Player { y: integer, vy: integer }
+fn main() {
+  p = Player { y: 0, vy: 0 };
+  jump_v = 5;
+  on: hash<(text, fn())> = {};
+  on["jump"] = || { p.vy = -jump_v; };
+  on["jump"]();
+  assert(p.vy == -5, "handler: {p.vy}");
+  println("ok");
+}

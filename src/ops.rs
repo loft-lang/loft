@@ -482,6 +482,35 @@ pub fn nest_verify(plain: i64, checked: i64, op: &'static str) -> i64 {
     plain
 }
 
+/// `@FR-R-FaultFlag` — the reruns after which a site stops trying its fast copy.  A loop whose
+/// nulls are common flags every time, so it pays the fast copy at most this many times.
+const FAULT_FLAG_TRIES: u32 = 8;
+
+/// `@FR-R-FaultFlag` — should this site skip its fast copy and run the statement as written?
+/// Under `--dev-soft-halt` an integer overflow REPORTS, and the fast copy never reports, so
+/// that mode always takes the exact statement; otherwise a site skips once it has rerun
+/// [`FAULT_FLAG_TRIES`] times.
+#[inline]
+#[must_use]
+pub fn fault_flag_skip(reruns: &std::sync::atomic::AtomicU32) -> bool {
+    reruns.load(std::sync::atomic::Ordering::Relaxed) >= FAULT_FLAG_TRIES || dev_soft_halt()
+}
+
+/// `@FR-R-FaultFlag` — count one exact run of a site, up to the point where it stops trying.
+#[cold]
+pub fn fault_flag_rerun(reruns: &std::sync::atomic::AtomicU32) {
+    if reruns.load(std::sync::atomic::Ordering::Relaxed) < FAULT_FLAG_TRIES {
+        reruns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// `@FR-R-FaultFlag` — a template's recoverable raise, in a fast copy: the fault is not
+/// reported here but flagged, and the exact rerun reports it once.
+#[inline]
+pub fn fault_flag_raise(flag: &mut bool, _kind: crate::runtime_error::RuntimeErrorKind) {
+    *flag = true;
+}
+
 #[inline]
 #[must_use]
 pub fn op_add_long_nn(v1: i64, v2: i64) -> i64 {

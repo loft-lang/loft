@@ -54,6 +54,7 @@ pub(crate) fn loft_lib_dir_for_shaped(
                     .join("release"),
                 None => dir.join("target").join(triple).join("release"),
             };
+            loft::native_lib::refresh_runtime_uplift(&candidate);
             if crate::file_access::exists(candidate.join("libloft.rlib")) {
                 return Some(candidate);
             }
@@ -83,6 +84,7 @@ pub(crate) fn loft_lib_dir_for_shaped(
     // with `cache::rlib_candidates` and `native_lib::find_loft_rlib`.
     // The order itself — and when a stale `deps/` copy yields — is `preferred_runtime_rlib`'s.
     let deps = exe_dir.join("deps");
+    loft::native_lib::refresh_runtime_uplift(&exe_dir);
     if let Some(rlib) = loft::native_lib::preferred_runtime_rlib(
         &deps.join("libloft.rlib"),
         &exe_dir.join("libloft.rlib"),
@@ -382,6 +384,8 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
         crate::file_access::exists(dir.join("libloft.rlib"))
             && loft::cache::runtime_fingerprint_matches(dir, fp)
     };
+    // A cargo on the per-unit layout leaves the uplift to loft (`refresh_runtime_uplift`).
+    loft::native_lib::refresh_runtime_uplift(&profile_dir);
     if fresh(&profile_dir) {
         crate::platform::timing_record("wasmrlib", shape.name(), true, None);
         return Some(profile_dir);
@@ -506,6 +510,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     };
     let before = modified();
     let status = crate::platform::timing_exec("cargo", &subject, why, || cmd.status());
+    loft::native_lib::refresh_runtime_uplift(&profile_dir);
     match status {
         Ok(s) if s.success() && crate::file_access::exists(&rlib) => {
             // An unchanged rlib means cargo found it current for this source tree: this
@@ -885,7 +890,16 @@ pub(crate) fn ensure_rlib_fresh() {
     // "could not find Cargo.toml" error.  Gate the whole thing on a
     // `Cargo.toml` in cwd: `cargo build --lib` needs one there anyway, so if
     // absent we are not in the loft source root — use the shipped rlib as-is.
-    if !crate::file_access::exists("Cargo.toml") {
+    //
+    // loft#2153 — and only when the running binary was built FROM that root.  `cargo build
+    // --lib` here refreshes this checkout's `target/`, which is the rlib the binary links
+    // only when the binary itself lives there.  An installed loft links
+    // `share/loft/libloft.rlib` and a dev binary of another checkout links that checkout's,
+    // so for both the build changes nothing they run — and on a fresh checkout it outlasts
+    // the run's own timeout.
+    if !crate::file_access::exists("Cargo.toml")
+        || !loft_source_tree().is_some_and(|tree| crate::file_access::same_file(&tree, "."))
+    {
         return;
     }
     let Some(lib_dir) = loft_lib_dir() else {

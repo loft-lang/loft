@@ -7462,6 +7462,9 @@ impl State {
         // @PLAN49 T1 — runtime phase breadcrumb.  One call per
         // program; runtime cost is irrelevant.
         crate::timeout::checkpoint_fn("run-interpret", "<entry>", "", 0);
+        // `LOFT_ALLOC_TRACE` — the program starts: what came before was the run's own setup.
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!("M"));
         // loft#952 — and the vocabulary its per-call breadcrumb reports in.  `"<entry>"`
         // above is a placeholder that names nothing; from here on a hard-kill names the
         // loft function the run was in.  Skipped entirely when no watchdog is armed.

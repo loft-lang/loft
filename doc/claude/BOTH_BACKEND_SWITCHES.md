@@ -387,6 +387,11 @@ records (`Data::open_world`); `--native-release` and `--interpret` run the pass.
 **`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form, leaving the case to `--native`'s own
 rewrite (`LOFT_NO_VALUE_RECORD`); it is the first bisect step for a wrong field out of a
 small-record call.  **`LOFT_TRACE_IR_VALUEREC=1`** names each carrier the pass declines and why.
+The analysis behind it (`opt::value_records`) skips, in each round of its admission fixpoint,
+a caller with nothing to decline, and remembers a caller's value locals while the verdicts its
+body reads are unchanged.  **`LOFT_NO_VR_SKIP=1`** walks every caller and
+recomputes every one's locals each round; the compiled program is the same either way, so it
+is the control half of an A/B on compile time, never a bisect step for a wrong answer.
 
 **A scalar leaf's call is its body (`@FR-R-InlineLeaf`, default-ON, both backends, at the
 top of `byte_code_from` after the value records):** a call of a function whose parameters,
@@ -701,6 +706,12 @@ entry too, and checks a removal's recognised slot against the entry's own index.
 `bench/portal/analysis/keyed.md` has the ledger and what is left.
 
 ## Runtime: store claims, clears and prefill
+
+**`LOFT_NO_POOL_RESET=1`** (`@FR-R-Reuse`'s reset clause, default-ON, both backends) makes a
+reused call buffer's release walk its tree again — with it off, the pool's release before every
+call after the first resets the buffer's store to a fresh root (`Stores::reset_pool_root`), the
+way `OpDatabase` re-mints a reused store.  The first bisect step for a value lost, or a store
+read stale, after a reused call buffer's release.
 
 **A claim writes nothing** (`@FR-H-Claim`, `@C137`): a claimed payload, and the tail an
 in-place grow exposes, hold whatever the block held last; every value is written by the code

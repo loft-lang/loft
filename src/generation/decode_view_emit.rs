@@ -24,17 +24,17 @@ use crate::data::{Definition, Value};
 impl Output<'_> {
     /// The function being emitted rewrites span fields: a `__dv` twin, or a root.
     pub(super) fn dv_on(&self) -> bool {
-        self.dv_active || self.dv.roots.contains_key(&self.def_nr)
+        self.dv_active || self.plan.dv.roots.contains_key(&self.def_nr)
     }
 
     /// `def` is named by its `__dv` twin here: a region function, in a twin's body (its own
     /// signature included) or called from a root.
     pub(super) fn dv_renames(&self, def: &Definition) -> bool {
-        if self.dv.names.is_empty() || !self.dv.names.contains(def.name()) {
+        if self.plan.dv.names.is_empty() || !self.plan.dv.names.contains(def.name()) {
             return false;
         }
         self.dv_active
-            || (self.dv.roots.contains_key(&self.def_nr)
+            || (self.plan.dv.roots.contains_key(&self.def_nr)
                 && !std::ptr::eq(def, self.data.def(self.def_nr)))
     }
 
@@ -53,7 +53,7 @@ impl Output<'_> {
         let mut out = String::new();
         let vars = self.data.def(def_nr).variables();
         if !self.dv_active
-            && let Some(&b) = self.dv.roots.get(&def_nr)
+            && let Some(&b) = self.plan.dv.roots.get(&def_nr)
         {
             let _ = write!(
                 out,
@@ -62,7 +62,7 @@ impl Output<'_> {
             );
         }
         if self.dv_active
-            && let Some(locals) = self.dv.span_locals.get(&def_nr)
+            && let Some(locals) = self.plan.dv.span_locals.get(&def_nr)
         {
             let mut locals: Vec<u16> = locals.iter().copied().collect();
             locals.sort_unstable();
@@ -74,11 +74,12 @@ impl Output<'_> {
     }
 
     fn dv_view(&self, rec: &Value) -> Option<DvType> {
-        decode_view::view_of(&self.dv, self.data, self.stores, self.def_nr, rec).cloned()
+        decode_view::view_of(&self.plan.dv, self.data, self.stores, self.def_nr, rec).cloned()
     }
 
     fn dv_frame_param(&self, v: u16) -> bool {
-        self.dv
+        self.plan
+            .dv
             .bparams
             .get(&self.def_nr)
             .is_some_and(|s| s.contains(&v))
@@ -92,6 +93,7 @@ impl Output<'_> {
     fn dv_span_local(&self, v: u16) -> bool {
         self.dv_active
             && self
+                .plan
                 .dv
                 .span_locals
                 .get(&self.def_nr)
@@ -172,6 +174,7 @@ impl Output<'_> {
         // A span local's holder: placed only on its slice guard's fallback path.
         if self.dv_active
             && let Some(guard) = self
+                .plan
                 .dv
                 .lazy
                 .get(&(std::ptr::from_ref(node) as usize))

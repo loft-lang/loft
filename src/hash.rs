@@ -2879,6 +2879,74 @@ pub fn inline_find_int(
     })
 }
 
+/// [`inline_find_int`] for a table that BORROWS its records (`(Col-Group)`: a linked element
+/// type's entries are records of their own, `Stores::hash_entry`): tagged slots, each naming a
+/// record by number, the integer key read from the record at `RECORD_PAYLOAD + kp`.  `None`
+/// where the general path must answer — not a tagged borrowing table, or a record the store
+/// does not hold — else the answer, a miss included.  A borrowing table leaves no tombstone
+/// (a removal re-files its run), so an empty slot ends the walk.
+#[inline(always)]
+#[allow(clippy::inline_always)]
+#[must_use]
+pub fn borrowed_find_int(
+    store: &Store,
+    store_nr: u16,
+    claim: u32,
+    kp: u32,
+    value: i64,
+) -> Option<DbRef> {
+    let words = store.record_words(claim);
+    if words <= RESERVED_WORDS
+        || u64::from(claim) + u64::from(words) > u64::from(store.capacity_words())
+    {
+        return None;
+    }
+    let base = unsafe { store.base_ptr().add(claim as usize * 8) }.cast_const();
+    let flags = raw_u32(base, STRIDE_FLD);
+    if flags & (INLINE | TAGGED) != TAGGED || stride_of(flags) != 0 {
+        return None;
+    }
+    let count = slots_in(words - RESERVED_WORDS, 8);
+    if count == 0 {
+        return None;
+    }
+    let seed = u64::from(raw_u32(base, SEED_FLD)) | (u64::from(raw_u32(base, SEED_FLD + 4)) << 32);
+    let digest = keys::long_hash(value, seed);
+    let tag = tag_of(digest);
+    let mut at = home_bucket(digest, count);
+    let limit = u64::from(store.capacity_words()) * 8;
+    let key_end = u64::from(crate::store::RECORD_PAYLOAD + kp) + 8;
+    for _ in 0..count {
+        let slot = raw_u32(base, BUCKET0 + at * 8);
+        if slot == 0 {
+            break;
+        }
+        if raw_u32(base, BUCKET0 + at * 8 + 4) == tag {
+            let rec = slot & !SLOT_RECORD;
+            if u64::from(rec) * 8 + key_end > limit {
+                return None;
+            }
+            let rbase = unsafe { store.base_ptr().add(rec as usize * 8) }.cast_const();
+            if raw_i64(rbase, crate::store::RECORD_PAYLOAD + kp) == value {
+                return Some(DbRef {
+                    store_nr,
+                    rec,
+                    pos: crate::store::RECORD_PAYLOAD,
+                });
+            }
+        }
+        at += 1;
+        if at >= count {
+            at = 0;
+        }
+    }
+    Some(DbRef {
+        store_nr,
+        rec: 0,
+        pos: 0,
+    })
+}
+
 /// `(Col-Inline)` — the byte spans of inline table `claim` that hold data, as `(offset, len)`
 /// into the store's buffer: the header and the slots, then each occupied bucket's entry.  The
 /// entry bytes of an empty or removed bucket are not data — nothing reads them before an

@@ -376,7 +376,7 @@ impl<'a> CScan<'a> {
         }
         self.callees.push(callee);
         let rb = if answers {
-            super::hoist::ret_buffer_attr(def)
+            crate::opt::attrs::ret_buffer_attr(def)
         } else {
             None
         };
@@ -1108,7 +1108,8 @@ fn consumer(
         return Err("the root answers a decoded value".into());
     }
     if c.returns.is_some() {
-        let rb = super::hoist::ret_buffer_attr(def).ok_or("answers a position without a buffer")?;
+        let rb =
+            crate::opt::attrs::ret_buffer_attr(def).ok_or("answers a position without a buffer")?;
         c.retbuf = Some(vars.var(&def.attributes()[rb].name));
     }
     for v in 0..vars.count() {

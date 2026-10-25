@@ -1,0 +1,8 @@
+enum Expr { Lit { v: integer }, Neg { child: integer } }
+fn eval(nodes: vector<Expr>, i: integer) -> integer { match nodes[i] { Lit { v } => v, Neg { child } => -eval(nodes, child) } }
+fn main() {
+  nodes: vector<Expr> = [Lit { v: 1 }];
+  for i in 0..2000 { nodes += [Neg { child: i }]; }
+  assert(eval(nodes, 2000) == 1, "deep eval {eval(nodes, 2000)}");
+  println("ok");
+}

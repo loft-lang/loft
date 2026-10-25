@@ -51,31 +51,47 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
         return;
     }
     data.program_closed = true;
+    // `LOFT_TIMING=1` — one line naming what each pass cost, so a slow close is
+    // attributed to its pass.  The clock is read only when asked: `Instant::now()`
+    // panics on wasm32-unknown-unknown.
+    let mut laps = crate::opt::laps::PassLaps::new(std::env::var_os("LOFT_TIMING").is_some());
     // `value_record` reads closure-record layouts; the verdict `byte_code_from` carries in
     // first is idempotent, so a close ahead of it carries it in too.
     crate::typedef::sync_capture_ownership(data, database);
+    laps.lap("capture_ownership");
     crate::value_record::rewrite_program(data, database);
+    laps.lap("value_record");
     // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the
     // inlined bodies) — after the value records, so a leaf it inlines is final.
     crate::leaf_inline::rewrite_program(data);
+    laps.lap("leaf_inline");
     // `@FR-R-ZeroCount` — a character count compared with zero reads the byte count, after
     // the inlining that may leave `len` as its operator.
     crate::zero_count::rewrite_program(data);
+    laps.lap("zero_count");
     // `@FR-R-CtorLiteral` — a constructor's call is its literal, after the leaf inlining
     // that leaves a constructor's scalar fields as operator expressions.
     crate::ctor_literal::rewrite_program(data, database);
+    laps.lap("ctor_literal");
     // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
     crate::forward_walk::rewrite_program(data);
+    laps.lap("forward_walk");
     // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
     crate::same_read::rewrite_program(data);
+    laps.lap("same_read");
     // `@FR-R-SelfReplace` — a vector delivered into the buffer it already is, dropped.
     crate::self_replace::rewrite_program(data);
+    laps.lap("self_replace");
     // `@FR-R-InRange` — a record element its loop proves in range, read without a discharge.
     crate::in_range::rewrite_program(data);
+    laps.lap("in_range");
     // `@FR-R-SingleUse`'s statement clause — a comprehension's element temporary.
     crate::single_use::rewrite_program(data);
+    laps.lap("single_use");
     // `@FR-R-DischargeInto` — a text discharge read straight into the local it assigns.
     crate::discharge_into::rewrite_program(data);
+    laps.lap("discharge_into");
+    laps.report("close_program", data.definitions());
 }
 
 /// Incremental variant of [`byte_code`] — only emit bytecode for

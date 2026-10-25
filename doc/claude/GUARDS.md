@@ -98,8 +98,10 @@ assert names those outside values by construction.
 
 ## A guard that never failed is not a guard — `make falsify`
 
-**`make falsify GUARD=tests/scripts/<file>.loft REF=<commit-before-the-fix>`**
-(`scripts/falsify.sh`) builds `REF` in a cached worktree, runs the guard THERE and HERE, and
+**`make falsify GUARD=tests/scripts/<file>.loft [REF=<commit-before-the-fix>]`**
+(`scripts/falsify.sh`) takes the control — the installed main without `REF`
+([§ The control is installed main](#the-control-is-installed-main)), else `REF` built in a
+cached worktree — runs the guard THERE and HERE, and
 compares four channels apart — **exit code, assertion failures, leaked stores, panic** — plus
 the `refusals` and `expect` columns for annotation-scored files, so the verdict names *which
 one moved*:
@@ -121,7 +123,8 @@ file that cannot fail on any earlier build.
 
 - **Arm the instrument the defect needs.**  A leaked store is not an exit code, so a leak guard
   scored plainly reads `leak none -> none`.  `LOFT_STRICT_STORES=1 make falsify …` (plus
-  `LOFT_POISON=1` for a use-after-free) passes both through to control and HERE; record the
+  `LOFT_POISON=1` for a use-after-free, and `LOFT_LEAK_CHECK=1` for a `main`-less guard, whose
+  tests check their stores only under it) passes them through to control and HERE; record the
   invocation in the `@falsified-at:` line, and name the CI leg that runs with that instrument
   (the nightly poison sweep), because on the plain suites such a guard passes on every build.
 - **A refused tree is the useful half.**  `THIS TREE IS NOT CLEAN` means the guard fails here,
@@ -158,11 +161,22 @@ arriving mid-build waits.  `this tree does not build`, an INERT backend with an 
 or `exit 127` in a bulk row on a checkout older than that lock means a concurrent run, not the
 tree.
 
+**This tree is built in the checkout's own `target/`** (debug profile, `--lib --bin loft`),
+which the edit loop keeps warm, so a run on a current `target/debug` rebuilds only what changed
+where a separate directory rebuilds the whole crate.  A commit since the last build still
+recompiles the crate, because the build bakes HEAD in.  A gate RUNNING in the checkout (`scripts/ci-run.sh status`) writes the
+same profile, so beside one — and always under `LOFT_FALSIFY_ISOLATED=1` — the build goes to
+`~/.cache/loft-falsify/head-target-<checkout>` instead, which is cold after any change to the
+crate: half an hour on a loaded box.  Do not edit the tree while a run scores it.  The guard
+may be given by an absolute path (a scratch copy, a sibling suite's cell); a missing one is
+refused before anything builds.
+
 **The control builds are cached and pruned.**  Each ref costs about 2 GB under
 `~/.cache/loft-falsify/<ref>` and `<ref>-target` — on disk, never in `TMPDIR` (often a RAM
-tmpfs; the native leg links `libloft.rlib` and its dependency rlibs) — beside a
-`head-target-<checkout>` (one per checkout: shared, a sibling's run rebuilt it from its own tree
-between this run's two legs) and a `shared-target`.  `LOFT_FALSIFY_KEEP` (default 4) most recently used controls are kept.
+tmpfs; the native leg links `libloft.rlib` and its dependency rlibs) — beside the
+`head-target-<checkout>` above (one per checkout: shared, a sibling's run rebuilt it from its
+own tree between this run's two legs) and a `shared-target`.  `LOFT_FALSIFY_KEEP` (default 4)
+most recently used controls are kept.
 A `--patch` control is cached under `patch-<patch content>-<HEAD>`, so a rebased HEAD never
 reuses a stale control.  A gate that fails on an unrelated suite right after `low space`
 lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS.md).
@@ -188,6 +202,35 @@ lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS
   decision.
 - Checking that a sha exists: `git rev-parse --verify --quiet` or `git cat-file -e`; a plain
   `git rev-parse` prints its argument even for a missing object.
+
+### The control is installed main
+
+A bug is filed and fixed only when main has it ([CLAUDE.md § Bug-filing policy](../../CLAUDE.md)),
+so while a fix is unmerged, main IS the build without it — for every guard on the branch at
+once.  `make install-main` installs `origin/main` into `~/.local` from a persistent worktree
+(`LOFT_MAIN_TREE`, default `~/.cache/loft-main`), so after main moves only what changed is
+rebuilt; `make falsify GUARD=<file>` without `REF` (`falsify.sh <guard> --installed [<loft>]`)
+then scores the guard against that binary with no build at all.  A ref control costs a full
+debug build of its commit, and one per fix adds up to hours on a loaded box.
+
+- **Which commit it is** comes from `<prefix>/share/loft/SOURCE` (`<sha> clean|dirty`), which
+  `make install` writes from a git checkout.  The receipt is `@falsified-at: <that sha>`, the
+  same form as a ref receipt, because the installed binary is a build of that commit.  A
+  missing stamp or a dirty install is refused: neither names a build anyone can rebuild.
+- **Score before the branch is joined.**  Once main holds the fix, the installed build passes
+  too and the guard reads INERT; from then on the control is the fix's parent commit
+  (`REF=`), a full build again.
+- **It writes no patch receipt, because none is needed.**  A patch rescues a receipt whose
+  control commit can vanish (a squash-merged branch); main keeps every commit, so a receipt
+  naming main's commit stays re-runnable, and a per-fix patch would cost the control build this
+  mode avoids.  It answers "fails without the branch", not "which fix cures it"; where that
+  matters, score the fix's own reversed diff with `--patch`.
+- **It runs from a mirror of the tree without its `Cargo.toml`**: a loft whose runtime
+  refresh reads only the working directory would take the tree for its own
+  checkout and build it before every native run.
+- **A stale install still scores, and says so**: a note when `origin/main` has moved past the
+  installed commit, and a second when that commit is not an ancestor of this tree — the two
+  sides then also differ by commits the branch lacks.
 
 ### The patch receipt — `@falsified-by:`
 
@@ -215,6 +258,9 @@ control is scored.  Nothing outside the repository has to survive for it to be r
 - **A patch isolates ONE defect only against the commit right before the fix.**  Against a
   distant control it is the whole source difference since; over 800 source lines `falsify.sh`
   writes no patch and says to re-run against the commit before the fix.
+- **The written patch is this TREE against the control.**  When later fixes sit on top of the
+  one the guard catches, it reverts them too: keep only that fix's own diff (`git diff -R
+  <fix>^ <fix>`, plus any later edit to the same lines) and score it with `--patch`.
 - **Deriving one after the fact**: a control is the PARENT of the commit that added the guard,
   so the patch is that commit's source diff reversed.  It stays runnable only while the tree
   still resembles the fix, and `falsify.sh` exits 3 when it no longer applies — detected, where

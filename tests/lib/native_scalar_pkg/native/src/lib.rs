@@ -26,10 +26,18 @@ use loft_ffi_macros::loft_native;
 // a harmless narrowing — on x86-64 SysV an `i32` return leaves the upper half of `rax`
 // undefined.  42 happens to survive it; `n_native_sentinel` below does not, which is
 // why it exists.
+cfg_if::cfg_if! {
+    if #[cfg(any())] {
+        const ANSWER: i64 = 0;
+    } else {
+        const ANSWER: i64 = 42;
+    }
+}
+
 #[loft_native]
 #[no_mangle]
 pub extern "C" fn n_native_answer() -> i64 {
-    42
+    ANSWER
 }
 
 /// Returns -1 — the value that makes an integer-width ABI mismatch observable.

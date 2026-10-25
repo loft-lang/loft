@@ -27,15 +27,20 @@
 # The control build is cached per ref under the scratch root, so a second guard against the
 # same ref costs nothing.
 #
-# ⚠ ONE CHANNEL IS BLIND, and it is blind for the corpus's usual guard shape.  The leak column
-# is read off the run's stderr ("stores not freed at program exit"), which only a `main`-ful
-# run under `--interpret` prints: `--tests` does not leak-check at all (the corpus leak gate
-# lives in `tests/wrap.rs`, which this does not run).  So a `main`-less guard — the standard
-# form — reports `leak none` on BOTH trees whatever it leaks, and a guard written to catch a
-# LEAK is therefore recorded INERT, i.e. mislabelled a lock.  Measured 2026-08-27 on
-# `a-nullable-return-joins-its-branch-arms.loft`, whose leaking cell `make ci` failed on while
-# this reported `0|0|none|none|0` for both trees (QUALITY-history.md B6p).  Until `--tests` grows a leak
-# check, score a leak guard by giving it a `main` and running it under `--interpret`.
+# `--installed` takes the INSTALLED loft as the control instead of building one: the binary
+# `make install-main` put on PATH, whose `share/loft/SOURCE` names the commit it was built
+# from.  Every bug fixed on a branch exists on main (CLAUDE.md § Bug-filing policy), so while
+# the fix is unmerged that one install is the control for every guard on the branch, and a
+# check costs the guard's run and nothing else.  Score before the branch is joined: once main
+# holds the fix, the installed build passes too and the guard reads INERT.
+#
+# ⚠ THE LEAK CHANNEL NEEDS ITS SWITCH.  A `main`-ful run under `--interpret` prints "stores not
+# freed at program exit" by itself; `--tests` — the `main`-less guard, the standard form —
+# checks each test's stores only under `LOFT_LEAK_CHECK=1` and then fails the test with "store(s)
+# not freed at exit", which the suite runner arms for every cell.  So arm it the same way
+# (`LOFT_LEAK_CHECK=1 make falsify …`); it is passed through like the arena instruments.
+# Unarmed, a guard written to catch a LEAK reads `leak none` on both trees and is recorded
+# INERT, i.e. mislabelled a lock (QUALITY-history.md B6p).
 #
 # ⚠ A SECOND CHANNEL IS BLIND, for the mirror-image reason.  `expect_channel` counts only
 # `@EXPECT_ERROR` / `@EXPECT_FAIL`, and `entry_modes` routes only those two to `--tests`.  A
@@ -50,6 +55,7 @@ set -uo pipefail
 usage() {
   echo "usage: scripts/falsify.sh <guard.loft> <control-ref>" >&2
   echo "       scripts/falsify.sh <guard.loft> --patch <file>  # control = HEAD + the patch" >&2
+  echo "       scripts/falsify.sh <guard.loft> --installed [<loft>]  # control = the installed build" >&2
   echo "       scripts/falsify.sh --bulk <listfile>   # <guard>TAB<control-ref> per line" >&2
   echo "       scripts/falsify.sh --self-test         # the scorer's own parsing, on this machine's tools" >&2
   exit 2
@@ -59,11 +65,18 @@ SELF_TEST=""
 REF=""
 PATCHFILE=""
 PATCH_ABS=""
+INSTALLED_BIN=""
 if [ "${1:-}" = "--self-test" ]; then
   SELF_TEST=1
 elif [ "${1:-}" = "--bulk" ]; then
   [ $# -eq 2 ] || usage
   BULK="$2"; [ -f "$BULK" ] || { echo "no such list: $BULK" >&2; exit 2; }
+elif [ "${2:-}" = "--installed" ]; then
+  [ $# -eq 2 ] || [ $# -eq 3 ] || usage
+  GUARD="$1"; INSTALLED_BIN="${3:-$(command -v loft || true)}"
+  [ -f "$GUARD" ] || { echo "no such guard: $GUARD" >&2; exit 2; }
+  [ -n "$INSTALLED_BIN" ] && [ -x "$INSTALLED_BIN" ] || {
+    echo "no installed loft to use as the control — run: make install-main" >&2; exit 2; }
 elif [ "${2:-}" = "--patch" ]; then
   # The control as a PATCH rather than a ref, for a guard whose control commit no longer
   # exists anywhere.  The patch reintroduces the defect on top of HEAD, so the receipt carries
@@ -85,6 +98,15 @@ ROOT=$(git rev-parse --show-toplevel)
 # (~2 GB), and `/tmp` is a RAM tmpfs on many Linux boxes — one run filled a 7.5 GB one, and
 # the build then failed as "this tree does not build" before the LRU below could run.
 CACHE="${LOFT_FALSIFY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/loft-falsify}"
+# The guard as one path both trees can read: as given when it is absolute (a scratch copy, a
+# sibling suite's cell), else under this checkout.  Prefixing the checkout to an absolute path
+# named a file that does not exist; both trees then exited 1 on it, the guard scored INERT, and
+# the run had spent its whole HERE build first.  Checked here, before anything is built.
+GUARD_PATH=""
+if [ -n "${GUARD:-}" ]; then
+  case "$GUARD" in /*) GUARD_PATH="$GUARD" ;; *) GUARD_PATH="$ROOT/$GUARD" ;; esac
+  [ -f "$GUARD_PATH" ] || { echo "no such guard: $GUARD_PATH" >&2; exit 2; }
+fi
 
 # Resolve a control ref to a commit, reaching into `refs/pull/*/head` when the clone does not
 # already hold it.
@@ -139,6 +161,36 @@ if [ -n "$PATCHFILE" ]; then
   # the branch had left, and scored the guard against semantics HEAD no longer has).
   SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)-$(git rev-parse --short=12 HEAD)"
   WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
+elif [ -n "$INSTALLED_BIN" ]; then
+  # The installed build is a control only when we know which commit it is: `make install`
+  # writes `<prefix>/share/loft/SOURCE` ("<sha> clean|dirty").  A dirty install is a build of
+  # no commit, so its receipt could name nothing anyone can rebuild.
+  bin_real=$(readlink -f "$INSTALLED_BIN" 2>/dev/null || echo "$INSTALLED_BIN")
+  src_file="$(dirname "$(dirname "$bin_real")")/share/loft/SOURCE"
+  isha=""; istate=""
+  [ -r "$src_file" ] && read -r isha istate < "$src_file"
+  if [ -z "$isha" ]; then
+    echo "$INSTALLED_BIN does not say which commit it was built from (no $src_file)." >&2
+    echo "  Install it with: make install-main" >&2
+    exit 2
+  fi
+  if [ "$istate" != clean ]; then
+    echo "$INSTALLED_BIN was built from a tree with uncommitted changes, so it is no commit's" >&2
+    echo "  build.  Reinstall from a clean tree: make install-main" >&2
+    exit 2
+  fi
+  resolve_control "$isha" || { echo "the installed build's commit $isha is not in this clone" >&2; exit 2; }
+  SHA=$(git rev-parse --short "$RESOLVED_SHA")
+  WT="$CACHE/installed-wt"; TGT=""
+  echo "control: the installed loft ($INSTALLED_BIN), built from $SHA" >&2
+  main_sha=$(git rev-parse --verify -q origin/main 2>/dev/null || true)
+  if [ -n "$main_sha" ] && [ "$main_sha" != "$RESOLVED_SHA" ]; then
+    echo "  note: origin/main is $(git rev-parse --short "$main_sha") — make install-main refreshes it" >&2
+  fi
+  if ! git merge-base --is-ancestor "$RESOLVED_SHA" HEAD; then
+    echo "  note: $SHA is not an ancestor of this tree, so the two sides also differ by commits" >&2
+    echo "  this branch lacks; rebase onto it, or read a moved channel with that in mind" >&2
+  fi
 elif [ -z "$BULK" ] && [ -z "$SELF_TEST" ]; then
   resolve_control "$REF" || {
     echo "unknown ref: $REF" >&2
@@ -194,12 +246,13 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
     MODE_N=(--native-release)
   fi
 }
-[ -n "$BULK$SELF_TEST" ] || entry_modes "$GUARD"
+[ -n "$BULK$SELF_TEST" ] || entry_modes "$GUARD_PATH"
 
 # Every build here goes through this, and every build takes its target directory's LOCK.
 #
 # Two falsify runs are two cargo processes, and the target dirs are SHARED between runs by
-# design — `head-target-<checkout>` holds the HERE build for both the bulk and single paths, and a control
+# design — the HERE build (this checkout's `target/`, or `head-target-<checkout>` beside a running
+# gate) serves both the bulk and single paths, and a control
 # is cached per ref so a second guard against the same ref costs nothing.  That sharing is worth
 # keeping; two concurrent writers into one of them is not.  Cargo does not serialise itself
 # across processes, and what comes out is a partial or stale binary whose verdicts read as
@@ -221,10 +274,13 @@ have_flock() { command -v flock >/dev/null 2>&1; }
 locked_cargo() { # <dir> <target-dir> <cargo subcommand> <its arguments…>
   local dir="$1" tgt="$2" sub="$3"; shift 3
   mkdir -p "$(dirname "$tgt")"
+  # The checkout's own `target/` keeps its lock INSIDE it: beside it is the work tree.
+  local lock="$tgt.lock"
+  [ "$tgt" = "$ROOT/target" ] && mkdir -p "$tgt" && lock="$tgt/.falsify.lock"
   if have_flock; then
     ( flock 9 || exit 1
       cd "$dir" && cargo "$sub" --target-dir "$tgt" "$@" >/dev/null 2>&1
-    ) 9>"$tgt.lock"
+    ) 9>"$lock"
   else
     ( cd "$dir" && cargo "$sub" --target-dir "$tgt" "$@" >/dev/null 2>&1 )
   fi
@@ -385,10 +441,13 @@ signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|lea
   out=$(cd "$tree" && bound -k 5 "$((lim + 20))" env LOFT_NATIVE_LEAK_CHECK=1 LOFT_TIMEOUT="$lim" \
         ${LOFT_POISON:+LOFT_POISON="$LOFT_POISON"} \
         ${LOFT_STRICT_STORES:+LOFT_STRICT_STORES="$LOFT_STRICT_STORES"} \
+        ${LOFT_LEAK_CHECK:+LOFT_LEAK_CHECK="$LOFT_LEAK_CHECK"} \
         "$bin" "$@" ${extra[@]+"${extra[@]}"} "$file" 2>&1); rc=$?
   local asserts leak panic refusals
   asserts=$(echo "$out" | grep -c "assertion failed")
-  leak=$(echo "$out" | grep -oE "stores not freed at program exit: .*" | head -1 | sed 's/.*exit: //')
+  # Two spellings of one report: a program's exit ("stores not freed at program exit: …") and
+  # a test's under `LOFT_LEAK_CHECK=1` ("store(s) not freed at exit: …").
+  leak=$(echo "$out" | grep -oE "store(s|\(s\)) not freed at (program )?exit: .*" | head -1 | sed 's/.*exit: //')
   panic=$(echo "$out" | grep -oE "panicked at [^:]*" | head -1)
   refusals=$(echo "$out" | grep -c "BUG (#306)")
   echo "$rc|$asserts|${leak:-none}|${panic:-none}|$refusals|$(expect_channel "$file" "$out")"
@@ -402,6 +461,18 @@ mkdir -p "$CACHE"
 # had).  The lock serialises the builds, not the build-to-run window, so only separate target
 # dirs keep a verdict about the tree it names.
 HEAD_TGT="$CACHE/head-target-$(printf '%s' "$ROOT" | sha256sum | cut -c1-12)"
+# ...but by default the HERE build is the checkout's OWN `target/` (debug profile), which the
+# edit loop keeps warm: the separate one is warm only for the falsify runs, so after a change to
+# the one large crate it recompiled all of it — measured 2026-10-25, 32 minutes on a loaded box
+# for a tree whose `target/debug/loft` was already current — and each copy holds 2.5–4 GB.  A
+# gate running in this checkout keeps the separate one: its clippy step writes the same debug
+# profile, and a falsify build there would stall it.  `LOFT_FALSIFY_ISOLATED=1` always does.
+# The build-to-run window is this checkout's own: rebuilding `target/` from an EDITED tree
+# while a run is scoring mixes two trees, as editing mid-run always has.
+if [ -z "${LOFT_FALSIFY_ISOLATED:-}" ] && [ -d "$ROOT/target/debug" ] \
+  && ! "$ROOT/scripts/ci-run.sh" status 2>/dev/null | grep -qE '^(RUNNING|QUEUED)'; then
+  HEAD_TGT="$ROOT/target"
+fi
 
 # ── bulk ─────────────────────────────────────────────────────────────────────────────────
 # Retrofitting the corpus: one control build per REF rather than per guard, into a SHARED
@@ -479,7 +550,27 @@ fi
 
 # `$WT.stub` marks a control still holding the stub: the stub build leaves a `debug/loft` too,
 # and a run killed before the regeneration must not be scored on it.
-if [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
+if [ -n "$INSTALLED_BIN" ]; then
+  # No build: only the SOURCE tree at the installed commit, because a guard runs inside the
+  # tree it is scored against (its `lib/`, its fixtures — `signature` says why).
+  if [ -d "$WT" ]; then
+    git -C "$WT" checkout -q --force --detach "$RESOLVED_SHA" || { echo "cannot check out $SHA" >&2; exit 1; }
+  else
+    git worktree add -q --detach "$WT" "$RESOLVED_SHA" || { echo "cannot create a worktree at $SHA" >&2; exit 1; }
+  fi
+  # The run directory mirrors the tree WITHOUT its `Cargo.toml`.  A loft that finds one in its
+  # working directory takes it for its own source checkout and runs `cargo build --lib` there
+  # before a native run — a full debug build of the tree, which the installed binary never
+  # links (it links `share/loft/libloft.rlib`).  Everything a guard reads (`lib/`, fixtures)
+  # is reached through the links.
+  RUN_DIR="$CACHE/installed-run"
+  rm -rf "$RUN_DIR" && mkdir -p "$RUN_DIR" || { echo "cannot create $RUN_DIR" >&2; exit 1; }
+  for e in "$WT"/* "$WT"/.[!.]*; do
+    [ -e "$e" ] || continue
+    case "${e##*/}" in Cargo.toml|target|.git) continue ;; esac
+    ln -s "$e" "$RUN_DIR/${e##*/}"
+  done
+elif [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
   if [ -n "$PATCHFILE" ]; then
     [ -d "$WT" ] || {
       git worktree add --detach "$WT" HEAD >/dev/null 2>&1 || {
@@ -507,13 +598,18 @@ if [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
   build "$WT" "$TGT" >/dev/null || { echo "the control does not build" >&2; exit 1; }
   rm -f "$WT.stub"
 fi
-CONTROL="$TGT/debug/loft"
+# The installed control runs WITHOUT `--path`: it loads the stdlib it was installed with.
+if [ -n "$INSTALLED_BIN" ]; then
+  CONTROL="$INSTALLED_BIN"; CONTROL_PATH=(); CONTROL_TREE="$RUN_DIR"
+else
+  CONTROL="$TGT/debug/loft"; CONTROL_PATH=(--path "$WT/"); CONTROL_TREE="$WT"
+  touch "$TGT" "$WT" 2>/dev/null
+fi
 # The control build is a full debug `target/` (~2 GB: the native leg links `libloft.rlib` and
 # its dependency rlibs, so the binary alone is not enough).  Kept per ref and never pruned,
 # these reached 364 GB and filled the disk (2026-09-05).  Keep the LOFT_FALSIFY_KEEP most
 # recently USED controls (default 4) — this one is stamped now — and remove the rest, their
 # worktrees with them.
-touch "$TGT" "$WT" 2>/dev/null
 keep="${LOFT_FALSIFY_KEEP:-4}"
 for old in $(ls -td "$CACHE"/*-target 2>/dev/null | tail -n +$((keep + 1))); do
   case "$old" in */head-target|*/shared-target) continue;; esac
@@ -522,8 +618,8 @@ for old in $(ls -td "$CACHE"/*-target 2>/dev/null | tail -n +$((keep + 1))); do
   rm -rf "$old" "$old.lock" "$CACHE/$sha.stub"
 done
 git -C "$ROOT" worktree prune >/dev/null 2>&1
-# A separate target dir on purpose: the main one may be mid-`make ci`, and cargo's build
-# lock is per target dir — building into it stalls a gate that is already running.
+# The checkout's own `target/` unless a gate is running in it (`HEAD_TGT`, above): cargo's build
+# lock is per target dir, and building into a gate's stalls it.
 HERE=$(build "$ROOT" "$HEAD_TGT") || { echo "this tree does not build" >&2; exit 1; }
 
 # loft#1224 — the verdict is an OR across backends, not an AND, and it names the inert side.
@@ -542,12 +638,12 @@ printf '%-12s %-10s %-46s %s\n' backend tree "exit|asserts|leak|panic|refusals|e
 for pair in "interpret ${MODE_I[*]}" "native ${MODE_N[*]}"; do
   name=${pair%% *}; args=${pair#* }
   # shellcheck disable=SC2086
-  c=$(signature "$CONTROL" "$WT" "$ROOT/$GUARD" --path "$WT/" $args)
+  c=$(signature "$CONTROL" "$CONTROL_TREE" "$GUARD_PATH" ${CONTROL_PATH[@]+"${CONTROL_PATH[@]}"} $args)
   # `--path` for BOTH sides: the binary is built into its own target dir and has no
   # `default/` beside it, so without this it cannot load the stdlib and exits 1 — which
   # reads as a difference and would score every guard as falsified for the wrong reason.
   # shellcheck disable=SC2086
-  h=$(signature "$HERE" "$ROOT" "$ROOT/$GUARD" --path "$ROOT/" $args)
+  h=$(signature "$HERE" "$ROOT" "$GUARD_PATH" --path "$ROOT/" $args)
   # loft#1224 — "clean" means the guard PASSES, and for an annotation-scored file passing is a
   # refusal: it exits 1 and prints the message it declared.  Judging it by exit code alone
   # reported THIS TREE IS NOT CLEAN for a guard that was working exactly as written.  So a file
@@ -642,6 +738,16 @@ elif [ $falsified_any -eq 1 ]; then
     # and the diff applies by construction; later it is hand-reconstruction, and for two thirds
     # of the corpus it is already too late.  So the durable form is offered at the only moment
     # it costs nothing.
+    #
+    # A control that is a commit of MAIN — the installed build's — never decays: main keeps
+    # every commit.  So there is nothing to rescue, and a per-fix patch would cost the very
+    # control build `--installed` exists to avoid.
+    if [ -n "$INSTALLED_BIN" ]; then
+      echo
+      echo "note: no patch written — the control is main's $SHA, which stays resolvable, so this"
+      echo "      receipt does not decay."
+      exit 0
+    fi
     pdir="$ROOT/tests/falsified"
     pbase=$(basename "$GUARD" .loft)
     mkdir -p "$pdir"
@@ -692,6 +798,14 @@ elif [ $falsified_any -eq 1 ]; then
       echo "…and the receipt that does not decay — written to tests/falsified/$pbase.patch."
       echo "Score it with: scripts/falsify.sh $GUARD --patch tests/falsified/$pbase.patch"
       echo "// @falsified-by: tests/falsified/$pbase.patch — $CHANNELS"
+      # The patch is this TREE against the control, so with more than one fix since the control
+      # it reverts them all.
+      nfix=$(git -C "$ROOT" rev-list --count "$SHA"..HEAD -- src/ default/ lib/ 2>/dev/null || echo 0)
+      if [ "${nfix:-0}" -gt 1 ]; then
+        echo "note: $nfix commits since $SHA touch the source, so this patch reverts all of them."
+        echo "      Keep only the fix's own diff (git diff -R <fix>^ <fix>) and score it with --patch"
+        echo "      — GUARDS.md § The patch receipt."
+      fi
     fi
   fi
   exit 0

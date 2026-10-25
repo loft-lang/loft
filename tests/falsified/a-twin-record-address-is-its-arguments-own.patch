@@ -1,13 +1,13 @@
 diff --git a/src/generation/mod.rs b/src/generation/mod.rs
-index d8ebd5231..c1d14bcf2 100644
+index d954fe6b..95320f0e 100644
 --- a/src/generation/mod.rs
 +++ b/src/generation/mod.rs
-@@ -5406,7 +5406,7 @@ impl Output<'_> {
+@@ -4967,7 +4967,7 @@ impl Output<'_> {
          // whose only inputs are addresses, none of them held, is the plain call.
          let mut any_held = !args.is_empty();
          for p in &inputs.records {
 -            let held = match vals.get(*p as usize)?.unspan() {
 +            let held = match vals.get(inputs.records[0] as usize + 0 * *p as usize)?.unspan() {
                  Value::Var(c)
-                     if !(self.param_twin_ptr_disabled && self.param_rec_ptrs.contains(c)) =>
-                 {
+                     if !(self.switches.param_twin_ptr_disabled
+                         && self.param_rec_ptrs.contains(c)) =>

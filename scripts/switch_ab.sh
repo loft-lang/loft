@@ -51,8 +51,10 @@
 # the programs written to catch that defect still catch it?  Such a program says so with
 # `// @catches: LOFT_NO_<CURE>`: its output MUST move with that switch, and is reported as
 # CAUGHT.  One that no longer moves is VACUOUS — the guard has stopped seeing the defect its
-# switch restores — and counts as a defect.  Every program without the header is compared as
-# usual under the cure's switch too.
+# switch restores — and counts as a defect.  A `@catches` program runs with LOFT_STRICT_STORES
+# and LOFT_POISON armed on both legs, so a restored early release shows as a fault wherever
+# the allocator puts the next block.  Every program without the header is compared as usual
+# under the cure's switch too.
 set -uo pipefail
 if [ $# -lt 1 ] || [[ "$1" != LOFT_NO_* ]]; then
   echo "usage: $0 LOFT_NO_<REWRITE> [--consumer DIR]..." >&2
@@ -85,10 +87,17 @@ run_one() {
   local mode="$1" file="$2" base args
   base="$(basename "$file" .loft)"
   args="$(sed -n 's#^// @ARGS: *##p' "$file" | head -1)"
+  # A program that catches a cure's defect runs with the store checks armed on every leg:
+  # LOFT_STRICT_STORES for a whole store released early, LOFT_POISON for a block released
+  # inside one.  A release of the wrong store is then a fault the output shows, instead of
+  # a value that moves only when a later allocation happens to reuse the freed memory.
+  # (Both arm on presence, so every other program runs with them unset.)
+  local poison=(-u LOFT_POISON -u LOFT_STRICT_STORES)
+  grep -qE "^// @catches:.*\b$SWITCH\b" "$file" && poison=(LOFT_POISON=1 LOFT_STRICT_STORES=1)
   if [ "$mode" = off ]; then
-    env "$SWITCH=1" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
+    env "${poison[@]}" "$SWITCH=1" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
   else
-    env -u "$SWITCH" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
+    env -u "$SWITCH" "${poison[@]}" LOFT_TIMEOUT="$AB_TIMEOUT" "$LOFT" $LOFT_ARGS --interpret $args "$file" >"$WORK/$mode/$base.out" 2>&1
   fi
   echo "exit=$?" >>"$WORK/$mode/$base.out"
 }

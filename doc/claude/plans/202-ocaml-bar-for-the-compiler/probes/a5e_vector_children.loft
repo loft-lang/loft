@@ -1,0 +1,15 @@
+enum Node {
+  Leaf { v: integer },
+  Call { name: text, args: vector<Node> },
+}
+fn total(n: Node) -> integer {
+  match n {
+    Leaf { v } => v,
+    Call { name, args } => { s = 0; for a in args { s += total(a); } s },
+  }
+}
+fn main() {
+  n = Call { name: "f", args: [Leaf { v: 1 }, Call { name: "g", args: [Leaf { v: 2 }, Leaf { v: 3 }] }] };
+  assert(total(n) == 6, "total: {total(n)}");
+  println("ok");
+}

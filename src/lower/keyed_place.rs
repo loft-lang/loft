@@ -79,7 +79,7 @@ pub fn site<'a>(stmt: &'a Value, data: &Data, d_nr: u32) -> Option<Site<'a>> {
         return None;
     };
     // The collection is re-derived for the finish: a pure path, the same place both times.
-    if super::hoist::vector_path(data, coll).is_none() || !keys.iter().all(pure_key) {
+    if crate::opt::writes::vector_path(data, coll).is_none() || !keys.iter().all(pure_key) {
         return None;
     }
     let Value::Block(bl) = value.unspan() else {

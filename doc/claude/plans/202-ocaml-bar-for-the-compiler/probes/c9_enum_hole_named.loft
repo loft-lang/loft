@@ -1,0 +1,10 @@
+enum Tok { Ident { s: text }, Num { v: integer }, Plus, Minus, LParen, RParen }
+fn show(t: Tok) -> text {
+  match t {
+    Ident { s } => s,
+    Num { v } => "{v}",
+    Plus => "+",
+    LParen => "(",
+  }
+}
+fn main() { println(show(Plus)); }

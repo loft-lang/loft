@@ -53,7 +53,7 @@ name = "loft-dap"
 path = "src/bin/loft-dap.rs"
 
 [features]
-default      = ["mmap", "random", "threading", "registry", "native-extensions", "remote-store", "strict-stores"]
+default      = ["mmap", "random", "threading", "registry", "native-extensions", "remote-store", "strict-stores", "stack-verify"]
 threading    = ["dep:rayon"]
 wasm         = ["dep:wasm-bindgen", "dep:serde", "dep:serde-wasm-bindgen",
                 "dep:js-sys", "dep:web-sys", "png", "dep:fontdue",
@@ -113,6 +113,11 @@ op-census    = []
 # development tree and its tests keep it; the installed runtime (`make install`'s
 # feature list) and the wasm builds leave it out, and say so when the switch is set.
 strict-stores = []
+# `LOFT_VERIFY_STACK` (@PLN154): the interpreter stack's init shadow, a DEBUGGING aid like
+# `strict-stores`.  Its armed test sits in every store write; a runtime built without the
+# feature answers it with a constant, so the write hooks compile away, and refuses the switch
+# out loud.  In `default`; the installed runtime and the wasm builds leave it out.
+stack-verify = []
 
 [build-dependencies]
 # build.rs re-derives the compiled stdlib's source hash to warn when it is stale (@PLN181).

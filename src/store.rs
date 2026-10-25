@@ -539,6 +539,12 @@ pub struct Store {
     park: bool,
     /// `@FR-H-Park` — the parked blocks, by exact size.  Empty when `park` is off.
     parked: Parked,
+    /// `@FR-H-RootExtent` — the live records `OpPlaceRecord` put in this store that are NOT
+    /// elements of its root collection (`Stores::place_record_prefilled`): an `R-ExitVector`
+    /// wrapper claimed in a one-field return buffer's store is one.  While any is live the
+    /// root's extent is not the store's extent, so the store is neither reset by a clear
+    /// nor exchanged with another (loft#2157).  [`Self::delete`] drops each as it goes.
+    placed_foreign: Vec<u32>,
     /// CO1.9/S28: monotonic counter incremented on every `claim`, `resize`, and `delete`.
     /// Saved into `CoroutineFrame` at yield; compared at resume to detect store mutations
     /// that may have invalidated `DbRef` locals held by the generator.  Always compiled in
@@ -871,7 +877,9 @@ impl Store {
     #[inline]
     #[must_use]
     pub fn shadow_armed(&self) -> bool {
-        !self.init_shadow.is_empty()
+        // A runtime built without the `stack-verify` feature answers a constant, so the
+        // write hooks below compile away (`stack_verify::enabled` says so when asked).
+        cfg!(feature = "stack-verify") && !self.init_shadow.is_empty()
     }
 
     /// Tag `len` bytes at absolute byte offset `at` as written.
@@ -905,7 +913,7 @@ impl Store {
     #[cold]
     #[inline(never)]
     pub fn shadow_kill(&mut self, at: usize, len: usize) {
-        if self.init_shadow.is_empty() {
+        if !self.shadow_armed() {
             return;
         }
         let end = (at + len).min(self.init_shadow.len());
@@ -931,7 +939,7 @@ impl Store {
     #[must_use]
     pub fn shadow_state(&self, at: usize, len: usize, kind: u16) -> crate::stack_verify::SlotState {
         use crate::stack_verify::{OPAQUE, SlotState, kind_width};
-        if self.init_shadow.is_empty() {
+        if !self.shadow_armed() {
             return SlotState::Written;
         }
         let Some(span) = self.init_shadow.get(at..at + len) else {
@@ -1033,7 +1041,7 @@ impl Store {
     /// an unwritten source stays unwritten at the destination, which is the property that
     /// lets a callee's missing return value be caught at the caller's read.
     pub fn shadow_move(&mut self, from: usize, to: usize, len: usize) {
-        if self.init_shadow.is_empty() {
+        if !self.shadow_armed() {
             return;
         }
         let tags = self.shadow_tags(from, len);
@@ -1177,6 +1185,7 @@ impl Store {
             park: park_enabled(),
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined,
             generation: 0,
@@ -1346,6 +1355,7 @@ impl Store {
             park: false,
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: true,
             generation: 0,
@@ -1457,6 +1467,7 @@ impl Store {
             park: false,
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: true,
             generation: 0,
@@ -1574,6 +1585,7 @@ impl Store {
             park: park_enabled(),
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: true,
             generation: 0,
@@ -1625,6 +1637,7 @@ impl Store {
         self.lazy_free.clear();
         // `@FR-H-Park` — the whole store is one free block again: nothing is parked.
         self.parked.clear();
+        self.placed_foreign.clear();
         // NOT `claims.insert(PRIMARY)`.  `set_free_header(1, …)` above makes word 1 the
         // store's one FREE block, so naming it in the live-record set records a block that
         // is free.  `claims_rebuild` answers the same question off the store's own bytes for
@@ -1677,6 +1690,13 @@ impl Store {
     /// payload poisoned under `LOFT_POISON_CLAIM=1`, zeroed under `LOFT_ZERO_CLAIM=1`.
     #[inline]
     fn finish_claim(&mut self, pos: u32) -> u32 {
+        // `LOFT_ALLOC_TRACE` — every claim ends here; compiled only into the `op-census` build.
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!(
+            "C {} {} {pos}",
+            self.alloc_serial,
+            self.read::<i32>(pos, 0)
+        ));
         // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
         // falsifier for the zero-on-claim question: fill a freshly claimed payload with
         // `0xDEADBEEF` instead of zeros, so a caller that RELIES on zero-init breaks
@@ -2296,6 +2316,12 @@ impl Store {
                 } else if Self::zero_claim_enabled() {
                     self.zero_range(rec, from, len);
                 }
+                #[cfg(feature = "op-census")]
+                crate::store_census::alloc_event(format_args!(
+                    "R {} {rec} {} {rec}",
+                    self.alloc_serial,
+                    self.read::<i32>(rec, 0)
+                ));
                 return rec;
             }
         }
@@ -2310,6 +2336,12 @@ impl Store {
         if crate::stack_verify::enabled() {
             crate::stack_verify::note_relocation(self.store_nr, rec, new);
         }
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!(
+            "R {} {rec} {} {new}",
+            self.alloc_serial,
+            self.read::<i32>(new, 0)
+        ));
         new
     }
 
@@ -2455,10 +2487,15 @@ impl Store {
             self.refuse_locked("Delete on locked store", rec, 0);
             return;
         }
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!("D {} {rec}", self.alloc_serial));
         // CO1.9/S28: increment generation so coroutine_next can detect deletions that
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
         self.valid(rec, 4);
+        if !self.placed_foreign.is_empty() {
+            self.placed_foreign.retain(|&r| r != rec);
+        }
         // `@FR-H-Removed` — a record a stored reference named keeps its position: every
         // removal of one (a vector's, a keyed collection's, its parent's release) ends here.
         if self.referenced.remove(rec) && tombstones_enabled() {
@@ -2893,7 +2930,7 @@ impl Store {
         // tagged unwritten, which is what they are: nothing has been put there yet.  The
         // tags themselves do not move, because a growth keeps every `rec * 8 + fld` where
         // it was.
-        if !self.init_shadow.is_empty() {
+        if self.shadow_armed() {
             self.init_shadow.resize(bytes, 0);
         }
     }
@@ -2998,7 +3035,7 @@ impl Store {
     fn retile_tail(&mut self, mark: u32) {
         // @PLN154 — the shadow spans the buffer, so a truncation truncates it.  Called
         // from both shrink paths, which is why it sits here rather than beside each.
-        if !self.init_shadow.is_empty() {
+        if self.shadow_armed() {
             self.init_shadow.truncate(self.size as usize * 8);
         }
         let tail = mark.max(PRIMARY);
@@ -3116,7 +3153,8 @@ impl Store {
 
     /// `@FR-H-SwapIn` — may this store's CONTENT be exchanged with another's: an ordinary
     /// in-memory store nothing pins to its slot (no file, no foreign bytes, no recording,
-    /// no lock, no borrow, not the interpreter's stack).  A free protection (a call's
+    /// no lock, no borrow, not the interpreter's stack, no record placed in it from outside
+    /// its root collection — `@FR-H-RootExtent`).  A free protection (a call's
     /// deep-copy bracket) guards the slot against a FREE, so it refuses only the side the
     /// exchange then frees: `released` is that side.
     pub(crate) fn content_swappable(&self, released: bool) -> bool {
@@ -3131,6 +3169,18 @@ impl Store {
             && self.foreign.is_none()
             && self.recording.is_none()
             && self.tag == 0
+            && self.placed_foreign.is_empty()
+    }
+
+    /// `@FR-H-RootExtent` — record `rec` was placed here from outside the root collection.
+    pub(crate) fn note_placed_foreign(&mut self, rec: u32) {
+        self.placed_foreign.push(rec);
+    }
+
+    /// `@FR-H-RootExtent` — does every live record of this store belong to its root
+    /// collection, as far as placement can tell?  A clear may reset the store only then.
+    pub(crate) fn root_owns_extent(&self) -> bool {
+        self.placed_foreign.is_empty()
     }
 
     /// Does this store hold exactly one live record, its root at record 1 — the shape a
@@ -3161,6 +3211,7 @@ impl Store {
         std::mem::swap(&mut a.lazy, &mut b.lazy);
         std::mem::swap(&mut a.dead_words, &mut b.dead_words);
         std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
+        std::mem::swap(&mut a.placed_foreign, &mut b.placed_foreign);
         // `@FR-H-Park` — the parked blocks are positions in the memory that moves, so the
         // lists and the set move with it (loft#2031: left behind, a store's set named live
         // records of the content it received, a delete parked one of them twice, and the
@@ -3286,6 +3337,7 @@ impl Store {
             park: false,
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,
@@ -3356,6 +3408,7 @@ impl Store {
             park: self.park,
             move_on_grow: self.move_on_grow,
             parked: self.parked.clone(),
+            placed_foreign: self.placed_foreign.clone(),
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,
@@ -3407,6 +3460,7 @@ impl Store {
             park: false,
             move_on_grow: false,
             parked: Parked::default(),
+            placed_foreign: Vec::new(),
             claimed_end: 0,
             defined: self.defined,
             generation: self.generation,
@@ -4475,7 +4529,7 @@ impl Store {
         // interpreter stack and 32 of them arrive here, where `T` also names the width;
         // the typed accessor above them carries only 74.5 % of the bytes.  Off, this is
         // the length load and the not-taken branch.
-        if !self.init_shadow.is_empty() {
+        if self.shadow_armed() {
             self.shadow_write(
                 at as usize,
                 std::mem::size_of::<T>(),
@@ -4646,7 +4700,7 @@ impl Store {
             return discard_sink(len);
         }
         let at = self.offset_in_bounds(rec, fld, len);
-        if !self.init_shadow.is_empty() {
+        if self.shadow_armed() {
             self.shadow_write(at as usize, len, crate::stack_verify::OPAQUE);
         }
         unsafe { self.ptr.offset(at) }
@@ -4675,7 +4729,7 @@ impl Store {
         let at = self.offset_in_bounds(rec, 8, size);
         // @PLN154 — a `&mut [u8]` handed out is a write of the whole span as far as the
         // shadow can tell; the caller need not come back through a typed accessor.
-        if !self.init_shadow.is_empty() {
+        if self.shadow_armed() {
             self.shadow_write(at as usize, size, crate::stack_verify::OPAQUE);
         }
         unsafe {
@@ -4916,7 +4970,7 @@ impl Store {
         // within its claimed allocation.
         unsafe { std::ptr::write_bytes(ptr, 0, len as usize) }
         // @PLN154 — `addr_mut::<u8>` above tagged one byte; the write covers `len`.
-        if !self.init_shadow.is_empty() {
+        if self.shadow_armed() {
             let at = (rec as usize) * 8 + pos as usize;
             self.shadow_write(at, len as usize, crate::stack_verify::OPAQUE);
         }
@@ -4976,7 +5030,7 @@ impl Store {
         }
         // @PLN154 — a raw byte move carries its tags, so a span the source never wrote
         // arrives unwritten and is caught at the read rather than at this copy.
-        if !self.init_shadow.is_empty() {
+        if self.shadow_armed() {
             self.shadow_move(
                 (from_rec as isize * 8 + from_pos) as usize,
                 (to_rec as isize * 8 + to_pos) as usize,

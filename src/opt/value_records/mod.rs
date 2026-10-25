@@ -6,6 +6,8 @@
 //! record argument, travel BY VALUE (a tuple of the fields) instead of through a store
 //! record.  The IR pass `value_record` and the native generator both read the answer.
 
+use crate::opt::value_records::sites::{forward_site, forward_tuple_on};
+
 use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
 use crate::opt::attrs::ret_buffer_attr;
@@ -51,6 +53,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
         return out;
     }
     let trace = std::env::var("LOFT_TRACE_VALUEREC").is_ok();
+    let mut clock = Clock::new(std::env::var_os("LOFT_TIMING").is_some());
     // Candidates by RESULT TYPE.
     let mut cand: HashMap<u32, u16> = HashMap::new();
     for d_nr in 0..data.definitions.len() as u32 {
@@ -123,6 +126,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
     // Which of them ARE received as tuples is decided in the fixpoint below beside the
     // value locals, because a parameter handed on is served only by another tuple parameter.
     let mut params = tuple_param_candidates(data, stores, &mut out.types, &mut out.index);
+    clock.add("candidates");
     if cand.is_empty() && params.is_empty() {
         return out;
     }
@@ -209,6 +213,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             false
         });
     }
+    clock.add("fnref_scan");
     arms.extend(targets.iter().filter(|t| !grouped.contains(t)));
     cand.retain(|d_nr, _| {
         let keep = !arms.contains(d_nr);
@@ -252,8 +257,10 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
     // @PLN164 C5 — the callee half of `(B-Disturb)`, built ONCE over the whole program as
     // the scope pass builds it: a site asks whether a call between its bind and its last
     // read can grow the container its leaf views, and that is a fact about the callee.
+    clock.add("fnref_groups");
     let disturbed =
         view_field_on().then(|| crate::scopes::disturbed_params_map(data, Some(stores)));
+    clock.add("disturbed_map");
 
     // The view-leaf OFFSETS are fixed by the record's type, so they are read once: every
     // reader of a value local needs them to account a field read the tuple serves.
@@ -271,6 +278,55 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             )
         })
         .collect();
+    // The functions each body calls directly, read once.  A round's site gate declines only
+    // an ADMITTED callee a caller calls ([`site_walk`], [`view_sites_declined`]), an arm of
+    // one of the caller's own listed fn-ref sites ([`site_walk_callref`]), or a tuple
+    // parameter of the caller itself — so a caller that calls no admitted function, is
+    // neither admitted nor a parameter holder, and owns no listed site has nothing to
+    // decline, and the round skips it.  Most of a program is such callers, and walking
+    // them every round was nearly the whole cost of this analysis.
+    let callees: Vec<HashSet<u32>> = (0..data.definitions.len() as u32)
+        .map(|d| {
+            let mut called = HashSet::new();
+            data.def(d).code().any_node(&mut |n| {
+                if let Value::Call(c, _) = n {
+                    called.insert(*c);
+                }
+                false
+            });
+            called
+        })
+        .collect();
+    let site_owners: HashSet<u32> = sites.keys().map(|(caller, _)| *caller).collect();
+    // A caller's value locals read the verdicts of only the functions its body names — its
+    // direct callees, the arms of its own listed fn-ref sites — and its own, so a round whose
+    // verdicts for those are the ones the last round saw finds the same locals.  They are
+    // remembered per caller with that slice of the verdicts as the key: a large body costs
+    // its walk once instead of once a round (dryopea's `script_command` was 0.8 s a round).
+    let mut site_arms: HashMap<u32, Vec<u32>> = HashMap::new();
+    for ((caller, _), (arms, _)) in &sites {
+        site_arms
+            .entry(*caller)
+            .or_default()
+            .extend(arms.iter().copied());
+    }
+    let reads: Vec<Vec<u32>> = (0..data.definitions.len() as u32)
+        .map(|d| {
+            let mut r: Vec<u32> = callees[d as usize].iter().copied().collect();
+            r.push(d);
+            if let Some(arms) = site_arms.get(&d) {
+                r.extend(arms.iter().copied());
+            }
+            r.sort_unstable();
+            r.dedup();
+            r
+        })
+        .collect();
+    let mut locals_memo: HashMap<u32, (LocalsKey, HashMap<u16, u16>)> = HashMap::new();
+    // `LOFT_NO_VR_SKIP=1` walks every caller every round and recomputes its locals, as
+    // before: the control half of the A/B that shows neither the skip nor the memo changes
+    // a decision.
+    let skip = std::env::var_os("LOFT_NO_VR_SKIP").is_none();
     // Admission is a FIXPOINT.  A body's tail may FORWARD another candidate's result and a
     // site may bind a BRANCH of candidate calls, so declining one function can decline
     // another; every round only removes, so it ends.  The body gate and the site gate read
@@ -283,6 +339,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             .count()
     };
     loop {
+        clock.rounds += 1;
         let before = (
             cand.len(),
             params.values().map(HashMap::len).sum::<usize>(),
@@ -308,6 +365,7 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
                 }
             }
         }
+        clock.add("presence");
         let admitted: HashMap<u32, u16> = cand.clone();
         let sp = surely_present_fns(data, &admitted, &params, &sites);
         cand.retain(|d_nr, record| {
@@ -355,8 +413,10 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             }
             why.is_none()
         });
+        clock.add("body_gate");
         let admitted: HashMap<u32, u16> = cand.clone();
         let sp = surely_present_fns(data, &admitted, &params, &sites);
+        clock.add("surely_present");
         let mut declined: HashSet<u32> = HashSet::new();
         // `(R-ValueLocal)` — a parameter whose uses the tuple cannot serve leaves this
         // round; a site that handed a value local to it is then unserved next round.
@@ -366,7 +426,31 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             if matches!(cdef.code(), Value::Null) {
                 continue;
             }
-            let locals = value_locals_in(data, caller, &admitted, &params, &view_offs, &sites, &sp);
+            if skip
+                && !admitted.contains_key(&caller)
+                && !params.contains_key(&caller)
+                && !site_owners.contains(&caller)
+                && !callees[caller as usize]
+                    .iter()
+                    .any(|c| admitted.contains_key(c))
+            {
+                continue;
+            }
+            let caller_clock = clock.last.map(|_| std::time::Instant::now());
+            clock.walked += 1;
+            let key = locals_key(&reads[caller as usize], &admitted, &params, &sp);
+            let locals = match locals_memo.get(&caller) {
+                Some((seen, locals)) if skip && *seen == key => locals.clone(),
+                _ => {
+                    let locals =
+                        value_locals_in(data, caller, &admitted, &params, &view_offs, &sites, &sp);
+                    locals_memo.insert(caller, (key, locals.clone()));
+                    locals
+                }
+            };
+            if let Some(t) = caller_clock {
+                clock.locals_ms += t.elapsed().as_secs_f64() * 1000.0;
+            }
             let own = admitted.contains_key(&caller).then_some(caller);
             let c = ShapeCtx {
                 data,
@@ -415,7 +499,11 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
                     disturbed.as_ref(),
                 ));
             }
+            if let Some(t) = caller_clock {
+                clock.slowest(t.elapsed().as_secs_f64() * 1000.0, caller);
+            }
         }
+        clock.add("site_gate");
         if trace {
             for d in &declined {
                 crate::loft_eprintln!(
@@ -459,7 +547,10 @@ pub fn value_records(data: &Data, stores: &Stores, library: bool) -> ValueRecord
             }
         }
     }
+    clock.add("fixpoint_tail");
     out.sp = surely_present_fns(data, &cand, &params, &sites);
+    clock.add("final_presence");
+    clock.report(data);
     out.fns = cand;
     out.params = params;
     out.fnref_sites = sites;
@@ -1522,4 +1613,243 @@ pub(crate) fn local_uses_ok(
         crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
     }
     mentions == accounted
+}
+
+/// The verdicts a caller's value locals can read: per function its body names (and the
+/// caller itself), whether it is admitted and with which key, its tuple parameters, and
+/// whether its tuple is surely present.
+type LocalsKey = Vec<(u32, Option<u16>, Vec<(usize, u16)>, bool)>;
+
+fn locals_key(
+    reads: &[u32],
+    admitted: &HashMap<u32, u16>,
+    params: &TupleParams,
+    sp: &HashSet<u32>,
+) -> LocalsKey {
+    reads
+        .iter()
+        .map(|d| {
+            let mut ps: Vec<(usize, u16)> = params
+                .get(d)
+                .map(|ps| ps.iter().map(|(i, k)| (*i, *k)).collect())
+                .unwrap_or_default();
+            ps.sort_unstable();
+            (*d, admitted.get(d).copied(), ps, sp.contains(d))
+        })
+        .collect()
+}
+
+/// `LOFT_TIMING` — what each step of [`value_records`] cost, summed over the fixpoint's
+/// rounds.  Inert unless `on`.
+struct Clock {
+    last: Option<std::time::Instant>,
+    steps: Vec<(&'static str, f64)>,
+    rounds: u32,
+    /// Callers the site gate walked, over all rounds, and the part of that spent in
+    /// `value_locals_in`.
+    walked: u32,
+    locals_ms: f64,
+    /// The five callers that cost the site gate most in one round.
+    slow: Vec<(f64, u32)>,
+}
+
+impl Clock {
+    fn new(on: bool) -> Self {
+        Clock {
+            last: on.then(std::time::Instant::now),
+            steps: Vec::new(),
+            rounds: 0,
+            walked: 0,
+            locals_ms: 0.0,
+            slow: Vec::new(),
+        }
+    }
+
+    fn slowest(&mut self, ms: f64, caller: u32) {
+        self.slow.push((ms, caller));
+        self.slow.sort_by(|a, b| b.0.total_cmp(&a.0));
+        self.slow.truncate(5);
+    }
+
+    fn add(&mut self, step: &'static str) {
+        if let Some(last) = self.last {
+            let now = std::time::Instant::now();
+            let ms = now.duration_since(last).as_secs_f64() * 1000.0;
+            match self.steps.iter_mut().find(|(s, _)| *s == step) {
+                Some(entry) => entry.1 += ms,
+                None => self.steps.push((step, ms)),
+            }
+            self.last = Some(now);
+        }
+    }
+
+    fn report(&self, data: &Data) {
+        if self.last.is_some() {
+            let mut line = format!(
+                "LOFT_TIMING value_records defs={} rounds={} walked={} locals={:.2}ms",
+                data.definitions.len(),
+                self.rounds,
+                self.walked,
+                self.locals_ms
+            );
+            for (ms, d) in &self.slow {
+                let _ = std::fmt::Write::write_fmt(
+                    &mut line,
+                    format_args!(" slow:{}={ms:.1}ms", data.def(*d).name()),
+                );
+            }
+            for (step, ms) in &self.steps {
+                let _ = std::fmt::Write::write_fmt(&mut line, format_args!(" {step}={ms:.2}ms"));
+            }
+            eprintln!("{line}");
+        }
+    }
+}
+
+/// Every [`forward_site`] of `def_nr`, keyed by the address of the call's ARGUMENT LIST — the
+/// slice the emitter is handed for that call — mapped to the buffer it writes.
+#[must_use]
+pub fn forward_sites(
+    data: &Data,
+    def_nr: u32,
+    admitted: &HashMap<u32, u16>,
+    locals: &HashMap<u16, u16>,
+) -> HashMap<usize, u16> {
+    let mut out = HashMap::new();
+    if !forward_tuple_on() {
+        return out;
+    }
+    data.def(def_nr).code().any_node(&mut |n| {
+        if let Value::Set(target, rhs) = n
+            && forward_site(data, def_nr, *target, rhs, admitted, locals).is_some()
+            && let Value::Call(_, args) = rhs.unspan()
+        {
+            out.insert(args.as_ptr() as usize, *target);
+        }
+        false
+    });
+    out
+}
+
+/// The DEAD BUFFERS of `def_nr` (@PLN157 § V-ah, `@FR-R-ValueRecord`): a local minted by
+/// `OpDatabase` whose every mention the value form drops — the buffer argument of an
+/// admitted callee (dropped from the call), the subject of a free or of the pool's
+/// release-on-reuse (`OpClear`), or an operand of a store-identity test whose other operand
+/// is a value local (answered `true` without a read).  Such a local was a § V-af join buffer for a branch that now binds a tuple: the
+/// store it minted per activation served nothing, so the mint and the frees are emitted
+/// as nothing.  A buffer with any other mention — a witness read against a RECORD local,
+/// an argument to a callee that keeps its buffer — is minted as before.
+#[must_use]
+pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    if vr.fns.is_empty() {
+        return out;
+    }
+    let locals = value_locals_in(
+        data,
+        def_nr,
+        &vr.fns,
+        &vr.params,
+        &vr.view_offs,
+        &vr.fnref_sites,
+        &vr.sp,
+    );
+    // A forward's buffer is WRITTEN by the site (`forward_site`), so its argument is a use.
+    let forwards = forward_sites(data, def_nr, &vr.fns, &locals);
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let mut minted: HashSet<u16> = HashSet::new();
+    let mut mentions: HashMap<u16, u32> = HashMap::new();
+    let mut dropped: HashMap<u16, u32> = HashMap::new();
+    let mut assigned: HashSet<u16> = HashSet::new();
+    def.code().any_node(&mut |n| {
+        match n {
+            Value::Var(w) => *mentions.entry(*w).or_insert(0) += 1,
+            // A buffer BOUND to a value holds whatever that value is — a call result is a
+            // store (`__lift_1 = mk(…)` of a record that owns a collection), and its free is
+            // its owner's release, not an empty one.
+            Value::Set(w, rhs) if !matches!(rhs.unspan(), Value::Null) => {
+                assigned.insert(*w);
+            }
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let arg_var = |i: usize| match args.get(i).map(Value::unspan) {
+                    Some(Value::Var(w)) => Some(*w),
+                    _ => None,
+                };
+                let callee = data.def(*d);
+                match callee.name() {
+                    "OpDatabase" | "OpDatabaseNP" => {
+                        if let Some(w) = arg_var(0) {
+                            minted.insert(w);
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    // The pool's release of a reused buffer (loft#1549): a buffer never
+                    // minted holds nothing to release (`OpClearEmitter`).
+                    "OpClear" => {
+                        if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    "OpFreeRef" | "OpFreeRefIfDistinct" => {
+                        if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                        // A free guarded FOR a value local is emitted as nothing
+                        // (`OpFreeRefIfDistinctEmitter`), and its witness goes with it.
+                        if callee.name() == "OpFreeRefIfDistinct"
+                            && arg_var(0).is_some_and(|o| locals.contains_key(&o))
+                            && let Some(w) = arg_var(1)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    // `@FR-O-LazyBuffer` — the null test in front of a lazy buffer's mint
+                    // is the mint's own guard, and goes with it.
+                    "OpRefIsNull" => {
+                        if let Some(w) = arg_var(0)
+                            && vars.is_lazy_buffer(w)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    "OpDistinctStore" => {
+                        for (i, other) in [(0, 1), (1, 0)] {
+                            if let Some(w) = arg_var(i)
+                                && arg_var(other).is_some_and(|o| locals.contains_key(&o))
+                            {
+                                *dropped.entry(w).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                    _ if vr.fns.contains_key(d)
+                        && !forwards.contains_key(&(args.as_ptr() as usize)) =>
+                    {
+                        if let Some(idx) = ret_buffer_attr(callee)
+                            && let Some(w) = arg_var(idx)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    // A buffer never minted in this frame — handed to admitted callees as their buffer and
+    // freed, nothing else — holds nothing either: the callees answer tuples and mint into
+    // no buffer, so it stays the null it was declared as, and its frees are nothing.
+    for w in minted.iter().copied().chain(dropped.keys().copied()) {
+        if !vars.is_argument(w)
+            && !locals.contains_key(&w)
+            && !assigned.contains(&w)
+            && crate::data::is_dbref(vars.tp(w).base())
+            && mentions.get(&w).copied().unwrap_or(0) == dropped.get(&w).copied().unwrap_or(0)
+        {
+            out.insert(w);
+        }
+    }
+    out
 }

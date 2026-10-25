@@ -1,0 +1,16 @@
+fn lex(src: text) -> vector<text> {
+  toks: vector<text> = [];
+  i = 0;
+  n = len(src);
+  while i < n {
+    c = src[i];
+    if c == ' ' { i += 1; continue; }
+    if c >= 'a' && c <= 'z' {
+      start = i;
+      while i < n && src[i] >= 'a' && src[i] <= 'z' { i += 1; }
+      toks += [src[start..i]];
+    } else { toks += [src[i..i+1]]; i += 1; }
+  }
+  toks
+}
+fn main() { t = lex("fn main ( )"); assert(len(t) == 4 && t[0] == "fn", "{t}"); println("ok"); }

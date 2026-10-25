@@ -3467,12 +3467,13 @@ pub const ANY_FIELD: u32 = u32::MAX;
 ///
 /// The offset comes from the LAST `OpGetField` before the base variable — `w.a[0]` is
 /// `OpGetVector(OpGetField(w, 16, …), 88, idx)`, so the place is `(w, 16)` — and a chain with
-/// no field read, `v[0]` on a local, is `(v, ANY_FIELD)`.  A deeper chain (`w.inner.a[0]`)
-/// answers its OUTERMOST field, which is the one a disturbance of `w` can name; the inner
-/// steps are a lower bound, as everything in this walk is.
+/// no field read, `v[0]` on a local, is `(v, ANY_FIELD)`.  A RUN of field reads next to each
+/// other answers the SUM of their offsets: `w.inner.a[0]` is `(w, off_inner + off_a)`, the
+/// slot `a` occupies inside `w`'s record, because a struct member is laid out inside its owner.
+/// What lies beyond an element read is in another record and is not added in.
 #[must_use]
 pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
-    projection_place_of(data, value, false).map(|(c, f, _)| (c, f))
+    projection_place_of(data, value, false).map(|(c, f, _, _)| (c, f))
 }
 
 /// [`projection_container_place`], counting the two NULLABLE element reads as the projections
@@ -3497,7 +3498,7 @@ pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u3
 /// statement about today's readers, not about the language.
 #[must_use]
 pub fn view_source_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
-    projection_place_of(data, value, true).map(|(c, f, _)| (c, f))
+    projection_place_of(data, value, true).map(|(c, f, _, _)| (c, f))
 }
 
 /// [`view_source_place`] with the fact that tells a reference **TO** a container from one
@@ -3515,32 +3516,108 @@ pub fn view_source_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
 /// settings admit element reads and field reads alike.  The two axes cross rather than nest.
 #[must_use]
 pub fn view_source_place_indexed(data: &Data, value: &Value) -> Option<((u16, u32), bool)> {
-    projection_place_of(data, value, true).map(|(c, f, indexed)| ((c, f), indexed))
+    projection_place_of(data, value, true).map(|(c, f, elems, _)| ((c, f), elems > 0))
+}
+
+/// [`view_source_place`] with the number of ELEMENT reads the chain crosses — the DEPTH of the
+/// value below its root variable.  `w.a` is 0, `w.a[0]` 1, `vv[0][0]` 2.
+///
+/// `(B-Disturb)` ends the places INSIDE the container it disturbs, and a place says which
+/// container only up to its root variable and the field run beside it: `vv[0]` and `vv[1]`
+/// are both `(vv, ANY_FIELD)`.  The depth is what tells a view a growth of `vv[0]` moves
+/// (`vv[0][0]`, depth 2 against the container's 1) from one it does not (`a = vv[0]`, which
+/// names the element SLOT and re-reads the repointed handle — `(B-View-Depth)`'s cell A).
+#[must_use]
+pub fn view_source_place_depth(data: &Data, value: &Value) -> Option<((u16, u32), u8)> {
+    projection_place_of(data, value, true).map(|(c, f, elems, _)| ((c, f), elems))
+}
+
+/// The LITERAL index of the element read nearest the root — `vv[1][j]` answers `1` — with the
+/// field run between the root and that read (`w.rows[1]` reads its element out of `w.rows`),
+/// or `None` when that read's index is computed, is a keyed lookup, or there is no element
+/// read.  Two indices compare only when their runs agree: they then index one container.
+///
+/// What it is for is the one proof that two element places DIFFER: `vv[0]` and `vv[1]` are
+/// both `(vv, ANY_FIELD)` at depth 1, so a growth of `vv[0]` reaches `e = vv[1][0]` by every
+/// other test.  Both literal and different spares the view, the filter loft#1460 applies to
+/// keys; `None` on either side means *could be the same element* and spares nothing.
+#[must_use]
+pub fn root_element_index(data: &Data, value: &Value) -> Option<(u32, i32)> {
+    projection_place_of(data, value, true).and_then(|(_, _, _, idx)| idx)
+}
+
+/// The root variable and the offset of the field read NEAREST it — `g.h.c` is `(g, off_h)`,
+/// where [`projection_container_place`] answers the slot `(g, off_h + off_c)`.
+///
+/// For a reader that matches the place against the `OpGetField` applied directly to the root
+/// variable, which carries exactly that offset: `Parser::reads_place` asks whether a literal's
+/// initialiser reads the field of the root its destination lies in.  Compared against the summed
+/// slot, every read of `g.h.…` looked disjoint from a destination `g.h.c` and the literal stopped
+/// staging what it reads (loft#2161).
+#[must_use]
+pub fn projection_root_field_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
+    projection_walk(data, value, false).map(|w| (w.0, w.4))
+}
+
+/// [`projection_container_place`] with the element-read depth [`view_source_place_depth`]
+/// describes — for naming the CONTAINER an op disturbs, which is not a nullable read.
+#[must_use]
+pub fn projection_place_depth(data: &Data, value: &Value) -> Option<((u16, u32), u8)> {
+    projection_place_of(data, value, false).map(|(c, f, elems, _)| ((c, f), elems))
 }
 
 /// The one walk behind all three readers, so *what is a projection* has a single answer.
 ///
 /// `nullable_reads` says whether the two null-answering element reads count as projections.
-/// The third element of the answer is set where the chain crosses an ELEMENT read rather than
-/// a field read — carried in the return rather than through an out-parameter, because every
-/// caller wants it or discards it explicitly, and two spellings of one walk is how this
+/// The third element of the answer counts the ELEMENT reads the chain crosses (0 for a chain
+/// of field reads only), and the fourth is [`root_element_index`]'s literal — carried in the return rather than through an out-parameter, because
+/// every caller wants it or discards it explicitly, and two spellings of one walk is how this
 /// function came to exist twice (loft#1543).
 fn projection_place_of(
     data: &Data,
     value: &Value,
     nullable_reads: bool,
-) -> Option<(u16, u32, bool)> {
+) -> Option<(u16, u32, u8, Option<(u32, i32)>)> {
+    projection_walk(data, value, nullable_reads).map(|w| (w.0, w.1, w.2, w.3))
+}
+
+/// [`projection_place_of`] with a fifth answer: the offset of the field read NEAREST the root
+/// alone, not summed with the run it sits in (`g.h.c` answers `off_h`).
+fn projection_walk(
+    data: &Data,
+    value: &Value,
+    nullable_reads: bool,
+) -> Option<(u16, u32, u8, Option<(u32, i32)>, u32)> {
     let mut cur = value;
     let mut field = ANY_FIELD;
-    // Did the chain read an ELEMENT out of the place, or does it name the place itself?  Set
-    // by the element-reading ops below and never cleared: one element read anywhere in the
-    // chain means the value lives at a position the container can move.
-    let mut indexed = false;
+    let mut nearest = ANY_FIELD;
+    // How many ELEMENT reads the chain crosses.  Counted by the element-reading ops below and
+    // never reset: one element read anywhere in the chain means the value lives at a position
+    // the container can move, and each further one is a container inside an element.
+    let mut elems: u8 = 0;
+    // Whether the step walked last was a FIELD read.  Consecutive field reads stay inside ONE
+    // record — a struct member is laid out inside its owner — so their offsets ADD, exactly as
+    // the runtime's `OpGetField` adds them to the `DbRef`'s position: `o.inner.a` is the slot at
+    // `off_inner + off_a` of `o`'s record, a different slot from `o.inner.b`.  Keeping only the
+    // field nearest the root gave both `(o, off_inner)`, so disturbing one sibling ended the
+    // places inside the other (loft#2161).  An element read starts a new record, and a field
+    // run on the far side of it is not added to this one.
+    let mut in_run = false;
+    // The literal index of the element read walked LAST, which is the one nearest the root,
+    // and the field run walked since it — which, at the root, is the run that read indexes.
+    let mut root_index: Option<i32> = None;
+    let mut run_since_elem = ANY_FIELD;
     loop {
         if let Value::If(_, t, e) = cur.unspan()
             && let Some(v) = variant_check_subject(data, t, e)
         {
-            return Some((v, field, indexed));
+            return Some((
+                v,
+                field,
+                elems,
+                root_index.map(|i| (run_since_elem, i)),
+                nearest,
+            ));
         }
         let Value::Call(d, args) = cur.unspan() else {
             return None;
@@ -3559,13 +3636,43 @@ fn projection_place_of(
         // treated as naming the container whole and spared a disturbance that reaches it.
         if name == "OpGetField" {
             if let Some(Value::Int(off)) = args.get(1).map(Value::unspan) {
-                field = *off as u32;
+                let off = *off as u32;
+                nearest = off;
+                field = if in_run && field != ANY_FIELD {
+                    field + off
+                } else {
+                    off
+                };
             }
+            if let Some(Value::Int(off)) = args.get(1).map(Value::unspan) {
+                run_since_elem = if run_since_elem == ANY_FIELD {
+                    *off as u32
+                } else {
+                    run_since_elem + *off as u32
+                };
+            }
+            in_run = true;
         } else {
-            indexed = true;
+            elems = elems.saturating_add(1);
+            in_run = false;
+            // `v[i]` in its four spellings carries the index LAST; a keyed lookup has keys.
+            root_index = match (name, args.last().map(Value::unspan)) {
+                ("OpGetRecord", _) => None,
+                (_, Some(Value::Int(i))) => Some(*i),
+                _ => None,
+            };
+            run_since_elem = ANY_FIELD;
         }
         match args.first().map(Value::unspan) {
-            Some(Value::Var(c)) => return Some((*c, field, indexed)),
+            Some(Value::Var(c)) => {
+                return Some((
+                    *c,
+                    field,
+                    elems,
+                    root_index.map(|i| (run_since_elem, i)),
+                    nearest,
+                ));
+            }
             Some(inner) => cur = inner,
             None => return None,
         }

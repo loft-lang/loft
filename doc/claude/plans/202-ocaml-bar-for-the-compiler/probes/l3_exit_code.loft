@@ -1,0 +1,1 @@
+fn main() { x: integer? = null; v = x ?? exit(2); println("unreachable {v}"); }

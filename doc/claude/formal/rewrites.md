@@ -2170,6 +2170,47 @@ c1–c6, pins `tests/guarded_chain.rs`.  Sites: `Output::chain_fast_path`,
 `Output::in_plain_chain`, `hoist::nested_counted_loops`, `hoist::written_vars`, the chain
 arm in `ops::int_arith`, the loop hook in `emit.rs`.
 
+### A `for` statement runs fast under a fault flag, and as written when it faults
+
+```
+  (R-FaultFlag)  a `for` statement whose every node is a literal, a local, a `Set` of a
+                 scalar local nothing takes the address of, a block, an `if`, a loop, a
+                 `break` / `continue` that stays inside it, or an OPERATOR whose `#rust`
+                 template touches no state once its recoverable raise is taken out, and
+                 which holds a DISCHARGE ON A RECURRENCE — one whose tested value
+                 depends, through the statement's assignments, on a local its result
+                 is written into — runs a fast copy first.  In it a
+                 `??` / `?` discharge (`if not-null(n) { n } else { d }`) sets a flag where
+                 `n` is null and answers `n`; a template's `s.raise_recoverable(k)` sets the
+                 flag instead of raising.  Each fault form answers exactly the exact form's
+                 value while the flag stays clear.  An integer operator keeps its checked
+                 form: its null tests are branches the processor predicts, off the value
+                 path, and a flag computed per operator measured slower (`02_sum_loop`
+                 1.81× → 2.24×).  A store READ (a getter or length, by name) and a call to a
+                 loft function whose own body passes the walk without a raise are admitted
+                 in a statement that writes no store.
+                 After the copy a set flag restores every written local declared before the
+                 statement and runs the statement as written, so a fault is answered and
+                 reported once, by the exact statement.  The copy is skipped under
+                 `--dev-soft-halt` (an overflow REPORTS there) and at a site that has rerun
+                 8 times.  Inside the copy a constant range of 1 to 64 rounds over a body
+                 free of loops, `break`, `continue` and `return`, of at most 48 nodes, is
+                 unrolled, the counters left where the loop leaves them.
+```
+
+**In words.** A discharge or a checked operator compiles to a select or a branch on a loop's
+critical path, and a select in a constant loop's body keeps LLVM from unrolling it, so one
+call's divisions cannot overlap the next call's.  The fast copy moves every such test off the
+path into one flag, read once after the statement.  Its only effect is on the statement's
+scalar locals, which a rerun restores, so a set flag leaves no trace: this is @C120's rule
+kept (every observable value as the interpreter answers it, faults included), with the fact
+established after a speculative run instead of before the arithmetic.  `06_newton_sqrt`:
+1.67× → 1.14× of Rust.  Switch `LOFT_NO_FAULT_FLAG=1`; `LOFT_TRACE_FAULT_FLAG=1` names each
+admission and each decline with its reason.  Sites: `generation/fault_flag.rs`
+(`fault_flag_admits`, `fault_flag_statement`, `fault_flag_unrolled`), the fault forms in
+`emit.rs` (the discharge), `calls.rs` (the raise), the runtime helpers `ops::fault_flag_*`.  Guard
+`loft-suite/rules/rewrites/R-FaultFlag/a-for-statement-run-under-a-fault-flag-answers-as-written.loft`.
+
 ### A dying temporary's elements move into the append that consumes them
 
 ```
@@ -3454,6 +3495,33 @@ cells `loft-suite/attic/scripts/a-reduction-loop-is-one-kernel-call.loft`.
                  REFILLED, so each reuse releases what the record held first
                  (H-ClearRelease, its record clause).
 ```
+
+```
+  (R-Reuse), the reset clause: a reused buffer's release — the pool statement's
+                 `OpClear(b, tp)` before every call after the first, for a type that
+                 owns heap — RESETS b's store instead of walking its tree: the store is
+                 re-initialised and its root claimed, zeroed, tagged and prefilled at
+                 1@8 as `OpDatabase` mints it, and the records a stored reference named
+                 are entombed, so such a reference reads null.  The walk frees exactly
+                 the tree reachable from the root and keeps the root; the reset keeps
+                 the same root and frees the store's every other block at once, which
+                 is the same set because the pool's own conditions make the store the
+                 previous result's alone: minted per activation, in a store of its own,
+                 named by nothing but its pool statement, its one call and its
+                 releases.  Spelled as the release with `POOL_RESET` on its type, so
+                 every pass that reads an `OpClear` reads it as before; declined at run
+                 time (the walk runs) for a record that is not its store's root, a
+                 store pinned, locked, file-backed, serving a foreign view, or held by a
+                 generator frame.
+```
+
+**In words.**  The walk paid one free per block and the next call one claim per block,
+every call, for a store that held nothing else: `panel_build`'s per-frame panel tree is
+−18.8 % reset rather than walked (hand-priced, hash unchanged).  A record that owns no
+heap keeps the walk's own fast path, which a reset would not beat.  Both backends run it:
+the bit is set on the IR (`scopes::reuse_record_buffers`) and acted on in
+`Stores::reset_pool_root`, reached from `remove_claims`.  Switch
+`LOFT_NO_POOL_RESET=1`.
 
 **In words.** @PLN157 § V and § V-af.  `scopes::reuse_record_buffers` inserts the
 `OpDatabase` and `scopes`'s pairing supplies the witness (`Scopes::minted_pairs` names the

@@ -1316,7 +1316,8 @@ fn lazy_mint_path(
     let is_call_on_buf = |node: &Value, op: u32, want_tp: bool| -> bool {
         matches!(node.unspan(), Value::Call(called, args) if *called == op
             && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == buf)
-            && (!want_tp || matches!(args.get(1).map(Value::unspan), Some(Value::Int(t)) if u16::try_from(*t) == Ok(tp))))
+            && (!want_tp || matches!(args.get(1).map(Value::unspan), Some(Value::Int(t))
+                if u16::try_from(*t & i32::from(crate::keys::POOL_TP_MASK)) == Ok(tp))))
     };
     let unwrap = |node: &Value| -> (Value, Option<usize>) {
         match node.unspan() {

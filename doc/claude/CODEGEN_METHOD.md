@@ -446,6 +446,8 @@ ownership — each is a type fact that should drive codegen mechanically.
 | a step that needs the interpreter AND a compiled target (adopt or build an artifact) | the driver, which composes the two halves (`native_artifact`) |
 
 The interpreter and the compiled targets are siblings: neither names the other.
+What emitted code names in the runtime, and what of it lies outside the runtime set, is
+[RUNTIME_SURFACE.md](RUNTIME_SURFACE.md) (`make runtime-surface`).
 Code outside the interpreter reaches it through `src/interp.rs` alone
 ([INTERMEDIATE.md § The interpreter's contract](INTERMEDIATE.md#the-interpreters-contract)).
 `python3 scripts/crate_layers.py check` holds the layering, and its budget of references that

@@ -65,9 +65,25 @@ every test holds, then copies with a slice zip that LLVM vectorises.
 
 Lever: the bounds are monotone in `px`, so the range where they hold is computed once per row,
 and inside it the reads and writes go unchecked.  This is an index-set split, and
-`ranged-call` already looked at this loop and declined: "no call gains".  Widening that clause to
-an inlined callee's guard is the lever, ≈ −45 % → ≈ 2.0×.  It is the same shape as `canvas` and
-`fill_polygon`, so it would move those too.
+`ranged-call` already looked at this loop and declined: "no call gains".  It is the same shape as
+`canvas` and `fill_polygon`, so it would move those too.
+
+**Priced 2026-10-24** (`hand_price.sh` on the production runtime, one pinned core, hash
+`becf0b85` unchanged in every run; the timed loop calls `n_draw_quads__inv`, not
+`n_draw_quads`, so a price on the plain function measures one call in 401):
+
+| form, in `n_draw_quads__inv`'s row loop | µs/op | vs base |
+|---|---:|---:|
+| base | 650 | — |
+| split, accessors without their bounds test, ONE loop with a per-pixel interval test (v4) | 840 | +29 % |
+| split into three loops, the middle calling guard-true accessors (v5) | 743 | +14 % |
+| split, middle loop reading and writing the elements directly: the row index computed once and stepped, both `len` limits folded into the interval's end (v3) | 266 | **−59 %** |
+
+So widening `ranged-call` to the callee's guard is NOT the lever: LLVM already folds the chained
+bounds tests well, and what remains per pixel is the checked `gy * w + gx`, the `len` test and
+`get_elem_at`'s own test, which block vectorising.  The −59 % is loop bounds-check elimination
+over an affine index into an invariant vector: the index strength-reduced to `row + px`, the
+bounds folded into the trip count, the access direct.  ≈ 1.5× if built; a rule of its own.
 
 ### hex_terrain `terrain_relief_pass` — 3.60×
 
@@ -152,6 +168,57 @@ Lever: unroll a constant-count loop with a small float body in the emitter, so L
 is not what decides (to price next), or move the test off the loop-carried chain.  The
 remaining 2.15× is the row loop (`get_vector`, store lookup and `push` per row, no two-lane divide
 across rows).
+
+**Priced 2026-10-24: unrolling is not the lever.**  All 50 rounds unrolled by hand, each keeping
+its NaN test: 230 ms against 230 ms, unchanged (hash `141af99`).  The test removed still gives
+140 ms (−39 %).  The test compiles branch-free (`divsd`, `cmpordsd`, `andpd`, `addsd`, `mulsd`
+per round against `divsd`, `addsd`, `mulsd`): two µops on a 50-round chain, and the measured
+1.65× is more than their latency, so the cost is the out-of-order window — fewer µops per item
+let the processor overlap the next items' independent chains.  The test is the program's:
+`x / guess` is `float?` and the source must discharge it into the non-null `float` (without
+the `?` loft warns and `newton_sqrt(0.0)` answers null), while the twin's natural Rust has no
+such step.  No general rewrite removes it; a proof that the quotient is never NaN is
+algorithm-specific (`x > 0` finite keeps `guess > 0` by induction).  **An owner question**:
+what a float division owes a non-null float.
+
+**What the rest is, and the general lever (priced 2026-10-24).**  The twin VECTORISES: its
+`chunk` is a pure map over a contiguous range, and LLVM runs two items' chains in one `divpd`
+(50 in the binary); the twin with vectorising switched off is 1.95× slower.  Loft's worker loop
+is one row at a time — an out-of-line `get_vector`, the field read through the store with a
+null branch, a checked `+ 1`, the conversion, `push` — and no row loop around a call
+vectorises.  Priced with a worker that maps its contiguous slice of rows at once (a probe entry
+point in the runtime, the field read directly, a null or overflowing `value` taken branch-free
+to NaN as `op_add_long` and `op_conv_float_from_long` do), one pinned core, hash `141af99`
+unchanged throughout:
+
+| form | µs | vs twin |
+|---|---:|---:|
+| twin (`rustc -O`) | 132 | 1.00× |
+| row map, NaN test removed | 145 | 1.10× |
+| **row map, the 50 rounds unrolled, every NaN test kept** | **235** | **1.78×** |
+| per-row worker, NaN test removed | 279 | 2.11× |
+| row map, the rounds as a loop, NaN test kept | 435 | 3.29× |
+| today | 460 | 3.49× |
+
+So the lever that keeps loft's semantics is the two together: a `par` (later a `for` map) over
+a vector of plain records hands each worker its row slice, the element's field reads become
+direct loads, and a constant-count inner loop with a small float body is unrolled by the emitter
+so LLVM can vectorise the row loop around it — −49 %, 3.49× → 1.78×.  General in mechanism; the
+SIMD part reaches only bodies that are pure arithmetic on the element's scalars, a body that
+touches the store keeps only the per-row saving.  The NaN test is then worth 1.78× → 1.10×, the
+owner question above.
+
+### hex_roof `roof_match` — 3.60× (new on 2026-10-24)
+
+`gap_report.py --fn match_op` (the bench's wrapper; `roof_match` itself is inlined into it):
+139.5 M instructions per call against the twin's 33.6 M.  `n_track_distance__inv` is 65 M and
+its caller `n_ridge_at` 56.6 M: every cell walks the track's segments, `seg_distance` reading
+`t.tk_p[i * 6 + j]` through `pv`.  Each read pays the checked `i * 6 + j` (`op_mul_long`,
+`op_add_long`, the overflow intrinsics, ≈ 25 M) and the element read's own bounds test
+(`elem_index` + `get_elem_at`, 17 M); `op_min_long_nullable` is another 9 M.  `ranged-call`
+declines every loop: "no call gains".  `tk_n` is a field nothing bounds, so no range proof
+reaches `i * 6`: the lever is a fact about the vector itself — `tk_p` holds `6 · tk_n`
+elements — which loft has no rule to state.  Not yet priced.
 
 ## In order
 

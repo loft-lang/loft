@@ -175,3 +175,25 @@ fn a_generator_that_is_never_iterated_stays_uncovered() {
         "a generator whose body never ran must be reported: {out}"
     );
 }
+
+/// loft#2164 — `@FR-R-PureReuse`'s shared-call clause gives a wrapper that shares a total
+/// call a variant (`check__given_n_names`), and the caller enters that variant instead of
+/// `check`.  The clause stands down where a run observes entries, but it runs in the scope
+/// pass, and the runner armed the flag only at bytecode time: `check` was reported as never
+/// entered and the variant counted as a fourth function.  Here `names` forwards JSON's `#pure`
+/// `keys()`, the shape `tests/scripts/a-call-two-wrappers-share-is-made-once.loft` shares.
+#[test]
+fn a_wrapper_the_shared_call_clause_would_vary_counts_as_entered() {
+    let out = coverage_of(
+        "shc",
+        "fn names(j: JsonValue) -> vector<text> { j.keys() }\n\
+         pub fn check(j: JsonValue) -> boolean { len(names(j)) == 2 }\n\
+         pub fn dispatch(j: JsonValue) -> integer {\n  if !check(j) { return -1; }\n  len(names(j))\n}\n",
+        "use shc::*;\nfn test_dispatch() { j = json_parse(\"{{\\\"b\\\": 1, \\\"a\\\": 2}}\"); \
+         assert(dispatch(j) == 2, \"dispatch\"); }\n",
+    );
+    assert!(
+        out.contains("coverage: all 3 functions were entered"),
+        "a function the tests entered must not be listed, and no generated variant counted: {out}"
+    );
+}

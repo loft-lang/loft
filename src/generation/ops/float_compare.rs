@@ -36,7 +36,10 @@ impl OpEmitter for FloatCompareEmitter {
             ctx.emit(&args[1])?;
             return write!(ctx.w, "))");
         }
-        if args.len() != 2 || ctx.output.nn_fast_disabled || !ctx.output.non_sentinel_args(args) {
+        if args.len() != 2
+            || ctx.output.switches.nn_fast_disabled
+            || !ctx.output.non_sentinel_args(args)
+        {
             return super::default::DefaultEmitter.emit(ctx, args);
         }
         if ctx.output.nn_verify {

@@ -350,15 +350,27 @@ def render():
             if doc:
                 w(f"Why it is slow, priced, and what to build: "
                   f"[analysis/{doc}](../../bench/portal/analysis/{doc})\n")
-            w("| routine | lane | population | × Rust | range | native | Rust | | what it stands for |")
-            w("|---|---|---|---:|---|---:|---:|---|---|")
+            # The SHIP column (@PLN201): the routine compiled as a game's release build would be,
+            # the fault checks dropped — present when the run measured `--lanes …,ship`.
+            ship = any(r.get("ship_ratio") or r.get("ship_hash") for r in rs)
+            ship_head, ship_rule = (" ship × Rust |", "---:|") if ship else ("", "")
+            w(f"| routine | lane | population | × Rust |{ship_head} range | native | Rust | | what it stands for |")
+            w(f"|---|---|---|---:|{ship_rule}---|---:|---:|---|---|")
             for r in sorted(rs, key=lambda r: -r["ratio_f"]):
                 flags = f" ({r['flags']})" if r.get("flags") else ""
                 older = r.get("commit") and r["commit"] != meta.get("commit")
                 if older:
                     flags += f" †{r['commit']}"
                     any_older.append(r)
-                w(f"| `{r['routine']}` | {r['bench']} | {r['pop']} | **{r['ratio_f']:.2f}** | "
+                if not ship:
+                    ship_cell = ""
+                elif r.get("ship_ratio"):
+                    ship_cell = f" {float(r['ship_ratio']):.2f} |"
+                elif r.get("ship_hash"):
+                    ship_cell = " hash differs |"
+                else:
+                    ship_cell = " — |"
+                w(f"| `{r['routine']}` | {r['bench']} | {r['pop']} | **{r['ratio_f']:.2f}** |{ship_cell} "
                   f"{float(r['ratio_lo']):.2f}–{float(r['ratio_hi']):.2f}{flags} | {fmt_ns(r['native_ns'])} | "
                   f"{fmt_ns(r['rust_ns'])} | {verdict_mark(r['ratio_f'])} | {r['what']} |")
             w("")

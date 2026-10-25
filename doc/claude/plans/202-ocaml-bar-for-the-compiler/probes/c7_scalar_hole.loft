@@ -1,0 +1,8 @@
+fn main() {
+  k = match 7 {
+    1 => "one",
+    2 => "two",
+  };
+  assert(k == null, "silent null");
+  println("ok");
+}

@@ -4,6 +4,8 @@
 
 //! What a function's attributes say about its calling convention.
 
+use crate::data::Data;
+
 use crate::data::Type;
 
 /// The hidden RETURN-BUFFER attribute of a record-returning function — the parameter
@@ -22,4 +24,12 @@ pub fn ret_buffer_attr(def: &crate::data::Definition) -> Option<usize> {
                 Type::Reference(_, _) | Type::Enum(_, true, _)
             )
     })
+}
+
+/// The variable of `def_nr`'s hidden return buffer, when it has one.
+pub fn retbuf_var(data: &Data, def_nr: u32) -> Option<u16> {
+    let def = data.def(def_nr);
+    let attr = def.hidden_return_buffer_attr()?;
+    let v = def.variables().var(&def.attributes()[attr].name);
+    (v != u16::MAX).then_some(v)
 }

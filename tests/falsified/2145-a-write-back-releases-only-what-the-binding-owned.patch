@@ -1,0 +1,321 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index ea61a9c..1a1c014 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -398,14 +398,6 @@ struct Scopes<'s> {
+     /// itself is never freed.  Keyed on every id the local is known by (the original and
+     /// any scope copy `scan_set` makes of it).  [`owner_witness_locals`] picks them.
+     owner_witness: HashMap<u16, u16>,
+-    /// loft#2145 / `@FR-B-Ref-Write` — a VIEW local (a projection: its deps name another
+-    /// variable) handed to a `&` heap parameter → `__vrb_<name>`, a snapshot of the store it
+-    /// views.  The callee's whole-value write-back re-points the local and releases the store
+-    /// it displaced, but that store is the viewed one, not the local's: it is protected for
+-    /// the call (`scan_args`), and the local releases at scope exit only a store distinct from
+-    /// the snapshot — the one a write-back installed, which `(O-Latest)` makes its own.
+-    /// [`view_rebind_locals`] picks them.
+-    view_rebind: HashMap<u16, u16>,
+     /// `@FR-L-CapRebind` — the closure records the statement being scanned releases in its
+     /// prefix (the record a rebuild is about to overwrite, loft#1388).  The rebuild's own
+     /// snapshot (`displaced_drop`) skips them: one release per displaced record.
+diff --git b/src/scopes/args.rs a/src/scopes/args.rs
+index b0b92b0..699554d 100644
+--- b/src/scopes/args.rs
++++ a/src/scopes/args.rs
+@@ -309,21 +309,6 @@ impl Scopes<'_> {
+             {
+                 amp_foreign.push(orig);
+             }
+-            // loft#2145 — the same mark for a VIEW local: the store the write-back displaces is
+-            // the one it views, owned elsewhere (`Scopes::view_rebind`).
+-            if outer_call != u32::MAX
+-                && let Value::Call(cs, cargs) = scanned.unspan()
+-                && *cs == create_stack_nr
+-                && let Some(Value::Var(v)) = cargs.first().map(Value::unspan)
+-                && let Some(&w) = self.view_rebind.get(v)
+-                && data
+-                    .def(outer_call)
+-                    .attributes()
+-                    .get(arg_idx)
+-                    .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
+-            {
+-                amp_foreign.push(w);
+-            }
+             if let Value::Insert(ops) = scanned {
+                 // Existing A5.6 hoisting: lift Set(w, Null) for owned Reference.
+                 let is_a56_hoisted = Self::is_null_init_preamble(&ops, function);
+diff --git b/src/scopes/buffers.rs a/src/scopes/buffers.rs
+index 481b84b..1a8b2c7 100644
+--- b/src/scopes/buffers.rs
++++ a/src/scopes/buffers.rs
+@@ -57,52 +57,6 @@ pub(super) fn tail_calls(v: &Value) -> Vec<&Value> {
+     }
+ }
+ 
+-/// The locals handed to a `&` heap parameter anywhere in `ops` — `OpCreateStack(Var(v))` as a
+-/// call argument whose parameter `Type::is_amp_rebindable_heap` — that the callee REASSIGNS as
+-/// a whole, at any depth of forwarding (`parser::callee_param_reassigns`): a whole-value
+-/// write-back no `Set` here shows.  A callee that only writes fields through the link displaces
+-/// nothing, so neither the buffer it fills nor the store a view names needs keeping from it.
+-pub(super) fn amp_rebound_locals(ops: &[Value], data: &Data) -> HashSet<u16> {
+-    struct Walk<'a> {
+-        data: &'a Data,
+-        create_stack: u32,
+-        cache: std::collections::HashMap<u32, Vec<bool>>,
+-        out: HashSet<u16>,
+-    }
+-    fn walk(v: &Value, w: &mut Walk) {
+-        if let Value::Call(d, args) = v.unspan() {
+-            for (i, a) in args.iter().enumerate() {
+-                if let Value::Call(cs, cargs) = a.unspan()
+-                    && *cs == w.create_stack
+-                    && let Some(Value::Var(x)) = cargs.first().map(Value::unspan)
+-                    && w.data
+-                        .def(*d)
+-                        .attributes()
+-                        .get(i)
+-                        .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
+-                    && crate::parser::callee_param_reassigns(*d, w.data, &mut w.cache)
+-                        .get(i)
+-                        .copied()
+-                        .unwrap_or(true)
+-                {
+-                    w.out.insert(*x);
+-                }
+-            }
+-        }
+-        v.for_each_child(&mut |c| walk(c, w));
+-    }
+-    let mut w = Walk {
+-        data,
+-        create_stack: data.def_nr("OpCreateStack"),
+-        cache: std::collections::HashMap::new(),
+-        out: HashSet::default(),
+-    };
+-    for op in ops {
+-        walk(op, &mut w);
+-    }
+-    w.out
+-}
+-
+ #[expect(clippy::too_many_lines, reason = "inherited")]
+ pub(super) fn reuse_record_buffers(
+     code: &mut Value,
+@@ -135,11 +89,6 @@ pub(super) fn reuse_record_buffers(
+             fed_locals.entry(av).or_default().push(v);
+         }
+     }
+-    let amp_rebound = if guarded.is_empty() {
+-        HashSet::default()
+-    } else {
+-        amp_rebound_locals(&bl.operators, data)
+-    };
+     let db_nr = data.def_nr("OpDatabase");
+     let clear_nr = data.def_nr("OpClear");
+     // Emitted in variable order so identical source compiles to identical IR.
+@@ -202,20 +151,6 @@ pub(super) fn reuse_record_buffers(
+             decline(av, "its result local is assigned more than once");
+             continue;
+         }
+-        if !ungated
+-            && fed_locals
+-                .get(&av)
+-                .is_some_and(|vs| vs.iter().any(|v| amp_rebound.contains(v)))
+-        {
+-            // A `&` heap argument is a second assignment the caller does not write: the
+-            // callee's whole-value write-back re-points the local and releases the store it
+-            // displaced (`@FR-B-Ref-Write`), which under reuse is this buffer's (loft#2145).
+-            decline(
+-                av,
+-                "its result local is handed to a `&` parameter that can rebind it",
+-            );
+-            continue;
+-        }
+         if !ungated
+             && fed_locals
+                 .get(&av)
+diff --git b/src/scopes/get_free_vars.rs a/src/scopes/get_free_vars.rs
+index 4bc24e5..633bb25 100644
+--- b/src/scopes/get_free_vars.rs
++++ a/src/scopes/get_free_vars.rs
+@@ -196,12 +196,6 @@ impl Scopes<'_> {
+         let mut guarded_hooks: std::collections::HashSet<u16> =
+             std::collections::HashSet::default();
+         let vars = self.variables(to_scope);
+-        // loft#2145 — the view locals among them a `&` callee may have rebound (released last
+-        // below, from this list: the sweep consumes `vars`).
+-        let view_rebound: Vec<(u16, u16)> = vars
+-            .iter()
+-            .filter_map(|v| self.view_rebind.get(v).map(|&w| (*v, w)))
+-            .collect();
+         if scope_debug {
+             eprintln!(
+                 "[get_free_vars] fn={} to_scope={to_scope} scope={} vars={vars:?} ret_var={ret_var} \
+@@ -1147,22 +1141,6 @@ impl Scopes<'_> {
+                 }
+             }
+         }
+-        // loft#2145 — a view local a `&` callee rebound holds the store the write-back installed,
+-        // which is its own (`(O-Latest)`); one still naming the store it views equals its
+-        // snapshot and releases nothing.  Re-snapshotted after the release, so a loop's next
+-        // pass compares against what this pass left rather than a store already released.
+-        for &(v, w) in &view_rebound {
+-            if v != ret_var && !return_sources.contains(&v) {
+-                guarded.push(Value::Call(
+-                    data.def_nr("OpFreeRefIfDistinct"),
+-                    vec![Value::Var(v), Value::Var(w)],
+-                ));
+-                guarded.push(Value::Call(
+-                    data.def_nr("OpPutRef"),
+-                    vec![Value::Var(w), Value::Var(v)],
+-                ));
+-            }
+-        }
+         if !guarded.is_empty() {
+             guarded.append(&mut ls);
+             ls = guarded;
+diff --git b/src/scopes/phase.rs a/src/scopes/phase.rs
+index a7cf27c..72602b4 100644
+--- b/src/scopes/phase.rs
++++ a/src/scopes/phase.rs
+@@ -197,7 +197,6 @@ pub(super) fn run_scan_phase(
+         entry_witness: None,
+         local_owns: HashMap::default(),
+         owner_witness: HashMap::default(),
+-        view_rebind: HashMap::default(),
+         prefix_released: Vec::new(),
+         displaced_owned,
+         views_to_materialise,
+@@ -305,18 +304,6 @@ pub(super) fn run_scan_phase(
+         scopes.var_order.push(w);
+         scopes.owner_witness.insert(v, w);
+     }
+-    // loft#2145 — the view locals a `&` callee may rebind, and the snapshot of the store each
+-    // views.  Minted before the scan: `scan_args` protects the snapshot at every such call.
+-    for v in view_rebind_locals(orig_code, &function, data, &scopes.owner_witness) {
+-        let name = format!("__vrb_{}", function.name(v));
+-        let tp = function.tp(v).without_deps();
+-        let w = function.add_temp_var(&name, &tp);
+-        // A self-dep, as the owner witness has: not a borrow, not an owner, freed by nothing.
+-        function.depend(w, w);
+-        scopes.var_scope.insert(w, 0);
+-        scopes.var_order.push(w);
+-        scopes.view_rebind.insert(v, w);
+-    }
+     // ⚠ @FR-N-Road (@PLN160) — this mechanism is NULLABLE BY CONSTRUCTION, and the dense
+     // spelling of the same mixed-ownership local answers the identical question by STORE
+     // IDENTITY (`OpFreeRefIfDistinct`, plus the `_old_` guard at the rebind).  @C90 makes the two
+@@ -505,24 +492,6 @@ pub(super) fn run_scan_phase(
+     // call and not as `null`, because a heap local's `= null` lowers to `OpInitRef` — a
+     // stack-record placeholder the allocator is expected to replace — and a free of THAT is
+     // the `#306` refusal.
+-    // loft#2145 — each view snapshot is taken right after the local's one bind, and starts at
+-    // the sentinel like an owner witness, so an exit reached before the bind compares the
+-    // local with nothing it could be.
+-    if !scopes.view_rebind.is_empty() {
+-        let mut pairs: Vec<(u16, u16)> = scopes.view_rebind.iter().map(|(&v, &w)| (v, w)).collect();
+-        pairs.sort_unstable();
+-        for &(v, w) in &pairs {
+-            snapshot_after_bind(&mut code, v, w, data);
+-        }
+-        if let Some(bl) = body_block_mut(&mut code) {
+-            for &(_, w) in pairs.iter().rev() {
+-                bl.operators.insert(
+-                    0,
+-                    v_set(w, Value::Call(data.def_nr("OpNullRefSentinel"), vec![])),
+-                );
+-            }
+-        }
+-    }
+     if !scopes.owner_witness.is_empty()
+         && let Some(bl) = body_block_mut(&mut code)
+     {
+@@ -932,89 +901,3 @@ pub(super) fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Da
+     let v = function.var(&name);
+     (v != u16::MAX).then_some(v)
+ }
+-
+-/// loft#2145 — the VIEW locals a `&` callee may rebind: each is handed to a `&` heap parameter
+-/// (`buffers::amp_rebound_locals`), borrows from another variable (its deps name one), is a
+-/// record or a struct-enum, and is bound ONCE, by a statement.  The once is what lets the
+-/// snapshot sit right after the bind: `--native` declares a local at its first bind, so a
+-/// release placed before a second one would be the only safe spelling of a rebind, and a
+-/// local bound once never needs it.  A local the owner witness already carries has its own
+-/// release protocol and is left to it; an argument is loft#1287's, a compiler temp is a slot.
+-fn view_rebind_locals(
+-    code: &Value,
+-    function: &Function,
+-    data: &Data,
+-    owner_witness: &HashMap<u16, u16>,
+-) -> Vec<u16> {
+-    let rebound = super::buffers::amp_rebound_locals(std::slice::from_ref(code), data);
+-    if rebound.is_empty() {
+-        return Vec::new();
+-    }
+-    let mut binds: HashMap<u16, usize> = HashMap::default();
+-    fn count(v: &Value, out: &mut HashMap<u16, usize>) {
+-        if let Value::Set(x, _) = v.unspan() {
+-            *out.entry(*x).or_insert(0) += 1;
+-        }
+-        v.for_each_child(&mut |c| count(c, out));
+-    }
+-    count(code, &mut binds);
+-    let mut out: Vec<u16> = rebound
+-        .into_iter()
+-        .filter(|&v| {
+-            !function.is_argument(v)
+-                && !function.is_compiler_generated(v)
+-                && !owner_witness.contains_key(&v)
+-                && matches!(
+-                    function.tp(v).base(),
+-                    Type::Reference(_, _) | Type::Enum(_, true, _)
+-                )
+-                && function.tp(v).depend().iter().any(|&d| d != v)
+-                && binds.get(&v) == Some(&1)
+-                && bound_by_statement(code, v)
+-        })
+-        .collect();
+-    out.sort_unstable();
+-    out
+-}
+-
+-/// Is `v`'s bind a statement of some block (not nested inside an expression)?
+-fn bound_by_statement(code: &Value, v: u16) -> bool {
+-    let mut found = false;
+-    fn walk(n: &Value, v: u16, found: &mut bool) {
+-        if let Value::Block(bl) = n.unspan()
+-            && bl
+-                .operators
+-                .iter()
+-                .any(|op| matches!(op.unspan(), Value::Set(x, _) if *x == v))
+-        {
+-            *found = true;
+-        }
+-        n.for_each_child(&mut |c| walk(c, v, found));
+-    }
+-    walk(code, v, &mut found);
+-    found
+-}
+-
+-/// Insert `OpPutRef(w, v)` after the statement that binds `v` (see [`view_rebind_locals`]).
+-fn snapshot_after_bind(code: &mut Value, v: u16, w: u16, data: &Data) {
+-    fn walk(n: &mut Value, v: u16, w: u16, put: u32) -> bool {
+-        if let Value::Block(bl) = n.unspan_mut()
+-            && let Some(i) = bl
+-                .operators
+-                .iter()
+-                .position(|op| matches!(op.unspan(), Value::Set(x, _) if *x == v))
+-        {
+-            bl.operators
+-                .insert(i + 1, Value::Call(put, vec![Value::Var(w), Value::Var(v)]));
+-            return true;
+-        }
+-        let mut done = false;
+-        n.for_each_child_mut(&mut |c| {
+-            if !done {
+-                done = walk(c, v, w, put);
+-            }
+-        });
+-        done
+-    }
+-    walk(code, v, w, data.def_nr("OpPutRef"));
+-}

@@ -2931,6 +2931,7 @@ impl Stores {
                 && elem != u16::MAX
                 && self.owns_heap(elem)
                 && crate::keys::store_reset_clear_enabled()
+                && self.allocations[db.store_nr as usize].root_owns_extent()
             {
                 // @PLN157 § V-ag — the vector is this store's ROOT, so everything in the
                 // store was claimed inside it (`@FR-H-RootExtent`) and the whole extent is
@@ -3023,6 +3024,25 @@ impl Stores {
         self.allocations[db.store_nr as usize].delete(db.rec);
     }
 
+    /// The element type of the collection a store's ROOT record wraps — the one-field
+    /// shape `OpDatabase` mints for a vector local or a return buffer, which a user struct
+    /// of one vector field shares — or `None` for any other root.  `@FR-H-RootExtent` is a
+    /// claim about exactly these stores.
+    fn root_vector_element(&self, store_nr: u16) -> Option<u16> {
+        let kt = self.allocations.get(store_nr as usize)?.known_type;
+        let crate::database::Parts::Struct(fields) = &self.types.get(kt as usize)?.parts else {
+            return None;
+        };
+        if fields.len() != 1 {
+            return None;
+        }
+        let vec_tp = self.field_type(kt, 0);
+        match self.types.get(vec_tp as usize)?.parts {
+            crate::database::Parts::Vector(_) => Some(self.content(vec_tp)),
+            _ => None,
+        }
+    }
+
     /// @PLN164 B2 (`@FR-R-Place`) — claim a `db_tp` RECORD inside `host`'s store as the
     /// return buffer of a call whose result will live in a field of a record in that
     /// store, prefilled exactly as `OpDatabase` prefills a fresh-store buffer (the type
@@ -3053,6 +3073,17 @@ impl Stores {
         } else {
             let r = self.claim(host, words);
             self.store_mut(&r).zero_range(r.rec, 8, u32::from(size));
+            // `@FR-H-RootExtent` — a record that is not an element of the host store's root
+            // collection breaks "the root's extent is the store's" while it lives, so a clear
+            // must not reset the store under it (loft#2157: an `R-ExitVector` wrapper claimed
+            // in a one-field return buffer, then the buffer's field replaced, the reset
+            // dropping the wrapper and the next claim landing on it).
+            if self
+                .root_vector_element(host.store_nr)
+                .is_some_and(|elem| elem != db_tp)
+            {
+                self.allocations[r.store_nr as usize].note_placed_foreign(r.rec);
+            }
             r
         };
         self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));

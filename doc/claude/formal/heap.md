@@ -477,10 +477,16 @@ the record it points at, not a place of the holder's.
                  the collection is wholly dead is a point at which the store is, and
                  releasing it there is one store reset rather than a free per
                  element.  What would break the rule is a record placed into the
-                 store from outside; the one mechanism that places (R-MoveAppend)
-                 places an ELEMENT of that very collection, so it holds.  A field
-                 vector, a user-struct root and a placed buffer are not store roots
-                 and carry no such claim.
+                 store from outside.  (R-MoveAppend) places an ELEMENT of that very
+                 collection, so it holds; (R-ExitVector) claims a vector local's
+                 wrapper in a return buffer's store, and (R-Place) a loop buffer in a
+                 vector local's, and neither is an element.  The runtime knows the
+                 store's root by its shape alone — a user struct of one vector field
+                 is the wrapper's shape — so `OpPlaceRecord` records each non-element
+                 it places, the record leaves that set when it is freed, and while
+                 the set is not empty the store is neither reset by a clear nor
+                 exchanged (H-SwapIn).  A field vector, a multi-field root and a
+                 placed buffer are not store roots and carry no such claim.
   (H-ClearRelease) CLEARING a vector that OUTLIVES the clear releases what its
                  elements own.  `clear_vector` is a length reset — sound wherever
                  the vector's store dies straight after (every use it was written

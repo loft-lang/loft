@@ -51,6 +51,9 @@ pub use crate::opt::loop_records::{
 };
 pub(crate) use crate::opt::loop_records::{group_covers_type, is_scalar, is_var, refillable_plain};
 
+pub use crate::opt::header::hoistable_vectors;
+pub(crate) use crate::opt::header::{body_blocks_hoist, vector_candidates};
+
 /// The operators that only COMPARE a reference — its record number, or the whole `DbRef` —
 /// and read no store: a view tested against null (`v != null`, or the handle test
 /// `OpRefIsNull`) is still the view it was, so a held address survives them (`@FR-R-RecPtr`).
@@ -87,168 +90,6 @@ pub fn flat_copy(stores: &Stores, op: &str, args: &[Value]) -> Option<u16> {
     }
     let known = u16::try_from(n & i32::from(crate::keys::COPY_TP_MASK)).ok()?;
     stores.flat_record_type(known).then(|| stores.size(known))
-}
-
-/// The vector paths whose header `body` may derive once up front, each with a clone of
-/// the operand expression the prelude evaluates.
-///
-/// Empty when anything in the loop could write a store — except, when `allow_in_place`
-/// (the @PLN157 P4a tier, off under `LOFT_NO_WRITE_HOIST=1`), the [`IN_PLACE_SET_OPS`],
-/// which cannot invalidate a header — when the body rebinds the path's ROOT variable, or
-/// when nothing indexes a vector at all. Order is the order the accesses appear in, so
-/// the generated prelude is stable across runs.
-pub fn hoistable_vectors(
-    body: &Block,
-    data: &Data,
-    def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
-    allow_in_place: bool,
-) -> Vec<(PathKey, Value)> {
-    let tiers = HoistTiers {
-        in_place: allow_in_place,
-        ..HoistTiers::default()
-    };
-    if body_blocks_hoist(body, data, None, def_nr, cache, tiers, None, true) {
-        return Vec::new();
-    }
-    vector_candidates(body, data, def_nr)
-}
-
-/// For the decline trace: descend `op`'s statement lists to the innermost statement that
-/// `blocks_header_hoist` refuses, and the `Line` marker before it.
-fn innermost_blocking<'a>(
-    op: &'a Value,
-    data: &Data,
-    stores: Option<&Stores>,
-    cache: &mut HashMap<u32, bool>,
-    vars: Option<&crate::variables::Function>,
-    tiers: HoistTiers,
-    owned: Option<&HoistOwned>,
-) -> (u32, &'a Value) {
-    let mut cur = op;
-    let mut line = 0;
-    loop {
-        let ops = match cur.unspan() {
-            Value::Block(bl) | Value::Loop(bl) => &bl.operators,
-            Value::Insert(ls) => ls,
-            // A statement with no list of its own (a `Set`, an `If`, a call): descend to the
-            // first CHILD the admission declines — the culprit is inside it, and naming the
-            // whole statement names nothing.
-            other => {
-                let mut next: Option<&'a Value> = None;
-                other.for_each_child(&mut |c: &'a Value| {
-                    if next.is_none()
-                        && blocks_header_hoist(
-                            c,
-                            data,
-                            stores,
-                            cache,
-                            &mut HashSet::new(),
-                            vars,
-                            tiers,
-                            &mut HashSet::new(),
-                            owned,
-                        )
-                    {
-                        next = Some(c);
-                    }
-                });
-                match next {
-                    Some(o) => {
-                        cur = o;
-                        continue;
-                    }
-                    None => return (line, cur),
-                }
-            }
-        };
-        let mut next: Option<&'a Value> = None;
-        let mut inner_line = line;
-        for o in ops {
-            if let Value::Line(n) = o.unspan() {
-                inner_line = *n;
-                continue;
-            }
-            if blocks_header_hoist(
-                o,
-                data,
-                stores,
-                cache,
-                &mut HashSet::new(),
-                vars,
-                tiers,
-                &mut HashSet::new(),
-                owned,
-            ) {
-                next = Some(o);
-                break;
-            }
-        }
-        match next {
-            Some(o) => {
-                cur = o;
-                line = inner_line;
-            }
-            None => return (line, cur),
-        }
-    }
-}
-
-/// Does anything in `body` invalidate a hoisted header?  The ONE gate both the vector
-/// headers and the scalar hoist (@PLN157 P4c) stand behind: a scalar hoist is admitted only
-/// in a loop whose store writes are all in place, so the two cannot disagree about which
-/// loops qualify.
-/// Enforces `@FR-R-InPlace` as the ONE gate `@FR-R-Header` and `@FR-R-Scalar` stand behind.
-// The seven parameters are `blocks_header_hoist`'s context and whether this verdict is the
-// final one (a verdict asked again under the text clause traces only its second answer).
-#[allow(clippy::too_many_arguments)]
-fn body_blocks_hoist(
-    body: &Block,
-    data: &Data,
-    stores: Option<&Stores>,
-    def_nr: u32,
-    cache: &mut HashMap<u32, bool>,
-    tiers: HoistTiers,
-    owned: Option<&HoistOwned>,
-    traced: bool,
-) -> bool {
-    let mut fresh: HashSet<u16> = HashSet::new();
-    let trace = traced && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
-    body.operators.iter().any(|op| {
-        let blocks = blocks_header_hoist(
-            op,
-            data,
-            stores,
-            cache,
-            &mut HashSet::new(),
-            Some(data.def(def_nr).variables()),
-            tiers,
-            &mut fresh,
-            owned,
-        );
-        if blocks && trace {
-            // The INNERMOST statement the admission declines, with the source line before
-            // it — the one to read when a loop that should hoist does not.  A loop body is
-            // one statement to this walk, and naming the body names nothing.
-            let (line, culprit) = innermost_blocking(
-                op,
-                data,
-                stores,
-                cache,
-                Some(data.def(def_nr).variables()),
-                tiers,
-                owned,
-            );
-            let shown = format!("{culprit:?}");
-            eprintln!(
-                "hoist: {} loop {} declined at line {line} by {}",
-                data.def(def_nr).name(),
-                body.scope,
-                &shown[..shown.len().min(400)]
-            );
-        }
-        blocks
-    })
 }
 
 /// The variables `body` rebinds — a `Set` or a `TuplePut` anywhere in it.  A rebind leaves
@@ -378,37 +219,6 @@ fn rebinds_root(n: &Value, root: u16, vars: &crate::variables::Function) -> bool
         }
         _ => false,
     }
-}
-
-/// The vector paths `body` indexes, in the order they appear, minus those whose root the
-/// body rebinds (a field path's header describes the record the ROOT named; repointing the
-/// field itself is an `OpSetRef`, which is not in [`IN_PLACE_SET_OPS`] and blocks outright).
-/// Enforces `@FR-R-Header`: which paths a loop derives a header for.
-fn vector_candidates(body: &Block, data: &Data, def_nr: u32) -> Vec<(PathKey, Value)> {
-    let vars = data.def(def_nr).variables();
-    let rebound = rebound_vars(body, data, vars);
-    let mut found: Vec<(PathKey, Value)> = Vec::new();
-    for op in &body.operators {
-        op.any_node(&mut |n| {
-            if let Value::Call(d, args) = n
-                && args.len() == 3
-                && is_element_address(data, *d)
-                && let Some(path) = vector_path(data, &args[0])
-            {
-                // A bare var must TYPE as a vector (an odd non-vector shape stays out); a
-                // field path is shape-trusted — it is the first argument of an
-                // element-address op, which takes a vector.
-                let vector_typed =
-                    !path.1.is_empty() || matches!(vars.tp(path.0).base(), Type::Vector(_, _));
-                if vector_typed && !found.iter().any(|(p, _)| *p == path) {
-                    found.push((path, args[0].clone()));
-                }
-            }
-            false
-        });
-    }
-    found.retain(|(p, _)| !rebound.contains(&p.0));
-    found
 }
 
 /// A hoisted scalar's key (@PLN157 P4c): the record VARIABLE and the field's byte offset.
@@ -999,7 +809,11 @@ fn placed_pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
         return None;
     }
     match call_named(release, data, "OpClear")? {
-        [arg, Value::Int(clear_tp)] if is_var(arg, buf) && i32::from(tp) == *clear_tp => {
+        // `@FR-R-Reuse`'s reset clause sets `POOL_RESET` on the release's type.
+        [arg, Value::Int(clear_tp)]
+            if is_var(arg, buf)
+                && i32::from(tp) == *clear_tp & i32::from(crate::keys::POOL_TP_MASK) =>
+        {
             Some((buf, tp))
         }
         _ => None,
@@ -1498,13 +1312,7 @@ pub(crate) fn work_buffer_arg(data: &Data, def_nr: u32, r: u16) -> bool {
         .is_some_and(|a| a.work_buffer)
 }
 
-/// The variable of `def_nr`'s hidden return buffer, when it has one.
-pub fn retbuf_var(data: &Data, def_nr: u32) -> Option<u16> {
-    let def = data.def(def_nr);
-    let attr = def.hidden_return_buffer_attr()?;
-    let v = def.variables().var(&def.attributes()[attr].name);
-    (v != u16::MAX).then_some(v)
-}
+pub use crate::opt::attrs::retbuf_var;
 
 /// `@FR-R-RecPtr` — is `n` an access of view `r` the held address SERVES: a fusable scalar
 /// field read or in-place write (either spelling of the field), a copy the address serves,
@@ -8849,7 +8657,11 @@ fn pool_of(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
         _ => return None,
     };
     match call_named(release, data, "OpClear")? {
-        [arg, Value::Int(clear_tp)] if is_var(arg, buf) && i32::from(tp) == *clear_tp => {
+        // `@FR-R-Reuse`'s reset clause sets `POOL_RESET` on the release's type.
+        [arg, Value::Int(clear_tp)]
+            if is_var(arg, buf)
+                && i32::from(tp) == *clear_tp & i32::from(crate::keys::POOL_TP_MASK) =>
+        {
             Some((buf, tp))
         }
         _ => None,
@@ -9616,7 +9428,7 @@ fn jumps_out(v: &Value) -> bool {
 /// destination FIELD at byte `dest`: a local that depends on `out` alone and whose every
 /// binding views another field of it (`sc.brushes[i]?` beside `sc.ops`, `parse_lock`'s shape)
 /// names a collection the growth does not move, and is spared — read with the scope pass's own
-/// place model ([`crate::scopes::value_view_places`]), which follows a `?` discharge's block
+/// place model ([`crate::scopes::value_view_places_depth`]), which follows a `?` discharge's block
 /// and both of its arms.  A record the frame placed in
 /// `out`'s store owns its block (its deps are empty) and is not named either, which is what
 /// keeps `parse_circle`'s paint, read in the window, admitted.  A parameter that views an
@@ -9643,9 +9455,9 @@ fn destination_views(
                     Value::Null => {}
                     rhs => {
                         bound = true;
-                        let places = crate::scopes::value_view_places(rhs, data, vars);
+                        let places = crate::scopes::value_view_places_depth(rhs, data, vars);
                         other &= !places.is_empty()
-                            && places.iter().all(|&(r, off)| {
+                            && places.iter().all(|&((r, off), _)| {
                                 r == out && off != crate::use_analysis::ANY_FIELD && off != dest
                             });
                     }
@@ -10681,9 +10493,7 @@ pub use crate::opt::value_records::leaves::{
     VALUE_RECORD_GETTERS, VALUE_RECORD_SETTERS, leaf_source, object_own_return,
 };
 
-pub(crate) use crate::opt::value_records::sites::{
-    ShapeCtx, forward_tuple_on, namings_avoid_place, tuple_arg_form,
-};
+pub(crate) use crate::opt::value_records::sites::{ShapeCtx, namings_avoid_place, tuple_arg_form};
 pub use crate::opt::value_records::sites::{
     ValueLeaves, fnref_param, forward_site, mv_return_source, tuple_arg_ready,
 };
@@ -10901,30 +10711,7 @@ pub fn value_setter(rt: &str) -> &'static str {
 
 // ── @PLN164 E-1 (`@FR-R-ValueRecord`) — a FORWARD writes the tuple into its own buffer ──
 
-/// Every [`forward_site`] of `def_nr`, keyed by the address of the call's ARGUMENT LIST — the
-/// slice the emitter is handed for that call — mapped to the buffer it writes.
-#[must_use]
-pub fn forward_sites(
-    data: &Data,
-    def_nr: u32,
-    admitted: &HashMap<u32, u16>,
-    locals: &HashMap<u16, u16>,
-) -> HashMap<usize, u16> {
-    let mut out = HashMap::new();
-    if !forward_tuple_on() {
-        return out;
-    }
-    data.def(def_nr).code().any_node(&mut |n| {
-        if let Value::Set(target, rhs) = n
-            && forward_site(data, def_nr, *target, rhs, admitted, locals).is_some()
-            && let Value::Call(_, args) = rhs.unspan()
-        {
-            out.insert(args.as_ptr() as usize, *target);
-        }
-        false
-    });
-    out
-}
+pub use crate::opt::value_records::{dead_buffers, forward_sites};
 
 /// The vector type and the element type of the view-leaf field at byte `off` of record type
 /// `tp` — what the record form's `OpGetField(buf, off, <vector>)` and `OpAppendVector(…,
@@ -11113,129 +10900,6 @@ pub fn arg_tuple_form(
         sp: &vr.sp,
     };
     tuple_arg_form(arg, tp, &c)
-}
-
-/// The DEAD BUFFERS of `def_nr` (@PLN157 § V-ah, `@FR-R-ValueRecord`): a local minted by
-/// `OpDatabase` whose every mention the value form drops — the buffer argument of an
-/// admitted callee (dropped from the call), the subject of a free or of the pool's
-/// release-on-reuse (`OpClear`), or an operand of a store-identity test whose other operand
-/// is a value local (answered `true` without a read).  Such a local was a § V-af join buffer for a branch that now binds a tuple: the
-/// store it minted per activation served nothing, so the mint and the frees are emitted
-/// as nothing.  A buffer with any other mention — a witness read against a RECORD local,
-/// an argument to a callee that keeps its buffer — is minted as before.
-#[must_use]
-pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16> {
-    let mut out = HashSet::new();
-    if vr.fns.is_empty() {
-        return out;
-    }
-    let locals = value_locals_in(
-        data,
-        def_nr,
-        &vr.fns,
-        &vr.params,
-        &vr.view_offs,
-        &vr.fnref_sites,
-        &vr.sp,
-    );
-    // A forward's buffer is WRITTEN by the site (`forward_site`), so its argument is a use.
-    let forwards = forward_sites(data, def_nr, &vr.fns, &locals);
-    let def = data.def(def_nr);
-    let vars = def.variables();
-    let mut minted: HashSet<u16> = HashSet::new();
-    let mut mentions: HashMap<u16, u32> = HashMap::new();
-    let mut dropped: HashMap<u16, u32> = HashMap::new();
-    let mut assigned: HashSet<u16> = HashSet::new();
-    def.code().any_node(&mut |n| {
-        match n {
-            Value::Var(w) => *mentions.entry(*w).or_insert(0) += 1,
-            // A buffer BOUND to a value holds whatever that value is — a call result is a
-            // store (`__lift_1 = mk(…)` of a record that owns a collection), and its free is
-            // its owner's release, not an empty one.
-            Value::Set(w, rhs) if !matches!(rhs.unspan(), Value::Null) => {
-                assigned.insert(*w);
-            }
-            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
-                let arg_var = |i: usize| match args.get(i).map(Value::unspan) {
-                    Some(Value::Var(w)) => Some(*w),
-                    _ => None,
-                };
-                let callee = data.def(*d);
-                match callee.name() {
-                    "OpDatabase" | "OpDatabaseNP" => {
-                        if let Some(w) = arg_var(0) {
-                            minted.insert(w);
-                            *dropped.entry(w).or_insert(0) += 1;
-                        }
-                    }
-                    // The pool's release of a reused buffer (loft#1549): a buffer never
-                    // minted holds nothing to release (`OpClearEmitter`).
-                    "OpClear" => {
-                        if let Some(w) = arg_var(0) {
-                            *dropped.entry(w).or_insert(0) += 1;
-                        }
-                    }
-                    "OpFreeRef" | "OpFreeRefIfDistinct" => {
-                        if let Some(w) = arg_var(0) {
-                            *dropped.entry(w).or_insert(0) += 1;
-                        }
-                        // A free guarded FOR a value local is emitted as nothing
-                        // (`OpFreeRefIfDistinctEmitter`), and its witness goes with it.
-                        if callee.name() == "OpFreeRefIfDistinct"
-                            && arg_var(0).is_some_and(|o| locals.contains_key(&o))
-                            && let Some(w) = arg_var(1)
-                        {
-                            *dropped.entry(w).or_insert(0) += 1;
-                        }
-                    }
-                    // `@FR-O-LazyBuffer` — the null test in front of a lazy buffer's mint
-                    // is the mint's own guard, and goes with it.
-                    "OpRefIsNull" => {
-                        if let Some(w) = arg_var(0)
-                            && vars.is_lazy_buffer(w)
-                        {
-                            *dropped.entry(w).or_insert(0) += 1;
-                        }
-                    }
-                    "OpDistinctStore" => {
-                        for (i, other) in [(0, 1), (1, 0)] {
-                            if let Some(w) = arg_var(i)
-                                && arg_var(other).is_some_and(|o| locals.contains_key(&o))
-                            {
-                                *dropped.entry(w).or_insert(0) += 1;
-                            }
-                        }
-                    }
-                    _ if vr.fns.contains_key(d)
-                        && !forwards.contains_key(&(args.as_ptr() as usize)) =>
-                    {
-                        if let Some(idx) = ret_buffer_attr(callee)
-                            && let Some(w) = arg_var(idx)
-                        {
-                            *dropped.entry(w).or_insert(0) += 1;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-        false
-    });
-    // A buffer never minted in this frame — handed to admitted callees as their buffer and
-    // freed, nothing else — holds nothing either: the callees answer tuples and mint into
-    // no buffer, so it stays the null it was declared as, and its frees are nothing.
-    for w in minted.iter().copied().chain(dropped.keys().copied()) {
-        if !vars.is_argument(w)
-            && !locals.contains_key(&w)
-            && !assigned.contains(&w)
-            && crate::data::is_dbref(vars.tp(w).base())
-            && mentions.get(&w).copied().unwrap_or(0) == dropped.get(&w).copied().unwrap_or(0)
-        {
-            out.insert(w);
-        }
-    }
-    out
 }
 
 /// The value leaves of `def_nr` for the emitter ([`ValueLeaves`]), over its value locals

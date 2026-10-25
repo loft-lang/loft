@@ -313,6 +313,277 @@ fn enter_source_dir(source_dir: &str, program_relative: bool) -> CwdGuard {
     CwdGuard(None)
 }
 
+// ── Annotations parsed from `// @` header comments ──────────────
+#[derive(Default)]
+pub(crate) struct Annotations {
+    /// File-level `@IGNORE` — skip the entire file.
+    ignore_file: bool,
+    /// Per-function `@IGNORE`: `fn_name` → true.
+    ignore_fn: std::collections::HashSet<String>,
+    /// File-level `@EXPECT_ERROR` substrings — every one must match an error.
+    expect_errors: Vec<String>,
+    /// Per-function `@EXPECT_ERROR`: `fn_name` → required substrings.
+    ///
+    /// Ordered, like the two maps below it, because the run REPORTS the
+    /// function names it satisfied — and a hash map's iteration order is
+    /// randomised per process, so the same green run printed its list in a
+    /// different order every time.  A report a reader diffs across runs has
+    /// to be stable.
+    expect_errors_fn: std::collections::BTreeMap<String, Vec<String>>,
+    /// File-level `@EXPECT_WARNING` substrings — all must appear in warnings.
+    expect_warnings: Vec<String>,
+    /// Per-function `@EXPECT_WARNING`: `fn_name` → required substrings.
+    expect_warnings_fn: std::collections::BTreeMap<String, Vec<String>>,
+    /// File-level `@EXPECT_FAIL` substrings — every function is expected to
+    /// panic with a message containing one of these.
+    expect_fail_file: Vec<String>,
+    /// Per-function `@EXPECT_FAIL`: `fn_name` → required substrings.
+    expect_fail_fn: std::collections::BTreeMap<String, Vec<String>>,
+    /// Each top-level function's source lines, 1-based and inclusive — up to the next
+    /// `fn`/`struct`/`enum` — so a claim prefers a diagnostic its own function produced.
+    fn_spans: std::collections::BTreeMap<String, (usize, usize)>,
+    /// Extra --lib dirs from @ARGS.
+    extra_lib_dirs: Vec<String>,
+    /// --project from @ARGS.
+    project: Option<String>,
+    /// --production from @ARGS.
+    production: bool,
+    /// --log-conf from @ARGS.
+    log_conf: Option<String>,
+    /// Positional arguments from @ARGS (passed as argv).
+    user_args: Vec<String>,
+}
+
+/// Scan the raw source for `// @` annotations.  Only comments before the
+/// first non-comment, non-blank line (or before a `fn`/`struct`/`enum`
+/// definition) are considered file-level.  A `// @EXPECT_FAIL` on the
+/// line directly before a `fn <name>` binds to that function.
+impl Annotations {
+    /// The messages function `fn_name` is expected to fail with — one of them must appear in
+    /// its failure — or none when it is expected to pass: its own `@EXPECT_FAIL` lines, else
+    /// the file's.
+    pub(crate) fn expected_failure(&self, fn_name: &str) -> Vec<String> {
+        self.expect_fail_fn
+            .get(fn_name)
+            .cloned()
+            .unwrap_or_else(|| self.expect_fail_file.clone())
+    }
+}
+
+pub(crate) fn parse_annotations(src: &str) -> Annotations {
+    let mut ann = Annotations::default();
+    // Pending annotations not yet bound to a function.
+    let mut pending = Pending::default();
+    // True until we see the first fn/struct/enum definition.
+    let mut in_header = true;
+    // The function whose span is open, with its first line.
+    let mut open_fn: Option<(String, usize)> = None;
+
+    for (idx, line) in src.lines().enumerate() {
+        let trimmed = line.trim();
+        let line_nr = idx + 1;
+        if trimmed.starts_with("fn ")
+            || trimmed.starts_with("struct ")
+            || trimmed.starts_with("enum ")
+        {
+            if let Some((name, start)) = open_fn.take() {
+                ann.fn_spans.insert(name, (start, line_nr - 1));
+            }
+        }
+
+        // Check for fn definition — bind pending annotations.
+        if trimmed.starts_with("fn ") {
+            in_header = false;
+            if let Some(name) = trimmed
+                .strip_prefix("fn ")
+                .and_then(|s| s.split(&['(', ' ', '{'][..]).next())
+            {
+                let name = name.trim();
+                if !name.is_empty() {
+                    open_fn = Some((name.to_string(), line_nr));
+                    pending.bind(&mut ann, name);
+                }
+            }
+            pending = Pending::default();
+            continue;
+        }
+
+        // Struct/enum definitions end the header.  A `struct` or `enum` cannot BE a
+        // test, so an annotation in front of one has no function to bind to — but it
+        // still describes a diagnostic the file must produce, so it becomes file-level
+        // rather than being discarded.  It used to be discarded: six `@EXPECT_ERROR`s
+        // in `102b-pass1-expected-errors.loft` sit in front of the deliberately-invalid
+        // `struct integer` / `enum hash` declarations they describe, and not one of them
+        // was ever checked.
+        if trimmed.starts_with("struct ") || trimmed.starts_with("enum ") {
+            in_header = false;
+            pending.ignore = false;
+            pending.promote(&mut ann);
+            continue;
+        }
+
+        // Only process // comments.  Blank lines are preserved —
+        // they must NOT clear pending annotations so that:
+        //   // @EXPECT_ERROR: msg
+        //
+        //   fn test_foo() { ... }
+        // still binds the annotation to test_foo.
+        let Some(comment) = trimmed.strip_prefix("//") else {
+            if !trimmed.is_empty() {
+                // Non-comment, non-blank line — no function follows, so promote rather
+                // than drop, for the reason given at the struct/enum arm above.  This is
+                // the arm that reaches an annotation written INSIDE a body:
+                // `persist-bind-field-store-757.loft` carries one there, and it was inert
+                // — replacing its text with a warning that exists nowhere left the file
+                // passing exactly as before.
+                pending.promote(&mut ann);
+                pending.ignore = false;
+            }
+            continue;
+        };
+        annotation_comment(comment.trim(), in_header, &mut ann, &mut pending);
+    }
+    if let Some((name, start)) = open_fn.take() {
+        ann.fn_spans.insert(name, (start, src.lines().count()));
+    }
+    // Any pending annotations not followed by a fn → file-level.
+    pending.promote(&mut ann);
+    if pending.ignore {
+        ann.ignore_file = true;
+    }
+    ann
+}
+
+/// One `// @…` comment: a header comment describes the file, a later one the next function.
+fn annotation_comment(
+    comment: &str,
+    in_header: bool,
+    ann: &mut Annotations,
+    pending: &mut Pending,
+) {
+    if let Some(rest) = comment.strip_prefix("@EXPECT_ERROR:") {
+        let sub = rest.trim();
+        if !sub.is_empty() {
+            if in_header {
+                ann.expect_errors.push(sub.to_string());
+            } else {
+                pending.error.push(sub.to_string());
+            }
+        }
+    } else if let Some(rest) = comment.strip_prefix("@EXPECT_WARNING:") {
+        let sub = rest.trim();
+        if !sub.is_empty() {
+            if in_header {
+                ann.expect_warnings.push(sub.to_string());
+            } else {
+                pending.warning.push(sub.to_string());
+            }
+        }
+    } else if let Some(rest) = comment.strip_prefix("@EXPECT_FAIL:") {
+        let sub = rest.trim();
+        if !sub.is_empty() {
+            if in_header {
+                ann.expect_fail_file.push(sub.to_string());
+            } else {
+                pending.fail.push(sub.to_string());
+            }
+        }
+    } else if comment.starts_with("@IGNORE") {
+        if in_header {
+            ann.ignore_file = true;
+        } else {
+            pending.ignore = true;
+        }
+    } else if let Some(rest) = comment.strip_prefix("@ARGS:") {
+        parse_args_annotation(rest.trim(), ann);
+    }
+}
+
+/// Annotations read since the last definition, waiting for the function they describe.
+#[derive(Default)]
+struct Pending {
+    fail: Vec<String>,
+    error: Vec<String>,
+    warning: Vec<String>,
+    ignore: bool,
+}
+
+impl Pending {
+    /// The next definition is function `name`: the annotations are its own.
+    fn bind(&mut self, ann: &mut Annotations, name: &str) {
+        if !self.fail.is_empty() {
+            ann.expect_fail_fn
+                .entry(name.to_string())
+                .or_default()
+                .append(&mut self.fail);
+        }
+        if !self.error.is_empty() {
+            ann.expect_errors_fn
+                .entry(name.to_string())
+                .or_default()
+                .append(&mut self.error);
+        }
+        if !self.warning.is_empty() {
+            ann.expect_warnings_fn
+                .entry(name.to_string())
+                .or_default()
+                .append(&mut self.warning);
+        }
+        if self.ignore {
+            ann.ignore_fn.insert(name.to_string());
+        }
+    }
+
+    /// No function follows: the annotations describe the file.
+    fn promote(&mut self, ann: &mut Annotations) {
+        ann.expect_fail_file.append(&mut self.fail);
+        ann.expect_errors.append(&mut self.error);
+        ann.expect_warnings.append(&mut self.warning);
+    }
+}
+
+/// Parse the token list after `@ARGS:` using the same flag convention as
+/// the main CLI.  Unknown flags are silently ignored so that future flags
+/// don't break old test files.
+fn parse_args_annotation(s: &str, ann: &mut Annotations) {
+    let tokens: Vec<&str> = s.split_whitespace().collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        let t = tokens[i];
+        i += 1;
+        if t == "--lib" {
+            if let Some(&dir) = tokens.get(i) {
+                ann.extra_lib_dirs.push(dir.to_string());
+                i += 1;
+            }
+        } else if t == "--project" {
+            if let Some(&dir) = tokens.get(i) {
+                ann.project = Some(dir.to_string());
+                i += 1;
+            }
+        } else if t == "--production" {
+            ann.production = true;
+        } else if t == "--log-conf" {
+            if let Some(&path) = tokens.get(i) {
+                ann.log_conf = Some(path.to_string());
+                i += 1;
+            }
+        } else if t.starts_with('-') {
+            // Unknown flag — skip (and consume a value arg if present).
+            if tokens.get(i).is_some_and(|s| !s.starts_with('-')) {
+                i += 1;
+            }
+        } else {
+            // Positional argument — this and all remaining tokens are user args.
+            ann.user_args.push(t.to_string());
+            for &rest in &tokens[i..] {
+                ann.user_args.push(rest.to_string());
+            }
+            break;
+        }
+    }
+}
+
 /// Run all zero-parameter functions in `.loft` files under `root_dir` as tests.
 /// Supports `@ARGS`, `@EXPECT_ERROR`, and `@EXPECT_FAIL` file annotations.
 /// Returns 0 if all pass, 1 if any fail.
@@ -365,246 +636,6 @@ pub(crate) fn run_tests(
         /// asking whether it FIRED, not which tier it landed in.
         advice: Vec<String>,
         errors: Vec<String>,
-    }
-
-    // ── Annotations parsed from `// @` header comments ──────────────
-    #[derive(Default)]
-    struct Annotations {
-        /// File-level `@IGNORE` — skip the entire file.
-        ignore_file: bool,
-        /// Per-function `@IGNORE`: `fn_name` → true.
-        ignore_fn: std::collections::HashSet<String>,
-        /// File-level `@EXPECT_ERROR` substrings — every one must match an error.
-        expect_errors: Vec<String>,
-        /// Per-function `@EXPECT_ERROR`: `fn_name` → required substrings.
-        ///
-        /// Ordered, like the two maps below it, because the run REPORTS the
-        /// function names it satisfied — and a hash map's iteration order is
-        /// randomised per process, so the same green run printed its list in a
-        /// different order every time.  A report a reader diffs across runs has
-        /// to be stable.
-        expect_errors_fn: std::collections::BTreeMap<String, Vec<String>>,
-        /// File-level `@EXPECT_WARNING` substrings — all must appear in warnings.
-        expect_warnings: Vec<String>,
-        /// Per-function `@EXPECT_WARNING`: `fn_name` → required substrings.
-        expect_warnings_fn: std::collections::BTreeMap<String, Vec<String>>,
-        /// File-level `@EXPECT_FAIL` substrings — every function is expected to
-        /// panic with a message containing one of these.
-        expect_fail_file: Vec<String>,
-        /// Per-function `@EXPECT_FAIL`: `fn_name` → required substrings.
-        expect_fail_fn: std::collections::BTreeMap<String, Vec<String>>,
-        /// Each top-level function's source lines, 1-based and inclusive — up to the next
-        /// `fn`/`struct`/`enum` — so a claim prefers a diagnostic its own function produced.
-        fn_spans: std::collections::BTreeMap<String, (usize, usize)>,
-        /// Extra --lib dirs from @ARGS.
-        extra_lib_dirs: Vec<String>,
-        /// --project from @ARGS.
-        project: Option<String>,
-        /// --production from @ARGS.
-        production: bool,
-        /// --log-conf from @ARGS.
-        log_conf: Option<String>,
-        /// Positional arguments from @ARGS (passed as argv).
-        user_args: Vec<String>,
-    }
-
-    /// Scan the raw source for `// @` annotations.  Only comments before the
-    /// first non-comment, non-blank line (or before a `fn`/`struct`/`enum`
-    /// definition) are considered file-level.  A `// @EXPECT_FAIL` on the
-    /// line directly before a `fn <name>` binds to that function.
-    fn parse_annotations(src: &str) -> Annotations {
-        let mut ann = Annotations::default();
-        // Pending annotations not yet bound to a function.
-        let mut pending_fail: Vec<String> = Vec::new();
-        let mut pending_error: Vec<String> = Vec::new();
-        let mut pending_warning: Vec<String> = Vec::new();
-        let mut pending_ignore = false;
-        // True until we see the first fn/struct/enum definition.
-        let mut in_header = true;
-        // The function whose span is open, with its first line.
-        let mut open_fn: Option<(String, usize)> = None;
-
-        for (idx, line) in src.lines().enumerate() {
-            let trimmed = line.trim();
-            let line_nr = idx + 1;
-            if trimmed.starts_with("fn ")
-                || trimmed.starts_with("struct ")
-                || trimmed.starts_with("enum ")
-            {
-                if let Some((name, start)) = open_fn.take() {
-                    ann.fn_spans.insert(name, (start, line_nr - 1));
-                }
-            }
-
-            // Check for fn definition — bind pending annotations.
-            if trimmed.starts_with("fn ") {
-                in_header = false;
-                if let Some(name) = trimmed
-                    .strip_prefix("fn ")
-                    .and_then(|s| s.split(&['(', ' ', '{'][..]).next())
-                {
-                    let name = name.trim();
-                    if !name.is_empty() {
-                        open_fn = Some((name.to_string(), line_nr));
-                        if !pending_fail.is_empty() {
-                            ann.expect_fail_fn
-                                .entry(name.to_string())
-                                .or_default()
-                                .append(&mut pending_fail);
-                        }
-                        if !pending_error.is_empty() {
-                            ann.expect_errors_fn
-                                .entry(name.to_string())
-                                .or_default()
-                                .append(&mut pending_error);
-                        }
-                        if !pending_warning.is_empty() {
-                            ann.expect_warnings_fn
-                                .entry(name.to_string())
-                                .or_default()
-                                .append(&mut pending_warning);
-                        }
-                        if pending_ignore {
-                            ann.ignore_fn.insert(name.to_string());
-                        }
-                    }
-                }
-                pending_fail.clear();
-                pending_error.clear();
-                pending_warning.clear();
-                pending_ignore = false;
-                continue;
-            }
-
-            // Struct/enum definitions end the header.  A `struct` or `enum` cannot BE a
-            // test, so an annotation in front of one has no function to bind to — but it
-            // still describes a diagnostic the file must produce, so it becomes file-level
-            // rather than being discarded.  It used to be discarded: six `@EXPECT_ERROR`s
-            // in `102b-pass1-expected-errors.loft` sit in front of the deliberately-invalid
-            // `struct integer` / `enum hash` declarations they describe, and not one of them
-            // was ever checked.
-            if trimmed.starts_with("struct ") || trimmed.starts_with("enum ") {
-                in_header = false;
-                pending_ignore = false;
-                ann.expect_fail_file.append(&mut pending_fail);
-                ann.expect_errors.append(&mut pending_error);
-                ann.expect_warnings.append(&mut pending_warning);
-                continue;
-            }
-
-            // Only process // comments.  Blank lines are preserved —
-            // they must NOT clear pending annotations so that:
-            //   // @EXPECT_ERROR: msg
-            //
-            //   fn test_foo() { ... }
-            // still binds the annotation to test_foo.
-            let Some(comment) = trimmed.strip_prefix("//") else {
-                if !trimmed.is_empty() {
-                    // Non-comment, non-blank line — no function follows, so promote rather
-                    // than drop, for the reason given at the struct/enum arm above.  This is
-                    // the arm that reaches an annotation written INSIDE a body:
-                    // `persist-bind-field-store-757.loft` carries one there, and it was inert
-                    // — replacing its text with a warning that exists nowhere left the file
-                    // passing exactly as before.
-                    ann.expect_fail_file.append(&mut pending_fail);
-                    ann.expect_errors.append(&mut pending_error);
-                    ann.expect_warnings.append(&mut pending_warning);
-                    pending_ignore = false;
-                }
-                continue;
-            };
-            let comment = comment.trim();
-
-            if let Some(rest) = comment.strip_prefix("@EXPECT_ERROR:") {
-                let sub = rest.trim();
-                if !sub.is_empty() {
-                    if in_header {
-                        ann.expect_errors.push(sub.to_string());
-                    } else {
-                        pending_error.push(sub.to_string());
-                    }
-                }
-            } else if let Some(rest) = comment.strip_prefix("@EXPECT_WARNING:") {
-                let sub = rest.trim();
-                if !sub.is_empty() {
-                    if in_header {
-                        ann.expect_warnings.push(sub.to_string());
-                    } else {
-                        pending_warning.push(sub.to_string());
-                    }
-                }
-            } else if let Some(rest) = comment.strip_prefix("@EXPECT_FAIL:") {
-                let sub = rest.trim();
-                if !sub.is_empty() {
-                    if in_header {
-                        ann.expect_fail_file.push(sub.to_string());
-                    } else {
-                        pending_fail.push(sub.to_string());
-                    }
-                }
-            } else if comment.starts_with("@IGNORE") {
-                if in_header {
-                    ann.ignore_file = true;
-                } else {
-                    pending_ignore = true;
-                }
-            } else if let Some(rest) = comment.strip_prefix("@ARGS:") {
-                parse_args_annotation(rest.trim(), &mut ann);
-            }
-        }
-        if let Some((name, start)) = open_fn.take() {
-            ann.fn_spans.insert(name, (start, src.lines().count()));
-        }
-        // Any pending annotations not followed by a fn → file-level.
-        ann.expect_fail_file.append(&mut pending_fail);
-        ann.expect_errors.append(&mut pending_error);
-        ann.expect_warnings.append(&mut pending_warning);
-        if pending_ignore {
-            ann.ignore_file = true;
-        }
-        ann
-    }
-
-    /// Parse the token list after `@ARGS:` using the same flag convention as
-    /// the main CLI.  Unknown flags are silently ignored so that future flags
-    /// don't break old test files.
-    fn parse_args_annotation(s: &str, ann: &mut Annotations) {
-        let tokens: Vec<&str> = s.split_whitespace().collect();
-        let mut i = 0;
-        while i < tokens.len() {
-            let t = tokens[i];
-            i += 1;
-            if t == "--lib" {
-                if let Some(&dir) = tokens.get(i) {
-                    ann.extra_lib_dirs.push(dir.to_string());
-                    i += 1;
-                }
-            } else if t == "--project" {
-                if let Some(&dir) = tokens.get(i) {
-                    ann.project = Some(dir.to_string());
-                    i += 1;
-                }
-            } else if t == "--production" {
-                ann.production = true;
-            } else if t == "--log-conf" {
-                if let Some(&path) = tokens.get(i) {
-                    ann.log_conf = Some(path.to_string());
-                    i += 1;
-                }
-            } else if t.starts_with('-') {
-                // Unknown flag — skip (and consume a value arg if present).
-                if tokens.get(i).is_some_and(|s| !s.starts_with('-')) {
-                    i += 1;
-                }
-            } else {
-                // Positional argument — this and all remaining tokens are user args.
-                ann.user_args.push(t.to_string());
-                for &rest in &tokens[i..] {
-                    ann.user_args.push(rest.to_string());
-                }
-                break;
-            }
-        }
     }
 
     // Recursively collect .loft files grouped by directory.
@@ -1059,9 +1090,15 @@ pub(crate) fn run_tests(
                 // recorded before its own libraries went in.
                 p.data.definitions()
             };
+            // `LOFT_TIMING=1` — what this file's front end cost, phase by phase, on one
+            // line, so a slow suite is attributed to a phase and a file.
+            let phase_clock = std::env::var_os("LOFT_TIMING")
+                .is_some()
+                .then(std::time::Instant::now);
             let parse_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 p.parse(&abs_file, false);
             }));
+            let parse_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
             if let Err(payload) = parse_ok {
                 let msg = panic_message(&*payload);
                 if has_expect_error && ann.expect_errors.iter().any(|s| msg.contains(s.as_str())) {
@@ -1090,6 +1127,11 @@ pub(crate) fn run_tests(
             // "scope check panic" in place of *"Cannot break outside a loop"*, so the author
             // never saw the error.  The diagnostics collected below report it.
             let has_errors = p.diagnostics.level() >= loft::diagnostics::Level::Error;
+            // The interpreter run reports the functions it entered, and the scope pass is
+            // where `@FR-R-PureReuse`'s shared-call clause makes its variants: armed only at
+            // `compile::byte_code`, the flag came too late, so a test entered the variant
+            // and coverage named its source as never entered.
+            p.data.observes_entries = !native_mode;
             let scopes_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if !has_errors {
                     scopes::check(&mut p.data, &mut p.database);
@@ -1108,8 +1150,18 @@ pub(crate) fn run_tests(
             // library's CI — which IS a test run — could not see a lost write, or a
             // `#superseded` steer pointing at nothing, which is a hard ERROR everywhere
             // else.
+            let scopes_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
             if !has_errors {
                 loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+            }
+            if let (Some(t), Some(parse_ms), Some(scopes_ms)) = (phase_clock, parse_ms, scopes_ms) {
+                eprintln!(
+                    "LOFT_TIMING test_file={display_name} seeded={} parse={parse_ms:.2}ms scopes={:.2}ms lints={:.2}ms defs={}",
+                    seeded.is_some(),
+                    scopes_ms - parse_ms,
+                    t.elapsed().as_secs_f64() * 1000.0 - scopes_ms,
+                    p.data.definitions()
+                );
             }
 
             // Collect diagnostics.

@@ -92,14 +92,17 @@ LAYERS: list[tuple[str, list[str]]] = [
     ]),
     ("interp", [
         "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",
-        "fuzz_oracle", "interp", "introspect", "live_dispatch", "live_reload", "native_adopt", "parallel",
-        "parallel_natives", "profiler", "stack", "state", "wasm_gl",
+        "fuzz_oracle", "interp", "introspect", "live_dispatch", "live_reload", "native_adopt",
+        "parallel", "parallel_natives", "profiler", "stack", "state", "wasm_gl",
     ]),
     ("lower", [
-       
+        "lower",
     ]),
     ("rust", [
         "create", "generation", "native_lib", "stdlib_codegen",
+    ]),
+    ("c", [
+        "c",
     ]),
     ("facade", [
         "doc_site", "fix_apply", "host", "lib_placement", "lsp", "native_artifact", "repl", "rpc",
@@ -114,6 +117,8 @@ LAYERS: list[tuple[str, list[str]]] = [
 SIBLINGS: list[tuple[str, str]] = [
     ("interp", "lower"),
     ("interp", "rust"),
+    ("interp", "c"),
+    ("rust", "c"),
 ]
 
 # Back-edges allowed per (from-layer, to-layer) while @PLN200's B1 and B2 cut them: a ratchet.

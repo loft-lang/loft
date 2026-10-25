@@ -2393,8 +2393,9 @@ pub fn ordered_range_cursors(
         let last = if till.is_empty() {
             length
         } else {
-            let (t, cmp) = ordered_find(data, ex, stores, keys, till);
-            if ex || cmp { t } else { t + 1 }
+            // @FR-Slice-KeyedIter — the search answers the exclusive end: the first slot at
+            // (`ex`) or past (`..=`) the bound, whether or not a stored key equals it.
+            ordered_find(data, ex, stores, keys, till).0
         };
         let start = if first == 0 {
             i32::MAX as u32

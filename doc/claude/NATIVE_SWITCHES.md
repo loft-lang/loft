@@ -670,6 +670,11 @@ cbor decoder's `(bytes[p] ?? 0) * 256`) carries its type's range — a fact beca
 such a slot refuses an unprovable value; `i32`/`u32` (the templates) and a
 signed alias with a spare bottom code (`limit(-100, 100) size(1)`, whose overflow writes the
 sentinel) stay unranged, and a boxed capture is read through its box and stays checked.
+**`LOFT_NO_FAULT_FLAG=1`** (`@FR-R-FaultFlag`, default-ON, generation time, `--native` only)
+runs every `for` statement as written — with it off, a statement that writes only scalar locals
+first runs a fast copy, each fault form setting a flag, and reruns as written when it is set —
+the first bisect step for a wrong value out of such a loop; `LOFT_TRACE_FAULT_FLAG=1` names each,
+and `LOFT_NO_FAULT_FLAG_UNROLL=1` keeps the fast copy's constant ranges as loops.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
 only) makes a counted loop's index chains keep their checked operators — with it off, chains
 of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals
@@ -689,15 +694,14 @@ cannot say which admitted loop paid.
 ## The release-pass probe (a measurement instrument)
 
 **`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
-build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
-division emits the processor's wrapping operator and every float comparison the plain
-one — what the eventual release build pass for games would emit (DESIGN_DECISIONS.md
-@C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the language's
-(`b = MAX + 1; d = (b + 5) * 2` reads `10` for null), so a row is comparable only while
-its hash still agrees; its time is the CEILING the checked build is measured against,
-which is what says whether a row is bound by the checks or by something else — the
-guide for what to optimise next.  The null test itself and the `*Nullable` twins keep
-their templates: they are the language's null semantics, not its fault protection.
+build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal division emits
+the processor's wrapping operator and every float comparison the plain one — what a game's
+release build emits where its ledger licenses every site (@PLN201, @C120, NATIVE.md § Optimisation
+tiers).  The values after a fault are NOT the language's (`b = MAX + 1; d = (b + 5) * 2` reads
+`10` for null), so a row compares only while its hash agrees; its time is the CEILING the checked
+build is measured against.  `bench/stats.py --lanes native,rust,ship` builds under it, giving each
+routine a `ship` ratio beside its checked one.  The null test and the `*Nullable` twins keep their
+templates (null semantics, not fault protection), and every rewrite still runs under it.
 
 ## Records returned and passed as values
 
@@ -990,10 +994,6 @@ whose checked arithmetic pushed it just past the default budget now folds into i
 way rustc folds a plain-Rust twin's.  A function that runs a loop gets no hint: pulled into a
 caller that loops itself, its loop-carried values spill across the caller's live range
 (`newton_sqrt` inlined through `roots` into `main` kept `guess` on the stack across its divide
-chain, +16 %).  Measured over the suite and three library benches (87 routines, hashes
-identical): geomean −2.3 %, hex_field `edgeset_count` 23.1 → 10.1 ms (35.6× → ~15.6×),
-`join` −19 %, `replace` −18 %, `dot_product` −14 %; the largest loss, `char_roundtrip` +5 %,
-is function layout — both arms read the same once `-align-all-functions=6 -align-loops=64`
-pins it.  **`LOFT_NO_INLINE_HINT=1`** emits no attribute (the emission of before) and is the
+chain, +16 %).  **`LOFT_NO_INLINE_HINT=1`** emits no attribute (the emission of before) and is the
 A/B for a row that moved after a rebuild.  `--names` pins every loft function
 `#[inline(never)]` regardless.  One home: `Output::fn_inline_attr`.
