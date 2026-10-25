@@ -171,7 +171,8 @@ static uint32_t loft_pg_copy_vector(loft_pg *r, const loft_tdesc *T, uint16_t st
 
 /* Stores::relocate_ptr_fields: the pointers of a struct of type `tp`, its bytes already copied to
  * byte `dst_fb` of `dst_rec`, each copied into the local store — a string or a vector of
- * scalars flat, a nested struct field by field, a vector of structs element by element.  The
+ * scalars flat, a nested struct field by field, an enum by the variant it holds, a vector of
+ * structs element by element.  The
  * source pointer is read from the local copy, which holds the image's own words. */
 static void loft_pg_relocate(loft_pg *r, const loft_tdesc *T, uint16_t store_nr, uint32_t dst_rec, uint32_t dst_fb,
                              uint16_t tp) {
@@ -189,6 +190,12 @@ static void loft_pg_relocate(loft_pg *r, const loft_tdesc *T, uint16_t store_nr,
             }
         } else if (ft->kind == LOFT_T_STRUCT) {
             loft_pg_relocate(r, T, store_nr, dst_rec, at, f->type);
+        } else if (ft->kind == LOFT_T_ENUM) {
+            /* An enum: its tag byte (1 is the first variant, 0 null), and a struct-enum
+             * variant's payload at the same position, as `copy_claims` walks it. */
+            int e = (int) *loft_at(&loft_stores[store_nr], dst_rec, at) - 1;
+            if (e >= 0 && e < (int) ft->n && ft->variants[e] != 0xFFFF)
+                loft_pg_relocate(r, T, store_nr, dst_rec, at, ft->variants[e]);
         } else if (ft->kind == LOFT_T_VECTOR) {
             sub = loft_u32(&loft_stores[store_nr], dst_rec, at);
             if (sub != 0) {

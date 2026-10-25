@@ -314,7 +314,9 @@ computes differently from the resident store becomes a lookup that silently answ
 - **`S-Paged` / `S-Paged-Same`** — `trie_db.rs` `the_paged_walk_answers_what_the_resident_walk_answers`,
   `radix_db/paged.rs` `a_paged_box_agrees_with_the_resident_one` and
   `every_axis_width_decodes_to_what_was_written`; the hash on every narrow key width,
-  `tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft`;
+  `tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft`; a struct-enum
+  variant's payload under every paged loader,
+  `tests/scripts/2178-a-paged-load-relocates-an-enum-variants-payload.loft`;
   `tests/paged_read_alloc.rs`, `tests/paged_browser.rs`, `tests/scripts/store_load_*.loft`;
   the bound on a malformed image — every claimed record's length and size word made huge, one
   at a time, under every paged loader —

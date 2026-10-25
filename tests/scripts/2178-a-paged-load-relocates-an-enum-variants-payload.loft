@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A PAGED LOAD RELOCATES AN ENUM VARIANT'S PAYLOAD (`@FR-S-Paged-Same`, loft#2178).  S-Paged-Same:
+// a paged lookup answers the record a whole-image load answers, with the same field values.  An
+// enum field holds its tag byte, and a struct-enum variant's payload lives at the same position
+// (`copy_claims` recurses into the variant there), so a working-set copy must relocate the
+// payload's texts and vectors as it relocates a struct's.  Each cell writes a collection whose
+// entry holds an enum field, loads entries a page at a time, and reads every payload field.  The
+// axes moved are the collection kind (hash by key and by keys, sorted by range, trie by prefix,
+// spatial by box), where the enum sits (a direct field, inside a nested struct), the variant (two
+// struct variants of different layouts, a unit variant) and the payload's pointer
+// fields (a text, a vector of integers, a vector of structs with a text).
+//
+// Values hand-computed: entry `i` holds `Label { tx: "label-{i}", n: 7 * i }` for even `i` and
+// `Bag { xs: [i, i + 1], items: [It { t: "it{i}" }] }` for odd `i`; entry 9 holds a unit `Dot`.
+//
+// @falsified-at: 39ebf3bca — interpret exit 101 -> 0, native exit 1 -> 0
+// CHANNEL: the asserts.
+// ARMED: no instrument.
+// WITNESS: each message names the collection, the entry and the value read.
+// HOLDS: `tests/scripts/store_paged_enum_field.loft` (an enum field of unit variants, paged).
+
+struct It { t: text }
+enum Shape { Dot, Label { tx: text, n: integer }, Bag { xs: vector<integer>, items: vector<It> } }
+struct Inner { s: Shape, k: integer }
+struct Rec { id: integer, s: Shape, inner: Inner, pad: text }
+struct Word { w: text, s: Shape }
+struct Pt { x: integer, y: integer, s: Shape }
+struct Sv { k: integer, s: Shape }
+
+fn shape(i: integer) -> Shape {
+  if i % 2 == 0 { Label { tx: "label-{i}", n: 7 * i } } else { Bag { xs: [i, i + 1], items: [It { t: "it{i}" }] } }
+}
+
+// The payload a shape renders as, read field by field; an absent entry's shape is "null".
+fn show(s: Shape?) -> text {
+  if s == null { return "null" }
+  match s {
+    Label { tx, n } => "L:{tx}:{n}",
+    Bag { xs, items } => {
+      r = "B:";
+      for x in xs { r += "{x},"; }
+      for it in items { r += "{it.t},"; }
+      r
+    },
+    Dot => "D"
+  }
+}
+
+fn main() {
+  base = "{temp_dir() ?? "/tmp"}/loft_2178_{now()}_{ticks()}";
+  h: hash<Rec[id]> = [];
+  for i in 0..6 { h += Rec { id: i, s: shape(i), inner: Inner { s: shape(i + 1), k: i }, pad: "pad{i}" }; }
+  h += Rec { id: 9, s: Dot, inner: Inner { s: Dot, k: 9 }, pad: "dot" };
+  tr: trie<Word[w]> = [];
+  for i in 0..4 { tr += Word { w: "word{i}", s: shape(i) }; }
+  sp: spatial<Pt[x, y]> = [];
+  for i in 0..4 { sp += Pt { x: i, y: i, s: shape(i) }; }
+  so: sorted<Sv[k]> = [];
+  for i in 0..4 { so += Sv { k: i, s: shape(i) }; }
+  assert(store_persist_copy(h, "{base}.h") && store_persist_copy(tr, "{base}.tr"), "write");
+  assert(store_persist_copy(sp, "{base}.sp") && store_persist_copy(so, "{base}.so"), "write");
+
+  m: hash<Rec[id]> = [];
+  assert(store_load_key(m, "{base}.h", 2), "load 2");
+  assert(store_load_keys(m, "{base}.h", [3, 9]) == 2, "load 3, 9");
+  assert(store_verify(m), "hash verify");
+  assert(show(m[2].s) == "L:label-2:14", "hash 2 s {show(m[2].s)}");
+  assert(show(m[2].inner.s) == "B:3,4,it3,", "hash 2 inner {show(m[2].inner.s)}");
+  assert(show(m[3].s) == "B:3,4,it3,", "hash 3 s {show(m[3].s)}");
+  assert(show(m[3].inner.s) == "L:label-4:28", "hash 3 inner {show(m[3].inner.s)}");
+  assert(show(m[9].s) == "D" && show(m[9].inner.s) == "D" && m[9].pad == "dot", "hash 9 {show(m[9].s)}");
+  assert(m[3].pad == "pad3", "hash 3 pad {m[3].pad}");
+
+  t: trie<Word[w]> = [];
+  assert(store_load_prefix(t, "{base}.tr", "word", -1) == 4, "trie count");
+  ts = "";
+  for w in t { ts += "{w.w}={show(w.s)};"; }
+  assert(ts == "word0=L:label-0:0;word1=B:1,2,it1,;word2=L:label-2:14;word3=B:3,4,it3,;", "trie {ts}");
+
+  p: spatial<Pt[x, y]> = [];
+  assert(store_load_box(p, "{base}.sp", [1, 1], [2, 2], -1) == 2, "spatial count");
+  ps = "";
+  for q in p { ps += "{q.x}={show(q.s)};"; }
+  assert(ps == "1=B:1,2,it1,;2=L:label-2:14;", "spatial {ps}");
+
+  o: sorted<Sv[k]> = [];
+  assert(store_load_range(o, "{base}.so", 1, 2) == 2, "sorted count");
+  os = "";
+  for v in o { os += "{v.k}={show(v.s)};"; }
+  assert(os == "1=B:1,2,it1,;2=L:label-2:14;", "sorted {os}");
+  println("every payload relocated");
+}

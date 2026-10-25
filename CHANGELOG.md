@@ -315,6 +315,11 @@ stack address on the interpreter (a garbage record on read, nothing said) and fa
 compile natively.  A `&` into a field that holds its record inline (`struct Rec { o: Other }`,
 `d.o = &p` or `Rec { o: &p }`) is refused — it has nothing to bind; write `d.o = p` to copy
 the record, or declare the field `reference<Other>` to hold a link (loft#2166).
+**A paged load reads an enum field's payload right.**  An entry loaded with `store_load_key`,
+`store_load_prefix`, `store_load_box`, `store_load_range` or their siblings read a struct-enum
+variant's text or vector wrong — an empty or another record's value, or a crash — while
+`store_load` read it right.  The variant's fields are now copied with the entry.
+
 **A paged load of a damaged image answers instead of crashing.**  `store_load_key`,
 `store_load_keys`, `store_load_range` and the other paged loaders could stop the program, or
 leave a collection `store_verify` rejects, when an image held a length or a size that ran past

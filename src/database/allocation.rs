@@ -8486,6 +8486,12 @@ impl Stores {
             ) {
                 // Inline nested struct: same records, deeper bases.
                 self.relocate_ptr_fields(reader, dst_rec, dst_off, src_rec, src_off, ftp, store_nr);
+            } else if let Some(variant) = self.enum_variant_at(ftp, store_nr, dst_rec, dst_off) {
+                // An enum: its payload is the variant's fields at the same position, as
+                // `copy_claims` walks it (loft#2178).
+                self.relocate_ptr_fields(
+                    reader, dst_rec, dst_off, src_rec, src_off, variant, store_nr,
+                );
             } else if let Parts::Vector(elem_tp) = self.types[ftp as usize].parts {
                 // vector<struct>: copy the inner record + recurse each element.
                 let src_sub = self.src_ptr(reader, dst_rec, dst_off, src_rec, src_off, store_nr);
@@ -8528,6 +8534,8 @@ impl Stores {
                 Parts::Struct(_) | Parts::EnumValue(_, _)
             ) {
                 self.collect_sub_records(dst_rec, dst_off, ftp, store_nr, out);
+            } else if let Some(variant) = self.enum_variant_at(ftp, store_nr, dst_rec, dst_off) {
+                self.collect_sub_records(dst_rec, dst_off, variant, store_nr, out);
             } else if ftp == 5 || matches!(self.types[ftp as usize].parts, Parts::Vector(_)) {
                 let sub = self.allocations[store_nr as usize].get_u32_raw(dst_rec, dst_off);
                 if sub != 0 {
@@ -8535,6 +8543,19 @@ impl Stores {
                 }
             }
         }
+    }
+
+    /// The struct-enum variant an enum field of type `tp` at `(rec, pos)` of the local copy holds
+    /// — read from its tag byte as `copy_claims` reads it — or `None` for a type that is not
+    /// an enum, a unit variant, or a null value.
+    #[cfg(paged_store)]
+    fn enum_variant_at(&self, tp: u16, store_nr: u16, rec: u32, pos: u32) -> Option<u16> {
+        let Parts::Enum(values) = &self.types[tp as usize].parts else {
+            return None;
+        };
+        let e_nr = self.allocations[store_nr as usize].get_byte(rec, pos, -1);
+        let variant = values.get(usize::try_from(e_nr).ok()?)?.0;
+        (variant != u16::MAX).then_some(variant)
     }
 
     /// The SOURCE pointer stored in a field, read from the local copy rather than
