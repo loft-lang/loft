@@ -453,6 +453,93 @@ fn single_cdylib(native_auto: &Path) -> Option<std::path::PathBuf> {
     })
 }
 
+/// loft#2180 — a library artifact's bridge names are the LIBRARY's, not its first builder's.
+///
+/// `alpha` and `beta` both define a `pub fn cell`.  A program that uses both sees a duplicate
+/// and disambiguates the emitted Rust; the cached `alpha` artifact used to export its bridge
+/// under that program's name (`cell_m<hash>`), so a program that uses `alpha` alone looked up
+/// `cell`, missed it and ran it interpreted — and in the other order the reverse.  Each order
+/// on a fresh copy: the first program builds and adopts the artifact, the second must
+/// dispatch through it (`LOFT_REQUIRE_NATIVE=1` turns an interpreted fallback into a failure).
+/// `other`, a name nothing else defines, is the control that resolved in both orders.
+// @speed 3
+#[test]
+fn a_library_bridge_name_does_not_depend_on_its_first_builder_2180() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable (mixed mode needs it)");
+        return;
+    }
+    let pid = std::process::id();
+    let progs: [(&str, &str, &str); 2] = [
+        (
+            "both",
+            "use alpha;\nuse beta;\nfn main() { println(\"both: {alpha::cell(95)} {beta::cell(95, 5)} {alpha::other(1)}\"); }\n",
+            "both: 9 19 2\n",
+        ),
+        (
+            "one",
+            "use alpha;\nfn main() { println(\"one: {alpha::cell(95)} {alpha::other(1)}\"); }\n",
+            "one: 9 2\n",
+        ),
+    ];
+    for (first, second) in [(0, 1), (1, 0)] {
+        let root = std::env::temp_dir().join(format!("loft_bridge_name_{pid}_{first}"));
+        let _ = fa::remove_dir_all(&root);
+        let libdir = root.join("libs");
+        fa::create_dir_all(&libdir).unwrap();
+        let native_auto = write_lib(
+            &libdir,
+            "alpha",
+            None,
+            "pub fn cell(x: integer) -> integer { x / 10 }\npub fn other(x: integer) -> integer { x + 1 }\n",
+        );
+        write_lib(
+            &libdir,
+            "beta",
+            None,
+            "pub fn cell(x: integer, size: integer) -> integer { x / size }\n",
+        );
+        let path = |i: usize| root.join(format!("{}.loft", progs[i].0));
+        for i in [first, second] {
+            fa::write(path(i), progs[i].1).unwrap();
+        }
+        // Three runs: the first after the library's source appears may interpret it.
+        for pass in 0..3 {
+            let r = run_against(&libdir, &path(first), &[]);
+            assert_eq!(
+                r.stdout, progs[first].2,
+                "{} pass {pass}:\n{}",
+                progs[first].0, r.stderr
+            );
+        }
+        assert!(
+            single_cdylib(&native_auto).is_some(),
+            "{} must have built alpha's artifact, or nothing is adopted",
+            progs[first].0
+        );
+        let r = run_against(&libdir, &path(second), &[("LOFT_REQUIRE_NATIVE", "1")]);
+        assert!(
+            r.success
+                && !r.stderr.contains("interpreted")
+                && !r.stderr.contains("LOFT_REQUIRE_NATIVE"),
+            "{} after {} must dispatch through alpha's artifact:\n{}",
+            progs[second].0,
+            progs[first].0,
+            r.stderr
+        );
+        assert_eq!(
+            r.stdout, progs[second].2,
+            "{}:\n{}",
+            progs[second].0, r.stderr
+        );
+        let _ = fa::remove_dir_all(&root);
+    }
+}
+
 /// @PLN11 N3 Step 4 — **dev-interpret-on-edit**.
 ///
 /// *Invariant:* a library's first use builds eagerly (native), but **editing** it
