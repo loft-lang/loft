@@ -835,8 +835,11 @@ fn hash_free_entry(
 /// seeded sequence of inserts (a key already filed is replaced, as `Stores::insert_record`
 /// replaces it), removals, lookups and reservations runs through both on three tables — an
 /// integer key, a text key, and one that borrows its entries (stride 0, a linked type's) — and
-/// every lookup, the walks in key order and in slot order, and every byte of the store agree.
-/// Inline tables grow and arena tables grow; a reservation turns a table into a bigger one.
+/// every lookup, the walks in key order and in slot order, and every byte of the store agree —
+/// and on a fourth whose first entry is a record it did not stage, which demotes it from an
+/// inline table to an arena one.  Falsified: the load factor, the inline growth, the back-shift,
+/// the insertion count, the arena's free list, a SipHash rotation, the text terminator and the
+/// replace-in-place insert each fail it.
 #[test]
 fn the_c_hash_table_files_every_entry_where_hash_does() {
     use loft::hash;
@@ -863,11 +866,11 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
         position: 0,
         start: 0,
     }];
-    let keys: [&[Key]; 3] = [&int_key, &text_key, &int_key];
-    let strides = [16u32, 16, 0];
+    let keys: [&[Key]; 4] = [&int_key, &text_key, &int_key, &int_key];
+    let strides = [16u32, 16, 0, 16];
     let mut stores = vec![Store::new_in_use_defined(100)];
     let root = stores[0].claim(3);
-    let h: Vec<DbRef> = (0..3)
+    let h: Vec<DbRef> = (0..4)
         .map(|t| DbRef {
             store_nr: 0,
             rec: root,
@@ -875,14 +878,23 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
         })
         .collect();
     // A table's seed is drawn when it is made; both sides then take the same one.
-    for t in 0..3 {
+    for t in 0..4 {
         let claim = hash::ensure_table(&h[t], strides[t], &mut stores);
         stores[0].set_u32_raw(claim, hash::SEED_FLD, 0x89ab_cdef);
         stores[0].set_u32_raw(claim, hash::SEED_FLD + 4, 0x0123_4567);
     }
+    // A record the inline table did not stage: filing it demotes the table to an arena.
+    let own = DbRef {
+        store_nr: 0,
+        rec: stores[0].claim(3),
+        pos: 8,
+    };
+    stores[0].set_int(own.rec, 8, 1_000_000);
+    stores[0].set_int(own.rec, 16, 7);
+    hash_insert(&mut stores, &h[3], &own, keys[3]);
     let (mut script, mut want) = (String::new(), String::new());
-    for _ in 0..5000 {
-        let t = next(3) as usize;
+    for _ in 0..6000 {
+        let t = next(4) as usize;
         let pick = next(100);
         let k = next(if t == 1 { 200 } else { 300 });
         let name = format!("k{k}");
@@ -935,7 +947,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
             }
         }
     }
-    for t in 0..3 {
+    for t in 0..4 {
         let _ = writeln!(want, "len {}", hash::count(&h[t], &stores));
         for e in hash::records_sorted(&h[t], &stores, keys[t]) {
             let _ = writeln!(want, "k {} {}", e.rec, e.pos);
@@ -979,16 +991,22 @@ int main(int argc, char **argv) {
     loft_st_init(&st);
     loft_stores = &st;
     loft_nstores = 1;
-    const loft_key *keys[3] = { K_INT, K_TEXT, K_INT };
-    uint32_t strides[3] = { 16, 16, 0 };
+    const loft_key *keys[4] = { K_INT, K_TEXT, K_INT, K_INT };
+    uint32_t strides[4] = { 16, 16, 0, 16 };
     uint32_t root = loft_st_claim(&st, 3);
-    loft_ref h[3];
-    for (int t = 0; t < 3; t++) {
+    loft_ref h[4];
+    for (int t = 0; t < 4; t++) {
         h[t].store_nr = 0;
         h[t].rec = root;
         h[t].pos = 8 + 4 * (uint32_t) t;
         loft_h_write_seed(&st, loft_h_ensure_table(h[t], strides[t]), UINT64_C(0x0123456789abcdef));
     }
+    loft_ref own = { 0, 0, 8 };
+    own.rec = loft_st_claim(&st, 3);
+    int64_t own_key = 1000000, own_value = 7;
+    memcpy(loft_at(&st, own.rec, 8), &own_key, 8);
+    memcpy(loft_at(&st, own.rec, 16), &own_value, 8);
+    (void) loft_hash_insert(T, 0, h[3], own, K_INT, 1, 0);
     FILE *f = fopen(argv[argc - 1], "r");
     char op;
     unsigned t, k;
@@ -1028,7 +1046,7 @@ int main(int argc, char **argv) {
             printf("%u %u\n", found.rec, found.pos);
         }
     }
-    for (int t = 0; t < 3; t++) {
+    for (int t = 0; t < 4; t++) {
         uint32_t n;
         printf("len %lld\n", (long long) loft_hash_len(h[t]));
         for (int by_slot = 0; by_slot < 2; by_slot++) {
