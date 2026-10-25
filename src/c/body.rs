@@ -1133,7 +1133,8 @@ impl<'a> FnWriter<'a> {
             // The same for a tuple read out of a tuple local (`pr = t.1`): its texts are the
             // ones the epilogue frees, so the local takes copies — a struct copy shared the
             // source's, and the free released text the caller still held.
-            Value::TupleGet(src, i) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) => {
+            Value::TupleGet(src, i) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) =>
+            {
                 let CType::Tuple(id) = c else { unreachable!() };
                 let from = format!("{}.f{i}", self.var(*src));
                 for (j, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
