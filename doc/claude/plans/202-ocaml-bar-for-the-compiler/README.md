@@ -8,9 +8,8 @@
 are in the plan directory's `probes/` (one per row, named by bar entry) and become cells under P0.
 The re-measurement closed two steps without code — **P1** (`>>` already works on main) and **P6**
 (not needed by 1a's AST rule) — and added two, **P8** (two diagnostics that name a cure which does
-not compile) and **P9** (the documentation and the skills).  **P0, P2, P3, P4, P7 and P8 are done**
-(2026-10-25, with loft#2166, #2168 and #2170 fixed on the way and loft#2171 found); the rest of P9
-and P5a remain.
+not compile) and **P9** (the documentation and the skills).  **P0, P2, P3, P4, P7, P8 and P9 are done**
+(2026-10-25, with loft#2166, #2168 and #2170 fixed on the way and loft#2171 found); P5a remains.
 One defect fell out of the measurement and is filed: loft#2163 (open).
 
 ## Goal
@@ -71,7 +70,7 @@ the moved record's old bytes.
 | **P6** | — | **closed 2026-10-25, not needed:** 1a's AST rule (above) keeps children in a `vector<Node>`, a keyed collection or an arena, never behind `reference<>` into a growable vector, and `a5e` (inline `vector<Node>` children) passes.  Binding `&` of a temporary would serve the shape the rule excludes | `Parser::is_amp_place`, `src/parser/operators.rs:1996` stays as it is | — |
 | **P7** | — | **done 2026-10-25** for A5, C7, C8 and H1 (OCAML_BAR.md § Evaluation: A5 passes through `reference<>`, the by-value spelling refused by design; C7 by the advice; C8 and H1 as written); H6 stands until P5a | `doc/claude/bars/OCAML_BAR.md` | the bar's table and the cells agree |
 | **P8** | — | **done 2026-10-25:** the bare-variant cure names the DECLARED enum (`Tree.Leaf`, not the instance `Tree<T#4>`); `Tree.Leaf` — a generic enum's template followed by `.` and one of its variants — is the qualified spelling, resolved by the TARGET (a typed local, a concrete parameter; `Tree::Leaf` likewise), and refused naming the typed-target cure where there is none (`tests/error_messages/cases/62_…`); a generic parameter's argument is refused too (`T` unconstrained).  Found on the way: a self-referencing generic enum that no generic function instantiates trips the two-pass contract on its own — loft#2171, filed, not fixed here.  Cell: `interfaces/G-Type` | `src/parser/objects.rs` (`parse_constant_value`, the qualifier) | the golden case; `make suite ARGS="@FR-G-Type --mode both"` |
-| **P9** | S | **the loft documentation and the skills, for this work** (owner, 2026-10-25): the user docs — LOFT.md's index, LOFT_DATA.md § Structs (`..base`), LOFT_CONTROL.md § Match (head/tail totality, the scalar-hole advice, the unit variant's `{`), DIAGNOSTICS.md (the `match-scalar-hole` row, `LOFT_NO_SCALAR_HOLE`), STDLIB.md where it names a limitation this plan lifted — and the reference pages that RUN (`tests/docs/*.loft`: a worked `..base` on the structs page, the match page's head/tail arms and its "the compiler will not remind you" sentence), regenerated with `cargo run --bin gendoc`; the skills — `loft-write` (the `..base` spelling, head/tail arms without `_`, the scalar-hole advice, and the four fixes struck from its known-bugs table: loft#2166, #2168, #2170, the stale A5 row), `loft-test` if a convention moved; `make skills-review` and `make libraries-review` read clean afterwards | `doc/claude/LOFT*.md`, `doc/claude/DIAGNOSTICS.md`, `tests/docs/`, `.claude/skills/loft-write/SKILL.md` | `make docs-lint` adds nothing; `make skills-review` names no skill this work moved; the reference pages run on both backends |
+| **P9** | — | **done 2026-10-25** — the Documentation section below is the list, every line checked; `make skills-review` remains the owner's read (every skill is listed from its 2026-10-16 watermark, not from this work) | — | `make docs-lint` adds nothing; the reference pages and `tests/docs/features/F12.loft` run on both backends |
 
 ## Phase ordering
 
@@ -114,16 +113,15 @@ marked done.
       regenerated (`943ffa89b`).
 - [x] doc/claude/bars/OCAML_BAR.md — A5, C7, C8, H1 re-measured (P7); H6 waits for P5a.
 - [x] LOFT.md's index — names no literal spelling (checked 2026-10-25); nothing to add.
-- [ ] tests/docs reference pages — a worked `..base` on the structs page; the match page's
-      head/tail arms.
+- [x] tests/docs reference pages — `08-struct.loft` § A record with some fields changed,
+      `29-match.loft` § Slice arms that cover every length; pages regenerated with `make doc`.
 - [x] the `loft-write` skill — `..base`, head/tail arms without `_`, the scalar-hole advice, a
       unit variant's `{` after `is`, `d.r = &p`; the error→fix rows; the snippets in
       `tests/reference/skill-*.loft` (`6c9764861`).  `make skills-review` still lists every skill
       from its 2026-10-16 watermark — the review itself is the owner's read.
-- [ ] STDLIB.md / INTERFACES.md — any limitation they state that this plan lifted (run the
-      citation check before repeating one).
-- [ ] the feature catalogue — the `@F` issue for struct literals and for `match` (`make
-      features-fetch && make features-gen`).
+- [x] STDLIB.md / INTERFACES.md — state nothing this plan lifted (grep 2026-10-25).
+- [x] the feature catalogue — @F12 (struct records: the update) and @F29 (match: the complete
+      slice match, the scalar-hole advice) edited; the shadow regenerated.
 
 ## Cross-arc dependencies
 

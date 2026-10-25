@@ -43,6 +43,15 @@ fn size_of(s: Shape) -> text {
   }
 }
 
+// A slice match whose arms together cover every length needs no `_`: `[]` covers the
+// empty vector and `[x, ..rest]` every other length — the list recursion.
+fn total(v: vector<integer>) -> integer {
+  match v {
+    [] => 0,
+    [x, ..rest] => x + total(rest),
+  }
+}
+
 fn main() {
   assert(direction_name(North) == "north", "simple enum match");
   assert(direction_name(West) == "west", "west");
@@ -198,6 +207,14 @@ fn main() {
   };
   assert(bigger == "rect", "variants inside a tuple pattern: {bigger}");
 
+  // ## Slice arms that cover every length
+  // One slice arm is length-constrained, so it never covers every length on its own; the
+  // ARMS do when an exact arm covers each short length and a rest arm every length from
+  // there on, each with plain element bindings and no guard. Then no `_` is needed and the
+  // match is not nullable. A set that leaves a length out — `[x, ..rest]` alone — is
+  // refused ("a slice pattern can fail").
+  assert(total([]) == 0, "the empty arm: {total([])}");
+  assert(total([1, 2, 3]) == 6, "the recursion over the rest: {total([1, 2, 3])}");
   // ## When nothing matches
   // This match names no `_`, and 7 is none of its arms.  On an enum that would
   // not compile; on a scalar there is no finite set to check, so the match

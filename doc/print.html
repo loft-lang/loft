@@ -804,6 +804,11 @@
 <pre><code>  linked = &amp;item;
   linked.stock = <span class="nm">1</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(item.stock == <span class="nm">1</span>, <span class="st">"'&amp;' binds a live link"</span>);</code></pre>
+<h2 id="a-record-with-some-fields-changed">A record with some fields changed</h2>
+<p><code>Product { price: 90, ..apple }</code> is a copy of <code>apple</code> with <code>price</code> written — exactly <code>sale = apple; sale.price = 90;</code> in one expression. The base keeps its value, the named fields are written as assignments (each reads the BASE, never the half-written copy), and <code>..base</code> is the last entry. The base must be a Product and present; a variant is not updated this way — match on it and build the variant from its fields.</p>
+<pre><code>  sale = <span class="en">Product</span> { price: <span class="nm">90</span>, ..apple };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sale.price == <span class="nm">90</span> &amp;&amp; sale.name == <span class="st">"Apple"</span> &amp;&amp; sale.stock == <span class="nm">49</span>, <span class="st">"the copy with price written: {sale.price} {sale.name} {sale.stock}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(apple.price == <span class="nm">120</span>, <span class="st">"the base keeps its price: {apple.price}"</span>);</code></pre>
 <h2 id="comparing-structs">Comparing structs</h2>
 <p><code>==</code> compares what two structs hold, field by field — a plain struct and a value struct alike, with no <code>OpEq</code> to write. To ask whether two names are the SAME record, put <code>&amp;</code> on both sides.</p>
 <pre><code>  twin = <span class="en">Product</span> {name: <span class="st">"Pear"</span>, price: <span class="nm">90</span>, stock: <span class="nm">3</span> };
@@ -2944,6 +2949,13 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
     <span class="en">Rect</span> { w, h } =&gt; <span class="st">"rect"</span>,
   }
 }</code></pre>
+<p>A slice match whose arms together cover every length needs no <code>_</code>: <code>[]</code> covers the empty vector and <code>[x, ..rest]</code> every other length — the list recursion.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">total</span>(v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+  match v {
+    [] =&gt; <span class="nm">0</span>,
+    [x, ..rest] =&gt; x + <span class="fn-call">total</span>(rest),
+  }
+}</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">direction_name</span>(<span class="en">North</span>) == <span class="st">"north"</span>, <span class="st">"simple enum match"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">direction_name</span>(<span class="en">West</span>) == <span class="st">"west"</span>, <span class="st">"west"</span>);</code></pre>
@@ -3065,6 +3077,10 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
     _ =&gt; <span class="st">"other"</span>,
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bigger == <span class="st">"rect"</span>, <span class="st">"variants inside a tuple pattern: {bigger}"</span>);</code></pre>
+<h2 id="slice-arms-that-cover-every-length">Slice arms that cover every length</h2>
+<p>One slice arm is length-constrained, so it never covers every length on its own; the ARMS do when an exact arm covers each short length and a rest arm every length from there on, each with plain element bindings and no guard. Then no <code>_</code> is needed and the match is not nullable. A set that leaves a length out — <code>[x, ..rest]</code> alone — is refused ("a slice pattern can fail").</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">total</span>([]) == <span class="nm">0</span>, <span class="st">"the empty arm: {total([])}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">total</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>]) == <span class="nm">6</span>, <span class="st">"the recursion over the rest: {total([1, 2, 3])}"</span>);</code></pre>
 <h2 id="when-nothing-matches">When nothing matches</h2>
 <p>This match names no <code>_</code>, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with <code>??</code>, or add a <code>_</code> arm.  The compiler advises at the match (<code>match-scalar-hole</code>); <code>LOFT_NO_SCALAR_HOLE</code> keeps a deliberate hole quiet.</p>
 <pre><code>  unmatched = match <span class="nm">7</span> {

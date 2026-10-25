@@ -2449,6 +2449,16 @@ Write '&' to get a live link where a bind would otherwise copy.
   assert(item.stock == 1, "'&' binds a live link");
 ```
 
+=== A record with some fields changed
+
+'Product { price: 90, ..apple }' is a copy of 'apple' with 'price' written — exactly 'sale = apple; sale.price = 90;' in one expression. The base keeps its value, the named fields are written as assignments (each reads the BASE, never the half-written copy), and '..base' is the last entry. The base must be a Product and present; a variant is not updated this way — match on it and build the variant from its fields.
+
+```rust
+  sale = Product { price: 90, ..apple };
+  assert(sale.price == 90 && sale.name == "Apple" && sale.stock == 49, "the copy with price written: {sale.price} {sale.name} {sale.stock}");
+  assert(apple.price == 120, "the base keeps its price: {apple.price}");
+```
+
 === Comparing structs
 
 '==' compares what two structs hold, field by field — a plain struct and a value struct alike, with no 'OpEq' to write. To ask whether two names are the SAME record, put '&' on both sides.
@@ -6270,6 +6280,17 @@ fn size_of(s: Shape) -> text {
 }
 ```
 
+A slice match whose arms together cover every length needs no `\_`: `\[\]` covers the empty vector and `\[x, ..rest\]` every other length — the list recursion.
+
+```rust
+fn total(v: vector<integer>) -> integer {
+  match v {
+    [] => 0,
+    [x, ..rest] => x + total(rest),
+  }
+}
+```
+
 ```rust
 fn main() {
   assert(direction_name(North) == "north", "simple enum match");
@@ -6467,6 +6488,15 @@ An element can be an enum variant with its fields bound, so one arm reads both s
     _ => "other",
   };
   assert(bigger == "rect", "variants inside a tuple pattern: {bigger}");
+```
+
+=== Slice arms that cover every length
+
+One slice arm is length-constrained, so it never covers every length on its own; the ARMS do when an exact arm covers each short length and a rest arm every length from there on, each with plain element bindings and no guard. Then no `\_` is needed and the match is not nullable. A set that leaves a length out — `\[x, ..rest\]` alone — is refused ("a slice pattern can fail").
+
+```rust
+  assert(total([]) == 0, "the empty arm: {total([])}");
+  assert(total([1, 2, 3]) == 6, "the recursion over the rest: {total([1, 2, 3])}");
 ```
 
 === When nothing matches
