@@ -174,10 +174,15 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
     // The seeded variant: identical wasm, with the store handed to the page's own
     // filesystem the way `doc/loft-fs.js` documents (`globalThis.loftBaseFS`).
     let page = fa::read_to_string(&html).expect("read page");
+    // The image travels with its layout sidecar, which `store_persist_copy` wrote beside it:
+    // a page refuses an image whose layout nothing records (`@FR-S-Gate`).
     let bytes = fa::read(dir.join("page.store")).expect("read store");
+    let side = fa::read(dir.join("page.store.dschema")).expect("read sidecar");
     let b64 = loft::base64::encode(&bytes);
+    let side64 = loft::base64::encode(&side);
     let seed = format!(
-        "<script>globalThis.loftBaseFS={{\"/page.store\":Uint8Array.from(atob(\"{b64}\"),c=>c.charCodeAt(0))}};</script>\n"
+        "<script>globalThis.loftBaseFS={{\"/page.store\":Uint8Array.from(atob(\"{b64}\"),c=>c.charCodeAt(0)),\
+         \"/page.store.dschema\":Uint8Array.from(atob(\"{side64}\"),c=>c.charCodeAt(0))}};</script>\n"
     );
     let seeded = page.replacen("<script>", &format!("{seed}<script>"), 1);
     assert!(seeded.len() > page.len(), "the seed was not spliced in");
