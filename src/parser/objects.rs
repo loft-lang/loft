@@ -664,11 +664,15 @@ impl Parser {
         // working once variants are no longer globally keyed (step 4).
         let qualifier_enum = if qualified && source == u16::MAX {
             let q = self.data.def_nr(name);
-            if q != u32::MAX && self.data.def_type(q) == DefType::Enum {
-                q
-            } else {
-                u32::MAX
-            }
+            // A GENERIC enum's template qualifies its variants too (`Tree.Leaf`): the instance
+            // the variant belongs to comes from the target, in `parse_constant_value`
+            // (loft-lang/plans#202 P8).  Asked only of a plain enum, the spelling fell through
+            // to a value of no type ("Unknown type null").
+            let is_enum = q != u32::MAX
+                && (self.data.def_type(q) == DefType::Enum
+                    || (self.data.def_type(q) == DefType::TypeTemplate
+                        && self.data.variant_of(q, &nm) != u32::MAX));
+            if is_enum { q } else { u32::MAX }
         } else {
             u32::MAX
         };
@@ -1647,7 +1651,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "bare variant '{name}' has no type here — qualify it as \
-                             '{enum_name}.{name}', or give the target an enum type"
+                             '{declared}.{name}', or give the target an enum type"
                         );
                     } else {
                         let names: Vec<String> = variant_enums
@@ -1658,7 +1662,7 @@ impl Parser {
                             self.lexer,
                             Level::Error,
                             "ambiguous variant '{name}' (a variant of {}) — qualify it, \
-                             e.g. '{enum_name}.{name}'",
+                             e.g. '{declared}.{name}'",
                             names.join(", ")
                         );
                     }
@@ -2597,6 +2601,25 @@ impl Parser {
         if qualifier_enum != u32::MAX {
             d_nr = self.data.variant_of(qualifier_enum, name);
         }
+        // `Tree.Leaf` — a GENERIC enum's template followed by `.` and one of its variants
+        // (loft-lang/plans#202 P8).  The plain enum's dot road reads `Color` as its TYPE and
+        // `.Red` as a member of it; a template has no enum type to carry that, so the name
+        // answered no type and the member read failed as "Unknown type null".  Qualify the
+        // variant with the template and resolve it below, where the target names the instance.
+        if qualifier_enum == u32::MAX
+            && d_nr != u32::MAX
+            && self.data.def_type(d_nr) == DefType::TypeTemplate
+            && self.lexer.peek_token(".")
+        {
+            let link = self.lexer.link();
+            self.lexer.cont();
+            if let Some(vname) = self.lexer.has_identifier()
+                && self.data.variant_of(d_nr, &vname) != u32::MAX
+            {
+                return self.parse_constant_value(code, source, &vname, name_pos, d_nr);
+            }
+            self.lexer.revert(link);
+        }
         // @PLN22 Phase 1 — a library-qualified `lib::Variant` falls back to the
         // variant_in_source chokepoint.  Harmless for non-variant `lib::name`
         // (no enum has the variant → MAX → falls through).
@@ -2758,6 +2781,54 @@ impl Parser {
                 }
                 self.data.variant_of(inst, name)
             };
+        }
+        // A UNIT variant of a generic enum, QUALIFIED (`Tree.Leaf`): its instance comes from the
+        // target, as a literal's does above — the template's own variant has no layout, and
+        // left as the value it reached the binding as "Unknown type null" (loft-lang/plans#202
+        // P8).  With no target the refusal names the typed-target cure; the bare spelling keeps
+        // its own road.
+        if literal_template != u32::MAX
+            && qualifier_enum != u32::MAX
+            && d_nr != u32::MAX
+            && self.data.def_type(d_nr) == DefType::EnumValue
+            && !self.lexer.peek_token("{")
+        {
+            let template = literal_template;
+            let in_template =
+                self.context != u32::MAX && self.data.def_type(self.context) == DefType::Generic;
+            let expected = match self.expected.base() {
+                Type::Reference(inst, _) | Type::Enum(inst, _, _)
+                    if self.data.def(*inst).instance_of == template
+                        && (in_template || !self.data.is_open_instance(*inst)) =>
+                {
+                    *inst
+                }
+                _ => u32::MAX,
+            };
+            if expected == u32::MAX {
+                if !self.first_pass {
+                    let declared = self.data.def(template).name().to_string();
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{declared}.{name}` is a variant of a generic enum, whose type arguments \
+                         come from the target — bind it to a typed local (`x: {declared}<…> = \
+                         {name}`) or pass it where a `{declared}<…>` is expected"
+                    );
+                }
+                // Recover as the `::` road's unknown variant does (#493): a null value typed
+                // as the enum, so a read of it afterwards is an ordinary error — a `Never`
+                // here met the two-pass contract's refusal (loft#2171).
+                *code = Value::Null;
+                return self.data.def(template).returned().clone();
+            }
+            if !self.data.is_open_instance(expected) {
+                self.lay_out_instance(expected);
+                for v in self.data.children_of(expected).collect::<Vec<_>>() {
+                    self.lay_out_instance(v);
+                }
+            }
+            d_nr = self.data.variant_of(expected, name);
         }
         if d_nr != u32::MAX {
             self.data.def_used(d_nr);

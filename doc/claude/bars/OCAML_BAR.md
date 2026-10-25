@@ -22,6 +22,8 @@ measurements, and the documentation-derived statuses they replaced, are in
 Every probe re-run as written at `58601f08a` (`tuxedo-pr1866-next`), both backends, from a scratch directory; <!-- doc-lint: ok -->
 A3 and C1 re-measured in their real spelling through their guards, and tier H measured new.  The
 other rows answer as they did at `b194678c`. <!-- doc-lint: ok -->
+A5, C7, C8 and H1 re-measured 2026-10-25 at `943ffa89b` (`157-native-4x`, loft-lang/plans#202), both backends: <!-- doc-lint: ok -->
+C8 and H1 pass as written, C7 by the advice the plan added, A5 through `reference<>`; H6 stands until the plan's P5a.
 **The two backends agreed on every cell except where a cell says otherwise.**  A probe whose
 spelling is wrong for a capability loft has is scored in the real spelling, and the row names
 it.
@@ -32,7 +34,7 @@ it.
 | A2 fold | **PASS** | as written |
 | A3 variable not in first param | **PASS** | `zip<T, U>` building a `vector<(T, U)>`, both backends (guard `a-generic-over-a-vector-of-tuples-of-its-type-variables.loft`; loft#1868, fixed pending merge).  `empty_of<T>() -> vector<T>` stays refused: *"Generic function must have at least one parameter of type T"* <!-- doc-lint: ok --> |
 | A4 generic struct | **PASS** | as written |
-| A5 generic recursive enum | FAIL | `Node { left: reference<Tree<T> >, … }` is refused (*"variant Node has no field 'left'"*).  `>>` closing two type-argument lists in a variant field is read as comparison operators; write `> >` |
+| A5 generic recursive enum | **PASS** | through `reference<Tree<T>>` — written `>>` or `> >` — with the nodes bound to typed locals (`n1: Tree<integer> = Node { left: &l, value: 1, right: &l }`), instantiated at `integer` and at `text` (suite `heap/H-RefHome`); the bar's BY-VALUE spelling (`left: Tree<T>`) is refused by design (*"Enum 'Tree<integer>' contains itself — use reference<Tree<integer>>"*), and a constructor nested behind `&` is A5b's refusal (loft-lang/plans#202) |
 | A5b recursive enum, monomorphic | **PASS** | `Add { l: reference<Expr>, r: reference<Expr> }`, each node bound to a local and linked with `&`; nesting the constructors inline is refused (*"Cannot assign ref(Lit) to field Add.l"*) |
 | A6 user `Result` | **PASS** | two spellings fixed: field-init shorthand does not exist (`Err { error: error }`), and a text parse is discharged at the cast (`s as integer ?? 0`) |
 | A7 user-declared interface | **PASS** | the spelling is `fn area(self: Self) -> float` (INTERFACES.md) |
@@ -49,14 +51,14 @@ it.
 | C4 tuple of variants | **PASS** | as written once the arm BODY spells `Playing { hp: hp }` (no field-init shorthand) |
 | C5 or-pattern with bindings | **PASS** | as written: `Circle { r } \| Sphere { r } => r` (`@FR-P-Multi`; `\|` and `,` are one separator, LOFT_CONTROL.md § Match expressions).  An or-pattern stands at every position: a tuple subject, a tuple element, a field, a plain-struct subject (@PLN186) |
 | C6 exhaustiveness through nesting | PARTIAL | the hole is refused, named by its outer variant (*"missing: X"*), not as `X { i: B }` |
-| C7 scalar-match hole diagnosed | PARTIAL | a warning, phrased as the null the hole produces (*"a nullable `text?` is stored into the return value"*), not naming the uncovered value |
-| C8 head/tail pattern | PASS with `_` | `[]` + `[x, ..rest]` is not seen as total (*"a slice pattern can fail …"*); the probe's `fn sum` collides with the reserved stdlib name |
+| C7 scalar-match hole diagnosed | **PASS** | the `match-scalar-hole` advice at the match (*"this `match` over character names 2 values and no `_` arm — a value none of them names selects no arm, and the statement does nothing"*; `LOFT_NO_SCALAR_HOLE` silences it), and the `text?` warning where the null reaches a non-null sink.  The uncovered VALUE is not named — a scalar domain is not finite, so the hole is named by what the arms cover (loft-lang/plans#202 P3) |
+| C8 head/tail pattern | **PASS** | as written: `[]` with `[x, ..rest]` covers every length, `(M-Total)`'s vector clause (loft-lang/plans#202 P4; suite `matching/M-Total`).  The probe's `fn sum` still collides with the reserved stdlib name — spell it `total` |
 | D1 generic return smuggles null | FAIL — a DECIDED edge | `formal/types.md` (N-Index) trusts a constant index by contract (@C80) |
 | D2 empty-stub default | FAIL | silent `0.0`, both backends |
 | E1, E2 structural sharing | not measured | `memory_used()` does not exist; a recursive enum links nodes bound to locals (A5b), so the probes need a new design before they measure sharing |
 | F1 missing combination named | changed | a definition over a plain-enum VALUE is refused at the declaration (*"'Rock' is a value of the plain enum 'Hand', not a type … take a 'Hand' and 'match' on its value"*) |
 | F2 enum-level fallback | **PASS** | `match (a, b) { (Rock, Scissors) => true, …, _ => false }` over the plain enum |
-| H1 functional record update | PARTIAL | `Unit { hp: 0, ..u }` is refused (*"Expect token ;"*); the capability is two statements — `d = u; d.hp = 0;` copies the record, `u` keeps its value |
+| H1 functional record update | **PASS** | `Unit { hp: 0, ..u }` as written: a copy of `u` with `hp` written, `u` kept, lowered to `d = u; d.hp = 0;` (loft-lang/plans#202 P2; suite `binding/B-Copy`).  A VARIANT is not updated this way — its tag would need checking against the base's (P2b) |
 | H2 immutable binding | **PASS** | `total: const integer = 5; total = 6;` → *"Cannot modify const variable 'total'"*.  The default is the opposite of OCaml's: a binding is mutable unless declared `const` |
 | H3 abstract type | **PASS** | `p.x` on a `geo::Pt` from outside `geo` → *"field `x` of `Pt` is not `pub` in `geo`"*, naming the cure (`pub x`); a field is private to its file (@C140).  A non-`pub` `type` alias named by a `pub` fn is OCaml's `type t` (`tests/pub_visibility.rs`). |
 | H4 phantom type parameter | **PASS** | `Door<Closed>` into a `Door<Open>` parameter → *"expected Door<Open>, got Door<Closed>"* |

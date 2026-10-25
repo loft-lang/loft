@@ -8,8 +8,9 @@
 are in the plan directory's `probes/` (one per row, named by bar entry) and become cells under P0.
 The re-measurement closed two steps without code — **P1** (`>>` already works on main) and **P6**
 (not needed by 1a's AST rule) — and added two, **P8** (two diagnostics that name a cure which does
-not compile) and **P9** (the documentation and the skills).  **P0, P2, P3 and P4 are done**
-(2026-10-25, with loft#2166, #2168 and #2170 fixed on the way); P8, P7, P9 and P5a remain.
+not compile) and **P9** (the documentation and the skills).  **P0, P2, P3, P4, P7 and P8 are done**
+(2026-10-25, with loft#2166, #2168 and #2170 fixed on the way and loft#2171 found); the rest of P9
+and P5a remain.
 One defect fell out of the measurement and is filed: loft#2163 (open).
 
 ## Goal
@@ -68,8 +69,8 @@ the moved record's old bytes.
 | **P5a** | S | a SELF-call in tail position becomes a jump to the function entry — an `opt` pass, so the interpreter, the Rust writer and the C writer get it at once (all three already read `Value::Loop` / `Value::Continue`: `src/state/codegen.rs`, `src/generation/emit.rs`, `src/c/body.rs`).  First clause: SCALAR parameters, a scalar or void result, no store-owning local — so nothing is released before the jump and the drop gate is vacuous; same arity; arguments evaluated into temporaries before the rebind; every decline reported (`rewrite_census::declined`); `LOFT_NO_TAIL_SELF` switches it off | `src/compile.rs::close_program`, beside `leaf_inline::rewrite_program`, which is the pattern (swap the body out, rewrite, `scopes::compute_function_intervals` + `assign_function_slots`, `rewrite_census::fired`) | H6 at 100000 both backends; the switch A/B byte-identical elsewhere (`scripts/introspect_diff.sh`); `make rewrite-census` row; `make interp-gap` not slower |
 | **P5b** | M | the HEAP clause, only when 1a's parser recurses on a record or vector parameter: a call hands a reference over ([formal/calls.md](../../formal/calls.md)) while an assignment copies `(B-Copy)`, and a heap-parameter rebind carries its entry witness (`@FR-O-Detach`), so the rebind must use the CALL's binding, not the assignment's; the frame's stores are released before the jump; no `&` parameter rebound through itself | the same pass | the drop gate (`LOFT_STRICT_STORES=1`, the leak scan) over a record, a vector and a `&` parameter; the P5a gates again |
 | **P6** | — | **closed 2026-10-25, not needed:** 1a's AST rule (above) keeps children in a `vector<Node>`, a keyed collection or an arena, never behind `reference<>` into a growable vector, and `a5e` (inline `vector<Node>` children) passes.  Binding `&` of a temporary would serve the shape the rule excludes | `Parser::is_amp_place`, `src/parser/operators.rs:1996` stays as it is | — |
-| **P7** | XS | re-measure A5, C7, C8, H1, H6 and write their dispositions into OCAML_BAR.md (`shipped`, this plan); correct A5's row — the capability passes through `reference<>`, the by-value spelling is refused by design | `doc/claude/bars/OCAML_BAR.md` | the bar's table and the cells agree |
-| **P8** | XS | the bare-variant refusal names a cure that compiles.  Today `src/parser/objects.rs:1649` prints the INSTANCE name — *"qualify it as 'Tree<T#4>.Leaf'"* — an internal name whose `<` / `>` read as chained comparisons in expression position, where the DECLARED name is meant (`Tree.Leaf`, the spelling that works for a plain enum: `C.A`).  And `Tree.Leaf` on a GENERIC enum answers *"Unknown type null — did you mean 'JNull'?"*: it takes its arguments from the target, or is refused naming the typed-target cure (`l: Tree<integer> = Leaf`) | `src/parser/objects.rs:1649` (the `declared` name is already computed there for the import cure); the resolution of `Enum.Variant` for a generic enum (@PLN22's enum-scoped variants) | an `@EXPECT_ERROR` cell per message, and the cure each message names compiles on both backends |
+| **P7** | — | **done 2026-10-25** for A5, C7, C8 and H1 (OCAML_BAR.md § Evaluation: A5 passes through `reference<>`, the by-value spelling refused by design; C7 by the advice; C8 and H1 as written); H6 stands until P5a | `doc/claude/bars/OCAML_BAR.md` | the bar's table and the cells agree |
+| **P8** | — | **done 2026-10-25:** the bare-variant cure names the DECLARED enum (`Tree.Leaf`, not the instance `Tree<T#4>`); `Tree.Leaf` — a generic enum's template followed by `.` and one of its variants — is the qualified spelling, resolved by the TARGET (a typed local, a concrete parameter; `Tree::Leaf` likewise), and refused naming the typed-target cure where there is none (`tests/error_messages/cases/62_…`); a generic parameter's argument is refused too (`T` unconstrained).  Found on the way: a self-referencing generic enum that no generic function instantiates trips the two-pass contract on its own — loft#2171, filed, not fixed here.  Cell: `interfaces/G-Type` | `src/parser/objects.rs` (`parse_constant_value`, the qualifier) | the golden case; `make suite ARGS="@FR-G-Type --mode both"` |
 | **P9** | S | **the loft documentation and the skills, for this work** (owner, 2026-10-25): the user docs — LOFT.md's index, LOFT_DATA.md § Structs (`..base`), LOFT_CONTROL.md § Match (head/tail totality, the scalar-hole advice, the unit variant's `{`), DIAGNOSTICS.md (the `match-scalar-hole` row, `LOFT_NO_SCALAR_HOLE`), STDLIB.md where it names a limitation this plan lifted — and the reference pages that RUN (`tests/docs/*.loft`: a worked `..base` on the structs page, the match page's head/tail arms and its "the compiler will not remind you" sentence), regenerated with `cargo run --bin gendoc`; the skills — `loft-write` (the `..base` spelling, head/tail arms without `_`, the scalar-hole advice, and the four fixes struck from its known-bugs table: loft#2166, #2168, #2170, the stale A5 row), `loft-test` if a convention moved; `make skills-review` and `make libraries-review` read clean afterwards | `doc/claude/LOFT*.md`, `doc/claude/DIAGNOSTICS.md`, `tests/docs/`, `.claude/skills/loft-write/SKILL.md` | `make docs-lint` adds nothing; `make skills-review` names no skill this work moved; the reference pages run on both backends |
 
 ## Phase ordering
@@ -112,13 +113,13 @@ marked done.
 - [x] tests/docs/29-match.loft — "the compiler will not remind you" rewritten, the page
       regenerated (`943ffa89b`).
 - [x] doc/claude/bars/OCAML_BAR.md — A5, C7, C8, H1 re-measured (P7); H6 waits for P5a.
-- [ ] LOFT.md's index — a line for the record update under structs, if the index names
-      spellings (check).
+- [x] LOFT.md's index — names no literal spelling (checked 2026-10-25); nothing to add.
 - [ ] tests/docs reference pages — a worked `..base` on the structs page; the match page's
       head/tail arms.
-- [ ] the `loft-write` skill — `..base`, head/tail arms without `_`, the scalar-hole advice, a
-      unit variant's `{` after `is`, `d.r = &p`; the error→fix rows for the new refusals; the
-      snippets in `tests/reference/skill-*.loft`; `make skills-review` clean.
+- [x] the `loft-write` skill — `..base`, head/tail arms without `_`, the scalar-hole advice, a
+      unit variant's `{` after `is`, `d.r = &p`; the error→fix rows; the snippets in
+      `tests/reference/skill-*.loft` (`6c9764861`).  `make skills-review` still lists every skill
+      from its 2026-10-16 watermark — the review itself is the owner's read.
 - [ ] STDLIB.md / INTERFACES.md — any limitation they state that this plan lifted (run the
       citation check before repeating one).
 - [ ] the feature catalogue — the `@F` issue for struct literals and for `match` (`make

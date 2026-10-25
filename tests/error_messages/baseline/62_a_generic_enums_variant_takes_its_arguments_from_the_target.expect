@@ -1,0 +1,18 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `Slot.Empty` is a variant of a generic enum, whose type arguments come from the target — bind it to a typed local (`x: Slot<…> = Empty`) or pass it where a `Slot<…>` is expected
+  --> <cases>/62_a_generic_enums_variant_takes_its_arguments_from_the_target.loft:6:28
+  |
+6 | fn main() { a = Slot.Empty; println("x"); }
+  |                            ^
+
+warning[never-read]: Variable a is never read
+  --> <cases>/62_a_generic_enums_variant_takes_its_arguments_from_the_target.loft:6:16
+  |
+6 | fn main() { a = Slot.Empty; println("x"); }
+  |                ^
+
+note: 1 diagnostic above suggests what to write instead — re-run with `--explain`
+
+error: aborting due to 1 previous error
