@@ -80,6 +80,13 @@ impl FnWriter<'_> {
                 self.line(ind, &format!("loft_gen_next({g}, &{t});"));
                 Ok(Some(E::new(t, super::kind_of(c))))
             }
+            ("OpCoroutineRetain", [g]) => {
+                let g = self.expr(g, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_gen_retain({})", as_ref(g)?),
+                    K::Ref,
+                )))
+            }
             ("OpCoroutineExhausted", [g]) => {
                 let g = self.expr(g, ind)?;
                 Ok(Some(E::new(

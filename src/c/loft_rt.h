@@ -833,7 +833,9 @@ static void loft_free_ref(loft_ref r) {
  * them and returns the value through `out`.  An iterator value names a frame's slot in
  * `loft_gens`: store number 0xFFFE, record slot + 1. */
 typedef struct { int32_t state; int32_t done; } loft_gen_head;
-typedef struct { void *frame; void (*resume)(void *frame, void *out); void (*release)(void *frame); } loft_gen_slot;
+/* `holds`: the holders that share the frame (`(G-Hold)`) — a release by one of several gives its
+ * hold back, and the last one releases the frame. */
+typedef struct { void *frame; void (*resume)(void *frame, void *out); void (*release)(void *frame); uint32_t holds; } loft_gen_slot;
 static loft_gen_slot *loft_gens = 0;
 static uint32_t loft_ngens = 0;
 
@@ -851,6 +853,7 @@ static loft_ref loft_gen_new(void *frame, void (*resume)(void *, void *), void (
     loft_gens[i].frame = frame;
     loft_gens[i].resume = resume;
     loft_gens[i].release = release;
+    loft_gens[i].holds = 1;
     loft_ref r;
     r.store_nr = 0xFFFE;
     r.rec = i + 1;
@@ -871,6 +874,13 @@ static void loft_gen_next(loft_ref g, void *out) {
     s->resume(s->frame, out);
 }
 
+/* OpCoroutineRetain (State::coroutine_retain): one more holder of the frame. */
+static loft_ref loft_gen_retain(loft_ref g) {
+    loft_gen_slot *s = loft_gen_of(g);
+    if (s) s->holds++;
+    return g;
+}
+
 /* OpCoroutineExhausted: has the generator run to its end (or is it no generator)? */
 static uint8_t loft_gen_exhausted(loft_ref g) {
     loft_gen_slot *s = loft_gen_of(g);
@@ -880,6 +890,10 @@ static uint8_t loft_gen_exhausted(loft_ref g) {
 static void loft_gen_free(loft_ref g) {
     loft_gen_slot *s = loft_gen_of(g);
     if (!s) return;
+    if (s->holds > 1) {
+        s->holds--;
+        return;
+    }
     s->release(s->frame);
     s->frame = 0;
 }
