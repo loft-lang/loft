@@ -655,6 +655,16 @@ impl<'a> FnWriter<'a> {
             // `parallel { … }`: the arms run one after another — each arm's effect is the one
             // its thread has (State's `OpParallelBegin`).
             Value::Parallel(arms) => arms.iter().try_for_each(|a| self.stmt(a, ind)),
+            // A dropped branch or block runs as a statement: each arm for its effect, a value
+            // arm's value discarded (`@FR-F-Drop`) — where an arm assigns, it has no value to read.
+            Value::Drop(x)
+                if matches!(
+                    x.unspan(),
+                    Value::If(..) | Value::Block(_) | Value::Insert(_)
+                ) =>
+            {
+                self.stmt(x, ind)
+            }
             Value::Drop(_) | Value::Call(..) | Value::CallRef(..) => {
                 let x = if let Value::Drop(x) = v { &**x } else { v };
                 let e = self.expr(x, ind)?;
@@ -1074,7 +1084,9 @@ impl<'a> FnWriter<'a> {
             ind,
             &format!("if (loft_fnref_minted({src}, (uint64_t) {since}, {clos})) {{"),
         );
-        if !witnessed {
+        // A parameter's displaced store is the caller's (a promoted return buffer the caller
+        // pools, `@FR-R-Reuse`): the adopt only rebinds it, as `State::bind_fn_ref_result` does.
+        if !witnessed && !self.params[var as usize] {
             self.line(
                 ind + 1,
                 &format!(
@@ -1291,10 +1303,13 @@ impl<'a> FnWriter<'a> {
             return self.ops_stmt(ops, ind);
         }
         // The value is the last operator that is not a free: frees after it run once it is
-        // taken, as they run under it on the bytecode's evaluation stack.
+        // taken, as they run under it on the bytecode's evaluation stack.  A `Set` has no value,
+        // so the reset that follows a free (`__disp = OpNullRefSentinel()`) is one of them.
         let at = ops
             .iter()
-            .rposition(|o| !matches!(o.unspan(), Value::Line(_)) && !self.is_free(o))
+            .rposition(|o| {
+                !matches!(o.unspan(), Value::Line(_) | Value::Set(..)) && !self.is_free(o)
+            })
             .ok_or("a value block with no value")?;
         ops[..at].iter().try_for_each(|o| self.stmt(o, ind))?;
         self.assign(&ops[at], target, c, ind)?;

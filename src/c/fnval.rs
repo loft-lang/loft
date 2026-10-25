@@ -122,13 +122,27 @@ impl Cx<'_> {
         out
     }
 
-    /// The arm calling `d`: its visible parameters in order, the value's closure, and a text
-    /// result's work buffer made for the call and released after it.
+    /// The arm calling `d`: its visible parameters in order, the value's closure, a text
+    /// result's work buffer made for the call and released after it, and a return buffer as
+    /// `--native`'s dispatch hands one (`generation::emit`, PLAN51 V-c): the null sentinel for a
+    /// record or a work buffer — the callee mints its own store — and, for a vector return, a
+    /// vector store made for the call, kept when the result IS it and freed otherwise
+    /// (`State::fn_return`'s rule, loft#1179).
     fn dispatch_arm(&self, out: &mut String, d: u32, ret: CType) -> Result<(), String> {
         let def = self.data.def(d);
         let mut args = Vec::new();
         let mut buffers = Vec::new();
         let mut visible = 0;
+        let vec_buf = match def.returned().ret_promo_base() {
+            Type::Vector(elm, _) => {
+                let tp = self
+                    .data
+                    .name_type(&format!("main_vector<{}>", elm.name(self.data)), 0);
+                (tp != u16::MAX).then_some(tp)
+            }
+            _ => None,
+        };
+        let mut uses_vec_buf = false;
         for a in def.attributes() {
             if a.name == "__closure" {
                 args.push("f.clos".to_string());
@@ -140,6 +154,18 @@ impl Cx<'_> {
                 let w = format!("w{}", buffers.len());
                 args.push(format!("&{w}"));
                 buffers.push(w);
+            } else if a.work_buffer {
+                args.push("loft_ref_null()".to_string());
+            } else if matches!(
+                a.typedef,
+                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+            ) {
+                if vec_buf.is_some() && ret == CType::Ref {
+                    uses_vec_buf = true;
+                    args.push("hb".to_string());
+                } else {
+                    args.push("loft_ref_null()".to_string());
+                }
             } else {
                 return Err(format!(
                     "a function value {} with a hidden {} buffer",
@@ -153,10 +179,21 @@ impl Cx<'_> {
         for w in &buffers {
             let _ = write!(out, " loft_text {w} = {{ 0, 0, 0 }};");
         }
+        let vec_tp = vec_buf.filter(|_| uses_vec_buf && ret == CType::Ref);
+        if let Some(tp) = vec_tp {
+            let _ = write!(
+                out,
+                " loft_ref hb = loft_ref_null(); loft_database_wrapper(&hb, {}, {tp});",
+                self.stores.size(tp)
+            );
+        }
         if ret == CType::Void {
             let _ = write!(out, " {call};");
         } else {
             let _ = write!(out, " {} r = {call};", held(ret));
+        }
+        if vec_tp.is_some() {
+            out.push_str(" if (r.store_nr != hb.store_nr) loft_free_ref(hb);");
         }
         for w in &buffers {
             let _ = write!(out, " loft_text_free(&{w});");
