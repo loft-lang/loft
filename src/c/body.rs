@@ -3028,7 +3028,16 @@ impl<'a> FnWriter<'a> {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
                 if self.cx.stores.is_linked(tp) {
-                    return Err("an append of a linked element type".into());
+                    self.cx.copy_type(tp)?;
+                    let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
+                    return Ok(E::new(
+                        format!(
+                            "loft_vec_add_array(loft_types, {tp}, {}, {})",
+                            as_ref(v)?,
+                            as_ref(other)?
+                        ),
+                        K::Void,
+                    ));
                 }
                 self.cx.copy_type(tp)?;
                 let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
@@ -3064,7 +3073,17 @@ impl<'a> FnWriter<'a> {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
                 if self.cx.stores.is_linked(tp) {
-                    return Err("a remove from a linked element type".into());
+                    self.cx.name_types();
+                    self.cx.describe_type(tp);
+                    let (v, idx) = self.two(name, &[(*v).clone(), (*idx).clone()], ind)?;
+                    return Ok(E::new(
+                        format!(
+                            "loft_vec_remove_linked(loft_types, {tp}, {}, {})",
+                            as_ref(v)?,
+                            as_int(idx)?
+                        ),
+                        K::Cond,
+                    ));
                 }
                 let size = self.cx.stores.size(tp);
                 let (v, idx) = self.two(name, &[(*v).clone(), (*idx).clone()], ind)?;

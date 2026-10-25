@@ -188,20 +188,25 @@ impl FnWriter<'_> {
                 let size = Self::literal(size, "element size")?;
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    return Err("an insert of a linked element type".into());
-                }
                 let (v, index) = self.two(name, &[(*v).clone(), (*index).clone()], ind)?;
                 let (image, n) = self.cx.default_image(tp);
                 let t = self.temp(CType::Ref);
-                self.line(
-                    ind,
-                    &format!(
-                        "{t} = loft_vec_insert({}, {size}, {});",
+                // A linked element is a record of its own, its slot the record's id.
+                let insert = if self.cx.stores.is_linked(tp) {
+                    format!(
+                        "loft_vec_insert_linked({}, {}, {})",
+                        as_ref(v)?,
+                        self.cx.stores.size(tp),
+                        as_int(index)?
+                    )
+                } else {
+                    format!(
+                        "loft_vec_insert({}, {size}, {})",
                         as_ref(v)?,
                         as_int(index)?
-                    ),
-                );
+                    )
+                };
+                self.line(ind, &format!("{t} = {insert};"));
                 self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
                 Ok(E::new(t, K::Ref))
             }

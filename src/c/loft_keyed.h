@@ -584,6 +584,61 @@ static int loft_walk_removed_at(int64_t state, int reverse, uint32_t *at) {
     return 1;
 }
 
+/* Stores::vector_add_array: `v += o` of a linked element type, whose slots are record ids — each
+ * element record copied into a fresh record of the destination's store, its heap deep-copied, a
+ * null slot kept null. */
+static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+    int64_t n = loft_vec_len(o);
+    if (n == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
+    uint32_t size = T[tp].size, words = 1 + (size + 7) / 8;
+    uint32_t o_rec = loft_u32(loft_store_of(o), o.rec, o.pos);
+    if (o_rec == 0) return;
+    for (int64_t i = 0; i < n; i++) {
+        uint32_t src = loft_u32(loft_store_of(o), o_rec, 8 + 4 * (uint32_t) i);
+        loft_ref slot = loft_vec_append(v, 4);
+        if (src == 0) {
+            loft_set_u32(loft_store_of(v), slot.rec, slot.pos, 0);
+        } else {
+            uint32_t nr = loft_claim(loft_store_of(v), words);
+            loft_ref from = { o.store_nr, src, 8 }, to = { v.store_nr, nr, 8 };
+            loft_copy_bytes(to, 0, from, 0, size);
+            loft_copy_claims(T, tp, from, to);
+            loft_set_u32(loft_store_of(v), slot.rec, slot.pos, nr);
+        }
+        loft_vec_finish(v);
+    }
+}
+
+/* Stores::insert_vector_element of a linked element type: a record-id slot inserted at `index`,
+ * and a fresh record of `size` bytes claimed for the element, the vector's record named at its
+ * byte 4; the element (its defaults the caller writes), or null for an index outside 0..=len. */
+static loft_ref loft_vec_insert_linked(loft_ref v, uint32_t size, int64_t index) {
+    loft_ref slot = loft_vec_insert(v, 4, index);
+    if (slot.rec == 0) return slot;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t nr = loft_claim(s, 1 + (size + 7) / 8);
+    loft_set_u32(s, nr, 4, v.rec);
+    loft_set_u32(s, slot.rec, slot.pos, nr);
+    loft_ref e = { v.store_nr, nr, 8 };
+    return e;
+}
+
+/* Stores::remove_vector_at of a linked element type: the slot at `index` unlinked, then the
+ * record it named released and deleted — the order `remove_owned` uses, since the release reads
+ * the record's own fields. */
+static int loft_vec_remove_linked(const loft_tdesc *T, uint16_t tp, loft_ref v, int64_t index) {
+    loft_ref slot = loft_vec_get(v, 4, index);
+    if (slot.rec == 0) return 0;
+    uint32_t rec = loft_u32(loft_store_of(v), slot.rec, slot.pos);
+    int shifted = loft_vec_remove(v, 4, index);
+    if (rec != 0) {
+        loft_ref elem = { v.store_nr, rec, 8 };
+        loft_remove_claims(T, tp, elem);
+        loft_st_delete(loft_store_of(v), rec);
+    }
+    return shifted;
+}
+
 /* OpRemove in a walk over a vector (State::remove, Stores::remove_vector_at): the element's
  * claims released, then its successors shift down; forward, the index steps back to visit the
  * one that moved into its place. */
