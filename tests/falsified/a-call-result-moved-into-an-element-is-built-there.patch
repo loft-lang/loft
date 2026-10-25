@@ -1,8 +1,7 @@
-diff --git a/src/generation/destination.rs b/src/generation/destination.rs
-index a21d123d2..24dad54bf 100644
---- a/src/generation/destination.rs
-+++ b/src/generation/destination.rs
-@@ -177,7 +177,7 @@ fn compute_shape(data: &Data, stores: &Stores, d_nr: u32, vo: i64) -> Option<Sha
+diff --git a/src/lower/destination.rs b/src/lower/destination.rs
+--- a/src/lower/destination.rs
++++ b/src/lower/destination.rs
+@@ -234,7 +234,7 @@
      let (vo, vt) = moved?;
      // The twin binds the buffer TO the destination, so the moved field must start where the
      // buffer does: at any other offset every write to it would land that far past the element.
