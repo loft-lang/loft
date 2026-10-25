@@ -76,6 +76,8 @@ module and the C header and compare every answer and every byte of the store.
 | `loft_paged.h` | `src/paged_reader.rs`, ported: an image read a page at a time, every read past its end 0 |
 | `loft_paged_load.h` | the working-set loaders (`store_load_key`, `_keys`, `_key_text`, `_keys_text`, `_prefix`, `_box`, `_range`) and their relocating copy |
 | `loft_keyed.h` | sorted and ordered (`src/vector.rs`), the walks, renders and keyed writes |
+| `loft_json.h` | `src/json.rs`' `JParser` and the lexer's JSON mode, ported; the JsonValue tree in a store and its natives (`LOFT_JSON`, `LOFT_JV_*`) |
+| `loft_parse.h` | `T.parse(text)` and `T.parse(JsonValue)`: the walks into a type, read from the `loft_ptypes` table `parse.rs` writes, and the per-store `#errors` (`LOFT_PARSE`) |
 | `loft_io.h` | files and the filesystem, pasted last |
 
 ## The macro modes
@@ -198,6 +200,21 @@ drops it; a mapped vector copied as a record's field is copied element by elemen
 interpreter does without `mmap`.  The emitter defines `LOFT_FOREIGN` only for a unit that
 reaches `file_map`, so no other program pays the record test in `loft_at`.
 
+**JSON and `T.parse`.**  `loft_json.h` is `JParser` over the lexer's JSON mode, token for
+token: the offsets, the JSON pointer and the message of every error are json.rs's, and
+`tests/c_emit.rs` reads some 28 000 documents and their mutations through both, in both
+dialects.  `json_parse` writes the tree into a store of its own at the program's JsonValue
+layout, and its readers and builders follow `native.rs`.  `T.parse(text)` reads the text as it
+writes the store (`read_into`), and `T.parse(json_parse(t))` walks the tree
+(`struct_from_jsonvalue`); both read what each type takes, and what an absent or misfit value
+leaves, from a table of the program's types (`parse.rs`: field names, declared nullability and
+defaults, narrow encodings, variants).  The errors a parse files are the record's `#errors`,
+kept per store and carried as the interpreter carries them — by a record copy into another
+store's root, a bind, an exchange, and a whole-vector write.  A second differential in
+`tests/c_emit.rs` parses some 1 750 documents into a record of every field kind, a vector of
+records, the checked cast and the staged form, on the interpreter and as C.  A parsed type
+holding a keyed collection, a linked group or a vector of nullable records is refused.
+
 **Files.**  A `File` record keeps the interpreter's fields (size, positions, path, handle,
 format); its handle indexes a table of open `FILE *`s, opened on first use, flushed after every
 write (the interpreter writes unbuffered, so another handle on the path reads it), and turned
@@ -253,8 +270,8 @@ only by failing with one of its messages — the annotations are read by the sam
 
 ## Not carried yet
 
-The sweep's ranking is the current list.  The large families: text parsed into a typed value
-(`T.parse`, `as vector<T>`, JSON), the image loaders over a URL, a lazy binding
+The sweep's ranking is the current list.  The large families: a parse into a keyed collection
+or a vector of nullable records, the image loaders over a URL, a lazy binding
 (`store_bind_lazy`), `store_reclaim`, a linked group with a spatial or trie member,
 `parallel { }` blocks, and the native library calls; of the generators, one held in a record
 field and one of tuples; of the `&` locals, a link into a store place; of `par`, a worker over

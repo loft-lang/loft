@@ -731,6 +731,15 @@ LOFT_HOT_INLINE void loft_set_u32(loft_store_t *s, uint32_t rec, uint32_t byte, 
     memcpy(loft_at(s, rec, byte), &v, 4);
 }
 
+#ifdef LOFT_PARSE
+/* `Store::parse_errors` (loft_parse.h): a store made again answers none, an exchange moves
+ * them with the content, a copy of a parsed root brings them. */
+static void loft_perrs_reset(uint16_t nr);
+static void loft_perrs_swap(uint16_t a, uint16_t b);
+static void loft_perrs_deliver(loft_ref data, loft_ref to, uint16_t tp, int fresh);
+static void loft_perrs_deliver_vector(loft_ref data, loft_ref to, int whole);
+#endif
+
 /* OpDatabase: a fresh record of `bytes` in the variable's store, cleared in place, or in a
  * new store when the variable holds none. */
 static void loft_database(loft_ref *var, uint32_t bytes) {
@@ -760,6 +769,9 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
     loft_st_entomb_kept(s, kept, nkept);
     free(kept);
     s->known = 0xFFFF;
+#ifdef LOFT_PARSE
+    loft_perrs_reset((uint16_t) nr);
+#endif
     var->store_nr = (uint16_t) nr;
     var->rec = rec;
     var->pos = 8;
@@ -1352,6 +1364,14 @@ static void loft_set_byte(loft_ref r, uint32_t fld, uint8_t v) {
     *loft_at(loft_store_of(r), r.rec, r.pos + fld) = v;
 }
 
+/* OpCastEnumFromText (`Stores::to_enum`): the value of plain enum `names` (1-based, `n` with
+ * the unused 0) whose name is `t`, 0 for none. */
+static uint8_t loft_enum_of_text(const char *const *names, size_t n, loft_str t) {
+    for (size_t i = 1; i < n; i++)
+        if (strlen(names[i]) == t.len && memcmp(names[i], t.p, t.len) == 0) return (uint8_t) i;
+    return 0;
+}
+
 /* OpGetEnum: 0 for the null reference, the stored byte otherwise. */
 static uint8_t loft_get_enum(loft_ref r, uint32_t fld) {
     if (r.rec == 0) return 0;
@@ -1627,6 +1647,9 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
     uint64_t serial = a->serial;
     a->serial = b->serial;
     b->serial = serial;
+#ifdef LOFT_PARSE
+    loft_perrs_swap(src.store_nr, dst.store_nr);
+#endif
     loft_free_ref(src);
     return 1;
 }
@@ -1662,6 +1685,9 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
     }
 #endif
     if (free_source && (flags & 2) && loft_swap_in(tp, src, dst)) return;
+#ifdef LOFT_PARSE
+    loft_perrs_deliver(src, dst, tp, 0);
+#endif
     /* The destination's previous content goes first, unless it is fresh (`COPY_FRESH_DEST`). */
     if (!fresh_dest) loft_remove_claims(T, tp, dst);
     loft_copy_bytes(dst, 0, src, 0, T[tp].size);
@@ -1793,6 +1819,9 @@ static int loft_vec_remove(loft_ref v, uint32_t size, int64_t index) {
 static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o);
 
 static void loft_vec_replace(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+#ifdef LOFT_PARSE
+    loft_perrs_deliver_vector(o, v, 1);
+#endif
     int absent = o.store_nr == 0xFFFF
         || (o.rec != 0 && o.pos != 0 && loft_u32(loft_store_of(o), o.rec, o.pos) == 0xFFFFFFFFu);
     if (absent) {
@@ -2010,6 +2039,9 @@ static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size) {
  * they own no heap and fit the room `v` has, one block copy (`vector_add_fits`); into an empty
  * `v`, a claim of exactly their size; else `vector_append` and a resize to the total. */
 static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+#ifdef LOFT_PARSE
+    loft_perrs_deliver_vector(o, v, 0);
+#endif
     int64_t n64 = loft_vec_len(o);
     if (n64 == 0 || v.store_nr == 0xFFFF || v.rec == 0) return;
     uint32_t n = (uint32_t) n64;
@@ -2047,6 +2079,28 @@ static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref 
         loft_ref b = { v.store_nr, dest, append_pos + i * size };
         loft_copy_claims(T, tp, a, b);
     }
+}
+
+/* OpAdoptVector (Stores::vector_adopt): a local takes a native call's vector answer as its own —
+ * a VIEW of the whole when the answer is a foreign store, the element copy otherwise. */
+static void loft_vec_adopt(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+#ifdef LOFT_PARSE
+    loft_perrs_deliver_vector(o, v, 1);
+#endif
+#if defined(LOFT_FOREIGN) && !defined(LOFT_NO_FOREIGN_VIEW)
+    if (v.store_nr != 0xFFFF && v.rec != 0 && v.pos != 0 && o.store_nr != 0xFFFF && o.rec != 0 && o.pos != 0
+        && v.store_nr != o.store_nr) {
+        int64_t n = loft_vec_len(o);
+        if (n > 0 && loft_st_is_foreign(loft_store_of(o))) {
+            loft_fspan span = loft_st_foreign_span(loft_store_of(o), 0, (uint32_t) n);
+            loft_store_t *s = loft_store_of(v);
+            loft_st_release_foreign(s);
+            loft_st_make_foreign(s, v.rec, v.pos, span);
+            return;
+        }
+    }
+#endif
+    loft_vec_add(T, tp, v, o);
 }
 
 /* OpMoveVector (Stores::move_vector, @FR-R-MoveLast): a local vector given up to a field.  In
@@ -2187,6 +2241,9 @@ static void loft_bind_copy(const loft_tdesc *T, uint16_t tp, loft_ref *dst, loft
     if (src.store_nr == dst->store_nr && src.rec == dst->rec && src.pos == dst->pos) return;
     if (src.store_nr == dst->store_nr) *dst = loft_ref_null();
     loft_database(dst, T[tp].size);
+#ifdef LOFT_PARSE
+    loft_perrs_deliver(src, *dst, tp, 1);
+#endif
     loft_copy_bytes(*dst, 0, src, 0, T[tp].size);
     loft_copy_claims(T, tp, src, *dst);
 }

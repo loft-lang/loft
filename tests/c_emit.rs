@@ -191,13 +191,13 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed("fn up() -> integer { v = \"[1,2]\" as vector<integer>; len(v) }\n");
+    let p = parsed("fn up() -> integer { t = stack_trace(); len(t) }\n");
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
-        .expect_err("text parsed into a vector is not carried yet");
-    assert_eq!(refusal.function, "up");
+        .expect_err("a stack trace is not carried yet");
+    assert_eq!(refusal.function, "stack_trace");
     assert!(
-        refusal.why.contains("OpCastVectorFromText"),
+        refusal.why.contains("native stack_trace"),
         "names the construct: {refusal}"
     );
 }
@@ -2324,4 +2324,134 @@ int main(int argc, char **argv) {
         bad.iter().take(12).cloned().collect::<Vec<_>>().join("\n")
     );
     assert_eq!(got.lines().count(), 2 * n, "the C stopped early");
+}
+
+/// The types `T.parse` is crossed with (`the_c_parses_text_as_the_interpreter_does`): every
+/// scalar, every narrow width, nullable and declared-default fields, a plain and a struct enum,
+/// a nested record, vectors of scalars and records — and a non-null enum without a default,
+/// which the checked `text as E2?` answers null for when the text leaves it out.
+const PARSE_TYPES: &str = r##"enum Color { Red, Green, Blue }
+enum Shape { Circle { radius: float }, Square { side: integer = 4 }, Dot }
+struct Inner { p: integer, q: text = "dq" }
+struct E2 { m: Color, a: integer }
+struct J2 { a: integer, c: text, d: boolean, e: character, f: u8, g: i8?, n: Inner, o: vector<integer>, r: vector<Inner>,
+  x: JsonValue, v: vector<JsonValue>, u: single, y: float = 2.5, t: integer?, w: vector<text> }
+struct Rec { a: integer, b: float, c: text, d: boolean, e: character, f: u8, g: i8, h: u16, i: i16, j: i32, k: u32,
+  l: integer = 5, m: Color = Blue, n: Inner, o: vector<integer>, r: vector<Inner>, s: Shape = Dot, t: integer?, u: single,
+  v: text?, w: u8?, x: boolean?, y: float = 2.5, z: Color? }
+fn check(t: text) {
+  println("#check");
+  r = Rec.parse(t);
+  println("{r} {r#errors} [{json_errors()}]");
+  w = vector<Inner>.parse(t);
+  println("{w} {w#errors}");
+  e = t as E2?;
+  println("{e} [{json_errors()}]");
+  q = J2.parse(json_parse(t));
+  println("{q.a} {q.c} {q.d} {q.e} {q.f} {q.g} {q.n} {q.o} {q.r} {q.u} {q.y} {q.t} {q.w} {q.x.to_json()} {q#errors} [{json_errors()}]");
+  for jv in q.v { print("{jv.to_json()};"); }
+  println("");
+}
+"##;
+
+/// The documents: seeds that reach every field kind, a misfit of each, a malformed document,
+/// the tagged and qualified spellings, and every truncation, deletion and replacement of them.
+fn parse_inputs() -> Vec<String> {
+    let seeds = [
+        r#"{"a":1,"b":2.5,"c":"x","d":true,"e":"Q","f":200,"g":-100,"h":60000,"i":-30000,"j":70000,"k":4000000000,"l":3,"m":Blue,"n":{"p":1,"q":"w"},"o":[1,2,3],"r":[{"p":4,"q":"z"}],"s":Circle{radius:2.0},"t":null,"u":1.25}"#,
+        r#"{a:7, m: Color.Red, s: Square{side: 3}, o: [], r: [{p: 1}, null, {q: "k"}], n: null}"#,
+        r#"{"s":"Dot","m":"Green","e":65,"c":null,"b":"bad","d":1}"#,
+        "Rec{a: 1, k: -1, f: 256, h: 70000, i: 40000, l: 9, t: 5}",
+        r#"{"o":[1,"x",3],"r":[{"p":"no"},{"p":2}],"n":{"q":1,"zz":[1,{"y":2}]}}"#,
+        r#"{"a":-9223372036854775808,"u":1e400,"b":-0.0,"g":127,"l":-1,"c":"é\n"}"#,
+        r#"[{"p":5},{"q":"r"}]"#,
+        r#"{"s":{"Circle":{"radius":1}},"z":Purple,"x":false}"#,
+        r#"{"a":3.7,"c":5,"d":"t","e":"xy","f":300,"g":null,"x":{"k":[1,{"m":"n"}]},"v":["s",[2],{"o":null},7,true],"w":["a",1,null]}"#,
+        r#"{"e":97,"o":[1.9,"q",null],"r":[{"p":"z"},7],"x":"str","n":{"p":2.5,"q":["no"]},"y":null,"u":2}"#,
+    ];
+    let alphabet = ["{", "}", "[", "]", ":", ",", "\"", "1", "null", "Blue"];
+    let mut out: Vec<String> = Vec::new();
+    for s in seeds {
+        let cuts: Vec<usize> = (0..=s.len()).filter(|&i| s.is_char_boundary(i)).collect();
+        for &i in &cuts {
+            out.push(s[..i].to_string());
+        }
+        for (k, w) in cuts.windows(2).enumerate() {
+            let (a, b) = (w[0], w[1]);
+            out.push(format!("{}{}", &s[..a], &s[b..]));
+            out.push(format!(
+                "{}{}{}",
+                &s[..a],
+                alphabet[k % alphabet.len()],
+                &s[b..]
+            ));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// `T.parse(text)` in the C (`loft_parse.h`, a port of `record_from_text` and its walk)
+/// answers what the interpreter answers: over every document, the record, its `#errors` and
+/// `json_errors()`, for a record, a vector of records, the checked cast, and the two-stage
+/// `T.parse(json_parse(text))` (`struct_from_jsonvalue`).  Two seeds'
+/// answers are pinned as hand-checked values, so an empty run cannot pass.
+#[test]
+fn the_c_parses_text_as_the_interpreter_does() {
+    let inputs = parse_inputs();
+    let mut program = PARSE_TYPES.to_string();
+    program.push_str("fn main() {\n");
+    for d in &inputs {
+        let mut lit = String::new();
+        for ch in d.chars() {
+            match ch {
+                '{' => lit.push_str("{{"),
+                '}' => lit.push_str("}}"),
+                '"' => lit.push_str("\\\""),
+                '\\' => lit.push_str("\\\\"),
+                '\n' => lit.push_str("\\n"),
+                c => lit.push(c),
+            }
+        }
+        program.push_str(&format!("  check(\"{lit}\");\n"));
+    }
+    program.push_str("}\n");
+    let Some(x) = Crossed::new("parse", &program) else {
+        return;
+    };
+    let path = x.dir().join("unused");
+    let want = x.run("interpret", "", &path);
+    let got = x.run("c", "", &path);
+    // Each check's answers follow its `#check` line: a text can hold a line break.
+    let split =
+        |out: &str| -> Vec<String> { out.split("#check\n").skip(1).map(str::to_string).collect() };
+    let (want, got) = (split(&want), split(&got));
+    assert_eq!(want.len(), inputs.len(), "the interpreter ran every check");
+    for pinned in [
+        r#"{a:7,b:0,c:"",d:false,e:null,f:0,g:-128,h:0,i:-32768,j:0,k:0,l:5,m:Red,n:{p:0,q:"dq"},o:[],r:[{p:1,q:"dq"},{p:0,q:"dq"},{p:0,q:"k"}],s:Square {side:3},t:null,u:0,v:null,w:null,x:null,y:2.5,z:null} [] []"#,
+        r#"{a:0,b:0,c:"",d:false,e:'A',f:0,g:-128,h:0,i:-32768,j:0,k:0,l:5,m:Green,n:{p:0,q:"dq"},o:[],r:[],s:Dot {},t:null,u:0,v:null,w:null,x:null,y:2.5,z:null} ["line 1:40 path:b","line 1:50 path:d"] [line 1:40 path:b|line 1:50 path:d]"#,
+    ] {
+        assert!(
+            want.iter().any(|w| w.lines().next() == Some(pinned)),
+            "the interpreter answers {pinned}"
+        );
+    }
+    let mut bad = Vec::new();
+    for (i, (w, g)) in want.iter().zip(&got).enumerate() {
+        if w != g {
+            bad.push(format!(
+                "{:?}\n    interpreter {w}\n    the C       {g}",
+                inputs[i]
+            ));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of {} checks differ, the first:\n{}",
+        bad.len(),
+        inputs.len(),
+        bad.iter().take(8).cloned().collect::<Vec<_>>().join("\n")
+    );
+    assert_eq!(got.len(), want.len(), "the C stopped early");
 }

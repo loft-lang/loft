@@ -819,6 +819,30 @@ static void loft_jp_render_path(const loft_jp *p, loft_text *out) {
     }
 }
 
+/* `stores.last_json_errors`: the errors of the last parse, in order; `json_errors()` reads them
+ * joined by `|`. */
+static loft_text *loft_jerr = 0;
+static size_t loft_jerr_n = 0, loft_jerr_cap = 0;
+
+static void loft_jerr_clear(void) {
+    for (size_t i = 0; i < loft_jerr_n; i++) loft_text_free(&loft_jerr[i]);
+    loft_jerr_n = 0;
+}
+
+/* One more error, its text taken over. */
+static void loft_jerr_take(loft_text t) {
+    if (loft_jerr_n == loft_jerr_cap) {
+        loft_jerr_cap = loft_jerr_cap ? loft_jerr_cap * 2 : 4;
+        loft_jerr = (loft_text *) realloc(loft_jerr, loft_jerr_cap * sizeof *loft_jerr);
+        if (!loft_jerr) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_jerr[loft_jerr_n++] = t;
+}
+
+static void loft_jerr_push(loft_str msg) {
+    loft_jerr_take(loft_text_own(msg));
+}
+
 /* `json::parse_with`: the whole of `text` as one value; 0 with the fault and the failing
  * value's JSON pointer on an error. */
 static int loft_json_parse(const uint8_t *text, size_t len, int lenient, loft_jv *v, loft_jfault *f, loft_text *path) {
@@ -846,8 +870,6 @@ static int loft_json_parse(const uint8_t *text, size_t len, int lenient, loft_jv
 #define LOFT_JD_OBJECT 6
 #define LOFT_JD_INT 7
 
-/* `stores.last_json_errors`: the last `json_parse`'s error, empty after one that read. */
-static loft_text loft_json_last_error;
 
 static uint8_t loft_jd(loft_ref v) {
     return *loft_at(loft_store_of(v), v.rec, v.pos);
@@ -989,12 +1011,14 @@ static loft_ref loft_json_parse_value(loft_str raw) {
     loft_text path = { 0, 0, 0 };
     int ok = loft_json_parse((const uint8_t *) raw.p, raw.len, 0, &v, &f, &path);
     loft_ref r = loft_jv_alloc();
-    loft_json_last_error.len = 0;
+    loft_jerr_clear();
     if (ok) {
         loft_jv_into(r, &v);
     } else {
         loft_set_byte(r, 0, LOFT_JD_NULL);
-        loft_json_format_error(&loft_json_last_error, (const uint8_t *) raw.p, raw.len, &f, loft_view(&path));
+        loft_text e = { 0, 0, 0 };
+        loft_json_format_error(&e, (const uint8_t *) raw.p, raw.len, &f, loft_view(&path));
+        loft_jerr_take(e);
     }
     loft_jv_free(&v);
     loft_text_free(&path);
@@ -1002,7 +1026,12 @@ static loft_ref loft_json_parse_value(loft_str raw) {
 }
 
 static loft_text loft_json_errors(void) {
-    return loft_text_own(loft_view(&loft_json_last_error));
+    loft_text t = { 0, 0, 0 };
+    for (size_t i = 0; i < loft_jerr_n; i++) {
+        if (i) loft_push_char(&t, '|');
+        loft_text_append(&t, loft_view(&loft_jerr[i]));
+    }
+    return t;
 }
 
 /* The collection record of a container's items or members, 0 for none. */
@@ -1206,7 +1235,7 @@ static void loft_jv_read(loft_ref src, loft_jv *v) {
 static loft_ref loft_jv_build(const loft_jv *v) {
     loft_ref r = loft_jv_alloc();
     loft_jv_into(r, v);
-    loft_json_last_error.len = 0;
+    loft_jerr_clear();
     return r;
 }
 
@@ -1234,9 +1263,11 @@ static loft_ref loft_json_number(double n) {
         return loft_jv_build(&v);
     }
     loft_ref r = loft_jv_build(&v);
-    loft_push_cstr(&loft_json_last_error, "json_number: non-finite value ");
-    loft_push_cstr(&loft_json_last_error, isnan(n) ? "NaN" : n < 0 ? "-inf" : "inf");
-    loft_push_cstr(&loft_json_last_error, " stored as JNull");
+    loft_text e = { 0, 0, 0 };
+    loft_push_cstr(&e, "json_number: non-finite value ");
+    loft_push_cstr(&e, isnan(n) ? "NaN" : n < 0 ? "-inf" : "inf");
+    loft_push_cstr(&e, " stored as JNull");
+    loft_jerr_take(e);
     return r;
 }
 

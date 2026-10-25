@@ -1694,6 +1694,9 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.unicode_native(def.name(), args, ind)? {
             return Ok(e);
         }
+        if let Some(e) = self.struct_json_native(def.name(), args, ind)? {
+            return Ok(e);
+        }
         let callee = def.original_name();
         let ret = cx
             .ctype(def.returned())
@@ -2061,6 +2064,57 @@ impl<'a> FnWriter<'a> {
         ))
     }
 
+    /// `T.to_json()` / `T.to_json_pretty()` of a record (`Stores::show_json`): its type's
+    /// render function in the JSON form; `T.parse(JsonValue)`, the walk over the tree; `None`
+    /// for another native.
+    fn struct_json_native(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let pretty = match name {
+            "n_struct_to_json" => 0,
+            "n_struct_to_json_pretty" => 1,
+            // `T.parse(JsonValue)`: the struct walk over the tree (`loft_parse.h`).
+            "n_struct_from_jsonvalue" => {
+                let [val, tp] = args else {
+                    return Err(format!("{name} with an unexpected operand list"));
+                };
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                self.cx.parse_type(tp)?;
+                let val = self.expr(val, ind)?;
+                return Ok(Some(E::new(
+                    format!(
+                        "loft_struct_from_jsonvalue(loft_ptypes, {}, {tp})",
+                        as_ref(val)?
+                    ),
+                    K::Ref,
+                )));
+            }
+            _ => return Ok(None),
+        };
+        let [val, tp] = args else {
+            return Err(format!("{name} with an unexpected operand list"));
+        };
+        let tp = u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+        self.cx.show_type(tp)?;
+        let val = self.expr(val, ind)?;
+        let t = self.temp(CType::Text);
+        self.line(ind, &format!("loft_text_free(&{t});"));
+        self.line(
+            ind,
+            &format!(
+                "{}(&{t}, {}, {}, 0);",
+                super::Cx::show_fn(tp),
+                as_ref(val)?,
+                2 | pretty
+            ),
+        );
+        Ok(Some(self.held(t, CType::Text)))
+    }
+
     /// `{v}` of a record or a vector: the type's render function (`show.rs`).
     fn format_database(&mut self, args: &[Value], ind: usize) -> Result<E, String> {
         let [dest, val, tp, fmt] = args else {
@@ -2167,7 +2221,47 @@ impl<'a> FnWriter<'a> {
                     K::View,
                 ))
             }
+            "OpCastVectorFromText" | "OpCastEnumFromText" => self.cast_from_text(name, args, ind),
             _ => self.float_operator(name, args, ind),
+        }
+    }
+
+    /// A value read from a text: a type's whole record (`Stores::record_from_text`) or a plain
+    /// enum's value by its name (`Stores::to_enum`).
+    fn cast_from_text(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match name {
+            // `Stores::record_from_text`: a new store holding the type the text describes.
+            "OpCastVectorFromText" => {
+                let [v, tp] = args else {
+                    return Err("OpCastVectorFromText with an unexpected operand list".into());
+                };
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type out of range".to_string())?;
+                self.cx.parse_type(tp)?;
+                let v = self.expr(v, ind)?;
+                Ok(E::new(
+                    format!("loft_record_from_text(loft_ptypes, {}, {tp})", as_view(v)?),
+                    K::Ref,
+                ))
+            }
+            // `Stores::to_enum`: the value whose name the text is, 0 for none.
+            "OpCastEnumFromText" => {
+                let [v, tp] = args else {
+                    return Err("OpCastEnumFromText with an unexpected operand list".into());
+                };
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type out of range".to_string())?;
+                let names = self.cx.enum_names(tp);
+                let v = self.expr(v, ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_enum_of_text({names}, sizeof {names} / sizeof *{names}, {})",
+                        as_view(v)?
+                    ),
+                    K::Enum,
+                ))
+            }
+            _ => Err(format!("operator {name}")),
         }
     }
 
@@ -3052,8 +3146,35 @@ impl<'a> FnWriter<'a> {
 
     /// The whole-vector operators: append, replace, remove, repeat — each with the deep
     /// copies its store method makes.
+    /// OpAdoptVector (`Stores::vector_adopt`): a local takes a native call's vector answer.
+    fn adopt_vector(
+        &mut self,
+        v: &Value,
+        other: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let name = "OpAdoptVector";
+        let tp = u16::try_from(Self::literal(tp, "element type")?)
+            .map_err(|_| "an element type out of range")?;
+        if self.cx.stores.is_linked(tp) {
+            return Err("an adopted vector of linked records".into());
+        }
+        self.cx.copy_type(tp)?;
+        let (v, other) = self.two(name, &[v.clone(), other.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_vec_adopt(loft_types, {tp}, {}, {})",
+                as_ref(v)?,
+                as_ref(other)?
+            ),
+            K::Void,
+        ))
+    }
+
     fn collection_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
+            ("OpAdoptVector", [v, other, tp]) => self.adopt_vector(v, other, tp, ind),
             ("OpAppendVector", [v, other, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
@@ -3531,6 +3652,8 @@ const OP_ENUM: &[&str] = &[
 const OP_TEXT: &[&str] = &[
     "OpGetText",
     "OpCastTextFromEnum",
+    "OpCastEnumFromText",
+    "OpCastVectorFromText",
     "OpConvTextFromNull",
     "OpCastTextFromBool",
     "OpGetTextSub",

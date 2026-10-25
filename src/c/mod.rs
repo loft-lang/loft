@@ -20,6 +20,7 @@ mod body;
 mod eq;
 mod files;
 mod fnval;
+mod parse;
 mod show;
 mod unicode;
 
@@ -44,6 +45,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_paged_load.h"),
     include_str!("loft_keyed.h"),
     include_str!("loft_json.h"),
+    include_str!("loft_parse.h"),
     include_str!("loft_io.h")
 );
 
@@ -159,6 +161,8 @@ pub(crate) struct Cx<'a> {
     gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
     gen_bodies: std::cell::RefCell<String>,
+    /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
+    parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
 }
 
 /// The record collections beside a plain vector the C carries; each layout is described in
@@ -200,6 +204,7 @@ impl<'a> Cx<'a> {
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
+            parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -945,6 +950,10 @@ fn json_native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_json_parse" => Some("loft_json_parse_value"),
         "n_json_errors" => Some("loft_json_errors"),
+        "n_parse_errors_of" => Some("loft_parse_errors_of"),
+        // Written by the type's render function (`struct_json_native`).
+        "n_struct_to_json" | "n_struct_to_json_pretty" => Some("loft_show"),
+        "n_struct_from_jsonvalue" => Some("loft_struct_from_jsonvalue"),
         "n_json_null" => Some("loft_json_null"),
         "n_json_bool" => Some("loft_json_bool"),
         "n_json_number" => Some("loft_json_number"),
@@ -1020,17 +1029,33 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
     }
-    // The JSON reader and the JsonValue tree (`loft_json.h`) are compiled in for a unit that
-    // reaches a JSON native, with the tree's layout read from this program's type table.
-    if reached.iter().any(|&d| {
+    // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
+    // tree with its layout read from this program's type table for one that reaches a JSON
+    // native, the typed walk (`loft_parse.h`) for one that parses a type.
+    let json_tree = reached.iter().any(|&d| {
         let n = data.def(d).name();
-        n.starts_with("n_json_") || n.starts_with("t_9JsonValue_")
-    }) {
+        n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue"
+    });
+    let parses = !cx.parse_types.borrow().is_empty()
+        || reached
+            .iter()
+            .any(|&d| data.def(d).name() == "n_parse_errors_of");
+    if json_tree || parses {
+        out.push_str("#define LOFT_JSON 1\n");
+    }
+    if json_tree {
         out.push_str(&json_layout(stores));
+    }
+    if parses {
+        out.push_str("#define LOFT_PARSE 1\n");
     }
     out.push_str(RUNTIME);
     out.push('\n');
     out.push_str(&cx.typedefs());
+    if parses {
+        out.push_str(&cx.parse_table());
+        out.push_str(&cx.main_vector_test());
+    }
     out.push_str(&cx.gen_decls.borrow());
     out.push_str(&protos);
     out.push_str(&dispatch);
@@ -1040,13 +1065,13 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     Ok(out)
 }
 
-/// `LOFT_JSON` and the offsets of the JsonValue tree, as `native.rs` reads them through
+/// The offsets of the JsonValue tree, as `native.rs` reads them through
 /// `Stores::position`: each variant's payload, a JsonField's name and value, and the sizes of
 /// a JsonValue, a JsonField and a text.
 fn json_layout(stores: &Stores) -> String {
     let at = |tp: &str, field: &str| stores.position(stores.name(tp), field);
     format!(
-        "#define LOFT_JSON 1\n#define LOFT_JV_SIZE {}\n#define LOFT_JF_SIZE {}\n#define LOFT_TEXT_SIZE {}\n\
+        "#define LOFT_JV_SIZE {}\n#define LOFT_JF_SIZE {}\n#define LOFT_TEXT_SIZE {}\n\
          #define LOFT_JF_NAME {}\n#define LOFT_JF_VALUE {}\n#define LOFT_JV_BOOL_VALUE {}\n\
          #define LOFT_JV_NUMBER_VALUE {}\n#define LOFT_JV_INT_VALUE {}\n#define LOFT_JV_STRING_VALUE {}\n\
          #define LOFT_JV_ITEMS {}\n#define LOFT_JV_FIELDS {}\n",
