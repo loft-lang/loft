@@ -31,10 +31,15 @@ if [ -n "${LOFT_DAILY_RUN:-}" ]; then
 else
   sha=$(git ls-remote origin refs/heads/main | cut -f1)
   [ -n "$sha" ] || unavailable "origin/main not reachable"
-  run=$(gh run list --workflow daily-build.yml --branch main --event push --limit 30 \
-          --json databaseId,headSha,conclusion \
-          -q ".[] | select(.headSha == \"$sha\" and .conclusion == \"success\") | .databaseId" | head -1)
-  [ -n "$run" ] || unavailable "no finished daily build for main ${sha:0:9} yet"
+  # This host's LEG must have passed, not the whole run: another platform's red leg does not
+  # make this one's runtime unusable.
+  run=""
+  for r in $(gh run list --workflow daily-build.yml --branch main --event push --limit 30 \
+               --json databaseId,headSha -q ".[] | select(.headSha == \"$sha\") | .databaseId"); do
+    leg=$(gh run view "$r" --json jobs -q ".jobs[] | select(.name == \"$triple\") | .conclusion")
+    if [ "$leg" = success ]; then run=$r; break; fi
+  done
+  [ -n "$run" ] || unavailable "no finished $triple daily build for main ${sha:0:9} yet"
 fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
