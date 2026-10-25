@@ -68,6 +68,7 @@ conditional one (each is one fix line), and the concept door they open onto.
 | `both-receiver-deprecated` | warning | A function whose first parameter is named `both`. `self` already gives a function both call spellings, `x.f(…)` and `f(x, …)` (`formal/calls.md` (F-Recv), (F-OneBody)), so `both` names nothing `self` does not; the declaration still compiles and means exactly `self` (@C123). A WARNING rather than advice by owner decision (2026-09-15), so a library's CI goes red on it and every published use is renamed — the call surface is unchanged by the rename. | Rename the parameter to `self`, and its uses in the body. | C · `@F16` |
 | `upper-case-local` | advice | An UPPER_CASE local — that style is reserved for constants. | Declare it `const`, or rename to lower_case. | C M · `@F18` |
 | `unreachable-code` | warning | Statements after a terminator can never run. | Delete them. | M · `@F16` |
+| `match-scalar-hole` | advice | A `match` over an integer, text or character names some values and has no `_` arm (nor a bare-binding arm), so a value none of them names selects no arm: as an expression the match answers null and its type is `τ?`, as a statement it does nothing — `(M-Total)`'s scalar clause, the one place a match falls through. An enum subject is checked instead (`M-Exhaust`); a boolean naming both `true` and `false` is total (`M-Bool`). Advice, not a warning: the null is what the language promises and the type carries it to whoever reads the value; the hole is said at the match because a lexer's unhandled character is otherwise silent. `LOFT_NO_SCALAR_HOLE` opts out. | Add a `_ =>` arm for the values the arms do not name, or discharge the null where the value is read. | C · `@F29` |
 | `unreachable-match-arm` | warning | A match arm an earlier arm already matches. | Delete the arm. | M · `@F29` |
 | `empty-parallel-block` | warning | A `parallel` block with no arms. | Delete it. | M · `@F33` |
 | `text-slice-char-bound` | warning | A text slice ends at `len(text)` — a character count where a byte offset is wanted, so it stops short on multi-byte text. | `size(text)` for the byte length, or `text[i..]` for the rest. | M M · `@F97` |
@@ -672,6 +673,13 @@ undiscoverable. `advice`, not `warning`: the zero is documented behaviour, so ig
 cannot produce a result the language did not promise. Quiet on a field with a declared
 default, on a NULLABLE field (absence is a value it holds), and on a bare `S {}` — that asks
 for the whole default record; the ambiguity is only in the PARTIAL literal) ·
+`LOFT_NO_SCALAR_HOLE` (loft-lang/plans#202 P3 `match-scalar-hole` ADVICE: a `match` over an
+integer, text or character that names some values and has no `_` arm — a value none of them
+names selects no arm, so the match answers null (`τ?`) or, as a statement, does nothing.  The
+null is `(M-Total)`'s answer and the type carries it, which is why this advises rather than
+warns; what it adds is the place — a lexer's `match c { 'a' => …, 'b' => … }` skips every
+other character in silence.  Quiet on a `_` or bare-binding arm, on a boolean naming both
+values, and on an enum subject, which `M-Exhaust` checks) ·
 `LOFT_NO_VARIANT_OVERWRITTEN` (loft#1397 `variant-overwritten-binding` WARNING: a
 `match`/`is` PAYLOAD binding still read after the subject's PLACE is given a DIFFERENT
 variant — `match w.st { Holder{inner} => { w.st = Empty{z: 0}; inner.a }, … }` reads

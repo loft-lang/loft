@@ -221,8 +221,16 @@ backtracking safe.
                  and NOT required.  With no total final arm the match MAY select no arm at runtime; by
                  the @C80 spreadsheet model ([DESIGN_DECISIONS.md @C80](../DESIGN_DECISIONS.md)) it then
                  yields **null**, so the match's result type is **nullable** (`τ?`) — no error, the null
-                 surfaces at the use site (the null-flow discipline).  This is the one place a `match`
-                 "falls through", and it falls through to null, never to a fault.
+                 surfaces at the use site (the null-flow discipline), and the match itself carries the
+                 `match-scalar-hole` advice.  This is the one place a `match` "falls through", and it
+                 falls through to null, never to a fault.
+               • VECTOR subject — one slice arm is length-constrained, so it never covers every length
+                 on its own; the ARMS do when, each with total element patterns and no guard, an exact
+                 arm covers its length and a rest arm every length from its minimum, and no length is
+                 left out: `[]` with `[x, ..rest]`, or `[] | [x] | [x, y, ..r]` as three arms.  The
+                 last arm is then the fallback, as a `_` is, and the join is not nullable.  Otherwise
+                 a total final arm (`_`, a bare name) is required, and its absence is a STATIC ERROR
+                 ("a slice pattern can fail").
 ```
 
 **In words.** For an ENUM subject this keeps loft's promise that a `match` never falls through to
@@ -321,7 +329,11 @@ follows `(P-Seq)` as a prefix reading of it.
   a false guard moves selection to the next arm with no binding left behind (`P-Guard`,
   `P-Atomic`).
 - **Scalar fall-through is null (`M-Total`)** — `match n { 1 => 10, 2 => 20 }` with `n = 9` is
-  `null`, and the match's type is nullable; no error, no fault.
+  `null`, and the match's type is nullable; no error, no fault — and the `match-scalar-hole`
+  advice at the match (`LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet).
+- **Slice arms covering every length (`M-Total`)** — `match v { [] => 0, [x, ..rest] => x +
+  total(rest) }` compiles with no `_`; `[x, ..rest]` alone, `[]` with `[x, y, ..rest]`, a guard on
+  the rest arm or a variant element pattern does not ("a slice pattern can fail").
 - **Exhaustiveness (`M-Exhaust`)** — `match c { A => 1 }` over `enum C { A, B }` does NOT compile
   ("missing: B"); adding a `B => …` arm or a trailing `_` makes it compile.
 - **As an expression (`M-Expr`)** — `r = match c { A => 100, B => 200 }` binds `r` to the arm's

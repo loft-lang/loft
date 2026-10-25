@@ -3066,7 +3066,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bigger == <span class="st">"rect"</span>, <span class="st">"variants inside a tuple pattern: {bigger}"</span>);</code></pre>
 <h2 id="when-nothing-matches">When nothing matches</h2>
-<p>This match names no <code>_</code>, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with <code>??</code>, or add a <code>_</code> arm — the compiler will not remind you.</p>
+<p>This match names no <code>_</code>, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with <code>??</code>, or add a <code>_</code> arm.  The compiler advises at the match (<code>match-scalar-hole</code>); <code>LOFT_NO_SCALAR_HOLE</code> keeps a deliberate hole quiet.</p>
 <pre><code>  unmatched = match <span class="nm">7</span> {
     <span class="nm">1</span> =&gt; <span class="st">"one"</span>,
     <span class="nm">2</span> =&gt; <span class="st">"two"</span>,

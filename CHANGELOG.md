@@ -144,6 +144,16 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**`[]` and `[x, ..rest]` are a complete match.**  Slice arms that together cover every length
+— an exact arm for each short length, a rest arm from there on, no guards — need no `_`:
+`match v { [] => 0, [x, ..rest] => x + total(rest) }` is the list recursion.  A set that leaves
+a length out is still refused.  (loft-lang/plans#202)
+
+**A scalar `match` with a hole says so.**  `match c { 'a' => …, 'b' => … }` names some values and
+no `_`: a value none of them names selects no arm — the match answers null, or does nothing as a
+statement — which is what the language promises, and now an advice (`match-scalar-hole`) at the
+match says where.  `LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet.  (loft-lang/plans#202)
+
 **A record with some fields changed, in one expression.**  `d = Unit { hp: 0, ..u }` is a copy
 of `u` with `hp` written — what `d = u; d.hp = 0;` does, so `u` keeps its value, a `text` or
 collection field releases what the copy brought, and a `const` field is refused.  `..base` is the

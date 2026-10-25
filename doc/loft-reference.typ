@@ -6471,7 +6471,7 @@ An element can be an enum variant with its fields bound, so one arm reads both s
 
 === When nothing matches
 
-This match names no `\_`, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with `??`, or add a `\_` arm — the compiler will not remind you.
+This match names no `\_`, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with `??`, or add a `\_` arm.  The compiler advises at the match (`match-scalar-hole`); `LOFT\_NO\_SCALAR\_HOLE` keeps a deliberate hole quiet.
 
 ```rust
   unmatched = match 7 {

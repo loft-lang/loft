@@ -202,7 +202,8 @@ fn main() {
   // This match names no `_`, and 7 is none of its arms.  On an enum that would
   // not compile; on a scalar there is no finite set to check, so the match
   // answers null and the null travels on.  Give the result a fallback with `??`,
-  // or add a `_` arm — the compiler will not remind you.
+  // or add a `_` arm.  The compiler advises at the match (`match-scalar-hole`);
+  // `LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet.
   unmatched = match 7 {
     1 => "one",
     2 => "two",

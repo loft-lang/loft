@@ -512,9 +512,22 @@ Order the arms from the most specific to the least: `[head, ..tail]` already mat
 vector with at least one element, so an arm below it that also starts with one element would
 never be reached.
 
-**Every slice pattern can fail, so a match on a vector needs a final catch-all.** No set of
-slice arms is ever complete on its own, because some length always escapes them. End with `_`
-or with a bare name, which binds the whole vector:
+**A slice pattern can fail, so a match on a vector ends with a catch-all — or with arms that
+together cover every length.** One slice arm is never complete on its own, because some length
+escapes it.  The arms are complete when an exact arm covers each short length and a rest arm
+every length from there on, each with plain element bindings and no guard — `[]` with
+`[x, ..rest]` is the list recursion:
+
+```
+fn total(v: vector<integer>) -> integer {
+  match v {
+    [] => 0,
+    [x, ..rest] => x + total(rest),
+  }
+}
+```
+
+Otherwise end with `_` or with a bare name, which binds the whole vector:
 
 ```
 match v {
@@ -523,8 +536,9 @@ match v {
 }
 ```
 
-Leaving it out is a compile error: *"match on vector is not exhaustive — a slice pattern can
-fail (a length no arm matches); add a `_ =>` or a bare-binding final arm"*.
+Leaving both out is a compile error: *"match on vector is not exhaustive — a slice pattern can
+fail (a length no arm matches); add a `_ =>` or a bare-binding final arm, or arms that together
+cover every length (`[]` and `[x, ..rest]`)"*.
 
 **What a binding gives you** depends on the element type, and follows the same view-or-copy
 split as the rest of the language:
