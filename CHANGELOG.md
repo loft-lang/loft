@@ -181,8 +181,9 @@ match says where.  `LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet.  (loft-l
 **A record with some fields changed, in one expression.**  `d = Unit { hp: 0, ..u }` is a copy
 of `u` with `hp` written — what `d = u; d.hp = 0;` does, so `u` keeps its value, a `text` or
 collection field releases what the copy brought, and a `const` field is refused.  `..base` is the
-last entry; the base must be a `Unit` and present.  A variant is not updated this way: `match` on
-it and build the variant from its fields.  (loft-lang/plans#202)
+last entry; the base must be a `Unit` and present.  A variant updates the same way when the base
+is known to be that variant — `Bin { l: 9, ..b }` with `b` a `Bin`, or `..(n as Bin)` inside
+`if n is Bin`; a base that may hold any variant of its enum is refused.  (loft-lang/plans#202)
 
 **A loop that discharges a null or divides runs faster.**  This is visible only as speed,
 under `--native`.  A `for` loop that changes nothing but its own numbers and booleans first

@@ -357,9 +357,12 @@ of `u` and then writes the named fields — exactly what `d = u; d.hp = 0;` does
 written as the assignments they stand for, so a `text` or collection field releases what the copy
 brought and a `const` field is refused; and each field reads the BASE, never the half-written
 copy (`Unit { y: u.hp, hp: u.y, ..u }` swaps).  `..base` is the last entry.  The base is a `Unit`
-and never absent — discharge a `Unit?` first (`..(u ?? Unit { … })`).  A variant is not updated
-this way: `match` on it and build the variant from its fields, since its tag would have to be
-checked against the base's.
+and never absent — discharge a `Unit?` first (`..(u ?? Unit { … })`).  A **variant** is updated
+the same way when the base's type IS that variant: a `Bin` local, parameter, field or call
+result, or the checked cast `..(n as Bin)` inside `if n is Bin`.  The copy carries the tag, so no
+check runs when the program does.  A base typed as the enum (`n: Node`) may hold any of its
+variants and is refused, naming that cast; a generic enum's variant has no type of its own, so
+there `match` on the base and build the variant from its fields.
 
 **A nullable STRUCT-enum (`Shape?`) works** as a local, a parameter, a return, a struct FIELD and
 a `vector<Shape?>` element — `= null`, `== null`, truthiness, `??`, `match` and reassignment in

@@ -11207,6 +11207,47 @@ fn test() {
     .result(Value::Null);
 }
 
+/// loft#2185 — a record update `w = U { f: e, ..b }` is the statement `w = b; w.f = e;`, and
+/// its inner bind of `w` is that statement's own write.  The bind took back a target mention it
+/// never counted, which removed the assert's real read, so `w`'s first value was reported dead;
+/// no warning is declared, so any warning fails the test.  The sibling below keeps the lint.
+#[test]
+fn dead_assignment_reads_a_record_update_as_one_write() {
+    code!(
+        "struct DuU { hp: integer, x: integer }
+enum DuN { DuL { v: integer }, DuB { op: integer, l: integer } }
+fn test() {
+    u = DuU { hp: 1, x: 2 };
+    w = DuU { hp: 3, x: 4 };
+    assert(w.hp == 3, \"read before the update\");
+    w = DuU { hp: 5, ..u };
+    n = DuB { op: 1, l: 2 };
+    m: DuN = DuL { v: 4 };
+    assert(m is DuL, \"read before the variant update\");
+    m = DuB { l: 7, ..n };
+    assert(w.hp == 5 && w.x == 2 && m is DuB, \"the updates\");
+}"
+    )
+    .result(Value::Null);
+}
+
+/// loft#2185 — the update's earlier write that nothing read IS dead, and is reported ONCE:
+/// the inner bind ran the check before the statement did, and the warning came out twice.
+#[test]
+fn dead_assignment_reports_a_record_update_once() {
+    code!(
+        "struct DoU { hp: integer, x: integer }
+fn test() {
+    u = DoU { hp: 1, x: 2 };
+    w = DoU { hp: 3, x: 4 };
+    w = DoU { hp: 5, ..u };
+    assert(w.hp == 5 && w.x == 2, \"the update\");
+}"
+    )
+    .warning("Dead assignment — 'w' is overwritten before being read at dead_assignment_reports_a_record_update_once:4:29")
+    .result(Value::Null);
+}
+
 /// P170 guard — three-way: the same shape but with a conditional
 /// assignment between the placeholder and the vec-elem reassign.
 #[test]

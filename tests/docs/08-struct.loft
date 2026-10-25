@@ -206,8 +206,9 @@ fn main() {
   // 'Product { price: 90, ..apple }' is a copy of 'apple' with 'price' written — exactly
   // 'sale = apple; sale.price = 90;' in one expression. The base keeps its value, the
   // named fields are written as assignments (each reads the BASE, never the half-written
-  // copy), and '..base' is the last entry. The base must be a Product and present; a
-  // variant is not updated this way — match on it and build the variant from its fields.
+  // copy), and '..base' is the last entry. The base must be a Product and present. A
+  // variant updates the same way when the base is known to be that variant: a local of the
+  // variant's type, or '..(s as Circle)' inside 'if s is Circle'.
   sale = Product { price: 90, ..apple };
   assert(sale.price == 90 && sale.name == "Apple" && sale.stock == 49, "the copy with price written: {sale.price} {sale.name} {sale.stock}");
   assert(apple.price == 120, "the base keeps its price: {apple.price}");

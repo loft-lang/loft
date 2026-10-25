@@ -2451,7 +2451,7 @@ Write '&' to get a live link where a bind would otherwise copy.
 
 === A record with some fields changed
 
-'Product { price: 90, ..apple }' is a copy of 'apple' with 'price' written — exactly 'sale = apple; sale.price = 90;' in one expression. The base keeps its value, the named fields are written as assignments (each reads the BASE, never the half-written copy), and '..base' is the last entry. The base must be a Product and present; a variant is not updated this way — match on it and build the variant from its fields.
+'Product { price: 90, ..apple }' is a copy of 'apple' with 'price' written — exactly 'sale = apple; sale.price = 90;' in one expression. The base keeps its value, the named fields are written as assignments (each reads the BASE, never the half-written copy), and '..base' is the last entry. The base must be a Product and present. A variant updates the same way when the base is known to be that variant: a local of the variant's type, or '..(s as Circle)' inside 'if s is Circle'.
 
 ```rust
   sale = Product { price: 90, ..apple };

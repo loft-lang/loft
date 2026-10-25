@@ -146,7 +146,12 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   source.  This is [heap.md](heap.md) H-Copy (`fv = e.items; fv[0]=99`
                   leaves `e.items[0]`).  A struct-enum value is a heap RECORD exactly as
                   a struct is — `Type::heap_def_nr` names both — and a `(C-Var)` widening
-                  `c: E = s` from a variant is a copy like any other.  For a type that
+                  `c: E = s` from a variant is a copy like any other.  A record UPDATE
+                  `S { f: e, ..b }` is this bind followed by the writes `d.f = e`: a copy
+                  whatever shape `b` has (a view of a place is held, then copied).  A
+                  variant literal `V { …, ..b }` takes `b` only when its static type IS
+                  `V`, so the copy carries the tag and no runtime check is made; a `b`
+                  typed as V's enum is refused.  For a type that
                   owns a droppable without `OpCopy`, such a bind is a compile-time error on
                   its own line, whatever follows it ([heap.md](heap.md) H-Copy-Refuse); with
                   `OpCopy` it takes a second lease (H-Copy-Lease).
