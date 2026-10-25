@@ -11,7 +11,14 @@
 //   - a `text` read character by character and sliced into tokens (`lex`);
 //   - an AST whose children are INDICES into one `vector<Node>`: the arena.  Never a
 //     `reference<Node>` into a vector that later grows — the records move (loft#2163);
-//   - keyed collections for the symbol table and for a table of `fn` values.
+//   - keyed collections for the symbol table and for a table of `fn` values;
+//   - a record with some fields changed, in one expression: `Opts { fold: false, ..opts }`
+//     for the driver's options, `Binding { uses: b.uses + 1, ..b }` to update a symbol-table
+//     entry in place (the keyed insert replaces the record with that key).
+//
+// Writing it found two compiler defects, both fixed: `if t is Plus { … }` on a unit variant
+// was an internal compiler error (loft#2168), and `_ => null` in an enum match was refused
+// (loft#2170).  Both spellings below are the natural ones.
 //
 // Run: loft --interpret examples/front_end.loft   (or `loft examples/front_end.loft`)
 
@@ -149,7 +156,8 @@ fn parse_group(p: Parser) -> integer {
   e
 }
 
-struct Binding { name: text, value: integer }
+// A symbol-table entry: its value, and how often the program read it.
+struct Binding { name: text, value: integer, uses: integer }
 
 fn apply(op: Op, a: integer, b: integer) -> integer {
   match op { Add => a + b, Sub => a - b, Mul => a * b }
@@ -158,7 +166,15 @@ fn apply(op: Op, a: integer, b: integer) -> integer {
 fn eval(nodes: vector<Node>, i: integer, env: hash<Binding[name]>) -> integer {
   match nodes[i] {
     Lit { v } => v,
-    Var { name } => { b = env[name]; if b { b.value } else { 0 } },
+    Var { name } => {
+      b = env[name];
+      if b {
+        v = b.value;
+        // The entry with one field changed, put back under its key.
+        env += [Binding { uses: b.uses + 1, ..b }];
+        v
+      } else { 0 }
+    },
     Neg { e } => -eval(nodes, e, env),
     Bin { op, l, r } => apply(op, eval(nodes, l, env), eval(nodes, r, env)),
   }
@@ -184,6 +200,9 @@ fn lit_of(nodes: vector<Node>, i: integer) -> integer? {
 // Constant folding: a node over literals becomes a literal; any other node is copied with
 // its children replaced by their folded twins — the copy-with-one-field-changed every
 // rewrite does.  The arena only grows: the folded tree is new nodes beside the old ones.
+// A node is a VARIANT, so its copy spells every field (`Bin { op: op, l: fl, r: fr }`): the
+// update `Bin { l: fl, r: fr, ..node }` would need the base's tag checked against `Bin`'s,
+// which is loft-lang/plans#202 P2b — on a struct it is `S { l: fl, r: fr, ..node }` today.
 fn fold(p: Parser, i: integer) -> integer {
   match p.nodes[i] {
     Lit { v } => i,
@@ -207,21 +226,31 @@ fn fold(p: Parser, i: integer) -> integer {
   }
 }
 
-fn run(src: text, env: hash<Binding[name]>) -> integer {
+// The driver's options: a record, so a call changes one with `..defaults`.
+struct Opts { show_tree: boolean, fold: boolean }
+
+fn run(src: text, env: hash<Binding[name]>, o: Opts) -> integer {
   p = new_parser(lex(src));
   root = p.parse_expr();
   if !(p.peek() is End) { p.fail("trailing input"); }
   value = eval(p.nodes, root, env);
-  folded = fold(p, root);
-  println("{src}  =>  {show(p.nodes, root)}  =  {value}");
-  println("    folded: {show(p.nodes, folded)}");
+  if o.show_tree { println("{src}  =>  {show(p.nodes, root)}  =  {value}"); } else { println("{src}  =  {value}"); }
+  if o.fold {
+    folded = fold(p, root);
+    println("    folded: {show(p.nodes, folded)}");
+  }
   value
 }
 
 fn main() {
-  env: hash<Binding[name]> = [Binding { name: "x", value: 10 }, Binding { name: "y", value: 3 }];
-  assert(run("1 + 2 * (3 - x)", env) == -13, "1 + 2 * (3 - 10)");
-  assert(run("-(4 + 5) * 2", env) == -18, "-(9) * 2");
-  assert(run("2 * 3 + x * y", env) == 36, "6 + 30");
-  assert(run("x - y - 1", env) == 6, "left-associative: (10 - 3) - 1");
+  env: hash<Binding[name]> = [Binding { name: "x", value: 10, uses: 0 }, Binding { name: "y", value: 3, uses: 0 }];
+  defaults = Opts { show_tree: true, fold: true };
+  assert(run("1 + 2 * (3 - x)", env, defaults) == -13, "1 + 2 * (3 - 10)");
+  assert(run("-(4 + 5) * 2", env, defaults) == -18, "-(9) * 2");
+  assert(run("2 * 3 + x * y", env, Opts { fold: false, ..defaults }) == 36, "6 + 30, not folded");
+  assert(run("x - y - 1", env, Opts { show_tree: false, ..defaults }) == 6, "left-associative: (10 - 3) - 1");
+  x = env["x"];
+  y = env["y"];
+  assert(x != null && x.uses == 3 && y != null && y.uses == 2, "the symbol table counted the reads: x {x.uses} y {y.uses}");
+  println("x read {x.uses} times, y {y.uses}");
 }
