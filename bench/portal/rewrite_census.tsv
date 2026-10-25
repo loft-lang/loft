@@ -1373,6 +1373,7 @@ hex_fit	3bdb69ef2	R-Counter	1181
 hex_fit	3bdb69ef2	R-CtorLiteral	4
 hex_fit	3bdb69ef2	R-DischargeInto	7
 hex_fit	3bdb69ef2	R-ExitVector	46
+hex_fit	3bdb69ef2	R-FaultFlag	2
 hex_fit	3bdb69ef2	R-FieldAppend	1
 hex_fit	3bdb69ef2	R-FieldAppend/bare	14
 hex_fit	3bdb69ef2	R-FileHold	4
@@ -1394,7 +1395,7 @@ hex_fit	3bdb69ef2	R-KeptTwin	129
 hex_fit	3bdb69ef2	R-KernelSum	1
 hex_fit	3bdb69ef2	R-Leaf	352
 hex_fit	3bdb69ef2	R-LeafChain	628
-hex_fit	3bdb69ef2	R-LitDiv	212
+hex_fit	3bdb69ef2	R-LitDiv	218
 hex_fit	3bdb69ef2	R-LiteralWalk	1
 hex_fit	3bdb69ef2	R-LoopBuffer	37
 hex_fit	3bdb69ef2	R-LoopRecord	5
@@ -1573,6 +1574,7 @@ hex_recover	3bdb69ef2	R-Counter	662
 hex_recover	3bdb69ef2	R-CtorLiteral	3
 hex_recover	3bdb69ef2	R-DischargeInto	5
 hex_recover	3bdb69ef2	R-ExitVector	15
+hex_recover	3bdb69ef2	R-FaultFlag	2
 hex_recover	3bdb69ef2	R-FieldAppend	1
 hex_recover	3bdb69ef2	R-FieldAppend/bare	16
 hex_recover	3bdb69ef2	R-FileHold	4
@@ -1593,7 +1595,7 @@ hex_recover	3bdb69ef2	R-KeptTwin	46
 hex_recover	3bdb69ef2	R-KernelSum	1
 hex_recover	3bdb69ef2	R-Leaf	249
 hex_recover	3bdb69ef2	R-LeafChain	280
-hex_recover	3bdb69ef2	R-LitDiv	163
+hex_recover	3bdb69ef2	R-LitDiv	169
 hex_recover	3bdb69ef2	R-LoopBuffer	27
 hex_recover	3bdb69ef2	R-LoopRecord	5
 hex_recover	3bdb69ef2	R-Mint	24
@@ -1739,7 +1741,7 @@ hex_terrain	3bdb69ef2	R-FieldAppend/bare	22
 hex_terrain	3bdb69ef2	R-FnHeader	3
 hex_terrain	3bdb69ef2	R-FormatAppend	1
 hex_terrain	3bdb69ef2	R-ForwardWalk	2
-hex_terrain	3bdb69ef2	R-GuardFree	14
+hex_terrain	3bdb69ef2	R-GuardFree	13
 hex_terrain	3bdb69ef2	R-GuardedChain	28
 hex_terrain	3bdb69ef2	R-GuardedChain/operators	74
 hex_terrain	3bdb69ef2	R-Header	120
@@ -1757,8 +1759,8 @@ hex_terrain	3bdb69ef2	R-LoopBuffer	17
 hex_terrain	3bdb69ef2	R-Mint	7
 hex_terrain	3bdb69ef2	R-Push	23
 hex_terrain	3bdb69ef2	R-PushFill	24
-hex_terrain	3bdb69ef2	R-Range	218
-hex_terrain	3bdb69ef2	R-RangedCall	16
+hex_terrain	3bdb69ef2	R-Range	214
+hex_terrain	3bdb69ef2	R-RangedCall	15
 hex_terrain	3bdb69ef2	R-RecPtr	18
 hex_terrain	3bdb69ef2	R-RecPtr/nested	2
 hex_terrain	3bdb69ef2	R-RefillBuffer	7
@@ -1767,6 +1769,7 @@ hex_terrain	3bdb69ef2	R-Reuse	1
 hex_terrain	3bdb69ef2	R-Scalar	60
 hex_terrain	3bdb69ef2	R-SingleUse	14
 hex_terrain	3bdb69ef2	R-SplitTable	1
+hex_terrain	3bdb69ef2	R-TailSelf	1
 hex_terrain	3bdb69ef2	R-TextBorrow	11
 hex_terrain	3bdb69ef2	R-TextClear	31
 hex_terrain	3bdb69ef2	R-ValueLocal	9

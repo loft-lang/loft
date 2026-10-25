@@ -663,6 +663,18 @@ Catalogue: @F17.
 
 ---
 
+**A function that calls itself as its last step runs to any depth.**  `count(n - 1, acc + 1)`
+as the value an `if` arm answers, the value a `return` hands back, or the last statement of a
+void function, is a jump to the function's entry, not a call: the recursion a loop would
+express — a cursor and an accumulator carried through — reaches 100 000 where a call stops at
+10 000 frames, on both backends.  A local held in a store (a text, a vector, a record) is
+released before the jump; a vector or record parameter is passed through as the pointer the
+call would share — itself, another parameter, a part of one (`r.next`, `v[i]`) — and a text or
+`&` parameter as itself.  What the jump cannot bind the way a call does is refused at the call,
+naming the variable and the cure: an argument that makes a fresh value (`f(n - 1, acc + "x")`)
+or names a local, a parameter the body rebinds, and a text or record result.  A self-call that is an operand (`1 + f(n - 1)`), or whose value is bound to a local
+before it is returned (`r = f(n - 1); r`), is an ordinary call and keeps its frame.
+
 ## Assertions
 
 ```

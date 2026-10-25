@@ -1,0 +1,5 @@
+// @C155 — the refusal this case renders, with the variable and the cure named
+fn build(n: integer, acc: text) -> integer {
+  if n == 0 { len(acc) } else { build(n - 1, acc + "x") }
+}
+fn main() { println(build(3, "")); }

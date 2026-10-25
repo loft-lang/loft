@@ -443,6 +443,10 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
         let n = v.unspan();
         f(n, loop_scope, block);
         let (ls, bs) = match n {
+            // `@FR-R-TailSelf`'s loop is the function body made a loop: it never falls through,
+            // so "the one free after the loop" has no place to run, and a record declared in
+            // it is declared per pass as it was — the loop is transparent here.
+            Value::Loop(lp) if lp.name == "tail_self" => (loop_scope, block),
             Value::Loop(lp) if nest && loop_scope.is_some() => (loop_scope, Some(lp.scope)),
             Value::Loop(lp) => (Some(lp.scope), Some(lp.scope)),
             Value::Block(b) => (loop_scope, Some(b.scope)),

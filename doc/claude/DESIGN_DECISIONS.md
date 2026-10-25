@@ -107,6 +107,7 @@ a guard that does not exercise it — is its line in
 - [C131](DESIGN_DECISIONS_FAILURE.md#c131--a-cast-to-a-variant-answers-the-variant-a-provable-miss-is-refused-an-unproven-one-defaults-and-warns) — A cast to a variant answers the variant: a provable miss is refused, an unproven one defaults and warns
 - [C148](DESIGN_DECISIONS_FAILURE.md#c148--a-parsed-value-carries-its-own-parse-errors-wherever-the-whole-value-goes) — A parsed value carries its own parse errors, wherever the whole value goes
 - [C142](DESIGN_DECISIONS_FAILURE.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null) — A null inside a `{…}` hole renders plain `null`, never the reason it is null
+- [C155](DESIGN_DECISIONS_FAILURE.md#c155--a-tail-self-call-the-frame-cannot-jump-is-refused-never-left-a-call) — A tail self-call the frame cannot jump is refused, never left a call
 
 ## Backends, execution and libraries — [DESIGN_DECISIONS_PLATFORM.md](DESIGN_DECISIONS_PLATFORM.md)
 

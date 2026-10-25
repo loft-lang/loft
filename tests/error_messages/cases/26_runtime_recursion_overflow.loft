@@ -1,6 +1,9 @@
-fn bomb() {
-  bomb();
+// The self-call is an operand, so it is a CALL that overflows; in tail position it would be
+// a jump that never does (`@FR-R-TailSelf`).
+fn bomb() -> integer {
+  1 + bomb()
 }
 fn main() {
-  bomb();
+  x = bomb();
+  print("{x}");
 }

@@ -5386,17 +5386,32 @@ each inlined call, each decline and each reduction below.
 ### A self-call in tail position is a jump
 
 ```
-  (R-TailSelf)   In a function whose parameters and locals are all scalars (integer, float,
-                 single, boolean, character, a plain enum — never a `&` parameter) and
-                 whose result is a scalar or nothing, the body is wrapped in a loop and
-                 every SELF-call in TAIL position — the value a `return` answers, the
-                 value an `if` arm or a block answers in that position, the last statement
-                 of a void body — binds its arguments to fresh temporaries, the parameters
-                 from them, and continues the loop; every other value in that position
+  (R-TailSelf)   In a function whose result is a scalar or nothing, the body is wrapped in
+                 a loop and every SELF-call
+                 in TAIL position — the value a `return` answers, the value an `if` arm or
+                 a block answers in that position, the last statement of a void body, the
+                 value of the temporary the scope pass hands to a `return` — binds its
+                 arguments to fresh temporaries, RELEASES what the frame owns (its locals
+                 held in a store, each declared afresh by the next iteration: the releases
+                 the return would have run, after the reads), binds the parameters from the
+                 temporaries, and continues the loop; every other value in that position
                  returns.  A self-call anywhere else stays a call.  A tail call inside a
                  user loop continues the function's loop by the loops between.  In every
-                 program — an `open_world` one and a coverage run included — except a body
-                 with a generator, a `parallel` block or a closure.
+                 program — an `open_world` one and a coverage run included.
+                 A scalar parameter is rebound by a copy, as a call binds it.  A parameter
+                 held in a store (a record, a vector, a collection, an iterator) is a
+                 pointer the frame never owned, which a call SHARES `(F-ParamHeap)`: it is
+                 rebound when the argument is such a pointer — the parameter itself (then
+                 nothing moves), another parameter, a projection rooted at one (`p.next`,
+                 `v[i]`); a text or `&` parameter only as itself (a text's assignment owns,
+                 a `&` assignment writes through: neither moves a pointer).  REFUSED (@C155), at the call, naming
+                 the variable and the cure: a tail self-call in a frame the jump cannot
+                 reuse — an argument that MAKES a value (a call, a literal, an operator
+                 result) or names a local the jump releases, a parameter the body REBINDS
+                 (the frame then owns its store), a `&` local, a result delivered into the
+                 caller's buffer, a generator, a `parallel` block or a closure in the body.
+                 It is never left a call.  A self-call whose value is bound to a local
+                 before it is returned (`r = f(…); r`) is not in tail position: a call.
 ```
 
 **In words.** Applies in: the IR phase, both backends, every lane.  The recursion a compiler's
@@ -5408,12 +5423,23 @@ property of the language and not of the lane, so an `--interpret` run, a `--nati
 run (which ships the live tier and is therefore `open_world`), a shipped binary and `loft test`
 must agree on it.  A live flip reaches a tail-recursive function at its next entry from
 outside, as it reaches a `while` loop; coverage still sees the function entered by the call
-that starts the recursion.  The first clause stops at scalars so
-the frame owns no store and nothing is released before the jump; a heap parameter's rebind is
-a copy where a call hands a reference over (calls.md), which is the second clause's question
-(loft-lang/plans#202 P5b).  `LOFT_NO_TAIL_SELF=1` keeps the calls; `LOFT_TRACE_TAIL_SELF=1`
-names each rewrite and each decline, and the census (`make rewrite-census`) records the
-admissions and the declines by reason.
+that starts the recursion.  A local held in a store is no obstacle: the body declares it
+afresh on every iteration, so the jump runs the scope pass's own releases for it — the ops
+that follow the `__ret_N` temporary or the void body's last statement — after the arguments
+are read.  A parameter held in a store is a pointer the frame never owned, so a tail
+call that passes it through — itself, a sibling parameter, a projection of one — rebinds the
+pointer exactly as the call would, and a swap of two such parameters is two pointer moves.
+What is refused is what a call does not do either: an argument the frame MAKES (a call's
+result, a literal, an operator result) would have to be handed into the frame's ownership; a
+local as the argument is released by the jump under its own pointer; a parameter the body
+rebinds (`(F-ParamRebind)`) holds a store this frame owns, which the epilogue frees after the
+temporary read it.  A heap result is delivered into the caller's hidden buffer (`___acc =
+f(…)`, `__retbuf`) and has no clause yet.  Those shapes are REFUSED rather than left a call
+(@C155): the refusal in the parser and the pass share `admit_frame`, so a program that
+compiles is one whose tail self-calls all jump; `r = f(…); r` is the spelling that keeps a call
+on purpose.  The remaining clause (loft-lang/plans#202 P5b) is the heap result's delivery.  `LOFT_NO_TAIL_SELF=1` keeps the calls;
+`LOFT_TRACE_TAIL_SELF=1` names each rewrite and each decline, and the census (`make
+rewrite-census`) records the admissions and the declines by reason.
 
 ### A value's range removes the operations it makes redundant
 
