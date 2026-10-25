@@ -872,6 +872,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_radix_sorted" => Some("loft_radix_sorted"),
         "n_spatial_range" => Some("loft_spatial_range"),
         "n_trie_prefix" => Some("loft_trie_prefix"),
+        "n_file_map" => Some("loft_file_map"),
         "n_store_persist_copy" => Some("loft_image_write"),
         "n_store_load" => Some("loft_image_load"),
         "n_store_memory" => Some("loft_store_memory"),
@@ -969,7 +970,16 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         function: data.def(roots[0]).original_name().clone(),
         why,
     })?;
-    let mut out = String::from(RUNTIME);
+    // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
+    // it compiles `loft_at` without the foreign record's test.
+    let mut out = String::new();
+    if crate::opt::names::reachable_functions(data, &all)
+        .iter()
+        .any(|&d| data.def(d).name() == "n_file_map")
+    {
+        out.push_str("#define LOFT_FOREIGN 1\n");
+    }
+    out.push_str(RUNTIME);
     out.push('\n');
     out.push_str(&cx.typedefs());
     out.push_str(&cx.gen_decls.borrow());

@@ -14,6 +14,10 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
+#if defined(LOFT_FOREIGN)
+#include <fcntl.h>
+#include <sys/mman.h>
+#endif
 #endif
 #include <errno.h>
 
@@ -637,6 +641,58 @@ static loft_ref loft_read_bytes(loft_str raw) {
     fclose(h);
     return r;
 }
+
+#if defined(LOFT_FOREIGN)
+#if defined(LOFT_POSIX)
+static void loft_unmap(void *bytes, size_t n) { munmap(bytes, n); }
+#endif
+
+/* file_map (Stores::fs_file_map): the whole file mapped read-only as a FOREIGN `vector<u8>` —
+ * a store of its own whose slot names `LOFT_FOREIGN_REC`, the mapping its owner — or null for a
+ * missing or unreadable one.  An empty file, or one that is not a regular file, is read as
+ * read_bytes reads it; so is every file where there is no mmap. */
+static loft_ref loft_file_map(loft_str raw) {
+#if defined(LOFT_POSIX)
+    char *path = loft_resolve(raw);
+    if (!path) return loft_ref_null();
+    int fd = open(path, O_RDONLY);
+    free(path);
+    if (fd < 0) return loft_ref_null();
+    struct stat st;
+    if (fstat(fd, &st) != 0 || (uint64_t) st.st_size > UINT32_MAX) {
+        close(fd);
+        return loft_ref_null();
+    }
+    if (st.st_size == 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        return loft_read_bytes(raw);
+    }
+    size_t n = (size_t) st.st_size;
+    void *map = mmap(0, n, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (map == MAP_FAILED) return loft_ref_null();
+    loft_fowner *o = (loft_fowner *) malloc(sizeof *o);
+    if (!o) { fputs("loft: out of memory\n", stderr); abort(); }
+    o->refs = 1;
+    o->bytes = map;
+    o->n = n;
+    o->release = loft_unmap;
+    loft_fspan span;
+    span.base = (const uint8_t *) map;
+    span.len = (uint32_t) n;
+    span.elem = 1;
+    span.owner = o;
+    /* Stores::vector_buffer(4): a fresh store whose root slot names the empty vector. */
+    loft_ref r = loft_ref_null();
+    loft_database(&r, 4);
+    loft_set_u32(loft_store_of(r), r.rec, r.pos, 0);
+    loft_st_make_foreign(loft_store_of(r), r.rec, r.pos, span);
+    return r;
+#else
+    return loft_read_bytes(raw);
+#endif
+}
+#endif
 
 /* write_bytes (Stores::fs_write_bytes): the file is the vector's bytes, replacing what it held. */
 static uint8_t loft_write_bytes(loft_str raw, loft_ref v) {

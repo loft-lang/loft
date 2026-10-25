@@ -708,7 +708,17 @@ static uint32_t loft_claim(loft_store_t *s, uint32_t words) {
 }
 
 LOFT_HOT_INLINE uint8_t *loft_at(loft_store_t *s, uint32_t rec, uint32_t byte) {
+#ifdef LOFT_FOREIGN
+    /* `Store::read`'s intercept: the foreign record is served from the foreign bytes. */
+    if (LOFT_UNLIKELY(rec == LOFT_FOREIGN_REC)) return loft_foreign_at(s, byte);
+#endif
     return s->buf + (size_t) rec * 8 + byte;
+}
+
+/* `Store::elem_base`: where vector record `rec`'s elements begin, past its header — the foreign
+ * bytes themselves for the foreign record. */
+LOFT_HOT_INLINE uint8_t *loft_elem_base(loft_store_t *s, uint32_t rec) {
+    return loft_at(s, rec, 8);
 }
 
 LOFT_HOT_INLINE uint32_t loft_u32(loft_store_t *s, uint32_t rec, uint32_t byte) {
@@ -731,6 +741,10 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
          * which keeps its serial — its tombstones kept. */
         nr = var->store_nr;
         loft_store_t *s = &loft_stores[nr];
+#ifdef LOFT_FOREIGN
+        /* A store made again while it serves a view stops serving it. */
+        if (!s->pinned) loft_st_release_foreign(s);
+#endif
         if (s->live) kept = loft_st_kept_positions(s, &nkept);
         loft_st_init(s);
         s->live = 1;
@@ -798,6 +812,10 @@ static void loft_free_ref(loft_ref r) {
     if (s->pinned || !s->live) return;
     s->live = 0;
     LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
+#ifdef LOFT_FOREIGN
+    /* A foreign store's bytes go with the handle: the owner drops here. */
+    loft_st_release_foreign(s);
+#endif
 #ifdef LOFT_POISON
     /* `LOFT_POISON` (free_named): every byte past the first word reads 0xDEADBEEF, so a stale
      * reference into the freed store reads loud garbage. */
@@ -1165,6 +1183,7 @@ LOFT_HOT_INLINE loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
  * base, read once before a loop that writes no store but in place — no record moves and no
  * length changes inside it — so an element read is one bounds test and one load. */
 typedef struct { uint16_t store_nr; uint32_t rec; int64_t len; uint8_t *base; } loft_vh;
+/* `base` is the element base (`Store::elem_base`), past the record's header. */
 
 LOFT_HOT_INLINE loft_vh loft_vh_of(loft_ref v) {
     loft_vh h;
@@ -1178,7 +1197,7 @@ LOFT_HOT_INLINE loft_vh loft_vh_of(loft_ref v) {
     if (r == 0) return h;
     h.rec = r;
     h.len = loft_u32(s, r, 4);
-    h.base = loft_at(s, r, 0);
+    h.base = loft_elem_base(s, r);
     return h;
 }
 
@@ -1209,28 +1228,28 @@ LOFT_HOT_INLINE int64_t loft_vh_get_int(loft_vh h, uint32_t size, int64_t from, 
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return LOFT_NULL;
     int64_t v;
-    memcpy(&v, h.base + 8 + (size_t) f * size + fld, 8);
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
     return v;
 }
 
 LOFT_HOT_INLINE void loft_vh_set_int(loft_vh h, uint32_t size, int64_t from, uint32_t fld, int64_t v) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return;
-    memcpy(h.base + 8 + (size_t) f * size + fld, &v, 8);
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
 LOFT_HOT_INLINE double loft_vh_get_float(loft_vh h, uint32_t size, int64_t from, uint32_t fld) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return (double) NAN;
     double v;
-    memcpy(&v, h.base + 8 + (size_t) f * size + fld, 8);
+    memcpy(&v, h.base + (size_t) f * size + fld, 8);
     return v;
 }
 
 LOFT_HOT_INLINE void loft_vh_set_float(loft_vh h, uint32_t size, int64_t from, uint32_t fld, double v) {
     int64_t f = loft_vh_index(h, from);
     if (f < 0) return;
-    memcpy(h.base + 8 + (size_t) f * size + fld, &v, 8);
+    memcpy(h.base + (size_t) f * size + fld, &v, 8);
 }
 
 /* ops::op_negate_long: null stays null. */
@@ -1302,6 +1321,10 @@ static int loft_fnref_minted(loft_ref r, uint64_t since, loft_ref clos) {
 static void loft_vec_clear(loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
     loft_store_t *s = loft_store_of(v);
+#ifdef LOFT_FOREIGN
+    /* A view of foreign bytes is dropped by its clear, never written. */
+    if (loft_st_is_foreign(s)) { loft_st_release_foreign(s); return; }
+#endif
     if (loft_u32(s, v.rec, v.pos) == 0xFFFFFFFFu) { loft_set_u32(s, v.rec, v.pos, 0); return; }
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r != 0) loft_set_u32(s, r, 4, 0);
@@ -1597,6 +1620,10 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
 static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 
 /* OpCopyRecord's flags: bit 0 frees the source, bit 1 says the type may move (loft_swap_in). */
+#ifdef LOFT_FOREIGN
+static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o);
+#endif
+
 static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref dst, int flags) {
     int free_source = flags & 1, fresh_dest = flags & 4;
     if (src.store_nr == dst.store_nr && src.rec == dst.rec && src.pos == dst.pos) return;
@@ -1611,6 +1638,15 @@ static void loft_copy_record(const loft_tdesc *T, uint16_t tp, loft_ref src, lof
         return;
     }
     if (src.rec == 0) return;
+#ifdef LOFT_FOREIGN
+    /* `@FR-Const-Foreign` (State::do_copy_record): a vector read out of a foreign store is copied
+     * element by element, as a bind of it copies — its bytes lie outside the store's blocks,
+     * where the record copy would read a record that is not there. */
+    if (T[tp].kind == LOFT_T_VECTOR && loft_st_is_foreign(loft_store_of(src))) {
+        loft_vec_add(T, T[tp].elem, dst, src);
+        return;
+    }
+#endif
     if (free_source && (flags & 2) && loft_swap_in(tp, src, dst)) return;
     /* The destination's previous content goes first, unless it is fresh (`COPY_FRESH_DEST`). */
     if (!fresh_dest) loft_remove_claims(T, tp, dst);
@@ -1799,6 +1835,10 @@ static uint32_t loft_vec_reached(loft_ref v, uint32_t size) {
 static void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
     loft_store_t *s = loft_store_of(v);
+#ifdef LOFT_FOREIGN
+    /* A local bound to a view: the clear drops it, and the store is an ordinary empty one. */
+    if (loft_st_is_foreign(s)) { loft_st_release_foreign(s); return; }
+#endif
     if (v.rec == 1) {
         uint16_t kt = s->known;
         int one_field = kt < loft_ntypes && T[kt].kind == LOFT_T_STRUCT && T[kt].n == 1;
@@ -2842,8 +2882,8 @@ static loft_text loft_text_from_bytes(loft_ref v) {
     return out;
 }
 
-/* OpSliceVector / OpSliceView (Stores::vector_slice; C has no foreign stores, so a view is the
- * copy): the elements [lo, hi) of `o`, clamped to it, appended to `v`.  Scalar elements only. */
+/* OpSliceVector (Stores::vector_slice): the elements [lo, hi) of `o`, clamped to it, appended to
+ * `v`.  Scalar elements only. */
 static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0 || o.store_nr == 0xFFFF || o.rec == 0 || o.pos == 0) return;
     int64_t n = loft_vec_len(o);
@@ -2857,6 +2897,29 @@ static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint3
         loft_copy_bytes(e, 0, a, 0, size);
         loft_vec_finish(v);
     }
+}
+
+/* OpSliceView (Stores::vector_slice_view): `v = o[lo..hi]` bound to a local that owns its store —
+ * when `o` serves foreign bytes the local's store becomes a VIEW of the span, no copy, the span
+ * sharing the owner; otherwise the copy loft_vec_slice makes.  `-DLOFT_NO_FOREIGN_VIEW` is the
+ * interpreter's LOFT_NO_FOREIGN_VIEW: the copy everywhere. */
+static void loft_vec_slice_view(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint32_t size) {
+#if defined(LOFT_FOREIGN) && !defined(LOFT_NO_FOREIGN_VIEW)
+    if (v.store_nr != 0xFFFF && v.rec != 0 && v.pos != 0 && o.store_nr != 0xFFFF && o.rec != 0
+        && o.pos != 0 && v.store_nr != o.store_nr) {
+        int64_t n = loft_vec_len(o);
+        int64_t l = lo < 0 ? 0 : lo > n ? n : lo;
+        int64_t h = hi < l ? l : hi > n ? n : hi;
+        if (h > l && loft_st_is_foreign(loft_store_of(o))) {
+            loft_fspan span = loft_st_foreign_span(loft_store_of(o), (uint32_t) l, (uint32_t) h);
+            loft_store_t *s = loft_store_of(v);
+            loft_st_release_foreign(s);
+            loft_st_make_foreign(s, v.rec, v.pos, span);
+            return;
+        }
+    }
+#endif
+    loft_vec_slice(v, o, lo, hi, size);
 }
 
 /* OpPlaceRecord (Stores::place_record_prefilled): a `tp` record claimed inside the host's store,

@@ -2741,9 +2741,9 @@ impl<'a> FnWriter<'a> {
         }
     }
 
-    /// `r += src[lo..hi]` of scalar elements (`OpSliceVector`, and `OpSliceView`, which C,
-    /// having no foreign stores, copies the same way).
-    fn vec_slice(&mut self, args: &[Value], ind: usize) -> Result<E, String> {
+    /// `r += src[lo..hi]` of scalar elements: `OpSliceVector` through `loft_vec_slice`, and
+    /// `OpSliceView` through `loft_vec_slice_view`, which views a foreign source instead.
+    fn vec_slice(&mut self, args: &[Value], ind: usize, func: &str) -> Result<E, String> {
         let [v, src, lo, hi, tp] = args else {
             return Err("a slice with an unexpected operand list".into());
         };
@@ -2773,7 +2773,7 @@ impl<'a> FnWriter<'a> {
             <[E; 4]>::try_from(es).map_err(|_| "a slice without four operands".to_string())?;
         Ok(E::new(
             format!(
-                "loft_vec_slice({}, {}, {}, {}, {size})",
+                "{func}({}, {}, {}, {}, {size})",
                 as_ref(v)?,
                 as_ref(src)?,
                 as_int(lo)?,
@@ -2821,7 +2821,8 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            ("OpSliceVector" | "OpSliceView", [_, _, _, _, _]) => self.vec_slice(args, ind),
+            ("OpSliceVector", [_, _, _, _, _]) => self.vec_slice(args, ind, "loft_vec_slice"),
+            ("OpSliceView", [_, _, _, _, _]) => self.vec_slice(args, ind, "loft_vec_slice_view"),
             ("OpRemoveVector", [v, tp, idx]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;

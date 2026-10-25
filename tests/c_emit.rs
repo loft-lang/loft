@@ -202,6 +202,29 @@ fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
     );
 }
 
+/// `file_map` is the one producer of a foreign store (@PLN174): a unit that reaches it compiles
+/// `loft_at` with the foreign record's test, and no other unit pays that test.  The values are
+/// the corpus's (`tests/scripts/174-foreign-*.loft`, through `scripts/c_sweep.py`).
+#[test]
+fn only_a_unit_that_maps_a_file_compiles_the_foreign_record() {
+    let p = parsed(
+        "fn mapped(p: text) -> integer { m = file_map(p) ?? []; len(m) }\n\
+         fn copied(p: text) -> integer { m = read_bytes(p) ?? []; len(m) }\n",
+    );
+    let unit = |f: &str| {
+        loft::c::emit_unit(&p.data, &p.database, &[p.data.def_nr(&format!("n_{f}"))])
+            .unwrap_or_else(|r| panic!("{f} is carried: {r}"))
+    };
+    assert!(
+        unit("mapped").starts_with("#define LOFT_FOREIGN 1\n"),
+        "a unit that maps a file serves the foreign record"
+    );
+    assert!(
+        !unit("copied").contains("#define LOFT_FOREIGN 1"),
+        "a unit that maps nothing compiles loft_at without the foreign test"
+    );
+}
+
 /// The overflow macros of `src/c/loft_cc.h` against Rust's checked arithmetic, at the
 /// boundaries where a fallback can go wrong (0, ±1, ±2^31.5, ±2^32, `i64::MAX`, `i64::MIN`
 /// and their neighbours), in each macro mode: a mode changes speed, never a value.

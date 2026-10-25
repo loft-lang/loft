@@ -123,6 +123,30 @@ static uint32_t loft_bits_next_at_or_after(const loft_bits *b, uint32_t from, in
     }
 }
 
+#ifdef LOFT_FOREIGN
+/* `FOREIGN_REC` (@PLN174): the one synthetic record id a FOREIGN store serves its bytes under —
+ * a vector handle names it in its collection slot exactly as it names a claimed record, and
+ * `loft_at` answers it from the foreign bytes.  Past any record a store can hold.  The emitter
+ * defines `LOFT_FOREIGN` only for a unit that reaches `file_map`, so no other unit pays the
+ * test in `loft_at`. */
+#define LOFT_FOREIGN_REC 0x7FFFFFF0u
+
+/* `ForeignOwner`: what keeps the foreign bytes alive, released with the last span over them. */
+typedef struct {
+    uint32_t refs;
+    void *bytes;
+    size_t n;
+    void (*release)(void *bytes, size_t n);
+} loft_fowner;
+
+/* `ForeignSpan`: `len` elements of `elem` bytes at `base`, and their owner (shared). */
+typedef struct { const uint8_t *base; uint32_t len, elem; loft_fowner *owner; } loft_fspan;
+
+/* `Foreign`: the span a store serves, the header (size word, length) a vector read expects at
+ * +0 and +4 of the record, and the collection slot that names `LOFT_FOREIGN_REC`. */
+typedef struct { loft_fspan span; uint8_t header[8]; uint32_t slot_rec, slot_pos; } loft_foreign;
+#endif
+
 /* `loft_store_t`: the `Store` fields the allocator reads, and the C runtime's own beside them
  * (`known`: the type a wrapper mint gave the store's first record, 0xFFFF for any other;
  * `protect`: the calls in flight that hold this store as an argument). */
@@ -147,6 +171,11 @@ typedef struct {
      * elements of the root collection; while any lives, a clear does not reset the store and
      * no exchange takes its content. */
     uint32_t *placed, nplaced, placed_cap;
+#ifdef LOFT_FOREIGN
+    /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
+     * every ordinary store. */
+    loft_foreign foreign;
+#endif
 } loft_store_t;
 
 static loft_store_t *loft_stores = 0;
@@ -961,6 +990,66 @@ static void loft_st_note_placed(loft_store_t *s, uint32_t rec) {
     }
     s->placed[s->nplaced++] = rec;
 }
+
+#ifdef LOFT_FOREIGN
+static int loft_st_is_foreign(const loft_store_t *s) { return s->foreign.span.owner != 0; }
+
+/* `Store::foreign_addr`: field `byte` of the foreign record — the header below 8, the foreign
+ * bytes past it. */
+static uint8_t *loft_foreign_at(loft_store_t *s, uint32_t byte) {
+    if (byte < 8) return s->foreign.header + byte;
+    return (uint8_t *) (uintptr_t) (s->foreign.span.base + (byte - 8));
+}
+
+/* `Store::foreign_span`: elements [lo, hi) of the foreign bytes, clamped, the owner shared; a
+ * span with no owner when the store serves none. */
+static loft_fspan loft_st_foreign_span(loft_store_t *s, uint32_t lo, uint32_t hi) {
+    loft_fspan sp;
+    memset(&sp, 0, sizeof sp);
+    if (!loft_st_is_foreign(s)) return sp;
+    const loft_fspan *f = &s->foreign.span;
+    if (lo > f->len) lo = f->len;
+    if (hi < lo) hi = lo;
+    if (hi > f->len) hi = f->len;
+    sp.base = f->base + (size_t) lo * f->elem;
+    sp.len = hi - lo;
+    sp.elem = f->elem;
+    sp.owner = f->owner;
+    sp.owner->refs++;
+    return sp;
+}
+
+/* `Store::make_foreign`: the slot at (rec, pos) names `LOFT_FOREIGN_REC`, the header presents
+ * the span's elements, and the span (its owner reference taken) is the store's.  A record the
+ * slot named before goes back to the free tree. */
+static void loft_st_make_foreign(loft_store_t *s, uint32_t rec, uint32_t pos, loft_fspan span) {
+    if (loft_st_is_foreign(s)) { fputs("loft: make_foreign on a store that is already foreign\n", stderr); abort(); }
+    uint32_t old = loft_st_u32(s, rec, pos);
+    if (old != 0) loft_st_delete(s, old);
+    loft_st_set_u32(s, rec, pos, LOFT_FOREIGN_REC);
+    uint64_t bytes = (uint64_t) span.len * span.elem;
+    uint64_t w = (bytes + 7) / 8 + 1;
+    uint32_t words = w > UINT32_MAX ? UINT32_MAX : (uint32_t) w;
+    memcpy(s->foreign.header, &words, 4);
+    memcpy(s->foreign.header + 4, &span.len, 4);
+    s->foreign.span = span;
+    s->foreign.slot_rec = rec;
+    s->foreign.slot_pos = pos;
+}
+
+/* `Store::release_foreign`: the store stops serving the bytes, its slot names the empty vector
+ * again, and the owner goes with the last span over it. */
+static void loft_st_release_foreign(loft_store_t *s) {
+    if (!loft_st_is_foreign(s)) return;
+    loft_fowner *o = s->foreign.span.owner;
+    s->foreign.span.owner = 0;
+    loft_st_set_u32(s, s->foreign.slot_rec, s->foreign.slot_pos, 0);
+    if (--o->refs == 0) {
+        if (o->release) o->release(o->bytes, o->n);
+        free(o);
+    }
+}
+#endif
 
 /* `Store::note_referenced` (`@FR-H-Removed`). */
 static void loft_st_note_referenced(loft_store_t *s, uint32_t rec) {

@@ -186,6 +186,18 @@ and its sorted into an `ordered`; a record finished into one member enters every
 record a key collision displaces leaves every keyed member.  A walk over a hash walks a snapshot
 in key order; an entry a write displaces or removes while the walk runs drops out of it.
 
+**Mapped files.**  `file_map` answers a FOREIGN store, as `Stores::fs_file_map` does (@PLN174):
+a store of its own whose root slot names the one synthetic record `LOFT_FOREIGN_REC`, the
+file mapped read-only (`mmap`) behind it, the mapping released with the last span over it.
+`loft_at` serves that record from the mapping — the header (size word, length) below byte 8,
+the file's bytes past it — so every vector read, the hoisted ones included (`loft_vh.base` is
+the element base, `Store::elem_base`), reads a mapping as it reads a record.  A slice bound to
+a local of its own (`OpSliceView`) is a VIEW sharing the owner; a clear, a rebind or the free
+drops it; a mapped vector copied as a record's field is copied element by element
+(`@FR-Const-Foreign`).  Without POSIX the file is read as `read_bytes` reads it, as the
+interpreter does without `mmap`.  The emitter defines `LOFT_FOREIGN` only for a unit that
+reaches `file_map`, so no other program pays the record test in `loft_at`.
+
 **Files.**  A `File` record keeps the interpreter's fields (size, positions, path, handle,
 format); its handle indexes a table of open `FILE *`s, opened on first use, flushed after every
 write (the interpreter writes unbuffered, so another handle on the path reads it), and turned
@@ -243,7 +255,7 @@ only by failing with one of its messages — the annotations are read by the sam
 
 The sweep's ranking is the current list.  The large families: text parsed into a typed value
 (`T.parse`, `as vector<T>`, JSON), the image loaders over a URL, a lazy binding
-(`store_bind_lazy`), `store_reclaim` and a store bound to a file, a linked group with a spatial or trie member,
+(`store_bind_lazy`), `store_reclaim`, a linked group with a spatial or trie member,
 `parallel { }` blocks, and the native library calls; of the generators, one held in a record
 field and one of tuples; of the `&` locals, a link into a store place; of `par`, a worker over
 tuples or function values.  A record holding a linked group is not copied yet: its members name one record set,
