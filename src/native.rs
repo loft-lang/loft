@@ -3625,8 +3625,11 @@ pub(crate) fn populate_struct_from_jsonvalue(
                     // passthrough is supported today.
                     let inner_name = stores.types[content_kt as usize].name.clone();
                     if inner_name == "JsonValue" {
-                        let jv_size = u32::from(stores.size(content_kt));
-                        copy_bytes(stores, &sub, dest, dest_field_pos, jv_size);
+                        // The value is copied whole into the record's store: a string, an
+                        // array or an object holds the record number of its text or its
+                        // items in the SOURCE store, which names nothing here (loft#2187).
+                        let value = dbref_to_parsed(stores, &sub);
+                        materialise_primitive_into(stores, &slot, &value);
                     } else {
                         // Any other enum keeps the all-zero value it always answered — WRITTEN
                         // here: a claimed record's bytes are not zero by any promise.
@@ -3884,27 +3887,12 @@ fn unwrap_text(
     Some(stores.store(sub).get_str(s_rec).to_owned())
 }
 
-/// Byte-copy `n_bytes` from `src` to `(dest.rec, dest_pos)` — used for
-/// the JsonValue-passthrough field case.  The runtime equivalent of the
-/// compile-time `OpCopyRecord` op for an inline struct-enum field.
-fn copy_bytes(stores: &mut Stores, src: &DbRef, dest: &DbRef, dest_pos: u32, n_bytes: u32) {
-    // Snapshot the bytes first because writing to dest may borrow
-    // stores mutably and invalidate the source pointer.
-    let mut buf: Vec<u8> = Vec::with_capacity(n_bytes as usize);
-    for i in 0..n_bytes {
-        buf.push(stores.store(src).read::<u8>(src.rec, src.pos + i));
-    }
-    let dest_store = stores.store_mut(dest);
-    for (i, byte) in buf.iter().enumerate() {
-        dest_store.write::<u8>(dest.rec, dest_pos + i as u32, *byte);
-    }
-}
-
 /// Populate a `vector<T>` field embedded in a struct from a JArray.
 /// The dest handle is at `dest_handle` (a 4-byte rec-nr slot inside
 /// the parent struct).  Iterates the JArray's items and for each one
 /// appends to the vector via `vector_append`, dispatching on the
 /// element type's `Parts`.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn populate_vector_from_jarray(
     stores: &mut Stores,
     dest_handle: &DbRef,
@@ -4016,6 +4004,10 @@ fn populate_vector_from_jarray(
                 }
                 None => absent(stores),
             }
+        } else if elem_name == "JsonValue" {
+            // A `vector<JsonValue>` element: the item copied whole, as a `JsonValue` field is.
+            let value = dbref_to_parsed(stores, &item);
+            materialise_primitive_into(stores, &elm, &value);
         } else if matches!(elem_parts, Parts::Struct(_)) {
             // Struct element — recurse into the walker writing into
             // the freshly-appended embedded element slot.
