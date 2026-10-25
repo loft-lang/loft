@@ -972,6 +972,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_keys.h"),
         include_str!("../src/c/loft_hash.h"),
+        include_str!("../src/c/loft_btree.h"),
     ] {
         c.push_str(part);
     }
@@ -1097,6 +1098,305 @@ int main(int argc, char **argv) {
         .find(|(_, (w, g))| w != g)
     {
         panic!("line {i}: hash.rs answers {w:?}, the C {g:?}");
+    }
+    assert_eq!(
+        got.lines().count(),
+        want.lines().count(),
+        "the C stopped early: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The index in C (`src/c/loft_btree.h`) is `btree.rs`: one seeded sequence of inserts (a key
+/// already filed displaces its record, as `Stores::insert_record` does), removals, exact and
+/// partial lookups and bounded walks runs through both on three indexes — an integer key, a text
+/// key whose values share prefixes (the nodes' prefixes, kept on ties), and a two-part key whose
+/// first part descends (the descent that compares records) — and every answer, every walk and
+/// every byte of the store agree.  Falsified: the rebalance threshold, both split points, the
+/// prefix taken on ties, a descending part, a merge that keeps its node, the lookup below a key
+/// and the arena's growth each fail it.  (A place that refits without forcing is no mutant: a key
+/// outside a node's prefix lands at its edge, so the shared prefix shrinks and the refit runs.)
+#[test]
+fn the_c_index_files_every_record_where_btree_does() {
+    use loft::btree;
+    use loft::keys::{Content, DbRef, Key, Str};
+    use loft::store::Store;
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let mut seed: u64 = 0x5eed_b7ee_0000_0003;
+    let mut next = |n: u64| {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 33) % n
+    };
+    let key = |type_nr: i8, position: u16| Key {
+        type_nr,
+        position,
+        start: 0,
+    };
+    let int_key = [key(1, 0)];
+    let text_key = [key(6, 0)];
+    let pair_key = [key(-1, 8), key(1, 0)];
+    let keys: [&[Key]; 3] = [&int_key, &text_key, &pair_key];
+    let mut stores = vec![Store::new_in_use_defined(100)];
+    let root = stores[0].claim(3);
+    let ix: Vec<DbRef> = (0..3)
+        .map(|t| DbRef {
+            store_nr: 0,
+            rec: root,
+            pos: 8 + 4 * t,
+        })
+        .collect();
+    // Three kinds of name: short ones, ones sharing a prefix longer than a node keeps, and ones
+    // whose first eight bytes a third of them share (a node's ties between a quarter and half).
+    let name = |k: u64| {
+        if k.is_multiple_of(7) {
+            format!("k{k}")
+        } else if k.is_multiple_of(3) {
+            format!("a-long-shared-prefix-of-names-{k:05}")
+        } else {
+            format!("p{:07}x{k}", k / 2)
+        }
+    };
+    // The key values of record key `k` in index `t`, as a lookup takes them.
+    let values = |t: usize, k: u64, parts: usize| -> Vec<Content> {
+        match t {
+            0 => vec![Content::Long(k as i64)],
+            1 => vec![Content::Str(Str::new(Box::leak(name(k).into_boxed_str())))],
+            _ => [Content::Long((k % 10) as i64), Content::Long(k as i64)][..parts].to_vec(),
+        }
+    };
+    let (mut script, mut want) = (String::new(), String::new());
+    for _ in 0..6000 {
+        let t = next(3) as usize;
+        let pick = next(100);
+        let k = next(400);
+        if pick < 50 {
+            let rec = stores[0].claim(3);
+            stores[0].set_u32_raw(rec, 4, root);
+            if t == 1 {
+                let text = stores[0].set_str(&name(k));
+                stores[0].set_u32_raw(rec, 8, text);
+            } else {
+                stores[0].set_int(rec, 8, k as i64);
+            }
+            stores[0].set_int(rec, 16, (k % 10) as i64);
+            // Stores::insert_record's index arm: a refused add names the record it keeps.
+            let dup = btree::add(&ix[t], rec, &mut stores, keys[t]);
+            if dup != 0 {
+                btree::remove(&ix[t], dup, &mut stores, keys[t]);
+                stores[0].delete(dup);
+                btree::add(&ix[t], rec, &mut stores, keys[t]);
+            }
+            let _ = writeln!(script, "I {t} {k}");
+        } else if pick < 70 {
+            let found = btree::find_exact(&ix[t], &stores, keys[t], &values(t, k, 2));
+            if found != 0 {
+                btree::remove(&ix[t], found, &mut stores, keys[t]);
+                stores[0].delete(found);
+            }
+            let _ = writeln!(script, "R {t} {k}");
+        } else if pick < 85 {
+            let found = btree::find_exact(&ix[t], &stores, keys[t], &values(t, k, 2));
+            let below = btree::find_record(&ix[t], true, &stores, keys[t], &values(t, k, 1));
+            let _ = writeln!(script, "F {t} {k}");
+            let _ = writeln!(want, "{found} {below}");
+        } else {
+            let till = k + next(60);
+            let ex = next(2) == 1;
+            let walk = btree::range(
+                &ix[t],
+                &stores,
+                keys[t],
+                &values(t, k, 1),
+                &values(t, till, 1),
+                ex,
+            );
+            let _ = writeln!(script, "W {t} {k} {till} {}", u8::from(ex));
+            let mut line = String::from("w");
+            if let Some((low, high)) = walk {
+                let mut p = low;
+                loop {
+                    let _ = write!(line, " {}", btree::record(&ix[t], &stores, p));
+                    if p == high || p == 0 {
+                        break;
+                    }
+                    p = btree::next(&ix[t], &stores, p);
+                }
+            }
+            let _ = writeln!(want, "{line}");
+        }
+    }
+    for one in &ix {
+        let all = btree::records(one, &stores);
+        let _ = writeln!(
+            want,
+            "len {} {}",
+            btree::count(one, &stores),
+            all.iter().map(u32::to_string).collect::<Vec<_>>().join(" ")
+        );
+    }
+    let store = &stores[0];
+    let _ = writeln!(want, "size {}", store.capacity_words());
+    let mut fnv: u64 = 0xcbf2_9ce4_8422_2325;
+    for w in 0..store.capacity_words() {
+        for b in store.read::<u64>(w, 0).to_le_bytes() {
+            fnv = (fnv ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    let _ = writeln!(want, "bytes {fnv:016x}");
+    let mut c = String::new();
+    for part in [
+        include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_store.h"),
+        include_str!("../src/c/loft_rt.h"),
+        include_str!("../src/c/loft_keys.h"),
+        include_str!("../src/c/loft_hash.h"),
+        include_str!("../src/c/loft_btree.h"),
+    ] {
+        c.push_str(part);
+    }
+    c.push_str(
+        r#"
+static void loft_init(void) {}
+static const loft_tdesc T[1] = { { LOFT_T_STRUCT, 24, 0, 0, 0, 0, 0, 0, 0, 0 } };
+static const loft_key K_INT[1] = { { 1, 0, 0 } };
+static const loft_key K_TEXT[1] = { { 6, 0, 0 } };
+static const loft_key K_PAIR[2] = { { -1, 8, 0 }, { 1, 0, 0 } };
+static loft_store_t st;
+
+static int name_of(char *out, unsigned k) {
+    if (k % 7 == 0) return sprintf(out, "k%u", k);
+    if (k % 3 == 0) return sprintf(out, "a-long-shared-prefix-of-names-%05u", k);
+    return sprintf(out, "p%07ux%u", k / 2, k);
+}
+
+static int values(int t, unsigned k, int parts, char *buf, loft_kv *kv) {
+    if (t == 0) { kv[0] = loft_kv_int(k); return 1; }
+    if (t == 1) { int len = name_of(buf, k); kv[0] = loft_kv_text(loft_lit(buf, (size_t) len)); return 1; }
+    kv[0] = loft_kv_int(k % 10);
+    kv[1] = loft_kv_int(k);
+    return parts;
+}
+
+int main(int argc, char **argv) {
+    st.size = 100;
+    st.buf = (uint8_t *) calloc(st.size, 8);
+    st.defined = 1;
+    st.live = 1;
+    loft_st_init(&st);
+    loft_stores = &st;
+    loft_nstores = 1;
+    const loft_key *keys[3] = { K_INT, K_TEXT, K_PAIR };
+    int nks[3] = { 1, 1, 2 };
+    uint32_t root = loft_st_claim(&st, 3);
+    loft_ref ix[3];
+    for (int t = 0; t < 3; t++) {
+        ix[t].store_nr = 0;
+        ix[t].rec = root;
+        ix[t].pos = 8 + 4 * (uint32_t) t;
+    }
+    FILE *f = fopen(argv[argc - 1], "r");
+    char op;
+    unsigned t, k, till, ex;
+    while (fscanf(f, " %c %u %u", &op, &t, &k) == 3) {
+        char buf[64], buf2[64];
+        loft_kv kv[2], kv2[2];
+        if (op == 'I') {
+            loft_ref e = { 0, loft_st_claim(&st, 3), 8 };
+            loft_set_u32(&st, e.rec, 4, root);
+            if (t == 1) {
+                int len = name_of(buf, k);
+                uint32_t text = loft_st_claim(&st, (uint32_t) (len + 15) / 8);
+                loft_set_u32(&st, text, 4, (uint32_t) len);
+                memcpy(loft_at(&st, text, 8), buf, (size_t) len);
+                loft_set_u32(&st, e.rec, 8, text);
+            } else {
+                int64_t kk = k;
+                memcpy(loft_at(&st, e.rec, 8), &kk, 8);
+            }
+            int64_t vv = k % 10;
+            memcpy(loft_at(&st, e.rec, 16), &vv, 8);
+            (void) loft_ix_insert(T, 0, ix[t], e, keys[t], nks[t], 0);
+        } else if (op == 'R') {
+            int n = values((int) t, k, 2, buf, kv);
+            loft_ref found = loft_ix_find(ix[t], keys[t], nks[t], kv, n);
+            if (found.rec != 0) loft_ix_remove(T, 0, ix[t], found, keys[t], nks[t], 0);
+        } else if (op == 'F') {
+            int n = values((int) t, k, 2, buf, kv);
+            uint32_t found = loft_bt_find_exact(ix[t], keys[t], nks[t], kv, n);
+            n = values((int) t, k, 1, buf, kv);
+            uint32_t below = loft_bt_record(ix[t], loft_bt_find(ix[t], 1, keys[t], nks[t], kv, n));
+            printf("%u %u\n", found, below);
+        } else {
+            uint32_t low, high;
+            if (fscanf(f, "%u %u", &till, &ex) != 2) return 2;
+            int n = values((int) t, k, 1, buf, kv);
+            int n2 = values((int) t, till, 1, buf2, kv2);
+            printf("w");
+            if (loft_bt_range(ix[t], keys[t], nks[t], kv, n, kv2, n2, (int) ex, &low, &high)) {
+                for (uint32_t p = low;;) {
+                    printf(" %u", loft_bt_record(ix[t], p));
+                    if (p == high || p == 0) break;
+                    p = loft_bt_next(ix[t], p);
+                }
+            }
+            printf("\n");
+        }
+    }
+    for (int t = 0; t < 3; t++) {
+        uint32_t n;
+        uint32_t *all = loft_bt_records(ix[t], &n);
+        printf("len %u", loft_bt_len(ix[t]));
+        for (uint32_t i = 0; i < n; i++) printf(" %u", all[i]);
+        printf("\n");
+        free(all);
+    }
+    printf("size %u\n", st.size);
+    uint64_t fnv = UINT64_C(0xcbf29ce484222325);
+    for (size_t i = 0; i < (size_t) st.size * 8; i++) fnv = (fnv ^ st.buf[i]) * UINT64_C(0x100000001b3);
+    printf("bytes %016llx\n", (unsigned long long) fnv);
+    return 0;
+}
+"#,
+    );
+    let dir = scratch("btree");
+    let (src, ops, exe) = (dir.join("btree.c"), dir.join("ops.txt"), dir.join("btree"));
+    fa::write(&src, &c).expect("write C");
+    fa::write(&ops, &script).expect("write ops");
+    let cc = loft::platform::process::harness_command("cc")
+        .args([
+            "-std=c99",
+            "-O2",
+            "-pedantic",
+            "-Werror",
+            "-Wno-unused-function",
+        ])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected loft_btree.h:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .arg(&ops)
+        .output()
+        .expect("run the index program");
+    let got = String::from_utf8_lossy(&out.stdout);
+    if let Some((i, (w, g))) = want
+        .lines()
+        .zip(got.lines())
+        .enumerate()
+        .find(|(_, (w, g))| w != g)
+    {
+        panic!("line {i}: btree.rs answers {w:?}, the C {g:?}");
     }
     assert_eq!(
         got.lines().count(),

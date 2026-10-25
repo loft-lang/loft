@@ -55,7 +55,8 @@ macros against Rust's checked arithmetic in every mode.
 | `loft_rt.h` | the C runtime, pasted after it |
 | `loft_keys.h` | key parts, their compare, and the per-table SipHash-1-3 digest of `src/siphash.rs` |
 | `loft_hash.h` | `src/hash.rs` and `src/arena.rs`, ported, and the `Stores` routines over a hash |
-| `loft_keyed.h` | the other keyed collections, the walks, renders and keyed writes |
+| `loft_btree.h` | `src/btree.rs`, ported: the index, and the `Stores` routines over it |
+| `loft_keyed.h` | sorted and ordered (`src/vector.rs`), the walks, renders and keyed writes |
 | `loft_io.h` | files and the filesystem, pasted last |
 
 ## The macro modes
@@ -122,9 +123,11 @@ writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`
 **Keyed collections.**  A persisted image carries a collection's layout, so the layouts are
 loft's.  A hash is `src/hash.rs` ported (`loft_hash.h`): the seeded table, inline and arena
 entries, a linked type's borrowed records, and its `Stores` routines — the one-probe insert and
-replace, `remove_owned`, `reserve_hash`, the copy and the release.  An index and an `ordered`
-are still a key-ordered array of record numbers of the C's own, until `src/btree.rs` is ported;
-a sorted is a vector kept in key order, read by a vector's readers.  The key compare, the range search and the sorted insert are
+replace, `remove_owned`, `reserve_hash`, the copy and the release.  An index is `src/btree.rs`
+ported (`loft_btree.h`): the node arena, the key parts and text prefixes, the walk's
+record cursors.  A sorted is a vector kept in key order (`sorted_new`, `sorted_finish`), and an
+`ordered` and an `array` a vector of record numbers (`ordered_finish`), each with the release
+`remove_owned` and `remove_vector_at` give it.  The key compare, the range search and the sorted insert are
 ports of `keys::compare`, `vector::sorted_search` and `vector::sorted_finish`.  A record type
 shared by several collections of one struct (`@FR-Col-Group`) turns its vector into an `array`
 and its sorted into an `ordered`; a record finished into one member enters every member, and a

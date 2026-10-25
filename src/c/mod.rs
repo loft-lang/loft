@@ -34,6 +34,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_rt.h"),
     include_str!("loft_keys.h"),
     include_str!("loft_hash.h"),
+    include_str!("loft_btree.h"),
     include_str!("loft_keyed.h"),
     include_str!("loft_io.h")
 );
@@ -499,8 +500,9 @@ impl<'a> Cx<'a> {
                     format!("{{ LOFT_T_VECTOR, {size}, {c}, 0, 0, 0 }}")
                 }
                 Parts::Hash(c, _) => format!("{{ LOFT_T_HASH, {size}, {c}, 0, 0, 0 }}"),
-                Parts::Index(c, _) | Parts::Ordered(c, _) | Parts::Array(c) => {
-                    format!("{{ LOFT_T_INDEX, {size}, {c}, 0, 0, 0 }}")
+                Parts::Index(c, _) => format!("{{ LOFT_T_INDEX, {size}, {c}, 0, 0, 0 }}"),
+                Parts::Ordered(c, _) | Parts::Array(c) => {
+                    format!("{{ LOFT_T_ORDERED, {size}, {c}, 0, 0, 0 }}")
                 }
                 Parts::ChildRec(c) => format!("{{ LOFT_T_CHILD, {size}, {c}, 0, 0, 0 }}"),
                 Parts::Enum(values) if values.iter().any(|(v, _)| *v != u16::MAX) => {
@@ -518,8 +520,9 @@ impl<'a> Cx<'a> {
                 _ => format!("{{ LOFT_T_SCALAR, {size}, 0, 0, 0, 0 }}"),
             };
             // `owns_heap`: the Rust store's own answer (`Stores::type_owns_heap`), never re-derived;
-            // a hash's key parts, which its copy re-files by; `linked`, the type's own flag.
-            let keys = if matches!(t.parts, Parts::Hash(..)) {
+            // a hash's or an index's key parts, which its copy re-files by; `linked`, the type's
+            // own flag.
+            let keys = if matches!(t.parts, Parts::Hash(..) | Parts::Index(..)) {
                 let (name, n) = self.keys_of(tp);
                 format!("{name}, {n}")
             } else {

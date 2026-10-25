@@ -1287,6 +1287,7 @@ static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
 #define LOFT_T_CHILD 5
 #define LOFT_T_HASH 6
 #define LOFT_T_INDEX 7
+#define LOFT_T_ORDERED 8
 
 /* A key part (keys::Key): its kind (negative: descending), its byte position in the element and
  * the start a narrow width counts from. */
@@ -1303,14 +1304,16 @@ typedef struct {
     const loft_fld *fields;    /* a struct's fields */
     const uint16_t *variants;  /* a struct-enum's variant types, 0xFFFF for a unit variant */
     uint8_t owns_heap;         /* Stores::type_owns_heap: a value of it owns a claim of its own */
-    const loft_key *keys;      /* a hash's key parts */
+    const loft_key *keys;      /* a hash's or an index's key parts */
     uint8_t nk;
     uint8_t linked;            /* Type::linked: a sibling or a stored reference names it by record */
 } loft_tdesc;
 
-/* The hash's halves of a copy and a release (loft_hash.h). */
+/* The hash's and the index's halves of a copy and a release (loft_hash.h, loft_btree.h). */
 static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to);
 static void loft_hash_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
+static void loft_ix_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to);
+static void loft_ix_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
 
 /* Copy `n` bytes between two places that may share a buffer a claim could move. */
 static void loft_copy_bytes(loft_ref to, uint32_t to_off, loft_ref from, uint32_t from_off, size_t n) {
@@ -1366,28 +1369,29 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
     case LOFT_T_HASH:
         loft_hash_copy_claims(T, tp, from, to);
         return;
-    case LOFT_T_INDEX: {
-        /* The key-ordered array is copied as it is, and each entry it names is copied into a
-         * record of the destination's. */
+    case LOFT_T_INDEX:
+        loft_ix_copy_claims(T, tp, from, to);
+        return;
+    case LOFT_T_ORDERED: {
+        /* Stores::copy_claims_array_body: a slot list of the source's length, each record it
+         * names copied into a record of the destination's. */
         uint32_t cur = loft_u32(fs, from.rec, from.pos);
         if (cur == 0 || cur == 0xFFFFFFFFu) { loft_set_u32(loft_store_of(to), to.rec, to.pos, cur); return; }
-        int32_t claimed;
-        memcpy(&claimed, loft_at(fs, cur, 0), 4);
-        uint32_t into = loft_claim(loft_store_of(to), (uint32_t) claimed);
-        memmove(loft_at(loft_store_of(to), into, 4), loft_at(fs, cur, 4), (size_t) claimed * 8 - 4);
+        uint32_t len = loft_u32(fs, cur, 4), size = T[d->elem].size;
+        uint32_t into = loft_st_claim(loft_store_of(to), 1 + (len + 1) / 2);
         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
-        uint32_t first = 8;
-        uint32_t count = loft_u32(loft_store_of(to), into, 4);
-        uint32_t size = T[d->elem].size;
-        for (uint32_t i = 0; i < count; i++) {
-            uint32_t r = loft_u32(loft_store_of(to), into, first + i * 4);
-            if (r == 0 || r == 0xFFFFFFFFu) continue;
-            uint32_t nr = loft_claim(loft_store_of(to), 1 + (size + 7) / 8);
-            loft_ref a = { from.store_nr, r, 8 };
-            loft_ref b = { to.store_nr, nr, 8 };
+        loft_set_u32(loft_store_of(to), into, 4, len);
+        for (uint32_t i = 0; i < len; i++) {
+            uint32_t elm = loft_u32(loft_store_of(from), cur, 8 + 4 * i);
+            if (elm == 0) {
+                loft_set_u32(loft_store_of(to), into, 8 + 4 * i, 0);
+                continue;
+            }
+            loft_ref a = { from.store_nr, elm, 8 };
+            loft_ref b = { to.store_nr, loft_st_claim(loft_store_of(to), 1 + (size + 7) / 8), 8 };
             loft_copy_bytes(b, 0, a, 0, size);
+            loft_set_u32(loft_store_of(to), into, 8 + 4 * i, b.rec);
             loft_copy_claims(T, d->elem, a, b);
-            loft_set_u32(loft_store_of(to), into, first + i * 4, nr);
         }
         return;
     }
@@ -1514,8 +1518,7 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
  * claim the value of type `tp` at `r` owns is deleted, children before the record that holds
  * them, and each collection field is left empty — the order the interpreter deletes in, which
  * decides where later claims land.  A `borrowed` collection — a view member of a linked group —
- * releases its own storage and none of the records it names.  The index tables are the C's own
- * until btree.rs is ported: their field is emptied and their records kept. */
+ * releases its own storage and none of the records it names. */
 static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 
 static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
@@ -1530,7 +1533,8 @@ static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r
         }
         return;
     }
-    if (d->kind == LOFT_T_VECTOR || d->kind == LOFT_T_CHILD || d->kind == LOFT_T_HASH || d->kind == LOFT_T_INDEX) {
+    if (d->kind == LOFT_T_VECTOR || d->kind == LOFT_T_CHILD || d->kind == LOFT_T_HASH || d->kind == LOFT_T_INDEX ||
+        d->kind == LOFT_T_ORDERED) {
         /* An absent collection slot owns nothing and reads as empty afterwards. */
         if (loft_u32(s, r.rec, r.pos) == 0xFFFFFFFFu) { loft_set_u32(s, r.rec, r.pos, 0); return; }
     }
@@ -1575,9 +1579,24 @@ static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r
     case LOFT_T_HASH:
         loft_hash_remove_claims(T, tp, r, borrowed);
         return;
-    case LOFT_T_INDEX: {
+    case LOFT_T_INDEX:
+        loft_ix_remove_claims(T, tp, r, borrowed);
+        return;
+    case LOFT_T_ORDERED: {
+        /* Every record the slot list names (not a view's), then the list. */
         uint32_t cur = loft_u32(s, r.rec, r.pos);
-        if (borrowed && cur != 0) loft_st_delete(s, cur);
+        if (cur != 0) {
+            if (!borrowed) {
+                for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
+                    uint32_t elm = loft_u32(s, cur, 8 + 4 * i);
+                    if (elm == 0) continue;
+                    loft_ref e = { r.store_nr, elm, 8 };
+                    loft_remove_claims(T, d->elem, e);
+                    loft_st_delete(s, elm);
+                }
+            }
+            loft_st_delete(s, cur);
+        }
         loft_set_u32(s, r.rec, r.pos, 0);
         return;
     }

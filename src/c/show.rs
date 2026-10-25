@@ -171,7 +171,11 @@ impl Cx<'_> {
                 let _ = writeln!(
                     out,
                     "    loft_show_keyed(s, r, fmt, ind, {}, {keys}, {n}, {}, {}, {});",
-                    i32::from(matches!(t.parts, Parts::Hash(..))),
+                    match t.parts {
+                        Parts::Hash(..) => 1,
+                        Parts::Index(..) => 2,
+                        _ => 0,
+                    },
                     i32::from(e.is_complex()),
                     i32::from(matches!(e.parts, Parts::Struct(_) | Parts::EnumValue(..))),
                     Self::show_fn(*elem)

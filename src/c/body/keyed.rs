@@ -111,7 +111,15 @@ impl FnWriter<'_> {
                     )
                 }
                 Keyed::Index | Keyed::Ordered => {
-                    format!("(void) loft_index_finish({c}, {rec}, {keys}, {n})")
+                    // A displaced record releases what it owns: its type is in the table.
+                    self.cx.name_types();
+                    self.cx.describe_type(elem);
+                    let insert = if kind == Keyed::Index {
+                        "loft_ix_insert"
+                    } else {
+                        "loft_ordered_insert"
+                    };
+                    format!("(void) {insert}(loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)")
                 }
                 Keyed::Array => format!("loft_array_append({c}, {rec})"),
             },
@@ -134,7 +142,8 @@ impl FnWriter<'_> {
             let kind = match kind {
                 Keyed::Array => "LOFT_M_ARRAY",
                 Keyed::Hash => "LOFT_M_HASH",
-                Keyed::Index | Keyed::Ordered => "LOFT_M_INDEX",
+                Keyed::Index => "LOFT_M_INDEX",
+                Keyed::Ordered => "LOFT_M_ORDERED",
                 Keyed::Sorted => return Err("a sorted member of a linked group".into()),
             };
             rows.push(format!("{{ {pos}, {kind}, {keys}, {n} }}"));
@@ -215,7 +224,14 @@ impl FnWriter<'_> {
                 let reverse = i32::from(on & 64 != 0);
                 Ok(Some(E::new(
                     match on & 63 {
-                        1 | 3 => format!("loft_seq_step(&{state}, {data}, 0, {reverse})"),
+                        1 => {
+                            // `arg` is the index type: a step finds its record again by key.
+                            let tp = u16::try_from(arg)
+                                .map_err(|_| "a type number out of range".to_string())?;
+                            let (keys, n) = self.cx.keys_of(tp);
+                            format!("loft_ix_step(&{state}, {data}, {keys}, {n}, {reverse})")
+                        }
+                        3 => format!("loft_seq_step(&{state}, {data}, 0, {reverse})"),
                         2 => format!("loft_seq_step(&{state}, {data}, {arg}, {reverse})"),
                         4 => format!("loft_scratch_step(&{state}, {data}, {reverse})"),
                         k => return Err(format!("a walk of kind {k}")),
@@ -274,7 +290,7 @@ impl FnWriter<'_> {
             ("OpLengthIndex", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_vec_len({})", as_ref(r)?),
+                    format!("(int64_t) loft_bt_len({})", as_ref(r)?),
                     K::Int,
                 )))
             }
@@ -299,44 +315,64 @@ impl FnWriter<'_> {
                 self.set_keyed(coll, value, tp, vals, ind).map(Some)
             }
             ("OpRemove", [Value::Var(state), data, on, tp]) => {
-                let on = Self::literal(on, "walk kind")?;
-                let tp = u16::try_from(Self::literal(tp, "type")?)
-                    .map_err(|_| "a type number out of range".to_string())?;
-                let size = match on & 63 {
-                    1 | 3 => 0,
-                    2 => self.cx.stores.size(tp),
-                    // A vector walk: its state is the index; forward, the successor moves into
-                    // the removed slot, so the index steps back to visit it (State::remove).
-                    0 if !self.cx.stores.is_linked(tp) => {
-                        let size = self.cx.stores.size(tp);
-                        let state = self.var(*state);
-                        let data = self.expr(data, ind)?;
-                        let back = if on & 64 != 0 { "" } else { " - 1" };
-                        return Ok(Some(E::new(
-                            format!(
-                                "{{ (void) loft_vec_remove({}, {size}, {state}); {state} = {state}{back}; }}",
-                                as_ref(data)?
-                            ),
-                            K::Void,
-                        )));
-                    }
-                    k => return Err(format!("a removal in a walk of kind {k}")),
-                };
-                let state = self.var(*state);
-                let data = self.expr(data, ind)?;
-                Ok(Some(E::new(
-                    format!(
-                        "loft_seq_remove(&{state}, {}, {size}, {})",
-                        as_ref(data)?,
-                        i32::from(on & 64 != 0)
-                    ),
-                    K::Void,
-                )))
+                self.walk_remove(*state, data, on, tp, ind).map(Some)
             }
             ("OpHashRemove", [data, rec, tp]) => self.keyed_remove(data, rec, tp, ind).map(Some),
             ("OpReserveHash", [h, count, tp]) => self.reserve_hash(h, count, tp, ind).map(Some),
             _ => Ok(None),
         }
+    }
+
+    /// `OpRemove(state, data, on, tp)` (`e#remove` in a walk, State::remove): the element the
+    /// walk visited last leaves the collection, releasing what it owns (`remove_vector_at`,
+    /// `remove_during_tree_iteration`), and the walk goes on with the one after it.  `tp` is the
+    /// element type, but for an index walk (on 1) the index type.
+    fn walk_remove(
+        &mut self,
+        state: u16,
+        data: &Value,
+        on: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let on = Self::literal(on, "walk kind")?;
+        let tp = u16::try_from(Self::literal(tp, "type")?)
+            .map_err(|_| "a type number out of range".to_string())?;
+        let reverse = i32::from(on & 64 != 0);
+        let call = match on & 63 {
+            // A vector walk: its state is the index; forward, the successor moves into the
+            // removed slot, so the index steps back to visit it.
+            0 if !self.cx.stores.is_linked(tp) => "loft_vec_walk_remove",
+            1 => {
+                let (_, elem, _) = self.keyed_of(tp)?;
+                let (keys, n) = self.cx.keys_of(tp);
+                self.cx.name_types();
+                self.cx.describe_type(elem);
+                let state = self.var(state);
+                let data = self.expr(data, ind)?;
+                return Ok(E::new(
+                    format!(
+                        "loft_ix_walk_remove(loft_types, {elem}, &{state}, {}, {keys}, {n}, {reverse})",
+                        as_ref(data)?
+                    ),
+                    K::Void,
+                ));
+            }
+            2 => "loft_sorted_walk_remove",
+            3 => "loft_ordered_walk_remove",
+            k => return Err(format!("a removal in a walk of kind {k}")),
+        };
+        self.cx.name_types();
+        self.cx.describe_type(tp);
+        let state = self.var(state);
+        let data = self.expr(data, ind)?;
+        Ok(E::new(
+            format!(
+                "{call}(loft_types, {tp}, &{state}, {}, {reverse})",
+                as_ref(data)?
+            ),
+            K::Void,
+        ))
     }
 
     /// `OpReserveHash(h, count, tp)`: buckets for `count` entries (`Stores::reserve_hash`).
@@ -401,7 +437,8 @@ impl FnWriter<'_> {
         let kind = match kind {
             Keyed::Hash => "LOFT_KEYED_HASH",
             Keyed::Sorted => "LOFT_KEYED_SORTED",
-            Keyed::Index | Keyed::Ordered => "LOFT_KEYED_INDEX",
+            Keyed::Index => "LOFT_KEYED_INDEX",
+            Keyed::Ordered => "LOFT_KEYED_ORDERED",
             Keyed::Array => return Err("a keyed write into an array".into()),
         };
         Ok(E::new(
@@ -447,9 +484,8 @@ impl FnWriter<'_> {
             match kind {
                 Keyed::Hash => format!("loft_h_find({data}, {keys}, {kv}, {n})"),
                 Keyed::Sorted => format!("loft_seq_find({data}, {size}, {keys}, {nk}, {kv}, {n})"),
-                Keyed::Index | Keyed::Ordered => {
-                    format!("loft_seq_find({data}, 0, {keys}, {nk}, {kv}, {n})")
-                }
+                Keyed::Index => format!("loft_ix_find({data}, {keys}, {nk}, {kv}, {n})"),
+                Keyed::Ordered => format!("loft_seq_find({data}, 0, {keys}, {nk}, {kv}, {n})"),
                 Keyed::Array => return Err("a keyed lookup in an array".into()),
             },
             K::Ref,
@@ -502,9 +538,13 @@ impl FnWriter<'_> {
         let ex = i32::from(on & 128 == 0);
         let (nk, ka) = (keys.len(), key_array(keys));
         let (f, t) = (value_array(&values), value_array(&till_values));
+        let reverse = i32::from(on & 64 != 0);
         Ok(E::new(
             match on & 63 {
-                1 | 3 => format!(
+                1 => format!(
+                    "loft_ix_iterate({data}, {ex}, {reverse}, {ka}, {nk}, {f}, {nfrom}, {t}, {ntill})"
+                ),
+                3 => format!(
                     "loft_seq_iterate({data}, 0, {ex}, {ka}, {nk}, {f}, {nfrom}, {t}, {ntill})"
                 ),
                 2 => format!(
@@ -534,20 +574,25 @@ impl FnWriter<'_> {
         let (keys, nk) = self.cx.keys_of(raw);
         let (data, rec) = self.two("OpHashRemove", &[data.clone(), rec.clone()], ind)?;
         let (data, rec) = (as_ref(data)?, as_ref(rec)?);
+        // What the element owns is released (`remove_owned`): its type is in the table.
+        self.cx.name_types();
+        self.cx.describe_type(elem);
+        let view = u8::from(view);
         Ok(E::new(
             match kind {
-                Keyed::Hash => {
-                    self.cx.name_types();
-                    self.cx.describe_type(elem);
-                    format!(
-                        "loft_hash_remove(loft_types, {elem}, {data}, {rec}, {keys}, {nk}, {})",
-                        u8::from(view)
-                    )
+                Keyed::Hash => format!(
+                    "loft_hash_remove(loft_types, {elem}, {data}, {rec}, {keys}, {nk}, {view})"
+                ),
+                Keyed::Sorted => {
+                    format!("loft_sorted_remove_owned(loft_types, {elem}, {data}, {rec}, {size})")
                 }
-                Keyed::Sorted => format!("loft_sorted_remove({data}, {rec}, {size})"),
-                Keyed::Index | Keyed::Ordered | Keyed::Array => {
-                    format!("loft_index_remove({data}, {rec})")
-                }
+                Keyed::Index => format!(
+                    "loft_ix_remove(loft_types, {elem}, {data}, {rec}, {keys}, {nk}, {view})"
+                ),
+                Keyed::Ordered | Keyed::Array => format!(
+                    "loft_ordered_remove(loft_types, {elem}, {data}, {rec}, {}, {view})",
+                    u8::from(kind == Keyed::Array)
+                ),
             },
             K::Void,
         ))

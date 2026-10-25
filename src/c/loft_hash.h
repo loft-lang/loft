@@ -1025,7 +1025,8 @@ static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref fro
     const loft_tdesc *d = &T[tp];
     loft_store_t *fs = loft_store_of(from);
     uint32_t cur = loft_u32(fs, from.rec, from.pos);
-    loft_set_u32(loft_store_of(to), to.rec, to.pos, 0);
+    /* An absent collection is copied absent (`copy_absent_collection`). */
+    loft_set_u32(loft_store_of(to), to.rec, to.pos, cur == 0xFFFFFFFFu ? cur : 0);
     if (cur == 0 || cur == 0xFFFFFFFFu) return;
     int owned = loft_h_stride(fs, cur) != 0, inl = loft_h_is_inline(fs, cur);
     uint32_t n, kept = 0;

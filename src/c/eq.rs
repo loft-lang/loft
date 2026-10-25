@@ -131,7 +131,11 @@ impl Cx<'_> {
                     let _ = writeln!(
                         out,
                         "    return loft_eq_keyed(a, b, {}, {keys}, {n}, {});",
-                        i32::from(matches!(t.parts, Parts::Hash(..))),
+                        match t.parts {
+                            Parts::Hash(..) => 1,
+                            Parts::Index(..) => 2,
+                            _ => 0,
+                        },
                         Self::eq_fn(*elem)
                     );
                 }

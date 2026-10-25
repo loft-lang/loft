@@ -105,30 +105,26 @@ static loft_ref loft_seq_find(loft_ref c, uint32_t size, const loft_key *keys, i
 }
 
 /* vector::sorted_new: room for one more element, staged one slot past the end — the gap
- * `loft_sorted_finish` opens moves it into place — or in slot 0 of an empty sorted. */
+ * `loft_sorted_finish` opens moves it into place — or in slot 0 of an empty sorted.  The vector
+ * is made with room for twelve and grows by `resize` to its length plus two. */
 static loft_ref loft_sorted_new(loft_ref c, uint32_t size) {
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
     loft_store_t *s = loft_store_of(c);
     uint32_t r = loft_collection_rec(s, c.rec, c.pos);
-    uint32_t len = 0;
+    loft_ref e = { c.store_nr, 0, 8 };
     if (r == 0) {
-        r = loft_claim(s, loft_vec_cap_words(12, size));
+        r = loft_st_claim(s, loft_vec_cap_words(12, size));
         loft_set_u32(s, c.rec, c.pos, r);
         loft_set_u32(s, r, 4, 0);
-    } else {
-        len = loft_u32(s, r, 4);
-        int32_t claimed;
-        memcpy(&claimed, loft_at(s, r, 0), 4);
-        uint32_t cap = (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
-        if (len + 2 > cap) {
-            uint32_t nr = loft_claim(s, loft_vec_cap_words((len + 2) * 2, size));
-            memcpy(loft_at(s, nr, 4), loft_at(s, r, 4), 4 + (size_t) len * size);
-            loft_set_u32(s, c.rec, c.pos, nr);
-            r = nr;
-        }
+        e.rec = r;
+        return e;
     }
-    loft_ref e;
-    e.store_nr = c.store_nr;
+    uint32_t len = loft_u32(s, r, 4);
+    uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(len + 2, size));
+    if (nr != r) {
+        loft_set_u32(s, c.rec, c.pos, nr);
+        r = nr;
+    }
     e.rec = r;
     e.pos = 8 + (len == 0 ? 0 : len + 1) * size;
     return e;
@@ -170,30 +166,49 @@ static void loft_sorted_remove(loft_ref c, loft_ref e, uint32_t size) {
     loft_set_u32(s, r, 4, len - 1);
 }
 
-/* record_finish on an index or an ordered (@FR-Col-Insert): the entry's record number goes to
- * its key's place; an entry the key already named is replaced, and its number answered. */
-static uint32_t loft_index_finish(loft_ref c, loft_ref e, const loft_key *keys, int nk) {
+/* vector::ordered_finish (@FR-Col-Insert): the record's number goes to its key's place in the
+ * ordered; a record the key already named is replaced and its number answered, 0 when the key
+ * was new. */
+static uint32_t loft_ordered_finish(loft_ref c, loft_ref e, const loft_key *keys, int nk) {
     if (c.store_nr == 0xFFFF || c.rec == 0 || e.rec == 0) return 0;
+    loft_ref slot = loft_sorted_new(c, 4);
     loft_seq q = loft_seq_of(c, 0);
     uint32_t len = loft_seq_len(&q);
+    if (len == 0) {
+        loft_set_u32(q.s, q.vrec, 4, 1);
+        loft_set_u32(q.s, q.vrec, slot.pos, e.rec);
+        return 0;
+    }
     int found;
-    uint32_t p = loft_seq_search(&q, len, 1, 0, 0, e.rec, e.pos, keys, nk, &found);
+    uint32_t p = loft_seq_search(&q, len, 1, 0, 0, e.rec, 8, keys, nk, &found);
     if (found) {
         uint32_t old = loft_u32(q.s, q.vrec, 8 + p * 4);
         loft_set_u32(q.s, q.vrec, 8 + p * 4, e.rec);
-        return old;
+        return old == e.rec ? 0 : old;
     }
-    loft_ref slot = loft_vec_append(c, 4);
-    if (slot.rec == 0) return 0;
-    loft_store_t *s = loft_store_of(c);
-    uint8_t *base = loft_at(s, slot.rec, 0);
-    if (p < len) memmove(base + 8 + (p + 1) * 4, base + 8 + p * 4, (size_t) (len - p) * 4);
-    loft_set_u32(s, slot.rec, 8 + p * 4, e.rec);
-    loft_set_u32(s, slot.rec, 4, len + 1);
+    uint8_t *base = loft_at(q.s, q.vrec, 0);
+    if (p < len) memmove(base + 12 + p * 4, base + 8 + p * 4, (size_t) (len - p) * 4);
+    loft_set_u32(q.s, q.vrec, 8 + p * 4, e.rec);
+    loft_set_u32(q.s, q.vrec, 4, len + 1);
     return 0;
 }
 
-/* The entry `e` leaves an index, an ordered or an array (an array only unlinks it). */
+/* Stores::insert_record on an ordered: the record filed; the record its key displaced is
+ * answered, released already unless `secondary` (a group member only unlinks). */
+static loft_ref loft_ordered_insert(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, const loft_key *keys,
+                                    int nk, int secondary) {
+    uint32_t gone = loft_ordered_finish(c, e, keys, nk);
+    if (gone == 0) return loft_ref_null();
+    loft_ref old = { c.store_nr, gone, 8 };
+    if (!secondary) {
+        loft_remove_claims(T, elem, old);
+        loft_st_delete(loft_store_of(c), gone);
+    }
+    return old;
+}
+
+/* The record `e` leaves an ordered or an array: its slot, found by its record number, is
+ * removed (Stores::unlink, by reference). */
 static void loft_index_remove(loft_ref c, loft_ref e) {
     uint32_t r = loft_keyed_rec(c);
     if (r == 0 || e.rec == 0) return;
@@ -206,6 +221,26 @@ static void loft_index_remove(loft_ref c, loft_ref e) {
         loft_set_u32(s, r, 4, len - 1);
         return;
     }
+}
+
+/* Stores::remove_owned on an ordered: unlinked, then its claims and its record released; on an
+ * array (`is_array`, whose removal reads `e` as given) the claims and then the unlink.  A `view`
+ * member only unlinks. */
+static void loft_ordered_remove(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, int is_array, int view) {
+    if (e.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
+    if (view) {
+        loft_index_remove(c, e);
+        return;
+    }
+    if (is_array) {
+        loft_remove_claims(T, elem, e);
+        loft_index_remove(c, e);
+        return;
+    }
+    loft_index_remove(c, e);
+    loft_ref rec = { e.store_nr, e.rec, 8 };
+    loft_remove_claims(T, elem, rec);
+    loft_st_delete(loft_store_of(c), e.rec);
 }
 
 /* ── walks ──
@@ -283,13 +318,17 @@ static loft_ref loft_scratch_step(int64_t *state, loft_ref x, int reverse) {
 
 /* ── copies, renders and equality over the entries ── */
 
-/* The elements of a hash (in key order) or an index, as references; `*n` their count. */
-static loft_ref *loft_keyed_refs(loft_ref c, int is_hash, const loft_key *keys, int nk, uint32_t *n) {
+/* The elements of a hash (kind 1, in key order), an index (2, in key order), or an ordered or an
+ * array (0, in their own), as references; `*n` their count. */
+static loft_ref *loft_keyed_refs(loft_ref c, int kind, const loft_key *keys, int nk, uint32_t *n) {
     *n = 0;
     uint32_t *recs = 0;
     uint32_t count = 0;
-    if (is_hash) return loft_hash_refs(c, keys, nk, 0, n);
-    {
+    if (kind == 1) return loft_hash_refs(c, keys, nk, 0, n);
+    if (kind == 2) {
+        recs = c.store_nr == 0xFFFF || c.rec == 0 ? (uint32_t *) calloc(1, 4) : loft_bt_records(c, &count);
+        if (!recs) { fputs("loft: out of memory\n", stderr); abort(); }
+    } else {
         uint32_t r = loft_keyed_rec(c);
         if (r != 0) {
             count = loft_u32(loft_store_of(c), r, 4);
@@ -329,19 +368,19 @@ static void loft_show_refs(loft_text *s, const loft_ref *e, uint32_t n, int fmt,
     loft_push_char(s, ']');
 }
 
-static void loft_show_keyed(loft_text *s, loft_ref r, int fmt, int ind, int is_hash, const loft_key *keys,
+static void loft_show_keyed(loft_text *s, loft_ref r, int fmt, int ind, int kind, const loft_key *keys,
                             int nk, int complex_elem, int struct_elem, loft_show_fn f) {
     if (loft_vec_absent(r)) { loft_push(s, "null", 4); return; }
     uint32_t n;
-    loft_ref *e = loft_keyed_refs(r, is_hash, keys, nk, &n);
+    loft_ref *e = loft_keyed_refs(r, kind, keys, nk, &n);
     loft_show_refs(s, e, n, fmt, ind, complex_elem, struct_elem, f);
     free(e);
 }
 
-static int loft_eq_keyed(loft_ref a, loft_ref b, int is_hash, const loft_key *keys, int nk, loft_eq_fn f) {
+static int loft_eq_keyed(loft_ref a, loft_ref b, int kind, const loft_key *keys, int nk, loft_eq_fn f) {
     uint32_t na, nb;
-    loft_ref *ea = loft_keyed_refs(a, is_hash, keys, nk, &na);
-    loft_ref *eb = loft_keyed_refs(b, is_hash, keys, nk, &nb);
+    loft_ref *ea = loft_keyed_refs(a, kind, keys, nk, &na);
+    loft_ref *eb = loft_keyed_refs(b, kind, keys, nk, &nb);
     int same = na == nb;
     for (uint32_t i = 0; same && i < na; i++) same = f(ea[i], eb[i]);
     free(ea);
@@ -414,11 +453,13 @@ static void loft_key_set(loft_ref e, const loft_key *k, loft_kv v) {
 #define LOFT_KEYED_HASH 0
 #define LOFT_KEYED_SORTED 1
 #define LOFT_KEYED_INDEX 2
+#define LOFT_KEYED_ORDERED 3
 
 /* The element of collection `c` (of kind `kind`) whose key parts equal the `n` given. */
 static loft_ref loft_keyed_find(loft_ref c, int kind, uint32_t size, const loft_key *keys, int nk,
                                 const loft_kv *kv, int n) {
     if (kind == LOFT_KEYED_HASH) return loft_h_find(c, keys, kv, n);
+    if (kind == LOFT_KEYED_INDEX) return loft_ix_find(c, keys, nk, kv, n);
     return loft_seq_find(c, kind == LOFT_KEYED_SORTED ? size : 0, keys, nk, kv, n);
 }
 
@@ -455,7 +496,8 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     if (existing.rec != 0) {
         if (kind == LOFT_KEYED_HASH) loft_hash_remove(T, etp, c, existing, keys, nk, 0);
         else if (kind == LOFT_KEYED_SORTED) loft_sorted_remove(c, existing, size);
-        else loft_index_remove(c, existing);
+        else if (kind == LOFT_KEYED_INDEX) loft_ix_remove(T, etp, c, existing, keys, nk, 0);
+        else loft_ordered_remove(T, etp, c, existing, 0, 0);
     }
     loft_ref e = kind == LOFT_KEYED_SORTED ? loft_sorted_new(c, size)
                  : kind == LOFT_KEYED_HASH ? loft_hash_entry(c, size, T[etp].linked)
@@ -465,7 +507,8 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     if (full) for (int i = 0; i < n; i++) loft_key_set(e, &keys[i], key[i]);
     if (kind == LOFT_KEYED_HASH) (void) loft_hash_insert(T, etp, c, e, keys, nk, 0);
     else if (kind == LOFT_KEYED_SORTED) loft_sorted_finish(c, size, keys, nk);
-    else loft_index_finish(c, e, keys, nk);
+    else if (kind == LOFT_KEYED_INDEX) (void) loft_ix_insert(T, etp, c, e, keys, nk, 0);
+    else (void) loft_ordered_insert(T, etp, c, e, keys, nk, 0);
     for (int i = 0; i < n; i++) loft_text_free(&own[i]);
     if (tmp.store_nr != 0xFFFF) loft_free_ref(tmp);
     if (free_source && value.store_nr != c.store_nr && !loft_free_protected(value)) loft_free_ref(value);
@@ -487,6 +530,56 @@ static void loft_seq_remove(int64_t *state, loft_ref c, uint32_t size, int rever
     }
     if (!loft_vec_remove(c, size ? size : 4, at)) return;
     *state = loft_iter_range(lo, hi);
+}
+
+/* The position a walk's removal names: the element it visited last (loft_seq_remove's). */
+static int loft_walk_removed_at(int64_t state, int reverse, uint32_t *at) {
+    uint64_t st = (uint64_t) state;
+    uint32_t lo = (uint32_t) st, hi = (uint32_t) (st >> 32);
+    if (!reverse && lo == 0) return 0;
+    *at = reverse ? hi : lo - 1;
+    return 1;
+}
+
+/* OpRemove in a walk over a vector (State::remove, Stores::remove_vector_at): the element's
+ * claims released, then its successors shift down; forward, the index steps back to visit the
+ * one that moved into its place. */
+static void loft_vec_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref v, int reverse) {
+    loft_ref e = loft_vec_get(v, T[elem].size, *state);
+    if (e.rec != 0) loft_remove_claims(T, elem, e);
+    (void) loft_vec_remove(v, T[elem].size, *state);
+    if (!reverse) *state = *state - 1;
+}
+
+/* OpRemove in a walk over a sorted (Stores::remove_vector_at): the element's claims released,
+ * then the element removed and the walk moved on. */
+static void loft_sorted_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref c, int reverse) {
+    uint32_t at, r = loft_keyed_rec(c), size = T[elem].size;
+    if (r == 0 || !loft_walk_removed_at(*state, reverse, &at) || at >= loft_u32(loft_store_of(c), r, 4)) return;
+    loft_ref e = { c.store_nr, r, 8 + at * size };
+    loft_remove_claims(T, elem, e);
+    loft_seq_remove(state, c, size, reverse);
+}
+
+/* Stores::remove_owned on a sorted: the element's claims released, then the element removed. */
+static void loft_sorted_remove_owned(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref e, uint32_t size) {
+    if (e.rec == 0) return;
+    loft_remove_claims(T, elem, e);
+    loft_sorted_remove(c, e, size);
+}
+
+/* OpRemove in a walk over an ordered (Stores::remove_vector_at, a linked element): the slot the
+ * walk visited last is unlinked, then its record's claims and the record released. */
+static void loft_ordered_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref c, int reverse) {
+    uint32_t at, r = loft_keyed_rec(c);
+    if (r == 0 || !loft_walk_removed_at(*state, reverse, &at) || at >= loft_u32(loft_store_of(c), r, 4)) return;
+    uint32_t rec = loft_u32(loft_store_of(c), r, 8 + at * 4);
+    loft_seq_remove(state, c, 0, reverse);
+    if (rec != 0) {
+        loft_ref e = { c.store_nr, rec, 8 };
+        loft_remove_claims(T, elem, e);
+        loft_st_delete(loft_store_of(c), rec);
+    }
 }
 
 /* ── arrays and linked groups (@FR-Col-Group) ──
@@ -517,6 +610,7 @@ static void loft_array_append(loft_ref v, loft_ref rec) {
 #define LOFT_M_ARRAY 0
 #define LOFT_M_HASH 1
 #define LOFT_M_INDEX 2
+#define LOFT_M_ORDERED 3
 
 /* One member of a linked group: its field's byte position, its kind (an index and an ordered
  * share LOFT_M_INDEX) and its key parts. */
@@ -534,7 +628,8 @@ static void loft_group_finish(loft_ref parent, loft_ref rec, const loft_member *
         uint32_t d = 0;
         if (m[i].kind == LOFT_M_ARRAY) loft_array_append(c, rec);
         else if (m[i].kind == LOFT_M_HASH) d = loft_hash_insert(0, 0, c, rec, m[i].keys, m[i].nk, 1).rec;
-        else d = loft_index_finish(c, rec, m[i].keys, m[i].nk);
+        else if (m[i].kind == LOFT_M_INDEX) d = loft_ix_insert(0, 0, c, rec, m[i].keys, m[i].nk, 1).rec;
+        else d = loft_ordered_insert(0, 0, c, rec, m[i].keys, m[i].nk, 1).rec;
         int seen = d == 0 || d == rec.rec;
         for (int j = 0; j < ng; j++) seen |= gone[j] == d;
         if (!seen && ng < 16) gone[ng++] = d;
@@ -549,6 +644,8 @@ static void loft_group_finish(loft_ref parent, loft_ref rec, const loft_member *
             for (int k = 0; k < nk; k++) key[k] = loft_key_get(loft_store_of(dr), dr.rec, 8, &m[i].keys[k]);
             if (m[i].kind == LOFT_M_HASH) {
                 if (loft_h_find(c, m[i].keys, key, nk).rec == dr.rec) (void) loft_hash_unlink(c, dr, m[i].keys, m[i].nk);
+            } else if (m[i].kind == LOFT_M_INDEX) {
+                if (loft_ix_find(c, m[i].keys, m[i].nk, key, nk).rec == dr.rec) (void) loft_bt_remove(c, dr.rec, m[i].keys, m[i].nk);
             } else if (loft_seq_find(c, 0, m[i].keys, m[i].nk, key, nk).rec == dr.rec) {
                 loft_index_remove(c, dr);
             }
