@@ -75,17 +75,21 @@ impl FnWriter<'_> {
     }
 
     /// `OpNewRecord` in a keyed collection `c` of type `tp`: a sorted stages the element past
-    /// its end; a hash or an index gets a record of its own.
+    /// its end; a hash takes an entry of its table (`Stores::hash_entry`); an index gets a
+    /// record of its own.
     pub(super) fn keyed_new(&mut self, c: &str, tp: u16, ind: usize) -> Result<E, String> {
         let (kind, elem, size) = self.keyed_of(tp)?;
         let (image, n) = self.cx.default_image(elem);
         let t = self.temp(CType::Ref);
-        let make = if kind == Keyed::Sorted {
-            "loft_sorted_new"
-        } else {
-            "loft_entry_new"
+        let make = match kind {
+            Keyed::Sorted => format!("loft_sorted_new({c}, {size})"),
+            Keyed::Hash => format!(
+                "loft_hash_entry({c}, {size}, {})",
+                u8::from(self.cx.stores.is_linked(elem))
+            ),
+            _ => format!("loft_entry_new({c}, {size})"),
         };
-        self.line(ind, &format!("{t} = {make}({c}, {size});"));
+        self.line(ind, &format!("{t} = {make};"));
         self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
         Ok(E::new(t, K::Ref))
     }
@@ -93,12 +97,19 @@ impl FnWriter<'_> {
     /// `OpFinishRecord` in a keyed collection: the record goes to its key's place
     /// (`@FR-Col-Insert`: an equal key's element is replaced).
     pub(super) fn keyed_finish(&mut self, c: &str, rec: &str, tp: u16) -> Result<E, String> {
-        let (kind, _, size) = self.keyed_of(tp)?;
+        let (kind, elem, size) = self.keyed_of(tp)?;
         let (keys, n) = self.cx.keys_of(tp);
         Ok(E::new(
             match kind {
                 Keyed::Sorted => format!("loft_sorted_finish({c}, {size}, {keys}, {n})"),
-                Keyed::Hash => format!("(void) loft_hash_finish({c}, {rec}, {keys}, {n})"),
+                Keyed::Hash => {
+                    // A displaced entry releases what it owns: its type is in the table.
+                    self.cx.name_types();
+                    self.cx.describe_type(elem);
+                    format!(
+                        "(void) loft_hash_insert(loft_types, {elem}, {c}, {rec}, {keys}, {n}, 0)"
+                    )
+                }
                 Keyed::Index | Keyed::Ordered => {
                     format!("(void) loft_index_finish({c}, {rec}, {keys}, {n})")
                 }
@@ -153,6 +164,13 @@ impl FnWriter<'_> {
                 let h = self.expr(h, ind)?;
                 Ok(Some(E::new(
                     format!("loft_hash_sorted({}, {keys}, {n})", as_ref(h)?),
+                    K::Ref,
+                )))
+            }
+            ("n_hash_unsorted", [h, _]) => {
+                let h = self.expr(h, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_hash_unsorted({})", as_ref(h)?),
                     K::Ref,
                 )))
             }
@@ -233,10 +251,17 @@ impl FnWriter<'_> {
                     .map_err(|_| "a type number out of range".to_string())?;
                 let dest = self.expr(dest, ind)?;
                 if tp & crate::database::CLEAR_KEYED_VIEW != 0 {
-                    // A view member lets its records go; the member that holds them frees.
-                    self.keyed_of(tp & !crate::database::CLEAR_KEYED_VIEW)?;
+                    // A view member releases its own storage; the member that holds the
+                    // records frees them (`remove_claims_keyed`).
+                    let tp = tp & !crate::database::CLEAR_KEYED_VIEW;
+                    self.keyed_of(tp)?;
+                    self.cx.name_types();
+                    self.cx.describe_type(tp);
                     return Ok(Some(E::new(
-                        format!("loft_keyed_clear({})", as_ref(dest)?),
+                        format!(
+                            "loft_remove_claims_mode(loft_types, {tp}, {}, 1)",
+                            as_ref(dest)?
+                        ),
                         K::Void,
                     )));
                 }
@@ -309,8 +334,33 @@ impl FnWriter<'_> {
                 )))
             }
             ("OpHashRemove", [data, rec, tp]) => self.keyed_remove(data, rec, tp, ind).map(Some),
+            ("OpReserveHash", [h, count, tp]) => self.reserve_hash(h, count, tp, ind).map(Some),
             _ => Ok(None),
         }
+    }
+
+    /// `OpReserveHash(h, count, tp)`: buckets for `count` entries (`Stores::reserve_hash`).
+    fn reserve_hash(
+        &mut self,
+        h: &Value,
+        count: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let tp = u16::try_from(Self::literal(tp, "type")?)
+            .map_err(|_| "a type number out of range".to_string())?;
+        self.keyed_of(tp)?;
+        self.cx.name_types();
+        self.cx.describe_type(tp);
+        let (h, count) = self.two("OpReserveHash", &[h.clone(), count.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_hash_reserve(loft_types, {tp}, {}, {})",
+                as_ref(h)?,
+                as_int(count)?
+            ),
+            K::Void,
+        ))
     }
 
     /// `OpSetKeyed(coll, value, tp, n, keys…)`: `coll[keys…] = value`, a deep copy of the value
@@ -395,7 +445,7 @@ impl FnWriter<'_> {
         let (keys, nk) = self.cx.keys_of(tp);
         Ok(E::new(
             match kind {
-                Keyed::Hash => format!("loft_hash_find({data}, {keys}, {nk}, {kv}, {n})"),
+                Keyed::Hash => format!("loft_h_find({data}, {keys}, {kv}, {n})"),
                 Keyed::Sorted => format!("loft_seq_find({data}, {size}, {keys}, {nk}, {kv}, {n})"),
                 Keyed::Index | Keyed::Ordered => {
                     format!("loft_seq_find({data}, 0, {keys}, {nk}, {kv}, {n})")
@@ -477,16 +527,23 @@ impl FnWriter<'_> {
     ) -> Result<E, String> {
         let raw = u16::try_from(Self::literal(tp, "type")?)
             .map_err(|_| "a type number out of range".to_string())?;
-        // A view member only unlinks (`CLEAR_KEYED_VIEW`); with no record freed in C, that is
-        // the removal itself.
+        // A view member only unlinks (`CLEAR_KEYED_VIEW`); the owner releases (`remove_owned`).
+        let view = raw & crate::database::CLEAR_KEYED_VIEW != 0;
         let raw = raw & !crate::database::CLEAR_KEYED_VIEW;
-        let (kind, _, size) = self.keyed_of(raw)?;
+        let (kind, elem, size) = self.keyed_of(raw)?;
         let (keys, nk) = self.cx.keys_of(raw);
         let (data, rec) = self.two("OpHashRemove", &[data.clone(), rec.clone()], ind)?;
         let (data, rec) = (as_ref(data)?, as_ref(rec)?);
         Ok(E::new(
             match kind {
-                Keyed::Hash => format!("loft_hash_remove({data}, {rec}, {keys}, {nk})"),
+                Keyed::Hash => {
+                    self.cx.name_types();
+                    self.cx.describe_type(elem);
+                    format!(
+                        "loft_hash_remove(loft_types, {elem}, {data}, {rec}, {keys}, {nk}, {})",
+                        u8::from(view)
+                    )
+                }
                 Keyed::Sorted => format!("loft_sorted_remove({data}, {rec}, {size})"),
                 Keyed::Index | Keyed::Ordered | Keyed::Array => {
                     format!("loft_index_remove({data}, {rec})")

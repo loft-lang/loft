@@ -1288,7 +1288,13 @@ static void loft_set_text(loft_ref r, uint32_t fld, loft_str v) {
 #define LOFT_T_HASH 6
 #define LOFT_T_INDEX 7
 
-typedef struct { uint16_t pos; uint16_t type; } loft_fld;
+/* A key part (keys::Key): its kind (negative: descending), its byte position in the element and
+ * the start a narrow width counts from. */
+typedef struct { int8_t type; uint16_t pos; int32_t start; } loft_key;
+
+/* A struct field: its byte position, its type, and whether it is a VIEW — a member of a linked
+ * group that borrows its records from a sibling (`other_indexes`' marker). */
+typedef struct { uint16_t pos; uint16_t type; uint8_t view; } loft_fld;
 typedef struct {
     uint8_t kind;
     uint16_t size;             /* the type's bytes */
@@ -1297,7 +1303,14 @@ typedef struct {
     const loft_fld *fields;    /* a struct's fields */
     const uint16_t *variants;  /* a struct-enum's variant types, 0xFFFF for a unit variant */
     uint8_t owns_heap;         /* Stores::type_owns_heap: a value of it owns a claim of its own */
+    const loft_key *keys;      /* a hash's key parts */
+    uint8_t nk;
+    uint8_t linked;            /* Type::linked: a sibling or a stored reference names it by record */
 } loft_tdesc;
+
+/* The hash's halves of a copy and a release (loft_hash.h). */
+static void loft_hash_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to);
+static void loft_hash_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
 
 /* Copy `n` bytes between two places that may share a buffer a claim could move. */
 static void loft_copy_bytes(loft_ref to, uint32_t to_off, loft_ref from, uint32_t from_off, size_t n) {
@@ -1351,9 +1364,11 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         return;
     }
     case LOFT_T_HASH:
+        loft_hash_copy_claims(T, tp, from, to);
+        return;
     case LOFT_T_INDEX: {
-        /* The table (or the key-ordered array) is copied as it is — the same keys hash to the
-         * same slots — and each entry it names is copied into a record of the destination's. */
+        /* The key-ordered array is copied as it is, and each entry it names is copied into a
+         * record of the destination's. */
         uint32_t cur = loft_u32(fs, from.rec, from.pos);
         if (cur == 0 || cur == 0xFFFFFFFFu) { loft_set_u32(loft_store_of(to), to.rec, to.pos, cur); return; }
         int32_t claimed;
@@ -1361,9 +1376,8 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         uint32_t into = loft_claim(loft_store_of(to), (uint32_t) claimed);
         memmove(loft_at(loft_store_of(to), into, 4), loft_at(fs, cur, 4), (size_t) claimed * 8 - 4);
         loft_set_u32(loft_store_of(to), to.rec, to.pos, into);
-        int hash = d->kind == LOFT_T_HASH;
-        uint32_t first = hash ? 16 : 8;
-        uint32_t count = loft_u32(loft_store_of(to), into, hash ? 8 : 4);
+        uint32_t first = 8;
+        uint32_t count = loft_u32(loft_store_of(to), into, 4);
         uint32_t size = T[d->elem].size;
         for (uint32_t i = 0; i < count; i++) {
             uint32_t r = loft_u32(loft_store_of(to), into, first + i * 4);
@@ -1499,9 +1513,12 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
 /* Stores::remove_claims (`remove_claims_mode`, `remove_struct_claims` and the owned walk): every
  * claim the value of type `tp` at `r` owns is deleted, children before the record that holds
  * them, and each collection field is left empty — the order the interpreter deletes in, which
- * decides where later claims land.  The hash and index tables are the C's own until their
- * layouts are ported: their field is emptied and their records kept. */
-static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+ * decides where later claims land.  A `borrowed` collection — a view member of a linked group —
+ * releases its own storage and none of the records it names.  The index tables are the C's own
+ * until btree.rs is ported: their field is emptied and their records kept. */
+static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
+
+static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     const loft_tdesc *d = &T[tp];
     loft_store_t *s = loft_store_of(r);
@@ -1517,12 +1534,12 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
         /* An absent collection slot owns nothing and reads as empty afterwards. */
         if (loft_u32(s, r.rec, r.pos) == 0xFFFFFFFFu) { loft_set_u32(s, r.rec, r.pos, 0); return; }
     }
-    if (!d->owns_heap) return;
+    if (!borrowed && !d->owns_heap) return;
     switch (d->kind) {
     case LOFT_T_STRUCT:
         for (uint16_t i = 0; i < d->n; i++) {
-            if (!T[d->fields[i].type].owns_heap) continue;
-            loft_remove_claims(T, d->fields[i].type, loft_field(r, d->fields[i].pos));
+            if (!d->fields[i].view && !T[d->fields[i].type].owns_heap) continue;
+            loft_remove_claims_mode(T, d->fields[i].type, loft_field(r, d->fields[i].pos), d->fields[i].view);
         }
         return;
     case LOFT_T_VECTOR: {
@@ -1556,13 +1573,20 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) {
         return;
     }
     case LOFT_T_HASH:
-    case LOFT_T_INDEX:
+        loft_hash_remove_claims(T, tp, r, borrowed);
+        return;
+    case LOFT_T_INDEX: {
+        uint32_t cur = loft_u32(s, r.rec, r.pos);
+        if (borrowed && cur != 0) loft_st_delete(s, cur);
         loft_set_u32(s, r.rec, r.pos, 0);
         return;
+    }
     default:
         return;
     }
 }
+
+static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r) { loft_remove_claims_mode(T, tp, r, 0); }
 
 /* vector::reached_capacity: the elements `v`'s claim holds room for, 0 when it has none. */
 static uint32_t loft_vec_reached(loft_ref v, uint32_t size) {

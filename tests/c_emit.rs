@@ -784,3 +784,306 @@ int main(int argc, char **argv) {
         "the C stopped early"
     );
 }
+
+/// Stores::insert_record's hash arm, for an element that owns nothing: one walk files `e` or
+/// finds the entry under its key, which `e` replaces; a walk that cannot answer falls back to a
+/// lookup, a removal and an add.
+fn hash_insert(
+    stores: &mut [loft::store::Store],
+    h: &loft::keys::DbRef,
+    e: &loft::keys::DbRef,
+    keys: &[loft::keys::Key],
+) {
+    use loft::hash::{self, Probed};
+    match hash::probe_for_insert(h, e, stores, keys) {
+        Probed::Free { bucket, index, tag } => hash::add_at(h, e, bucket, index, tag, stores, keys),
+        Probed::Present {
+            entry,
+            bucket,
+            index,
+        } => {
+            let gone = hash::replace_at(h, bucket, index, stores);
+            hash_free_entry(stores, h, &entry, gone);
+        }
+        Probed::Unknown => {
+            let key = loft::keys::get_key(e, stores, keys);
+            let existing = hash::find(h, stores, keys, &key);
+            if existing.rec != 0 && (existing.rec, existing.pos) != (e.rec, e.pos) {
+                let slot = hash::remove(h, &existing, stores, keys);
+                hash_free_entry(stores, h, &existing, slot);
+            }
+            hash::add(h, e, stores, keys);
+        }
+    }
+}
+
+/// Stores::free_hash_entry.
+fn hash_free_entry(
+    stores: &mut [loft::store::Store],
+    h: &loft::keys::DbRef,
+    e: &loft::keys::DbRef,
+    slot: u32,
+) {
+    if slot == 0 {
+        loft::hash::free_entry(h, e, stores);
+    } else {
+        loft::hash::free_slot(h, slot, stores);
+    }
+}
+
+/// The hash table and its arena in C (`src/c/loft_hash.h`) are `hash.rs` and `arena.rs`: one
+/// seeded sequence of inserts (a key already filed is replaced, as `Stores::insert_record`
+/// replaces it), removals, lookups and reservations runs through both on three tables — an
+/// integer key, a text key, and one that borrows its entries (stride 0, a linked type's) — and
+/// every lookup, the walks in key order and in slot order, and every byte of the store agree.
+/// Inline tables grow and arena tables grow; a reservation turns a table into a bigger one.
+#[test]
+fn the_c_hash_table_files_every_entry_where_hash_does() {
+    use loft::hash;
+    use loft::keys::{Content, DbRef, Key, Str};
+    use loft::store::Store;
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let mut seed: u64 = 0x5eed_4a54_0000_0002;
+    let mut next = |n: u64| {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 33) % n
+    };
+    let int_key = [Key {
+        type_nr: 1,
+        position: 0,
+        start: 0,
+    }];
+    let text_key = [Key {
+        type_nr: 6,
+        position: 0,
+        start: 0,
+    }];
+    let keys: [&[Key]; 3] = [&int_key, &text_key, &int_key];
+    let strides = [16u32, 16, 0];
+    let mut stores = vec![Store::new_in_use_defined(100)];
+    let root = stores[0].claim(3);
+    let h: Vec<DbRef> = (0..3)
+        .map(|t| DbRef {
+            store_nr: 0,
+            rec: root,
+            pos: 8 + 4 * t,
+        })
+        .collect();
+    // A table's seed is drawn when it is made; both sides then take the same one.
+    for t in 0..3 {
+        let claim = hash::ensure_table(&h[t], strides[t], &mut stores);
+        stores[0].set_u32_raw(claim, hash::SEED_FLD, 0x89ab_cdef);
+        stores[0].set_u32_raw(claim, hash::SEED_FLD + 4, 0x0123_4567);
+    }
+    let (mut script, mut want) = (String::new(), String::new());
+    for _ in 0..5000 {
+        let t = next(3) as usize;
+        let pick = next(100);
+        let k = next(if t == 1 { 200 } else { 300 });
+        let name = format!("k{k}");
+        if pick < 55 {
+            let v = next(1_000_000) as i64;
+            let e = if t == 2 {
+                let rec = stores[0].claim(3);
+                stores[0].set_u32_raw(rec, 4, root);
+                DbRef {
+                    store_nr: 0,
+                    rec,
+                    pos: 8,
+                }
+            } else {
+                hash::alloc_entry(&h[t], strides[t], root, &mut stores)
+            };
+            if t == 1 {
+                let text = stores[0].set_str(&name);
+                stores[0].set_u32_raw(e.rec, e.pos, text);
+            } else {
+                stores[0].set_int(e.rec, e.pos, k as i64);
+            }
+            stores[0].set_int(e.rec, e.pos + 8, v);
+            hash_insert(&mut stores, &h[t], &e, keys[t]);
+            let _ = writeln!(script, "I {t} {k} {v}");
+        } else {
+            let key = if t == 1 {
+                Content::Str(Str::new(&name))
+            } else {
+                Content::Long(k as i64)
+            };
+            let found = hash::find(&h[t], &stores, keys[t], &[key]);
+            if pick < 75 {
+                if found.rec != 0 {
+                    let slot = hash::remove(&h[t], &found, &mut stores, keys[t]);
+                    if strides[t] != 0 {
+                        hash_free_entry(&mut stores, &h[t], &found, slot);
+                    } else {
+                        stores[0].delete(found.rec);
+                    }
+                }
+                let _ = writeln!(script, "R {t} {k}");
+            } else if pick < 97 {
+                let _ = writeln!(script, "F {t} {k}");
+                let _ = writeln!(want, "{} {}", found.rec, found.pos);
+            } else {
+                let n = next(400) as i64;
+                hash::reserve(&h[t], n, strides[t], &mut stores, keys[t]);
+                let _ = writeln!(script, "S {t} {n}");
+            }
+        }
+    }
+    for t in 0..3 {
+        let _ = writeln!(want, "len {}", hash::count(&h[t], &stores));
+        for e in hash::records_sorted(&h[t], &stores, keys[t]) {
+            let _ = writeln!(want, "k {} {}", e.rec, e.pos);
+        }
+        for e in hash::records_by_slot(&h[t], &stores) {
+            let _ = writeln!(want, "s {} {}", e.rec, e.pos);
+        }
+    }
+    let store = &stores[0];
+    let _ = writeln!(want, "size {}", store.capacity_words());
+    let mut fnv: u64 = 0xcbf2_9ce4_8422_2325;
+    for w in 0..store.capacity_words() {
+        for b in store.read::<u64>(w, 0).to_le_bytes() {
+            fnv = (fnv ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    let _ = writeln!(want, "bytes {fnv:016x}");
+    let mut c = String::new();
+    for part in [
+        include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_store.h"),
+        include_str!("../src/c/loft_rt.h"),
+        include_str!("../src/c/loft_keys.h"),
+        include_str!("../src/c/loft_hash.h"),
+    ] {
+        c.push_str(part);
+    }
+    c.push_str(
+        r#"
+static void loft_init(void) {}
+static const loft_tdesc T[1] = { { LOFT_T_STRUCT, 16, 0, 0, 0, 0, 0, 0, 0, 0 } };
+static const loft_key K_INT[1] = { { 1, 0, 0 } };
+static const loft_key K_TEXT[1] = { { 6, 0, 0 } };
+
+int main(int argc, char **argv) {
+    static loft_store_t st;
+    st.size = 100;
+    st.buf = (uint8_t *) calloc(st.size, 8);
+    st.defined = 1;
+    st.live = 1;
+    loft_st_init(&st);
+    loft_stores = &st;
+    loft_nstores = 1;
+    const loft_key *keys[3] = { K_INT, K_TEXT, K_INT };
+    uint32_t strides[3] = { 16, 16, 0 };
+    uint32_t root = loft_st_claim(&st, 3);
+    loft_ref h[3];
+    for (int t = 0; t < 3; t++) {
+        h[t].store_nr = 0;
+        h[t].rec = root;
+        h[t].pos = 8 + 4 * (uint32_t) t;
+        loft_h_write_seed(&st, loft_h_ensure_table(h[t], strides[t]), UINT64_C(0x0123456789abcdef));
+    }
+    FILE *f = fopen(argv[argc - 1], "r");
+    char op;
+    unsigned t, k;
+    long long v;
+    while (fscanf(f, " %c %u", &op, &t) == 2) {
+        char name[32];
+        int len;
+        if (op == 'S') {
+            if (fscanf(f, "%lld", &v) != 1) return 2;
+            loft_h_reserve(h[t], v, strides[t], keys[t], 1);
+            continue;
+        }
+        if (fscanf(f, "%u", &k) != 1) return 2;
+        len = sprintf(name, "k%u", k);
+        if (op == 'I') {
+            if (fscanf(f, "%lld", &v) != 1) return 2;
+            loft_ref e = loft_hash_entry(h[t], 16, t == 2);
+            if (t == 1) {
+                uint32_t text = loft_st_claim(&st, (uint32_t) (len + 15) / 8);
+                loft_set_u32(&st, text, 4, (uint32_t) len);
+                memcpy(loft_at(&st, text, 8), name, (size_t) len);
+                loft_set_u32(&st, e.rec, e.pos, text);
+            } else {
+                int64_t kk = k;
+                memcpy(loft_at(&st, e.rec, e.pos), &kk, 8);
+            }
+            int64_t vv = v;
+            memcpy(loft_at(&st, e.rec, e.pos + 8), &vv, 8);
+            (void) loft_hash_insert(T, 0, h[t], e, keys[t], 1, 0);
+            continue;
+        }
+        loft_kv kv = t == 1 ? loft_kv_text(loft_lit(name, (size_t) len)) : loft_kv_int(k);
+        loft_ref found = loft_h_find(h[t], keys[t], &kv, 1);
+        if (op == 'R') {
+            if (found.rec != 0) loft_hash_remove(T, 0, h[t], found, keys[t], 1, 0);
+        } else {
+            printf("%u %u\n", found.rec, found.pos);
+        }
+    }
+    for (int t = 0; t < 3; t++) {
+        uint32_t n;
+        printf("len %lld\n", (long long) loft_hash_len(h[t]));
+        for (int by_slot = 0; by_slot < 2; by_slot++) {
+            loft_ref *e = loft_hash_refs(h[t], keys[t], 1, by_slot, &n);
+            for (uint32_t i = 0; i < n; i++) printf("%c %u %u\n", by_slot ? 's' : 'k', e[i].rec, e[i].pos);
+            free(e);
+        }
+    }
+    printf("size %u\n", st.size);
+    uint64_t fnv = UINT64_C(0xcbf29ce484222325);
+    for (size_t i = 0; i < (size_t) st.size * 8; i++) fnv = (fnv ^ st.buf[i]) * UINT64_C(0x100000001b3);
+    printf("bytes %016llx\n", (unsigned long long) fnv);
+    return 0;
+}
+"#,
+    );
+    let dir = scratch("hash");
+    let (src, ops, exe) = (dir.join("hash.c"), dir.join("ops.txt"), dir.join("hash"));
+    fa::write(&src, &c).expect("write C");
+    fa::write(&ops, &script).expect("write ops");
+    let cc = loft::platform::process::harness_command("cc")
+        .args([
+            "-std=c99",
+            "-O2",
+            "-pedantic",
+            "-Werror",
+            "-Wno-unused-function",
+        ])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected loft_hash.h:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .arg(&ops)
+        .output()
+        .expect("run the hash program");
+    let got = String::from_utf8_lossy(&out.stdout);
+    if let Some((i, (w, g))) = want
+        .lines()
+        .zip(got.lines())
+        .enumerate()
+        .find(|(_, (w, g))| w != g)
+    {
+        panic!("line {i}: hash.rs answers {w:?}, the C {g:?}");
+    }
+    assert_eq!(
+        got.lines().count(),
+        want.lines().count(),
+        "the C stopped early: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

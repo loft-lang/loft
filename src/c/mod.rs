@@ -32,6 +32,8 @@ const RUNTIME: &str = concat!(
     include_str!("loft_cc.h"),
     include_str!("loft_store.h"),
     include_str!("loft_rt.h"),
+    include_str!("loft_keys.h"),
+    include_str!("loft_hash.h"),
     include_str!("loft_keyed.h"),
     include_str!("loft_io.h")
 );
@@ -473,13 +475,17 @@ impl<'a> Cx<'a> {
                 Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                     let list: Vec<String> = fields
                         .iter()
-                        .map(|f| format!("{{ {}, {} }}", f.position, f.content))
+                        .map(|f| {
+                            // A view member of a linked group borrows its records.
+                            let view = f.other_indexes().first() == Some(&u16::MAX);
+                            format!("{{ {}, {}, {} }}", f.position, f.content, u8::from(view))
+                        })
                         .collect();
                     let _ = writeln!(
                         out,
                         "static const loft_fld loft_fields{tp}[] = {{ {} }};",
                         if list.is_empty() {
-                            "{ 0, 0 }".into()
+                            "{ 0, 0, 0 }".into()
                         } else {
                             list.join(", ")
                         }
@@ -511,11 +517,19 @@ impl<'a> Cx<'a> {
                 }
                 _ => format!("{{ LOFT_T_SCALAR, {size}, 0, 0, 0, 0 }}"),
             };
-            // `owns_heap`: the Rust store's own answer (`Stores::type_owns_heap`), never re-derived.
+            // `owns_heap`: the Rust store's own answer (`Stores::type_owns_heap`), never re-derived;
+            // a hash's key parts, which its copy re-files by; `linked`, the type's own flag.
+            let keys = if matches!(t.parts, Parts::Hash(..)) {
+                let (name, n) = self.keys_of(tp);
+                format!("{name}, {n}")
+            } else {
+                "0, 0".into()
+            };
             let row = format!(
-                "{}, {} }}",
+                "{}, {}, {keys}, {} }}",
                 row.strip_suffix(" }").unwrap_or(&row),
-                u8::from(self.stores.type_owns_heap(tp))
+                u8::from(self.stores.type_owns_heap(tp)),
+                u8::from(self.stores.is_linked(tp))
             );
             rows.push(format!("    [{tp}] = {row},"));
         }
@@ -537,6 +551,8 @@ impl<'a> Cx<'a> {
     /// The tuple structs, each after the ones it holds, and the default images.
     fn typedefs(&self) -> String {
         let mut out = String::new();
+        // The table names the key parts of the hashes in it, so it is written first.
+        let table = self.copy_table();
         for tp in self.key_types.borrow().iter() {
             let parts: Vec<String> = self.stores.types[*tp as usize]
                 .keys
@@ -553,7 +569,7 @@ impl<'a> Cx<'a> {
                 }
             );
         }
-        out.push_str(&self.copy_table());
+        out.push_str(&table);
         for tp in self.enum_names.borrow().iter() {
             let count = match &self.stores.types[*tp as usize].parts {
                 crate::database::Parts::Enum(values) => values.len(),
@@ -690,6 +706,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "t_4text_replace" => Some("loft_replace"),
         "t_4text_byte_at" => Some("loft_byte_at"),
         "n_hash_sorted" => Some("loft_hash_sorted"),
+        "n_hash_unsorted" => Some("loft_hash_unsorted"),
         "t_4hash_len" => Some("loft_hash_len"),
         "n_read_bytes" => Some("loft_read_bytes"),
         "n_write_bytes" => Some("loft_write_bytes"),
