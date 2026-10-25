@@ -14787,6 +14787,113 @@ impl Parser {
         self.context = saved_ctx;
     }
 
+    /// loft#2179, `@FR-F-Ret` — an instance whose record return DECLARES no dep hands back a
+    /// store it owns on every path, so a path that returns a PARAMETER copies it first.
+    ///
+    /// A caller reads an empty return dep as *fresh* and adopts the result as its own store.
+    /// The concrete twin keeps that true by copying each borrowed path into its return buffer
+    /// (`ref_return`); an instance has no buffer, and where its return is a JOIN — a parameter
+    /// on one path, a store it minted on another (`if n == 0 { return a; } y: T = b; y`) —
+    /// [`Self::derive_monomorph_return_deps`] can name no dep, so the parameter path handed the
+    /// caller its own record as if it were new, and a write through the result wrote the
+    /// argument, on both backends.  [`Self::bind_monomorph_join_return`] closes this for a
+    /// value BRANCH in tail position; this closes every other place a parameter is returned —
+    /// an early `return a`, a bare `a` tail — by binding it into a local of its own
+    /// (`@FR-B-Copy`: the bind copies a record), so the declaration holds on every path.
+    ///
+    /// Runs after the deps are derived, and only where none were: a return that borrows on
+    /// every path declares it and is copied by the caller instead.
+    pub(crate) fn copy_param_returns_of_fresh_instance(&mut self, d_nr: u32) {
+        let ret = self.data.def(d_nr).returned().clone();
+        if !matches!(ret, Type::Reference(_, _) | Type::Enum(_, true, _))
+            || !ret.depend().is_empty()
+        {
+            return;
+        }
+        let saved_ctx = self.context;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = d_nr;
+        let mut code =
+            std::mem::replace(&mut self.data.definitions[d_nr as usize].code, Value::Null);
+        if let Value::Block(bl) = &mut code {
+            let n = bl.operators.len();
+            for (i, op) in bl.operators.iter_mut().enumerate() {
+                self.copy_returned_params(op, &ret, i + 1 == n);
+            }
+        }
+        self.data.definitions[d_nr as usize].code = code;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = saved_ctx;
+    }
+
+    /// The walk of [`Self::copy_param_returns_of_fresh_instance`]: each record PARAMETER in
+    /// return position — under a `return`, or as the tail when `tail` — becomes a copy into a
+    /// fresh local, which is then what the site returns.
+    fn copy_returned_params(&mut self, node: &mut Value, ret: &Type, tail: bool) {
+        let is_param = |p: &Self, v: &Value| match v.unspan() {
+            Value::Var(x) => {
+                p.vars.is_argument(*x)
+                    && !p.vars.name(*x).starts_with("__")
+                    && matches!(
+                        p.vars.tp(*x),
+                        Type::Reference(_, _) | Type::Enum(_, true, _)
+                    )
+            }
+            _ => false,
+        };
+        let copied = |p: &mut Self, x: Value| {
+            let tmp = p.create_unique("__ret_param", ret);
+            p.vars.defined(tmp);
+            (crate::data::v_set(tmp, x), tmp)
+        };
+        match node {
+            Value::Span(b) => self.copy_returned_params(&mut b.1, ret, tail),
+            Value::Return(inner) => {
+                if is_param(self, inner) {
+                    let x = std::mem::replace(&mut **inner, Value::Null);
+                    let (set, tmp) = copied(self, x);
+                    *node = Value::Insert(vec![set, Value::Return(Box::new(Value::Var(tmp)))]);
+                } else {
+                    self.copy_returned_params(inner, ret, true);
+                }
+            }
+            Value::Var(_) if tail && is_param(self, node) => {
+                let x = std::mem::replace(node, Value::Null);
+                let (set, tmp) = copied(self, x);
+                *node = Value::Insert(vec![set, Value::Var(tmp)]);
+            }
+            Value::If(_, t, e) => {
+                self.copy_returned_params(t, ret, tail);
+                self.copy_returned_params(e, ret, tail);
+            }
+            Value::Block(b) => {
+                let n = b.operators.len();
+                for (i, op) in b.operators.iter_mut().enumerate() {
+                    self.copy_returned_params(op, ret, tail && i + 1 == n);
+                }
+            }
+            // A loop's last statement is not the function's value; only a `return` in it is.
+            Value::Loop(b) => {
+                for op in &mut b.operators {
+                    self.copy_returned_params(op, ret, false);
+                }
+            }
+            Value::Insert(ops) => {
+                let n = ops.len();
+                for (i, op) in ops.iter_mut().enumerate() {
+                    self.copy_returned_params(op, ret, tail && i + 1 == n);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// loft#1872, `@FR-F-Ret` — a value branch whose leaves hand back a PARAMETER on one arm
     /// and a CALL's result on another: a recursive or delegating instance's Join.  Bound whole
     /// into one owned local, the parameter arm is copied at that bind (both backends guard a
@@ -19954,6 +20061,10 @@ impl Parser {
                         if !dep.contains(&a) {
                             dep.push(a);
                         }
+                        if site == RetSite::MidReturn {
+                            self.mid_return_param_deps
+                                .insert((self.context, self.first_pass, a));
+                        }
                         if chain_site
                             && !signature_only
                             && let Some(tail) = body.last_mut()
@@ -20227,6 +20338,15 @@ impl Parser {
                     .collect::<Vec<_>>()
             }
             .into_iter()
+            // loft#2179 — and not borrowed by an EARLIER mid-body `return` of this pass.  A
+            // mid-body site's `body` is its own value only, so without this `return b` pruned
+            // the `a` an earlier `return a` merged, the function declared `-> P["b"]`, and a
+            // caller witnessing one argument adopted the other's store and wrote through it.
+            .filter(|(a, _)| {
+                !self
+                    .mid_return_param_deps
+                    .contains(&(self.context, self.first_pass, *a))
+            })
             .filter(|(_, name)| {
                 let var = self.vars.var(name);
                 // NOT in the tail-source `expanded` set AND not borrowed by a

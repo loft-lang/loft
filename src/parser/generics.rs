@@ -812,6 +812,9 @@ impl Parser {
         // forwards a nested generic's borrow (`g5<T>(x) -> T { g1(x) }`) read the TEMPLATE's
         // dep-free `-> T` above.  Only where no dep was derived, so nothing is written twice.
         self.derive_monomorph_return_deps(d_nr, g_nr);
+        // loft#2179 — what the deps could not name, the body now copies: an instance declared
+        // fresh returns no parameter's store.
+        self.copy_param_returns_of_fresh_instance(d_nr);
         // The body's text-return promotion ran while its tail call still named the nested
         // TEMPLATE (`inner(s, c)` in `outer<S>(s: S) -> S?`): not a text call, nothing to
         // promote.  Now that the call names `inner`'s monomorph, ask again — a `-> text?`
@@ -1714,6 +1717,9 @@ impl Parser {
                 // The body is fresh, so every call it makes to ANOTHER generic has to be
                 // retargeted at that one's monomorph again.
                 self.instantiate_nested_generics(d_nr, &bindings);
+                // loft#2179 — and the refilled body copies its parameter returns again: the
+                // deps kept from the first instantiation still say fresh.
+                self.copy_param_returns_of_fresh_instance(d_nr);
                 // And the text-return promotion has to be asked again: the first
                 // instantiation asked it of the pass-1 body, whose tail call still named
                 // the nested TEMPLATE (`-> S?` — not text, so nothing to promote), and the
