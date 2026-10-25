@@ -144,14 +144,11 @@ pub fn at_ticks(value: i64) {
         eprint!("{line}");
         return;
     }
-    let file = crate::file_access::open_with(
-        path,
-        std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(!first)
-            .truncate(first),
-    );
+    let file = if first {
+        crate::file_access::create(path)
+    } else {
+        crate::file_access::append(path)
+    };
     if let Ok(mut f) = file {
         let _ = f.write_all(line.as_bytes());
     }

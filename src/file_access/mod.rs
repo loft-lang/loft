@@ -329,6 +329,22 @@ pub fn create(path: impl HostPath) -> io::Result<std::fs::File> {
     })
 }
 
+/// Create the file if it is not there, and open it for appending.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn append(path: impl HostPath) -> io::Result<std::fs::File> {
+    let path = &*path.to_path_text();
+    run(path, |p| {
+        let opened = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)?;
+        emulated::stream_base(path, p)?;
+        Ok(opened)
+    })
+}
+
 /// Open an existing file for reading AND writing, neither creating nor truncating it.
 ///
 /// # Errors
