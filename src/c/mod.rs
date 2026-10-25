@@ -1059,6 +1059,13 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
             Type::RefVar(inner) => inner,
             tp => tp,
         };
+        // A name the first pass met before its declaration became a local of no type; the
+        // second pass resolved it, so nothing binds it and the scope pass never scoped it.
+        // It is declared as a placeholder nothing reads.
+        if tp.is_unknown() && !args.contains(&v) && vars.scope(v) == u16::MAX {
+            shapes.push(CType::Int);
+            continue;
+        }
         let c = cx.ctype(tp).filter(|c| *c != CType::Void).ok_or_else(|| {
             let what = if args.contains(&v) {
                 "parameter"
