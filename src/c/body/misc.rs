@@ -144,8 +144,7 @@ impl FnWriter<'_> {
         }
     }
 
-    /// The vector reshapes (insert, reserve, keep a range) and the size operators: the end of
-    /// the operator chain, holding the refusal that names an operator not carried.
+    /// The vector reshapes (insert, reserve, keep a range) and the size operators.
     fn vector_shape_operator(
         &mut self,
         name: &str,
@@ -210,6 +209,39 @@ impl FnWriter<'_> {
                 self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
                 Ok(E::new(t, K::Ref))
             }
+            ("OpKeepRange", [v, lo, hi, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) || self.cx.stores.type_owns_heap(tp) {
+                    return Err("a kept range of elements that own records".into());
+                }
+                let size = self.cx.stores.size(tp);
+                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
+                let [v, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a kept range without three operands".to_string())?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_keep_range({}, {}, {}, {size})",
+                        as_ref(v)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
+                    K::Void,
+                ))
+            }
+            _ => self.child_record_operator(name, args, ind),
+        }
+    }
+
+    /// A struct field's child record (a function value's closure, `@FR-L-CapOwn`): the end of
+    /// the operator chain, holding the refusal that names an operator not carried.
+    fn child_record_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        match (name, args) {
             ("OpRefFromChildRec", [f]) => {
                 let f = self.expr(f, ind)?;
                 Ok(E::new(
@@ -233,26 +265,6 @@ impl FnWriter<'_> {
                     ),
                 );
                 Ok(E::new(t, K::Ref))
-            }
-            ("OpKeepRange", [v, lo, hi, tp]) => {
-                let tp = u16::try_from(Self::literal(tp, "element type")?)
-                    .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) || self.cx.stores.type_owns_heap(tp) {
-                    return Err("a kept range of elements that own records".into());
-                }
-                let size = self.cx.stores.size(tp);
-                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
-                let [v, lo, hi] = <[E; 3]>::try_from(es)
-                    .map_err(|_| "a kept range without three operands".to_string())?;
-                Ok(E::new(
-                    format!(
-                        "loft_vec_keep_range({}, {}, {}, {size})",
-                        as_ref(v)?,
-                        as_int(lo)?,
-                        as_int(hi)?
-                    ),
-                    K::Void,
-                ))
             }
             _ => Err(format!("operator {name}")),
         }
