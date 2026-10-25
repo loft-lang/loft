@@ -5622,12 +5622,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // Reads only: the build's WRITES are emitted from `vec` / `dest` after this, so the
         // rename cannot redirect an append.
         if let Some(place) = field_place {
+            // A field is appended to by `+=` and replaced by `=` (`assign_replaces`).
+            let appending = !self.assign_replaces;
+            let is_dest = |n: &Value| self.field_place(n).is_some_and(|p| p == place);
             for part in parts.iter_mut() {
-                part.map_nodes(&mut |n| {
-                    if self.field_place(n).is_some_and(|p| p == place) {
-                        *n = Value::Var(src);
-                    }
-                });
+                let mut rename = |part: &mut Value| {
+                    part.map_nodes(&mut |n| {
+                        if is_dest(n) {
+                            *n = Value::Var(src);
+                        }
+                    });
+                };
+                if appending {
+                    self.rename_reads_keeping_ref_places(part, &is_dest, &mut rename);
+                } else {
+                    rename(part);
+                }
             }
         } else {
             // A `&` link shares the destination's store, so a read spelled through the link
@@ -5642,10 +5652,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             let appending = !(vec == self.assign_target && self.assign_replaces);
             for name in names {
                 for part in parts.iter_mut() {
+                    let mut rename =
+                        |part: &mut Value| crate::parser::collections::rename_var(part, name, src);
                     if appending {
-                        self.rename_reads_keeping_ref_places(part, name, src);
+                        let is_dest = |n: &Value| matches!(n, Value::Var(v) if *v == name);
+                        self.rename_reads_keeping_ref_places(part, &is_dest, &mut rename);
                     } else {
-                        crate::parser::collections::rename_var(part, name, src);
+                        rename(part);
                     }
                 }
             }
@@ -5665,11 +5678,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// removes its records: the interpreter read null (H-Removed) and `--native` read the
     /// freed record, for every node but the last, silently.
     ///
-    /// Only the place's ROOT is spared — the chain of element and field steps down from the
-    /// destination.  What the place READS to get there (the index, `len(nodes) - 1`) is a read
-    /// like any other and still sees the snapshot, as `(I-Comp)` asks.  A `=` replace detaches
-    /// its destination, so it keeps the plain rename.
-    fn rename_reads_keeping_ref_places(&self, part: &mut Value, from: u16, to: u16) {
+    /// Only the place's ROOT is spared — the destination at the end of the chain of element and
+    /// field steps, `is_dest` saying which node that is (a variable, or a field place such as
+    /// `h.list`).  What the place READS to get there (the index, `len(nodes) - 1`) is a read like
+    /// any other and still sees the snapshot, as `(I-Comp)` asks: `rename` runs over everything
+    /// else.  A `=` replace detaches its destination, so it keeps the plain rename.
+    fn rename_reads_keeping_ref_places(
+        &self,
+        part: &mut Value,
+        is_dest: &dyn Fn(&Value) -> bool,
+        rename: &mut dyn FnMut(&mut Value),
+    ) {
         // A place step: its FIRST argument is the record or vector the step reads into.
         let steps: Vec<u32> = [
             "OpVectorRef",
@@ -5682,9 +5701,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         .map(|n| self.data.def_nr(n))
         .collect();
         let set_ref = self.data.def_nr("OpSetDbRef");
-        // Walks each pointer-field place down to its root and swaps the root `Var(a)` for
-        // `Var(b)`: out of the rename's way, and back after it.
-        let swap_roots = |part: &mut Value, a: u16, b: u16| {
+        // Walks each pointer-field place down its steps to the destination and hands that
+        // node to `at_root`.  The second walk meets the same places in the same order: the
+        // rename changes what a place reads, never its steps.
+        let walk = |part: &mut Value, at_root: &mut dyn FnMut(&mut Value) -> bool| {
             part.map_nodes(&mut |n| {
                 let Value::Call(d, args) = n else { return };
                 if *d != set_ref || args.len() < 3 {
@@ -5692,23 +5712,50 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 }
                 let mut at = &mut args[2];
                 loop {
+                    if at_root(at) {
+                        break;
+                    }
                     match at {
                         Value::Span(sp) => at = &mut sp.1,
-                        Value::Call(op, step_args) if steps.contains(op) && !step_args.is_empty() => {
+                        Value::Call(op, step_args)
+                            if steps.contains(op) && !step_args.is_empty() =>
+                        {
                             at = &mut step_args[0];
-                        }
-                        Value::Var(v) if *v == a => {
-                            *v = b;
-                            break;
                         }
                         _ => break,
                     }
                 }
             });
         };
-        swap_roots(part, from, u16::MAX);
-        crate::parser::collections::rename_var(part, from, to);
-        swap_roots(part, u16::MAX, from);
+        // Out of the rename's way behind a placeholder no variable is, and back after it.
+        let mut roots: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+        walk(part, &mut |n| {
+            if is_dest(n) {
+                roots.push_back(std::mem::replace(n, Value::Var(u16::MAX)));
+                true
+            } else {
+                false
+            }
+        });
+        if roots.is_empty() {
+            rename(part);
+            return;
+        }
+        rename(part);
+        walk(part, &mut |n| {
+            if matches!(n, Value::Var(v) if *v == u16::MAX) {
+                if let Some(root) = roots.pop_front() {
+                    *n = root;
+                }
+                true
+            } else {
+                false
+            }
+        });
+        debug_assert!(
+            roots.is_empty(),
+            "a pointer-field place lost its root in the rename"
+        );
     }
 
     /// Does a comprehension being built into `vec` READ `vec` itself?
