@@ -21,13 +21,17 @@
 // WITNESS: each message names the image, the key or the range, and what was loaded.
 // HOLDS: `golden-images-whole.loft` (the same images loaded whole).
 
+// The images are read from the workspace root, the one directory every runner shares: an
+// interpreter run, the in-process test runner and a native binary built in a scratch
+// directory each anchor a relative path elsewhere.
+#cwd
 struct GRec { k: integer, name: text, tags: vector<integer>, v: integer }
 struct GText { name: text, v: integer }
 struct GNarrow { k: integer limit(1000, 1200), v: integer }
 struct GPin { x: integer, y: integer, n: integer }
 struct GWord { w: text, hits: integer }
 
-fn img(name: text) -> text { "../golden/images/h3-i2-r1-t1/{name}.store" }
+fn img(name: text) -> text { "tests/golden/images/h3-i2-r1-t1/{name}.store" }
 
 fn check_hash(layout: text) {
   one: hash<GRec[k]> = [];

@@ -24,6 +24,10 @@
 // WITNESS: each message names the image, the record and the value read.
 // HOLDS: `tests/store_persist_loft.rs` (the same structures written and read by one build).
 
+// The images are read from the workspace root, the one directory every runner shares: an
+// interpreter run, the in-process test runner and a native binary built in a scratch
+// directory each anchor a relative path elsewhere.
+#cwd
 struct GRec { k: integer, name: text, tags: vector<integer>, v: integer }
 struct GText { name: text, v: integer }
 struct GNarrow { k: integer limit(1000, 1200), v: integer }
@@ -33,7 +37,7 @@ enum GKind { Plain, Named { label: text, n: integer } }
 struct GInner { a: integer, b: text }
 struct GRoot { title: text, nums: vector<integer>, inner: GInner, kind: GKind, f: float, small: integer limit(-100, 100) }
 
-fn img(name: text) -> text { "../golden/images/h3-i2-r1-t1/{name}.store" }
+fn img(name: text) -> text { "tests/golden/images/h3-i2-r1-t1/{name}.store" }
 
 fn rec_ok(e: GRec, i: integer) -> boolean {
   e.k == i * 7 - 1000 && e.name == "rec-{i}" && len(e.tags) == 2 && e.tags[0] == i % 5

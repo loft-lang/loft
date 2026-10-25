@@ -5240,6 +5240,11 @@ impl Stores {
     /// store builtin.
     #[cfg(feature = "mmap")]
     pub fn persist_copy(&mut self, slot: u16, path: &std::path::Path) -> bool {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = path.to_str().and_then(|p| self.image_path(p)) else {
+            return false;
+        };
+        let path = std::path::Path::new(&resolved);
         let idx = slot as usize;
         if idx >= self.allocations.len() || self.allocations[idx].free {
             return false;
@@ -5323,6 +5328,18 @@ impl Stores {
         false
     }
 
+    /// The file a store builtin names by `raw`: a relative path re-homed against the
+    /// program's anchor, as every file builtin's is (`resolve_path`), and a URL left as it
+    /// is.  Read raw, a relative image path resolved against the process's working
+    /// directory, which the CLI moves to the anchor before a run — and an in-process host
+    /// (the test runner, the REPL) does not: the image was looked for beside the caller.
+    fn image_path(&self, raw: &str) -> Option<String> {
+        if raw.starts_with("http://") || raw.starts_with("https://") {
+            return Some(raw.to_string());
+        }
+        self.resolve_path(raw)
+    }
+
     /// Load a persisted store image at `path` into `slot`, HEAP-backed.  There is
     /// no mmap, so it works on **every** backend.  The slot's empty store is replaced by a heap
     /// store copied from the file, keeping the slot bookkeeping.  Returns
@@ -5330,6 +5347,11 @@ impl Stores {
     /// `Store::load` signature check under `catch_unwind`), never a misread.
     /// @PLN97 arc G Phase 1 (#522).
     pub fn load_path(&mut self, slot: u16, path: &std::path::Path) -> bool {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = path.to_str().and_then(|p| self.image_path(p)) else {
+            return false;
+        };
+        let path = std::path::Path::new(&resolved);
         let slot_idx = slot as usize;
         if slot_idx >= self.allocations.len() {
             return false;
@@ -6928,6 +6950,11 @@ impl Stores {
     }
 
     pub fn load_path_untrusted(&mut self, slot: u16, path: &std::path::Path) -> bool {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = path.to_str().and_then(|p| self.image_path(p)) else {
+            return false;
+        };
+        let path = std::path::Path::new(&resolved);
         // An older layout converts in memory, as `store_load` does (@PLN196); the converter
         // validates the image's structure before it reads a record.
         if self.layout_changed(slot, path) {
@@ -7157,6 +7184,11 @@ impl Stores {
     /// structural root position in the image), NOT the raw bytes.
     #[cfg(paged_store)]
     pub fn load_range(&mut self, local: &DbRef, path: &str, lo: i64, hi: i64) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         if !self.layout_gate_ok(path, local) {
             return 0;
         }
@@ -7863,6 +7895,11 @@ impl Stores {
     /// -keyed copyable hash.
     #[cfg(paged_store)]
     pub fn load_key_text(&mut self, local: &DbRef, path: &str, key: &str) -> bool {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return false;
+        };
+        let path = resolved.as_str();
         if !self.layout_gate_ok(path, local) {
             return false;
         }
@@ -7929,6 +7966,11 @@ impl Stores {
     /// stepping at the cap, so the untaken tail is never fetched.
     #[cfg(paged_store)]
     pub fn load_prefix(&mut self, local: &DbRef, path: &str, pre: &str, limit: i64) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         if !self.layout_gate_ok(path, local) {
             return 0;
         }
@@ -8017,6 +8059,11 @@ impl Stores {
         till: &[i64],
         limit: i64,
     ) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         if !self.layout_gate_ok(path, local) {
             return 0;
         }
@@ -8102,6 +8149,11 @@ impl Stores {
     /// FLAT-struct restriction (scalar fields only — no relocation yet).
     #[cfg(paged_store)]
     pub fn load_keys(&mut self, local: &DbRef, path: &str, keys_vals: &[i64]) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         let key_sets: Vec<Vec<crate::keys::Content>> = keys_vals
             .iter()
             .map(|&kv| vec![crate::keys::Content::Long(kv)])
@@ -8124,6 +8176,11 @@ impl Stores {
     /// the shape the batch form is for.
     #[cfg(paged_store)]
     pub fn load_keys_text(&mut self, local: &DbRef, path: &str, keys_vals: &[&str]) -> i64 {
+        // A relative path is the program's, re-homed against its anchor (`resolve_path`).
+        let Some(resolved) = self.image_path(path) else {
+            return 0;
+        };
+        let path = resolved.as_str();
         let key_sets: Vec<Vec<crate::keys::Content>> = keys_vals
             .iter()
             .map(|k| vec![crate::keys::Content::Str(crate::keys::Str::new(k))])
