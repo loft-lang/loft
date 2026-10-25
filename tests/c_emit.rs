@@ -1602,9 +1602,11 @@ static int word_of(char *out, unsigned k) {
     return sprintf(out, "prefix%u", k);
 }
 
-static void ids(const char *tag, uint32_t *r, uint32_t n) {
+/* `n` is read through its address, after `r`'s call wrote it: C leaves the order the arguments
+ * of one call are evaluated in unspecified, and x86-64 gcc read a stale count first. */
+static void ids(const char *tag, uint32_t *r, const uint32_t *n) {
     printf("%s", tag);
-    for (uint32_t i = 0; i < n; i++) printf(" %u", r[i]);
+    for (uint32_t i = 0; i < *n; i++) printf(" %u", r[i]);
     printf("\n");
     free(r);
 }
@@ -1664,18 +1666,18 @@ int main(int argc, char **argv) {
         } else if (op == 'N') {
             if (fscanf(f, "%lld %lld %u", &x, &y, &lim) != 3) return 2;
             int64_t from[2] = { x, y };
-            ids("n", loft_rx_near(pts, K_AXES, 2, from, lim, &n), n);
+            ids("n", loft_rx_near(pts, K_AXES, 2, from, lim, &n), &n);
         } else if (op == 'B') {
             if (fscanf(f, "%lld %lld %lld %lld", &x, &y, &tx, &ty) != 4) return 2;
             int64_t from[2] = { x, y }, till[2] = { tx, ty };
-            ids("b", loft_rx_box(pts, K_AXES, 2, from, till, SIZE_MAX, &n), n);
+            ids("b", loft_rx_box(pts, K_AXES, 2, from, till, SIZE_MAX, &n), &n);
         } else if (op == 'X') {
             if (fscanf(f, "%63s", buf) != 1) return 2;
-            ids("x", loft_rx_prefix(words, K_WORD, loft_lit(buf, strlen(buf)), SIZE_MAX, &n), n);
+            ids("x", loft_rx_prefix(words, K_WORD, loft_lit(buf, strlen(buf)), SIZE_MAX, &n), &n);
         }
     }
-    ids("p", loft_rx_records(pts, &n), n);
-    ids("t", loft_rx_records(words, &n), n);
+    ids("p", loft_rx_records(pts, &n), &n);
+    ids("t", loft_rx_records(words, &n), &n);
     printf("size %u\n", st.size);
     uint64_t fnv = UINT64_C(0xcbf29ce484222325);
     for (size_t i = 0; i < (size_t) st.size * 8; i++) fnv = (fnv ^ st.buf[i]) * UINT64_C(0x100000001b3);
