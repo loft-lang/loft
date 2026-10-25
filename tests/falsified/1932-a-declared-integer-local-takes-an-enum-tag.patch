@@ -1,11 +1,10 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 69d432df4..93424a4b3 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -4323,22 +4323,6 @@ use a separate collection or add after the loop"
-         } else {
-             self.parse_operators(expect, code, &mut parent_tp, 0)
-         };
+@@ -4694,22 +4694,6 @@
+                 self.refuse_link_into_record_place(&rhs_pos);
+             }
+         }
 -        // `@FR-T-Sub` / `@FR-C-Var` — a plain enum converts to its integer tag at EVERY checking
 -        // position, and a local DECLARED `integer` is one: the argument, return, field and
 -        // element positions took `Colour.Green` as 2 while `y: integer = Colour.Green` (and a
