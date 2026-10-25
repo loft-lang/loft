@@ -10,14 +10,16 @@ use super::{EmitCtx, OpEmitter};
 use crate::data::Value;
 use std::io;
 
-/// `OpConvRefFromNull` — the null-reference literal.  (Native only; the
-/// interpreter uses the op's own `#rust` body, which differs — a pre-existing
-/// divergence left untouched by the match-elimination.)
+/// `OpConvRefFromNull` — the null-reference literal: the CANONICAL null (`DbRef::NULL`,
+/// `store_nr == u16::MAX`), which the interpreter's `stores.null()` answers and `OpRefIsNull`
+/// tests.  Store 0 with record 0 read as null to `OpEqRef`'s `rec == 0` but not to
+/// `OpRefIsNull`, so a checked variant cast's miss typed `V?` was not null on `--native`
+/// (loft#2186).
 pub struct OpConvRefFromNullEmitter;
 
 impl OpEmitter for OpConvRefFromNullEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, _args: &[Value]) -> io::Result<()> {
-        write!(ctx.w, "DbRef {{ store_nr: 0, rec: 0, pos: 0 }}")
+        write!(ctx.w, "DbRef {{ store_nr: u16::MAX, rec: 0, pos: 0 }}")
     }
 }
 

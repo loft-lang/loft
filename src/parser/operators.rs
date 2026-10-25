@@ -5590,6 +5590,15 @@ impl Parser {
                         rt = defaulted;
                     }
                 }
+                // @C131 — `as V?` is the CHECKED variant cast: null on a miss, so its type is
+                // `V?`, and a non-null destination needs a discharge (loft#2186) — typed `V`, a
+                // non-null `V` held null and a record update took it as a present base.
+                if nullable_cast
+                    && !matches!(rt, Type::Optional(_))
+                    && self.variant_cast_disc(ctp, &rt).is_some()
+                {
+                    rt = Type::optional(rt.clone());
+                }
                 // @C131 — an enum value cast to one of its variants (`s as Circle`).  Where the
                 // miss is provable the cast is refused (a known `Rect` has no `as Circle`, above);
                 // where it is not, a miss answers the variant with every field at its default
