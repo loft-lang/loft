@@ -1302,7 +1302,10 @@ mod tests {
             store.vector_push_long(&mut vec, 10);
             store.vector_push_long(&mut vec, 11);
         }
-        assert!(RESIZES.lock().unwrap().is_empty(), "a push into room crossed the bridge");
+        assert!(
+            RESIZES.lock().unwrap().is_empty(),
+            "a push into room crossed the bridge"
+        );
         // The third does not fit: one resize, to ~2x the minimum of 11 longs (23 words).
         for v in 12..32 {
             unsafe { store.vector_push_long(&mut vec, v) };
