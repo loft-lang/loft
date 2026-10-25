@@ -164,8 +164,23 @@ jobs:
            sweep that validated nothing."
             exit 1
           fi
-          echo "packages=$entries" >> "$GITHUB_OUTPUT"
-          echo "scope=$SCOPE, $(printf '%s' "$entries" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') legs"
+          # One leg per PACKAGE, its versions in turn.  GitHub refuses a matrix of more than 256
+          # jobs and says nothing: the full scope reached 385 versions and the run ended with
+          # `validate` never created, red with every job it did create green.  Grouping also
+          # builds loft once per package rather than once per version.
+          legs=$(printf '%s' "$entries" | python3 -c '
+          import json, sys
+          groups = {}
+          for e in json.load(sys.stdin):
+              groups.setdefault(e.rsplit("@", 1)[0], []).append(e)
+          print(json.dumps([" ".join(v) for v in groups.values()]))')
+          n_legs=$(printf '%s' "$legs" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          if [ "$n_legs" -gt 256 ]; then
+            echo "::error::${n_legs} legs exceed GitHub's 256-job matrix limit — the validate job would never start."
+            exit 1
+          fi
+          echo "packages=$legs" >> "$GITHUB_OUTPUT"
+          echo "scope=$SCOPE, $(printf '%s' "$entries" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') versions in ${n_legs} legs"
           echo "validating: $entries"
 
           # Coercing the type keeps the sweep RUNNING, but on its own it would also
@@ -241,7 +256,20 @@ jobs:
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
       - name: Validate ${{ matrix.package }}
-        run: scripts/registry_validate.sh ${{ matrix.package }}
+        env:
+          VERSIONS: ${{ matrix.package }}
+        run: |
+          # Every version of the package, each named on its own when it fails.
+          failed=0
+          for v in $VERSIONS; do
+            echo "::group::$v"
+            if ! scripts/registry_validate.sh "$v"; then
+              echo "::error title=registry-validation::$v failed"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
