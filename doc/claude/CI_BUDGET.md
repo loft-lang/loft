@@ -455,7 +455,7 @@ edit.  Measured on the 24-core box; the dated runs are in the history companion
 | the tests my diff touches | `find_problems.sh --changed` | seconds; a `src/` edit selects the curated set (~70 s warm) on top of the dev test-binary build — and, because the curated set holds browser binaries, two more full release builds of the crate for the stale wasm rlibs first; `--subject <name>` without a browser binary skips them |
 | one area | `find_problems.sh --subject <name>` | seconds to a minute |
 | the whole gate | `scripts/ci-run.sh start`, or `gh workflow run ci.yml` | ~20 min; two live gates double it |
-| the receipt of a new guard | `make falsify` | two dev builds in the shared falsify target dir — after the fix is committed, never while an edit is pending |
+| the receipt of a new guard | `make falsify` | the control is installed main (no build); this tree is the checkout's own dev build — ~20 s when `target/debug` is current, a crate recompile when it is not (a commit moves HEAD, which the build bakes in).  Beside a running gate it uses a separate target dir: ~9 min warm-deps, half an hour on a loaded box.  Never while an edit is pending |
 | release and lifetime of every shape | `cargo test --release --test ownership_drop_gate` | an hour class: dozens of native compiles on every core — nothing runs beside it |
 | which corpus files a lowering change moves | the census (CODEGEN_METHOD.md § the corpus census) | the emission diff: minutes; running every moved file natively: hours when the rule fires broadly — bound the native run by what the diff names |
 
