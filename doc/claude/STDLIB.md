@@ -620,6 +620,14 @@ a `.` or an exponent (`1.5`, `1e3`), or one that overflows `i64`, is a **`JNumbe
 `float` field read a `JNumber` as-is and widen a `JInteger`. Serialisation is exact
 in both cases. `json_number(x)` always builds a `JNumber` (it takes a `float`).
 
+**A `JsonValue` given no value is `JNull` (`@FR-D-Json`).** A record field of type
+`JsonValue` holds whatever JSON stands at its key — copied into the record's own store —
+and `JNull` when the key is missing or spelled `null`, in both `T.parse(text)` and
+`T.parse(json_parse(text))`; a literal that leaves the field out gives it `JNull` too.  A
+`null` element of a `vector<JsonValue>` is `JNull`.  Declare the field `JsonValue?` to tell
+a missing value apart: it then holds `null` (`info == null`).  Guard:
+`loft-suite/rules/types/D-Json/a-jsonvalue-given-no-value-is-jnull.loft`.
+
 | Function | Description |
 |---|---|
 | `json_parse(text) -> JsonValue` | Parse JSON; malformed input returns `JNull` |

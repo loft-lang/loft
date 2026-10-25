@@ -7618,7 +7618,16 @@ impl Parser {
                 // was skipped above; a genuinely `Optional` enum field is `Optional(Enum)`
                 // here (not `Enum`), so it null-fills correctly through `to_default` below.
                 // This is the `S{}` half of the one `has_default` rule `x?` enforces.
+                // `@FR-D-Json`: a `JsonValue` field is the one enum with a stated zero — `JNull`,
+                // JSON's own absence, the first variant — so an omitted one takes it.
                 if let Type::Enum(e, _, _) = &tp
+                    && self.data.def(*e).name == "JsonValue"
+                {
+                    // Built as the literal `JNull` is: a record of the variant (`EnumUnitLit`),
+                    // copied into the field.
+                    let e = *e;
+                    self.emit_variant_value(e, "JNull", &mut default);
+                } else if let Type::Enum(e, _, _) = &tp
                     && !self.data.def(*e).name.starts_with("__")
                     && !self.first_pass
                 {
@@ -7635,7 +7644,9 @@ impl Parser {
                 // tests/scripts/06-structs.loft locks this).  Pointer
                 // fields take the sentinel branch above: a pointer's zero
                 // value IS null.
-                default = to_default(&tp, &self.data);
+                if default == Value::Null {
+                    default = to_default(&tp, &self.data);
+                }
             } else if matches!(&default, Value::Block(b) if b.name == "EnumUnitLit") {
                 // @PLN22 Phase 1 — a mixed struct-enum unit-variant default
                 // (`mode: Mode = Idle`) is a SELF-CONTAINED allocation block whose

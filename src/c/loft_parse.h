@@ -130,6 +130,12 @@ typedef struct {
     const char *unfilled;
 } loft_pw;
 
+/* `@FR-D-Json`: `JsonValue`, the one enum whose default is a variant (`JNull`, tag 1). */
+#define LOFT_P_JNULL 1
+static int loft_p_is_json(const loft_pw *w, uint16_t tp) {
+    return tp != 0xFFFF && w->P[tp].kind == LOFT_P_ENUM && strcmp(w->P[tp].name, "JsonValue") == 0;
+}
+
 static int loft_p_coll(const loft_pw *w, uint16_t tp) {
     return tp != 0xFFFF && w->P[tp].kind == LOFT_P_VECTOR;
 }
@@ -212,7 +218,9 @@ static void loft_pw_default(loft_pw *w, uint16_t tp, int nullable, int final, lo
         if (!nullable && final) loft_set_text(rec, 0, loft_lit("", 0));
         else loft_p_u32(rec, 0);
         return;
-    case LOFT_P_ENUM: *loft_at(loft_store_of(rec), rec.rec, rec.pos) = 0; return;
+    case LOFT_P_ENUM:
+        *loft_at(loft_store_of(rec), rec.rec, rec.pos) = !nullable && loft_p_is_json(w, tp) ? LOFT_P_JNULL : 0;
+        return;
     case LOFT_P_BYTE: *loft_at(loft_store_of(rec), rec.rec, rec.pos) = t->nullable ? 255 : 0; return;
     case LOFT_P_SHORT: {
         uint16_t v = t->nullable ? 0 : 1;
@@ -271,6 +279,12 @@ static void loft_pw_default(loft_pw *w, uint16_t tp, int nullable, int final, lo
 static void loft_pw_absent(loft_pw *w, uint16_t tp, uint16_t rec_tp, uint16_t field, loft_ref slot) {
     if (loft_pw_declared(w, rec_tp, field, slot)) return;
     int nullable = loft_p_field_nullable(w, rec_tp, field);
+    /* `@FR-D-Json`: a `JsonValue` the text gives no value holds `JNull`, unless it is a field
+     * declared `JsonValue?`. */
+    if (loft_p_is_json(w, tp) && !(rec_tp != 0xFFFF && field != 0xFFFF && nullable)) {
+        *loft_at(loft_store_of(slot), slot.rec, slot.pos) = LOFT_P_JNULL;
+        return;
+    }
     /* `@FR-D-NoEnumF`: a non-null enum field has no value to take; the parse made none. */
     if (!nullable && !w->unfilled && tp != 0xFFFF && w->P[tp].kind == LOFT_P_ENUM && w->P[tp].strict_enum)
         w->unfilled = w->P[rec_tp].fields[field].name;
@@ -939,9 +953,6 @@ static void loft_jsv_copy(loft_ref slot, loft_ref sub) {
     loft_jv_free(&tree);
 }
 
-static int loft_p_is_json(const loft_pw *w, uint16_t tp) {
-    return w->P[tp].kind == LOFT_P_ENUM && strcmp(w->P[tp].name, "JsonValue") == 0;
-}
 
 static void loft_jsv_struct(loft_pw *w, loft_ref dest, uint16_t kt, loft_ref src);
 

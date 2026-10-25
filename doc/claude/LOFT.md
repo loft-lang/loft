@@ -855,7 +855,8 @@ variable: `f()#errors` does not parse, and a variable that is neither a record n
 refused.  The one-step `Type.parse(text)`, the `text as T` cast and the staged
 `Type.parse(json_parse(text))` all fill it; `json_errors()` carries the same mismatches as one
 text.  A field with no default cannot be left out: a record whose bare enum field declares no
-`= <variant>` is refused by `text as T` and `T.parse(…)` (`text-parse-may-leave-a-field-unfilled`),
+`= <variant>` is refused by `text as T` and `T.parse(…)` (`text-parse-may-leave-a-field-unfilled`)
+— except a `JsonValue` field, which takes `JNull` (`@FR-D-Json`, STDLIB.md § JsonValue surface),
 and the checked `text as T?` answers null when the text leaves that field out, sets it to
 `null`, or names a variant the enum does not have.  Guards:
 `loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft`,

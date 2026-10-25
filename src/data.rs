@@ -8187,8 +8187,10 @@ impl Data {
                     // only a genuinely `Optional`-typed field (below) defaults to null.  The
                     // synthetic `__nullable<…>` enum (a nullable struct field's inline rep) is
                     // excluded — it is handled as a real nullable.
+                    // `@FR-D-Json`: a `JsonValue` field defaults to `JNull`.
                     if let Type::Enum(e, _, _) = &ftp
                         && !self.def(*e).name.starts_with("__")
+                        && self.def(*e).name != "JsonValue"
                     {
                         let fname = self.attr_name(*d_nr, a);
                         let tn = ftp.name(self);

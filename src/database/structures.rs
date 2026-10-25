@@ -3429,6 +3429,16 @@ impl Stores {
             return;
         }
         let nullable = self.field_declared_nullable(rec_tp, field);
+        // `@FR-D-Json`: JSON's own absence is `JNull`, so a `JsonValue` the text gives no value
+        // holds it — a field declared `JsonValue`, an element, a value with no declaration.
+        // Only a field DECLARED `JsonValue?` holds null.
+        if self.types[tp as usize].name == "JsonValue"
+            && !(rec_tp != u16::MAX && field != u16::MAX && nullable)
+        {
+            self.store_mut(slot)
+                .set_byte(slot.rec, slot.pos, 0, crate::native::JV_DISCR_NULL);
+            return;
+        }
         // `@FR-D-NoEnumF`: a non-null enum field has no zero to take — its 0 IS its null — so a
         // parse that leaves one without a value has not produced the record (loft#2079).  The
         // checked cast reads this and answers null; the asserting forms are refused at compile
@@ -3759,6 +3769,7 @@ impl Stores {
         // record allocation (@PLN157 § V-e: ~5 % of the `smooth` row).
         enum Shape {
             Enum,
+            JsonNull,
             Byte(bool),
             Short(bool),
             ShortRaw(i32, bool),
@@ -3771,6 +3782,10 @@ impl Stores {
             Other,
         }
         let shape = match &self.types[tp as usize].parts {
+            // `@FR-D-Json`: a non-null `JsonValue` defaults to `JNull`, not to the null tag.
+            Parts::Enum(_) if !nullable && self.types[tp as usize].name == "JsonValue" => {
+                Shape::JsonNull
+            }
             Parts::Enum(_) => Shape::Enum,
             Parts::Byte(_, null) => Shape::Byte(*null),
             Parts::Short(_, null) => Shape::Short(*null),
@@ -3786,6 +3801,10 @@ impl Stores {
         match shape {
             Shape::Enum => {
                 self.store_mut(rec).set_byte(rec.rec, rec.pos, 0, 0);
+            }
+            Shape::JsonNull => {
+                self.store_mut(rec)
+                    .set_byte(rec.rec, rec.pos, 0, crate::native::JV_DISCR_NULL);
             }
             Shape::Byte(null) => {
                 self.store_mut(rec)
