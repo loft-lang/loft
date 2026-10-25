@@ -865,16 +865,7 @@ impl<'a> FnWriter<'a> {
         // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
         // every later read and write of it goes through.
         if self.store_links[var as usize] {
-            let name = var_name(self.vars.name(var), var);
-            if crate::scopes::link_set_repoints(self.cx.data, self.vars, var, x) {
-                self.bound[var as usize] = true;
-                let e = self.expr(x, ind)?;
-                self.line(ind, &format!("{name} = {};", as_ref(e)?));
-                self.flush(ind);
-                return Ok(());
-            }
-            let write = self.link_access(var, Some(x))?;
-            return self.stmt(&write, ind);
+            return self.store_link_set(var, x, ind);
         }
         if self.links[var as usize] && !self.params[var as usize] {
             if let Some(target) = self.stack_target(x) {
@@ -1227,45 +1218,7 @@ impl<'a> FnWriter<'a> {
                 self.line(ind, "}");
                 Ok(())
             }
-            Value::Tuple(vals) => {
-                let CType::Tuple(id) = c else {
-                    return Err("a tuple literal into a non-tuple".into());
-                };
-                let shapes = self.cx.tuple_shapes(id);
-                if shapes.len() != vals.len() {
-                    return Err("a tuple literal of another arity".into());
-                }
-                // Every element is evaluated before any is stored, as the bytecode pushes them
-                // all first: `s = (s.1, s.0)` reads the old members.  A literal reads nothing.
-                let constant = |x: &Value| {
-                    matches!(
-                        x.unspan(),
-                        Value::Int(_)
-                            | Value::Long(_)
-                            | Value::Float(_)
-                            | Value::Single(_)
-                            | Value::Boolean(_)
-                            | Value::Text(_)
-                            | Value::Null
-                    )
-                };
-                if vals.len() > 1 && !vals.iter().all(constant) {
-                    let mut held = Vec::with_capacity(vals.len());
-                    for (x, s) in vals.iter().zip(&shapes) {
-                        let t = self.temp(*s);
-                        self.assign(x, &t, *s, ind)?;
-                        held.push(t);
-                    }
-                    for (i, (t, s)) in held.iter().zip(shapes).enumerate() {
-                        self.copy_member(t, &format!("{target}.f{i}"), s, ind);
-                    }
-                    return Ok(());
-                }
-                for (i, (x, s)) in vals.iter().zip(shapes).enumerate() {
-                    self.assign(x, &format!("{target}.f{i}"), s, ind)?;
-                }
-                Ok(())
-            }
+            Value::Tuple(vals) => self.assign_tuple(vals, target, c, ind),
             v @ (Value::Return(_) | Value::Break(_) | Value::Continue(_)) => self.stmt(v, ind),
             v => {
                 let e = self.expr(v, ind)?;
@@ -1278,6 +1231,53 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
         }
+    }
+
+    /// A tuple literal into `target`, of shape `c`.
+    fn assign_tuple(
+        &mut self,
+        vals: &[Value],
+        target: &str,
+        c: CType,
+        ind: usize,
+    ) -> Result<(), String> {
+        let CType::Tuple(id) = c else {
+            return Err("a tuple literal into a non-tuple".into());
+        };
+        let shapes = self.cx.tuple_shapes(id);
+        if shapes.len() != vals.len() {
+            return Err("a tuple literal of another arity".into());
+        }
+        // Every element is evaluated before any is stored, as the bytecode pushes them
+        // all first: `s = (s.1, s.0)` reads the old members.  A literal reads nothing.
+        let constant = |x: &Value| {
+            matches!(
+                x.unspan(),
+                Value::Int(_)
+                    | Value::Long(_)
+                    | Value::Float(_)
+                    | Value::Single(_)
+                    | Value::Boolean(_)
+                    | Value::Text(_)
+                    | Value::Null
+            )
+        };
+        if vals.len() > 1 && !vals.iter().all(constant) {
+            let mut held = Vec::with_capacity(vals.len());
+            for (x, s) in vals.iter().zip(&shapes) {
+                let t = self.temp(*s);
+                self.assign(x, &t, *s, ind)?;
+                held.push(t);
+            }
+            for (i, (t, s)) in held.iter().zip(shapes).enumerate() {
+                self.copy_member(t, &format!("{target}.f{i}"), s, ind);
+            }
+            return Ok(());
+        }
+        for (i, (x, s)) in vals.iter().zip(shapes).enumerate() {
+            self.assign(x, &format!("{target}.f{i}"), s, ind)?;
+        }
+        Ok(())
     }
 
     fn assign_seq(
@@ -1325,6 +1325,21 @@ impl<'a> FnWriter<'a> {
                 _ => {}
             }
         }
+    }
+
+    /// `var = x` on a store link: a re-point takes the new place, anything else is written
+    /// through the place (`link_set_repoints` tells them apart, as for the bytecode).
+    fn store_link_set(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        if crate::scopes::link_set_repoints(self.cx.data, self.vars, var, x) {
+            self.bound[var as usize] = true;
+            let name = var_name(self.vars.name(var), var);
+            let e = self.expr(x, ind)?;
+            self.line(ind, &format!("{name} = {};", as_ref(e)?));
+            self.flush(ind);
+            return Ok(());
+        }
+        let write = self.link_access(var, Some(x))?;
+        self.stmt(&write, ind)
     }
 
     /// The read (`value` none) or the write of store link `v`, as the operator the bytecode
