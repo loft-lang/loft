@@ -369,11 +369,11 @@ pub fn preferred_runtime_rlib(
     has_uplifted.then(|| uplifted.to_path_buf())
 }
 
-/// Make `<profile>/libloft.rlib` the runtime the live rustc built, as cargo's uplift did.
+/// Make `<profile>/libloft.rlib` the runtime the live rustc built, as a cargo uplift does.
 ///
 /// Every lookup links the rlib at `<profile>/libloft.rlib` (and its `.rmeta` beside it), and
 /// derives the search path from that directory.  A cargo on the per-unit layout writes the
-/// rlib only to `<profile>/build/loft/<unit>/out/` and no longer uplifts it, so that path is
+/// rlib only to `<profile>/build/loft/<unit>/out/` and does not uplift it, so that path is
 /// either missing (a fresh tree) or a file an older toolchain left there (a restored cache),
 /// and every compile against it fails with `E0514`.  When the uplifted rlib is missing or
 /// was written by another rustc, and a per-unit one was written by this rustc, the newest
@@ -1684,6 +1684,15 @@ fn build_keyed_cdylib(
     // binary and leaves the library rlib behind.  Left bare, the message costs a
     // full gate: it surfaces as several unrelated-looking native tests failing ~9
     // minutes in, each naming a file that is present when you go and look.
+    // The per-unit layout's rlib, put where the lookup reads it (`refresh_runtime_uplift`).
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
+    {
+        for (dir, _) in crate::toolchain::rlib_search_dirs(&exe_dir) {
+            refresh_runtime_uplift(&dir);
+        }
+    }
     let (rlib, deps) = find_loft_rlib().ok_or(
         "libloft.rlib not found for this build — run `cargo build --release --lib` \
          (or `make check-rlib` to check before a gate); a `cargo build --bin loft` \
@@ -2128,9 +2137,9 @@ mod rmeta_identity_tests {
 
     const OTHER: &str = "rustc 0.0.1-nightly (deadbeef 2000-01-01)";
 
-    /// A cargo on the per-unit layout writes the fresh rlib under `build/loft/<unit>/out/` and
-    /// no longer uplifts it: the stale uplift a restored cache left is replaced by the unit
-    /// this rustc wrote, with its `.rmeta`; a missing uplift is created.
+    /// A cargo on the per-unit layout writes the fresh rlib only under `build/loft/<unit>/out/`:
+    /// a stale uplift a restored cache left is replaced by the unit this rustc wrote, with its
+    /// `.rmeta`, and a missing uplift is created.
     #[test]
     fn a_stale_or_missing_uplift_takes_the_unit_this_rustc_wrote() {
         let Some(live) = crate::toolchain::rustc_version() else {

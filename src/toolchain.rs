@@ -63,7 +63,6 @@ pub fn find_loft_rlib() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
         if !crate::file_access::is_dir(dir) {
             continue;
         }
-        crate::native_lib::refresh_runtime_uplift(dir);
         let exact = dir.join("libloft.rlib");
         if crate::file_access::exists(&exact) {
             return Some((exact, deps_dir.clone()));

@@ -384,6 +384,8 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
         crate::file_access::exists(dir.join("libloft.rlib"))
             && loft::cache::runtime_fingerprint_matches(dir, fp)
     };
+    // A cargo on the per-unit layout leaves the uplift to loft (`refresh_runtime_uplift`).
+    loft::native_lib::refresh_runtime_uplift(&profile_dir);
     if fresh(&profile_dir) {
         crate::platform::timing_record("wasmrlib", shape.name(), true, None);
         return Some(profile_dir);
@@ -508,6 +510,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     };
     let before = modified();
     let status = crate::platform::timing_exec("cargo", &subject, why, || cmd.status());
+    loft::native_lib::refresh_runtime_uplift(&profile_dir);
     match status {
         Ok(s) if s.success() && crate::file_access::exists(&rlib) => {
             // An unchanged rlib means cargo found it current for this source tree: this
