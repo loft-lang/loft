@@ -140,7 +140,7 @@ pub use par_safety::{
 pub use par_writes::{worker_calls_parent_write, worker_calls_parent_write_deep};
 pub(crate) use phase::{collect_fnref_captures, collect_fnref_targets, multi_assigned_in};
 use phase::{hidden_return_buffer_var, run_scan_phase};
-pub(crate) use places::value_view_places;
+pub(crate) use places::value_view_places_depth;
 pub use places::{ParamPlace, call_arg_place, compose_param_place, same_place};
 pub use reshape_refusals::{ReshapeRefusal, reshape_refusals};
 pub(crate) use returns::return_has_null_arm;

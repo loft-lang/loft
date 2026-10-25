@@ -9,7 +9,7 @@ use super::disturbance::{
     DisturbedParams, RemovedParams, ViewCause, disturbed_params_map, removed_params_map,
 };
 use super::places::{
-    ParamPlace, call_arg_place, compose_param_place, same_place, value_view_places,
+    ParamPlace, call_arg_place, compose_param_place, same_place, value_view_places_depth,
 };
 use super::view_walk::{ViewWalk, is_place_link};
 use crate::data::{Data, DefType, Type, Value};
@@ -112,11 +112,11 @@ fn arg_references_element_in(
         if *s != *t || matches!(rhs.unspan(), Value::Null) {
             return;
         }
-        let places = value_view_places(rhs, data, function);
+        let places = value_view_places_depth(rhs, data, function);
         if places.is_empty() {
             resolved = false;
         }
-        names |= places.iter().any(|p| same_place(*p, place));
+        names |= places.iter().any(|(p, _)| same_place(*p, place));
     });
     names || !resolved
 }
@@ -125,7 +125,7 @@ fn arg_references_element_in(
 /// container there, rather than the container's own slot (`&cv.data`, which a growth repoints
 /// and the reader re-reads, `(B-Ref-Alias)`'s in-versus-to)?
 ///
-/// Through [`value_view_places`], the one home for "which places does this value view", so a
+/// Through [`value_view_places_depth`], the one home for "which places does this value view", so a
 /// `?`-discharged or a nullable element read is the projection it is.  A value that names no
 /// place answers no: a scalar, a fresh record and a call's result alias nothing the callee
 /// can move.
@@ -136,9 +136,9 @@ fn names_element_in(value: &Value, place: ParamPlace, function: &Function, data:
     ) {
         return false;
     }
-    value_view_places(value, data, function)
+    value_view_places_depth(value, data, function)
         .iter()
-        .any(|p| same_place(*p, place))
+        .any(|(p, _)| same_place(*p, place))
 }
 
 /// The value an argument ultimately passes: the tail of any lifting preamble, with the

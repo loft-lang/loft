@@ -104,18 +104,8 @@ pub fn same_place(view: (u16, u32), disturbed: (u16, u32)) -> bool {
 /// ownership oracle and both emitters read: peeling an arbitrary `if` there would claim `a?` on
 /// a nullable parameter, whose lowering is an `if` with a `Var` arm, and answer `Borrowed` for
 /// a value the callee minted.
-pub(crate) fn value_view_places(
-    value: &Value,
-    data: &Data,
-    function: &Function,
-) -> Vec<(u16, u32)> {
-    value_view_places_depth(value, data, function)
-        .into_iter()
-        .map(|(place, _)| place)
-        .collect()
-}
-
-/// [`value_view_places`] with each place's DEPTH — the element reads between the viewed value
+///
+/// With each place's DEPTH — the element reads between the viewed value
 /// and its root ([`crate::use_analysis::view_source_place_depth`]).  A place two arms reach at
 /// different depths keeps the DEEPER one: a disturbance ends a view deeper than its container,
 /// so the deeper reading is the one that is ended by more.

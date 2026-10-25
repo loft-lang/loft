@@ -9428,7 +9428,7 @@ fn jumps_out(v: &Value) -> bool {
 /// destination FIELD at byte `dest`: a local that depends on `out` alone and whose every
 /// binding views another field of it (`sc.brushes[i]?` beside `sc.ops`, `parse_lock`'s shape)
 /// names a collection the growth does not move, and is spared — read with the scope pass's own
-/// place model ([`crate::scopes::value_view_places`]), which follows a `?` discharge's block
+/// place model ([`crate::scopes::value_view_places_depth`]), which follows a `?` discharge's block
 /// and both of its arms.  A record the frame placed in
 /// `out`'s store owns its block (its deps are empty) and is not named either, which is what
 /// keeps `parse_circle`'s paint, read in the window, admitted.  A parameter that views an
@@ -9455,9 +9455,9 @@ fn destination_views(
                     Value::Null => {}
                     rhs => {
                         bound = true;
-                        let places = crate::scopes::value_view_places(rhs, data, vars);
+                        let places = crate::scopes::value_view_places_depth(rhs, data, vars);
                         other &= !places.is_empty()
-                            && places.iter().all(|&(r, off)| {
+                            && places.iter().all(|&((r, off), _)| {
                                 r == out && off != crate::use_analysis::ANY_FIELD && off != dest
                             });
                     }

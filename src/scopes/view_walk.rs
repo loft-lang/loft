@@ -24,7 +24,7 @@ use crate::variables::Function;
 /// The place a `text` PAYLOAD binding views: its bind reads `OpGetText(base, offset)`, the
 /// field of the subject `base` at `offset` (loft#1665).
 ///
-/// Kept apart from [`value_view_places`] on purpose.  `OpGetText` answers an owned COPY of the
+/// Kept apart from [`crate::scopes::value_view_places_depth`] on purpose.  `OpGetText` answers an owned COPY of the
 /// characters, so it is no projection for the deps proxy or the ownership readers, and adding
 /// it to the shared projection list would change what every one of them answers.  Only a
 /// binding whose writes the parser MIRRORS into that field is a view of it, and only the
@@ -445,10 +445,12 @@ impl ViewWalk<'_> {
                 let keys_before = self.view_keys.clone();
                 let depth_before = self.view_depth.clone();
                 let index_before = self.view_index.clone();
-                let mut indices = Vec::with_capacity(2);
-                let mut depths = Vec::with_capacity(2);
+                // Two arms, two slots: an `if` is walked in every function of every program,
+                // the standard library's included, so its bookkeeping allocates nothing.
+                let mut indices: [HashMap<u16, (u32, i32)>; 2] = Default::default();
+                let mut depths: [HashMap<u16, u8>; 2] = Default::default();
                 let mut ends = Vec::with_capacity(2);
-                for branch in [t.unspan(), e.unspan()] {
+                for (arm, branch) in [t.unspan(), e.unspan()].into_iter().enumerate() {
                     self.open.clone_from(&open_before);
                     self.shaken.clone_from(&shaken_before);
                     self.view_keys.clone_from(&keys_before);
@@ -464,8 +466,8 @@ impl ViewWalk<'_> {
                         std::mem::take(&mut self.shaken),
                         std::mem::take(&mut self.view_keys),
                     ));
-                    depths.push(std::mem::take(&mut self.view_depth));
-                    indices.push(std::mem::take(&mut self.view_index));
+                    depths[arm] = std::mem::take(&mut self.view_depth);
+                    indices[arm] = std::mem::take(&mut self.view_index);
                 }
                 let (e_open, e_shaken, e_keys) = ends.pop().expect("an else arm");
                 let (mut open, mut shaken, t_keys) = ends.pop().expect("a then arm");
@@ -483,17 +485,15 @@ impl ViewWalk<'_> {
                 self.shaken = shaken;
                 // A view either arm leaves open keeps the DEEPER reading: it is the one more
                 // disturbances end, which is the safe direction for a view that may be either.
-                let mut depth = depths.pop().expect("an else arm");
-                for (v, d) in depths.pop().expect("a then arm") {
+                let [t_depth, mut depth] = depths;
+                for (v, d) in t_depth {
                     let e = depth.entry(v).or_insert(d);
                     *e = (*e).max(d);
                 }
                 self.view_depth = depth;
                 // An index survives only where both paths agree, as a key does.
-                let e_index = indices.pop().expect("an else arm");
-                self.view_index = indices
-                    .pop()
-                    .expect("a then arm")
+                let [t_index, e_index] = indices;
+                self.view_index = t_index
                     .into_iter()
                     .filter(|(v, i)| e_index.get(v) == Some(i))
                     .collect();
@@ -831,7 +831,7 @@ impl ViewWalk<'_> {
             // a view by the same relation a record `&` link is: it holds the place's `DbRef`,
             // and a growth or removal moves the element under it.  `(B-Ref-Reshape)` keys on
             // that aliasing relation, not on the element type, so it opens here too.  A link to
-            // a LOCAL (`c = &x`) names no container — `value_view_places` answers nothing for
+            // a LOCAL (`c = &x`) names no container — `value_view_places_depth` answers nothing for
             // `OpCreateStack` — so it opens nothing.  The materialise side never meets one:
             // an `&` link is refused at the disturbance rather than copied.
             // A `text` PAYLOAD binding whose writes are mirrored into its subject's field
