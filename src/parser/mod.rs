@@ -483,6 +483,12 @@ pub struct Parser {
     /// position of the statement whose left-hand side CREATED the variable, and both passes
     /// read it back to tell a first binding from a rebinding.
     pub(crate) first_bind_at: HashMap<(u32, u16), (u32, u32)>,
+    /// `@FR-B-Copy` — the struct literals that are UPDATES (`S { f: e, ..base }`), as
+    /// `(function, line, column)` of the literal's `{`: pass 1 meets the `..` after reading the
+    /// fields as a fresh record's and records it; pass 2 reads it back and takes the update
+    /// road before the roads that mint a work reference run, so nothing is minted for a
+    /// record the update never builds (loft-lang/plans#202 P2).
+    pub(crate) update_literals: HashSet<(u32, u32, u32)>,
     /// `@FR-B-Scope` — the `(function, variable, after_end)` triples whose binding the
     /// statement being parsed STARTS: its first binding, or (`after_end`) a bind after the
     /// name's block ended.  Innermost last.  The variable holds nothing until that statement
@@ -1911,6 +1917,7 @@ impl Parser {
             amp_pending: false,
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
+            update_literals: HashSet::new(),
             binding_starts: Vec::new(),
             stmt_if_pending: false,
             fit_candidate: None,

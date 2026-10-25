@@ -144,6 +144,12 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A record with some fields changed, in one expression.**  `d = Unit { hp: 0, ..u }` is a copy
+of `u` with `hp` written — what `d = u; d.hp = 0;` does, so `u` keeps its value, a `text` or
+collection field releases what the copy brought, and a `const` field is refused.  `..base` is the
+last entry; the base must be a `Unit` and present.  A variant is not updated this way: `match` on
+it and build the variant from its fields.  (loft-lang/plans#202)
+
 **A loop that discharges a null or divides runs faster.**  This is visible only as speed,
 under `--native`.  A `for` loop that changes nothing but its own numbers and booleans first
 runs without testing each `?`, `??` or division as it goes.  It notes once whether any of them

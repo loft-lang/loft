@@ -3886,7 +3886,6 @@ use a separate collection or add after the loop"
             })
     }
 
-    #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     /// `@FR-B-Ref-StoredRef` / `@FR-B-Ref-Reshape` (loft#2166) — a `&` reached a record place
     /// that is not a stored reference: a plain record field, an element, a tuple member.  Such
     /// a place holds the record itself, so a link has nothing to bind there, and loft refuses
@@ -3913,6 +3912,7 @@ use a separate collection or add after the loop"
         );
     }
 
+    #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     pub(crate) fn parse_assign_op(
         &mut self,
         code: &mut Value,

@@ -351,6 +351,16 @@ Nullable fields default to `null`. A **bare (non-`Optional`) enum field is the o
 has no zero value (an enum's 0 is `null`, which a non-null field may not hold), so omitting it is a
 compile error — provide it, give it `= <variant>`, or type it `E?` (@PLN116).
 
+**A record with some fields changed is an UPDATE**: `d = Unit { hp: 0, ..u }` binds `d` to a copy
+of `u` and then writes the named fields — exactly what `d = u; d.hp = 0;` does, in one expression.
+`u` keeps its value (`(B-Copy)`, [formal/binding.md](formal/binding.md)); the named fields are
+written as the assignments they stand for, so a `text` or collection field releases what the copy
+brought and a `const` field is refused; and each field reads the BASE, never the half-written
+copy (`Unit { y: u.hp, hp: u.y, ..u }` swaps).  `..base` is the last entry.  The base is a `Unit`
+and never absent — discharge a `Unit?` first (`..(u ?? Unit { … })`).  A variant is not updated
+this way: `match` on it and build the variant from its fields, since its tag would have to be
+checked against the base's.
+
 **A nullable STRUCT-enum (`Shape?`) works** as a local, a parameter, a return, a struct FIELD and
 a `vector<Shape?>` element — `= null`, `== null`, truthiness, `??`, `match` and reassignment in
 both directions all behave (loft#1065, loft#1071). How absence is STORED follows the slot, as the
