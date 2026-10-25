@@ -3799,10 +3799,22 @@ impl Stores {
             _ => Shape::Other,
         };
         match shape {
+            // A struct-enum's slot is its largest variant, and its null is tested on more than
+            // the tag (`OpGetInt4(field, 0) == 0`), so the whole slot is written; a plain enum
+            // is its one byte (loft#2189, `@FR-H-Claim`).
             Shape::Enum => {
-                self.store_mut(rec).set_byte(rec.rec, rec.pos, 0, 0);
+                let size = u32::from(self.types[tp as usize].size);
+                if size > 1 && size != u32::from(u16::MAX) {
+                    self.store_mut(rec).zero_range(rec.rec, rec.pos, size);
+                } else {
+                    self.store_mut(rec).set_byte(rec.rec, rec.pos, 0, 0);
+                }
             }
             Shape::JsonNull => {
+                let size = u32::from(self.types[tp as usize].size);
+                if size > 1 && size != u32::from(u16::MAX) {
+                    self.store_mut(rec).zero_range(rec.rec, rec.pos, size);
+                }
                 self.store_mut(rec)
                     .set_byte(rec.rec, rec.pos, 0, crate::native::JV_DISCR_NULL);
             }

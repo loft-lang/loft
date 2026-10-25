@@ -219,6 +219,9 @@ static void loft_pw_default(loft_pw *w, uint16_t tp, int nullable, int final, lo
         else loft_p_u32(rec, 0);
         return;
     case LOFT_P_ENUM:
+        /* A struct-enum's slot is written whole: its null is tested on more than the tag
+         * (loft#2189). */
+        if (t->size > 1) memset(loft_at(loft_store_of(rec), rec.rec, rec.pos), 0, t->size);
         *loft_at(loft_store_of(rec), rec.rec, rec.pos) = !nullable && loft_p_is_json(w, tp) ? LOFT_P_JNULL : 0;
         return;
     case LOFT_P_BYTE: *loft_at(loft_store_of(rec), rec.rec, rec.pos) = t->nullable ? 255 : 0; return;
