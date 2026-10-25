@@ -527,6 +527,36 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     if (free_source && value.store_nr != c.store_nr && !loft_free_protected(value)) loft_free_ref(value);
 }
 
+/* OpFillKeyed (Stores::fill_keyed_from_vector): each element of the vector `src` filed into the
+ * keyed collection `c` as a deep copy under its own key (`insert_keyed_copy`, the latest of one
+ * key winning); a null linked element has no key and stays out.  Every element is resolved
+ * before the first insert, which may grow a store they share.  A source the bind gives up is
+ * freed. */
+static void loft_fill_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref src, int kind,
+                            const loft_key *keys, int nk, int linked, int free_source) {
+    if (src.store_nr == 0xFFFF || src.store_nr >= loft_nstores) return;
+    int64_t len = loft_vec_len(src);
+    uint32_t width = linked ? 4u : T[etp].size;
+    loft_ref *recs = (loft_ref *) malloc(sizeof(loft_ref) * (size_t) (len > 0 ? len : 1));
+    if (!recs) { fputs("loft: out of memory\n", stderr); abort(); }
+    int64_t n = 0;
+    for (int64_t i = 0; i < len; i++) {
+        loft_ref slot = loft_vec_get(src, width, i);
+        if (slot.rec == 0) continue;
+        if (linked) {
+            uint32_t rec = loft_u32(loft_store_of(slot), slot.rec, slot.pos);
+            if (rec == 0) continue;
+            loft_ref r = { src.store_nr, rec, 8 };
+            recs[n++] = r;
+        } else {
+            recs[n++] = slot;
+        }
+    }
+    for (int64_t i = 0; i < n; i++) loft_set_keyed(T, etp, c, recs[i], kind, keys, nk, 0, 0, 0);
+    free(recs);
+    if (free_source && src.store_nr != c.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+}
+
 /* OpRemove (`e#remove`) in a walk over a sorted (`size` its element) or an index (`size` 0):
  * the element the walk visited last goes, and the walk goes on with the one after it. */
 static void loft_seq_remove(int64_t *state, loft_ref c, uint32_t size, int reverse) {

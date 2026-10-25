@@ -7,7 +7,7 @@
 //! `loft_keyed.h`; a key part's value is a `loft_kv`, its description a `loft_key`.
 
 use super::{
-    E, FnWriter, K, as_bool, as_char, as_enum, as_float, as_int, as_ref, as_single, as_view,
+    Coll, E, FnWriter, K, as_bool, as_char, as_enum, as_float, as_int, as_ref, as_single, as_view,
 };
 use crate::c::{CType, Keyed};
 use crate::data::Value;
@@ -614,6 +614,9 @@ impl FnWriter<'_> {
                     K::Void,
                 )))
             }
+            ("OpFillKeyed", [parent, src, tp, ptp, fld]) => {
+                self.fill_keyed(parent, src, tp, ptp, fld, ind).map(Some)
+            }
             ("OpSetKeyed", [coll, value, tp, _, vals @ ..]) => {
                 self.set_keyed(coll, value, tp, vals, ind).map(Some)
             }
@@ -697,6 +700,50 @@ impl FnWriter<'_> {
                 "loft_hash_reserve(loft_types, {tp}, {}, {})",
                 as_ref(h)?,
                 as_int(count)?
+            ),
+            K::Void,
+        ))
+    }
+
+    /// `OpFillKeyed(parent, src, tp, ptp, fld)`: `coll += vector`, each element filed into the
+    /// keyed collection at the parent's field (the parent itself for field `u16::MAX`) as a deep
+    /// copy under its own key.  A member of a linked group is refused: its record enters every
+    /// member, which `loft_set_keyed` does not do.
+    fn fill_keyed(
+        &mut self,
+        parent: &Value,
+        src: &Value,
+        tp: &Value,
+        ptp: &Value,
+        fld: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let raw = u16::try_from(Self::literal(tp, "type")?)
+            .map_err(|_| "a type number out of range".to_string())?;
+        let tp = raw & 0x7FFF;
+        let (kind, elem, _) = self.keyed_of(tp)?;
+        let (place, _, coll) = self.record_collection(parent, ptp, fld, ind)?;
+        if !matches!(coll, Coll::Keyed(_)) {
+            return Err("a fill of a linked group member".into());
+        }
+        self.cx.copy_type(elem)?;
+        let src = self.expr(src, ind)?;
+        let src = as_ref(src)?;
+        let (keys, nk) = self.cx.keys_of(tp);
+        let kind = match kind {
+            Keyed::Hash => "LOFT_KEYED_HASH",
+            Keyed::Sorted => "LOFT_KEYED_SORTED",
+            Keyed::Index => "LOFT_KEYED_INDEX",
+            Keyed::Ordered => "LOFT_KEYED_ORDERED",
+            Keyed::Array => return Err("a fill of an array".into()),
+            Keyed::Spatial => "LOFT_KEYED_SPATIAL",
+            Keyed::Trie => "LOFT_KEYED_TRIE",
+        };
+        let linked = i32::from(self.cx.stores.is_linked(elem));
+        Ok(E::new(
+            format!(
+                "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kind}, {keys}, {nk}, {linked}, {})",
+                i32::from(raw & 0x8000 != 0)
             ),
             K::Void,
         ))

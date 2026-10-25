@@ -59,7 +59,7 @@ enum K {
 }
 
 /// The collection a new record is added to (`FnWriter::record_collection`).
-enum Coll {
+pub(super) enum Coll {
     /// A plain vector.
     Vector,
     /// A record collection of this type (`Cx::keyed`).
@@ -2556,7 +2556,7 @@ impl<'a> FnWriter<'a> {
     /// itself when `fld` is `u16::MAX`, else the parent's field.  A vector, any record
     /// collection `Cx::keyed` names, or a member of a linked group (`@FR-Col-Group`), whose
     /// record enters every member; any other collection is refused.
-    fn record_collection(
+    pub(super) fn record_collection(
         &mut self,
         data: &Value,
         ptp: &Value,
