@@ -116,11 +116,12 @@ equally correct — what must agree is what a lookup finds, not where it was put
                 - a release below the reader's floor — refused (layout.md L-Release);
                 - a different identity — converted by a loader that reads the whole image
                   (the upgrade, layout.md) and refused by a paged one; never read raw;
-                - a sidecar that does not parse — refused.
-              An image with NO sidecar records no identity and is read as written: the
-              publisher of a bare image answers for its layout (REMOTE_STORES.md: a missing
-              <url>.dschema is normal).  ⚠ This is the one raw read layout.md's L-Sound does not
-              cover; see the deviation register.
+                - a sidecar that does not parse, or cannot be read — refused;
+                - NO sidecar — refused: the image records no layout, so a raw read is a guess
+                  at every stride.  Over HTTP a sidecar that cannot be fetched (a 404, an
+                  unreachable server) is no sidecar.
+              The refusal is the loader's failure answer (false, or a count of 0), and nothing
+              is loaded.
   (S-Pair)    an image and its sidecar are ONE write.  The writer stages both beside the target
               and replaces what is there only when both are written; the call answers true only
               then.  A write that fails before the replace leaves the previous image and its
@@ -132,8 +133,8 @@ A reader checks it first and reads raw only on a match, which is what lets the f
 between releases without one image ever being read under the wrong rules.  The placement token
 is the part that covers this chapter: the layout hash alone says where a record's FIELDS are,
 the token says how the hash or tree finds the RECORD.  Writing the two files as one is what
-keeps the passport honest — an image beside no sidecar, or beside an older one, is read under
-rules it was not written by.
+keeps the passport honest: an image beside no sidecar is refused, and one beside an older
+writer's sidecar would be read under rules it was not written by.
 
 ### The hash table
 
@@ -285,13 +286,8 @@ computes differently from the resident store becomes a lookup that silently answ
 
 ## Deviations
 
-**OPEN: 1** (`D-struct-3`).  The full register, with each entry's measurement, is in
+**OPEN: 0.**  The full register, with each entry's measurement, is in
 [structures-history.md](structures-history.md).
-
-- **D-struct-3** — OPEN (loft#2174), spec-may-adjust: an image with no sidecar is read raw under <!-- doc-lint: ok -->
-  the reader's layout (S-Gate's last clause), which layout.md's `L-Sound` — *"a raw handoff is
-  admitted ONLY when the two identities are equal"* — does not allow.  The two rules disagree;
-  the owner decides which one moves.
 
 ## Conformance
 
@@ -321,6 +317,9 @@ computes differently from the resident store becomes a lookup that silently answ
   `tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft`;
   `tests/paged_read_alloc.rs`, `tests/paged_browser.rs`, `tests/scripts/store_load_*.loft`.
 - **`S-Pair`** — `tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft`.
+- **`S-Gate`, an image with no sidecar** —
+  `tests/scripts/2174-an-image-without-its-sidecar-is-refused.loft` (whole, untrusted and paged
+  loaders refused; the pair loads), and `dschema_lifecycle_beside_a_store` (`Bare`).
 - **Every rule, across releases** — the GOLDEN IMAGES: `tests/golden/images/<set>/`, one image
   and sidecar per structure and per hash layout, written once by `scripts/golden_images.sh` (it
   refuses a set that exists, so their bytes always come from an earlier build) and read by every

@@ -134,7 +134,8 @@ struct Item {                          // v2 of { id, label, price }
 | the working-set loaders above | refused (`refuse_paged`, so the program can read the refusal back) |
 | `loft layout upgrade <program> <store>…` | the FILE is upgraded in place: written beside, swapped in, the original kept as `<path>.old` (a later upgrade replaces it) |
 
-A missing sidecar is not checked.  A refusal leaves the file, its `.dschema` and the
+An image with no sidecar is refused too: nothing records the layout it was written with
+(formal/structures.md `S-Gate`).  A refusal leaves the file, its `.dschema` and the
 collection as they were.
 The raw paths share one verdict, `Stores::layout_verdict_ok`, and the converting paths one
 entry, `Stores::layout_changed` with `load_upgraded`; a new whole-image

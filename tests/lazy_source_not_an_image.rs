@@ -81,6 +81,13 @@ fn fixture(d: &Path) {
     .expect("write one");
 }
 
+/// Put the fixture image's sidecar beside `name`, so the cell measures what its FILE is
+/// rather than the refusal of an image with no sidecar (`@FR-S-Gate`).
+fn with_sidecar(d: &Path, name: &str) {
+    let side = fa::read(d.join("good.store.dschema")).expect("the fixture's sidecar");
+    fa::write(d.join(format!("{name}.dschema")), &side).expect("write sidecar");
+}
+
 fn probe(d: &Path, path: &str) -> String {
     let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "one.loft", path])
@@ -108,6 +115,9 @@ fn a_source_that_is_not_an_image_reports_a_fault() {
     fa::write(d.join("empty.store"), b"").expect("write");
     fa::write(d.join("junk.store"), b"not-a-store").expect("write");
     fa::write(d.join("rand.store"), vec![0xABu8; 8192]).expect("write");
+    for name in ["empty.store", "junk.store", "rand.store"] {
+        with_sidecar(&d, name);
+    }
 
     for (label, path) in [
         ("a missing file", "no_such.store"),
@@ -159,6 +169,7 @@ fn truncation_still_reads_and_a_broken_signature_does_not() {
 
     let half = d.join("half.store");
     fa::write(&half, &good[..good.len() / 2]).expect("write half");
+    with_sidecar(&d, "half.store");
     let line = probe(&d, "half.store");
     assert!(
         line.contains("null=false"),
@@ -168,6 +179,7 @@ fn truncation_still_reads_and_a_broken_signature_does_not() {
     let mut broken = good;
     broken[..4].fill(0);
     fa::write(d.join("nosig.store"), &broken).expect("write nosig");
+    with_sidecar(&d, "nosig.store");
     let line = probe(&d, "nosig.store");
     let _ = fa::remove_dir_all(&d);
     assert!(

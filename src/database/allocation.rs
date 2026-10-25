@@ -6968,9 +6968,8 @@ impl Stores {
     ///
     /// The `.dschema` sidecar already records the layout the file was written with, and
     /// the paged loaders already gate on it — this is the same gate on the whole-image
-    /// paths.  A store with no sidecar (legacy, or written by another tool) still loads:
-    /// the check can only report what it knows, and refusing every unlabelled store would
-    /// break programs that are reading their own correct data.
+    /// paths.  A store with no sidecar is refused (`@FR-S-Gate`): nothing records the
+    /// layout it was written with, so a raw read is a guess at every stride.
     ///
     /// `builtin` names the call in the refusal, so the reader is sent to the line that
     /// asked.
@@ -6978,13 +6977,10 @@ impl Stores {
         let Some(current) = self.slot_layout_identity(slot) else {
             return true; // untyped store — no identity to compare against
         };
-        // An unreadable sidecar (an I/O failure, not a layout answer) tells us nothing
-        // about the layout, so it neither passes nor fails the store: keep the previous
-        // behaviour rather than refuse a load on a filesystem hiccup.
-        let Ok(verdict) = crate::schema_sidecar::check_beside(path, &current, self.release())
-        else {
-            return true;
-        };
+        // A sidecar that cannot be read tells nothing about the layout, so the image is
+        // read under no recorded layout — refused, as a missing one is.
+        let verdict = crate::schema_sidecar::check_beside(path, &current, self.release())
+            .unwrap_or(crate::schema_sidecar::SchemaVerdict::Unreadable);
         Self::layout_verdict_ok(&verdict, &path.display().to_string(), builtin)
     }
 
@@ -7016,11 +7012,9 @@ impl Stores {
 
     /// The layout gate ([`schema_gate_ok`](Self::schema_gate_ok)) for a store image fetched from `url`: the
     /// sidecar is `<url>.dschema`, read over the same transport as the image.  A fetch
-    /// that fails is an absent sidecar — a server answers 404 for one it does not have,
-    /// and a missing `file://` sidecar is the same answer — so it passes, as a local
-    /// store with no sidecar does.  The image's SHA-256 pin does not cover the sidecar
-    /// and does not need to: a sidecar can only refuse a load, never admit a misread
-    /// that its absence would not.
+    /// that fails — a 404, an unreachable server — leaves the image with no recorded
+    /// layout, and it is refused as a local image with no sidecar is (`@FR-S-Gate`).
+    /// The image's SHA-256 pin does not cover the sidecar.
     #[cfg(any(
         feature = "registry",
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
@@ -7045,7 +7039,7 @@ impl Stores {
                 ),
                 Err(_) => (crate::schema_sidecar::SchemaVerdict::Unreadable, None),
             },
-            Err(_) => (crate::schema_sidecar::SchemaVerdict::Fresh, None),
+            Err(_) => (crate::schema_sidecar::SchemaVerdict::Bare, None),
         };
         if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
             return Ok(text);
@@ -7065,8 +7059,12 @@ impl Stores {
             .then(|| crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]))
     }
 
-    /// May a store whose sidecar gave `verdict` be read raw (`@FR-L-Sound`)?  Only an
-    /// absent sidecar or a matching one says yes.  Every other answer is refused, with
+    /// Why an image with no sidecar is refused, as every loader says it.
+    const BARE_IMAGE: &'static str = "it has no layout sidecar (`.dschema`) beside it, so nothing records the \
+         layout its records were written with; write it with store_persist_copy, which writes both";
+
+    /// May a store whose sidecar gave `verdict` be read raw (`@FR-L-Sound`)?  Only a
+    /// matching sidecar says yes.  Every other answer is refused, with
     /// what changed, on stderr: a refused load otherwise reads as "the file is missing",
     /// which sends the reader to the wrong half of their program.
     fn layout_verdict_ok(
@@ -7079,6 +7077,10 @@ impl Stores {
         }
         if let crate::schema_sidecar::SchemaVerdict::Refused(why) = verdict {
             crate::loft_eprintln!("{builtin}: refusing {what} — {why}.");
+            return false;
+        }
+        if *verdict == crate::schema_sidecar::SchemaVerdict::Bare {
+            crate::loft_eprintln!("{builtin}: refusing {what} — {}.", Self::BARE_IMAGE);
             return false;
         }
         let detail = match verdict {
@@ -7111,8 +7113,8 @@ impl Stores {
     /// differs from THIS program's collection type — so the loader never
     /// range-reads foreign-layout bytes at schema-derived offsets (a silent
     /// corruption / wild-pointer hazard the post-hoc `store_verify` should not be
-    /// the only guard against). An ABSENT sidecar (a legacy / pre-3b.5 store) or
-    /// an untyped local store passes; `store_verify` stays the backstop. `path`
+    /// the only guard against). An ABSENT sidecar is refused too (`@FR-S-Gate`); an
+    /// untyped local store has no identity to compare and passes. `path`
     /// is a local file or an `http(s)://` URL — the sidecar is read from beside
     /// it (`<path>.dschema`), over the same transport.
     #[cfg(paged_store)]
@@ -7131,10 +7133,14 @@ impl Stores {
         // `refuse_paged` rather than its own `eprintln`, so the program can read
         // it back too: a refusal reachable by one route and not another is the
         // same silence in a different place (loft#802).
-        let reason = format!(
-            "its recorded layout differs from this program's (verdict: \
-             {verdict:?}); not range-reading foreign bytes"
-        );
+        let reason = if verdict == crate::schema_sidecar::SchemaVerdict::Bare {
+            Self::BARE_IMAGE.to_string()
+        } else {
+            format!(
+                "its recorded layout differs from this program's (verdict: \
+                 {verdict:?}); not range-reading foreign bytes"
+            )
+        };
         self.refuse_paged(path, &reason);
         false
     }

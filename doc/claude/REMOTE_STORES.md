@@ -189,9 +189,11 @@ produces **correct answers** — loft reads and discards the prefix to reach the
 offset. It is just slow, and slow in a way that grows with the offset. That
 fallback exists so a misconfigured host is a performance bug, not a wrong result.
 
-There is also an optional `<url>.dschema` sidecar beside the store (the
-self-describing layout descriptor). A **404 is a normal answer** meaning "no
-sidecar", not an error.
+Beside the store lies its `<url>.dschema` sidecar (the layout the image was written
+with), and the server must serve it: a loader reads an image only beside a sidecar that
+matches its own layout, and a 404 or an unreachable sidecar refuses the load
+(formal/structures.md `S-Gate`).  `store_persist_copy` writes both files; publish them
+together.
 
 ## Paging, and the knob that matters
 

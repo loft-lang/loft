@@ -492,11 +492,10 @@ impl PageProvider for PageSource {
 /// The layout-identity gate for a working-set load (@PLN97 3b.5). Given the
 /// store `spec` (a local path or an `http(s)://` URL), read the `.dschema`
 /// sidecar beside it and compare its recorded layout with the running program's
-/// `current` identity. An ABSENT sidecar (a legacy / pre-3b.5 store) or an
-/// unreachable remote yields [`SchemaVerdict::Fresh`] — the caller proceeds and
-/// the post-copy `store_verify` stays the backstop; a PRESENT sidecar that is
-/// mismatched or unparseable yields a non-raw-safe verdict the caller rejects
-/// on, so foreign-layout bytes are never range-read at schema-derived offsets.
+/// `current` identity (`@FR-S-Gate`).  An ABSENT sidecar, an unreachable one and one
+/// that cannot be read all yield a verdict that is not raw-safe ([`SchemaVerdict::Bare`],
+/// [`SchemaVerdict::Unreadable`]): an image whose layout nothing records is never
+/// range-read at schema-derived offsets, and neither is a mismatched one.
 #[must_use]
 pub fn check_sidecar(
     spec: &str,
@@ -507,11 +506,11 @@ pub fn check_sidecar(
     if spec.starts_with("http://") || spec.starts_with("https://") {
         match crate::net::fetch_text(&format!("{spec}.dschema")) {
             Some(text) => crate::schema_sidecar::verdict_for_sidecar_text(&text, current, release),
-            None => SchemaVerdict::Fresh, // 404 / unreachable → proceed (store_verify backstop)
+            None => SchemaVerdict::Bare,
         }
     } else {
         crate::schema_sidecar::check_beside(std::path::Path::new(spec), current, release)
-            .unwrap_or(SchemaVerdict::Fresh) // IO error (not NotFound) → proceed (backstop)
+            .unwrap_or(SchemaVerdict::Unreadable)
     }
 }
 

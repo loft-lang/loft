@@ -40,8 +40,7 @@
     `tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft`, falsified on
     `b36d0449f` (exit 1 on both backends).
 
-- **D-struct-3 — OPEN (2026-10-25, loft#2174), spec-may-adjust: an image with no sidecar is read
-  raw.**
+- **D-struct-3 — CLOSED (2026-10-25, loft#2174): an image with no sidecar was read raw.**
   - **Violates:** layout.md `L-Sound` (*"a raw handoff is admitted ONLY when the two identities
     are equal"*); `S-Gate`'s last clause records the shipped behaviour that contradicts it.
   - **Where:** `schema_sidecar::check_file` maps a missing sidecar to `Fresh`; the URL loaders map
@@ -51,6 +50,11 @@
     declaring `b` before `a`, answers `a=20 b=10` through `store_load` and through
     `store_load_key` — silently swapped.  With the sidecar the same read converts (`a=10 b=20`)
     or, paged, refuses.
-  - **Removal:** the owner's decision — refuse a bare image and a failed sidecar fetch (a change
-    to a shipped surface: `REMOTE_STORES.md` documents the missing sidecar as normal), or keep
-    the raw read and amend `L-Sound` to name the exception.
+  - **Closed by:** the owner's decision for `L-Sound` as written — a bare image is refused, and
+    so is a sidecar that cannot be read or fetched.  `check_beside` answers
+    `SchemaVerdict::Bare` for a missing sidecar (the project baseline keeps `Fresh`: a first
+    build owes none), and every image gate — whole, untrusted, URL, paged, and the C backend's
+    `loft_image_gate` — refuses it with one sentence.  A shipped-surface change:
+    `REMOTE_STORES.md` had documented the missing sidecar as normal.  Guard:
+    `tests/scripts/2174-an-image-without-its-sidecar-is-refused.loft`, falsified on
+    `b36d0449f` (exit 1 on both backends).

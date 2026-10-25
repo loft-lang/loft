@@ -16,6 +16,13 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**A store image is read only beside its `.dschema` sidecar.**  `store_load`,
+`store_load_untrusted`, `store_load_url` and the paged loaders (`store_load_key`, `store_load_box`,
+`store_load_prefix`, …) refuse an image with no sidecar beside it, and over HTTP one whose sidecar
+the server does not serve, instead of reading its bytes under the program's own layout — which
+read wrong values whenever a struct had changed since the image was written.  `store_persist_copy`
+writes both files: copy, ship and serve them together.
+
 **A collection is no longer bound to a file.**  `store_persist_bind`, `store_release`,
 `store_durable_check` and `store_durable_seal` are gone.  Save a collection with
 `store_persist_copy(collection, path)` — call it again whenever the state is worth saving — and
@@ -301,6 +308,13 @@ stack address on the interpreter (a garbage record on read, nothing said) and fa
 compile natively.  A `&` into a field that holds its record inline (`struct Rec { o: Other }`,
 `d.o = &p` or `Rec { o: &p }`) is refused — it has nothing to bind; write `d.o = p` to copy
 the record, or declare the field `reference<Other>` to hold a link (loft#2166).
+**A paged lookup finds a narrow key.**  `store_load_key`, `store_load_keys` and a lazily bound hash
+answered "absent" for a key the image held when the key field was a `limit(…)` range not starting
+at 0, or a one-byte range at 128 and above; they now find it, as `store_load` always did.
+
+**`store_persist_copy` answers false when it could not write the image's sidecar.**  It answered
+true and left the new image beside no sidecar, or beside the previous write's.  The image and its
+sidecar are now written together: a failed write leaves the previous pair as it was.
 
 **A sandbox may use the safe stdlib without a grant.**  Arithmetic, text, collections, JSON and
 the other stdlib functions that compute only on their arguments are admitted under every sandbox

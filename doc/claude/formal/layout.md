@@ -424,7 +424,7 @@ under the falsifier list already records for the sentinel half.
               two identities are equal.  Discharged by the .dschema sidecar (schema_sidecar): the
               stored id is compared before a byte is read; a mismatch is converted by a
               whole-image load or refused by a paged one (structures.md S-Gate).  An image with
-              NO sidecar is read raw — the exception structures.md D-struct-3 records.
+              NO sidecar records no identity and is refused.
 ```
 
 **In words.** The layout is allowed to change between builds — but a store written under an old

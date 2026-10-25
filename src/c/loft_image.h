@@ -374,7 +374,13 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc) {
     sprintf(side, "%s.dschema", path);
     FILE *f = fopen(side, "rb");
     free(side);
-    if (!f) return 1;
+    if (!f) {
+        /* `@FR-S-Gate`: an image with no sidecar records no layout and is never read raw. */
+        fprintf(stderr, "store_load: refusing %s — it has no layout sidecar (`.dschema`) beside it, so nothing "
+                "records the layout its records were written with; write it with store_persist_copy, which "
+                "writes both.\n", path);
+        return 0;
+    }
     size_t cap = 4096, n = 0, got;
     char *text = (char *) malloc(cap + 1);
     if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
