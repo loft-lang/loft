@@ -466,9 +466,18 @@ fn def_reshape_refusals(
             return;
         };
         let cdef = data.def(*callee);
+        // A container INSIDE an element of the parameter (`p[0] += …`) is a hazard only for an
+        // argument naming an element of THAT container, and the test below asks for any element
+        // of the place — so a growth there is left to the materialise, which reads the depth,
+        // and only a removal keeps the reach it had when the map named it the whole parameter.
         let mut places: Vec<(ParamPlace, ViewCause)> = disturbed
             .and_then(|d| d.get(callee))
-            .map(|m| m.iter().map(|(p, c)| (*p, *c)).collect())
+            .map(|m| {
+                m.iter()
+                    .filter(|(_, d)| d.at.depth == 0 || d.cause == ViewCause::Reshaped)
+                    .map(|(p, d)| (*p, d.cause))
+                    .collect()
+            })
             .unwrap_or_default();
         if let Some(params) = removed.get(callee) {
             places.extend(

@@ -7,8 +7,8 @@
 //! why a view had to be copied out of its container.
 
 use super::places::{
-    ParamPlace, add_offset, base_container_place, call_arg_place, compose_param_place,
-    named_place_depth, peel_stack_ref,
+    ParamPlace, add_offset, base_container_place, call_arg_at, compose_param_at, named_place_depth,
+    peel_stack_ref,
 };
 use crate::data::{Data, Type, Value};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -527,7 +527,50 @@ impl Disturbance {
 /// outright — *"the disturbance may be in this frame or in anything the frame CALLS … at any
 /// depth"* — and `(B-View)` keys its materialise on the same four events, so it inherits the
 /// same reach. This is the fact the materialise was missing; see [`ViewWalk::disturb`].
-pub type DisturbedParams = HashMap<u32, HashMap<ParamPlace, ViewCause>>;
+pub type DisturbedParams = HashMap<u32, HashMap<ParamPlace, ParamDisturbance>>;
+
+/// What a definition does to one place of a parameter: the cause, and where the container
+/// sits inside the parameter ([`ContainerAt`]) — `p[0].remove(0)` is a container one element
+/// read deep, which ends the caller's views INTO that element and not its view of the element
+/// slot, exactly as the same statement written in the caller does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParamDisturbance {
+    pub cause: ViewCause,
+    pub at: ContainerAt,
+}
+
+impl ParamDisturbance {
+    /// Fold a second disturbance of the same place in, answering whether anything changed: the
+    /// shallower container (it ends more), the literal index only where both agree, and the
+    /// reshape over the growth ([`record_cause`]).  Each moves one way only, which is what
+    /// ends [`disturbed_params_map`]'s worklist.
+    fn merge(&mut self, other: ParamDisturbance) -> bool {
+        let before = *self;
+        self.at.depth = self.at.depth.min(other.at.depth);
+        if self.at.index != other.at.index {
+            self.at.index = None;
+        }
+        if other.cause == ViewCause::Reshaped {
+            self.cause = ViewCause::Reshaped;
+        }
+        *self != before
+    }
+}
+
+/// Record `d` at `place`, merged with what is already there; whether the map changed.
+fn record_param(
+    out: &mut HashMap<ParamPlace, ParamDisturbance>,
+    place: ParamPlace,
+    d: ParamDisturbance,
+) -> bool {
+    match out.entry(place) {
+        std::collections::hash_map::Entry::Vacant(e) => {
+            e.insert(d);
+            true
+        }
+        std::collections::hash_map::Entry::Occupied(mut e) => e.get_mut().merge(d),
+    }
+}
 
 /// @PLN164 C5 — the places `code` DISTURBS in the frame of `def_nr`: what its own ops grow or
 /// remove from, plus what anything it CALLS grows or removes from, mapped back onto the
@@ -564,12 +607,11 @@ pub fn places_disturbed_by(
         code.walk(&mut |v| {
             let Value::Call(d, args) = v else { return };
             let Some(places) = map.get(d) else { return };
-            for &(slot, inner) in places.keys() {
+            for (&(slot, inner), pd) in places {
                 if let Some(arg) = args.get(usize::from(slot))
-                    && let Some(base) = call_arg_place(arg, data)
-                    && let Some(place) = compose_param_place(base, inner)
+                    && let Some((base, base_at)) = call_arg_at(arg, data)
                 {
-                    out.insert(place);
+                    out.insert(compose_param_at(base, base_at, inner, pd.at).0);
                 }
             }
         });
@@ -598,9 +640,9 @@ fn disturbed_param_places(
     data: &Data,
     d_nr: u32,
     database: Option<&crate::database::Stores>,
-) -> HashMap<ParamPlace, ViewCause> {
+) -> HashMap<ParamPlace, ParamDisturbance> {
     let def = data.def(d_nr);
-    let mut out: HashMap<ParamPlace, ViewCause> = HashMap::default();
+    let mut out: HashMap<ParamPlace, ParamDisturbance> = HashMap::default();
     if def.attributes.is_empty() || matches!(def.code, Value::Null) {
         return out;
     }
@@ -610,38 +652,50 @@ fn disturbed_param_places(
     // depth rule the caller's walk applies to every event read off this map — so the clear is
     // reported as what it does to those elements, a removal of all of them.  Subtracted as an
     // overwrite before, which spared the views into the elements too (loft#2161).
-    let mut cleared: HashSet<ParamPlace> = HashSet::default();
+    let mut cleared: HashMap<ParamPlace, ParamDisturbance> = HashMap::default();
     def.code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         if data.def(*d).name() != "OpClearVector" {
             return;
         }
-        if let Some((place, 0)) = args.first().and_then(|a| named_place_depth(a, data)) {
-            cleared.insert(place);
+        let Some(arg) = args.first() else { return };
+        if let Some((place, depth)) = named_place_depth(arg, data) {
+            let index = crate::use_analysis::root_element_index(data, arg);
+            record_param(
+                &mut cleared,
+                place,
+                ParamDisturbance {
+                    cause: ViewCause::Reshaped,
+                    at: ContainerAt { depth, index },
+                },
+            );
         }
     });
     // A hidden attribute is COMPILER-GENERATED, which is the one test that covers the return
     // buffer and every other `__`-named slot alike; a user parameter is never one.
     let visible = |v: u16| function.is_argument(v) && !function.is_compiler_generated(v);
-    // Depth 0 only: a caller's view meets this place through `compose_param_place`, which
-    // carries no depth, so a growth of a container INSIDE an element of a parameter
-    // (`p[0] += …`) would read as a growth of the parameter itself and end the caller's views
-    // of every element.  Left uncollected, the lower bound this map has always kept.
+    // Every depth, each with where its container sits: the caller composes it with the depth
+    // of the argument it passed ([`compose_param_at`]) and ends the views the same statement
+    // written inline would end.  Kept to depth 0 before, which dropped `p[0].remove(0)` — a
+    // removal `main` had reported as one of the whole parameter — and the caller's view of
+    // the element that shifted in read the wrong record (loft#2161).
     for (place, at) in grown_containers(&def.code, data, function, database) {
-        if at.depth == 0 && visible(place.0) {
-            out.insert(place, ViewCause::Grown);
-        }
-    }
-    // Recorded LAST and unconditionally, because a place reached by both reports the RESHAPE —
-    // the cause with something to act on at the container ([`record_cause`]).
-    for (place, at) in reshaped_containers(&def.code, data, function) {
-        if at.depth == 0 && visible(place.0) {
-            out.insert(place, ViewCause::Reshaped);
-        }
-    }
-    for place in cleared {
         if visible(place.0) {
-            out.insert(place, ViewCause::Reshaped);
+            let cause = ViewCause::Grown;
+            record_param(&mut out, place, ParamDisturbance { cause, at });
+        }
+    }
+    // A place reached by both reports the RESHAPE — the cause with something to act on at the
+    // container ([`record_cause`]); [`ParamDisturbance::merge`] keeps it.
+    for (place, at) in reshaped_containers(&def.code, data, function) {
+        if visible(place.0) {
+            let cause = ViewCause::Reshaped;
+            record_param(&mut out, place, ParamDisturbance { cause, at });
+        }
+    }
+    for (place, d) in cleared {
+        if visible(place.0) {
+            record_param(&mut out, place, d);
         }
     }
     out
@@ -669,9 +723,27 @@ pub fn disturbed_params_map(
 ) -> DisturbedParams {
     let mut out = DisturbedParams::default();
     let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_DISTURB").is_some());
+    let say = |d_nr: u32, (slot, off): ParamPlace, d: ParamDisturbance, via: Option<u32>| {
+        let def = data.def(d_nr);
+        let field = if off == ANY_FIELD {
+            "whole".to_string()
+        } else {
+            format!("+{off}")
+        };
+        let via = via.map_or(String::new(), |c| format!(", via {}", data.def(c).name()));
+        eprintln!(
+            "[disturb] {} {:?} through parameter `{}` ({field}, depth {}){via}",
+            def.name(),
+            d.cause,
+            def.variables.name(slot),
+            d.at.depth
+        );
+    };
     let mut work: Vec<(u32, ParamPlace)> = Vec::new();
-    // (callee, its param slot) -> every (caller, the caller's own place) that feeds it.
-    let mut forwards: HashMap<(u32, u16), Vec<(u32, ParamPlace)>> = HashMap::default();
+    // (callee, its param slot) -> every (caller, the caller's own place, where it sits) that
+    // feeds it.
+    type Forward = (u32, ParamPlace, ContainerAt);
+    let mut forwards: HashMap<(u32, u16), Vec<Forward>> = HashMap::default();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
         if !def.name.starts_with("n_") {
@@ -681,21 +753,11 @@ pub fn disturbed_params_map(
         // allocation-less table's `Option<(ptr, Layout, _)>` memcheck reports as a
         // conditional jump on uninitialised bytes, on every run.
         let places = disturbed_param_places(data, d_nr, database);
-        for (&place, &cause) in &places {
+        for (&place, &d) in &places {
             if trace {
-                let (slot, off) = place;
-                let field = if off == ANY_FIELD {
-                    "whole".to_string()
-                } else {
-                    format!("+{off}")
-                };
-                eprintln!(
-                    "[disturb] {} {cause:?} through parameter `{}` ({field})",
-                    def.name(),
-                    def.variables.name(slot)
-                );
+                say(d_nr, place, d, None);
             }
-            if out.entry(d_nr).or_default().insert(place, cause).is_none() {
+            if record_param(out.entry(d_nr).or_default(), place, d) {
                 work.push((d_nr, place));
             }
         }
@@ -710,7 +772,7 @@ pub fn disturbed_params_map(
             }
             for (i, arg) in args.iter().enumerate() {
                 let Ok(i) = u16::try_from(i) else { continue };
-                let Some(place) = call_arg_place(arg, data) else {
+                let Some((place, at)) = call_arg_at(arg, data) else {
                     continue;
                 };
                 // Only a place rooted at the caller's OWN parameter reaches ITS caller; a
@@ -720,7 +782,7 @@ pub fn disturbed_params_map(
                     forwards
                         .entry((*callee, i))
                         .or_default()
-                        .push((d_nr, place));
+                        .push((d_nr, place, at));
                 }
             }
         });
@@ -729,35 +791,15 @@ pub fn disturbed_params_map(
         let Some(ups) = forwards.get(&(callee, slot)) else {
             continue;
         };
-        let cause = out
-            .get(&callee)
-            .and_then(|m| m.get(&(slot, inner)))
-            .copied()
-            .unwrap_or(ViewCause::Grown);
-        for (caller, base) in ups.clone() {
-            let Some(place) = compose_param_place(base, inner) else {
-                continue;
-            };
-            if out
-                .entry(caller)
-                .or_default()
-                .insert(place, cause)
-                .is_none()
-            {
+        let Some(&d) = out.get(&callee).and_then(|m| m.get(&(slot, inner))) else {
+            continue;
+        };
+        for &(caller, base, base_at) in ups {
+            let (place, at) = compose_param_at(base, base_at, inner, d.at);
+            let up = ParamDisturbance { cause: d.cause, at };
+            if record_param(out.entry(caller).or_default(), place, up) {
                 if trace {
-                    let def = data.def(caller);
-                    let (slot, off) = place;
-                    let field = if off == ANY_FIELD {
-                        "whole".to_string()
-                    } else {
-                        format!("+{off}")
-                    };
-                    eprintln!(
-                        "[disturb] {} {cause:?} through parameter `{}` ({field}), via {}",
-                        def.name(),
-                        def.variables.name(slot),
-                        data.def(callee).name()
-                    );
+                    say(caller, place, up, Some(callee));
                 }
                 work.push((caller, place));
             }

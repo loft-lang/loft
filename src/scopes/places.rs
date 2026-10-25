@@ -6,6 +6,7 @@
 //! names, and whether two places name the same storage.  The view walk, the disturbance analysis
 //! and the reshape refusals all ask their questions in these terms.
 
+use super::disturbance::ContainerAt;
 use crate::data::{Data, Value};
 use crate::variables::Function;
 
@@ -271,6 +272,44 @@ pub fn compose_param_place(base: (u16, u32), inner: u32) -> Option<ParamPlace> {
     Some((base.0, add_offset(base.1, inner)))
 }
 
+/// [`compose_param_place`] with where each container sits: the argument the caller passed
+/// (`base`, `base_at`) and the container the callee disturbed inside its parameter (`inner`,
+/// `inner_at`).  The answer is the place, depth and index the INLINED chain would resolve to
+/// ([`crate::use_analysis::projection_place_depth`]), so a disturbance one frame down ends the
+/// views the same statement written in the caller ends, and no others:
+///
+/// - the depth is the sum — `f(vv[0])` growing its `p` is a container one element read deep;
+/// - the field is the root's run: the sum when the callee's container is a field run of its
+///   parameter itself, either side's when the other names none.  When both name one and the
+///   callee's sits past an element read, the root run cannot be told from here and the whole
+///   variable stands in — the side that copies a view rather than keeping a stale one;
+/// - the index is the caller's when its argument read an element, else the callee's, read out
+///   of the composed run.
+pub fn compose_param_at(
+    base: ParamPlace,
+    base_at: ContainerAt,
+    inner: u32,
+    inner_at: ContainerAt,
+) -> (ParamPlace, ContainerAt) {
+    let field = if inner_at.depth == 0 || base.1 == ANY_FIELD || inner == ANY_FIELD {
+        add_offset(base.1, inner)
+    } else {
+        ANY_FIELD
+    };
+    let index = if base_at.depth > 0 {
+        base_at.index
+    } else {
+        inner_at.index.map(|(run, i)| (add_offset(base.1, run), i))
+    };
+    (
+        (base.0, field),
+        ContainerAt {
+            depth: base_at.depth.saturating_add(inner_at.depth),
+            index,
+        },
+    )
+}
+
 /// The offset of a field `inner` read inside a place at offset `base` of the same record —
 /// their sum, with [`ANY_FIELD`] on either side meaning *no field read there*.
 ///
@@ -309,24 +348,36 @@ pub fn named_place_depth(arg: &Value, data: &Data) -> Option<((u16, u32), u8)> {
 /// and the block carries the binding that resolves it. Read here rather than from walk state
 /// because the binding travels with the argument — there is no ordering to get wrong.
 pub fn call_arg_place(arg: &Value, data: &Data) -> Option<ParamPlace> {
+    call_arg_at(arg, data).map(|(place, _)| place)
+}
+
+/// [`call_arg_place`] with where the argument sits ([`ContainerAt`]): `f(vv[0])` hands the
+/// callee a container one element read below `vv`, and a disturbance the callee makes at its
+/// own depth 0 is a disturbance at depth 1 here — the same answer `vv[0] += …` written inline
+/// gives, so a call cannot end the views `a = vv[1]` or `a = vv[0]` the inline spelling spares.
+pub fn call_arg_at(arg: &Value, data: &Data) -> Option<(ParamPlace, ContainerAt)> {
+    let at = |v: &Value, depth: u8| ContainerAt {
+        depth,
+        index: crate::use_analysis::root_element_index(data, v),
+    };
     if let Value::Insert(ops) = arg.unspan() {
-        let place = call_arg_place(ops.last()?, data)?;
-        if place.1 != ANY_FIELD {
-            return Some(place);
+        let found = call_arg_at(ops.last()?, data)?;
+        if found.0.1 != ANY_FIELD {
+            return Some(found);
         }
         // The temp names a place only where this block is what bound it; otherwise the temp
         // itself is the place, which is what a caller-local container passed down is.
         for op in ops {
             if let Value::Set(t, rhs) = op.unspan()
-                && *t == place.0
+                && *t == found.0.0
             {
-                return base_container_place(rhs, data);
+                let (place, depth) = crate::use_analysis::projection_place_depth(data, rhs)?;
+                return Some((place, at(rhs, depth)));
             }
         }
-        return Some(place);
+        return Some(found);
     }
-    match peel_stack_ref(arg, data) {
-        Value::Var(c) => Some((*c, ANY_FIELD)),
-        other => base_container_place(other, data),
-    }
+    let v = peel_stack_ref(arg, data);
+    let (place, depth) = named_place_depth(v, data)?;
+    Some((place, at(v, depth)))
 }

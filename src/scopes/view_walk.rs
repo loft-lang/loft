@@ -7,11 +7,11 @@
 //! that may move.
 
 use super::disturbance::{
-    Disturbance, DisturbedParams, RemovedParams, ViewCause, grown_containers, named_place,
-    reshaped_containers,
+    ContainerAt, Disturbance, DisturbedParams, RemovedParams, ViewCause, grown_containers,
+    named_place, reshaped_containers,
 };
 use super::places::{
-    ParamPlace, add_offset, call_arg_place, compose_param_place, get_record_literal_keys,
+    ParamPlace, add_offset, call_arg_at, compose_param_at, get_record_literal_keys,
     keyed_payload_view, named_place_depth, peel_stack_ref, same_place, value_view_places_depth,
 };
 use crate::data::{Data, Type, Value};
@@ -563,7 +563,7 @@ impl ViewWalk<'_> {
             if at.depth == 0 {
                 whole.insert(place);
             } else {
-                self.shake_places_deeper(place, at.depth, at.index, ViewCause::Reshaped);
+                self.shake_places_deeper(place, at.depth, at.index, ViewCause::Reshaped, None);
             }
         }
         self.shake_places_keyed(
@@ -593,11 +593,11 @@ impl ViewWalk<'_> {
             }
         });
         for (place, depth, index) in rebuilt {
-            self.shake_places_deeper(place, depth, index, ViewCause::Reassigned);
+            self.shake_places_deeper(place, depth, index, ViewCause::Reassigned, None);
         }
         // A growth ends the views deeper than the container it grows (`shake_places_keyed`).
         for (place, at) in grown_containers(stmt, self.data, self.function, self.database) {
-            self.shake_places_deeper(place, at.depth, at.index, ViewCause::Grown);
+            self.shake_places_deeper(place, at.depth, at.index, ViewCause::Grown, None);
         }
         if let Some(removed) = self.cross_frame {
             for (container, callee) in reshaped_via_call(stmt, self.data, removed) {
@@ -623,39 +623,40 @@ impl ViewWalk<'_> {
     /// so, and a removal one frame down read the element that shifted in. One shape, two
     /// meanings, decided by which side of a call the append sits on.
     ///
-    /// The callee's fact is [`DisturbedParams`]; [`compose_param_place`] maps it onto the
-    /// argument this frame passed. The cause travels with it so the advice names the growth or
-    /// the removal, and `via` names the callee so the report points at the call rather than at
-    /// the container's own line.
+    /// The callee's fact is [`DisturbedParams`]; [`compose_param_at`] maps it onto the
+    /// argument this frame passed, DEPTH included: `grow(vv)` growing `p[0]` and `grow(vv[0])`
+    /// growing `p` are both a container one element read below `vv`, which ends `vv[0][0]` and
+    /// leaves `a = vv[1]` aliasing, as `vv[0] += …` written here does (loft#2161).  The cause
+    /// travels with it so the advice names the growth or the removal, and `via` names the
+    /// callee so the report points at the call rather than at the container's own line.
     fn disturb_via_calls(&mut self, stmt: &Value) {
         let Some(disturbed) = self.disturbed else {
             return;
         };
-        let mut hits: Vec<(ParamPlace, ViewCause, u32)> = Vec::new();
+        let mut hits: Vec<(ParamPlace, ContainerAt, ViewCause, u32)> = Vec::new();
         let data = self.data;
         stmt.walk(&mut |v| {
             let Value::Call(d, args) = v else { return };
             let Some(places) = disturbed.get(d) else {
                 return;
             };
-            for (&(slot, inner), &cause) in places {
+            for (&(slot, inner), pd) in places {
                 let Some(arg) = args.get(usize::from(slot)) else {
                     continue;
                 };
-                let Some(base) = call_arg_place(arg, data) else {
+                let Some((base, base_at)) = call_arg_at(arg, data) else {
                     continue;
                 };
-                if let Some(place) = compose_param_place(base, inner) {
-                    hits.push((place, cause, *d));
-                }
+                let (place, at) = compose_param_at(base, base_at, inner, pd.at);
+                hits.push((place, at, pd.cause, *d));
             }
         });
-        for (place, cause, callee) in hits {
-            self.shake_plain_places(&HashSet::from_iter([place]), cause, Some(callee));
+        for (place, at, cause, callee) in hits {
+            self.shake_plain_places(place, at, cause, Some(callee));
         }
     }
 
-    /// [`Self::shake_places`], with the prior state restored afterwards for every binding in
+    /// [`Self::shake_places_deeper`], with the prior state restored afterwards for every binding in
     /// [`Self::whole_container`].  The callee path's shake — [`Self::disturb_via_calls`] is the
     /// only caller.
     ///
@@ -668,7 +669,7 @@ impl ViewWalk<'_> {
     ///
     /// The restore is keyed by VIEW, where [`Self::names_container_itself`] matches the place
     /// EXACTLY — so a whole-container link is spared from every place one call disturbs,
-    /// including a disturbance of the whole variable, which [`compose_param_place`] answers as
+    /// including a disturbance of the whole variable, which [`compose_param_at`] answers as
     /// `ANY_FIELD` and [`same_place`] matches by wildcard.
     ///
     /// What the sparing is for: `d = &cv.data; grow(cv, 7); grow(cv, 8); d[2]` is
@@ -683,7 +684,8 @@ impl ViewWalk<'_> {
     /// sparing `&` links INTO a container.
     fn shake_plain_places(
         &mut self,
-        places: &HashSet<(u16, u32)>,
+        place: (u16, u32),
+        at: ContainerAt,
         cause: ViewCause,
         via: Option<u32>,
     ) {
@@ -713,7 +715,7 @@ impl ViewWalk<'_> {
             .iter()
             .map(|(v, _, _)| (*v, self.shaken.get(v).copied()))
             .collect();
-        self.shake_places(places, cause, via);
+        self.shake_places_deeper(place, at.depth, at.index, cause, via);
         for (view, prior) in before {
             match prior {
                 Some(d) => {
@@ -1039,6 +1041,7 @@ impl ViewWalk<'_> {
         depth: u8,
         index: Option<(u32, i32)>,
         cause: ViewCause,
+        via: Option<u32>,
     ) {
         let spared: Vec<u16> = match index {
             Some((run, i)) => self
@@ -1063,7 +1066,7 @@ impl ViewWalk<'_> {
         self.shake_places_keyed(
             &HashSet::from_iter([place]),
             cause,
-            None,
+            via,
             &HashMap::default(),
             depth.saturating_add(1),
         );
