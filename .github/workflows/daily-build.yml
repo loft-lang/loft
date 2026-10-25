@@ -210,7 +210,10 @@ jobs:
       # library is already built as that binary's dependency, and the pair must be one build.
       - name: Package the runtime library
         # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
-        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
+        # Not Windows: an installed loft there cannot link `--native` yet — the import
+        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
+        # output directories only a build tree has (LNK1181 in the smoke).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin' && matrix.target != 'x86_64-pc-windows-msvc'
         shell: bash
         run: |
           CARGO_INCREMENTAL=0 scripts/lean_build.sh --lib --bin loft --target ${{ matrix.target }}
@@ -220,7 +223,10 @@ jobs:
       # so each leg that can run its own artefact compiles one with `--native` against it.
       - name: Smoke-test the runtime (--native)
         # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
-        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
+        # Not Windows: an installed loft there cannot link `--native` yet — the import
+        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
+        # output directories only a build tree has (LNK1181 in the smoke).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin' && matrix.target != 'x86_64-pc-windows-msvc'
         shell: bash
         run: |
           set -e
@@ -241,7 +247,10 @@ jobs:
 
       - name: Upload the runtime
         # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
-        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
+        # Not Windows: an installed loft there cannot link `--native` yet — the import
+        # libraries a dependency's build script names (`windows.0.48.5.lib`) live in build-script
+        # output directories only a build tree has (LNK1181 in the smoke).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin' && matrix.target != 'x86_64-pc-windows-msvc'
         uses: actions/upload-artifact@v4
         with:
           name: loft-daily-runtime-${{ matrix.target }}

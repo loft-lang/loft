@@ -173,9 +173,9 @@ for small inputs and overflows at ten thousand frames is a wrong answer that arr
 a compile-time refusal is the one-way door loft may still add before the freeze
 ([COMPATIBILITY.md § The error surface is one-directional](COMPATIBILITY.md)); dropping it
 later, as the heap clause lands shape by shape, costs nothing.  The refusal and the pass share
-one predicate (`tail_self::admit_frame`), so what compiles is exactly what jumps.
+one predicate (`tail_frame::admit_frame`), so what compiles is exactly what jumps.
 **Holds at:** `@C155` — the refusal in `src/parser/definitions.rs` (pass two, beside the
-per-function lints), `admit_frame` and `declared_params` in `src/opt/tail_self.rs`; guards:
+per-function lints), `admit_frame` and `declared_params` in `src/tail_frame.rs`; guards:
 `tests/error_messages/cases/63_a_tail_self_call_the_frame_cannot_jump_is_refused.loft`, and in
 loft-suite `rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-is-refused.loft`.
 **Catalogue:** `formal/rewrites.md` `(R-TailSelf)` · `formal/calls.md` `(F-ParamHeap)`,
