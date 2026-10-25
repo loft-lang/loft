@@ -680,6 +680,12 @@ impl Parser {
             return;
         }
         let attrs_n = self.data.def(d_nr).attributes().len();
+        crate::loft_trace!(
+            generic,
+            "monomorph return deps fn={} oracle={:?}",
+            self.data.def(d_nr).name(),
+            crate::use_analysis::return_ownership(&self.data, d_nr)
+        );
         // loft#1880 — the oracle reads a SELF call as a mint, so a recursive instance that
         // only ever hands its argument's view along (`el(v, i - 1)`, base case `v[0]`)
         // reads as a `Join`; the leaf walk settles it by the induction the recursion is.
