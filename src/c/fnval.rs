@@ -156,10 +156,12 @@ impl Cx<'_> {
                 buffers.push(w);
             } else if a.work_buffer {
                 args.push("loft_ref_null()".to_string());
-            } else if matches!(
-                a.typedef,
-                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-            ) {
+            } else if !matches!(a.typedef, Type::Optional(_))
+                && matches!(
+                    a.typedef.base(),
+                    Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+                )
+            {
                 if vec_buf.is_some() && ret == CType::Ref {
                     uses_vec_buf = true;
                     args.push("hb".to_string());

@@ -6967,8 +6967,11 @@ impl Parser {
             // destination declared as the enum (`m: Node = Bin { …, ..n }`) is the `(C-Var)`
             // widening `m = n` is, and the named fields are then written with the variant's
             // layout, which the copy made the destination hold.
-            let bind_tp = match self.vars.tp(dest) {
-                Type::Enum(..) if variant => self.vars.tp(dest).clone(),
+            // An `Optional` destination keeps the variant's type, as it did (@FR-N-Shape spelled).
+            let bind_tp = match self.vars.tp(dest).base() {
+                Type::Enum(..) if variant && !matches!(self.vars.tp(dest), Type::Optional(_)) => {
+                    self.vars.tp(dest).clone()
+                }
                 _ => ret.clone(),
             };
             self.parse_assign_op(
@@ -7620,7 +7623,9 @@ impl Parser {
                 // This is the `S{}` half of the one `has_default` rule `x?` enforces.
                 // `@FR-D-Json`: a `JsonValue` field is the one enum with a stated zero — `JNull`,
                 // JSON's own absence, the first variant — so an omitted one takes it.
-                if let Type::Enum(e, _, _) = &tp
+                // The nullability question spelled: an `Optional` JsonValue stays null.
+                if !matches!(tp, Type::Optional(_))
+                    && let Type::Enum(e, _, _) = tp.base()
                     && self.data.def(*e).name == "JsonValue"
                 {
                     // Built as the literal `JNull` is: a record of the variant (`EnumUnitLit`),
