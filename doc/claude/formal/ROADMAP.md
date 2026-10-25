@@ -33,9 +33,10 @@ Closing a row means the implementation obeys the rule (then the deviation entry 
 | [closures.md](closures.md) | 0 | ✓ **D-clo-7** and **D-clo-14** both CLOSED 2026-09-03 — one `??`-default leak in two positions (D-clo-14 by store identity, D-clo-7 by the capture SLOT read off the callee's body; the `if`/`match`-arm residual it was filed with turned out to be **D-own-8**, not a closure defect — the named twin and a struct leak identically): a lambda's borrow arm hands back a store whose witness cannot be NAMED (the return dep names `__closure`, not which slot), so the mint arm's store leaks.  At a COLLECTION return that leak is now CLOSED by store identity against the `Join` base, which the temp's own dep names (loft#1257) — the decline that preceded it was correct in the over-free direction and paid for it with the leak.  The cluster the three were recorded as in [QUALITY.md](../QUALITY.md) — *"ONE missing per-execution ownership witness"* — is measured wrong: two of the three closed with no witness at all, and what separates the closed rows from `D-clo-7` is whether a base can be NAMED.  ⚠ D-clo-14 is invisible on the program-exit leak channel (its stores are freed at FRAME exit) — measure it with `LOFT_ALLOC_SITES=1`, or at the 65535-store ceiling, which is the one channel that fails on both backends.  **D-clo-18** and **D-clo-20** left this register as REFUSALS ([DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md)), which is the spec-may-adjust route below, not a fix |
 | [capabilities.md](capabilities.md) | 0 | the `deps` borrow checker's sibling — **✓ CLOSED (2026-07-04)**: sandbox admission enforces all six rules, each with a RED/GREEN pair. **D-cap-1** the parameter `#default` lock (`param_lock_violations`); **D-cap-2** the closure descent (`mark_lambda_sandboxed` — a script-only lambda is usable, a host-reaching one is rejected naming the reach); **D-cap-3** the owned-vs-host write split (`raw_write_is_host_owned` gained a `Type::Vector` owned arm — a probe proved a local vector never aliases host, every whole-value bind incl. `&` COPIES, so only a PARAMETER-root write is a host effect and the `arguments()` check already IS that boundary; the feared `ownership_of` consultation was NOT needed) |
 | [layout.md](layout.md) | 0 | ✓ **D-layout-1** CLOSED 2026-09-21 (loft#1562) — the bind of an existing file and the whole-image URL loaders now ask the `.dschema` gate that `store_load` and the paged loaders already asked. Before: no version guard on persisted bytes (#477: same types, different bytes, silently misread; `L-Sound`). **Mechanism shipped (@PLN97):** the golden byte-layout test catches a change at commit; the `.dschema` sidecar (`CorruptReason::SchemaMismatch`) detects a stale store at load → the `on_corruption` rebuild. **Residual:** the durable store ([plans/43](../plans/43-loft-store-durable/)) isn't loft-driven yet, so nothing auto-invokes the load-time gate — closes when a persistence consumer wires `check_beside` into its open path |
+| [structures.md](structures.md) | 1 | `D-struct-3` (loft#2174), spec-may-adjust — an image with no sidecar is read raw, against `L-Sound`; Phase B5 |
 
-**Six open, in five chapters** — `D-op-1`/`D-op-2` (operational), `D-layout-1`, `D-heap-1`,
-`D-tup-10` and `D-perf-2`.  (`D-heap-LIFO` closed 2026-09-12 by rewriting heap.md's free rules
+**Four open, in three chapters** — `D-op-1`/`D-op-2` (operational), `D-perf-2` and
+`D-struct-3`, as `rule_tags.py registers` counts them.  (`D-heap-LIFO` closed 2026-09-12 by rewriting heap.md's free rules
 to how the mechanism functions, and `D-Domain-Guard` the same day by widening the lattice.)  Counted 2026-09-12 by `rule_tags.py registers`, which
 reads each chapter's stated `OPEN: n` against the entries it lists rather than restating it here;
 the line below was hand-maintained and read **four** for nine days.  This paragraph is prose beside
@@ -44,6 +45,8 @@ a measured number, so re-run the tool rather than quoting it.  They are not seve
 - **2 meta** — `D-op-1`/`D-op-2`. There is no shared operational semantics, so the interpreter IS
   the spec and a backend divergence is caught by test rather than by definition. An open-ended
   coverage instrument (@PLN89), not a row that closes.
+- **1 decision** — `D-struct-3` (loft#2174): an image with no sidecar is read raw, which
+  layout.md's `L-Sound` does not allow; Phase B5 below.
 - ~~**1 residual** — `D-layout-1`~~ CLOSED 2026-09-21 (loft#1562): the bind and the whole-image
   URL loaders now ask the gate the other load paths already asked.
 - **0 from the cluster whose premise was measured false** — `D-clo-7` and `D-clo-14` are both
@@ -69,7 +72,7 @@ a measured number, so re-run the tool rather than quoting it.  They are not seve
   `ok` over an empty region.  A gate that hunts an EFFECT must be checked against whether the
   effect can occur inside the window it searches.
 
-**Every one is code→spec: no open row is a rule that needs changing.** The chapters that WERE
+**Every one but `D-struct-3` is code→spec: no other open row is a rule that needs changing.** The chapters that WERE
 closed stay closed on their merits — types.md (@PLN25 value/null: DN1–DN6 + D2, DN3 covering
 integer `/`/`%`, indexing and the text→numeric parse flip; overflow-arith a decided edge @C85; the
 @PLN102 DN3-Float extension written ahead of the code), grammar.md, capabilities.md
@@ -117,6 +120,7 @@ These are **spec-may-adjust** — your call resolves them, then they close or re
 | ~~B2~~ | ~~**D-gram-2**~~ **DONE** | loft's surface IS deliberately not context-free — accepted on purpose. | reclassified → decided edge, [DESIGN_DECISIONS @C82](../DESIGN_DECISIONS_SYNTAX.md#c82--lofts-surface-is-deliberately-not-context-free) |
 | ~~B3~~ | ~~**D-gram-4**~~ **DONE** | A1 made prefix `&` total — keep one `&` token, disambiguated by position (like Rust). | reclassified → decided edge, [DESIGN_DECISIONS @C81](../DESIGN_DECISIONS_SYNTAX.md#c81---stays-one-token-disambiguated-by-position-bitwise-and-vs-reference) |
 | ~~B4~~ | ~~**D-clo-18**~~ (+ **D-clo-20**) **DONE** | A closure cannot write through a captured `&` SCALAR parameter, nor rebind a captured heap parameter: `(L-CapScalar)` hands the closure a COPY, so there is no shared record for the write to land in, and the repoint that looks like the cure was MEASURED to move the wrong answer from caller to callee rather than remove it. Both were silent wrong answers before the refusal. | reclassified → decided edge, [DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md); closures.md 3 → 2 with no code change |
+| B5 | **D-struct-3** | Is an image with no `.dschema` sidecar refused, or read raw under the reader's layout? `L-Sound` says refused; the loaders read it raw and `REMOTE_STORES.md` documents a missing `<url>.dschema` as normal. A failed sidecar fetch over HTTP takes the same raw path. | owner's call: refuse (a shipped-surface change) or amend `L-Sound` to name the exception |
 
 ## Phase C — tracked projects (have or need a plan; weeks)
 

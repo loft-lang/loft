@@ -120,6 +120,7 @@ impl LayoutIdentity {
     /// store (the only on-disk addition; the payload stays byte-identical). A
     /// `schema=` line is emitted only when non-empty, so an all-non-null program
     /// round-trips byte-identically with the pre-F9 format.
+    /// The text is `@FR-S-Sidecar`'s grammar.
     #[must_use]
     pub fn to_sidecar(&self) -> String {
         let schema_line = if self.schema.is_empty() {
@@ -243,6 +244,7 @@ pub enum Handoff {
 /// dump → [`Handoff::Identical`] (the raw-handoff fast path); otherwise a
 /// structured per-type diff. This is the handoff decision variable @PLN97 exists
 /// to make sound — never a silent raw handoff across a changed layout.
+/// The comparison `@FR-S-Gate` runs before a byte of an image is read under it.
 #[must_use]
 pub fn classify(old: &LayoutIdentity, new: &LayoutIdentity) -> Handoff {
     // @C152 — a store whose hashes were written under a placement this build reads
@@ -319,6 +321,23 @@ impl LayoutIdentity {
     /// creates the parent dir if needed). Shared by `write_beside` (the store
     /// sidecar) and `write_baseline` (the project layout lockfile).
     fn write_to(&self, path: &Path) -> std::io::Result<()> {
+        let tmp = self.stage_to(path)?;
+        crate::file_access::rename(&tmp, path)
+    }
+
+    /// The first half of [`Self::write_beside`]: the sidecar text written and synced to
+    /// `<store>.dschema.tmp`, whose path is answered for the caller to rename into place.
+    /// A store writer stages its image the same way and commits the two together, so a
+    /// failure before the commit leaves the previous image and sidecar as they were
+    /// (`@FR-S-Pair`).
+    ///
+    /// # Errors
+    /// Propagates any `io::Error` creating, writing or syncing the temp file.
+    pub fn stage_beside(&self, store_path: &Path) -> std::io::Result<PathBuf> {
+        self.stage_to(&dschema_path(store_path))
+    }
+
+    fn stage_to(&self, path: &Path) -> std::io::Result<PathBuf> {
         use std::io::Write as _;
         if let Some(parent) = path.parent() {
             crate::file_access::create_dir_all(parent)?;
@@ -327,12 +346,10 @@ impl LayoutIdentity {
         let mut tmp = path.as_os_str().to_owned();
         tmp.push(".tmp");
         let tmp = PathBuf::from(tmp);
-        {
-            let mut f = crate::file_access::create(&tmp)?;
-            f.write_all(self.to_sidecar().as_bytes())?;
-            f.sync_all()?;
-        }
-        crate::file_access::rename(&tmp, path)
+        let mut f = crate::file_access::create(&tmp)?;
+        f.write_all(self.to_sidecar().as_bytes())?;
+        f.sync_all()?;
+        Ok(tmp)
     }
 }
 

@@ -4025,6 +4025,7 @@ pub fn ints_hash(values: &[i64], seed: u64) -> u64 {
     hasher.finish()
 }
 
+/// The digest `@FR-S-Digest` defines: SipHash-1-3 over the seed and the decoded key fields.
 #[inline]
 #[must_use]
 pub fn key_hash(key: &[Content], seed: u64) -> u64 {

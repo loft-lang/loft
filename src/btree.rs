@@ -35,6 +35,7 @@ use crate::store::Store;
 use std::cmp::Ordering;
 
 /// Slots in a node.  16 measured best of 8 / 16 / 32 / 64 (`tests/btree_probe.rs`).
+/// The node bytes below are `@FR-S-Index`.
 pub const FANOUT: u32 = 16;
 /// The fewest slots a node other than the root holds after a removal.
 const MIN: u32 = FANOUT / 4;

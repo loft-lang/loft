@@ -5276,18 +5276,35 @@ impl Stores {
             return false;
         };
         drop(rebuilt);
-        if std::fs::write(path, &padded).is_err() {
-            return false;
-        }
-        // The layout sidecar: a paged or remote loader gates on it BEFORE
-        // range-reading foreign bytes.
+        // `@FR-S-Pair` — the image and its layout sidecar are one write: both are staged
+        // beside the target, and only when both are written do they replace what is there,
+        // so a failure leaves the previous pair as it was.  An image without its sidecar
+        // reads as raw-safe to every loader, and one beside an earlier write's sidecar
+        // reads under that write's layout.
         // The slot the image's references name is the rebuilt store's (`@FR-L-Ref-Slot`).
         let id = crate::schema_sidecar::LayoutIdentity::of_store(self, dst_slot, tp);
-        if id.write_beside(path).is_err() && std::env::var_os("LOFT_LOADER_STATS").is_some() {
-            crate::loft_eprintln!(
-                "store_persist_copy: could not write layout sidecar beside {}",
-                path.display()
-            );
+        let mut staged = path.as_os_str().to_owned();
+        staged.push(".tmp");
+        let staged = std::path::PathBuf::from(staged);
+        let image = (|| -> std::io::Result<()> {
+            use std::io::Write as _;
+            let mut f = crate::file_access::create(&staged)?;
+            f.write_all(&padded)?;
+            f.sync_all()
+        })();
+        let sidecar = image.and_then(|()| id.stage_beside(path));
+        let Ok(sidecar) = sidecar else {
+            let _ = crate::file_access::remove_file(&staged);
+            if std::env::var_os("LOFT_LOADER_STATS").is_some() {
+                crate::loft_eprintln!("store_persist_copy: not written — {}", path.display());
+            }
+            return false;
+        };
+        if crate::file_access::rename(&staged, path).is_err()
+            || crate::file_access::rename(&sidecar, crate::schema_sidecar::dschema_path(path))
+                .is_err()
+        {
+            return false;
         }
         if std::env::var_os("LOFT_LOADER_STATS").is_some() {
             crate::loft_eprintln!(
@@ -8753,6 +8770,7 @@ impl Stores {
 /// track the data.  Interior free blocks still remain: reclaiming those means
 /// relocating records and rewriting every `DbRef`, which is compaction, not
 /// this.
+/// Where an image ends: the last claimed block (`@FR-S-Image`).
 #[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
     // PRIMARY = 1 is the first record's word position.
@@ -8795,6 +8813,7 @@ pub(super) fn store_image_live_end(src: &[u8], src_words: u32) -> Option<u32> {
 ///
 /// Returns `None` if the source bytes don't describe a walkable record chain,
 /// or if `target_words` would cut into live data.
+/// The image's floor: one free block pads it to 1024 words (`@FR-S-Image`).
 #[cfg_attr(not(any(feature = "mmap", feature = "wasm")), allow(dead_code))]
 pub(super) fn build_padded_store_image(
     src: &[u8],

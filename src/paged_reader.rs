@@ -1022,6 +1022,7 @@ impl<P: PageProvider> PagedReader<P> {
 /// decoded through [`crate::arena`] — or, for a table that borrows its records, the
 /// record number itself.  A pre-@PLN135-arc-H image cannot reach here: the placement
 /// token refuses it at load.
+/// `@FR-S-Paged`: every address computed from the key and the table's own bytes.
 pub fn find_hash_entry<P: PageProvider>(
     reader: &mut PagedReader<P>,
     root_rec: u32,
@@ -1167,13 +1168,48 @@ fn read_reader_str<P: PageProvider>(reader: &mut PagedReader<P>, rec: u32) -> St
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// An integer key or axis field's value at byte `p` of record `rec` in the paged image —
+/// the paged spelling of the `Store` reader its `type_nr` names, `key.start` included
+/// (`@FR-Col-Axis`, `@FR-L-Narrow-Decode`): the narrow widths store `value - start`, so a
+/// decode that assumed a zero bias, or read a byte signed, answers another value than the
+/// resident store for the same bytes (`@FR-S-Paged-Same`).  The ONE paged decode, read by
+/// the hash lookup and the spatial walk alike.
+fn field_value<P: PageProvider>(
+    reader: &mut PagedReader<P>,
+    rec: u32,
+    p: u32,
+    key: &crate::keys::Key,
+) -> i64 {
+    let start = i64::from(key.start);
+    match key.type_nr.unsigned_abs() {
+        // 4-byte signed (`int<…>`), as `Store::get_i32_raw` reads it.
+        8 => i64::from(reader.i32_at(rec, p)),
+        // 4-byte UNSIGNED (`int_raw<…>`, @FR-L-Narrow-Enc), as `Store::get_u32_raw` reads
+        // it.  Raw like the signed 4-byte arm above, so it takes no bias.
+        12 => i64::from(reader.u32_at(rec, p)),
+        // 2-byte, `start`-biased with `0` reserved for null (`Store::get_short`).
+        9 => {
+            let raw = reader.u16_at(rec, p);
+            if raw == 0 {
+                i64::from(i32::MIN)
+            } else {
+                i64::from(raw) + start - 1
+            }
+        }
+        // 1-byte, `start`-biased (`Store::get_byte`).
+        10 => i64::from(reader.u8_at(rec, p)) + start,
+        // 2-byte direct, `start`-biased (`Store::get_short_full`).
+        11 => i64::from(reader.u16_at(rec, p)) + start,
+        // `integer` (1), `long` (2), and any other integer default.
+        _ => reader.i64_at(rec, p),
+    }
+}
+
 /// Compare `key` against the key fields of the entry at `(rec, pos)` in the
-/// paged image — the reader port of `keys::compare_key` for the fixed-width
-/// numeric key types (1/2 = i64 `integer`/`long`, 8/9/10/11 = narrow ints) and
-/// text keys (6).
-/// Text/float keys (types 6/3/4) are a follow-up (they need a string-record
-/// read / float compare); an unsupported type returns `Greater` so it never
-/// falsely matches.
+/// paged image — the reader port of `keys::compare_key` for the integer key
+/// types (1/2 = `integer`/`long`, 8–12 = the narrow widths, through
+/// [`field_value`]) and text keys (6).  A float key returns `Greater`, so it
+/// never matches.
 fn key_compare_reader<P: PageProvider>(
     reader: &mut PagedReader<P>,
     key: &[crate::keys::Content],
@@ -1187,24 +1223,7 @@ fn key_compare_reader<P: PageProvider>(
         let k = &keys[k_nr];
         let p = pos + u32::from(k.position);
         let c = match (val, k.type_nr.abs()) {
-            (Content::Long(v), 1 | 2) => v.cmp(&reader.i64_at(rec, p)),
-            (Content::Long(v), 8) => v.cmp(&i64::from(reader.i32_at(rec, p))),
-            (Content::Long(v), 12) => v.cmp(&i64::from(reader.u32_at(rec, p))),
-            (Content::Long(v), 9) => {
-                let mut b = [0u8; 2];
-                reader.read_into(u64::from(rec) * 8 + u64::from(p), &mut b);
-                v.cmp(&i64::from(i16::from_ne_bytes(b)))
-            }
-            (Content::Long(v), 10) => {
-                let mut b = [0u8; 1];
-                reader.read_into(u64::from(rec) * 8 + u64::from(p), &mut b);
-                v.cmp(&i64::from(b[0] as i8))
-            }
-            (Content::Long(v), 11) => {
-                let mut b = [0u8; 2];
-                reader.read_into(u64::from(rec) * 8 + u64::from(p), &mut b);
-                v.cmp(&i64::from(u16::from_ne_bytes(b) as i16))
-            }
+            (Content::Long(v), 1 | 2 | 8..=12) => v.cmp(&field_value(reader, rec, p, k)),
             // text key (3b.6): the field holds a `u32` pointer to a string record
             // (fld 4 = length, fld 8.. = UTF-8 bytes). Read it over the reader and
             // compare as strings. `key_hash` already hashes the `Content::Str`.
@@ -1572,34 +1591,12 @@ impl<'a, P: PageProvider> PagedSpatial<'a, P> {
     /// _resident_one` drives every width through both readers and compares the
     /// answers, which is what holds them in step.
     fn axis_value(&mut self, rec: u32, key: &crate::keys::Key) -> i64 {
-        let p = ELEM_PAYLOAD + u32::from(key.position);
-        // Each arm is the paged spelling of the `Store` reader `radix_db::axis_i64` calls
-        // for the same `type_nr`, `key.start` included: the narrow widths store
-        // `value - start`, so a decode that assumed a zero bias would give this storage a
-        // different Morton code than the resident one for the same record.
-        let start = i64::from(key.start);
-        match key.type_nr.unsigned_abs() {
-            // 4-byte signed (`int<…>`), as `Store::get_i32_raw` reads it.
-            8 => i64::from(self.reader.i32_at(rec, p)),
-            // 4-byte UNSIGNED (`int_raw<…>`, @FR-L-Narrow-Enc), as `Store::get_u32_raw`
-            // reads it.  Raw like the signed 4-byte arm above, so it takes no bias.
-            12 => i64::from(self.reader.u32_at(rec, p)),
-            // 2-byte, `start`-biased with `0` reserved for null (`Store::get_short`).
-            9 => {
-                let raw = self.reader.u16_at(rec, p);
-                if raw == 0 {
-                    i64::from(i32::MIN)
-                } else {
-                    i64::from(raw) + start - 1
-                }
-            }
-            // 1-byte, `start`-biased (`Store::get_byte`).
-            10 => i64::from(self.reader.u8_at(rec, p)) + start,
-            // 2-byte direct, `start`-biased (`Store::get_short_full`).
-            11 => i64::from(self.reader.u16_at(rec, p)) + start,
-            // `integer` (1), `long` (2), and any other integer default.
-            _ => self.reader.i64_at(rec, p),
-        }
+        field_value(
+            self.reader,
+            rec,
+            ELEM_PAYLOAD + u32::from(key.position),
+            key,
+        )
     }
 
     /// The record's axis codes, order-preserving, kept until another record is asked

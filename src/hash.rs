@@ -47,6 +47,7 @@ use std::cmp::Ordering;
 // public so `tests/layout_golden.rs::placement_contract_is_pinned` can pin them —
 // changing one without bumping `crate::placement::HASH` would let an older store be
 // misread instead of refused. See [`crate::placement`].
+// The table record's bytes are `@FR-S-Hash`.
 pub const LEN_FLD: u32 = 4;
 pub const SEED_FLD: u32 = 8;
 pub const STRIDE_FLD: u32 = 28;
@@ -178,6 +179,7 @@ fn inline_words(count: u32, stride: u32) -> u32 {
 }
 
 /// Byte offset of an inline table's entries array.
+/// `@FR-S-Inline`: entries follow the 8-byte slots.
 #[inline]
 #[must_use]
 pub fn ent0(count: u32) -> u32 {
@@ -303,6 +305,7 @@ pub fn stride_for(size: u32) -> u32 {
 /// and the bucket is the same number.  A table the allocator handed a few words more, or
 /// one a store written before carries, keeps the division: same formula, so no stored hash
 /// moves and none is refused.
+/// `@FR-S-Probe`: the home slot of a digest, for the writer and every reader.
 #[inline]
 #[must_use]
 pub fn home_bucket(digest: u64, count: u32) -> u32 {

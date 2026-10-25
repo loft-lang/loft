@@ -482,7 +482,7 @@ registering, or narrowing only takes effect for struct fields.
 See [INTERMEDIATE.md § Integer Storage Size](INTERMEDIATE.md#integer-storage-size)
 for the per-variant table and the rule selection.
 
-### Sorted By-Value Vector (`Parts::Ordered`)
+### Sorted By-Value Vector (`Parts::Sorted`)
 
 Same record layout as Vector. Elements are kept in sorted order via binary search insertion.
 
@@ -492,7 +492,7 @@ Same record layout as Vector. Elements are kept in sorted order via binary searc
 | `sorted_add(store, rec, size, keys) -> u32` | Append then insertion-sort to correct position; returns offset |
 | `sorted_finish(store, rec, size, keys)` | Insertion-sort the last added element into correct position |
 
-### By-Reference Array (`Array` / `Parts::Array` / `Parts::Sorted`)
+### By-Reference Array (`Array` / `Parts::Array` / `Parts::Ordered`)
 
 Stores 4-byte record references (offsets into a separate store) rather than inline data. Used for `sorted<T>` where `T` is a struct stored elsewhere.
 

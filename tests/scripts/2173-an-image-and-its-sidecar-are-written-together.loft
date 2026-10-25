@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN IMAGE AND ITS SIDECAR ARE WRITTEN TOGETHER (`@FR-S-Pair`, loft#2173).  A store image is
+// read under the layout its `.dschema` sidecar records, so the two are one write: the call
+// answers true only when both were written, and a write that fails leaves the previous pair as
+// it was.  The cell writes a first pair, makes the sidecar impossible to write (a directory
+// where its temp file goes), writes a second value over the first, and reads the path back.
+// Held fixed: one hash of one record, the image path, the failure at the sidecar.
+//
+// Values hand-computed: the second write answers false; the image still holds the first
+// value (10), not the second (20).
+//
+// @falsified-at: b36d0449f — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the asserts.
+// ARMED: no instrument.
+// WITNESS: each message prints the call's answer and the value read back.
+// HOLDS: `tests/scripts/store_persist_smoke.loft` (the pair written and read when nothing fails).
+
+struct R { k: integer, v: integer }
+
+fn main() {
+  p = "{temp_dir() ?? "/tmp"}/loft_2173_{now()}_{ticks()}.store";
+  a: hash<R[k]> = [R { k: 1, v: 10 }];
+  assert(store_persist_copy(a, p), "the first pair is written");
+  mkdir("{p}.dschema.tmp");
+  b: hash<R[k]> = [R { k: 1, v: 20 }];
+  wrote = store_persist_copy(b, p);
+  l: hash<R[k]> = [];
+  loaded = store_load(l, p);
+  v = l[1].v ?? -1;
+  rmdir("{p}.dschema.tmp");
+  delete(p);
+  delete("{p}.dschema");
+  assert(!wrote, "a write whose sidecar fails answers false, not {wrote}");
+  assert(loaded && v == 10, "the first pair is intact: loaded {loaded}, value {v}");
+}
