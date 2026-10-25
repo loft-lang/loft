@@ -3020,6 +3020,21 @@ impl<'a> FnWriter<'a> {
         ))
     }
 
+    /// `OpRemoveVector` of a linked element type: the slot unlinked, the record released.
+    fn remove_linked(&mut self, tp: u16, v: &Value, idx: &Value, ind: usize) -> Result<E, String> {
+        self.cx.name_types();
+        self.cx.describe_type(tp);
+        let (v, idx) = self.two("OpRemoveVector", &[v.clone(), idx.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_vec_remove_linked(loft_types, {tp}, {}, {})",
+                as_ref(v)?,
+                as_int(idx)?
+            ),
+            K::Cond,
+        ))
+    }
+
     /// The whole-vector operators: append, replace, remove, repeat — each with the deep
     /// copies its store method makes.
     fn collection_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
@@ -3073,17 +3088,7 @@ impl<'a> FnWriter<'a> {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
                 if self.cx.stores.is_linked(tp) {
-                    self.cx.name_types();
-                    self.cx.describe_type(tp);
-                    let (v, idx) = self.two(name, &[(*v).clone(), (*idx).clone()], ind)?;
-                    return Ok(E::new(
-                        format!(
-                            "loft_vec_remove_linked(loft_types, {tp}, {}, {})",
-                            as_ref(v)?,
-                            as_int(idx)?
-                        ),
-                        K::Cond,
-                    ));
+                    return self.remove_linked(tp, v, idx, ind);
                 }
                 let size = self.cx.stores.size(tp);
                 let (v, idx) = self.two(name, &[(*v).clone(), (*idx).clone()], ind)?;
