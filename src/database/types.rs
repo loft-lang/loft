@@ -702,12 +702,19 @@ impl Stores {
                     // slot (which `(H-LongRef)` allows) and name `integer`, `text` or a
                     // `__tuple` there — linking those would lay every vector of them out by
                     // reference.
+                    // A STRUCT-ENUM target is a record type too (loft#2163): its elements were
+                    // left inline, so `nodes += [Neg { e: &nodes[len(nodes) - 1] }]` read null
+                    // once the vector grew past its first allocation.  A plain enum is a
+                    // value, and names no record.
+                    let record_target = f.target != u16::MAX
+                        && match &self.types[f.target as usize].parts {
+                            Parts::Struct(_) | Parts::EnumValue(_, _) => true,
+                            Parts::Enum(variants) => variants.iter().any(|(v, _)| *v != u16::MAX),
+                            _ => false,
+                        };
                     if matches!(self.types[f.content as usize].parts, Parts::DbRef)
                         && f.target != u16::MAX
-                        && matches!(
-                            self.types[f.target as usize].parts,
-                            Parts::Struct(_) | Parts::EnumValue(_, _)
-                        )
+                        && record_target
                         && !self.types[t_nr].name.starts_with("__closure_")
                         && !self.types[f.target as usize].name.starts_with("__")
                     {

@@ -5637,13 +5637,78 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // to clear, and the literal answered zeros.
             let mut names = vec![vec];
             names.extend(self.vector_link_partner_vars(vec));
+            // An APPEND keeps its destination's records where they are, so a `&` into the
+            // destination names that record and not the snapshot's copy of it.
+            let appending = !(vec == self.assign_target && self.assign_replaces);
             for name in names {
                 for part in parts.iter_mut() {
-                    crate::parser::collections::rename_var(part, name, src);
+                    if appending {
+                        self.rename_reads_keeping_ref_places(part, name, src);
+                    } else {
+                        crate::parser::collections::rename_var(part, name, src);
+                    }
                 }
             }
         }
         Some(snap)
+    }
+
+    /// loft#2163 — the snapshot rename of an APPEND, sparing the place a `reference<T>` field
+    /// is set to.
+    ///
+    /// `(H-RefSet)` makes a pointer field name the record of the place it is assigned
+    /// (`OpSetDbRef(holder, pos, <place>)`), and `(H-LongRef)` gives every element of a
+    /// reference target's collection a record of its own, which growing the collection does
+    /// not move.  So in `nodes += [N { c: &nodes[len(nodes) - 1] }]` the field names a record
+    /// of `nodes`.  Renamed onto the snapshot with every other read, it named the SNAPSHOT's
+    /// copy instead, and the snapshot is minted again on the next pass of a loop, which
+    /// removes its records: the interpreter read null (H-Removed) and `--native` read the
+    /// freed record, for every node but the last, silently.
+    ///
+    /// Only the place's ROOT is spared — the chain of element and field steps down from the
+    /// destination.  What the place READS to get there (the index, `len(nodes) - 1`) is a read
+    /// like any other and still sees the snapshot, as `(I-Comp)` asks.  A `=` replace detaches
+    /// its destination, so it keeps the plain rename.
+    fn rename_reads_keeping_ref_places(&self, part: &mut Value, from: u16, to: u16) {
+        // A place step: its FIRST argument is the record or vector the step reads into.
+        let steps: Vec<u32> = [
+            "OpVectorRef",
+            "OpVectorRefNullable",
+            "OpGetVector",
+            "OpGetVectorNullable",
+            "OpGetField",
+        ]
+        .iter()
+        .map(|n| self.data.def_nr(n))
+        .collect();
+        let set_ref = self.data.def_nr("OpSetDbRef");
+        // Walks each pointer-field place down to its root and swaps the root `Var(a)` for
+        // `Var(b)`: out of the rename's way, and back after it.
+        let swap_roots = |part: &mut Value, a: u16, b: u16| {
+            part.map_nodes(&mut |n| {
+                let Value::Call(d, args) = n else { return };
+                if *d != set_ref || args.len() < 3 {
+                    return;
+                }
+                let mut at = &mut args[2];
+                loop {
+                    match at {
+                        Value::Span(sp) => at = &mut sp.1,
+                        Value::Call(op, step_args) if steps.contains(op) && !step_args.is_empty() => {
+                            at = &mut step_args[0];
+                        }
+                        Value::Var(v) if *v == a => {
+                            *v = b;
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+            });
+        };
+        swap_roots(part, from, u16::MAX);
+        crate::parser::collections::rename_var(part, from, to);
+        swap_roots(part, u16::MAX, from);
     }
 
     /// Does a comprehension being built into `vec` READ `vec` itself?
