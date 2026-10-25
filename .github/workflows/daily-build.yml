@@ -209,7 +209,8 @@ jobs:
       # (scripts/install_main_ci.sh).  The same target directory as the bundle's binary: the
       # library is already built as that binary's dependency, and the pair must be one build.
       - name: Package the runtime library
-        if: steps.want.outputs.run == 'yes'
+        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
         shell: bash
         run: |
           CARGO_INCREMENTAL=0 scripts/lean_build.sh --lib --bin loft --target ${{ matrix.target }}
@@ -218,7 +219,8 @@ jobs:
       # A runtime that cannot link a program is the one failure the download exists to avoid,
       # so each leg that can run its own artefact compiles one with `--native` against it.
       - name: Smoke-test the runtime (--native)
-        if: steps.want.outputs.run == 'yes'
+        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
         shell: bash
         run: |
           set -e
@@ -238,7 +240,8 @@ jobs:
           [ "$out" = "daily runtime ok" ] || { echo "the runtime did not compile and run its own program"; exit 1; }
 
       - name: Upload the runtime
-        if: steps.want.outputs.run == 'yes'
+        # Not the cross leg: its proc-macros are the runner's architecture (runtime_bundle.sh).
+        if: steps.want.outputs.run == 'yes' && matrix.target != 'x86_64-apple-darwin'
         uses: actions/upload-artifact@v4
         with:
           name: loft-daily-runtime-${{ matrix.target }}

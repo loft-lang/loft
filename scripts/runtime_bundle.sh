@@ -22,6 +22,11 @@ fi
 triple=$1
 out=$2
 cd "$(dirname "$0")/.."
+build_host=$(rustc -vV | sed -n 's/^host: //p')
+if [ "$build_host" != "$triple" ]; then
+  echo "runtime_bundle: $triple cross-built on $build_host — its proc-macros are $build_host code, so no runtime ships" >&2
+  exit 1
+fi
 rel="target/install-lib/$triple/release"
 exe=loft
 case "$triple" in *windows*) exe=loft.exe ;; esac
@@ -37,9 +42,14 @@ cp -r default "$stage/share/loft/"
 cp "$rel/libloft.rlib" "$stage/share/loft/"
 [ -f "$rel/libloft.rmeta" ] && cp "$rel/libloft.rmeta" "$stage/share/loft/"
 cp "$rel"/deps/*.rlib "$stage/share/loft/deps/"
-# Proc-macro crates are host dynamic libraries: a package's native build needs them.
-for ext in so dylib dll; do
-  if ls "$rel"/deps/*."$ext" >/dev/null 2>&1; then cp "$rel"/deps/*."$ext" "$stage/share/loft/deps/"; fi
+# Proc-macro crates are HOST dynamic libraries, and a `--target` build keeps host code apart:
+# in `target/install-lib/release/deps/`, not the triple's directory.  A package's native build
+# loads them, so they come too — which is why a cross-built leg cannot ship a runtime.
+host="target/install-lib/release/deps"
+for dir in "$rel/deps" "$host"; do
+  for ext in so dylib dll; do
+    if ls "$dir"/*."$ext" >/dev/null 2>&1; then cp "$dir"/*."$ext" "$stage/share/loft/deps/"; fi
+  done
 done
 # Only the newest loft_ffi rlib: an older one beside it is a second candidate for one crate.
 # Judged in the build directory: the copies all carry the time of the copy.
