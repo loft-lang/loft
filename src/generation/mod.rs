@@ -7497,6 +7497,27 @@ macro_rules! loft_ckpt_t {{
         )
     }
 
+    /// The test ledger's site table (@PLN201, [`crate::opt::ledger_sites`]), armed by `main`
+    /// before anything runs: the instrumented calls pass their index into it.  Nothing for a
+    /// program built without `LOFT_LEDGER`.
+    fn emit_ledger_table(&self, w: &mut dyn Write) -> std::io::Result<()> {
+        if self.data.ledger_sites.is_empty() {
+            return Ok(());
+        }
+        writeln!(
+            w,
+            "#[allow(dead_code)]\nfn __loft_ledger() {{\n    loft::ledger::arm_static(&["
+        )?;
+        for s in &self.data.ledger_sites {
+            writeln!(
+                w,
+                "        ({:?}, 0x{:016x}_u64, {}_u32, {}_i64),",
+                s.function, s.body, s.ordinal, s.kind
+            )?;
+        }
+        writeln!(w, "    ]);\n}}")
+    }
+
     /// The checkpoint counter arrays, the site table and the report, emitted AFTER the
     /// function bodies — that is the first moment the number of sites is known.
     ///
@@ -8711,6 +8732,7 @@ extern crate loft;"
         writeln!(w, "}}\n")?;
         self.output_functions(w, from, till, None)?;
         self.emit_ckpt_table(w)?;
+        self.emit_ledger_table(w)?;
         self.emit_main_bootstrap(w, till)
     }
 
@@ -8859,7 +8881,8 @@ extern crate loft;"
         }
         // Emit only reachable functions across the full definition range.
         self.output_functions(w, 0, till, Some(&reachable))?;
-        self.emit_ckpt_table(w)
+        self.emit_ckpt_table(w)?;
+        self.emit_ledger_table(w)
     }
 
     /// Emit a Rust `fn main()` bootstrap if the program defines a loft `main` function.
@@ -9170,6 +9193,12 @@ extern crate loft;"
         } else {
             ""
         };
+        // @PLN201 — a ledger build arms its site table first (`emit_ledger_table`).
+        let ledger = if self.data.ledger_sites.is_empty() {
+            ""
+        } else {
+            "    __loft_ledger();\n"
+        };
         // @PLN196 step 9 — the release the program's stores record, from the manifest it is
         // compiled against: a shipped binary need not sit beside its `loft.toml`.  Empty (and
         // so byte-identical) for a program whose project records none.  It REPLACES what the
@@ -9223,7 +9252,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -9264,7 +9293,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;

@@ -7,8 +7,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Active.  Step 1 (the measurement column) is built: `bench/stats.py --lanes native,rust,ship`
-and the portal's ship column.  Steps 2–4 are designed below, not built.
+Active.  Step 1 (the measurement column) and step 2 (the ledger) are built; `--ship` is the
+shipped build on every compiled target, every check kept (NATIVE.md § Optimisation tiers).
+Steps 3–4 are designed below, not built.
 
 ## Goal
 
@@ -48,13 +49,24 @@ licensed.
    beside the checked ratio.  A row whose ship hash differs is marked, never failed: a fault
    wraps there.  `make perf-portal ARGS="--lanes native,rust,ship"` puts the column on the
    portal page.
-2. **The ledger.**  A checked run with `LOFT_LEDGER=<file>` records, per FAULT SITE, whether it
-   faulted, and per function whether it ran.  A site is named by what survives a rebuild of
-   the same source: the function, a hash of its body, the operator and its position in the
-   body.  The interpreter and a native library record into the same file, so a game's
-   development runs (interpreted routine, precompiled libraries) collect one ledger.  Many
-   runs merge: a fault in any run marks the site.
-3. **The ship build.**  `loft build --ship <ledger>…` compiles the program and every library
+2. **The ledger (built).**  A run with `LOFT_LEDGER=<file>` is the ordinary checked run on
+   either backend, with every fault site instrumented: `compile::close_program` first runs
+   `opt::ledger_sites`, which rewrites each site `OpAddInt(a, b)` into the builtin
+   `__ledger(site, kind, a, b)` (`src/ledger.rs`).  That call answers what the operator answers
+   — a zero divisor reports as it does — and counts the site as run, and as FAULTED when the
+   processor's answer would differ: an overflow, a null operand the processor would not carry,
+   a zero divisor.  The sites are the probe's: integer `+ - * / %`, negation, `& | ^`, a right
+   shift by a constant.  A site is named by the function's definition name, a hash of its body
+   (call targets by name, positions left out: a function added elsewhere moves no hash, an
+   edit to the body moves its own) and the operator's pre-order ordinal, named before any
+   whole-program rewrite, so a body `leaf_inline` copies keeps its callee's names and both
+   backends write the same file.  The counts merge at exit (an `atexit` handler, so `exit()`
+   and a failing run are recorded) into a sorted text file, one site per line, under a lock
+   file beside it: runs add up, on either backend, from any number of processes.  A ledger
+   run neither reads nor writes the program cache; `--ship` is never one.  Not recorded yet,
+   so such a site keeps its check: casts, float comparisons, and code that runs precompiled
+   (the compiled stdlib, a library's cdylib).  Guards: `tests/ledger.rs`.
+3. **The ship build.**  `loft --ship <ledger>…` compiles the program and every library
    from source, and links the libraries' Rust STATICALLY: a library loaded as a shared object
    reaches its thread-locals through `__tls_get_addr` and is called through a bound slot,
    which cost web `pack_u8` 43 % and random `rand` 23 % against the static link.  At each fault site: the function's body hash matches the ledger, the
@@ -67,12 +79,12 @@ licensed.
 
 ## Open design question — how much coverage licenses a site
 
-The recommended form above licenses a site when its FUNCTION ran and the site never faulted.
-It is cheap: one flag per function in a ledger run, and nothing per operator.  It also
-licenses a site in a branch the function never took.  The strict alternative counts each
-site's own executions, which costs a counter per operator in ledger runs only.  A site in an
-untaken branch then keeps its check, and the tier is exactly as safe as the testing's
-coverage.  The choice is the owner's: the cheap form is assumed until it is decided.
+The ledger counts each SITE's own runs, so step 3 can apply either rule.  The cheap form
+licenses a site when its FUNCTION ran and the site never faulted, which also licenses a site
+in a branch the function never took.  The strict form licenses a site only when the site
+itself ran and never faulted: a site in an untaken branch keeps its check, and the tier is
+exactly as safe as the testing's coverage.  Recommended: the strict form, now that its
+counts cost nothing extra.  The choice is the owner's.
 
 ## Cross-arc dependencies
 

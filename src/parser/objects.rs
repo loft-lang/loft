@@ -6967,11 +6967,8 @@ impl Parser {
             // destination declared as the enum (`m: Node = Bin { …, ..n }`) is the `(C-Var)`
             // widening `m = n` is, and the named fields are then written with the variant's
             // layout, which the copy made the destination hold.
-            // An `Optional` destination keeps the variant's type, as it did (@FR-N-Shape spelled).
             let bind_tp = match self.vars.tp(dest).base() {
-                Type::Enum(..) if variant && !matches!(self.vars.tp(dest), Type::Optional(_)) => {
-                    self.vars.tp(dest).clone()
-                }
+                Type::Enum(..) if variant => self.vars.tp(dest).clone(),
                 _ => ret.clone(),
             };
             self.parse_assign_op(

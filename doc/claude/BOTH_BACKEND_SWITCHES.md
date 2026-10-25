@@ -876,6 +876,15 @@ in-place reassignment stays).  It is the bisect step when a program that compile
 refused, or reads a stored reference differently, and the A/B that shows what such a shape
 reads without it.
 
+## Instrument: the test ledger
+
+**`LOFT_LEDGER=<file>`** makes a run record, per fault site, how often it ran and how often the
+processor's answer would have differed from the checked one (an overflow, a null operand, a
+zero divisor), merged into `<file>` at exit (@PLN201 step 2, `src/ledger.rs`).  The run is the
+ordinary checked run on either backend and answers the same; it is slower, since every integer
+operator is a call, and it neither reads nor writes the program cache.  Both backends write the
+same file for the same runs.  `--ship` ignores it.  Guards: `tests/ledger.rs`.
+
 ## Falsifier: the emulated Windows host
 
 **`LOFT_POISON_HOST=windows`** (@PLN184 Track W, runtime, BOTH backends, Linux and macOS)

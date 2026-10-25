@@ -9497,6 +9497,8 @@ fn main() {
     }
     if ship_build {
         native_utils::link_static_unless_named();
+        // A shipped build is never a ledger run (@PLN201), whatever the environment says.
+        loft::ledger::suppress();
     }
     // Computed where it is used — the fast path's lookup and the sidecar a native build
     // saves — never on a run that takes neither (an `--interpret` run, a check).  Computing it
@@ -11852,6 +11854,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                         "    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
                     );
                     let _ = writeln!(f, "    init(&cell);");
+                    // @PLN201 — a ledger build arms its site table before the tests run.
+                    if !p.data.ledger_sites.is_empty() {
+                        let _ = writeln!(f, "    __loft_ledger();");
+                    }
                     for (d_nr, name) in &test_fns {
                         let def = p.data.def(*d_nr);
                         let mut work_args = Vec::new();

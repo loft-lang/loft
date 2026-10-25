@@ -162,6 +162,13 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**A test ledger records what your checked runs prove.**  Run your tests or your program with
+`LOFT_LEDGER=game.ledger`: each integer operator's site is counted as run, and as faulted when
+the processor's plain arithmetic would have answered differently — an overflow, a null operand,
+a zero divisor.  The run answers exactly as without the ledger, on either backend, and runs add
+up in one file.  It is the evidence a later `--ship game.ledger` build will use to drop only the
+checks your testing proved unnecessary.
+
 **A self-call in tail position runs to any depth.**  `fn count(n: integer, acc: integer) ->
 integer { if n == 0 { acc } else { count(n - 1, acc + 1) } }` no longer stops at 10 000 frames:
 a self-call that is the last thing the function does becomes a jump to its entry, on both

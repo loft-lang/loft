@@ -22,6 +22,11 @@ use crate::parser::Parser;
 /// `None` to disable (env var unset/empty, or `default/` unreadable).
 #[cfg(feature = "mmap")]
 fn cache_target(default_dir: &str) -> Option<std::path::PathBuf> {
+    // A ledger run (@PLN201) arms its site table while the program closes, which a replayed
+    // image skips: it is never loaded from, nor saved to, the cache.
+    if crate::ledger::armed_for_build() {
+        return None;
+    }
     if std::env::var_os("LOFT_STDLIB_CACHE").is_none_or(|v| v.is_empty())
         && !crate::cache::program_cache_enabled()
     {
@@ -437,6 +442,10 @@ pub fn warm_load_program(
     native_ctx: &str,
     store_out: &mut Option<(crate::database::Stores, crate::keys::DbRef)>,
 ) -> Option<u32> {
+    // A ledger run (@PLN201) instruments the program as it closes, which a replay skips.
+    if crate::ledger::armed_for_build() {
+        return None;
+    }
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, &p.lib_dirs);
     // `LOFT_TIMING`: the two halves of a warm start that are not the parse — hashing the
     // stdlib sources for the key, and materialising the bundle (@PLN179 finding 001).
@@ -606,6 +615,10 @@ pub fn save_program(
     auto_native: &AutoNative<'_>,
 ) {
     use std::fmt::Write as _;
+    // A ledger run's closed program is instrumented: never the image a later run replays.
+    if crate::ledger::armed_for_build() {
+        return;
+    }
     let Some(stdk) = stdlib_key_hex(default_dir) else {
         return; // no readable stdlib → a bundle that could not be tied to one
     };
