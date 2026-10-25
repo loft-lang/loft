@@ -65,6 +65,11 @@ def corpus() -> list[str]:
     return [l for l in r.stdout.split("\n") if l.strip()]
 
 
+# The interpreter is the oracle, and the slowest of the runs: a program near a minute on it
+# (tests/scripts/2177-…, ~60 s alone) timed out under a full sweep's load and read as a differ.
+ORACLE_TIMEOUT = 180
+
+
 def run(cmd, timeout, cwd=None, env=None):
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=timeout, cwd=cwd,
@@ -110,9 +115,9 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
         i_plain = None
         for mode in modes:
             flags, env = POISON_MODES.get(mode, (MODES.get(mode), None))
-            i_out = run(interp, 60, cwd=src.parent, env=env) if env else i_plain
+            i_out = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env=env) if env else i_plain
             if i_out is None:
-                i_out = i_plain = run(interp, 60, cwd=src.parent)
+                i_out = i_plain = run(interp, ORACLE_TIMEOUT, cwd=src.parent)
             code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
             if code != 0:
                 first = err.decode(errors="replace").strip().split("\n")[0]

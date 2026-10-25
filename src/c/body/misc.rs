@@ -40,7 +40,7 @@ impl FnWriter<'_> {
         }
     }
 
-    /// The remaining operators, or the refusal that names one.
+    /// The remaining operators; the vector reshapes and sizes follow.
     pub(super) fn misc_operator(
         &mut self,
         name: &str,
@@ -62,77 +62,9 @@ impl FnWriter<'_> {
                     K::Single,
                 ))
             }
-            ("OpBitNotSingleInt", [v]) => {
-                let v = self.expr(v, ind)?;
-                Ok(E::new(format!("(~{})", as_int(v)?), K::Int))
-            }
-            ("OpSizeStruct", [r, sz]) => {
-                let sz = Self::literal(sz, "size")?;
-                let r = self.expr(r, ind)?;
-                Ok(E::new(
-                    format!("((void) {}, INT64_C({sz}))", as_ref(r)?),
-                    K::Int,
-                ))
-            }
-            ("OpSizeHash", [r]) => {
-                let r = self.expr(r, ind)?;
-                Ok(E::new(
-                    format!("loft_hash_table_bytes({})", as_ref(r)?),
-                    K::Int,
-                ))
-            }
-            ("OpReserveVector", [v, count, size]) => {
-                let size = Self::literal(size, "element size")?;
-                let (v, count) = self.two(name, &[(*v).clone(), (*count).clone()], ind)?;
-                Ok(E::new(
-                    format!(
-                        "loft_vec_reserve({}, {}, {size})",
-                        as_ref(v)?,
-                        as_int(count)?
-                    ),
-                    K::Void,
-                ))
-            }
-            ("OpInsertVector", [v, size, index, tp]) => {
-                let size = Self::literal(size, "element size")?;
-                let tp = u16::try_from(Self::literal(tp, "element type")?)
-                    .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    return Err("an insert of a linked element type".into());
-                }
-                let (v, index) = self.two(name, &[(*v).clone(), (*index).clone()], ind)?;
-                let (image, n) = self.cx.default_image(tp);
-                let t = self.temp(CType::Ref);
-                self.line(
-                    ind,
-                    &format!(
-                        "{t} = loft_vec_insert({}, {size}, {});",
-                        as_ref(v)?,
-                        as_int(index)?
-                    ),
-                );
-                self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
-                Ok(E::new(t, K::Ref))
-            }
-            ("OpKeepRange", [v, lo, hi, tp]) => {
-                let tp = u16::try_from(Self::literal(tp, "element type")?)
-                    .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) || self.cx.stores.type_owns_heap(tp) {
-                    return Err("a kept range of elements that own records".into());
-                }
-                let size = self.cx.stores.size(tp);
-                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
-                let [v, lo, hi] = <[E; 3]>::try_from(es)
-                    .map_err(|_| "a kept range without three operands".to_string())?;
-                Ok(E::new(
-                    format!(
-                        "loft_vec_keep_range({}, {}, {}, {size})",
-                        as_ref(v)?,
-                        as_int(lo)?,
-                        as_int(hi)?
-                    ),
-                    K::Void,
-                ))
+            // The place a store link names (`c = &v[1]`): its `loft_ref`.
+            ("OpVarRef", [Value::Var(v)]) if self.store_links[*v as usize] => {
+                Ok(E::new(super::var_name(self.vars.name(*v), *v), K::Ref))
             }
             ("OpAbsInt", [v]) => {
                 let v = self.expr(v, ind)?;
@@ -204,6 +136,91 @@ impl FnWriter<'_> {
                 Ok(E::new(
                     format!(
                         "{{ if ({o}.clos.rec == 0 || {o}.clos.store_nr == {n}.clos.store_nr) {o}.clos = loft_ref_null(); }}"
+                    ),
+                    K::Void,
+                ))
+            }
+            _ => self.vector_shape_operator(name, args, ind),
+        }
+    }
+
+    /// The vector reshapes (insert, reserve, keep a range) and the size operators: the end of
+    /// the operator chain, holding the refusal that names an operator not carried.
+    fn vector_shape_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        match (name, args) {
+            ("OpBitNotSingleInt", [v]) => {
+                let v = self.expr(v, ind)?;
+                Ok(E::new(format!("(~{})", as_int(v)?), K::Int))
+            }
+            ("OpSizeStruct", [r, sz]) => {
+                let sz = Self::literal(sz, "size")?;
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("((void) {}, INT64_C({sz}))", as_ref(r)?),
+                    K::Int,
+                ))
+            }
+            ("OpSizeHash", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(E::new(
+                    format!("loft_hash_table_bytes({})", as_ref(r)?),
+                    K::Int,
+                ))
+            }
+            ("OpReserveVector", [v, count, size]) => {
+                let size = Self::literal(size, "element size")?;
+                let (v, count) = self.two(name, &[(*v).clone(), (*count).clone()], ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_reserve({}, {}, {size})",
+                        as_ref(v)?,
+                        as_int(count)?
+                    ),
+                    K::Void,
+                ))
+            }
+            ("OpInsertVector", [v, size, index, tp]) => {
+                let size = Self::literal(size, "element size")?;
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) {
+                    return Err("an insert of a linked element type".into());
+                }
+                let (v, index) = self.two(name, &[(*v).clone(), (*index).clone()], ind)?;
+                let (image, n) = self.cx.default_image(tp);
+                let t = self.temp(CType::Ref);
+                self.line(
+                    ind,
+                    &format!(
+                        "{t} = loft_vec_insert({}, {size}, {});",
+                        as_ref(v)?,
+                        as_int(index)?
+                    ),
+                );
+                self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
+                Ok(E::new(t, K::Ref))
+            }
+            ("OpKeepRange", [v, lo, hi, tp]) => {
+                let tp = u16::try_from(Self::literal(tp, "element type")?)
+                    .map_err(|_| "an element type out of range")?;
+                if self.cx.stores.is_linked(tp) || self.cx.stores.type_owns_heap(tp) {
+                    return Err("a kept range of elements that own records".into());
+                }
+                let size = self.cx.stores.size(tp);
+                let es = self.args(&[(*v).clone(), (*lo).clone(), (*hi).clone()], ind)?;
+                let [v, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a kept range without three operands".to_string())?;
+                Ok(E::new(
+                    format!(
+                        "loft_vec_keep_range({}, {}, {}, {size})",
+                        as_ref(v)?,
+                        as_int(lo)?,
+                        as_int(hi)?
                     ),
                     K::Void,
                 ))

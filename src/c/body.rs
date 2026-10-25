@@ -115,6 +115,12 @@ pub(crate) struct FnWriter<'a> {
     /// Which parameters are `&` links: a pointer to the caller's variable, read and written
     /// through (`(*v)`), as the bytecode reads and writes through the stack reference.
     links: Vec<bool>,
+    /// Which `&` locals link a STORE place (`c = &v[1]`, `f = &o.x`): every bind names an
+    /// element or a field, never a variable.  Held as the place's `loft_ref`; a read or a
+    /// write goes through the place's own operator, as the bytecode's `OpGetInt`/`OpSetInt`
+    /// through the link's `DbRef`.  A link bound to a variable on one path and a place on
+    /// another is not carried.
+    store_links: Vec<bool>,
     ret: CType,
     body: String,
     /// Every temporary: its name and shape, declared at the top.
@@ -158,6 +164,7 @@ impl<'a> FnWriter<'a> {
             links: (0..def.variables().count())
                 .map(|v| matches!(def.variables().tp(v).base(), crate::data::Type::RefVar(_)))
                 .collect(),
+            store_links: store_links(cx, def),
             ret,
             body: String::new(),
             temps: Vec::new(),
@@ -199,6 +206,11 @@ impl<'a> FnWriter<'a> {
         let mut out = String::new();
         for v in (0..self.shapes.len()).filter(|v| !self.params[*v]) {
             let c = self.shapes[v];
+            if self.store_links[v] {
+                let name = var_name(self.vars.name(v as u16), v as u16);
+                let _ = writeln!(out, "    loft_ref {name} = {{ 0xFFFF, 0, 0 }};");
+                continue;
+            }
             if self.links[v] {
                 let name = var_name(self.vars.name(v as u16), v as u16);
                 let _ = writeln!(out, "    {} *{name} = 0;", held(c));
@@ -506,10 +518,22 @@ impl<'a> FnWriter<'a> {
 
     /// A scope-exit free, or the store lock the cleanup window may hold.
     fn is_free(&self, v: &Value) -> bool {
-        matches!(v.unspan(), Value::Call(d, _) if {
-            let name = self.cx.data.def(*d).name();
-            name.starts_with("OpFree") || name == "n_set_store_lock"
-        })
+        match v.unspan() {
+            Value::Call(d, _) => {
+                let name = self.cx.data.def(*d).name();
+                // A drop cascade releases as a free does: a closure's (`OpDropFnRef`) and a
+                // record type's (`t_<n><Type>_OpDrop` / `_OpDropAll`), each ahead of its
+                // store's free.
+                name.starts_with("OpFree")
+                    || name == "OpDropFnRef"
+                    || (name.starts_with("t_")
+                        && (name.ends_with("_OpDrop") || name.ends_with("_OpDropAll")))
+                    || name == "n_set_store_lock"
+            }
+            // The guarded release `if <holds a record> <release> else null`.
+            Value::If(_, t, e) => matches!(e.unspan(), Value::Null) && self.is_free(t),
+            _ => false,
+        }
     }
 
     /// `ops` for their effect, returning the value a `tail_capture` names.
@@ -840,6 +864,18 @@ impl<'a> FnWriter<'a> {
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
         // every later read and write of it goes through.
+        if self.store_links[var as usize] {
+            let name = var_name(self.vars.name(var), var);
+            if crate::scopes::link_set_repoints(self.cx.data, self.vars, var, x) {
+                self.bound[var as usize] = true;
+                let e = self.expr(x, ind)?;
+                self.line(ind, &format!("{name} = {};", as_ref(e)?));
+                self.flush(ind);
+                return Ok(());
+            }
+            let write = self.link_access(var, Some(x))?;
+            return self.stmt(&write, ind);
+        }
         if self.links[var as usize] && !self.params[var as usize] {
             if let Some(target) = self.stack_target(x) {
                 self.bound[var as usize] = true;
@@ -1199,6 +1235,32 @@ impl<'a> FnWriter<'a> {
                 if shapes.len() != vals.len() {
                     return Err("a tuple literal of another arity".into());
                 }
+                // Every element is evaluated before any is stored, as the bytecode pushes them
+                // all first: `s = (s.1, s.0)` reads the old members.  A literal reads nothing.
+                let constant = |x: &Value| {
+                    matches!(
+                        x.unspan(),
+                        Value::Int(_)
+                            | Value::Long(_)
+                            | Value::Float(_)
+                            | Value::Single(_)
+                            | Value::Boolean(_)
+                            | Value::Text(_)
+                            | Value::Null
+                    )
+                };
+                if vals.len() > 1 && !vals.iter().all(constant) {
+                    let mut held = Vec::with_capacity(vals.len());
+                    for (x, s) in vals.iter().zip(&shapes) {
+                        let t = self.temp(*s);
+                        self.assign(x, &t, *s, ind)?;
+                        held.push(t);
+                    }
+                    for (i, (t, s)) in held.iter().zip(shapes).enumerate() {
+                        self.copy_member(t, &format!("{target}.f{i}"), s, ind);
+                    }
+                    return Ok(());
+                }
                 for (i, (x, s)) in vals.iter().zip(shapes).enumerate() {
                     self.assign(x, &format!("{target}.f{i}"), s, ind)?;
                 }
@@ -1238,6 +1300,92 @@ impl<'a> FnWriter<'a> {
         self.assign(&ops[at], target, c, ind)?;
         self.flush(ind);
         ops[at + 1..].iter().try_for_each(|o| self.stmt(o, ind))
+    }
+
+    /// `to = from` for a value of shape `c` at two C places: a text copied, a tuple member by
+    /// member at any depth (its texts the destination's own), anything else assigned.
+    fn copy_member(&mut self, from: &str, to: &str, c: CType, ind: usize) {
+        match c {
+            CType::Text => self.line(ind, &format!("loft_text_set(&{to}, loft_view(&{from}));")),
+            CType::Tuple(id) => {
+                for (j, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
+                    self.copy_member(&format!("{from}.f{j}"), &format!("{to}.f{j}"), e, ind);
+                }
+            }
+            _ => self.line(ind, &format!("{to} = {from};")),
+        }
+    }
+
+    /// Every text a tuple of struct `id` at C place `at` holds, nested tuples included.
+    fn tuple_text_leaves(&self, at: &str, id: u32, out: &mut Vec<String>) {
+        for (j, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
+            match e {
+                CType::Text => out.push(format!("{at}.f{j}")),
+                CType::Tuple(inner) => self.tuple_text_leaves(&format!("{at}.f{j}"), inner, out),
+                _ => {}
+            }
+        }
+    }
+
+    /// The read (`value` none) or the write of store link `v`, as the operator the bytecode
+    /// uses through the link's `DbRef`: the place's own get or set, a narrow integer's with its
+    /// `min`, on `OpVarRef(v)` — the place itself.
+    fn link_access(&self, v: u16, value: Option<&Value>) -> Result<Value, String> {
+        use crate::data::Type;
+        let Type::RefVar(tp) = self.vars.tp(v).base() else {
+            return Err("a store link that is not a link".into());
+        };
+        let narrow = crate::data::NarrowSlot::of_type(tp);
+        let (get, set) = match tp.base() {
+            Type::Integer(_) if narrow.is_some() => {
+                let n = narrow.expect("checked");
+                (n.get_op(), n.set_op())
+            }
+            Type::Integer(_) => ("OpGetInt", "OpSetInt"),
+            Type::Character => ("OpGetCharacter", "OpSetCharacter"),
+            Type::Single => ("OpGetSingle", "OpSetSingle"),
+            Type::Float => ("OpGetFloat", "OpSetFloat"),
+            Type::Boolean => ("OpGetBoolean", "OpSetBoolean"),
+            Type::Enum(_, false, _) => ("OpGetEnum", "OpSetEnum"),
+            Type::Text(_) => ("OpGetText", "OpSetText"),
+            _ => return Err("a store link of this kind".into()),
+        };
+        let data = self.cx.data;
+        let op = data.def_nr(if value.is_some() { set } else { get });
+        let place = Value::Call(data.def_nr("OpVarRef"), vec![Value::Var(v)]);
+        let mut args = vec![place, Value::Int(0)];
+        // A narrow kind's ops take the `min` after the field (`OpGetByte(r, fld, min)`).
+        if data.def(op).attributes().len() == if value.is_some() { 4 } else { 3 } {
+            args.push(Value::Int(narrow.map_or(0, |n| n.min)));
+        }
+        if let Some(x) = value {
+            args.push(x.clone());
+        }
+        Ok(Value::Call(op, args))
+    }
+
+    /// The typed null of an operand of type `tp`, as an operator call, or `None` for a type
+    /// whose null the bytecode does not push as one value.
+    fn typed_null(&self, tp: &crate::data::Type) -> Option<Value> {
+        use crate::data::Type;
+        let op = match tp.base() {
+            Type::Integer(..) => "OpConvIntFromNull",
+            Type::Float => "OpConvFloatFromNull",
+            Type::Single => "OpConvSingleFromNull",
+            Type::Text(_) => "OpConvTextFromNull",
+            Type::Boolean => "OpConvBoolFromNull",
+            Type::Character => "OpConvCharacterFromNull",
+            Type::Reference(..)
+            | Type::Vector(..)
+            | Type::Sorted(..)
+            | Type::Hash(..)
+            | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..) => "OpNullRefSentinel",
+            _ => return None,
+        };
+        let nr = self.cx.data.def_nr(op);
+        (nr < self.cx.data.definitions()).then(|| Value::Call(nr, Vec::new()))
     }
 
     /// The C shape a call through function value `v` answers.
@@ -1321,6 +1469,10 @@ impl<'a> FnWriter<'a> {
                 format!("loft_lit({}, {})", c_string(s), s.len()),
                 K::View,
             )),
+            Value::Var(var) if self.store_links[*var as usize] => {
+                let read = self.link_access(*var, None)?;
+                self.expr(&read, ind)
+            }
             Value::Var(var) => {
                 let name = self.var(*var);
                 Ok(match self.shapes[*var as usize] {
@@ -1483,6 +1635,23 @@ impl<'a> FnWriter<'a> {
     fn call(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
         let cx = self.cx;
         if is_operator(cx.data, d) {
+            // A bare `null` argument is the null of the operand's declared type, as the
+            // bytecode pushes it (`OpSetDbRef(g, 0, null)`, `OpPushInt(v, null)`).
+            if args.iter().any(|a| matches!(a.unspan(), Value::Null)) {
+                let attrs = cx.data.def(d).attributes();
+                let typed: Vec<Value> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| match a.unspan() {
+                        Value::Null => attrs
+                            .get(i)
+                            .and_then(|at| self.typed_null(&at.typedef))
+                            .unwrap_or(Value::Null),
+                        _ => a.clone(),
+                    })
+                    .collect();
+                return self.operator(cx.data.def(d).name(), &typed, ind);
+            }
             return self.operator(cx.data.def(d).name(), args, ind);
         }
         let def = cx.data.def(d);
@@ -1792,6 +1961,28 @@ impl<'a> FnWriter<'a> {
                 let [dest] = args else {
                     return Err("OpFreeText without one operand".into());
                 };
+                // A member that is itself a tuple frees each text it holds, at any depth, as the
+                // bytecode's `emit_tuple_text_free` does.
+                if let Value::TupleGet(var, i) = dest.unspan()
+                    && let CType::Tuple(id) = self.shapes[*var as usize]
+                    && let Some(CType::Tuple(inner)) = self.cx.tuple_shapes(id).get(*i as usize)
+                {
+                    let mut frees = Vec::new();
+                    self.tuple_text_leaves(&format!("{}.f{i}", self.var(*var)), *inner, &mut frees);
+                    let code = frees
+                        .iter()
+                        .map(|t| format!("loft_text_free(&{t})"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Ok(E::new(
+                        if code.is_empty() {
+                            "((void) 0)".into()
+                        } else {
+                            format!("({code})")
+                        },
+                        K::Void,
+                    ));
+                }
                 let dest = self.text_dest(dest)?;
                 Ok(E::new(format!("loft_text_free(&{dest})"), K::Void))
             }
@@ -2270,7 +2461,7 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            ("OpGetField", [r, fld, _tp]) => {
+            ("OpGetField", [r, fld, _] | [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("loft_field({}, {fld})", as_ref(r)?), K::Ref))
@@ -3410,4 +3601,64 @@ fn unsupported(v: &Value) -> String {
     let kind = format!("{v:?}");
     let kind = kind.split(['(', ' ', '{']).next().unwrap_or("value");
     format!("the construct {kind}")
+}
+
+/// The `&` locals of `def` that link a store place: every bind (`link_set_repoints`) names an
+/// element or a field, or another store link (`OpVarRef`), none a variable (`OpCreateStack`),
+/// and the kind has a field operator.  A link to a link follows it, so the answer is the
+/// fixpoint over the binds.
+fn store_links(cx: &Cx, def: &crate::data::Definition) -> Vec<bool> {
+    use crate::data::Type;
+    let vars = def.variables();
+    let n = vars.count() as usize;
+    let args = vars.arguments();
+    let mut binds: Vec<Vec<&Value>> = vec![Vec::new(); n];
+    def.code().walk(&mut |node| {
+        if let Value::Set(v, x) = node
+            && !args.contains(v)
+            && matches!(vars.tp(*v).base(), Type::RefVar(_))
+            && crate::scopes::link_set_repoints(cx.data, vars, *v, x)
+        {
+            binds[*v as usize].push(x);
+        }
+    });
+    let kind_ok = |v: usize| {
+        let Type::RefVar(tp) = vars.tp(v as u16).base() else {
+            return false;
+        };
+        matches!(
+            tp.base(),
+            Type::Integer(_)
+                | Type::Character
+                | Type::Single
+                | Type::Float
+                | Type::Boolean
+                | Type::Enum(_, false, _)
+                | Type::Text(_)
+        )
+    };
+    let mut store = vec![false; n];
+    loop {
+        let mut changed = false;
+        for v in 0..n {
+            if store[v] || binds[v].is_empty() || !kind_ok(v) {
+                continue;
+            }
+            let all_places = binds[v].iter().all(|x| match x.unspan() {
+                Value::Call(d, xs) => match cx.data.def(*d).name() {
+                    "OpCreateStack" => false,
+                    "OpVarRef" => matches!(xs.as_slice(), [Value::Var(a)] if store[*a as usize]),
+                    _ => true,
+                },
+                _ => true,
+            });
+            if all_places {
+                store[v] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            return store;
+        }
+    }
 }
