@@ -1,6 +1,7 @@
 /* ── The hash table (src/hash.rs) and its entry arena (src/arena.rs) ───────────────────────
  * loft's own layout, ported line for line: a persisted store IS this layout, so a table the C
- * writes is one the interpreter reads and the other way round.
+ * writes is one the interpreter reads and the other way round (`@FR-S-Hash`, `@FR-S-Probe`,
+ * `@FR-S-Arena`, `@FR-S-Inline`).
  *
  * The collection slot names the TABLE record (byte offsets):
  *   0  size header       4  live count (arena) / owner (inline)     8  seed (u64)

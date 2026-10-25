@@ -583,6 +583,33 @@ impl<'a> Cx<'a> {
         walk(self.stores, tp, &mut Vec::new())
     }
 
+    /// A struct's field rows, `loft_fields{tp}`: each field's byte position, its type, whether it
+    /// is a view member of a linked group (it borrows its records) and whether it is hidden (a
+    /// `#`-named field).
+    fn field_rows(tp: u16, fields: &[crate::database::Field]) -> String {
+        let list: Vec<String> = fields
+            .iter()
+            .map(|f| {
+                let view = f.other_indexes().first() == Some(&u16::MAX);
+                let hidden = u8::from(f.name.starts_with('#'));
+                format!(
+                    "{{ {}, {}, {}, {hidden} }}",
+                    f.position,
+                    f.content,
+                    u8::from(view)
+                )
+            })
+            .collect();
+        format!(
+            "static const loft_fld loft_fields{tp}[] = {{ {} }};",
+            if list.is_empty() {
+                "{ 0, 0, 0, 0 }".into()
+            } else {
+                list.join(", ")
+            }
+        )
+    }
+
     /// The copy table: one `loft_tdesc` per registered type, at its type number.
     fn copy_table(&self) -> String {
         use crate::database::Parts;
@@ -609,23 +636,7 @@ impl<'a> Cx<'a> {
                     format!("{{ LOFT_T_TEXT, {size}, 0, 0, 0, 0 }}")
                 }
                 Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                    let list: Vec<String> = fields
-                        .iter()
-                        .map(|f| {
-                            // A view member of a linked group borrows its records.
-                            let view = f.other_indexes().first() == Some(&u16::MAX);
-                            format!("{{ {}, {}, {} }}", f.position, f.content, u8::from(view))
-                        })
-                        .collect();
-                    let _ = writeln!(
-                        out,
-                        "static const loft_fld loft_fields{tp}[] = {{ {} }};",
-                        if list.is_empty() {
-                            "{ 0, 0, 0 }".into()
-                        } else {
-                            list.join(", ")
-                        }
-                    );
+                    let _ = writeln!(out, "{}", Self::field_rows(tp, fields));
                     format!(
                         "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_fields{tp}, 0 }}",
                         fields.len()
@@ -654,6 +665,7 @@ impl<'a> Cx<'a> {
                         values.len()
                     )
                 }
+                Parts::DbRef => format!("{{ LOFT_T_DBREF, {size}, 0, 0, 0, 0 }}"),
                 _ => format!("{{ LOFT_T_SCALAR, {size}, 0, 0, 0, 0 }}"),
             };
             // `owns_heap`: the Rust store's own answer (`Stores::type_owns_heap`), never re-derived;
@@ -858,6 +870,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_store_persist_copy" => Some("loft_image_write"),
         "n_store_load" => Some("loft_image_load"),
         "n_store_memory" => Some("loft_store_memory"),
+        "n_store_verify" => Some("loft_store_verify"),
         "n_store_upgrade_owed_next" => Some("loft_store_upgrade_owed_next"),
         "n_store_upgrade_owed_record" => Some("loft_store_upgrade_owed_record"),
         "n_store_upgrade_owed_old" => Some("loft_store_upgrade_owed_old"),

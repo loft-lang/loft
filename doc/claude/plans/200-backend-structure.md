@@ -528,8 +528,9 @@ the browser read them), so a layout is observable.
   of a loaded image, compaction on load.  Its acceptance (owner): a C program
   reads the store files the interpreter and a `--native` program wrote — mapped, loaded and
   paged — and they read the C's; a cell per direction.  `store_memory()` is carried
-  (`Store::usage` and `Stores::memory_report`; the creation site reads `bc:0` as on native);
-  `store_reclaim` is still to come.
+  (`Store::usage` and `Stores::memory_report`; the creation site reads `bc:0` as on native), and
+  `store_verify` (`Stores::verify_graph_ok`, the bounds-checked claim walk); `store_reclaim` is
+  still to come.  The bytes every reader keeps are [formal/structures.md](../formal/structures.md).
 
 ## B6 — optional: a minimal binary
 

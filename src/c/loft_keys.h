@@ -2,7 +2,8 @@
  * A key part (keys::Key, `loft_key`) names its kind (negative: descending), its byte position
  * in the element and the start a narrow width counts from.  Its value is a `loft_kv`
  * (keys::Content).  A hash table files an entry by the SipHash-1-3 digest of its key, seeded
- * per table: the digest is part of the store format, so it is loft's own, byte for byte. */
+ * per table: the digest is part of the store format, so it is loft's own, byte for byte
+ * (`@FR-S-Digest`). */
 
 #define LOFT_KV_INT 0
 #define LOFT_KV_SINGLE 1

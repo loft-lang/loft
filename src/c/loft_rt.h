@@ -1427,14 +1427,17 @@ static void loft_refill_text(loft_ref r, uint32_t fld, loft_str v) {
 #define LOFT_T_ORDERED 8
 #define LOFT_T_RADIX 9
 #define LOFT_T_TRIE 10
+/* A stored reference: copied and released as a scalar, its store number checked by a verify. */
+#define LOFT_T_DBREF 11
 
 /* A key part (keys::Key): its kind (negative: descending), its byte position in the element and
  * the start a narrow width counts from. */
 typedef struct { int8_t type; uint16_t pos; int32_t start; } loft_key;
 
-/* A struct field: its byte position, its type, and whether it is a VIEW — a member of a linked
- * group that borrows its records from a sibling (`other_indexes`' marker). */
-typedef struct { uint16_t pos; uint16_t type; uint8_t view; } loft_fld;
+/* A struct field: its byte position, its type, whether it is a VIEW — a member of a linked
+ * group that borrows its records from a sibling (`other_indexes`' marker) — and whether it is
+ * hidden (a `#`-named field, which `type_at` passes over). */
+typedef struct { uint16_t pos; uint16_t type; uint8_t view; uint8_t hidden; } loft_fld;
 typedef struct {
     uint8_t kind;
     uint16_t size;             /* the type's bytes */
@@ -1495,7 +1498,7 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         loft_ref src_v = { from.store_nr, cur, 0 };
         loft_ref dst_v = { to.store_nr, into, 0 };
         loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);
-        if (T[d->elem].kind == LOFT_T_SCALAR) return;
+        if (T[d->elem].kind == LOFT_T_SCALAR || T[d->elem].kind == LOFT_T_DBREF) return;
         for (uint32_t i = 0; i < len; i++) {
             loft_ref a = { from.store_nr, cur, 8 + i * size };
             loft_ref b = { to.store_nr, into, 8 + i * size };
@@ -1667,7 +1670,7 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
         loft_ref e = loft_vec_append(v, size);
         loft_ref a = { v.store_nr, loft_collection_rec(loft_store_of(v), v.rec, v.pos), 8 + (length - 1) * size };
         loft_copy_bytes(e, 0, a, 0, size);
-        if (T[ctp].kind != LOFT_T_SCALAR) loft_copy_claims(T, ctp, a, e);
+        if (T[ctp].kind != LOFT_T_SCALAR && T[ctp].kind != LOFT_T_DBREF) loft_copy_claims(T, ctp, a, e);
         loft_vec_finish(v);
     }
 }

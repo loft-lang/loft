@@ -5,7 +5,8 @@
  * its parent, @8 / @12 its false / true child.  A child is 0 (empty), a record number (> 0) or
  * a node (its negated id).  The tree keys on `user bits ‖ 0x00 ‖ 32-bit record id ‖ zeros`, so
  * no key ends and distinct records always differ.  A spatial collection's user bits are its
- * axes' Morton interleave (src/radix_db.rs); a trie's are its text key's bytes (src/trie_db.rs).
+ * axes' Morton interleave (src/radix_db.rs); a trie's are its text key's bytes (src/trie_db.rs)
+ * (`@FR-S-Tree`, `@FR-S-TreeKey`).
  * An entry is a record of its own, its payload at byte 8. */
 
 #define LOFT_RX_TERM_BITS 8u

@@ -4,7 +4,8 @@
  * holds up to FANOUT slots, each an 8-byte KEY PART (the first key field as an i64 in the
  * field's order) beside a record number; an internal slot i ≥ 1 also names its child, whose
  * minimum the record is.  Leaves are chained both ways.  A position names a leaf slot,
- * `leaf·FANOUT + slot`, 0 for none.  An entry is a record of its own, its payload at byte 8. */
+ * `leaf·FANOUT + slot`, 0 for none.  An entry is a record of its own, its payload at byte 8
+ * (`@FR-S-Index`). */
 
 #define LOFT_BT_FANOUT 16u
 #define LOFT_BT_MIN (LOFT_BT_FANOUT / 4)

@@ -239,6 +239,26 @@ impl FnWriter<'_> {
                     K::Ref,
                 )))
             }
+            ("t_4hash_len", [h]) => {
+                let h = self.expr(h, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_hash_len({})", as_ref(h)?),
+                    K::Int,
+                )))
+            }
+            _ => self.store_native(name, args, ind),
+        }
+    }
+
+    /// The natives over a whole store — its image, its verify, its report — or `None` for
+    /// another.
+    fn store_native(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        match (name, args) {
             ("n_store_persist_copy", [r, path]) => {
                 // The image's sidecar is the store's root type's: the value's static type
                 // names it, and the runtime writes nothing for a store minted otherwise.
@@ -281,19 +301,27 @@ impl FnWriter<'_> {
                     K::Bool,
                 )))
             }
+            ("n_store_verify", [r]) => {
+                // The walk reads the store's own type, so every type the value reaches is
+                // described.
+                let tp = self
+                    .value_type(r)
+                    .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+                    .ok_or("a verified value whose store type is not known here")?;
+                self.cx.name_types();
+                self.cx.describe_type(tp);
+                let r = self.expr(r, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_store_verify(loft_types, loft_ntypes, {})", as_ref(r)?),
+                    K::Bool,
+                )))
+            }
             ("n_store_memory", []) => {
                 let t = self.temp(CType::Text);
                 self.line(ind, &format!("loft_text_free(&{t});"));
                 let names = self.cx.type_names();
                 self.line(ind, &format!("{t} = loft_store_memory({names});"));
                 Ok(Some(self.held(t, CType::Text)))
-            }
-            ("t_4hash_len", [h]) => {
-                let h = self.expr(h, ind)?;
-                Ok(Some(E::new(
-                    format!("loft_hash_len({})", as_ref(h)?),
-                    K::Int,
-                )))
             }
             _ => Ok(None),
         }

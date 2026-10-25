@@ -2317,8 +2317,8 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpFreeRecordIn", [r, tp]) => {
-                let tp = u16::try_from(Self::literal(tp, "type")?)
-                    .map_err(|_| "a type out of range")?;
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
                 self.cx.copy_type(tp)?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
@@ -2914,6 +2914,26 @@ impl<'a> FnWriter<'a> {
 
     /// Booleans and bytes in records and vectors, absent vectors, store identity, text
     /// clears and the text null.
+    /// `OpClear(r, tp)` (`Stores::remove_claims`): the value's claims released, or with
+    /// `@FR-R-Reuse`'s reset flag its pooled store reset where `reset_pool_root` allows.
+    fn clear_op(&mut self, r: &Value, tp: &Value, ind: usize) -> Result<E, String> {
+        let raw = u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+        let tp = raw & crate::keys::POOL_TP_MASK;
+        self.cx.copy_type(tp)?;
+        let r = self.expr(r, ind)?;
+        let r = as_ref(r)?;
+        let walk = format!("loft_remove_claims(loft_types, {tp}, {r})");
+        if raw & crate::keys::POOL_RESET == 0 {
+            return Ok(E::new(walk, K::Void));
+        }
+        let size = self.cx.stores.enum_parent_size(tp);
+        let (image, n) = self.cx.default_image(tp);
+        Ok(E::new(
+            format!("if (!loft_reset_pool_root({r}, {tp}, {size}, {image}, {n})) {walk}"),
+            K::Void,
+        ))
+    }
+
     fn slot_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
             ("OpGetBoolean", [r, fld]) => {
@@ -2960,28 +2980,7 @@ impl<'a> FnWriter<'a> {
                     K::Cond,
                 ))
             }
-            ("OpClear", [r, tp]) => {
-                // `@FR-R-Reuse`'s reset flag asks for a fresh root where the store allows it;
-                // the walk below is the answer the interpreter falls back to when it does not.
-                let raw = u16::try_from(Self::literal(tp, "type")?)
-                    .map_err(|_| "a type out of range")?;
-                let tp = raw & crate::keys::POOL_TP_MASK;
-                self.cx.copy_type(tp)?;
-                let r = self.expr(r, ind)?;
-                let r = as_ref(r)?;
-                let walk = format!("loft_remove_claims(loft_types, {tp}, {r})");
-                if raw & crate::keys::POOL_RESET == 0 {
-                    return Ok(E::new(walk, K::Void));
-                }
-                let size = self.cx.stores.enum_parent_size(tp);
-                let (image, n) = self.cx.default_image(tp);
-                Ok(E::new(
-                    format!(
-                        "if (!loft_reset_pool_root({r}, {tp}, {size}, {image}, {n})) {walk}"
-                    ),
-                    K::Void,
-                ))
-            }
+            ("OpClear", [r, tp]) => self.clear_op(r, tp, ind),
             ("OpClearText", [dest]) => {
                 let dest = self.text_dest(dest)?;
                 Ok(E::new(format!("{dest}.len = 0"), K::Void))
