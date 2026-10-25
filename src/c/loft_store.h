@@ -143,6 +143,10 @@ typedef struct {
     int defined;
     /* `Store::park` off — a store loaded from an image parks nothing (`Store::load`). */
     int no_park;
+    /* `Store::placed_foreign` (`@FR-H-RootExtent`): the live records placed here that are not
+     * elements of the root collection; while any lives, a clear does not reset the store and
+     * no exchange takes its content. */
+    uint32_t *placed, nplaced, placed_cap;
 } loft_store_t;
 
 static loft_store_t *loft_stores = 0;
@@ -860,6 +864,10 @@ static void loft_entomb(loft_store_t *s, uint32_t rec) {
 /* `Store::delete`. */
 static void loft_st_delete(loft_store_t *s, uint32_t rec) {
     LOFT_TRACE("D %llu %u\n", (unsigned long long) s->serial, rec);
+    for (uint32_t i = 0; i < s->nplaced;) {
+        if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];
+        else i++;
+    }
     if (loft_bits_remove(&s->referenced, rec)) {
         loft_entomb(s, rec);
         return;
@@ -938,9 +946,20 @@ static void loft_st_init(loft_store_t *s) {
     s->dead_words = 0;
     loft_bits_clear(&s->lazy_free);
     loft_parked_clear(s);
+    s->nplaced = 0;
     s->needs_coalesce = 0;
     s->claimed_end = 0;
     loft_fl_insert(s, LOFT_ST_PRIMARY);
+}
+
+/* `Store::note_placed_foreign` (`@FR-H-RootExtent`). */
+static void loft_st_note_placed(loft_store_t *s, uint32_t rec) {
+    if (s->nplaced == s->placed_cap) {
+        s->placed_cap = s->placed_cap ? s->placed_cap * 2 : 4;
+        s->placed = (uint32_t *) realloc(s->placed, (size_t) s->placed_cap * 4);
+        if (!s->placed) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    s->placed[s->nplaced++] = rec;
 }
 
 /* `Store::note_referenced` (`@FR-H-Removed`). */

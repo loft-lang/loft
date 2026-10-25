@@ -2307,11 +2307,20 @@ impl<'a> FnWriter<'a> {
                     u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
                 let size = self.cx.stores.enum_parent_size(tp);
                 let (image, n) = self.cx.default_image(tp);
+                // `@FR-H-RootExtent`: a record that is not an element of the host store's root
+                // vector is noted, so a clear does not reset the store under it.  The host's
+                // store is minted as the host value's type, so the Rust store answers here.
+                let foreign = self
+                    .value_type(host)
+                    .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+                    .and_then(|kt| self.cx.stores.root_vector_element_of(kt))
+                    .is_some_and(|elem| elem != tp);
                 let host = self.expr(host, ind)?;
                 Ok(E::new(
                     format!(
-                        "loft_place_record({}, {tp}, {size}, {image}, {n})",
-                        as_ref(host)?
+                        "loft_place_record({}, {tp}, {size}, {image}, {n}, {})",
+                        as_ref(host)?,
+                        u8::from(foreign)
                     ),
                     K::Ref,
                 ))

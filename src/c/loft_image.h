@@ -491,6 +491,7 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc) {
     s->defined = 1;
     s->no_park = 1;
     s->lazy = 0;
+    s->nplaced = 0;
     s->needs_coalesce = 0;
     s->claimed_end = 0;
     s->serial = 0;

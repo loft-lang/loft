@@ -1581,7 +1581,7 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst) {
     if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
     if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
-    if (a->protect || b->protect) return 0;
+    if (a->protect || b->protect || a->nplaced || b->nplaced) return 0;
     if (!loft_st_holds_only_root(b)) return 0;
     /* `Store::swap_contents`: the content moves, each slot keeps its serial. */
     loft_store_t t = *a;
@@ -1811,7 +1811,7 @@ static void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, lo
         uint16_t elem = vec_tp < loft_ntypes && T[vec_tp].kind == LOFT_T_VECTOR ? T[vec_tp].elem : 0xFFFF;
         if (elem != 0xFFFF && T[elem].owns_heap) {
             uint32_t size = T[elem].size;
-            if (one_field) {
+            if (one_field && s->nplaced == 0) {
                 uint32_t reached = loft_vec_reached(v, size);
                 loft_st_init(s);
                 uint32_t root = loft_st_claim(s, 1 + (T[kt].size + 7u) / 8);
@@ -2860,8 +2860,11 @@ static void loft_vec_slice(loft_ref v, loft_ref o, int64_t lo, int64_t hi, uint3
 }
 
 /* OpPlaceRecord (Stores::place_record_prefilled): a `tp` record claimed inside the host's store,
- * prefilled with its defaults, or in a fresh store of its own when there is no host. */
-static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n) {
+ * prefilled with its defaults, or in a fresh store of its own when there is no host.  `foreign`:
+ * the host's root is a vector of another element type, so the record is noted
+ * (`@FR-H-RootExtent`). */
+static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, const uint8_t *image, uint32_t n,
+                                  int foreign) {
     loft_ref r;
     if (host.store_nr == 0xFFFF || host.rec == 0 || host.store_nr >= loft_nstores) {
         r = loft_ref_null();
@@ -2870,6 +2873,7 @@ static loft_ref loft_place_record(loft_ref host, uint16_t tp, uint32_t size, con
         r.store_nr = host.store_nr;
         r.rec = loft_claim(loft_store_of(host), 1 + (size + 7) / 8);
         r.pos = 8;
+        if (foreign) loft_st_note_placed(loft_store_of(r), r.rec);
     }
     loft_set_u32(loft_store_of(r), r.rec, 4, tp);
     loft_fill(r, image, n);

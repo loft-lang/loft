@@ -3029,7 +3029,12 @@ impl Stores {
     /// of one vector field shares — or `None` for any other root.  `@FR-H-RootExtent` is a
     /// claim about exactly these stores.
     fn root_vector_element(&self, store_nr: u16) -> Option<u16> {
-        let kt = self.allocations.get(store_nr as usize)?.known_type;
+        self.root_vector_element_of(self.allocations.get(store_nr as usize)?.known_type)
+    }
+
+    /// [`root_vector_element`](Stores::root_vector_element) for a store whose root is minted
+    /// as `kt` — what the C backend asks of a placement's host when it writes the program.
+    pub(crate) fn root_vector_element_of(&self, kt: u16) -> Option<u16> {
         let crate::database::Parts::Struct(fields) = &self.types.get(kt as usize)?.parts else {
             return None;
         };

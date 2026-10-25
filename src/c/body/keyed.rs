@@ -62,7 +62,7 @@ impl FnWriter<'_> {
 
     /// The static type of a variable read, the one shape a persisted value takes; `None` for
     /// any other value.
-    fn value_type(&self, v: &Value) -> Option<crate::data::Type> {
+    pub(super) fn value_type(&self, v: &Value) -> Option<crate::data::Type> {
         match v.unspan() {
             Value::Var(var) => Some(self.vars.tp(*var).clone()),
             _ => None,
