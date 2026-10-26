@@ -1786,6 +1786,17 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
         if let Some(runtime) = in_binary_native(def.native()) {
             return forwarded_native(cx, d, ret, runtime);
         }
+        // A native loft's own binary implements is never unloaded there: the stub would answer
+        // what the interpreter never does, so a native the runtime does not carry refuses.
+        if crate::native::FUNCTIONS
+            .iter()
+            .any(|(name, _)| *name == def.native())
+        {
+            return Err(format!(
+                "native {} (in loft's binary; the C runtime does not carry it)",
+                def.original_name()
+            ));
+        }
         return unloaded_native(cx, d, ret);
     }
     let vars = def.variables();

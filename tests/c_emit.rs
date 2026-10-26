@@ -3969,3 +3969,74 @@ fn a_halted_c_test_releases_the_texts_its_frames_hold() {
         "{err}"
     );
 }
+
+/// @PLN203 — the natives of an `in_binary` library (`[native] in_binary = true`: implemented in
+/// loft's own binary) run on the C when its runtime carries them, and refuse by name when it
+/// does not.  `lib/process`'s `process_run` is carried (`loft_process.h`): the values below are
+/// computed by hand — a run's code and both streams, a signal as 128 + n, a program that cannot
+/// start, a timeout's -2, a cursor's lines — and the interpreter must give the same lines.
+/// `engine_host`'s `rebuild_status` is not carried: the C must refuse the unit naming it, never
+/// emit the "not loaded" stub, which the interpreter cannot give for a native of its own binary.
+#[test]
+fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
+    if !have_cc() || !cfg!(unix) {
+        eprintln!("skipped: no cc on PATH, or not a POSIX host");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    let dir = scratch("inbinary");
+    let file = dir.join("p.loft");
+    fa::write(
+        &file,
+        "use process::*;\nfn main() {\n  \
+         both: Command = \"sh -c 'echo out; echo err >&2; exit 3'\";\n  b = both.run();\n  \
+         println(\"run {b.ok} {b.code} [{b.stdout.trim()}] [{b.stderr.trim()}]\");\n  \
+         killed: Command = \"sh -c 'kill -TERM $$'\";\n  println(\"signal {killed.run().code}\");\n  \
+         missing: Command = \"no-such-program-for-loft\";\n  m = missing.run();\n  \
+         println(\"missing {m.code} {m.stderr.starts_with(\\\"no-such-program-for-loft: \\\")}\");\n  \
+         slow: Command = \"sleep 5\";\n  t = slow.run(\"\", 100);\n  \
+         println(\"timeout {t.code} {t.timed_out}\");\n  \
+         three: Command = \"sh -c 'echo a; echo b >&2; echo c'\";\n  n = 0;\n  \
+         for l in three.lines() { n += 1; println(\"line {n} {l}\"); }\n}\n",
+    )
+    .expect("write program");
+    let want = "run false 3 [out] [err]\nsignal 143\nmissing -1 true\ntimeout -2 true\n\
+                line 1 a\nline 2 c\n";
+    for backend in ["--native-c", "--interpret"] {
+        let out = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&file)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let host = dir.join("h.loft");
+    fa::write(
+        &host,
+        "use engine_host;\nfn main() { println(\"{engine_host::rebuild_status()}\"); }\n",
+    )
+    .expect("write program");
+    let out = loft::platform::process::harness_command(loft)
+        .args(["--emit-c"])
+        .arg(dir.join("h.c"))
+        .arg("--lib")
+        .arg(&lib)
+        .arg(&host)
+        .output()
+        .expect("run loft --emit-c");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "a refusal: {err}");
+    assert!(
+        err.contains("rebuild_status") && err.contains("the C runtime does not carry it"),
+        "the refusal names the native: {err}"
+    );
+}
