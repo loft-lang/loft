@@ -14,6 +14,11 @@ writes C that answers differently from the interpreter.
 ## Running it
 
 ```bash
+loft --native-c prog.loft [args]   # emit, build with LOFT_CC / CC / cc, cache the binary in
+                                   #   .loft/cache/native-c-<key>, run it (exit 2 on a refusal);
+                                   #   --ship is -O3, --native-debug -O0 -g,
+                                   #   --native-emit [out.c] writes the C; LOFT_NATIVE_BACKEND=c
+                                   #   makes --native mean this; LOFT_KEEP_NATIVE_C=1 keeps the .c
 loft --emit-c out.c prog.loft      # write the C; exit 2 with "does not carry this program
                                    #   yet: <fn>: <why>" for a construct not carried
 cc -std=c99 out.c -o prog -lm && ./prog
@@ -33,6 +38,12 @@ twin's; `cship` builds it under `LOFT_RELEASE_PASS_PROBE=1`, where the generator
 release-pass probe's forms (`loft_wrap_*` in `loft_rt.h`: the processor's arithmetic with every
 wrap defined, for exactly the operators the Rust probe changes) — the ship tier's ceiling, as the
 Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes).
+
+The C binary reads the run bounds itself: `LOFT_MEMORY_LIMIT` caps the bytes the stores' buffers
+hold (`loft_heap_moved`, called before every resize of one; a growth past it stops the run with
+101 and the report naming the type and the growth), and `LOFT_TIMEOUT` stops the run with 124
+at the deadline (`alarm` under POSIX; without it the driver's own bound ends the program with
+itself).
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
 it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It
@@ -361,6 +372,5 @@ starts from.
 No program of the corpus is refused.  What the C runtime does not have, it answers at run time
 the way a build without it answers: a ranged or a TLS transport for a URL, a SQL driver for a
 lazy database source.  Refused at emit time: a program declaring a loft lazy driver, a link re-pointed to a narrow
-or a text store place, a par row of a tuple holding a reference, and a stdlib native the runtime
-has not ported (`eprint`, `is_symlink`, the `store_upgrade_owed_*` family) — each by name.  Not
+or a text store place, and a par row of a tuple holding a reference — each by name.  Not
 refused and not carried: a `#native` function (above).

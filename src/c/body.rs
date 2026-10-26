@@ -702,9 +702,7 @@ impl<'a> FnWriter<'a> {
     }
 
     fn stmt_kind(&mut self, v: &Value, ind: usize) -> Result<(), String> {
-        if self.cx.frames.get() {
-            self.note_site(v, ind);
-        }
+        self.note_site(v, ind);
         match v {
             // A value block's result where nothing takes it: a leaf has no effect.
             Value::Null

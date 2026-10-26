@@ -188,6 +188,85 @@ static loft_store_t *loft_stores = 0;
 static uint32_t loft_nstores = 0;
 static uint64_t loft_stores_allocated = 0;
 
+/* ── The heap ceiling (store_budget.rs) ──────────────────────────────────────────────────
+ * `loft_heap_total` is the bytes every store's buffer holds; `LOFT_MEMORY_LIMIT` sets
+ * `loft_heap_limit` (0: none, the default).  Every site that sizes a store's buffer calls
+ * `loft_heap_moved` with the buffer's old and new word counts BEFORE it allocates, so a growth
+ * that would cross the ceiling stops the run with the store as it was, and the report names the
+ * growth that was refused.  The names are the unit's type table (`loft_tnames`). */
+extern const char *const loft_tnames[];
+extern const uint32_t loft_ntnames;
+static uint64_t loft_heap_total = 0, loft_heap_limit = 0;
+
+static void loft_heap_human(char *out, uint64_t b) {
+    if (b >= ((uint64_t) 1 << 30)) sprintf(out, "%.1f GiB", (double) b / (double) ((uint64_t) 1 << 30));
+    else if (b >= ((uint64_t) 1 << 20)) sprintf(out, "%.1f MiB", (double) b / (double) ((uint64_t) 1 << 20));
+    else if (b >= ((uint64_t) 1 << 10)) sprintf(out, "%.1f KiB", (double) b / (double) ((uint64_t) 1 << 10));
+    else sprintf(out, "%llu B", (unsigned long long) b);
+}
+
+/* `parse_limit`: `2G`, `512M`, `4k`, a bare number of bytes, an optional `B`; 0 when the text is
+ * no size, with `*ok` cleared. */
+static uint64_t loft_heap_parse_limit(const char *t, int *ok) {
+    size_t n = strlen(t);
+    uint64_t scale = 1, v = 0;
+    *ok = 0;
+    while (n && (t[n - 1] == ' ' || t[n - 1] == '\t')) n--;
+    while (n && (*t == ' ' || *t == '\t')) { t++; n--; }
+    if (n && (t[n - 1] == 'b' || t[n - 1] == 'B')) n--;
+    if (n && (t[n - 1] == 'k' || t[n - 1] == 'K')) { scale = (uint64_t) 1 << 10; n--; }
+    else if (n && (t[n - 1] == 'm' || t[n - 1] == 'M')) { scale = (uint64_t) 1 << 20; n--; }
+    else if (n && (t[n - 1] == 'g' || t[n - 1] == 'G')) { scale = (uint64_t) 1 << 30; n--; }
+    if (!n) return 0;
+    for (size_t i = 0; i < n; i++) {
+        if (t[i] < '0' || t[i] > '9') return 0;
+        if (v > (UINT64_MAX - 9) / 10) return 0;
+        v = v * 10 + (uint64_t) (t[i] - '0');
+    }
+    if (v && scale > UINT64_MAX / v) return 0;
+    *ok = 1;
+    return v * scale;
+}
+
+/* `apply_env_limit_if_set`: an ordinary run is capped only when the variable is set; a typo is
+ * reported and leaves the run uncapped, as the interpreter's default for an ordinary run. */
+static void loft_heap_read_limit(void) {
+    const char *v = getenv("LOFT_MEMORY_LIMIT");
+    int ok = 0;
+    if (!v) return;
+    loft_heap_limit = loft_heap_parse_limit(v, &ok);
+    if (!ok) {
+        fprintf(stderr, "loft: LOFT_MEMORY_LIMIT='%s' is not a size (try 2G, 512M or 0) — keeping the default 0 B\n", v);
+        loft_heap_limit = 0;
+    }
+}
+
+static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t new_words) {
+    uint64_t old_b = (uint64_t) old_words * 8, new_b = (uint64_t) new_words * 8;
+    if (new_b <= old_b) {
+        uint64_t freed = old_b - new_b;
+        loft_heap_total = loft_heap_total > freed ? loft_heap_total - freed : 0;
+        return;
+    }
+    if (loft_heap_limit && loft_heap_total + (new_b - old_b) > loft_heap_limit) {
+        char used[32], cap[32], from[32], to[32];
+        uint16_t kt = s->known;
+        loft_heap_human(used, loft_heap_total);
+        loft_heap_human(cap, loft_heap_limit);
+        loft_heap_human(from, old_b);
+        loft_heap_human(to, new_b);
+        fflush(stdout);
+        fprintf(stderr, "loft: store memory limit reached — %s in use, limit %s\n\n  the growth that crossed it\n", used, cap);
+        if (kt != 0xFFFF && kt < loft_ntnames)
+            fprintf(stderr, "    a store of type `%s` (kt=%u) growing %s → %s\n", loft_tnames[kt], (unsigned) kt, from, to);
+        else
+            fprintf(stderr, "    a store growing %s → %s\n", from, to);
+        fputs("\n  Raise or remove the limit with LOFT_MEMORY_LIMIT=<size|0>, e.g. 8G.\n", stderr);
+        exit(101);
+    }
+    loft_heap_total += new_b - old_b;
+}
+
 #ifdef LOFT_ALLOC_TRACE
 /* `LOFT_ALLOC_TRACE=<file>` — the same event lines `store_census::alloc_event` writes. */
 static FILE *loft_trace_file(void) {
@@ -648,6 +727,7 @@ static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
     uint64_t inc64 = (uint64_t) s->size * 7;
     uint32_t inc = inc64 > UINT32_MAX ? UINT32_MAX / 3 : (uint32_t) (inc64 / 3);
     uint32_t size = to_size > inc ? to_size : inc;
+    loft_heap_moved(s, s->size, size);
 #ifdef LOFT_POISON
     /* `LOFT_POISON`: the growth always MOVES the bytes and scribbles the block it leaves, which
      * is kept, never handed back — an address taken into the store before the growth then reads
@@ -1137,6 +1217,7 @@ static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
     if (words < mark) return 0;
     if (words < LOFT_ST_PRIMARY + 1) words = LOFT_ST_PRIMARY + 1;
     if (words >= s->size) return 0;
+    loft_heap_moved(s, s->size, words);
     uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) words * 8);
     if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
     s->buf = b;

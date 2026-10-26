@@ -990,6 +990,19 @@ static uint8_t loft_is_dir_at(loft_str raw) {
     return r;
 }
 
+/* is_symlink (Stores::fs_is_symlink_at): the path itself is a link, not followed; false
+ * without POSIX, where no link is seen. */
+static uint8_t loft_is_symlink_at(loft_str raw) {
+    char *path = loft_resolve(raw);
+    uint8_t r = 0;
+#if defined(LOFT_POSIX)
+    struct stat st;
+    r = (uint8_t) (path && lstat(path, &st) == 0 && S_ISLNK(st.st_mode));
+#endif
+    free(path);
+    return r;
+}
+
 static uint8_t loft_is_file_at(loft_str raw) {
     char *path = loft_resolve(raw);
     int64_t size;

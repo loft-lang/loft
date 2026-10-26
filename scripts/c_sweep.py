@@ -9,6 +9,8 @@
     scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
     scripts/c_sweep.py --all            # every refusal reason, not the top 25
     scripts/c_sweep.py --mode default   # one macro mode (strict, default, verify) instead of all
+    scripts/c_sweep.py --stderr         # also compare stderr: a fault's message, its `-->` line,
+                                        # excerpt and call chain (the oracle runs --no-warnings)
     scripts/c_sweep.py --poison         # the store poison modes instead: the C built with
                                         # -DLOFT_POISON / -DLOFT_POISON_CLAIM against the
                                         # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1
@@ -42,7 +44,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
-CC = ["cc", "-std=c99", "-O1"]
+CC = ["cc", "-std=c99", "-O1", "-DLOFT_CALL_CHAIN"]
 MODES = {
     "strict": ["-DLOFT_STRICT", "-pedantic", "-Werror"],
     "default": ["-w"],
@@ -98,7 +100,16 @@ def unreported(out: bytes) -> bytes:
     return REPORT.sub(b"<store report>", out)
 
 
-def one(path: str, asan: bool = False, modes=tuple(MODES)):
+# The lines only the interpreter's process writes: Rust's panic preamble around a fault it
+# reports through a panic (the store ceiling), and the backtrace hint after it.
+INTERP_ONLY = re.compile(rb"^(thread '.*' \(\d+\) panicked at .*|note: run with `RUST_BACKTRACE.*)\n", re.M)
+
+
+def scrubbed(err: bytes) -> bytes:
+    return INTERP_ONLY.sub(b"", err).strip(b"\n")
+
+
+def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False):
     src = ROOT / path
     with tempfile.TemporaryDirectory(prefix="loft-c-sweep-") as tmp:
         c = os.path.join(tmp, "p.c")
@@ -113,7 +124,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
         tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
         # A program without `main` is its tests: the C runs them as `loft --tests` does,
         # and the two exit statuses say whether every test passed.
-        interp = [LOFT, "--tests" if tests else "--interpret", str(src)]
+        interp = [LOFT, "--tests" if tests else "--interpret"] + \
+            (["--no-warnings"] if stderr else []) + [str(src)]
         i_plain = None
         for mode in modes:
             flags, env = POISON_MODES.get(mode, (MODES.get(mode), None))
@@ -133,6 +145,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
                 return path, "sanitizer", f"[{mode}] {line.strip()[:200]}", None
             same = c_out[0] == i_out[0] if tests else \
                 (c_out[0], unreported(c_out[1])) == (i_out[0], unreported(i_out[1]))
+            if same and stderr and not tests:
+                same = scrubbed(c_out[2]) == scrubbed(i_out[2])
             if not same:
                 return path, "differ", f"[{mode}]", (i_out, c_out)
         return path, "match", "", None
@@ -154,7 +168,8 @@ def main(argv: list[str]) -> int:
     bad = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
         asan = "--asan" in argv
-        for path, bucket, why, outs in ex.map(lambda f: one(f, asan, modes), files):
+        stderr = "--stderr" in argv
+        for path, bucket, why, outs in ex.map(lambda f: one(f, asan, modes, stderr), files):
             buckets[bucket] += 1
             if bucket == "refused":
                 reasons[why] += 1
@@ -166,9 +181,12 @@ def main(argv: list[str]) -> int:
     for path, bucket, why, outs in sorted(bad):
         print(f"  {bucket:8} {path}" + (f" — {why}" if why else ""))
         if verbose and outs:
-            (ic, io, _), (cc, co, _) = outs
+            (ic, io, ie), (cc, co, ce) = outs
             print(f"      interpreter exit {ic}: {io[:300]!r}")
             print(f"      C           exit {cc}: {co[:300]!r}")
+            if "--stderr" in argv:
+                print(f"      interpreter stderr: {scrubbed(ie)[:400]!r}")
+                print(f"      C           stderr: {scrubbed(ce)[:400]!r}")
     if reasons:
         print("refused, by reason:")
         for why, n in reasons.most_common(None if "--all" in argv else 25):

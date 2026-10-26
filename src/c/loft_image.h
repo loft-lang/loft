@@ -237,6 +237,7 @@ static uint32_t loft_relayout_walk(const loft_tdesc *T, uint32_t ntypes, uint16_
 static uint16_t loft_store_scratch(uint32_t words) {
     uint32_t nr = loft_store_make(0);
     loft_store_t *s = &loft_stores[nr];
+    loft_heap_moved(s, s->size, words < 4 ? 4 : words);
     free(s->buf);
     s->size = words < 4 ? 4 : words;
     s->buf = (uint8_t *) calloc(s->size, 8);
@@ -250,6 +251,7 @@ static uint16_t loft_store_scratch(uint32_t words) {
  * (`Store::new_freed_sentinel`, four words, parking on) its next store is made in. */
 static void loft_store_drop(uint16_t nr) {
     loft_store_t *s = &loft_stores[nr];
+    loft_heap_moved(s, s->size, 4);
     free(s->buf);
     s->size = 4;
     s->buf = (uint8_t *) malloc((size_t) s->size * 8);
@@ -689,6 +691,7 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
             return 0;
         }
     }
+    loft_heap_moved(s, s->size, words);
     free(s->buf);
     s->buf = bytes;
     s->size = words;

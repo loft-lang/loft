@@ -341,6 +341,11 @@ static void loft_print(loft_str s) {
     fwrite(s.p, 1, s.len, stdout);
 }
 
+/* eprint (platform::host_eprint): the text to standard error, unbuffered as Rust's is. */
+static void loft_eprint(loft_str s) {
+    fwrite(s.p, 1, s.len, stderr);
+}
+
 /* The integer operators: null in, null out; an overflow or a division by zero is null. */
 /* The checked operators: a null operand or an overflow answers null.  The multiply of two
  * computed operands asks LOFT_MUL_OVF (a flag test where the portable check divides); with a
@@ -412,13 +417,15 @@ static int loft_in_test = 0;
 /* The message of the last failed assert, for a test expected to fail with it. */
 static loft_text loft_fail_msg = { 0, 0, 0 };
 
+static void loft_fault_where(loft_str file, int64_t line);
+
 static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t line) {
-    (void) file;
-    (void) line;
     if (test == 1) return;
+    fflush(stdout);
     fputs("error: assertion failed: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
     fputc('\n', stderr);
+    if (!loft_in_test) loft_fault_where(file, line);
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "assertion failed: ", 18);
     loft_push(&loft_fail_msg, message.p, message.len);
@@ -429,12 +436,14 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
 
 /* `@FR-H-WriteLocked` (`RuntimeError::locked_store_write`): a development run stops at a write
  * into a store the author locked, as the interpreter does; a test fails. */
+static void loft_fault_chain(void);
 static void loft_locked_write(void) {
     static const char msg[] = "write to a locked store — unlock it with `#lock = false` before writing";
     fflush(stdout);
     fputs("error: ", stderr);
     fputs(msg, stderr);
     fputc('\n', stderr);
+    if (!loft_in_test) loft_fault_chain();
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, msg, sizeof msg - 1);
     if (loft_in_test) longjmp(loft_test_jmp, 1);
@@ -442,7 +451,13 @@ static void loft_locked_write(void) {
     exit(1);
 }
 
-#ifdef LOFT_FRAMES
+/* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
+ * other unit keeps them where the build asks for the call chain a fault prints
+ * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
+#if defined(LOFT_FRAMES) && !defined(LOFT_CALL_CHAIN)
+#define LOFT_CALL_CHAIN 1
+#endif
+#ifdef LOFT_CALL_CHAIN
 /* The frames the program is running (call_frames.rs, `cr_call_push`): each function's name and
  * file, and the line it is calling from (`cr_call_site`), outermost first. */
 typedef struct { const char *fn, *file; uint32_t site; } loft_frame;
@@ -472,15 +487,70 @@ static void loft_frame_site(uint32_t line) {
 #define LOFT_FRAMES_RESET() (loft_nframes = 0)
 #else
 #define LOFT_FRAMES_RESET() ((void) 0)
+#define loft_frame_push(fn, file) ((void) 0)
+#define loft_frame_pop() ((void) 0)
+#define loft_frame_site(line) ((void) 0)
 #endif
+
+/* The frames a halting fault fired under (`RuntimeError::render_call_chain`): innermost first,
+ * five at most with a count of the rest; nothing for a single frame, whose `-->` line already
+ * says where. */
+static void loft_fault_chain(void) {
+#ifdef LOFT_CALL_CHAIN
+    size_t n = loft_nframes, shown = n < 5 ? n : 5;
+    if (n <= 1) return;
+    fprintf(stderr, "  in fn %s() \xe2\x86\x90 called from\n", loft_frames[n - 1].fn);
+    for (size_t i = 1; i < shown; i++) fprintf(stderr, "        fn %s()\n", loft_frames[n - 1 - i].fn);
+    if (n > 5) fprintf(stderr, "        \xe2\x80\xa6 (%lu more frames)\n", (unsigned long) (n - 5));
+#endif
+}
+
+/* Where a halting fault fired (`render_entry_pretty` for a fault at column 1): the `-->` line,
+ * then the source line and its caret, read from the file now as `FileSourceLoader` reads it
+ * (a tab shown as four spaces), then the call chain. */
+static void loft_fault_where(loft_str file, int64_t line) {
+    if (file.len && line > 0) {
+        char *path = (char *) malloc(file.len + 1);
+        FILE *f;
+        int digits = 1;
+        int64_t at = 1;
+        int c;
+        if (!path) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(path, file.p, file.len);
+        path[file.len] = 0;
+        fprintf(stderr, "  --> %s:%lld:1\n", path, (long long) line);
+        f = fopen(path, "rb");
+        free(path);
+        for (int64_t v = line; v >= 10; v /= 10) digits++;
+        if (f) {
+            loft_text text = { 0, 0, 0 };
+            while (at < line && (c = fgetc(f)) != EOF) if (c == '\n') at++;
+            if (at == line) {
+                while ((c = fgetc(f)) != EOF && c != '\n') {
+                    if (c == '\t') loft_push(&text, "    ", 4);
+                    else { char ch = (char) c; loft_push(&text, &ch, 1); }
+                }
+                if (text.len && text.p[text.len - 1] == '\r') text.len--;
+                if (c != EOF || text.len) {
+                    fprintf(stderr, "%*s |\n%lld | ", digits, "", (long long) line);
+                    fwrite(text.p, 1, text.len, stderr);
+                    fprintf(stderr, "\n%*s | ^\n", digits, "");
+                }
+            }
+            free(text.p);
+            fclose(f);
+        }
+    }
+    loft_fault_chain();
+}
 
 /* panic(message): the program stops as a failed assertion stops it, saying `panic:`. */
 static void loft_panic(loft_str message, loft_str file, int64_t line) {
-    (void) file;
-    (void) line;
+    fflush(stdout);
     fputs("error: panic: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
     fputc('\n', stderr);
+    if (!loft_in_test) loft_fault_where(file, line);
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "panic: ", 7);
     loft_push(&loft_fail_msg, message.p, message.len);
@@ -786,6 +856,7 @@ static uint32_t loft_store_make(int counted) {
     }
     loft_store_t *s = &loft_stores[nr];
     if (!s->buf) {
+        loft_heap_moved(s, 0, 100);
         s->size = 100;
         s->buf = (uint8_t *) malloc((size_t) s->size * 8);
         if (!s->buf) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -1080,6 +1151,7 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
     uint32_t nr = loft_store_make(0);
     loft_store_t *s = &loft_stores[nr];
     if (n > s->size) {
+        loft_heap_moved(s, s->size, n);
         uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) n * 8);
         if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
         s->buf = b;
@@ -3221,6 +3293,40 @@ static void loft_init(void);
 #include <fcntl.h>
 #endif
 
+/* ── The run's time bound (timeout.rs) ─────────────────────────────────────────────────
+ * `LOFT_TIMEOUT=<seconds>` (0 or unset: none): at the deadline the program stops with 124, the
+ * GNU `timeout` status the interpreter's graceful exit gives, saying so on stderr.  POSIX arms
+ * `alarm`; the handler does only what a signal handler may (`write`, `_exit`).  Without POSIX
+ * the bound is the driver's, which ends the program with itself. */
+#if defined(LOFT_POSIX)
+#include <signal.h>
+#include <unistd.h>
+static char loft_timeout_msg[96];
+static size_t loft_timeout_len = 0;
+static void loft_timeout_fire(int sig) {
+    (void) sig;
+    if (write(2, loft_timeout_msg, loft_timeout_len) < 0) { /* nothing left to tell */ }
+    _exit(124);
+}
+#endif
+
+static void loft_arm_timeout(void) {
+#if defined(LOFT_POSIX)
+    const char *v = getenv("LOFT_TIMEOUT");
+    unsigned long secs = 0;
+    if (!v || !*v) return;
+    for (const char *c = v; *c; c++) {
+        if (*c < '0' || *c > '9' || secs > 100000000ul) return;
+        secs = secs * 10 + (unsigned long) (*c - '0');
+    }
+    if (!secs) return;
+    sprintf(loft_timeout_msg, "[timeout] deadline reached after %lus (graceful)\n", secs);
+    loft_timeout_len = strlen(loft_timeout_msg);
+    signal(SIGALRM, loft_timeout_fire);
+    alarm((unsigned) secs);
+#endif
+}
+
 static void loft_start(int argc, char **argv) {
 #if defined(_WIN32)
     /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
@@ -3230,6 +3336,8 @@ static void loft_start(int argc, char **argv) {
     loft_argc = argc;
     loft_argv = argv;
     loft_start_us = loft_now_us();
+    loft_heap_read_limit();
+    loft_arm_timeout();
     LOFT_TRACE("M\n");
     loft_init();
 }

@@ -2679,3 +2679,126 @@ fn main() {\n\
         .expect("run the shim C program");
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
+
+/// @PLN203 C1 — `loft --native-c` drives the C: it emits the program, builds it with the host's
+/// C compiler, caches the binary beside the program (`.loft/cache/native-c-<key>`) and runs it
+/// with the program's arguments and its exit status.  The run bounds reach the C binary as they
+/// reach the interpreter: `LOFT_MEMORY_LIMIT` stops a growth that crosses it and says so,
+/// `LOFT_TIMEOUT` stops the run with 124.  Every value is computed by hand.
+#[test]
+fn native_c_builds_caches_and_runs_the_program_under_the_run_bounds() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("driver");
+    let _ = fa::remove_dir_all(dir.join(".loft"));
+    let file = dir.join("drive.loft");
+    // 1² + … + 10² = 385; two arguments; the exit status is the argument count + 4 = 6.
+    fa::write(
+        &file,
+        "fn main() {\n  s = 0;\n  for i in 1..=10 { s += i * i; }\n  a = arguments();\n  \
+         println(\"sum {s} args {len(a)} {a[0]}{a[1]}\");\n  exit(len(a) + 4);\n}\n",
+    )
+    .expect("write program");
+    let run = || {
+        loft::platform::process::harness_command(loft)
+            .arg("--native-c")
+            .arg(&file)
+            .args(["x", "y"])
+            .env_remove("LOFT_NATIVE_NO_CACHE")
+            .output()
+            .expect("run loft --native-c")
+    };
+    for round in ["cold", "cached"] {
+        let out = run();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "sum 385 args 2 xy\n",
+            "{round} run: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(6), "{round} run's exit status");
+    }
+    let cached: Vec<String> = fa::read_dir(dir.join(".loft").join("cache"))
+        .expect("the cache directory")
+        .into_iter()
+        .filter_map(|p| fa::file_name(&p))
+        .filter(|n| n.starts_with("native-c-"))
+        .collect();
+    assert_eq!(cached.len(), 1, "one cached binary for one program: {cached:?}");
+
+    // A vector of 2²⁰ integers needs 8 MiB of store; the limit is 1 MiB.
+    let grow = dir.join("grow.loft");
+    fa::write(
+        &grow,
+        "fn main() {\n  v: vector<integer> = [];\n  for i in 0..1048576 { v += [i]; }\n  \
+         println(\"{len(v)}\");\n}\n",
+    )
+    .expect("write program");
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&grow)
+        .env("LOFT_MEMORY_LIMIT", "1M")
+        .output()
+        .expect("run loft --native-c");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && out.stdout.is_empty(),
+        "the growth past 1 MiB stops the run before it prints: {err}"
+    );
+    assert!(
+        err.contains("store memory limit reached") && err.contains("limit 1.0 MiB"),
+        "the report names the limit: {err}"
+    );
+    // Without the limit the same program runs to its end.
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&grow)
+        .env_remove("LOFT_MEMORY_LIMIT")
+        .output()
+        .expect("run loft --native-c");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1048576\n");
+
+    // A loop no compiler can fold (the generator never reaches -1) stopped after one second.
+    let spin = dir.join("spin.loft");
+    fa::write(
+        &spin,
+        "fn main() {\n  x = 1;\n  n = 0;\n  while x != -1 { x = (x * 1103515245 + 12345) % 2147483648; \
+         n += 1; }\n  println(\"{n}\");\n}\n",
+    )
+    .expect("write program");
+    // Built first, so the timed run spends its second in the program and not in `cc`; the
+    // driver's own deadline names a phase, the C's does not.
+    let check = loft::platform::process::harness_command(loft)
+        .args(["--check", "--native-c"])
+        .arg(&spin)
+        .output()
+        .expect("run loft --check --native-c");
+    assert_eq!(String::from_utf8_lossy(&check.stdout), "ok\n");
+    let started = std::time::Instant::now();
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&spin)
+        .env("LOFT_TIMEOUT", "1")
+        .output()
+        .expect("run loft --native-c");
+    if cfg!(unix) {
+        assert_eq!(
+            out.status.code(),
+            Some(124),
+            "the deadline's status: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("[timeout] deadline reached after 1s (graceful)\n"),
+            "the deadline says so: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(60),
+        "the bound held"
+    );
+}

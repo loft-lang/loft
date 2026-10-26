@@ -159,8 +159,6 @@ pub(crate) struct Cx<'a> {
     key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The root types a `store_persist_copy` writes an image of: one sidecar each.
     sidecars: std::cell::RefCell<std::collections::BTreeSet<u16>>,
-    /// Whether the unit reports its stores (`store_memory()`), which names every type.
-    type_names: std::cell::Cell<bool>,
     /// Every type the unit writes to or reads from a file (`loft_ser{tp}` / `loft_de{tp}`).
     ser_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The Unicode tables the unit reads (`crate::c::unicode`).
@@ -218,7 +216,6 @@ impl<'a> Cx<'a> {
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             sidecars: std::cell::RefCell::new(std::collections::BTreeSet::new()),
-            type_names: std::cell::Cell::new(false),
             ser_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
@@ -331,23 +328,22 @@ impl<'a> Cx<'a> {
     /// The type-name table `store_memory()` reads, by type number: the name `Stores::types`
     /// gives each, so a store's line names its type as the interpreter's does.
     pub(crate) fn type_names(&self) -> &'static str {
-        self.type_names.set(true);
         "loft_tnames, loft_ntnames"
     }
 
+    /// Always written: the heap ceiling's report (`loft_heap_moved`) names a type by it too.
     fn type_name_table(&self) -> String {
-        if !self.type_names.get() {
-            return String::new();
-        }
         let names: Vec<String> = self
             .stores
             .types
             .iter()
             .map(|t| body::c_string(&t.name))
             .collect();
+        // A C99 initializer holds at least one element: a unit with no types (none the
+        // stdlib leaves out) writes a null placeholder its count of 0 never reaches.
         format!(
-            "static const char *const loft_tnames[] = {{ {} }};\nstatic const uint32_t loft_ntnames = {};\n",
-            names.join(", "),
+            "const char *const loft_tnames[] = {{ {} }};\nconst uint32_t loft_ntnames = {};\n",
+            if names.is_empty() { "0".to_string() } else { names.join(", ") },
             names.len()
         )
     }
@@ -990,6 +986,8 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_mtime" => Some("loft_mtime"),
         "n_is_dir" => Some("loft_is_dir_at"),
         "n_is_file" => Some("loft_is_file_at"),
+        "n_is_symlink" => Some("loft_is_symlink_at"),
+        "n_eprint" => Some("loft_eprint"),
         "n_os_temp_dir" => Some("loft_os_temp_dir"),
         "n_source_dir" => Some("loft_source_dir"),
         "n_path_sep" => Some("loft_path_sep"),
@@ -1555,10 +1553,10 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
     let body = body::FnWriter::new(cx, d, shapes, ret)
         .places(places)
         .write()?;
-    if cx.frames.get() {
-        return Ok((sig, framed(cx, d, &name, &params, ret, &body)));
-    }
-    Ok((sig, body))
+    // Every function keeps its frame: the pushes are macros that a build without the call
+    // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
+    // the compiler folds into its caller.
+    Ok((sig, framed(cx, d, &name, &params, ret, &body)))
 }
 
 /// A `#c` binding (`c_signature`, `c_call`): a wrapper declaring the callee by the author's own
@@ -1760,7 +1758,7 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
     Ok((sig, out))
 }
 
-/// A function of a unit that keeps frames: its body becomes `<name>__fr`, and the function
+/// A function as the unit writes it: its body becomes `<name>__fr`, and the function
 /// pushes its frame (`cr_call_push`'s name and file), calls the body and pops the frame, so
 /// every return of the body leaves the frame stack as it found it.
 fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> String {
