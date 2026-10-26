@@ -956,6 +956,100 @@ fn main() {
     );
 }
 
+/// `vector_sum_int` as C (loop_kernels.rs, `vector::sum_blocks_i64`): the stdlib `sum` reads
+/// its elements off the vector's base a block of 1024 at a time, and a block whose elements all
+/// lie in [-2^40, 2^40) with the total more than 2^50 from the int64 edge is summed plainly; any
+/// other block, and every element after it, takes the checked add.  Several blocks, an element
+/// past the bound mid-vector, a null element, an overflow and a start near the edge each answer
+/// what integer addition answers.  Dropping the block's bound test sums the null as a number.
+#[test]
+fn the_sum_kernel_sums_in_blocks_with_integer_rules() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+fn main() {
+  v: vector<integer> = [];
+  for i in 0..3000 { v += [i]; }
+  println("a {sum(v)}");
+  w: vector<integer> = [];
+  for i in 0..3000 { if i == 1500 { w += [2199023255552]; } else { w += [i]; } }
+  println("b {sum(w)}");
+  n: integer = null;
+  x: vector<integer> = [1, 2];
+  x += [n];
+  x += [4];
+  println("c {sum(x)}");
+  o: vector<integer> = [9223372036854775807, 1];
+  println("d {sum(o)}");
+  println("e {sum([1, 2, 3], 9223372036854775800)}");
+  m: vector<integer> = [];
+  for i in 0..2050 { m += [0 - i * 1000000]; }
+  println("f {sum(m)}");
+}
+"#;
+    // a: 0 + 1 + … + 2999.  b: the same with 1500 replaced by 2^41.  c: a null element makes
+    // the sum null.  d: i64::MAX + 1 overflows to null.  e: 9223372036854775800 + 6.
+    // f: -10^6 · (0 + … + 2049).
+    let want =
+        "a 4498500\nb 2199027752552\nc null\nd null\ne 9223372036854775806\nf -2100225000000\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("sum-kernel");
+    let file = dir.join("sum.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("sum.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
+}
+
 /// `par` as C (`src/c/body/par.rs`): a worker over integer rows, one over record rows that
 /// returns a text, and one with an extra argument.  The C runs the rows in order; each result
 /// is the one a thread computes, so the hand-computed values hold on both.

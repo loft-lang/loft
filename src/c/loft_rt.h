@@ -3724,10 +3724,41 @@ static int loft_eq_content(loft_eq_fn f, loft_ref a, loft_ref b) {
 
 /* ── Kernels and conversions the stdlib calls natively ─────────────────────────────────── */
 
-/* vector_sum_int (loop_kernels.rs): `acc` plus every element, with integer addition's rules. */
+/* vector_sum_int (loop_kernels.rs): `acc` plus every element, with integer addition's rules.  The
+ * elements are read off the vector's base, a block of LOFT_SUM_BLOCK at a time (vector::
+ * sum_blocks_i64): a block whose every element lies in [-2^40, 2^40) and whose total starts more
+ * than 2^50 from the int64 edge cannot overflow and holds no null, so its plain sum is what the
+ * checked add answers.  The first block that fails, and every element after it, take the
+ * checked add, which propagates a null and an overflow as before. */
+#define LOFT_SUM_BLOCK 1024
+#define LOFT_SUM_BOUND (INT64_C(1) << 40)
 static int64_t loft_vector_sum_int(loft_ref v, int64_t acc) {
     int64_t n = loft_vec_len(v);
-    for (int64_t i = 0; i < n; i++) acc = loft_add(acc, loft_get_int(loft_vec_get(v, 8, i), 0));
+    if (n <= 0) return acc;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    const uint8_t *base = loft_at(s, r, 8);
+    int64_t at = 0;
+    while (at < n) {
+        int64_t stop = at + LOFT_SUM_BLOCK < n ? at + LOFT_SUM_BLOCK : n;
+        uint64_t room = acc == LOFT_NULL ? 0 : (acc < 0 ? (uint64_t) 0 - (uint64_t) acc : (uint64_t) acc);
+        if (acc == LOFT_NULL || room >= (uint64_t) INT64_MAX - (uint64_t) LOFT_SUM_BLOCK * (uint64_t) LOFT_SUM_BOUND) break;
+        uint64_t high = 0, sum = 0;
+        for (int64_t i = at; i < stop; i++) {
+            int64_t x;
+            memcpy(&x, base + (size_t) i * 8, 8);
+            high |= ((uint64_t) x + (uint64_t) LOFT_SUM_BOUND) >> 41;
+            sum += (uint64_t) x;
+        }
+        if (high != 0) break;
+        acc = (int64_t) ((uint64_t) acc + sum);
+        at = stop;
+    }
+    for (int64_t i = at; i < n; i++) {
+        int64_t x;
+        memcpy(&x, base + (size_t) i * 8, 8);
+        acc = loft_add(acc, x);
+    }
     return acc;
 }
 
