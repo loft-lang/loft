@@ -1661,8 +1661,16 @@ or build a local and use that."
         name
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// loft#2188 — a lambda's body is a return position of its own, not the bind around it.
     pub(crate) fn parse_lambda(&mut self, code: &mut Value) -> Type {
+        let outer_bind_rhs = std::mem::replace(&mut self.in_bind_rhs, false);
+        let tp = self.parse_lambda_body(code);
+        self.in_bind_rhs = outer_bind_rhs;
+        tp
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_lambda_body(&mut self, code: &mut Value) -> Type {
         if self.discovering > 0 {
             return self.lambda_signature();
         }
@@ -1962,11 +1970,19 @@ or build a local and use that."
     // false when `||` was consumed (zero params, no closing `|`).
     // Types are inferred from `lambda_hint` (set by the call-site parser) when omitted.
     // Produces Type::Function; runtime representation is d_nr as i32, same as fn-ref.
+    /// loft#2188 — a lambda's body is a return position of its own, not the bind around it.
+    pub(crate) fn parse_lambda_short(&mut self, code: &mut Value, expect_close: bool) -> Type {
+        let outer_bind_rhs = std::mem::replace(&mut self.in_bind_rhs, false);
+        let tp = self.parse_lambda_short_body(code, expect_close);
+        self.in_bind_rhs = outer_bind_rhs;
+        tp
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "one context save/restore spans the whole body; a split would need unsafe borrowing"
     )]
-    pub(crate) fn parse_lambda_short(&mut self, code: &mut Value, expect_close: bool) -> Type {
+    fn parse_lambda_short_body(&mut self, code: &mut Value, expect_close: bool) -> Type {
         if self.discovering > 0 {
             self.skip_short_lambda(expect_close);
             return Type::Unknown(0);
