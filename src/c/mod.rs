@@ -969,7 +969,8 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_store_lazy_faults" => Some("loft_lazy_faults"),
         "n_store_lazy_clear" => Some("loft_lazy_clear"),
         "n_store_lazy_fail" => Some("loft_lazy_fail"),
-        "n_store_lazy_query" | "n_store_lazy_range" => Some("loft_lazy_db_fetch"),
+        "n_store_lazy_query" => Some("loft_lazy_query"),
+        "n_store_lazy_range" => Some("loft_lazy_range"),
         "n_store_load_key"
         | "n_store_load_key_text"
         | "n_store_load_keys"

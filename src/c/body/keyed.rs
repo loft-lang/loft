@@ -530,6 +530,16 @@ impl FnWriter<'_> {
         let Some(sql) = derive_select(&desc, tp, &QueryShape::Equality, &Mapping::default()) else {
             return Ok("0".to_string());
         };
+        // The explicit forms (`lazy_query`, `lazy_range`): a filter is the select with the
+        // caller's predicate after its WHERE; a range exists only for an ordered collection.
+        let filter = derive_select(
+            &desc,
+            tp,
+            &QueryShape::Filter(String::new()),
+            &Mapping::default(),
+        )
+        .map(|s| s.text);
+        let range = derive_select(&desc, tp, &QueryShape::Range, &Mapping::default());
         let Ok((kind, elem, size)) = self.keyed_of(tp) else {
             return Ok("0".to_string());
         };
@@ -572,7 +582,7 @@ impl FnWriter<'_> {
             let _ = writeln!(
                 self.cx.gen_decls.borrow_mut(),
                 "static const loft_sql_col loft_sqlcols{tp}[] = {{ {} }};\n\
-                 static const loft_sql_plan {name} = {{ {}, {}, {}, loft_types, loft_sqlcols{tp}, {}, {}, {elem}, {size}, {kind}, {keys}, {nk} }};",
+                 static const loft_sql_plan {name} = {{ {}, {}, {}, loft_types, loft_sqlcols{tp}, {}, {}, {elem}, {size}, {kind}, {keys}, {nk}, {}, {}, {} }};",
                 if cols.is_empty() {
                     "{ 0, 0, 0, 0 }".to_string()
                 } else {
@@ -582,7 +592,12 @@ impl FnWriter<'_> {
                 super::c_string(table),
                 super::c_string(stores.element_type_name(tp)),
                 cols.len(),
-                sql.params.len()
+                sql.params.len(),
+                filter.map_or_else(|| "0".to_string(), |f| super::c_string(&f)),
+                range
+                    .as_ref()
+                    .map_or_else(|| "0".to_string(), |r| super::c_string(&r.text)),
+                range.as_ref().map_or(0, |r| r.params.len())
             );
         }
         Ok(format!("&{name}"))

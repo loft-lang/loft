@@ -2,8 +2,8 @@
  * A keyed lookup that misses on a bound collection consults the source for that one key and
  * looks again, so the collection stays the only authority on what is resident.  A `.store`
  * image is read a page at a time by the paged loaders, through a fetch function the emitter
- * writes per binding site from the collection's type.  A database (`sqlite:`) or a loft driver's
- * scheme has no driver in a C build: its fetch is unreachable, which the fault channel says.
+ * writes per binding site from the collection's type.  A `sqlite:` source is driven here as core
+ * drives it (`sql_source.rs`, below); a loft driver's scheme calls the program's own driver.
  * The channel is sticky — every failure counted, the FIRST reason kept — and only
  * `store_lazy_clear` clears it.  Pasted only into a unit that binds (`LOFT_LAZY`). */
 #ifdef LOFT_LAZY
@@ -26,6 +26,10 @@ typedef struct {
     int kind;
     const loft_key *keys;
     int nk;
+    /* `lazy_query`'s select up to its WHERE, the caller's predicate appended; `lazy_range`'s
+     * query and how many placeholders it has (0 when the collection has no range). */
+    const char *filter, *range;
+    int range_nparams;
 } loft_sql_plan;
 
 /* A binding: the collection's place, its source, the source's identity when it was bound
@@ -420,6 +424,10 @@ static int loft_sq_schema(void *db, const char *target, const loft_sql_plan *pl,
 }
 #endif
 
+#if defined(LOFT_POSIX_HOST)
+static void loft_lazy_sql_materialise(const loft_sql_plan *pl, loft_ref coll, const loft_sql_cell *row);
+#endif
+
 /* `fetch_from_sql`: the equality query for the missed key, its first row written into a fresh
  * record (`materialise` / `write_cell`: a NULL is loft's null for the field) and filed by the
  * collection's own insert.  1 inserted, 0 absent; a source that cannot answer is refused. */
@@ -468,10 +476,27 @@ static int loft_lazy_sql_fetch(loft_lazy_bind *b, const char *target, const loft
         loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
         return 0;
     }
+    loft_lazy_sql_materialise(pl, b->coll, rows);
+    loft_sq_free_rows(rows, nr, nc);
+    return 1;
+#else
+    (void) target;
+    (void) key;
+    snprintf(why, sizeof why, "`%s` needs a database driver, which this build does not have", b->source.p);
+    loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+    return 0;
+#endif
+}
+
+#if defined(LOFT_POSIX_HOST)
+/* `materialise` / `write_cell`: one row written into a fresh record and filed by the collection's
+ * own insert; a NULL is the field's null. */
+static void loft_lazy_sql_materialise(const loft_sql_plan *pl, loft_ref coll, const loft_sql_cell *row) {
+    int nc = pl->ncols;
     loft_ref tmp = loft_ref_null();
     loft_database(&tmp, pl->size);
     for (int c = 0; c < nc; c++) {
-        const loft_sql_cell *cell = &rows[c];
+        const loft_sql_cell *cell = &row[c];
         uint32_t at = pl->cols[c].pos;
         int64_t iv = cell->kind == 1 ? cell->i : cell->kind == 2 ? (int64_t) cell->f
                      : cell->kind == 3 ? strtoll(cell->t.p, 0, 10) : LOFT_NULL;
@@ -507,15 +532,146 @@ static int loft_lazy_sql_fetch(loft_lazy_bind *b, const char *target, const loft
         default: break;
         }
     }
+    loft_set_keyed(pl->types, pl->elem, coll, tmp, pl->kind, pl->keys, pl->nk, 0, 0, 1, 0);
+}
+
+/* `row_key` + the ask-first rule of `lazy_query` / `lazy_range`: every row whose key is not
+ * resident is materialised (a person reached by a predicate and by navigation is one record);
+ * the count added, or the refusal through the channel. */
+static int64_t loft_lazy_sql_rows(loft_lazy_bind *b, const char *target, const char *sql, const loft_kv *args,
+                                  int nargs) {
+    const loft_sql_plan *pl = b->sql;
+    char why[1024];
+    why[0] = 0;
+    void *db = loft_sq_open(target, why, sizeof why);
+    if (!db) return loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+    loft_sql_cell *rows;
+    int nr, nc;
+    if (loft_sq_query(db, target, sql, args, nargs, &rows, &nr, &nc, why, sizeof why) != 0)
+        return loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
+    int64_t added = 0;
+    for (int r = 0; r < nr; r++) {
+        const loft_sql_cell *row = rows + (size_t) r * (size_t) nc;
+        if (nc != pl->ncols) {
+            loft_sq_free_rows(rows, nr, nc);
+            static const char m[] = "the source answered a different column count";
+            return loft_lazy_refuse(b->coll, loft_lit(m, sizeof m - 1));
+        }
+        loft_kv key[8];
+        int nk = pl->nk < 8 ? pl->nk : 8, found_all = 1;
+        for (int k = 0; k < nk; k++) {
+            int col = -1;
+            for (int c = 0; c < nc; c++)
+                if (pl->cols[c].pos == pl->keys[k].position) { col = c; break; }
+            if (col < 0 || row[col].kind == 0) { found_all = 0; break; }
+            memset(&key[k], 0, sizeof key[k]);
+            const loft_sql_cell *cell = &row[col];
+            if (cell->kind == 3) {
+                key[k].kind = LOFT_KV_TEXT;
+                key[k].s = loft_lit(cell->t.p, cell->t.len ? cell->t.len - 1 : 0);
+            } else if (pl->cols[col].content == 2 || pl->cols[col].content == 3) {
+                key[k].kind = LOFT_KV_FLOAT;
+                key[k].f = cell->kind == 2 ? cell->f : (double) cell->i;
+                key[k].g = (float) key[k].f;
+            } else {
+                key[k].kind = LOFT_KV_INT;
+                key[k].i = cell->kind == 1 ? cell->i : (int64_t) cell->f;
+            }
+        }
+        if (!found_all) {
+            loft_sq_free_rows(rows, nr, nc);
+            static const char m[] = "a row arrived without the collection's key";
+            return loft_lazy_refuse(b->coll, loft_lit(m, sizeof m - 1));
+        }
+        if (loft_keyed_find(b->coll, pl->kind, pl->size, pl->keys, pl->nk, key, nk).rec != 0) continue;
+        loft_lazy_sql_materialise(pl, b->coll, row);
+        added++;
+    }
     loft_sq_free_rows(rows, nr, nc);
-    loft_set_keyed(pl->types, pl->elem, b->coll, tmp, pl->kind, pl->keys, pl->nk, 0, 0, 1, 0);
-    return 1;
+    return added;
+}
+#endif
+
+/* The binding of `coll` to a database, or the refusal (`lazy_query` / `lazy_range`'s preamble). */
+static loft_lazy_bind *loft_lazy_db_binding(loft_ref coll, int64_t *refused) {
+    loft_lazy_bind *b = loft_lazy_binding(coll);
+    char why[512];
+    if (!b) {
+        static const char m[] = "this collection is not bound to a source";
+        *refused = loft_lazy_refuse(coll, loft_lit(m, sizeof m - 1));
+        return 0;
+    }
+    if (loft_lazy_database(loft_view(&b->source)) != 1) {
+        snprintf(why, sizeof why, "`%s` is not a database source", b->source.p);
+        *refused = loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+        return 0;
+    }
+    return b;
+}
+
+/* `store_lazy_query(coll, condition)` (`Stores::lazy_query`): the caller's predicate, verbatim, after
+ * the derived select — not index-checked, it is the escape hatch — every new row materialised. */
+static int64_t loft_lazy_query(loft_ref coll, loft_str condition) {
+    int64_t refused = 0;
+    loft_lazy_bind *b = loft_lazy_db_binding(coll, &refused);
+    char why[512];
+    if (!b) return refused;
+    if (!b->sql || !b->sql->filter) {
+        snprintf(why, sizeof why, "no query can be derived for `%s`", b->element ? b->element : "?");
+        return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+    }
+#if defined(LOFT_POSIX_HOST)
+    loft_text q = { 0, 0, 0 };
+    loft_push(&q, b->sql->filter, strlen(b->sql->filter));
+    loft_push(&q, condition.p, condition.len);
+    loft_push(&q, "", 1);
+    int64_t n = loft_lazy_sql_rows(b, b->source.p + 7, q.p, 0, 0);
+    free(q.p);
+    return n;
 #else
-    (void) target;
-    (void) key;
+    (void) condition;
     snprintf(why, sizeof why, "`%s` needs a database driver, which this build does not have", b->source.p);
-    loft_lazy_refuse(b->coll, loft_lit(why, strlen(why)));
-    return 0;
+    return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+#endif
+}
+
+/* `store_lazy_range(coll, lo, hi)` (`Stores::lazy_range`): the ordered collection's one key column
+ * between `lo` and `hi`, schema-checked like a lookup, every new row materialised. */
+static int64_t loft_lazy_range(loft_ref coll, int64_t lo, int64_t hi) {
+    int64_t refused = 0;
+    loft_lazy_bind *b = loft_lazy_db_binding(coll, &refused);
+    char why[1024];
+    if (!b) return refused;
+    if (!b->sql || !b->sql->range) {
+        snprintf(why, sizeof why, "`%s` has no range to fetch — an ordered collection is what derives one",
+                 b->element ? b->element : "?");
+        return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+    }
+    if (b->sql->range_nparams != 2) {
+        static const char m[] = "a range fetch takes ONE key column; a composite key needs an explicit query";
+        return loft_lazy_refuse(coll, loft_lit(m, sizeof m - 1));
+    }
+#if defined(LOFT_POSIX_HOST)
+    const char *target = b->source.p + 7;
+    why[0] = 0;
+    void *db = loft_sq_open(target, why, sizeof why);
+    if (!db) return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+    if (!b->sql_checked) {
+        b->sql_checked = 1;
+        if (!loft_sq_schema(db, target, b->sql, why, sizeof why)) b->sql_refusal = loft_log_dup(why, strlen(why));
+    }
+    if (b->sql_refusal) return loft_lazy_refuse(coll, loft_lit(b->sql_refusal, strlen(b->sql_refusal)));
+    loft_kv args[2];
+    memset(args, 0, sizeof args);
+    args[0].kind = args[1].kind = LOFT_KV_INT;
+    args[0].i = lo;
+    args[1].i = hi;
+    return loft_lazy_sql_rows(b, target, b->sql->range, args, 2);
+#else
+    (void) lo;
+    (void) hi;
+    snprintf(why, sizeof why, "`%s` needs a database driver, which this build does not have", b->source.p);
+    return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
 #endif
 }
 
@@ -650,19 +806,6 @@ static uint8_t loft_lazy_clear(loft_ref coll) {
 /* `store_lazy_fail(local, why)`: a driver's refusal, through the same channel. */
 static void loft_lazy_fail(loft_ref coll, loft_str why) {
     loft_lazy_refuse(coll, why);
-}
-
-/* `store_lazy_query` / `store_lazy_range` (`lazy_query`, `lazy_range`): a database's explicit
- * fetch, which a C build has no driver to run — refused through the channel, nothing added. */
-static int64_t loft_lazy_db_fetch(loft_ref coll) {
-    loft_lazy_bind *b = loft_lazy_binding(coll);
-    char why[512];
-    if (!b) return loft_lazy_refuse(coll, loft_lit("this collection is not bound to a source", 40));
-    if (loft_lazy_database(loft_view(&b->source)) != 1)
-        snprintf(why, sizeof why, "`%s` is not a database source", b->source.p);
-    else
-        snprintf(why, sizeof why, "`%s` needs a database driver, which this build does not have", b->source.p);
-    return loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
 }
 
 #endif

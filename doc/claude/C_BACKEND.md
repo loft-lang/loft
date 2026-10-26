@@ -406,10 +406,15 @@ degenerate box — and looks again, so the collection stays the only authority o
 resident.  The binding pins the source (length, modification time, inode) and a fetch after
 it moved refuses; the fault channel (`store_lazy_error`, `_faults`, `_clear`, `_fail`) keeps
 every failure's count and the first reason.  A kind an image cannot page is refused at the
-bind.  A database (`sqlite:`) or a loft driver's scheme answers unreachable — this runtime has
-no SQL driver — and `store_lazy_query` / `store_lazy_range` refuse the same way; a program that
-declares its own driver (`fn lazy_fetch…`) is refused at emit time.  The miss hook is written
-only into a unit that binds.
+bind.  A `sqlite:` source is driven as core drives it: the binding carries its collection type's
+plan, derived when the unit is written by the same `sql_query::derive_select` the interpreter
+calls (the equality query, the filter's prefix, the range query, each column's field), and the
+runtime opens SQLite read-only through the system's library, checks the schema once per binding
+(columns, affinity, an index serving the lookup), and files each row with the collection's own
+insert; `store_lazy_query` and `store_lazy_range` materialise every row not yet resident.  A
+program's own driver (`fn lazy_fetch…`) is called on a miss through an adapter per element type,
+a fault inside it contained, as on the interpreter; a driver scheme with no driver answers
+unreachable.  The miss hook is written only into a unit that binds.
 
 **URL loads.**  `store_load_url` and `store_load_url_trusted` fetch the sidecar and the image
 (`file://` from the filesystem, `http://` as one HTTP/1.1 GET over a POSIX socket), gate the
@@ -445,7 +450,7 @@ platforms — is [@PLN203](plans/203-c99-default-backend.md), with the measured 
 starts from.
 
 No program of the corpus is refused.  What the C runtime does not have, it answers at run time
-the way a build without it answers: a ranged or a TLS transport for a URL, a SQL driver for a
-lazy database source.  Refused at emit time: a program declaring a loft lazy driver, a link re-pointed to a narrow
-or a text store place, and a par row of a tuple holding a reference — each by name.  Not
+the way a build without it answers: a ranged or a TLS transport for a URL; SQLite where the system
+has no `libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
+and a par row of a tuple holding a reference — each by name.  Not
 refused and not carried: a `#native` function (above).
