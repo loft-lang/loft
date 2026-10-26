@@ -73,7 +73,8 @@ stores past them, freed when it ends.  Tier 1 runs on threads the workers whose 
 scalar, a text or nothing, each writing its own rows of the parent's result buffer; a worker
 returning a record or a function value stays sequential until tier 2 adopts the worker's stores
 into the parent and translates its references (`StoreRebase`, as `parallel.rs` does).  The rows
-split into `min(threads, rows)` contiguous slices, as `par_pool::parallel_workers` splits them.
+split into `min(threads, rows)` contiguous slices, as `par_pool::parallel_workers` splits them.  Tier 2
+is the performance stream's (157-native-4x, owner 2026-10-26).
 
 **C5 — libraries and hosts.**  The decision: a library compiled whole into each program (the
 C does this today; the cost is compile time per program, bounded by the cache) or a C archive
@@ -88,7 +89,10 @@ out opens its packages' libraries at start through loft's search order, `--stati
 inside and `--dynamic` beside, and a missing library stops the program naming the package and
 where it searched (`native::a_shipped_c_library_travels_with_the_program`); Windows still links
 them beside the binary, which C8 takes.  The two link-mode tests over `native_scalar_pkg` are
-`[native] crate` tests and move to `--native-rust` with C9.
+`[native] crate` tests and move to `--native-rust` with C9.  The `in_binary` libraries (natives inside
+loft's own binary): the C runtime carries `lib/process`'s and `lib/git`'s
+(`loft_process.h`, POSIX hosts); an in-binary native it does not carry refuses the unit by
+name — `engine_host`'s 52, which go with the C worker processes above.
 
 **C6 — the wasm and browser targets.**  The runtime under `-DLOFT_NO_POSIX` is the start: the
 WASI libc gives files for `--native-wasm`; the browser needs the host imports the Rust writer
