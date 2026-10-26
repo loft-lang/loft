@@ -343,7 +343,11 @@ impl<'a> Cx<'a> {
         // stdlib leaves out) writes a null placeholder its count of 0 never reaches.
         format!(
             "const char *const loft_tnames[] = {{ {} }};\nconst uint32_t loft_ntnames = {};\n",
-            if names.is_empty() { "0".to_string() } else { names.join(", ") },
+            if names.is_empty() {
+                "0".to_string()
+            } else {
+                names.join(", ")
+            },
             names.len()
         )
     }
@@ -1245,8 +1249,9 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 
 /// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim`
 /// of ONE source is `#include`d by path, so one `cc` of the unit is the whole build; one of
-/// several sources is built into its static archive (`c_shim::archive`, the same artefact a
-/// `--static` program links) and named in a `/* link: <path> */` line for whoever compiles
+/// several sources is built into its static archive by `cc` + `ar` (`c_shim::cc_archive`; off
+/// Windows the same artefact a `--static` program links) and named in a `/* link: <path> */`
+/// line for whoever compiles
 /// the unit — several sources cannot share a translation unit, since each may carry its own
 /// `static` names (the vendored BearSSL does).  A declared library (`libs`, `optional-libs`)
 /// is named the same way, for the linker.  `scripts/c_sweep.py` and `tests/c_emit.rs` read
@@ -1267,7 +1272,9 @@ fn c_libraries(data: &Data) -> String {
                 lib.pkg_dir,
                 crate::file_access::portable_str(&lib.shim[0])
             );
-        } else if let Ok(Some(archive)) = crate::c_shim::archive(&lib.pkg_dir, &lib.shim) {
+        } else if let Ok(archive) = crate::c_shim::cc_archive(&lib.pkg_dir, &lib.shim) {
+            // Archived by `cc` + `ar` whatever the host's static-link archiver is: `cc` links
+            // this unit, and MinGW's `ld` cannot read an MSVC archive.
             let _ = writeln!(
                 out,
                 "/* `[c] shim` of package {}, {} sources */\n/* link: {} */",

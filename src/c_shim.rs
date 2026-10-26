@@ -213,14 +213,32 @@ fn identity(
 /// # Errors
 /// As [`build`]: an unreadable source, no compiler, a compile that fails, or no archiver.
 pub fn archive(pkg_dir: &str, sources: &[String]) -> Result<Option<std::path::PathBuf>, String> {
-    let (stem, paths, out_dir) = identity(pkg_dir, sources)?;
     let Some(tools) = crate::platform::shim_archiver() else {
         return Ok(None);
     };
+    archive_with(tools, pkg_dir, sources).map(Some)
+}
+
+/// @PLN203 — the shim's static archive for a unit the C backend writes, which `cc` links: built
+/// by `cc` + `ar` on every host.  On Windows the host archiver of [`archive`] is MSVC's, whose
+/// `.lib` MinGW's `ld` refuses ("corrupt .drectve"), so the C unit cannot share it.
+///
+/// # Errors
+/// As [`archive`].
+pub fn cc_archive(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, String> {
+    archive_with(&crate::platform::ShimArchiver::Unix, pkg_dir, sources)
+}
+
+fn archive_with(
+    tools: &crate::platform::ShimArchiver,
+    pkg_dir: &str,
+    sources: &[String],
+) -> Result<std::path::PathBuf, String> {
+    let (stem, paths, out_dir) = identity(pkg_dir, sources)?;
     let name = tools.file_name(&stem);
     let archive = out_dir.join(&name);
     if crate::file_access::exists(&archive) {
-        return Ok(Some(archive));
+        return Ok(archive);
     }
     crate::file_access::create_dir_all(&out_dir).map_err(|e| format!("cannot create {e}"))?;
     // Staged and renamed like the shared library, for the same reason: a concurrent
@@ -281,7 +299,7 @@ pub fn archive(pkg_dir: &str, sources: &[String]) -> Result<Option<std::path::Pa
         )
     });
     let _ = crate::file_access::remove_dir_all(&stage);
-    published.map(|()| Some(archive))
+    published.map(|()| archive)
 }
 
 /// @PLN197 — the static archive of a C library a package ships, which a static native link
