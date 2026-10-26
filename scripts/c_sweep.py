@@ -283,7 +283,7 @@ def load_times(label: str) -> dict:
     path = TIMES / f"{label}.tsv"
     last = {}
     if path.exists():
-        for line in path.read_text().splitlines()[1:]:
+        for line in path.read_text(encoding="utf-8").splitlines()[1:]:
             parts = line.split("\t")
             if len(parts) == 3:
                 last[(parts[0], parts[1])] = float(parts[2])
@@ -317,8 +317,9 @@ def report_times(timings: dict, label: str) -> None:
             if interp is not None and secs > 3 * interp and secs > interp + 2.0:
                 past_interp.append((secs / max(interp, 1e-3), prog, mode, interp, secs))
     TIMES.mkdir(parents=True, exist_ok=True)
-    path.write_text("program\tmode\tseconds\n" + "".join(
-        f"{p}\t{m}\t{v:.3f}\n" for (p, m), v in sorted(now.items())))
+    body = "program\tmode\tseconds\n" + "".join(
+        f"{p}\t{m}\t{v:.3f}\n" for (p, m), v in sorted(now.items()))
+    path.write_text(body, encoding="utf-8")
     for title, rows in (("slower than the last sweep", slower),
                         ("slower than the interpreter", past_interp)):
         if rows:

@@ -16,6 +16,10 @@
 # (default `cc`), HAND_PRICE_CFLAGS replaces the lane's flags (`-std=c99 -O3`); add `-g` for a
 # profile.  The ship lane's unit is emitted with LOFT_RELEASE_PASS_PROBE=1 (stats.py `cship`).
 set -euo pipefail
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  sed -n '5,17p' "$0"
+  exit 0
+fi
 if [ $# -ne 2 ]; then
   echo "usage: $0 <emitted.c> <out-binary>" >&2
   exit 2

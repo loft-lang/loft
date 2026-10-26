@@ -24,7 +24,7 @@ _CHECKOUT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _started(pid: int) -> str:
     """The process's start time in clock ticks since boot, or "" when it does not run."""
     try:
-        with open(f"/proc/{pid}/stat") as f:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
             # The command name (field 2) may hold spaces; the fields after its `)` are fixed.
             return f.read().rsplit(")", 1)[1].split()[19]
     except (OSError, IndexError):
@@ -34,7 +34,7 @@ def _started(pid: int) -> str:
 def _alive(d: str) -> bool:
     try:
         pid = int(os.path.basename(d))
-        with open(os.path.join(d, ".owner")) as f:
+        with open(os.path.join(d, ".owner"), encoding="utf-8") as f:
             stamp = f.read().strip()
     except (ValueError, OSError):
         return False
@@ -53,6 +53,6 @@ def run_root(tool: str) -> str:
     mine = os.path.join(root, str(os.getpid()))
     shutil.rmtree(mine, ignore_errors=True)
     os.makedirs(mine)
-    with open(os.path.join(mine, ".owner"), "w") as f:
+    with open(os.path.join(mine, ".owner"), "w", encoding="utf-8") as f:
         f.write(_started(os.getpid()))
     return mine
