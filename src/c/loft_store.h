@@ -36,8 +36,10 @@
 #define LOFT_PARK_PREV 4u
 #define LOFT_PARK_NEXT 8u
 
-/* `Claims`: one bit per word, grown on demand to the highest position inserted. */
-typedef struct { uint64_t *bits; uint32_t nwords; uint32_t live; } loft_bits;
+/* `Claims`: one bit per word, grown on demand to the highest position inserted.  `nwords` is
+ * the length and `cap` the allocation, as a `Vec<u64>`'s: growth doubles the allocation and a
+ * clear keeps it, so a store cleared and refilled in a loop allocates nothing. */
+typedef struct { uint64_t *bits; uint32_t nwords; uint32_t live; uint32_t cap; } loft_bits;
 
 static int loft_bits_contains(const loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
@@ -48,10 +50,14 @@ static int loft_bits_insert(loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
     if (w >= b->nwords) {
         uint32_t n = w + 1;
-        uint64_t *nb = (uint64_t *) realloc(b->bits, (size_t) n * 8);
-        if (!nb) { fputs("loft: out of memory\n", stderr); abort(); }
-        memset(nb + b->nwords, 0, (size_t) (n - b->nwords) * 8);
-        b->bits = nb;
+        if (n > b->cap) {
+            uint32_t cap = b->cap * 2 > n ? b->cap * 2 : n;
+            uint64_t *nb = (uint64_t *) realloc(b->bits, (size_t) cap * 8);
+            if (!nb) { fputs("loft: out of memory\n", stderr); abort(); }
+            b->bits = nb;
+            b->cap = cap;
+        }
+        memset(b->bits + b->nwords, 0, (size_t) (n - b->nwords) * 8);
         b->nwords = n;
     }
     uint64_t mask = (uint64_t) 1 << (pos & 63);
@@ -73,8 +79,6 @@ static int loft_bits_remove(loft_bits *b, uint32_t pos) {
 }
 
 static void loft_bits_clear(loft_bits *b) {
-    free(b->bits);
-    b->bits = 0;
     b->nwords = 0;
     b->live = 0;
 }
