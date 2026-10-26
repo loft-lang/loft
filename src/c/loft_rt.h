@@ -2075,6 +2075,148 @@ static void loft_vec_reserve(loft_ref v, int64_t count, uint32_t size) {
     if (nr != r) loft_set_u32(s, v.rec, v.pos, nr);
 }
 
+/* `@FR-R-PushFill`'s window clause (vector::PushWindow, Stores::push_windowed) — the hot state
+ * of a counted push loop: element 0's address, the length the loop has reached and the room in
+ * elements.  A push that fits is one comparison, one store and a bump; the record's own length
+ * is written when the window grows or closes, since nothing the loop runs reads it in between
+ * (the emitter's proof, `hoist::push_window_ok`).  Passed and answered BY VALUE across the cold
+ * growth arm, so a loop keeps the three in registers.  `rec` stands between `len` and `cap` on
+ * purpose: adjacent, GCC's SLP pass carried the pair in one vector register and shuffled it out
+ * at every push — 1.6 ns a push against 0.3 (bench 16 `f32_build`, -O2 and -O3 alike). */
+typedef struct { uint8_t *base; uint32_t len; uint32_t rec; uint32_t cap; uint16_t store_nr; } loft_win;
+
+/* Open a window over `v`'s vector of `size`-byte elements.  An absent vector, and a locked
+ * store (`@FR-H-WriteLocked`), have no room: every push takes the growth arm, the ordinary
+ * append, which refuses or drops it exactly as before. */
+static loft_win loft_win_of(loft_ref v, uint32_t size) {
+    loft_win w = { 0, 0, 0, 0, 0xFFFF };
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return w;
+    loft_store_t *s = loft_store_of(v);
+    w.store_nr = v.store_nr;
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return w;
+    w.rec = r;
+    w.len = loft_u32(s, r, 4);
+    int32_t claimed;
+    memcpy(&claimed, loft_at(s, r, 0), 4);
+    if (!s->read_only && claimed > 0 && size != 0) w.cap = (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
+    w.base = loft_at(s, r, 8);
+    return w;
+}
+
+/* The record's length is the window's: written at the growth arm and at the close.  A window
+ * with no room never moved its length, and a locked store is not written. */
+static void loft_win_sync(loft_win w) {
+    if (w.rec == 0 || w.cap == 0) return;
+    memcpy(loft_at(&loft_stores[w.store_nr], w.rec, 4), &w.len, 4);
+}
+
+/* vector::reserve_more: room for `extra` MORE elements than the vector holds; nothing when the
+ * block already has it, or for a non-positive or unrepresentable count. */
+static void loft_vec_reserve_more(loft_ref v, int64_t extra, uint32_t size) {
+    if (extra <= 0 || extra == LOFT_NULL || v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    int64_t len = r == 0 ? 0 : (int64_t) loft_u32(s, r, 4);
+    if (extra > (int64_t) UINT32_MAX - len) return;
+    uint32_t count = (uint32_t) (len + extra);
+    if (r != 0 && !s->read_only) {
+        int32_t claimed;
+        memcpy(&claimed, loft_at(s, r, 0), 4);
+        if (claimed >= (int32_t) loft_vec_cap_words(count < 11 ? 11 : count, size)) return;
+    }
+    loft_vec_reserve(v, (int64_t) count, size);
+}
+
+/* The growth arm, out of line: the length synced, the element appended the ordinary way (which
+ * grows, refuses a locked store, drops a push into an absent vector), the window re-derived. */
+LOFT_COLD static loft_win loft_win_grow(loft_win w, loft_ref v, uint32_t size, uint64_t bits) {
+    loft_win_sync(w);
+    loft_ref e = loft_vec_append(v, size);
+    if (e.rec != 0) {
+        uint8_t *at = loft_at(loft_store_of(e), e.rec, e.pos);
+        if (size == 8) memcpy(at, &bits, 8);
+        else if (size == 4) { uint32_t b = (uint32_t) bits; memcpy(at, &b, 4); }
+        else { uint8_t b = (uint8_t) bits; *at = b; }
+        loft_vec_finish(v);
+    }
+    return loft_win_of(v, size);
+}
+
+/* A push through the window: one comparison, one store and a bump while it fits (the element's
+ * bytes as the ordinary push writes them, encoded by the caller), the growth arm otherwise. */
+LOFT_HOT_INLINE void loft_win_put8(loft_win *w, loft_ref v, uint64_t bits) {
+    if (LOFT_LIKELY(w->len < w->cap)) {
+        memcpy(w->base + (size_t) w->len * 8, &bits, 8);
+        w->len++;
+    } else {
+        *w = loft_win_grow(*w, v, 8, bits);
+    }
+}
+
+LOFT_HOT_INLINE void loft_win_put4(loft_win *w, loft_ref v, uint32_t bits) {
+    if (LOFT_LIKELY(w->len < w->cap)) {
+        memcpy(w->base + (size_t) w->len * 4, &bits, 4);
+        w->len++;
+    } else {
+        *w = loft_win_grow(*w, v, 4, bits);
+    }
+}
+
+LOFT_HOT_INLINE void loft_win_put1(loft_win *w, loft_ref v, uint8_t bits) {
+    if (LOFT_LIKELY(w->len < w->cap)) {
+        w->base[w->len] = bits;
+        w->len++;
+    } else {
+        *w = loft_win_grow(*w, v, 1, bits);
+    }
+}
+
+/* `@FR-R-PushFill`'s record clause (Stores::push_record_windowed): the window's next slot for a
+ * record mint, the window grown first when it is full — the length synced and one element's
+ * room reserved the runtime's way.  The element stays invisible until the group's finish bumps
+ * the window (`loft_win_finish`).  A vector the window cannot serve (absent, or in a locked store)
+ * mints the ordinary way, so it drops or refuses exactly as before. */
+LOFT_COLD static loft_win loft_win_room(loft_win w, loft_ref v, uint32_t size) {
+    loft_win_sync(w);
+    loft_vec_reserve_more(v, 1, size);
+    return loft_win_of(v, size);
+}
+
+LOFT_HOT_INLINE loft_ref loft_win_slot(loft_win *w, loft_ref v, uint32_t size) {
+    if (LOFT_UNLIKELY(w->len >= w->cap)) {
+        *w = loft_win_room(*w, v, size);
+        if (w->len >= w->cap) return loft_vec_append(v, size);
+    }
+    loft_ref e;
+    e.store_nr = w->store_nr;
+    e.rec = w->rec;
+    e.pos = 8 + w->len * size;
+    return e;
+}
+
+/* The group's finish: the minted element counts.  One the window could not serve was minted
+ * and is finished the ordinary way, and the window re-derived from the record it changed. */
+LOFT_HOT_INLINE void loft_win_finish(loft_win *w, loft_ref v, uint32_t size) {
+    if (LOFT_LIKELY(w->len < w->cap)) {
+        w->len++;
+    } else {
+        loft_vec_finish(v);
+        *w = loft_win_of(v, size);
+    }
+}
+
+/* `LOFT_VERIFY`'s proof for a windowed push: the window still describes the vector — its
+ * record, element base and room are what a fresh derivation answers. */
+static int loft_win_same(loft_win w, loft_ref v, uint32_t size) {
+    loft_win f = loft_win_of(v, size);
+    return f.rec == w.rec && f.base == w.base && f.cap == w.cap && f.store_nr == w.store_nr;
+}
+
+LOFT_HOT_INLINE uint64_t loft_f64_bits(double x) { uint64_t b; memcpy(&b, &x, 8); return b; }
+LOFT_HOT_INLINE uint32_t loft_f32_bits(float x) { uint32_t b; memcpy(&b, &x, 4); return b; }
+LOFT_HOT_INLINE uint32_t loft_i4_bits(int64_t x) { return x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x; }
+
 #ifdef LOFT_FOREIGN
 static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size);
 #endif

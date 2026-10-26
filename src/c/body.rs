@@ -154,6 +154,27 @@ pub(crate) struct FnWriter<'a> {
     adopt: Option<crate::generation::hoist::RetAdopt>,
     /// Inside an adopted function's `one_buffer_vec_copy` delivery block.
     in_delivery: u32,
+    /// `@FR-R-PushFill`'s window clause — the push windows the enclosing counted loops hold:
+    /// each path, its `loft_win`, the `loft_ref` the vector operand was read into, and the
+    /// element width.
+    windows: Vec<(crate::opt::writes::PathKey, String, String, u32)>,
+    /// `@FR-R-CompleteWrite` (`hoist::complete_writes`): the element types every mint of this
+    /// function writes completely, so the default image copied into a fresh element writes
+    /// nothing that survives; computed on first use.
+    complete_mints: Option<std::collections::HashSet<u16>>,
+}
+
+/// A counted loop a push window is opened for (`FnWriter::window_loop`): the pushed path,
+/// its vector operand, the range that counts its passes and the pushes one pass runs at most.
+struct WindowLoop<'b> {
+    path: crate::opt::writes::PathKey,
+    vector: std::borrow::Cow<'b, Value>,
+    hi: &'b Value,
+    index_var: u16,
+    next_var: Option<u16>,
+    inclusive: bool,
+    pushes: u32,
+    size: u32,
 }
 
 impl<'a> FnWriter<'a> {
@@ -203,6 +224,8 @@ impl<'a> FnWriter<'a> {
                 crate::generation::hoist::ret_adopt(cx.data, d)
             },
             in_delivery: 0,
+            windows: Vec::new(),
+            complete_mints: None,
             decls: Vec::new(),
             // A parameter arrives bound: its first `Set` is a rebind.
             bound: {
@@ -413,6 +436,239 @@ impl<'a> FnWriter<'a> {
         }
         self.headers.push(frame);
         Ok(())
+    }
+
+    /// `@FR-R-PushFill`'s window clause, as the Rust writer's `push_reserve`: before a COUNTED
+    /// push loop (`hoist::push_loop`) whose pushes nothing else in the body can observe
+    /// (`hoist::push_window_ok`: the root exclusive, the other statements naming no store it
+    /// may view and writing none), reserve the loop's pushes once and open a `loft_win` on the
+    /// vector; every push of the path then goes through it, its per-push pre-allocation is
+    /// the reservation's, and the length is written once at the loop's exit.  A reservation
+    /// is capacity, observably nothing.  `LOFT_NO_PUSH_FILL=1` / `LOFT_NO_PUSH_WINDOW=1` open
+    /// none, as on native.  Answers whether a window was opened.
+    fn open_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
+        let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
+        if self.gen_elem.is_some() || env_on("LOFT_NO_PUSH_FILL") || env_on("LOFT_NO_PUSH_WINDOW") {
+            return Ok(false);
+        }
+        let Some(p) = self.window_loop(lp) else {
+            return Ok(false);
+        };
+        let n = self.decls.len() + 1;
+        let (w, pv) = (format!("pw{n}"), format!("pv{n}"));
+        self.decls
+            .push(format!("loft_win {w} = {{ 0, 0, 0, 0, 0xFFFF }};"));
+        self.decls
+            .push(format!("loft_ref {pv} = {{ 0xFFFF, 0, 0 }};"));
+        let vector = self.expr(&p.vector, ind)?;
+        self.line(ind, &format!("{pv} = {};", as_ref(vector)?));
+        // The trip count: the range's end less its start (the `next` counter, or the index
+        // the loop steps from plus one), plus one for an inclusive range — checked, so a
+        // count that does not fit reserves nothing.
+        let hi = self.expr(p.hi, ind)?;
+        let hi = as_int(hi)?;
+        let lo = match p.next_var {
+            Some(nx) => self.var(nx),
+            None => format!("loft_add({}, INT64_C(1))", self.var(p.index_var)),
+        };
+        let incl = u8::from(p.inclusive);
+        self.flush(ind);
+        self.line(
+            ind,
+            &format!(
+                "loft_vec_reserve_more({pv}, loft_mul(loft_add(loft_sub({hi}, {lo}), INT64_C({incl})), INT64_C({})), {});",
+                p.pushes, p.size
+            ),
+        );
+        self.line(ind, &format!("{w} = loft_win_of({pv}, {});", p.size));
+        self.windows.push((p.path, w, pv, p.size));
+        Ok(true)
+    }
+
+    /// The counted loop `lp` a window is admitted for: scalar pushes (`hoist::push_loop`,
+    /// `push_window_ok`), or record mint groups (`hoist::mint_loop`, `mint_window_ok`, under
+    /// `LOFT_NO_RECORD_PUSH` / `LOFT_NO_HEAP_RECORD_PUSH` as on native).  A path an enclosing
+    /// loop holds a window on is served by that window: a reservation would move its record.
+    fn window_loop<'b>(&mut self, lp: &'b Block) -> Option<WindowLoop<'b>> {
+        use crate::generation::hoist;
+        let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
+        let data = self.cx.data;
+        let open = |w: &Self, path: &crate::opt::writes::PathKey| {
+            w.windows.iter().any(|(p, _, _, _)| p == path)
+        };
+        if let Some(p) = hoist::push_loop(lp, data) {
+            if p.fill.is_some() || open(self, &p.path) {
+                return None;
+            }
+            hoist::push_window_ok(
+                lp,
+                &p,
+                data,
+                self.d,
+                Some(self.cx.stores),
+                &mut self.hoist_cache,
+            )
+            .ok()?;
+            return Some(WindowLoop {
+                path: p.path,
+                vector: std::borrow::Cow::Borrowed(p.vector),
+                hi: p.hi,
+                index_var: p.index_var,
+                next_var: p.next_var,
+                inclusive: p.inclusive,
+                pushes: p.pushes,
+                size: p.size,
+            });
+        }
+        if env_on("LOFT_NO_RECORD_PUSH") {
+            return None;
+        }
+        let (m, hi) = hoist::mint_loop(
+            lp,
+            data,
+            self.cx.stores,
+            self.vars,
+            !env_on("LOFT_NO_HEAP_RECORD_PUSH"),
+        )
+        .ok()?;
+        if open(self, &m.path) {
+            return None;
+        }
+        hoist::mint_window_ok(
+            lp,
+            &m,
+            data,
+            self.d,
+            Some(self.cx.stores),
+            &mut self.hoist_cache,
+        )
+        .ok()?;
+        Some(WindowLoop {
+            path: m.path,
+            vector: std::borrow::Cow::Owned(m.vector),
+            hi,
+            index_var: m.index_var,
+            next_var: m.next_var,
+            inclusive: m.inclusive,
+            pushes: m.mints_per_pass,
+            size: m.size,
+        })
+    }
+
+    /// `@FR-R-CompleteWrite` — does every mint of element type `tp` in this function write it
+    /// completely?  Then the default image a fresh element is filled with writes nothing that
+    /// survives, and the copy is left out, as native calls `OpNewRecordNP`.  A function with a
+    /// record copy into a field of a fresh element keeps every fill: a null source leaves that
+    /// field what the fill wrote (loft#2044).
+    fn mint_complete(&mut self, tp: u16) -> bool {
+        if std::env::var("LOFT_NO_COMPLETE_WRITE").is_ok_and(|v| v != "0") {
+            return false;
+        }
+        if self.complete_mints.is_none() {
+            let c = crate::generation::hoist::complete_writes(self.cx.data, self.cx.stores, self.d);
+            self.complete_mints = Some(if c.fresh_fields.is_empty() {
+                c.mint_tps
+            } else {
+                std::collections::HashSet::new()
+            });
+        }
+        self.complete_mints
+            .as_ref()
+            .is_some_and(|m| m.contains(&tp))
+    }
+
+    /// A push, or its pre-allocation, onto a path an enclosing loop holds a window on: the
+    /// element's bytes as the ordinary push writes them, through the window.  `None` for any
+    /// other operator.
+    fn windowed(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        let data = self.cx.data;
+        let by_path = |w: &Self, path: &crate::opt::writes::PathKey| {
+            w.windows
+                .iter()
+                .find(|(p, _, _, _)| p == path)
+                .map(|(_, w, pv, size)| (w.clone(), pv.clone(), *size))
+        };
+        let window_of = |w: &Self, v: &Value| {
+            let path = crate::opt::writes::vector_path(data, v)?;
+            by_path(w, &path)
+        };
+        if name == "OpPreAllocVector" {
+            return Ok(args
+                .first()
+                .and_then(|v| window_of(self, v))
+                .map(|_| E::new("((void) 0)", K::Void)));
+        }
+        if matches!(name, "OpNewRecord" | "OpFinishRecord")
+            && let Some(t) =
+                crate::opt::writes::mint_target(data, self.cx.stores, name, args, self.vars)
+            && let Some((w, pv, size)) = by_path(self, &t.path)
+        {
+            if name == "OpFinishRecord" {
+                return Ok(Some(E::new(
+                    format!("loft_win_finish(&{w}, {pv}, {size})"),
+                    K::Void,
+                )));
+            }
+            let elem = self.cx.stores.content(t.vector_tp);
+            let ptp = u16::try_from(Self::literal(&args[1], "type")?)
+                .map_err(|_| "a type number out of range")?;
+            let site = format!("{}:{w}", data.def(self.d).original_name());
+            let e = self.temp(CType::Ref);
+            self.line(
+                ind,
+                &format!(
+                    "{e} = (LOFT_PROVED(loft_win_same({w}, {pv}, {size}), {}), loft_win_slot(&{w}, {pv}, {size}));",
+                    c_string(&site)
+                ),
+            );
+            if !self.mint_complete(ptp) {
+                let (image, n) = self.cx.default_image(elem);
+                self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
+            }
+            return Ok(Some(E::new(e, K::Ref)));
+        }
+        let Some(fp) = crate::opt::writes::fused_push(data, name, args) else {
+            return Ok(None);
+        };
+        let Some((w, pv, _)) = window_of(self, fp.vector) else {
+            return Ok(None);
+        };
+        let val = self.expr(fp.val, ind)?;
+        let (put, bits) = match name {
+            "OpPushInt" => ("loft_win_put8", format!("(uint64_t) {}", as_int(val)?)),
+            "OpPushFloat" => (
+                "loft_win_put8",
+                format!("loft_f64_bits({})", as_float(val)?),
+            ),
+            "OpPushSingle" => (
+                "loft_win_put4",
+                format!("loft_f32_bits({})", as_single(val)?),
+            ),
+            "OpPushInt4" => ("loft_win_put4", format!("loft_i4_bits({})", as_int(val)?)),
+            "OpPushCharacter" => ("loft_win_put4", as_char(val)?),
+            "OpPushBoolean" => ("loft_win_put1", as_bool(val)?),
+            "OpPushEnum" => ("loft_win_put1", as_enum(val)?),
+            "OpPushByte" => {
+                let min = Self::literal(
+                    fp.bias.ok_or("a byte push without its minimum")?,
+                    "byte minimum",
+                )?;
+                (
+                    "loft_win_put1",
+                    format!("loft_byte_raw({min}, {})", as_int(val)?),
+                )
+            }
+            _ => return Ok(None),
+        };
+        let site = format!("{}:{w}", data.def(self.d).original_name());
+        Ok(Some(E::new(
+            format!(
+                "(LOFT_PROVED(loft_win_same({w}, {pv}, {}), {}), {put}(&{w}, {pv}, {bits}))",
+                fp.size,
+                c_string(&site)
+            ),
+            K::Void,
+        )))
     }
 
     /// `(R-Header)`'s proof site for a held access: the vector still is what `held` holds.
@@ -714,6 +970,29 @@ impl<'a> FnWriter<'a> {
         r
     }
 
+    /// A loop: its held vectors and its push window before it, the window closed after.
+    fn loop_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        self.hold_vectors(b, ind)?;
+        let window = self.open_window(b, ind)?;
+        self.labels += 1;
+        let l = self.labels;
+        self.loops.push(l);
+        self.line(ind, "for (;;) {");
+        self.block_stmt(b, ind + 1)?;
+        self.line(ind, &format!("cont_{l}:;"));
+        self.line(ind, "}");
+        self.line(ind, &format!("brk_{l}:;"));
+        self.loops.pop();
+        self.headers.pop();
+        if window {
+            // The loop's one exit: the counted push loop has no break, return or
+            // continue of its own (`hoist::push_loop`).
+            let (_, w, _, _) = self.windows.pop().expect("the window this loop opened");
+            self.line(ind, &format!("loft_win_sync({w});"));
+        }
+        Ok(())
+    }
+
     fn stmt_kind(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         self.note_site(v, ind);
         match v {
@@ -758,20 +1037,7 @@ impl<'a> FnWriter<'a> {
                 self.flush(ind);
                 Ok(())
             }
-            Value::Loop(b) => {
-                self.hold_vectors(b, ind)?;
-                self.labels += 1;
-                let l = self.labels;
-                self.loops.push(l);
-                self.line(ind, "for (;;) {");
-                self.block_stmt(b, ind + 1)?;
-                self.line(ind, &format!("cont_{l}:;"));
-                self.line(ind, "}");
-                self.line(ind, &format!("brk_{l}:;"));
-                self.loops.pop();
-                self.headers.pop();
-                Ok(())
-            }
+            Value::Loop(b) => self.loop_stmt(b, ind),
             Value::Break(n) => {
                 let l = self.label(*n)?;
                 self.flush(ind);
@@ -2317,6 +2583,11 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(e);
         }
+        if !self.windows.is_empty()
+            && let Some(e) = self.windowed(name, args, ind)?
+        {
+            return Ok(e);
+        }
         if let Some(e) = self.keyed_operator(name, args, ind)? {
             return Ok(e);
         }
@@ -3537,10 +3808,14 @@ impl<'a> FnWriter<'a> {
                     Coll::Vector => {}
                 }
                 let size = self.cx.stores.size(elem);
-                let (image, n) = self.cx.default_image(elem);
                 let t = self.temp(CType::Ref);
                 self.line(ind, &format!("{t} = loft_vec_append({v}, {size});"));
-                self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
+                let ptp = u16::try_from(Self::literal(ptp, "type")?)
+                    .map_err(|_| "a type number out of range")?;
+                if !self.mint_complete(ptp) {
+                    let (image, n) = self.cx.default_image(elem);
+                    self.line(ind, &format!("loft_fill({t}, {image}, {n});"));
+                }
                 Ok(E::new(t, K::Ref))
             }
             ("OpFinishRecord", [data, rec, ptp, fld]) => {

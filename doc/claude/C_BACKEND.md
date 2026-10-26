@@ -182,6 +182,18 @@ above stays sound: it holds nothing across a loop that grows a store, so a buffe
 parameter's store moves no held record.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies, as for the
 Rust writer; `tests/c_emit.rs` counts the adopted binds both ways against hand-computed values.
 
+**Push windows.**  A counted push loop the Rust writer's admission passes
+(`hoist::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record mint groups)
+reserves its pushes once and opens a `loft_win` on the vector — element 0's address, the length
+reached, the room — and every push of that path is a compare, a store and a bump; a record mint
+takes the window's next slot.  The record's length is written back at the loop's exit, and the
+cold growth arm (a locked store, an absent vector) is the ordinary append.  `LOFT_VERIFY` checks
+each push against a fresh derivation.  A mint of a type `hoist::complete_writes` proves every
+literal writes completely copies no default image (`@FR-R-CompleteWrite`), unless the function
+copies a record into a fresh element's field, where a null source leaves what the fill wrote.  `LOFT_NO_PUSH_FILL=1`,
+`LOFT_NO_PUSH_WINDOW=1`, `LOFT_NO_RECORD_PUSH=1` and `LOFT_NO_COMPLETE_WRITE=1` turn the pieces
+off, as on native.
+
 **Keyed collections.**  A persisted image carries a collection's layout, so the layouts are
 loft's.  A hash is `src/hash.rs` ported (`loft_hash.h`): the seeded table, inline and arena
 entries, a linked type's borrowed records, and its `Stores` routines — the one-probe insert and

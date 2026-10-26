@@ -731,6 +731,209 @@ fn main() {
     }
 }
 
+/// `@FR-R-PushFill`'s window clause as C: a counted push loop the Rust writer's own admission
+/// passes (`hoist::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record
+/// mints) reserves its pushes once and pushes through a `loft_win` — a compare, a store and a
+/// bump — whose length is written back at the loop's exit.  Every push kind is here (integer,
+/// float, single, i32, u8, character, boolean, enum), a record mint whose literal writes every
+/// field (no default image copied, `@FR-R-CompleteWrite`), a comprehension inside a
+/// comprehension, and a window reopened on every pass of an outer loop.  The C declines where
+/// native declines: the enum vector, and a mint under an `if` arm.  Each value is computed by
+/// hand; `LOFT_NO_PUSH_WINDOW=1` opens none and answers the same; the proofs are checked under
+/// `LOFT_VERIFY`.  A window cannot serve a locked store, so its pushes take the growth arm,
+/// the ordinary append, which refuses as the interpreter does.
+#[test]
+fn a_counted_push_loop_pushes_through_a_window() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+enum Dir { North, East, South }
+struct P { x: float, y: integer, name: text }
+struct Q { x: float, id: integer }
+fn ints(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * 3 + 1]; }
+  sum(v) + len(v)
+}
+fn floats(n: integer) -> float {
+  v: vector<float> = [];
+  for i in 0..n { v += [i as float * 0.5]; }
+  t = 0.0;
+  for x in v { t += x; }
+  t
+}
+fn singles(n: integer) -> integer {
+  v: vector<single> = [];
+  for i in 0..n { v += [i as single, 0.25f]; }
+  round(v[len(v) - 2]? as float * 4.0) as integer + len(v)
+}
+fn narrow(n: integer) -> text {
+  a: vector<i32> = [];
+  b: vector<u8> = [];
+  c: vector<character> = [];
+  d: vector<boolean> = [];
+  e: vector<Dir> = [];
+  for i in 0..n { a += [(i - 2) as i32 ?? 0]; }
+  for i in 0..n { b += [((i * 50) & 255) as u8]; }
+  for i in 0..n { c += ['a']; }
+  for i in 0..n { d += [i % 2 == 0]; }
+  for i in 0..n { e += [Dir.East]; }
+  "{a} {b} {len(c)}{c[0]} {d} {len(e)}"
+}
+fn records(n: integer) -> text {
+  v: vector<P> = [];
+  for i in 0..n {
+    if i % 3 == 0 { v += [P { x: i as float, y: i * 10, name: "p{i}" }]; } else { v += [P { x: 0.5, y: i, name: "q" }]; }
+  }
+  "{len(v)} {v[3]?.name} {v[4]?.y} {v[n - 1]?.x}"
+}
+fn built(n: integer) -> integer {
+  v: vector<Q> = [];
+  for i in 0..n { v += [Q { x: i as float * 0.5, id: i * 7 }]; }
+  t = 0;
+  for q in v { t += q.id + round(q.x * 2.0) as integer; }
+  t + len(v)
+}
+fn grid(side: integer) -> integer {
+  g = [for y in 0..side { [for x in 0..side { x * y }] }];
+  acc = 0;
+  for r in g { acc += len(r) + sum(r); }
+  acc
+}
+fn reopened(rounds: integer) -> integer {
+  v: vector<integer> = [];
+  for r in 0..rounds {
+    for k in 0..4 { v += [r * 10 + k]; }
+  }
+  len(v) + v[len(v) - 1]?
+}
+fn main() {
+  println("{ints(10)} {floats(6)} {singles(5)}");
+  println("{narrow(4)}");
+  println("{records(7)}");
+  println("{grid(4)} {reopened(25)} {built(12)}");
+}
+"#;
+    // ints: 3·45 + 10 + 10 = 155.  floats: 0.5·15.  singles: v[8] = 4.0 → 16, + 10 elements.
+    // records: i = 3 is a `p` literal, i = 4 a `q` one, v[6].x = 6.  grid: each row y sums 6y
+    // over 4 elements, 16 + 36.  reopened: 25·4 elements, the last 24·10 + 3.  built: the ids
+    // 7·66, the halves doubled 66, 12 elements.
+    let want = "155 7.5 26\n[-2,-1,0,1] [0,50,100,150] 4a [true,false,true,false] 4\n\
+                7 p3 4 6\n52 343 540\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("push-window");
+    let file = dir.join("window.loft");
+    fa::write(&file, src).expect("write program");
+    let run_loft = |args: &[&str], f: &std::path::Path| {
+        loft::platform::process::harness_command(loft)
+            .args(args)
+            .arg(f)
+            .output()
+            .expect("run loft")
+    };
+    let interp = run_loft(&["--interpret"], &file);
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let build = |c: &std::path::Path, exe: &std::path::Path, flags: &[&str]| {
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(c)
+            .arg("-o")
+            .arg(exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc rejected {}:\n{}",
+            c.display(),
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        loft::platform::process::harness_command(exe)
+            .output()
+            .expect("run the C program")
+    };
+    for (mode, off, windows, slots) in [("windowed", "0", 10, 1), ("unwindowed", "1", 0, 0)] {
+        let c = dir.join(format!("{mode}.c"));
+        let emit = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_PUSH_WINDOW", off)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let opened = text
+            .lines()
+            .filter(|l| l.trim_start().starts_with("pw") && l.contains(" = loft_win_of(pv"))
+            .count();
+        assert_eq!(opened, windows, "{mode}: the windows opened");
+        assert_eq!(
+            text.matches("loft_win_slot(&pw").count(),
+            slots,
+            "{mode}: the record slots"
+        );
+        for (kind, flags) in [
+            ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+            ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+        ] {
+            let out = build(&c, &dir.join(format!("{mode}-{kind}")), flags);
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                want,
+                "{mode} {kind}: the C program"
+            );
+        }
+    }
+    let locked = dir.join("locked.loft");
+    fa::write(
+        &locked,
+        "fn build(n: integer) -> integer {\n  v: vector<integer> = [7];\n  v#lock = true;\n  \
+         for i in 0..n { v += [i * 2]; }\n  len(v)\n}\nfn main() { println(\"{build(5)}\"); }\n",
+    )
+    .expect("write program");
+    let interp = run_loft(&["--interpret"], &locked);
+    let c = dir.join("locked.c");
+    let emit = run_loft(&["--emit-c", c.to_str().expect("utf-8 path")], &locked);
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        fa::read_to_string(&c)
+            .expect("read the C")
+            .contains(" = loft_win_of(pv"),
+        "the locked vector's loop is windowed"
+    );
+    let out = build(
+        &c,
+        &dir.join("locked"),
+        &["-DLOFT_STRICT", "-pedantic", "-Werror"],
+    );
+    assert_eq!(
+        out.status.code(),
+        interp.status.code(),
+        "the locked push's exit status"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("write to a locked store"),
+        "the C refuses the locked push: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// `par` as C (`src/c/body/par.rs`): a worker over integer rows, one over record rows that
 /// returns a text, and one with an extra argument.  The C runs the rows in order; each result
 /// is the one a thread computes, so the hand-computed values hold on both.
