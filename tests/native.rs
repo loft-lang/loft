@@ -5113,7 +5113,7 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
     )?;
     let dist = root.join("dist");
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .args(["--native-release", "--dynamic", "--lib"])
+        .args(["--ship", "--dynamic", "--lib"])
         .arg(&lib_dir)
         .arg("--out")
         .arg(&dist)
@@ -5309,9 +5309,19 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
         "no shim archiver on {triple} — a static program would keep its shim beside it"
     );
     let needle = tree.to_string_lossy().into_owned();
-    for (mode, flag) in [("dynamic", "--dynamic"), ("static", "--static")] {
+    // `shipped` names no link mode: `--ship` links the libraries in by default
+    // (`native_utils::link_static_unless_named`), so it is the static program.
+    for (mode, flag) in [
+        ("dynamic", Some("--dynamic")),
+        ("static", Some("--static")),
+        ("shipped", None),
+    ] {
         let dist = root.join(mode);
-        let out = loft_cmd(&["--native-release", flag, "--out", &dist.to_string_lossy()])?;
+        let dist_s = dist.to_string_lossy().into_owned();
+        let mut args = vec!["--ship"];
+        args.extend(flag);
+        args.extend(["--out", dist_s.as_str()]);
+        let out = loft_cmd(&args)?;
         assert!(
             out.status.success(),
             "[{mode}] --out failed: {}",
@@ -5342,7 +5352,7 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
             .env_remove("LOFT_LIB_PATH")
             .output()
     };
-    for mode in ["dynamic", "static"] {
+    for mode in ["dynamic", "static", "shipped"] {
         let o = run(&root.join(mode))?;
         assert_eq!(
             String::from_utf8_lossy(&o.stdout).trim(),

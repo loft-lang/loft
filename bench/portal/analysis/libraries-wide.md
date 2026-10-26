@@ -279,7 +279,7 @@ The loop is now one append of the text's bytes behind an in-range guard, the loo
 running for any range the guard refuses; the append grows the vector with the push's own
 doubling (`vector::append_bytes`, one home with `vector_append`), because a reservation to the
 exact length reallocated on every chunk and read as 2 ns a byte on the probe.  Probe
-(256-byte texts appended 64 000 times, `--native-release`): 2.8–3.0 → 0.34–0.50 ns a byte.
+(256-byte texts appended 64 000 times, `--ship`): 2.8–3.0 → 0.34–0.50 ns a byte.
 The row, same box: `encode_bytes` **94.7× → 43.1×** (7.13 → 3.20 ms per op).  What the row
 still pays is not the copy: a profile of the whole cbor bench binary puts ~45 % of its time in
 the store mint, claim and free bookkeeping (`op_database_inner` 14 %, `set_free_header` 9 %,
@@ -297,7 +297,7 @@ bookkeeping around a value Rust keeps on the stack — is gone for every vector 
 leaves its frame: the local is a hidden work-buffer parameter, minted once per caller
 activation and cleared by the callee (`formal/rewrites.md` § *A local that never leaves the
 frame is the caller's buffer*).  The probe (2 M calls of `fn f(salt) { v: vector<integer> =
-[]; …; len(v) }`, `--native-release`): 78–91 → 29–36 ns a call, the hand-written form 26.
+[]; …; len(v) }`, `--ship`): 78–91 → 29–36 ns a call, the hand-written form 26.
 Reach, by the walk's own trace over six libraries: 98 locals promoted (hex_body 15,
 hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29) before the by-value clause,
 which admits a hand-off to a loft-bodied callee whose answer carries no dep on that parameter

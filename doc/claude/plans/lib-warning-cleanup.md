@@ -96,7 +96,7 @@ The source counts came in below the work-list numbers (those were files×passes 
 
 **Registry note:** in-repo `lib/audience_crystal` still shows `not null` (+ `&`) warnings
 from its `gridmesh-0.1.2` REGISTRY dependency (a stale copy predating the sibling-repo
-fix).  Those clear only when the fixed graphics libs are re-published (loft-ship skill,
+fix).  Those clear only when the fixed graphics libs are re-published (loft-library skill,
 touch-gated) — a release step, not a source edit.
 
 ### C3 — `&`-parameter advisory (gridmesh, 7 sites) — **DONE (2026-07-16)**
@@ -128,7 +128,7 @@ null-flow surface (a new f-finding), since that can re-open C1.
 **Two residuals (not source edits):**
 - **Registry republish** — in-repo `lib/audience_crystal` still warns via its stale
   `gridmesh-0.1.2` REGISTRY dependency; clears when the fixed graphics libs are
-  re-published (loft-ship skill, touch-gated).
+  re-published (loft-library skill, touch-gated).
 - **Loft diagnostic bug — FIXED** — the null-flow return-value N-Store that misreported
   the following function's position (see C1 note) is fixed on `tuxedo-work`
   ([nstore-position-fix.md](102-stability-contract/nstore-position-fix.md), Steps 0–5).

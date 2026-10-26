@@ -4491,7 +4491,7 @@ use a separate collection or add after the loop"
         // `OpCopyRecord` into the entry, free scratch.  Handing the parse a target of the
         // ELEMENT type removes all three: the literal writes straight into the slot
         // `OpNewRecord` carved out of the collection.  Measured on 1M `integer`-keyed
-        // inserts, `--native-release`: 933ms → 555ms.
+        // inserts, `--ship`: 933ms → 555ms.
         //
         // Gated on the RHS being a fresh literal of exactly the element type, peeked as
         // `<element-name> {`:
@@ -4676,12 +4676,15 @@ use a separate collection or add after the loop"
         // itself, the literal had no member types to steer it.
         let link_tuple = self.ref_tuple_expected(op, to);
         let expect = link_tuple.as_ref().unwrap_or(f_type);
+        let prev_bind_rhs =
+            std::mem::replace(&mut self.in_bind_rhs, op == "=" && var_nr != u16::MAX);
         let mut s_type = if let Some((value, tp)) = self.preset_rhs.take() {
             *code = value;
             tp
         } else {
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
+        self.in_bind_rhs = prev_bind_rhs;
         // `@FR-B-Ref-StoredRef` (loft#2166) — the `&` a record place was handed, resolved as
         // the struct literal resolves it: a `reference<τ>` field (the pointer marker) holds
         // the link, so the write below stores the source's DbRef exactly as `d.r = p` does

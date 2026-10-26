@@ -2181,6 +2181,13 @@ impl Parser {
             result
         };
         let mut tp = t.clone();
+        // loft#2188 — a block VALUE whose tail is a call that may hand back an argument.
+        if context != "return from block"
+            && let Some(last) = l.len().checked_sub(1)
+            && let Some(lifted) = self.lift_borrowing_call_value(t, &mut l[last])
+        {
+            return lifted;
+        }
         // @PLN85 move-on-block-return (block-return-move.md): a block used as a
         // VALUE — NOT a function return (those flow through the delivery
         // classifier below) — whose tail views a struct LOCAL that is DEFINED
@@ -2194,12 +2201,19 @@ impl Parser {
         // tail that views an OUTER local (`a = { base }`, `base` defined before
         // the block) is a genuine borrow the consumer keeps — the block does not
         // define it, so `block_defines_var` is false and it is left alone.
-        if !self.first_pass
-            && context != "return from block"
+        if context != "return from block"
             && let Type::Reference(td, ls) = t.base()
             && ls.iter().any(|&v| Self::block_defines_var(l, v))
         {
             let td = *td;
+            // loft#2188 — pass 1 reports what pass 2 lowers this to: an owned copy, not a borrow
+            // of the block's local.  The binding takes its type from pass 1, and a branch
+            // `r = if s == 0 { mk(q) } else { t = mk(w); t }` read as a borrow of `t` there,
+            // so `r` was never freed and the other arm's fresh store leaked on every run that
+            // took it — on both backends.
+            if self.first_pass {
+                return Type::Reference(td, Deps::none());
+            }
             let last = l.len() - 1;
             let w = self.materialize_view_value(td, &mut l[last]);
             return self.vars.tp(w).clone();
@@ -7474,6 +7488,13 @@ impl Parser {
         let t = self.expression(arm_code);
         self.expected = saved_expected;
         self.arm_convert_reported = false;
+        // loft#2188 — a bare arm is a block arm without the braces, so a call that may hand
+        // back an argument is lifted here as `block_result` lifts a block arm's: on both passes
+        // (pass 1 reports its type), and before the unknown-expected exit, because the FIRST arm
+        // has no sibling type yet and is lifted all the same.
+        if let Some(lifted) = self.lift_borrowing_call_value(&t, arm_code) {
+            return lifted;
+        }
         if self.first_pass || expected.is_unknown() {
             return t;
         }
@@ -14787,6 +14808,163 @@ impl Parser {
         self.context = saved_ctx;
     }
 
+    /// loft#2188, `@FR-F-Ret` — a branch arm's VALUE that is a CALL which may hand back one of
+    /// its arguments (`r = if c { h(q, w, k) } else { … }`, `h` declaring `-> P["a", …]`).
+    ///
+    /// A branch binds its arm's answer as it is, so the binding read as a borrow of `q` and freed
+    /// nothing — yet on every run such a callee answers a store it made (its buffer, or its copy of
+    /// `a`), and that store leaked, one per call, on both backends.  A DIRECT bind of the same
+    /// call decides copy-or-adopt per run (`OpBindOrCopy`, the native join guard), so the call is
+    /// bound into a local of its own first and that local is copied out as an owned work-ref,
+    /// like any local a block value defines: the spelling `{ t = h(…); t }`, which was already
+    /// right.  Answers the arm's new type, or `None` where `code` is not such a call.
+    ///
+    /// On pass 1 the arm only REPORTS that type, deps-free, and is lowered on pass 2: the binding
+    /// takes its type from pass 1, and read as a borrow of `q` there it stayed one — never freed
+    /// — whichever arm ran, so a sibling arm's fresh store leaked instead.  A `-> T?` result is
+    /// left alone, by its marker: a nullable delivery has its own lowering.
+    pub(crate) fn lift_borrowing_call_value(&mut self, t: &Type, code: &mut Value) -> Option<Type> {
+        let (shape, nullable) = t.peel_optional();
+        if nullable {
+            return None;
+        }
+        let Type::Reference(td, _) = shape.base() else {
+            return None;
+        };
+        let Value::Call(fn_nr, _) = code.unspan() else {
+            return None;
+        };
+        // A SELF call is `(R-TailSelf)`'s to judge — a jump, or the @C155 refusal — and bound
+        // into a local it would no longer stand in tail position for either.  And only a branch
+        // being BOUND: a function's own return branch is delivered per arm by `ref_return`.
+        if *fn_nr == self.context || !self.in_bind_rhs {
+            return None;
+        }
+        let callee = self.data.def(*fn_nr);
+        if !callee.is_loft_defined() || !callee.returns_borrowed_view() {
+            return None;
+        }
+        let td = *td;
+        if self.first_pass {
+            return Some(Type::Reference(td, Deps::none()));
+        }
+        let tmp = self.create_unique("__arm_call", &Type::Reference(td, Deps::none()));
+        self.vars.defined(tmp);
+        let call = std::mem::replace(code, Value::Null);
+        let mut copied = Value::Var(tmp);
+        let w = self.materialize_view_value(td, &mut copied);
+        *code = Value::Insert(vec![crate::data::v_set(tmp, call), copied]);
+        Some(self.vars.tp(w).clone())
+    }
+
+    /// loft#2179, `@FR-F-Ret` — an instance whose record return DECLARES no dep hands back a
+    /// store it owns on every path, so a path that returns a PARAMETER copies it first.
+    ///
+    /// A caller reads an empty return dep as *fresh* and adopts the result as its own store.
+    /// The concrete twin keeps that true by copying each borrowed path into its return buffer
+    /// (`ref_return`); an instance has no buffer, and where its return is a JOIN — a parameter
+    /// on one path, a store it minted on another (`if n == 0 { return a; } y: T = b; y`) —
+    /// [`Self::derive_monomorph_return_deps`] can name no dep, so the parameter path handed the
+    /// caller its own record as if it were new, and a write through the result wrote the
+    /// argument, on both backends.  [`Self::bind_monomorph_join_return`] closes this for a
+    /// value BRANCH in tail position; this closes every other place a parameter is returned —
+    /// an early `return a`, a bare `a` tail — by binding it into a local of its own
+    /// (`@FR-B-Copy`: the bind copies a record), so the declaration holds on every path.
+    ///
+    /// Runs after the deps are derived, and only where none were: a return that borrows on
+    /// every path declares it and is copied by the caller instead.
+    pub(crate) fn copy_param_returns_of_fresh_instance(&mut self, d_nr: u32) {
+        let ret = self.data.def(d_nr).returned().clone();
+        if !matches!(ret.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
+            || !ret.depend().is_empty()
+        {
+            return;
+        }
+        let saved_ctx = self.context;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = d_nr;
+        let mut code =
+            std::mem::replace(&mut self.data.definitions[d_nr as usize].code, Value::Null);
+        if let Value::Block(bl) = &mut code {
+            let n = bl.operators.len();
+            for (i, op) in bl.operators.iter_mut().enumerate() {
+                self.copy_returned_params(op, &ret, i + 1 == n);
+            }
+        }
+        self.data.definitions[d_nr as usize].code = code;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = saved_ctx;
+    }
+
+    /// The walk of [`Self::copy_param_returns_of_fresh_instance`]: each record PARAMETER in
+    /// return position — under a `return`, or as the tail when `tail` — becomes a copy into a
+    /// fresh local, which is then what the site returns.
+    fn copy_returned_params(&mut self, node: &mut Value, ret: &Type, tail: bool) {
+        // `@FR-N-Shape` — a NULLABLE parameter is left alone, by its marker: under a presence
+        // guard `return a?` lowers to the bare `a` of a `T?`, whose discharge delivers it.
+        let is_param = |p: &Self, v: &Value| match v.unspan() {
+            Value::Var(x) => {
+                let (shape, nullable) = p.vars.tp(*x).peel_optional();
+                p.vars.is_argument(*x)
+                    && !p.vars.name(*x).starts_with("__")
+                    && !nullable
+                    && matches!(shape.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
+            }
+            _ => false,
+        };
+        let copied = |p: &mut Self, x: Value| {
+            let tmp = p.create_unique("__ret_param", ret);
+            p.vars.defined(tmp);
+            (crate::data::v_set(tmp, x), tmp)
+        };
+        match node {
+            Value::Span(b) => self.copy_returned_params(&mut b.1, ret, tail),
+            Value::Return(inner) => {
+                if is_param(self, inner) {
+                    let x = std::mem::replace(&mut **inner, Value::Null);
+                    let (set, tmp) = copied(self, x);
+                    *node = Value::Insert(vec![set, Value::Return(Box::new(Value::Var(tmp)))]);
+                } else {
+                    self.copy_returned_params(inner, ret, true);
+                }
+            }
+            Value::Var(_) if tail && is_param(self, node) => {
+                let x = std::mem::replace(node, Value::Null);
+                let (set, tmp) = copied(self, x);
+                *node = Value::Insert(vec![set, Value::Var(tmp)]);
+            }
+            Value::If(_, t, e) => {
+                self.copy_returned_params(t, ret, tail);
+                self.copy_returned_params(e, ret, tail);
+            }
+            Value::Block(b) => {
+                let n = b.operators.len();
+                for (i, op) in b.operators.iter_mut().enumerate() {
+                    self.copy_returned_params(op, ret, tail && i + 1 == n);
+                }
+            }
+            // A loop's last statement is not the function's value; only a `return` in it is.
+            Value::Loop(b) => {
+                for op in &mut b.operators {
+                    self.copy_returned_params(op, ret, false);
+                }
+            }
+            Value::Insert(ops) => {
+                let n = ops.len();
+                for (i, op) in ops.iter_mut().enumerate() {
+                    self.copy_returned_params(op, ret, tail && i + 1 == n);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// loft#1872, `@FR-F-Ret` — a value branch whose leaves hand back a PARAMETER on one arm
     /// and a CALL's result on another: a recursive or delegating instance's Join.  Bound whole
     /// into one owned local, the parameter arm is copied at that bind (both backends guard a
@@ -19954,6 +20132,10 @@ impl Parser {
                         if !dep.contains(&a) {
                             dep.push(a);
                         }
+                        if site == RetSite::MidReturn {
+                            self.mid_return_param_deps
+                                .insert((self.context, self.first_pass, a));
+                        }
                         if chain_site
                             && !signature_only
                             && let Some(tail) = body.last_mut()
@@ -20240,6 +20422,29 @@ impl Parser {
             .map(|(a, _)| a)
             .collect();
             dep.retain(|d| !stale_visible.contains(d));
+            // loft#2179 — where mid-body `return`s of this pass hand back TWO or more different
+            // parameters, every one of them stays declared.  A mid-body site's `body` is its own
+            // value only, so the prune above dropped the parameter an earlier `return` merged:
+            // `if .. { return a; } if .. { return b; } …` declared `-> P["b"]`, the caller
+            // guarded against `b` alone (the oracle can witness only one base), and the run that
+            // answered `a` adopted the caller's store and wrote through it.  Declared, the pair
+            // is `returns_one_of_several_args`, which every caller copies.  ONE such parameter
+            // beside a store the function made keeps the shape loft#1888 settled — the buffer
+            // alone declared, the oracle naming the parameter as the Join's witness.
+            let mut merged: Vec<u16> = self
+                .mid_return_param_deps
+                .iter()
+                .filter(|(c, pass, _)| *c == self.context && *pass == self.first_pass)
+                .map(|(_, _, a)| *a)
+                .collect();
+            merged.sort_unstable();
+            if merged.len() > 1 {
+                for a in merged {
+                    if !dep.contains(&a) {
+                        dep.push(a);
+                    }
+                }
+            }
             // H2: the rebuilt return-type deps are ATTRIBUTE indices —
             // tag them so `as_attr_indices` readers verify in debug builds.
             let dep = Deps::attrs(dep.to_vec());

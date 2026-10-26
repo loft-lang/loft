@@ -38,7 +38,7 @@ with numbers that can be compared from one pass to the next:
     disagree is not one algorithm and its times do not compare — always fatal.
 
 Lanes: `native` (loft `--native-emit --lean`, rustc opt-level 3, one codegen unit — what
-`--native-release` ships), `rust` (the reference, `rustc -O` unless `--ref-flags` says
+`--ship` ships), `rust` (the reference, `rustc -O` unless `--ref-flags` says
 otherwise), `interp` (the loft interpreter), `python`, and `ship`: the program compiled whole,
 its libraries' loft code included and their Rust linked in (`--static`), under
 `LOFT_RELEASE_PASS_PROBE=1` — what a game's release build would emit once its own checked
@@ -50,7 +50,7 @@ ship hash differs is marked and carries no ship ratio.
 
 `--package DIR` measures a LIBRARY's own bench — `DIR/bench/bench.loft` beside its twin
 `DIR/bench/bench.rs`, the layout the drawing library set (@PLN158).  A package has
-dependencies, so its native lane is built by loft itself (`--native-release`, what a consumer
+dependencies, so its native lane is built by loft itself (`--ship`, what a consumer
 gets) and sampled from the binary loft cached.  Point it at a SCRATCH CLONE, never at the
 library's working tree: the build writes caches beside the source.
 
@@ -242,7 +242,7 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
 
 
 def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
-    """The lanes of a library's own bench.  The native lane is what `loft --native-release`
+    """The lanes of a library's own bench.  The native lane is what `loft --ship`
     builds and caches for `bench/bench.loft`; the newest binary in that cache IS the binary.
     A binary is named `native-<key>` (by what it compiles to, so one program at two paths is
     one entry); a cache written by an older loft still names it `bench-<key>`."""
@@ -256,8 +256,8 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
         # start, and run straight from the cache below it has no driver to hand it their
         # directories (`LOFT_LIB_PATH`); installed by version under `~/.loft/lib/` it finds
         # them the way any built program does.
-        run_checked([loft, "--native-release", "--install-libs", "bench/bench.loft", "--n", "2"],
-                    f"{pkg_dir}: loft --native-release", times, "native-release", reserve_gb,
+        run_checked([loft, "--ship", "--install-libs", "bench/bench.loft", "--n", "2"],
+                    f"{pkg_dir}: loft --ship", times, "native-release", reserve_gb,
                     cwd=pkg_dir)
         cache = os.path.join(bench_dir, ".loft", "cache")
         built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(("native-", "bench-"))] \
@@ -266,13 +266,13 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
             raise BuildFailed(f"{pkg_dir}: loft left no cached native binary under bench/.loft/cache")
         cmds["native"] = [max(built, key=os.path.getmtime)]
     if "ship" in lanes:
-        # Every library recompiled inside the program at the ship level: `--native-release`
+        # Every library recompiled inside the program at the ship level: `--ship`
         # compiles the libraries' loft code into the binary from source, `--static` links
         # their Rust into it as well (one file, as a game ships), and the probe switch is part
         # of the cache key, so this is a binary of its own (the newest one).
-        run_checked([loft, "--native-release", "--static", "--install-libs", "bench/bench.loft",
+        run_checked([loft, "--ship", "--static", "--install-libs", "bench/bench.loft",
                      "--n", "2"],
-                    f"{pkg_dir}: loft --native-release (ship)", times, "ship-release", reserve_gb,
+                    f"{pkg_dir}: loft --ship (ship)", times, "ship-release", reserve_gb,
                     cwd=pkg_dir, env=SHIP_ENV)
         cache = os.path.join(bench_dir, ".loft", "cache")
         built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith(("native-", "bench-"))]

@@ -422,17 +422,6 @@ impl<'a> JParser<'a> {
         skip_ws(self.bytes, self.value_end)
     }
 
-    /// Byte offset of the lexer's current token (or input end at EOF).  Exact for
-    /// the non-number tokens that never over-consume.
-    fn peek_pos(&self) -> usize {
-        let r = self.lx.peek();
-        if r.has == LexItem::None {
-            self.bytes.len()
-        } else {
-            self.at_token()
-        }
-    }
-
     /// Byte offset of the lexer's current token, as the lexer read it
     /// ([`Lexer::peek_offset`]).  Every offset this reader reports is one.
     fn at_token(&self) -> usize {
@@ -465,9 +454,13 @@ impl<'a> JParser<'a> {
                 // value) matches the old byte-scanner; otherwise it is real EOF.
                 if at < self.bytes.len() {
                     match self.bytes[at] {
+                        // A string the lexer could not read is one JSON refuses too; were the
+                        // two ever to disagree, the input still ends here as an error rather
+                        // than a panic (loft#2183).
                         b'"' => {
-                            return Err(json_string_validate(self.bytes, at)
-                                .expect_err("lexer string failure must be an error"));
+                            return Err(json_string_validate(self.bytes, at).err().unwrap_or_else(
+                                || ("unexpected end of input".to_string(), self.bytes.len()),
+                            ));
                         }
                         b'-' | b'0'..=b'9' => {
                             let (value, end) = self.scan_number(at)?;
@@ -645,7 +638,9 @@ impl<'a> JParser<'a> {
                 };
                 if name == word {
                     self.lx.cont();
-                    self.value_end = self.peek_pos();
+                    // The literal's own end: the next token's position is inside a string
+                    // that follows directly (its first content byte), loft#2183.
+                    self.value_end = off + word.len();
                     Ok(val)
                 } else {
                     Err((format!("expected `{word}` at offset {off}"), off))
@@ -690,8 +685,9 @@ impl<'a> JParser<'a> {
         let start = self.at_token(); // the `[`
         self.lx.cont();
         if self.lx.peek_token("]") {
+            let close = self.at_token();
             self.lx.cont();
-            self.value_end = self.peek_pos();
+            self.value_end = close + 1;
             return (start, None);
         }
         // First element starts just past the `[`; each subsequent one past its `,`.
@@ -714,7 +710,7 @@ impl<'a> JParser<'a> {
             }
             Some(b']') => {
                 self.lx.cont();
-                self.value_end = self.peek_pos();
+                self.value_end = d + 1;
                 Ok(None)
             }
             Some(b) => Err((format!("expected `,` or `]` in array, got {b:#x}"), d)),
@@ -743,8 +739,9 @@ impl<'a> JParser<'a> {
         let start = self.at_token(); // the `{`
         self.lx.cont();
         if self.lx.peek_token("}") {
+            let close = self.at_token();
             self.lx.cont();
-            self.value_end = self.peek_pos();
+            self.value_end = close + 1;
             return (start, false);
         }
         (start, true)
@@ -781,7 +778,7 @@ impl<'a> JParser<'a> {
             }
             Some(b'}') => {
                 self.lx.cont();
-                self.value_end = self.peek_pos();
+                self.value_end = d + 1;
                 Ok(false)
             }
             Some(b) => Err((format!("expected `,` or `}}` in object, got {b:#x}"), d)),
@@ -1073,6 +1070,26 @@ mod tests {
     fn refused(input: &str) -> (String, usize) {
         let err = parse(input).expect_err(input);
         (err.message, err.byte_offset)
+    }
+
+    /// loft#2183 — a delimiter after a literal or a closer is read where that value ENDS: a
+    /// string directly after it is reported at its quote, and the shape that desynced the
+    /// lexer onto a byte it could not read answers an error instead of panicking.
+    #[test]
+    fn a_delimiter_after_a_literal_or_a_closer_is_read_where_it_ends() {
+        let arr = |b: u8| format!("expected `,` or `]` in array, got {b:#x}");
+        assert_eq!(refused(r#"[true"x"]"#), (arr(b'"'), 5));
+        assert_eq!(refused(r#"[null"x"]"#), (arr(b'"'), 5));
+        assert_eq!(refused(r#"[[]"x"]"#), (arr(b'"'), 3));
+        assert_eq!(refused(r#"[{}"x"]"#), (arr(b'"'), 3));
+        assert_eq!(refused(r#"[[1]"x"]"#), (arr(b'"'), 4));
+        assert_eq!(
+            refused(r#"{"a":{}"x"}"#),
+            ("expected `,` or `}` in object, got 0x22".to_string(), 7)
+        );
+        assert_eq!(refused(r#"[true", "é"]"#), (arr(b'"'), 5));
+        // Valid documents read as before.
+        assert!(parse(r#"[true, [], {}, [1], {"a": {}}, null]"#).is_ok());
     }
 
     /// A number written as plain digits is taken from the lexer's token, and only where

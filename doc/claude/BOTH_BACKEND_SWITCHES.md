@@ -62,7 +62,7 @@ gets its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the laz
 `then`, the turn's `OpClear` kept), the field moves by `OpMoveField` — the bytes relocate,
 the source is ZEROED so the next turn's clear and the callee's refill find an empty record
 — and each exit releases the placed record as a block (`OpFreeRecordIn`).  Measured on the
-cbor decoder's bench (`--native-release`, this box): decode 42.6 ms → 34.7 ms per op.
+cbor decoder's bench (`--ship`, this box): decode 42.6 ms → 34.7 ms per op.
 **`LOFT_NO_TAKE_LOCAL=1`** (`(R-MoveLast)`'s local clause, the scope pass, BOTH backends) keeps
 `x = y` for a vector local `y` built afresh each pass (the double buffer `tmp = []; …; result =
 tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
@@ -118,7 +118,7 @@ store that was released under it; `LOFT_TRACE_PLACE=1` names each admission
 (`[return-field]`) and each decline (a parameter's or a view's field, an element, a returned
 record that owns no heap — the native value form's to answer — a statement in the exit that
 is not a free, a buffer that is not the function's own).  Measured on pluginabi's
-`check_request` driver (`--native-release`, this box): 0.34 s → 0.33 s per 40 rounds; the
+`check_request` driver (`--ship`, this box): 0.34 s → 0.33 s per 40 rounds; the
 copy census of `return p.a` 1 → 0 per call.
 
 **`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON, parse time +
@@ -383,7 +383,7 @@ site that owes a record calls a TWIN that keeps it, so that site runs what it ra
 call's buffer store, its mint and its frees leave the IR, so the interpreter claims no store per
 call.  A program parsed against again after compiling (the REPL, the debugger, live reload, a
 host calling by name, a build that ships the live tier — plain `--native` among them) keeps
-records (`Data::open_world`); `--native-release` and `--interpret` run the pass.
+records (`Data::open_world`); `--ship` and `--interpret` run the pass.
 **`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form, leaving the case to `--native`'s own
 rewrite (`LOFT_NO_VALUE_RECORD`); it is the first bisect step for a wrong field out of a
 small-record call.  **`LOFT_TRACE_IR_VALUEREC=1`** names each carrier the pass declines and why.

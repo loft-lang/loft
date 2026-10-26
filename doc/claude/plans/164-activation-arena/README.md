@@ -106,7 +106,7 @@ and it belongs with the role/lifetime/element-layout work § 3e registers.  Pric
 arc priced every unit: a hand patch in the runtime first, `perf` on the release binary, all
 fourteen rows before a unit is cut.
 
-*Measurement recipe used throughout*: the release-tier emission (`loft --native-release
+*Measurement recipe used throughout*: the release-tier emission (`loft --ship
 --native-emit`), rustc against `target/release`, `perf stat -r 5` × 3 interleaved under
 `taskset`, stores counted exactly with callgrind (n = 20 minus n = 10 calls of `database_named`),
 hash `33f6d2b8` checked on every variant so a faster run is still the same program.

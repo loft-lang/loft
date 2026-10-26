@@ -47,8 +47,9 @@ impl Cx<'_> {
             | Parts::ShortRaw(..)
             | Parts::Int(..)
             | Parts::IntRaw(..)
+            | Parts::DbRef
             | Parts::ChildRec(_) => Ok(()),
-            other => {
+            other @ Parts::Base => {
                 let kind = format!("{other:?}");
                 Err(format!(
                     "a format of a {}",
@@ -231,6 +232,9 @@ impl Cx<'_> {
                     "    (void) fmt; (void) ind;\n    loft_show_int_raw(s, r, {});",
                     i32::from(*nullable)
                 );
+            }
+            Parts::DbRef => {
+                out.push_str("    (void) fmt; (void) ind;\n    loft_show_dbref(s, r);\n")
             }
             _ => out.push_str("    (void) fmt; (void) ind;\n    loft_show_child(s, r);\n"),
         }

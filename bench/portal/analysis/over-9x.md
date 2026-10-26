@@ -10,7 +10,7 @@ condition to extend, or a NEW rule, drafted in `doc/claude/formal/rewrites.md` �
 An ANALYSIS: one box, provisional numbers, none a promise.
 
 Taken 2026-10-05 on arm64 macOS (`firewall02`), branch `157-native-4x` at `29d68fde2`,
-`--native-release` flags against `rustc -O`, three alternated rounds per form on an idle
+`--ship` flags against `rustc -O`, three alternated rounds per form on an idle
 box after the five attributions ran; every hash equals its committed row's.  "6×" is the
 row's Rust time × 6; "clearly" means with the usual one-third loss between a hand price and
 the built rewrite (loft-optimize § 4) the row still lands under it.
@@ -236,7 +236,7 @@ script takes them from the package's own compile (worklist.md § Tooling).
 ## The three rows still over 9× (2026-10-07, after `(R-Destination)`)
 
 `map_json` 9.8×, `check_request` 9.2×, `mapfile_to_painted` 9.1× in their lanes.  Each row
-was profiled alone on the shipped flags (`--native-release --names`, one core, the P-core
+was profiled alone on the shipped flags (`--ship --names`, one core, the P-core
 table of `perf`); each named lever below was priced by a temporary edit — of the runtime
 (rlib A/B) or of the emitted Rust — with the hash unchanged, then reverted.
 

@@ -109,7 +109,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     emit_tier(tag, &[], env)
 }
 
-/// [`emit`] with the tier's flags in front (`--native-release`: the IR rewrites run).
+/// [`emit`] with the tier's flags in front (`--ship`: the IR rewrites run).
 fn emit_tier(tag: &str, tier: &[&str], env: &[(&str, &str)]) -> String {
     // One file per TEST: the tests run on threads of one process.
     let out =
@@ -349,12 +349,12 @@ fn a_file_read_through_a_one_line_reader_takes_the_window_on_the_release_tier() 
     // `bf#read(2) as i16 as integer`.  The release tier inlines the reader, so `bf` is named
     // only as the file of a scalar read and the window opens; f2's `bf#next` still keeps
     // the header there.
-    let got = counts(&emit_tier("release", &["--native-release"], &[]));
+    let got = counts(&emit_tier("release", &["--ship"], &[]));
     for (name, want) in [("n_f1_mk", (1, 1, 0, 1)), ("n_f2_mk", (0, 0, 1, 0))] {
         assert_eq!(
             got.get(name).copied().unwrap_or_default(),
             want,
-            "{name}: (windows, windowed pushes, header pushes, closes) on --native-release"
+            "{name}: (windows, windowed pushes, header pushes, closes) on --ship"
         );
     }
 }

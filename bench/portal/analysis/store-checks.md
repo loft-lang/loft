@@ -43,7 +43,7 @@ two 4-byte halves and read back as one 8-byte load, are a store-forwarding stall
 Two cures follow, one per kind of check:
 
 - **Debug switches (`LOFT_STRICT_STORES`, the init shadow) leave the shipped tier.**  Only
-  removal pays.  The shipped and performance tiers (`--native-release`, every library cdylib)
+  removal pays.  The shipped and performance tiers (`--ship`, every library cdylib)
   would link a runtime built without them, and the semantics tier keeps them.  This is a
   decision for the owner: it is a second rlib in the distribution, and a lean binary must say
   so when the switch is set rather than ignore it.

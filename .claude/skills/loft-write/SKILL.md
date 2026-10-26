@@ -353,7 +353,8 @@ more = Item { count: 5, ..item };       // a copy of `item` with `count` written
 `d = Unit { hp: 0, ..u }` is `d = u; d.hp = 0;`: the named fields are written as assignments (a
 `text` or collection field releases what the copy brought; a `const` field is refused), each
 reads the BASE, and the base must be an `Item` and present (discharge an `Item?` first).  A
-variant is not updated this way — `match` on it and build the variant from its fields.
+variant updates the same way when the base's type IS that variant (`..b` with `b: Bin`, or
+`..(n as Bin)` inside `if n is Bin`); a base typed as the enum is refused.
 
 Field names may overlap across structs — lookups are type-scoped.
 
@@ -936,7 +937,7 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 | `match arm separator is \`=>\`, not \`->\`` | Replace `->` with `=>` in the arm. |
 | `'fn' definitions must be at file scope, not inside a function or block` | Move the helper fn out of the enclosing fn body.  Lambdas (`|x| { … }` or `fn(x: T) { … }`) are the only function-shaped values allowed inside a fn body. |
 | `` `&` has nothing to bind here: this place holds the record itself `` | A `&` into a plain record field or element — assign the record (`d.o = p`, a copy) or declare the field `reference<T>`; `d.r = &p` on a `reference<T>` field stores the pointer |
-| `` `..base` completes a struct literal, and `V` is a variant `` | A variant is not updated with `..base` — `match` on the base and build the variant from its fields |
+| `` the base after `..` is a `E`, which may hold any of its variants `` | Name the variant: `..(base as V)` inside `if base is V`; for a generic enum, `match` on the base and build `V` from its fields |
 | `` the base after `..` may be absent `` / `` must be a `S`, the literal's own type `` | Discharge the base first (`..(b ?? …)`), and give the literal the base's type |
 | `` `E.V` is a variant of a generic enum, whose type arguments come from the target `` | Bind it to a typed local (`x: E<integer> = V`) or pass it where an `E<…>` is expected |
 | `advice[match-scalar-hole]` | A scalar `match` with no `_`: add `_ =>` for the values the arms do not name, or `LOFT_NO_SCALAR_HOLE` for a deliberate hole |

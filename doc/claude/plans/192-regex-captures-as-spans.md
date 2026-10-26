@@ -318,7 +318,7 @@ rows.
    prediction is yes — one cell on the library's testbed before P1 closes.
 3. **The warning's channel on the browser target** (no stderr): the library's wasm bridge
    routes it through `log_warn`, which the host already captures — verified on the `--html`
-   target in the parity gate (loft-ship skill).
+   target in the parity gate (loft-library skill).
 
 ## See also
 

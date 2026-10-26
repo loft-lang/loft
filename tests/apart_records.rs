@@ -5,7 +5,7 @@
 //! value: its owners declare `__ap_<v>`, its callees are emitted as `__apr` twins, and the
 //! store meets it at `apart_write_fresh` or `rotate_from_parts`.  A driver or a callee that
 //! reads an element keeps the store form; `LOFT_NO_APART_RECORDS=1` emits none.  The plan is
-//! made only where no live tier ships (`--native-release`), so every test runs that tier.  The
+//! made only where no live tier ships (`--ship`), so every test runs that tier.  The
 //! cell corpus (`tests/scripts/158-apart-records.loft`) says the VALUES hold; this pins what is
 //! emitted.
 use loft::file_access as fa;
@@ -57,10 +57,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         std::process::id()
     ));
     let out_s = out.to_str().unwrap().to_string();
-    let status = loft(
-        &["--native-release", "--native-emit", &out_s, &cells()],
-        env,
-    );
+    let status = loft(&["--ship", "--native-emit", &out_s, &cells()], env);
     assert!(
         fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
@@ -113,7 +110,7 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
         ] {
             let mut env = vec![falsifier];
             env.extend(switch);
-            let got = run(&["--native-release"], &env);
+            let got = run(&["--ship"], &env);
             assert_eq!(
                 got, oracle,
                 "native under {env:?} must print what the interpreter printed"

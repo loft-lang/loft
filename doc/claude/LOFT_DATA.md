@@ -357,9 +357,12 @@ of `u` and then writes the named fields — exactly what `d = u; d.hp = 0;` does
 written as the assignments they stand for, so a `text` or collection field releases what the copy
 brought and a `const` field is refused; and each field reads the BASE, never the half-written
 copy (`Unit { y: u.hp, hp: u.y, ..u }` swaps).  `..base` is the last entry.  The base is a `Unit`
-and never absent — discharge a `Unit?` first (`..(u ?? Unit { … })`).  A variant is not updated
-this way: `match` on it and build the variant from its fields, since its tag would have to be
-checked against the base's.
+and never absent — discharge a `Unit?` first (`..(u ?? Unit { … })`).  A **variant** is updated
+the same way when the base's type IS that variant: a `Bin` local, parameter, field or call
+result, or the checked cast `..(n as Bin)` inside `if n is Bin`.  The copy carries the tag, so no
+check runs when the program does.  A base typed as the enum (`n: Node`) may hold any of its
+variants and is refused, naming that cast; a generic enum's variant has no type of its own, so
+there `match` on the base and build the variant from its fields.
 
 **A nullable STRUCT-enum (`Shape?`) works** as a local, a parameter, a return, a struct FIELD and
 a `vector<Shape?>` element — `= null`, `== null`, truthiness, `??`, `match` and reassignment in
@@ -670,10 +673,14 @@ express — a cursor and an accumulator carried through — reaches 100 000 wher
 10 000 frames, on both backends.  A local held in a store (a text, a vector, a record) is
 released before the jump; a vector or record parameter is passed through as the pointer the
 call would share — itself, another parameter, a part of one (`r.next`, `v[i]`) — and a text or
-`&` parameter as itself.  What the jump cannot bind the way a call does is refused at the call,
-naming the variable and the cure: an argument that makes a fresh value (`f(n - 1, acc + "x")`)
-or names a local, a parameter the body rebinds, and a text or record result.  A self-call that is an operand (`1 + f(n - 1)`), or whose value is bound to a local
-before it is returned (`r = f(n - 1); r`), is an ordinary call and keeps its frame.
+`&` parameter as itself.  A text, record, vector or generic result is delivered as the call
+would deliver it, and what the caller owns afterwards is what the call would have left it.
+What the jump cannot bind the way a call does is refused at the call, naming the variable and
+the cure: an argument that makes a fresh value (`f(n - 1, acc + "x")`) or names a local, a text
+parameter handed another text (`swap(n - 1, b, a)` over two texts), and a parameter the body
+rebinds; a generic is refused per instance (`swap<text>` where `swap<S>` jumps).  A self-call
+that is an operand (`1 + f(n - 1)`), or whose value is bound to a local before it is returned
+(`r = f(n - 1); r`), is an ordinary call and keeps its frame.
 
 ## Assertions
 

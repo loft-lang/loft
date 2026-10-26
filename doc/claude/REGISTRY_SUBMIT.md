@@ -244,7 +244,7 @@ Editing `index.json` directly (above) has two drawbacks: your PR can **race** th
 signed index (two PRs touching the same file, or a maintainer publish landing
 between your CI run and the merge), and nothing **validates** your library before it
 is trusted.  The **`submissions/` path** fixes both (@PLN102 @C96): you add a small
-staging file that *never touches `index.json`*, and the maintainer's `loft ship` run
+staging file that *never touches `index.json`*, and the maintainer's `loft maintain-registry` run
 puts it through the full validation gate before folding it in.
 
 > ⚠ **Reconciled on the registry side on branch `tuxedo-submitting-guide` of
@@ -310,7 +310,7 @@ Fields:
 Generating it is copy-paste from step 2: `loft package` already prints the `entry`
 body; wrap it and add `name`/`version`/`repo`/`tag`/`subpath`.
 
-What the maintainer's `loft ship` does with it (no human step unless flagged):
+What the maintainer's `loft maintain-registry` does with it (no human step unless flagged):
 
 1. **Vets** `repo@tag` through `scripts/vet-lib.sh` — the same V1–V6 gate own libs
    pass: it compiles + runs your tests against the current loft, checks metadata, and

@@ -33,9 +33,9 @@
 // cut of `q1-store-footprint.loft` read the same number before and after a fix and was
 // measuring itself. Shape and size come from the command line.
 //
-//   loft --native-release q5-chunked-arena.loft dense    1000000
-//   loft --native-release q5-chunked-arena.loft chunked  1000000 4096
-//   loft --native-release q5-chunked-arena.loft hash     1000000
+//   loft --ship q5-chunked-arena.loft dense    1000000
+//   loft --ship q5-chunked-arena.loft chunked  1000000 4096
+//   loft --ship q5-chunked-arena.loft hash     1000000
 
 struct Entry { key: integer, val: integer }
 

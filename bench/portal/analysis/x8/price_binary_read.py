@@ -6,7 +6,7 @@ every later one takes its two bytes straight off the buffered file, and the curs
 written back to the File record once, after the loop.  Every edit asserts the line it
 replaces.
 
-    loft --native-release --native-emit l18.rs bench/18_consumer_crawler/bench.loft
+    loft --ship --native-emit l18.rs bench/18_consumer_crawler/bench.loft
     price_binary_read.py l18.rs l18_hold.rs
     bench/portal/hand_price.sh l18.rs l18 && bench/portal/hand_price.sh l18_hold.rs l18_hold
 """

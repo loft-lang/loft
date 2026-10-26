@@ -11,7 +11,7 @@
 //! (`LOFT_LIVE_FNS`), which lists neither `f_`-keyed overload — a step-14 finding.
 //!
 //! And the slim-artifact property (step 12): because every static site is a direct call, an
-//! overload nothing calls is unreachable, and the SHIPPED lane (`--native-release`, which emits
+//! overload nothing calls is unreachable, and the SHIPPED lane (`--ship`, which emits
 //! only reachable functions) leaves it out — the one property whose failure is invisible in
 //! behaviour, so it is asserted on the emitted source.  The semantics lane (`--native`) keeps
 //! every tier by design (NATIVE.md § Optimisation tiers), which is the control that lets the
@@ -183,7 +183,7 @@ fn emitted_hit_overloads(lane: &str) -> Vec<String> {
 
 #[test]
 fn an_uncalled_overload_is_absent_from_the_shipped_artifact() {
-    let shipped = emitted_hit_overloads("--native-release");
+    let shipped = emitted_hit_overloads("--ship");
     assert!(
         shipped.iter().any(|f| f.ends_with("Fireball_IceWall_hit"))
             && shipped.iter().any(|f| f.ends_with("Fireball_Crate_hit")),

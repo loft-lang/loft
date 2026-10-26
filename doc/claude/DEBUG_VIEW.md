@@ -146,7 +146,7 @@ view: view-stop                       ## Start the loft viewer in the background
 	@LOFT_VIEW_STATE=$(VIEW_STATE) $(LOFT)/target/release/loft --interpret \
 	    --lib $(LOFT)/lib $(LOFT)/tools/viewer/refresh.loft >$(VIEW_LOG) 2>&1 || true
 	@LOFT_VIEW_PORT=$(VIEW_PORT) LOFT_VIEW_STATE=$(VIEW_STATE) nohup \
-	    $(LOFT)/target/release/loft --native-release \
+	    $(LOFT)/target/release/loft --ship \
 	    --lib $(LOFT)/lib $(LOFT)/tools/viewer/src/main.loft >>$(VIEW_LOG) 2>&1 & \
 	    echo $$! > $(VIEW_PID)
 	@sleep 2

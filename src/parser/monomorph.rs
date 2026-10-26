@@ -322,6 +322,21 @@ impl Parser {
         }
         for v in 0..tmpl_vars.count() {
             let tmpl_tp = tmpl_vars.tp(v).clone();
+            // loft#2156 — a vector backing's wrapper row: the rows the template baked for it
+            // (`OpDatabase(__vdb, main_vector<K>)`) name the placeholder's layout.  The
+            // instance's own table already holds the wrapper `fill_monomorph_body` re-derived
+            // (`Self::instance_vector_wrapper`), at the same variable number.
+            if let Type::Reference(stale_w, _) = tmpl_tp.base()
+                && let Type::Reference(fresh_w, _) =
+                    self.data.definitions[d_nr as usize].variables.tp(v).base()
+                && stale_w != fresh_w
+                && self.data.def(*stale_w).name().starts_with("main_vector<")
+            {
+                let stale = i32::from(self.data.def(*stale_w).known_type());
+                let fresh = i32::from(self.data.def(*fresh_w).known_type());
+                note(&mut rows, stale, fresh);
+                continue;
+            }
             let over_a_variable = bindings
                 .iter()
                 .any(|(h, _)| self.data.type_mentions(&tmpl_tp, *h));
@@ -880,6 +895,58 @@ impl Parser {
     /// result.
     pub(super) fn substitute_all(tp: Type, bindings: &[(u32, Type)]) -> Type {
         tp.substitute_all(bindings)
+    }
+
+    /// loft#2156 — a vector backing's wrapper type at this instance's bindings.
+    ///
+    /// The template mints a vector local's backing (`__vdb_N`) as `ref(main_vector<E>)`, a
+    /// NAMED wrapper struct whose only field is `vector<E>`.  A reference to that struct does
+    /// not mention the type variable — only its field does — so substitution walks past it
+    /// and the instance kept `main_vector<K>`: its backing was built with the placeholder's
+    /// zero-size element, and a deep copy of it (`OpCopyRecord` through that row) copied
+    /// `length * 0` bytes.  `sort_by` answered a scrambled vector wherever the store swap
+    /// that hides the copy is declined.  The wrapper is a function of its element, so the
+    /// instance's wrapper is the one over the substituted element (@FR-G-Mono).
+    ///
+    /// `None` for every other type, and for a wrapper over a concrete element.
+    pub(super) fn instance_vector_wrapper(
+        &mut self,
+        tp: &Type,
+        bindings: &[(u32, Type)],
+    ) -> Option<Type> {
+        let Type::Reference(w, deps) = tp.base() else {
+            return None;
+        };
+        if self.first_pass
+            || !matches!(self.data.def_type(*w), DefType::Struct)
+            || !self.data.def(*w).name().starts_with("main_vector<")
+        {
+            return None;
+        }
+        let Some(Type::Vector(elem, _)) = self
+            .data
+            .def(*w)
+            .attributes()
+            .first()
+            .map(|a| a.typedef.base())
+        else {
+            return None;
+        };
+        if !bindings
+            .iter()
+            .any(|(h, _)| self.data.type_mentions(elem, *h))
+        {
+            return None;
+        }
+        let elem = Self::substitute_all((**elem).clone(), bindings);
+        let fresh = self.data.vector_def(&mut self.lexer, &elem);
+        self.vector_wrapper_known_type(fresh);
+        let fresh = Type::Reference(fresh, deps.clone());
+        // A nullable backing stays nullable.
+        Some(match tp {
+            Type::Optional(_) => Type::Optional(Box::new(fresh)),
+            _ => fresh,
+        })
     }
 
     /// `[T ↦ C]` over one type — @FR-G-Mono's *"applied throughout"*, for the signature

@@ -18,7 +18,7 @@ fn emit(tag: &str, lean: bool, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     if lean {
-        cmd.arg("--native-release");
+        cmd.arg("--ship");
     }
     cmd.arg("--native-emit")
         .arg(&out)

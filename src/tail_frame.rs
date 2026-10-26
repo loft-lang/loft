@@ -2,13 +2,25 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I64 — Bytecode compiler (IR to bytecode): which self-calls sit in tail position, and whether a frame can be reused by a jump
 
-//! `@FR-R-TailSelf`'s analysis: the tail self-calls of a body and whether its frame can be
-//! reused by a jump.  Here, in the front layer, because the parser asks it for its refusal
-//! (@C155, on the source shape) and `opt::tail_self` for the rewrite (on the lowered one).
+//! `@FR-R-TailSelf`'s PREDICATE — the one answer to "does this function call itself in tail
+//! position, and can its frame be reused by a jump?" — asked twice: by the parser, which
+//! REFUSES a frame it cannot reuse (@C155, `definitions.rs`, on the source shape), and by the
+//! rewrite (`opt::tail_self`, on the lowered shape), so that what compiles is exactly what
+//! jumps.  It reads both shapes: a `return`'s value, an `if` arm's or a block's value in that
+//! position, the last statement of a void body, and the value written to a DELIVERY PLACE — a
+//! compiler temporary (`__ret_N`, the join's `__ref_p2_N` and `___ret_join_N`, the hidden
+//! `&text` buffer `___acc_N`) before the releases and the `return` of it.  Here, below the
+//! parser in the crate's layers, because the parser may not name the optimiser.
 
 use crate::data::{Data, Definition, Type, Value, is_scalar};
 use crate::lexer::Position;
 use crate::variables::Function;
+
+/// `LOFT_NO_TAIL_SELF=1` switches the whole rule off — the jump AND the parser's refusal — so a
+/// tail-recursive program can be bisected as the plain call.
+pub(crate) fn off() -> bool {
+    crate::env_once!(std::env::var("LOFT_NO_TAIL_SELF").is_ok_and(|v| v != "0"))
+}
 
 /// The declared parameters, as variable numbers: the definition's attributes that are not
 /// hidden, in order.  A hidden attribute is a buffer a lowering added after the signature (a
@@ -25,11 +37,13 @@ pub(crate) fn declared_params(def: &Definition) -> Vec<u16> {
 
 /// Can this frame be reused by a jump?  The one predicate for the parser's refusal (@C155,
 /// `definitions.rs`, on the source shape) and for this pass (on the lowered one): a result
-/// that is a scalar or nothing; no `&` local; every argument a tail self-call hands to a
-/// parameter held in a store, or to a `&` parameter, is a pointer the frame does not own (a
-/// parameter or a projection of one); no generator, `parallel` block or closure in the body.
-/// A local may be held in a store — the jump releases it.  `params` is `declared_params`'
-/// list.  `Err` names what blocks it, with the variable and its type, for the refusal's text.
+/// that is a scalar, nothing, a text or a store-held value (the kinds the scope pass delivers
+/// through a temporary or a buffer); no `&` local; every argument a tail self-call hands to a
+/// parameter held in a store is a pointer the frame does not own (a parameter or a projection
+/// of one), a text or `&` parameter only itself; no parameter rebound in the body; no
+/// generator, `parallel` block or closure in the body.  A local may be held in a store — the
+/// jump releases it.  `params` is `declared_params`' list.  `Err` names what blocks it, with
+/// the variable and its type, for the refusal's text.
 pub(crate) fn admit_frame(
     vars: &Function,
     result: &Type,
@@ -38,14 +52,19 @@ pub(crate) fn admit_frame(
     params: &[u16],
     d: u32,
 ) -> Result<(), String> {
-    if !(is_scalar(result) || matches!(result.base(), Type::Void | Type::Null)) {
+    let delivered = is_scalar(result)
+        || matches!(result.base(), Type::Void | Type::Null | Type::Text(_))
+        || crate::data::is_dbref(result.base());
+    if !delivered {
         return Err(format!(
-            "its result is a `{}`, which is delivered into the caller's buffer, not a scalar",
+            "its result is a `{}`, which the jump cannot yet deliver",
             result.source_name(data)
         ));
     }
+    // A `&` LOCAL has no raw pointer move; the hidden `&text` buffer of a text result is an
+    // argument (hidden, so not a declared parameter) and the delivery place, not a local.
     for v in 0..vars.count() {
-        if matches!(vars.tp(v).base(), Type::RefVar(_)) && !params.contains(&v) {
+        if matches!(vars.tp(v).base(), Type::RefVar(_)) && !vars.is_argument(v) {
             return Err(format!("local `{}` is a `&` reference", vars.name(v)));
         }
     }
@@ -119,7 +138,7 @@ pub(crate) fn admit_frame(
 /// scope pass marks a rebindable parameter with `OpFreeRefIfDistinct(p, witness)`.  A field
 /// write (`OpSetInt(p, …)`) is a mutation through the pointer, which `(F-ParamGrow)` allows,
 /// and is not one of these.
-pub(crate) fn writes_variable(code: &Value, v: u16, data: &Data) -> bool {
+fn writes_variable(code: &Value, v: u16, data: &Data) -> bool {
     code.any_node(&mut |n| match n {
         Value::Set(x, _) => *x == v,
         Value::Call(op, items) if !items.is_empty() => {
@@ -141,7 +160,7 @@ pub(crate) fn writes_variable(code: &Value, v: u16, data: &Data) -> bool {
 /// element, a reference read) rooted at one?  Anything else — a call's result, a literal, an
 /// operator's result, a local — is a value the frame makes or releases, which a call never
 /// hands over into the callee's ownership either.
-pub(crate) fn borrows_from_params(arg: &Value, params: &[u16], data: &Data) -> bool {
+fn borrows_from_params(arg: &Value, params: &[u16], data: &Data) -> bool {
     match arg.unspan() {
         Value::Var(q) => params.contains(q),
         Value::Call(op, items) if !items.is_empty() => {
@@ -153,15 +172,23 @@ pub(crate) fn borrows_from_params(arg: &Value, params: &[u16], data: &Data) -> b
     }
 }
 
-/// Is `v` a release the scope pass emits at a scope's end — a free, a clear, a closure drop?
+/// Is `v` a release the scope pass emits at a scope's end — a free, a clear, a closure drop —
+/// or one it guards (`if OpDistinctStore(…) OpFreeRefIfDistinct(…) else null`, the return
+/// buffer's witness test)?
 pub(crate) fn is_release(data: &Data, v: &Value) -> bool {
-    matches!(v.unspan(), Value::Call(op, _) if {
-        let name = data.def(*op).name();
-        name.starts_with("OpFree") || name.starts_with("OpClear") || name == "OpDropFnRef"
-    })
+    match v.unspan() {
+        Value::Call(op, _) => {
+            let name = data.def(*op).name();
+            name.starts_with("OpFree") || name.starts_with("OpClear") || name == "OpDropFnRef"
+        }
+        Value::If(_, a, b) => {
+            is_release(data, a) && (matches!(b.unspan(), Value::Null) || is_release(data, b))
+        }
+        _ => false,
+    }
 }
 
-pub(crate) fn is_line(v: &Value) -> bool {
+fn is_line(v: &Value) -> bool {
     matches!(v.unspan(), Value::Line(_))
 }
 
@@ -170,22 +197,87 @@ pub(crate) fn last_value(ops: &[Value]) -> Option<usize> {
     ops.iter().rposition(|op| !is_line(op))
 }
 
-/// The scope pass's return shape: `ops[k]` is `__ret_N = E`, then releases (and line markers)
-/// only, then at `ops[j]` `return __ret_N` — or, for a block in value position, `__ret_N` as
-/// the block's last operator.  Answers `(k, j)`; `E` is then in value position with those
-/// releases as the epilogue a jump must run.
-pub(crate) fn ret_pattern(
+/// Is `x` a place the scope pass DELIVERS the result through: a compiler temporary — `__ret_N`,
+/// `__ret_tail_N`, the join's `___ret_join_N` and `__ref_p2_N`, the hidden `&text` buffer
+/// `___acc_N` / `___tret_N` — which is any variable whose name the compiler minted (`__…`)?  A
+/// user local promoted to the buffer keeps its own name, so `t = f(…); t` stays the bound
+/// spelling that keeps a call, whatever the result's type.
+fn is_delivery_place(x: u16, vars: &Function) -> bool {
+    x < vars.count() && vars.name(x).starts_with("__")
+}
+
+/// The scope pass's delivery shape in a block: the terminal at `ops[j]` — `return x`, or in
+/// value position (`in_value`) the bare `x` the block answers, which is the same shape before
+/// the scope pass wraps the body's tail in its `return` (a generic instance is asked at its
+/// instantiation, before that) — `x` a delivery place, preceded by releases (and line markers)
+/// only, preceded at `ops[m]` by the statement that WRITES `x` — `x = E` itself, or an `if`
+/// whose arms write it.  Every `x = E` in that statement puts `E` in value position, with those
+/// releases as the epilogue a jump must run.  Answers `(m, j, x)`.
+pub(crate) fn delivery(
     ops: &[Value],
     vars: &Function,
     data: &Data,
     in_value: bool,
-) -> Option<(usize, usize)> {
+) -> Option<(usize, usize, u16)> {
+    let j = last_value(ops)?;
+    let e = match ops[j].unspan() {
+        Value::Return(e) => e.unspan(),
+        bare @ Value::Var(_) if in_value => bare,
+        _ => return None,
+    };
+    let Value::Var(x) = e else {
+        return None;
+    };
+    if !is_delivery_place(*x, vars) {
+        return None;
+    }
+    let mut m = j;
+    while m > 0 && (is_release(data, &ops[m - 1]) || is_line(&ops[m - 1])) {
+        m -= 1;
+    }
+    if m == 0 {
+        return None;
+    }
+    let m = m - 1;
+    writes_place(&ops[m], *x).then_some((m, j, *x))
+}
+
+/// The join lowering delivers in two steps — `tmp = E; x = tmp`, `tmp` a compiler
+/// temporary: at `ops[i]` the first step whose second follows at the next operator (line
+/// markers aside), so `E` is in value position.  Answers `(i, tmp)`.
+pub(crate) fn two_step(ops: &[Value], i: usize, x: u16, vars: &Function) -> Option<u16> {
+    let Value::Set(tmp, _) = ops[i].unspan() else {
+        return None;
+    };
+    if *tmp == x || !is_delivery_place(*tmp, vars) {
+        return None;
+    }
+    let next = ops[i + 1..].iter().find(|op| !is_line(op))?;
+    matches!(next.unspan(), Value::Set(y, e) if *y == x && matches!(e.unspan(), Value::Var(z) if z == tmp))
+        .then_some(*tmp)
+}
+
+/// Does statement `v` write `x` — itself, or through an `if` arm or a block it holds?
+pub(crate) fn writes_place(v: &Value, x: u16) -> bool {
+    match v.unspan() {
+        Value::Set(y, _) => *y == x,
+        Value::If(_, a, b) => writes_place(a, x) || writes_place(b, x),
+        Value::Block(bl) => bl.operators.iter().any(|op| writes_place(op, x)),
+        _ => false,
+    }
+}
+
+/// The scope pass's return shape inside a block in VALUE position: `ops[k]` is `__ret_N = E`
+/// (or the join's `__ref_p2_N = E`), then releases (and line markers) only, then that
+/// temporary as the block's last operator.  `E` is then in value position with those releases
+/// as the epilogue.  Answers `(k, j)`.
+pub(crate) fn ret_pattern(ops: &[Value], vars: &Function, data: &Data) -> Option<(usize, usize)> {
     let last = last_value(ops);
     for (k, op) in ops.iter().enumerate() {
         let Value::Set(r, _) = op.unspan() else {
             continue;
         };
-        if !vars.name(*r).starts_with("__ret_") {
+        if !is_delivery_place(*r, vars) {
             continue;
         }
         let mut j = k + 1;
@@ -195,12 +287,8 @@ pub(crate) fn ret_pattern(
         if j >= ops.len() {
             return None;
         }
-        match ops[j].unspan() {
-            Value::Return(e) if matches!(e.unspan(), Value::Var(x) if x == r) => {
-                return Some((k, j));
-            }
-            Value::Var(x) if x == r && in_value && Some(j) == last => return Some((k, j)),
-            _ => {}
+        if matches!(ops[j].unspan(), Value::Var(x) if x == r) && Some(j) == last {
+            return Some((k, j));
         }
     }
     None
@@ -223,48 +311,99 @@ pub(crate) struct TailCall {
 /// Every self-call in tail position of `code` (a function's body).  The gate for the pass and
 /// for the parser's refusal, so it reads both the source shape and the lowered one: a
 /// `return`'s value, an `if` arm's or a block's value in that position, the last statement of
-/// a void body, the `__ret_N` pattern, and the value assigned to a hidden `&` result buffer (a
-/// heap result's delivery, which the parser lowers before this is asked).
+/// a void body, and the value written to a delivery place (`__ret_N`, the hidden text buffer)
+/// before the releases and the `return` of it.
 pub(crate) fn tail_calls(code: &Value, d: u32, vars: &Function, data: &Data) -> Vec<TailCall> {
     let f = Finder { d, vars, data };
     let mut out = Vec::new();
-    f.block(code.unspan(), true, None, &mut out);
+    f.body(code.unspan(), &mut out);
     out
 }
 
-pub(crate) struct Finder<'a> {
+struct Finder<'a> {
     d: u32,
     vars: &'a Function,
     data: &'a Data,
 }
 
 impl Finder<'_> {
+    /// A function's body: a block, or the `Insert` the join lowering splices around one
+    /// (`___ret_join_N = null` before the block).
+    fn body(&self, v: &Value, out: &mut Vec<TailCall>) {
+        match v.unspan() {
+            Value::Block(b) => self.ops(&b.operators, true, None, out),
+            Value::Insert(items) => self.ops(items, true, None, out),
+            _ => {}
+        }
+    }
+
     /// `in_value`: the block's last value is a tail (a result or a void body's last statement).
     fn block(&self, v: &Value, in_value: bool, at: Option<Position>, out: &mut Vec<TailCall>) {
-        let Value::Block(b) = v.unspan() else {
-            return;
-        };
-        let ops = &b.operators;
+        if let Value::Block(b) = v.unspan() {
+            self.ops(&b.operators, in_value, at, out);
+        }
+    }
+
+    fn ops(&self, ops: &[Value], in_value: bool, at: Option<Position>, out: &mut Vec<TailCall>) {
         let last = last_value(ops);
-        let pat = ret_pattern(ops, self.vars, self.data, in_value);
+        let deliver = delivery(ops, self.vars, self.data, in_value);
+        let pat = if in_value && deliver.is_none() {
+            ret_pattern(ops, self.vars, self.data)
+        } else {
+            None
+        };
         let vtail = if in_value {
             void_tail(ops, self.data)
         } else {
             None
         };
         for (i, op) in ops.iter().enumerate() {
-            if let Some((k, _)) = pat
+            if let Some((m, _, x)) = deliver
+                && i == m
+            {
+                self.deliver(op, x, at, out);
+            } else if deliver.is_some_and(|(_, j, _)| j == i) {
+                // The delivery's own `return x`, no tail of its own.
+            } else if let Some((k, _)) = pat
                 && i == k
                 && let Value::Set(_, e) = op.unspan()
             {
                 self.value(e, at, out);
             } else if pat.is_some_and(|(_, j)| j == i) {
-                // The pattern's own `return __ret_N`, no tail of its own.
+                // The pattern's own `__ret_N`, no tail of its own.
             } else if in_value && (Some(i) == last || Some(i) == vtail) {
                 self.value(op, at, out);
             } else {
                 self.statement(op, at, out);
             }
+        }
+    }
+
+    /// The statement that writes the delivery place `x`: every `x = E` puts `E` in value
+    /// position.
+    fn deliver(&self, v: &Value, x: u16, at: Option<Position>, out: &mut Vec<TailCall>) {
+        match v {
+            Value::Span(bx) => self.deliver(&bx.1, x, Some(bx.0), out),
+            Value::Set(y, e) if *y == x => self.value(e, at, out),
+            Value::If(_, a, b) => {
+                self.deliver(a, x, at, out);
+                self.deliver(b, x, at, out);
+            }
+            Value::Block(bl) => {
+                let ops = &bl.operators;
+                for (i, op) in ops.iter().enumerate() {
+                    if two_step(ops, i, x, self.vars).is_some()
+                        && let Value::Set(_, e) = op.unspan()
+                    {
+                        self.value(e, at, out);
+                    } else if writes_place(op, x) {
+                        self.deliver(op, x, at, out);
+                    } else {
+                        self.statement(op, at, out);
+                    }
+                }
+            }
+            other => self.statement(other, at, out),
         }
     }
 
@@ -290,18 +429,6 @@ impl Finder<'_> {
             Value::Span(bx) => self.statement(&bx.1, Some(bx.0), out),
             Value::Return(e) => self.value(e, at, out),
             Value::Block(_) => self.block(v, false, at, out),
-            // A heap result is delivered into the compiler's hidden `&` buffer: `___acc = f(…)`
-            // is the tail call of a text-returning function, which the parser lowers this way.
-            // A user local promoted to the buffer keeps its own name, and `t = f(…); t` is the
-            // bound spelling that keeps a call, whatever the result's type.
-            Value::Set(x, e)
-                if *x < self.vars.count()
-                    && self.vars.is_argument(*x)
-                    && self.vars.name(*x).starts_with("__")
-                    && matches!(self.vars.tp(*x).base(), Type::RefVar(_)) =>
-            {
-                self.value(e, at, out);
-            }
             other => other.for_each_child(&mut |c| self.statement(c, at, out)),
         }
     }

@@ -9,7 +9,7 @@
 // `LOFT_NO_CLEAR_RELEASE=1` (the pre-fix pure length reset) this same shape crosses a
 // 64 MiB store-heap ceiling on the interpreter ("store memory limit reached — 46.2
 // MiB in use ... main_vector<Heavy>"), and passes with the release on; RSS on
-// `--native-release` goes 60/134/310/848 MB at n=400/800/1600/3200 without it and a
+// `--ship` goes 60/134/310/848 MB at n=400/800/1600/3200 without it and a
 // flat 12-13 MB with it.  tests/clear_release.rs runs BOTH halves, so the guard
 // proves the leak is closed AND that it can still see it.
 

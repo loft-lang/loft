@@ -116,7 +116,7 @@ that is parsed against again after compiling is marked `Data::open_world` and ke
 records.  That covers the REPL, the debugger (which runs through it), live reload, the
 browser debugger panel and a host that calls functions by name.  A warm-cache start also
 keeps records, because it reads bodies from the cached store.  So does a COMPILED build that
-ships the live tier (`--native` and `--native-wasm` without `--lean` / `--native-release`,
+ships the live tier (`--native` and `--native-wasm` without `--lean` / `--ship`,
 `--html --debug`): its runtime bootstraps an interpreter by parsing the program again, and a
 function flipped to it must keep the signature the compiled code calls.  Rewriting a by-value
 record parameter into a tuple took that function out of the live tier's dispatch table —

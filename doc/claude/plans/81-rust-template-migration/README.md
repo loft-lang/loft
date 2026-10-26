@@ -4,7 +4,7 @@
 was opened. When filed (2026-05-02), `#rust"..."` looked like a redundant second emission path to
 delete (migrate all ~200 stdlib sites to hand-written `OpEmitter`s, then retire
 `output_call_template` + `Value::RawExpr`). Since then `#rust` **inline** became a first-class,
-*recommended* library-authoring mechanism — the loft-ship **Tier-1** path ("prefer `#rust` inline
+*recommended* library-authoring mechanism — the loft-library **Tier-1** path ("prefer `#rust` inline
 over `#native` external whenever the Rust is small"), ✓ across all four targets in
 [PACKAGES.md](../../PACKAGES.md). So it's a **kept public feature**, not debt: deleting the template
 path would break the documented `#rust` inline library route, and this doc's own "cost" section

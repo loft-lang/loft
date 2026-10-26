@@ -6,7 +6,7 @@ element field it is copied to.
 
     C6-nested-literal-hand-patch.py in.rs out.rs
 
-`in.rs` is a `loft --native-release --native-emit` emission.  The shape replaced is
+`in.rs` is a `loft --ship --native-emit` emission.  The shape replaced is
 
     let _pre_N = { //Object_M: ref(T)["__ref_p2_K"]
       var___ref_p2_K = OpDatabaseNP(cell,var___ref_p2_K, TP_i32);

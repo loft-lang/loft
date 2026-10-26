@@ -207,7 +207,7 @@ fn the_switch_restores_the_checked_form_everywhere() {
 #[test]
 fn the_values_hold_on_both_backends_in_both_switch_states_and_under_verify() {
     run_ok(&["--interpret"], &[]);
-    run_ok(&["--native-release"], &[]);
+    run_ok(&["--ship"], &[]);
     run_ok(&["--native"], &[("LOFT_NO_BOUNDED_NEST", "1")]);
     run_ok(&["--native"], &[("LOFT_NO_NEST_RAW_READS", "1")]);
     run_ok(

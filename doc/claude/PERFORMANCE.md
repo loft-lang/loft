@@ -269,20 +269,20 @@ of its runs, so those positions have no single `Data` to resolve against).
 ### Attributing a bench ROW — `--names` on the native build (@PLN158)
 
 `perf` names `n_<yours>` only while the function still exists as a symbol.  A shipped
-build (`--native-release`) is lean and fully optimised, and rustc INLINES a small routine
+build (`--ship`) is lean and fully optimised, and rustc INLINES a small routine
 into the loop that calls it — a bench lane's `main` — so `perf annotate` shows the lane's
 float math with no way to say which row's it is.  Two rows of the consumer lane
 (`mesh_aabb`, `enum_match`) were measured unattributable that way (`round-3.md`), and the
 whole record class sat behind them.
 
-`loft --native-release --names` is the instrument: every generated loft function carries
+`loft --ship --names` is the instrument: every generated loft function carries
 `#[inline(never)]` (loft#954's attribute, which the browser build uses so a trap's frames
 resolve), so each row has a symbol and `perf` attributes its samples to it.  A MEASUREMENT
 build, never one that ships — the attribute costs exactly the inlining it names.  The
 recipe, on one core:
 
 ```bash
-loft --native-release --names --native-emit /tmp/lane.rs bench/16_consumer_shapes/bench.loft
+loft --ship --names --native-emit /tmp/lane.rs bench/16_consumer_shapes/bench.loft
 bench/portal/hand_price.sh /tmp/lane.rs /tmp/lane          # the shipped flags
 perf record -F 15000 -e cycles:u -o /tmp/lane.data -- taskset -c 0 /tmp/lane --n 200
 perf report -i /tmp/lane.data --stdio --sort symbol | grep n_c_mesh_aabb   # the row's share
@@ -484,8 +484,8 @@ The generator writes a probe into the emitted Rust at the one call/op chokepoint
 `file:line`. Two tiers:
 
 ```bash
-LOFT_NATIVE_CHECKPOINTS=count loft --native-release p.loft   # counts; every target
-LOFT_NATIVE_CHECKPOINTS=time  loft --native-release p.loft   # counts + inclusive ticks
+LOFT_NATIVE_CHECKPOINTS=count loft --ship p.loft   # counts; every target
+LOFT_NATIVE_CHECKPOINTS=time  loft --ship p.loft   # counts + inclusive ticks
 ```
 
 The report prints the hot operator sites and then a **by-function rollup**, which is
@@ -541,8 +541,8 @@ whose enclosing loft function or source file contains `<filter>`, so a second pa
 subsystem costs a fraction of the first pass over everything:
 
 ```bash
-LOFT_NATIVE_CHECKPOINTS=time:raster_segment loft --native-release p.loft   # one function
-LOFT_NATIVE_CHECKPOINTS=count:brush.loft    loft --native-release p.loft   # one module
+LOFT_NATIVE_CHECKPOINTS=time:raster_segment loft --ship p.loft   # one function
+LOFT_NATIVE_CHECKPOINTS=count:brush.loft    loft --ship p.loft   # one module
 ```
 
 Measured on `lock_curved`: **1155 sites → 126**, and the run drops from 4.98 s to 3.32 s
@@ -751,7 +751,7 @@ it to price a codegen change before writing it in `src/generation/`
 (`bench/portal/hand_price.sh` wraps it).
 
 Time the binary the release ships: bare `--native` is the semantics build, about 10× slower in
-wall-clock on runtime-heavy work than `--native-release`, and that gap is not a codegen
+wall-clock on runtime-heavy work than `--ship`, and that gap is not a codegen
 question.
 
 ---
@@ -880,7 +880,7 @@ comprehensions, P2's native half and its interpreter half (formal/rewrites.md `(
 and the startup cache.
 
 The two measurement notes that invalidate naïve numbers: `loft --native` compiles a
-SEMANTICS build — measure what ships with `--native-release` or a performance lane (CLAUDE.md
+SEMANTICS build — measure what ships with `--ship` or a performance lane (CLAUDE.md
 § Conventions, three optimisation tiers); and a warm run of a binary copied out of `target/`
 has the program cache on (`LOFT_NO_CACHE=1` for an exact before/after).
 

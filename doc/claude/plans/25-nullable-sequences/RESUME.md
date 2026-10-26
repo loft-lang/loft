@@ -129,7 +129,7 @@ back `null` on both; a `u8?` local holds 255 on both). And **flow-narrowing work
 > - **Registry republish gates multiplayer(v2/v3/v5) + viewer_markdown** — the `web-0.2.1` (`web.loft:206
 >   ws_client_recv_native → return null`) and `server-0.2.0` (`server.loft:180`) registry libs still
 >   `return null` into `-> text`. The in-tree web *fixture* is migrated but the REGISTRY copies need the
->   `text?` migration + a **touch-gated republish** (loft-ship; canonical home loft-libs-net) — USER-GATED.
+>   `text?` migration + a **touch-gated republish** (loft-library; canonical home loft-libs-net) — USER-GATED.
 >   The in-tree `game_protocol` example server (`tictactoe_server_v2.loft`) also needs the `text?` sweep,
 >   but fixing it alone won't green multiplayer (server-0.2.0 still rejects).
 > - **Environmental**: `html_asyncify` (chrome timeout + a stale GL cdylib), `error_messages::38_import_unknown`

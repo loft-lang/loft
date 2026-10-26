@@ -88,7 +88,7 @@ loft --native --native-debug --native-emit out.rs program.loft
 `--native-debug`:
 - passes `-Cdebuginfo=2 -g` to rustc,
 - omits `-O` (debug builds; opt level 0) — combine with
-  `--native-release` if you want optimised + debug-info,
+  `--ship` if you want optimised + debug-info,
 - preserves the `/tmp/loft_native.rs` (or `--native-emit` target) on
   disk so the DWARF's source-line entries point at a real file,
 - emits a `.loft.map` sidecar next to the binary (NDB.1 consumes this;
@@ -98,7 +98,7 @@ loft --native --native-debug --native-emit out.rs program.loft
 
 `src/main.rs` already builds the rustc command.  Two new flags:
 - `native_debug: bool` — push `-Cdebuginfo=2`, drop `-O` unless
-  `--native-release` was also passed.
+  `--ship` was also passed.
 - Always emit the `.loft.map` (negligible cost; LSP.3's DAP server
   consumes it from the same location).
 
@@ -339,7 +339,7 @@ Post-process the rustc output ELF (or Mach-O / PE):
   source-line entry can correspond to multiple loft lines after
   inlining.  Mitigation: emit DWARF inline subroutine info that maps
   the inlined call site to the loft caller.
-- **Optimised builds.**  `--native-release` + `--native-debug` produces
+- **Optimised builds.**  `--ship` + `--native-debug` produces
   DWARF where source-line ordering is non-monotonic (the optimiser
   reorders code).  GDB handles this fine in stock Rust binaries; the
   rewrite preserves line ordering by entry not by file order, so it
@@ -451,7 +451,7 @@ Build checklist (per § NDB.0 design above):
 - When flag is set:
   - Push `-Cdebuginfo=2 -g` to the rustc invocation.
   - Drop `-O` (debug builds; opt level 0) UNLESS
-    `--native-release` is also set.
+    `--ship` is also set.
   - Preserve `/tmp/loft_native_<pid>.rs` (per-process tmp) on
     disk so DWARF's `.debug_line` table points at a real file.
     Today's behaviour deletes it after compilation.
@@ -482,7 +482,7 @@ Quality gates (before ship):
   then `--native-debug` produces two distinct cached binaries.
 - **Performance penalty acceptable** — debug build runs
   noticeably slower than release.  Document trade-off in `--help`.
-- **`--native-release` flag** — optional sibling combining
+- **`--ship` flag** — optional sibling combining
   `-Cdebuginfo=2` (debug symbols) WITH `-O` (optimisation).
   Useful for production debugging.  May land in NDB.0 or
   defer to NDB.1 (decide at impl time).

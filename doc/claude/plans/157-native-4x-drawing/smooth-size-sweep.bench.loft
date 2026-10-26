@@ -5,7 +5,7 @@
 // hash of what it produced.
 //
 //     loft bench/bench.loft [--n N]                     the interpreter
-//     loft --native-release bench/bench.loft [--n N]    compiled
+//     loft --ship bench/bench.loft [--n N]    compiled
 //     python3 bench/compare.py                          all three lanes, joined
 //
 // One tab-separated line per routine: name, iterations, total µs, ns per op, output

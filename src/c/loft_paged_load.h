@@ -16,6 +16,7 @@
 /* Stores::refuse_paged: a refusal, which reads as 0 like an absent key, said on stderr. */
 static void loft_pg_refuse(const char *path, const char *reason) {
     fprintf(stderr, "store loader: refusing %s — %s; loaded NOTHING (a refusal, not an absent key)\n", path, reason);
+    loft_pg_record(path, reason);
 }
 
 /* What every loader does before it reads (layout_gate_ok, PageSource::open, the store's
@@ -330,13 +331,13 @@ static int64_t loft_pg_load_prefix(const loft_tdesc *T, loft_ref local, loft_str
 
 /* store_load_box (Stores::load_box): every entry of a spatial index inside the closed box between
  * two corners, the walk capped at `limit`; the count loaded. */
-static int64_t loft_pg_load_box(const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
-                                const char *refusal, uint16_t content, const loft_key *keys, int nk, loft_ref from,
-                                loft_ref till, int64_t limit, const char *type_name) {
+static int64_t loft_pg_load_box_kv(const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
+                                   const char *refusal, uint16_t content, const loft_key *keys, int nk,
+                                   const loft_kv *f, int64_t nf, const loft_kv *t, int64_t nt, int64_t limit,
+                                   const char *type_name) {
     loft_pg r;
-    int64_t loaded = 0, nf, nt;
+    int64_t loaded = 0;
     if (!loft_pg_begin(&r, local, path, sc, refusal)) return 0;
-    loft_kv *f = loft_pg_key_list(from, 0, &nf), *t = loft_pg_key_list(till, 0, &nt);
     if (nf < nk || nt < nk) {
         char why[256];
         snprintf(why, sizeof why,
@@ -364,9 +365,18 @@ static int64_t loft_pg_load_box(const loft_tdesc *T, loft_ref local, loft_str pa
             free(found.p);
         }
     }
+    loft_pg_close(&r);
+    return loaded;
+}
+
+static int64_t loft_pg_load_box(const loft_tdesc *T, loft_ref local, loft_str path, const loft_sidecar *sc,
+                                const char *refusal, uint16_t content, const loft_key *keys, int nk, loft_ref from,
+                                loft_ref till, int64_t limit, const char *type_name) {
+    int64_t nf, nt;
+    loft_kv *f = loft_pg_key_list(from, 0, &nf), *t = loft_pg_key_list(till, 0, &nt);
+    int64_t loaded = loft_pg_load_box_kv(T, local, path, sc, refusal, content, keys, nk, f, nf, t, nt, limit, type_name);
     free(f);
     free(t);
-    loft_pg_close(&r);
     return loaded;
 }
 

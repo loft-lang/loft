@@ -1461,7 +1461,7 @@ jobs:
             ${{ runner.os }}-cargo-
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
-      # `make index` runs `target/release/loft --native-release` (it exits 1
+      # `make index` runs `target/release/loft --ship` (it exits 1
       # with "host loft binary missing" otherwise), and that native compile
       # links `target/release/libloft.rlib` — so build BOTH the binary and the
       # canonical lib.  This job previously relied on a CACHED binary and so

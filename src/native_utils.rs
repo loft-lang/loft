@@ -1917,6 +1917,19 @@ pub(crate) fn link_by_flag(static_link: bool) {
     LINK_BY_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// `--ship` — a shipped program links its native libraries INTO itself unless a flag or the
+/// program's `#link` directive named a mode: one file, and a library function called directly
+/// rather than through a bound slot and `__tls_get_addr` (NATIVE.md § Optimisation tiers).  Called after
+/// [`apply_link_directive`], so it ranks below both.
+pub(crate) fn link_static_unless_named() {
+    let _ = LINK.compare_exchange(
+        LINK_UNSET,
+        LINK_STATIC,
+        std::sync::atomic::Ordering::Relaxed,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 /// The link mode a program's header names — `#link static` or `#link dynamic` among the
 /// directives before its first declaration — applied unless a flag named one.  Read from the
 /// SOURCE, before any parse: the native fast path runs a cached binary without parsing, and

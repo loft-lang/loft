@@ -6712,11 +6712,14 @@ impl Parser {
     /// a `const` field is refused, and the IR is the two statements' own.  `dest` is the
     /// variable the literal is bound to when it is the whole right-hand side (the update then
     /// IS the assignment: `Value::Insert`, `Type::Rewritten`), else a work reference the
-    /// value is answered from.  `..base` is the last entry; the base is a `S`, not absent;
-    /// a variant is not updated this way (its tag would need checking against the base's).
+    /// value is answered from.  `..base` is the last entry; the base is a `S`, not absent.
+    /// A VARIANT literal updates the same way when the base's static type IS that variant
+    /// (loft-lang/plans#202 P2b): the copy carries the tag, so no runtime check is made or
+    /// wanted — a base typed as the ENUM is refused, naming the checked cast
+    /// (`..(n as V)` inside `if n is V`) that names the variant statically.
     #[expect(
         clippy::too_many_lines,
-        reason = "one road: the destination, the named fields as assignments, the base and its three refusals, the bind"
+        reason = "one road: the destination, the named fields as assignments, the base and its four refusals, the bind"
     )]
     fn parse_object_update(
         &mut self,
@@ -6730,15 +6733,14 @@ impl Parser {
         let work_p2 = self.vars.work_ref_p2();
         self.lexer.token("{");
         let name = self.data.def(td_nr).name().to_string();
-        let ret = self.data.def(td_nr).returned().clone();
-        if self.data.def_type(td_nr) != DefType::Struct {
+        let variant = self.data.def_type(td_nr) == DefType::EnumValue;
+        if !variant && self.data.def_type(td_nr) != DefType::Struct {
             if !self.first_pass {
                 self.lexer.pos_diagnostic(
                     Level::Error,
                     literal_pos,
                     &format!(
-                        "`..base` completes a struct literal, and `{name}` is a variant — \
-                         `match` on the base and build the variant from its fields"
+                        "`..base` completes a struct or variant literal, and `{name}` is neither"
                     ),
                 );
             }
@@ -6746,6 +6748,13 @@ impl Parser {
             *code = Value::Null;
             return Type::Never;
         }
+        // A variant's `returned()` is its ENUM; the update's value is the variant itself, as
+        // the literal's is — the base must be one and the result is one.
+        let ret = if variant {
+            Type::Reference(td_nr, crate::data::Deps::none())
+        } else {
+            self.data.def(td_nr).returned().clone()
+        };
         self.data.set_referenced(td_nr, self.context, Value::Null);
         let (dest, fresh) = match dest {
             Some(v) => (v, false),
@@ -6844,6 +6853,11 @@ impl Parser {
         // assignment's words instead of these.
         let is_same = matches!(base_tp.base(), Type::Reference(d, _) if *d == td_nr);
         let absent = is_same && matches!(base_tp, Type::Optional(_));
+        // A variant literal over a base typed as its ENUM: which variant the base holds is a
+        // runtime fact, and the update makes no runtime check (loft-lang/plans#202 P2b) — the
+        // cure names the variant statically, through the checked cast.
+        let enum_base = variant
+            && matches!(base_tp.base(), Type::Enum(e, true, _) if *e == self.data.def(td_nr).parent());
         let judged = !matches!(base_tp.base(), Type::Never | Type::Unknown(_));
         if judged && (absent || !is_same) {
             if absent && !self.first_pass {
@@ -6856,12 +6870,32 @@ impl Parser {
                         base_tp.source_name(&self.data)
                     ),
                 );
-            } else if !absent && !self.first_pass {
+            } else if enum_base && !self.first_pass {
+                // The cure must compile where it is named (P8's lesson): a generic enum's
+                // variant has no static type — `as V` resolves the bare name to the TEMPLATE's
+                // variant, which no instance's value is — so there the cure is the `match`.
+                // Erring toward the `match` is safe: it compiles for every enum.
+                let cure = if self.data.is_template_part(self.data.def_nr(&name)) {
+                    format!("`match` on it and build `{name}` from its fields")
+                } else {
+                    format!("name the variant: `..(base as {name})` inside `if base is {name}`")
+                };
                 self.lexer.pos_diagnostic(
                     Level::Error,
                     &base_pos,
                     &format!(
-                        "the base after `..` must be a `{name}`, the literal's own type — got {}",
+                        "the base after `..` is a `{}`, which may hold any of its variants — \
+                         {cure}",
+                        base_tp.source_name(&self.data)
+                    ),
+                );
+            } else if !absent && !self.first_pass {
+                let kind = if variant { "variant" } else { "type" };
+                self.lexer.pos_diagnostic(
+                    Level::Error,
+                    &base_pos,
+                    &format!(
+                        "the base after `..` must be a `{name}`, the literal's own {kind} — got {}",
                         base_tp.source_name(&self.data)
                     ),
                 );
@@ -6886,21 +6920,64 @@ impl Parser {
         // that IS the destination (`d = S { f: e, ..d }`) binds nothing, as `d = d;` emits
         // nothing: the named fields are written over the record `d` already holds.
         let mut ops = Vec::new();
+        // The copy OWNS (`(B-Copy)`), whatever shape the base has.  A bare variable binds
+        // directly: a plain bind of a whole value copies.  A base that is a VIEW of some
+        // place — a projection, a checked cast of one, a value branch over them; its type
+        // carries the deps of the place it reads — is first bound to a work reference that
+        // KEEPS those deps (a view, which the scope pass never frees), and the destination is
+        // then bound from that variable: the bare-variable copy again.  Bound from the view
+        // directly, the destination was typed as an owner over a value only some shapes of
+        // which the bind lowering copies (a field read, an element read): a value branch or
+        // a cast of a projection stayed the place itself, so the named fields wrote through
+        // to the base and the scope's free of the "copy" freed the base's record.
+        let (base, base_tp) =
+            if !matches!(base.unspan(), Value::Var(_)) && !base_tp.depend().is_empty() {
+                // A plain `Set`, not an assignment: the assignment path may itself copy a value
+                // branch, and this local is to hold the place, not a record of its own.
+                let view = self.vars.work_refs_p2(&base_tp, &mut self.lexer);
+                self.vars.defined(view);
+                ops.push(v_set(view, base));
+                (Value::Var(view), base_tp)
+            } else {
+                (base, base_tp)
+            };
         if !matches!(base.unspan(), Value::Var(v) if *v == dest) {
             // The statement that holds this update records the write of `dest` (its own
             // `Set`); the bind inside it is that same write, not one before it, so the
             // dead-store lint's record of it is undone — left standing, the statement's
             // write read as overwriting it.
             let writes_before = self.vars.save_and_clear_write_state();
+            // …and the bind's target was never parsed as an expression, so it has no counted
+            // mention for the assignment path to take back: left as it does, the take-back
+            // removed a REAL read of the destination before the statement (`w = U { … };
+            // assert(w.hp …); w = U { hp: 5, ..u }` reported the first write dead).
+            let mentions_before = self.vars.save_mentions(dest);
+            // The statement reports a dead earlier write once; the bind asked the same
+            // question first and reported it twice.  Nothing else is written inside the bind
+            // (its value is already parsed), and the state is put back below.
+            if !fresh {
+                self.vars.clear_write_state();
+            }
             let mut bind = Value::Var(dest);
             // The copy OWNS (`(B-Copy)`): the base's type as read carries the borrow of the
             // place it was read from, and a destination typed from that is a view the scope
             // pass never frees — a temporary built this way leaked its record.
             self.preset_rhs = Some((base, base_tp.without_deps()));
+            // The bind is into the destination's OWN type: a variant update bound to a
+            // destination declared as the enum (`m: Node = Bin { …, ..n }`) is the `(C-Var)`
+            // widening `m = n` is, and the named fields are then written with the variant's
+            // layout, which the copy made the destination hold.
+            // An `Optional` destination keeps the variant's type, as it did (@FR-N-Shape spelled).
+            let bind_tp = match self.vars.tp(dest).base() {
+                Type::Enum(..) if variant && !matches!(self.vars.tp(dest), Type::Optional(_)) => {
+                    self.vars.tp(dest).clone()
+                }
+                _ => ret.clone(),
+            };
             self.parse_assign_op(
                 &mut bind,
                 "=",
-                &ret,
+                &bind_tp,
                 &Value::Var(dest),
                 Type::Null,
                 dest,
@@ -6909,6 +6986,7 @@ impl Parser {
             self.preset_rhs = None;
             if !fresh {
                 self.vars.restore_write_state(&writes_before);
+                self.vars.restore_mentions(dest, mentions_before);
             }
             ops.push(bind);
         }
@@ -7543,7 +7621,18 @@ impl Parser {
                 // was skipped above; a genuinely `Optional` enum field is `Optional(Enum)`
                 // here (not `Enum`), so it null-fills correctly through `to_default` below.
                 // This is the `S{}` half of the one `has_default` rule `x?` enforces.
-                if let Type::Enum(e, _, _) = &tp
+                // `@FR-D-Json`: a `JsonValue` field is the one enum with a stated zero — `JNull`,
+                // JSON's own absence, the first variant — so an omitted one takes it.
+                // The nullability question spelled: an `Optional` JsonValue stays null.
+                if !matches!(tp, Type::Optional(_))
+                    && let Type::Enum(e, _, _) = tp.base()
+                    && self.data.def(*e).name == "JsonValue"
+                {
+                    // Built as the literal `JNull` is: a record of the variant (`EnumUnitLit`),
+                    // copied into the field.
+                    let e = *e;
+                    self.emit_variant_value(e, "JNull", &mut default);
+                } else if let Type::Enum(e, _, _) = &tp
                     && !self.data.def(*e).name.starts_with("__")
                     && !self.first_pass
                 {
@@ -7560,7 +7649,9 @@ impl Parser {
                 // tests/scripts/06-structs.loft locks this).  Pointer
                 // fields take the sentinel branch above: a pointer's zero
                 // value IS null.
-                default = to_default(&tp, &self.data);
+                if default == Value::Null {
+                    default = to_default(&tp, &self.data);
+                }
             } else if matches!(&default, Value::Block(b) if b.name == "EnumUnitLit") {
                 // @PLN22 Phase 1 — a mixed struct-enum unit-variant default
                 // (`mode: Mode = Idle`) is a SELF-CONTAINED allocation block whose

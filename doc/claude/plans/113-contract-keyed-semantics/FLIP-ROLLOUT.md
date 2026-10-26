@@ -109,7 +109,7 @@ Remaining, all release-gated: cut the flip release → merge these three → ver
    than running it).
 2. Un-draft the PR, run the lib's **parity gate** (`--interpret` == `--native` == wasm where claimed;
    the multi-byte test each PR added), merge.
-3. **Touch-sign + publish** via the loft-ship skill — **re-sign `index.json`** (skipping the re-sign
+3. **Touch-sign + publish** via the loft-library skill — **re-sign `index.json`** (skipping the re-sign
    breaks *all* installs; that is the publish foot-gun).
 4. **Verify survival** before moving on: new loft installs + runs the flipped lib; **old loft
    hard-rejects it** with `requires loft >=<flip release> but interpreter is 2026.7.1` (never runs it

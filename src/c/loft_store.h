@@ -157,6 +157,8 @@ typedef struct {
     uint16_t known;
     int pinned;
     int protect;
+    /* `Store::read_only` set by the author's `#lock = true` (`@FR-H-WriteLocked`). */
+    int read_only;
     uint64_t serial;
     loft_bits claims, referenced, removed, lazy_free, parked_set;
     uint32_t parked_heads[LOFT_PARK_MAX_WORDS + 1];
@@ -171,6 +173,10 @@ typedef struct {
      * elements of the root collection; while any lives, a clear does not reset the store and
      * no exchange takes its content. */
     uint32_t *placed, nplaced, placed_cap;
+    /* `Stores::frame_held` (`@FR-G-Arg-Rebind`): the live generator frames holding this store
+     * as an argument, and whether its owner released it while they did. */
+    uint32_t frame_holds;
+    int orphaned;
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */
@@ -862,9 +868,19 @@ static uint32_t loft_st_claim_inner(loft_store_t *s, uint32_t size) {
     return loft_claim_scan(s, size);
 }
 
+/* `@FR-H-WriteLocked`: a write that reached a locked store (loft_rt.h).  The allocator compiled
+ * on its own (without `loft_cc.h`, as its c_emit harness compiles it) has no locks. */
+#ifdef LOFT_CC_H
+static void loft_locked_write(void);
+#define LOFT_WRITE_CHECK(s) do { if (LOFT_UNLIKELY((s)->read_only)) loft_locked_write(); } while (0)
+#else
+#define LOFT_WRITE_CHECK(s) ((void) (s))
+#endif
+
 /* `Store::claim`: a record of `size` words, its header written; the payload holds whatever the
  * block held (`@FR-H-Claim`). */
 static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
+    LOFT_WRITE_CHECK(s);
     uint32_t pos = loft_st_claim_inner(s, size);
     LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
 #ifdef LOFT_POISON_CLAIM
@@ -954,6 +970,7 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
 /* `Store::resize`: `rec` grown to `size` words, in place when the next block allows, else
  * moved (the new position answered). */
 static uint32_t loft_st_resize(loft_store_t *s, uint32_t rec, uint32_t size) {
+    LOFT_WRITE_CHECK(s);
     uint32_t nw = loft_st_resize_inner(s, rec, size);
     return nw;
 }
@@ -963,6 +980,7 @@ static uint32_t loft_st_resize(loft_store_t *s, uint32_t rec, uint32_t size) {
 /* `Store::init`: one free block spanning the store, which is its wilderness. */
 static void loft_st_init(loft_store_t *s) {
     uint32_t sig = LOFT_ST_SIGNATURE, one = 1;
+    s->read_only = 0;
     memcpy(s->buf, &sig, 4);
     memcpy(s->buf + 4, &one, 4);
     loft_set_free_header(s, LOFT_ST_PRIMARY, (int32_t) s->size - 1);
@@ -1105,6 +1123,43 @@ static loft_usage loft_st_usage(const loft_store_t *s) {
     }
     u.walk_complete = pos == s->size;
     return u;
+}
+
+/* `Store::shrink_to` (a heap store): the buffer cut to `words`, never under the end of the last
+ * claimed block nor the two-word floor, and the free space left above it re-tiled as one block
+ * ending the store, the free tree rebuilt (`retile_tail`).  0 when it did not shrink. */
+static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
+    if (s->read_only) return 0;
+    loft_flush_parked(s);
+    loft_usage u = loft_st_usage(s);
+    if (!u.walk_complete) return 0;
+    uint32_t mark = u.live_end_words;
+    if (words < mark) return 0;
+    if (words < LOFT_ST_PRIMARY + 1) words = LOFT_ST_PRIMARY + 1;
+    if (words >= s->size) return 0;
+    uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) words * 8);
+    if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+    s->buf = b;
+    s->size = words;
+    uint32_t tail = mark > LOFT_ST_PRIMARY ? mark : LOFT_ST_PRIMARY;
+    if (tail < s->size) loft_set_free_header(s, tail, (int32_t) (s->size - tail));
+    loft_fl_rebuild(s);
+    return 1;
+}
+
+/* `Store::reclaim_tail`: parked blocks flushed and the free blocks merged, lazy frees off for
+ * good, and the tail given back down to the live end plus an eighth of slack (`slack_target`);
+ * the words it shrank by. */
+static uint32_t loft_st_reclaim_tail(loft_store_t *s) {
+    loft_flush_parked(s);
+    if (s->needs_coalesce) loft_coalesce_free(s);
+    s->lazy = 0;
+    s->dead_words = 0;
+    loft_bits_clear(&s->lazy_free);
+    uint32_t before = s->size;
+    uint32_t mark = loft_st_usage(s).live_end_words;
+    uint32_t target = mark + mark / 8 < mark ? UINT32_MAX : mark + mark / 8;
+    return loft_st_shrink_to(s, target) ? before - s->size : 0;
 }
 
 /* `Store::claim_at`: the record at exactly `pos`, `size` words, carved out of the free blocks

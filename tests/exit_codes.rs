@@ -1987,3 +1987,74 @@ fn a_copied_binary_runs_on_its_embedded_stdlib() {
     );
     let _ = fa::remove_dir_all(&tmp);
 }
+
+/// `--ship` builds the program as it ships, on whichever compiled target the run names, and
+/// is refused where nothing is built — each refusal names why and exits 2, so a script that
+/// asked for a shipped artefact never gets a run (or nothing) in its place.  The shipped
+/// host binary answers what the interpreter answers.  `--native-release`, the name it
+/// replaced, is an unknown option.
+#[test]
+fn ship_builds_the_program_and_is_refused_where_nothing_is_built() {
+    let dir = std::env::temp_dir().join(format!("loft_ship_cli_{}", std::process::id()));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let prog = dir.join("p.loft");
+    fa::write(
+        &prog,
+        "fn main() {\n  t = 0;\n  for x in 0..1000 { t = (t * 31 + x) % 1000003; }\n  println(\"{t}\");\n}\n",
+    )
+    .expect("write program");
+    let run = |args: &[&str]| {
+        loft::platform::process::harness_command(loft_bin())
+            .args(args)
+            .arg(&prog)
+            .current_dir(workspace_root())
+            .env("LOFT_TIMEOUT", "600")
+            .output()
+            .expect("invoke loft")
+    };
+    let shipped = run(&["--ship"]);
+    assert!(
+        shipped.status.success(),
+        "--ship failed: {}",
+        String::from_utf8_lossy(&shipped.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&shipped.stdout),
+        "729977\n",
+        "--ship"
+    );
+    let c_out = dir.join("p.c");
+    let c_out = c_out.to_string_lossy();
+    for (args, why) in [
+        (
+            vec!["--ship", "--interpret"],
+            "--interpret runs the program without building it",
+        ),
+        (
+            vec!["--interpret", "--ship"],
+            "--interpret runs the program without building it",
+        ),
+        (
+            vec!["--ship", "--emit-c", c_out.as_ref()],
+            "--emit-c writes C source only",
+        ),
+        (vec!["--ship", "--tests"], "tests run on the checked build"),
+        (
+            vec!["--ship", "--debug"],
+            "a shipped page has no debug channel",
+        ),
+    ] {
+        let out = run(&args);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(stderr.contains(why), "{args:?} names why: {stderr}");
+    }
+    let old = run(&["--native-release"]);
+    assert_eq!(old.status.code(), Some(1), "--native-release is unknown");
+    assert!(
+        String::from_utf8_lossy(&old.stdout).contains("unknown option: --native-release"),
+        "{}",
+        String::from_utf8_lossy(&old.stdout)
+    );
+    let _ = fa::remove_dir_all(&dir);
+}

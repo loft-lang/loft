@@ -1085,7 +1085,8 @@ pub(crate) fn surely_present_fns(
                     sp: &sp,
                 };
                 let body = data.def(*d).code();
-                let mut present = surely_present(body, &c, &mut HashSet::new());
+                let mut present =
+                    frame_loop_tail(body) || surely_present(body, &c, &mut HashSet::new());
                 // A block that returns the buffer it filled is judged as the block; its own
                 // `return` reads that buffer, which is bound by no assignment.
                 let mut own_returns: HashSet<usize> = HashSet::new();
@@ -1117,6 +1118,13 @@ pub(crate) fn surely_present_fns(
         }
         sp = keep;
     }
+}
+
+/// Is the body's tail `@FR-R-TailSelf`'s frame loop?  It falls through nowhere: the
+/// function's values are the `return`s inside it, which the callers ask one by one, as
+/// `Definition::return_sites` and the non-sentinel reader read such a body.
+fn frame_loop_tail(body: &Value) -> bool {
+    matches!(body.tail().unspan(), Value::Loop(_))
 }
 
 /// Does every RESULT position of `d_nr`'s body carry a value leaf ([`value_shape`]), and
@@ -1151,7 +1159,7 @@ pub(crate) fn value_body(
     // dense leaf of a `-> S?` body is the shorter tuple until the emitter appends the presence
     // word ([`widen_marks`]).
     let key = admitted.get(&d_nr).copied();
-    if !key.is_some_and(|k| fits(body, &c, k)) {
+    if !key.is_some_and(|k| frame_loop_tail(body) || fits(body, &c, k)) {
         return Some("the tail is not a value leaf");
     }
     // An `Object` that returns the record it builds is the leaf; its own `return`, the

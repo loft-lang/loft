@@ -114,7 +114,7 @@ name.  Three consequences worth stating:
   definition in IR, bytecode and native — byte-identical to a hand-monomorphised twin once
   the callee names are normalised (`tests/introspect_dispatch.rs`).  No runtime table exists
   for such a site — and so an overload nothing calls is unreachable and absent from the
-  shipped artifact (`--native-release` emits only reachable functions; the semantics lane
+  shipped artifact (`--ship` emits only reachable functions; the semantics lane
   keeps every tier by design), the slim-artifact property step 12 pins in the same file.
 
 **Disp-Specific** *(amended — the abstract position is the ENUM, not an interface).*  The

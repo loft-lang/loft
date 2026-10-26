@@ -332,6 +332,13 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 projection is Borrowed(base), a call resolves through the callee's return
                 summary.  It does NOT read `deps` — the two are INDEPENDENT derivations of
                 the same question.  A chokepoint reads the oracle rather than re-deriving.
+                A variable's class joins every DEFINITION it has, in both spellings: a
+                `Set` (a copy, for a whole record) and a pointer write (`OpPutRef(v, e)`,
+                which gives `v` the store `e` names and copies nothing) — so a parameter
+                `(R-TailSelf)` rebinds at its jump is one of several caller stores, as the
+                swapped argument of the call it replaced made it.  A function's return
+                sites are its `return`s and its body's tail; a `Loop` in tail position is
+                no value and contributes none.
   (O-Proxy)     an EMPTY `deps` list is a cheap PROXY for "this binding owns its store",
                 and it is UNSOUND ALONE: a borrow whose dep list was never populated also
                 reads empty, so the proxy answers "owner" for a borrower.  A site that

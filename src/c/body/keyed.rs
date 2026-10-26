@@ -11,7 +11,9 @@ use super::{
 };
 use crate::c::{CType, Keyed};
 use crate::data::Value;
+use crate::database::Parts;
 use crate::keys::Key;
+use std::fmt::Write as _;
 
 /// The C description of key parts: a `loft_key` array literal.
 fn key_array(keys: &[Key]) -> String {
@@ -152,30 +154,96 @@ impl FnWriter<'_> {
         rec: &str,
         members: &[(u16, u16)],
     ) -> Result<E, String> {
-        let mut rows = Vec::new();
-        for &(pos, tp) in members {
-            let (kind, _, _) = self.keyed_of(tp)?;
-            let (keys, n) = self.cx.keys_of(tp);
-            let kind = match kind {
-                Keyed::Array => "LOFT_M_ARRAY",
-                Keyed::Hash => "LOFT_M_HASH",
-                Keyed::Index => "LOFT_M_INDEX",
-                Keyed::Ordered => "LOFT_M_ORDERED",
-                Keyed::Sorted => return Err("a sorted member of a linked group".into()),
-                Keyed::Spatial | Keyed::Trie => {
-                    return Err("a tree member of a linked group".into());
-                }
-            };
-            rows.push(format!("{{ {pos}, {kind}, {keys}, {n} }}"));
-        }
+        let (rows, n) = self.cx.member_rows(members)?;
+        let (elem, held, nullable) = self.cx.group_release(members)?;
         Ok(E::new(
             format!(
-                "loft_group_finish({parent}, {rec}, (const loft_member[]){{ {} }}, {})",
-                rows.join(", "),
-                rows.len()
+                "loft_group_finish(loft_types, {elem}, {held}, {nullable}, {parent}, {rec}, {rows}, {n})"
             ),
             K::Void,
         ))
+    }
+
+    /// The operators that keep a linked group one record set (`@FR-Col-Group`): a record the
+    /// vector member holds handed to the other members after an element write
+    /// (`OpLinkRecord`), and a whole vector indexed into one view member (`OpIndexGroup`).
+    fn group_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        match (name, args) {
+            ("OpLinkRecord", [data, rec, ptp, fld]) => {
+                let ptp = u16::try_from(Self::literal(ptp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let fld = u16::try_from(Self::literal(fld, "field")?)
+                    .map_err(|_| "a field number out of range".to_string())?;
+                self.group_parent_plain(ptp)?;
+                let siblings = self.cx.group_siblings(ptp, fld);
+                let (data, rec) = self.two(name, &[data.clone(), rec.clone()], ind)?;
+                if siblings.is_empty() {
+                    return Ok(Some(E::new("(void) 0", K::Void)));
+                }
+                let (rows, n) = self.cx.member_rows(&siblings)?;
+                let stores = self.cx.stores;
+                let mut all = siblings.clone();
+                all.push((stores.field_position(ptp, fld), stores.field_type(ptp, fld)));
+                let (elem, held, nullable) = self.cx.group_release(&all)?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_group_finish(loft_types, {elem}, {held}, {nullable}, {}, {}, {rows}, {n})",
+                        as_ref(data)?,
+                        as_ref(rec)?
+                    ),
+                    K::Void,
+                )))
+            }
+            ("OpIndexGroup", [primary, _view, tp, ptp, fld]) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let ptp = u16::try_from(Self::literal(ptp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let fld = u16::try_from(Self::literal(fld, "field")?)
+                    .map_err(|_| "a field number out of range".to_string())?;
+                self.group_parent_plain(ptp)?;
+                let stores = self.cx.stores;
+                let prim = stores.field_position(ptp, fld);
+                let members = self.cx.group_siblings(ptp, fld);
+                let Some(&(vpos, _)) = members.iter().find(|(_, t)| *t == tp) else {
+                    return Err("a group view that is no member of the group".into());
+                };
+                let keyed: Vec<(u16, u16)> = members
+                    .iter()
+                    .copied()
+                    .filter(|&(_, t)| !matches!(self.keyed_of(t), Ok((Keyed::Array, _, _))))
+                    .collect();
+                let view = self.cx.member_row(vpos, tp)?;
+                let (rows, n) = self.cx.member_rows(&keyed)?;
+                let (_, _, nullable) = self.cx.group_release(&members)?;
+                let primary = self.expr(primary, ind)?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_index_group({}, {prim}, {nullable}, (const loft_member[]){{ {view} }}, {rows}, {n})",
+                        as_ref(primary)?
+                    ),
+                    K::Void,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// A group whose parent is a `__nullable<S>` payload reads its members through the
+    /// variant (`Stores::nullable_field_parent`), which the C does not carry yet.
+    fn group_parent_plain(&self, ptp: u16) -> Result<(), String> {
+        if self.cx.stores.types[ptp as usize]
+            .name
+            .starts_with("__nullable<")
+        {
+            return Err("a linked group inside a nullable record".into());
+        }
+        Ok(())
     }
 
     /// The natives over keyed collections, or `None` for another.
@@ -250,6 +318,105 @@ impl FnWriter<'_> {
         }
     }
 
+    /// The static type of the value whose store `v` names: a variable's, and for a field of a
+    /// record (`OpGetField`) the record's — the field lives in the record's store, whose root
+    /// a whole-store native reads.
+    fn store_value_type(&self, v: &Value) -> Option<crate::data::Type> {
+        match v.unspan() {
+            Value::Call(d, args) if self.cx.data.def(*d).name() == "OpGetField" => {
+                self.store_value_type(args.first()?)
+            }
+            _ => self.value_type(v),
+        }
+    }
+
+    /// `store_load_url(r, url, sha)` and `store_load_url_trusted(r, url)` (`loft_net.h`): the
+    /// gate reads the layout of the store's root type, as `store_load`'s does.
+    fn load_url(
+        &mut self,
+        name: &str,
+        r: &Value,
+        url: &Value,
+        rest: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        // The gate reads the layout of the store's root type, as `store_load`'s does.
+        let tp = self
+            .store_value_type(r)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+            .ok_or("a loaded value whose store type is not known here")?;
+        // A store holding references is re-pointed at its slot by a walk of its type.
+        if self.cx.holds_stored_refs(tp) {
+            self.cx.copy_type(tp)?;
+            self.cx.name_types();
+        }
+        let sc = self.cx.sidecar_of(tp);
+        let mut all = vec![r.clone(), url.clone()];
+        all.extend(rest.iter().cloned());
+        let es = self.args(&all, ind)?;
+        let mut es = es.into_iter();
+        let r = as_ref(es.next().ok_or("a URL load without its value")?)?;
+        let url = as_view(es.next().ok_or("a URL load without its URL")?)?;
+        let sha = match es.next() {
+            Some(e) => format!("{}, ", as_view(e)?),
+            None => String::new(),
+        };
+        let f = if name == "n_store_load_url" {
+            "loft_store_load_url"
+        } else {
+            "loft_store_load_url_trusted"
+        };
+        Ok(E::new(format!("{f}({r}, {url}, {sha}{sc})"), K::Bool))
+    }
+
+    /// The natives of a lazily bound collection (`@PLN129`, `loft_lazy.h`), or `None`.
+    fn lazy_native(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        match (name, args) {
+            ("n_store_bind_lazy", [local, source]) => self.bind_lazy(local, source, ind).map(Some),
+            ("n_store_lazy_error", [local]) => {
+                let r = self.expr(local, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_lazy_error({})", as_ref(r)?),
+                    K::View,
+                )))
+            }
+            ("n_store_lazy_faults", [local]) => {
+                let r = self.expr(local, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_lazy_faults({})", as_ref(r)?),
+                    K::Int,
+                )))
+            }
+            ("n_store_lazy_clear", [local]) => {
+                let r = self.expr(local, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_lazy_clear({})", as_ref(r)?),
+                    K::Bool,
+                )))
+            }
+            ("n_store_lazy_fail", [local, why]) => {
+                let (r, why) = self.two(name, &[local.clone(), why.clone()], ind)?;
+                Ok(Some(E::new(
+                    format!("loft_lazy_fail({}, {})", as_ref(r)?, as_view(why)?),
+                    K::Void,
+                )))
+            }
+            // A database's explicit fetches: a C build has no driver to run them.
+            ("n_store_lazy_query" | "n_store_lazy_range", [local, rest @ ..]) => {
+                let mut all = vec![local.clone()];
+                all.extend(rest.iter().cloned());
+                let mut es = self.args(&all, ind)?.into_iter();
+                let r = as_ref(es.next().ok_or("a lazy fetch without its collection")?)?;
+                let rest: Vec<String> = es.map(|e| format!("(void) ({}), ", e.code)).collect();
+                Ok(Some(E::new(
+                    format!("({}loft_lazy_db_fetch({r}))", rest.concat()),
+                    K::Int,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// The natives over a whole store — its image, its verify, its report — or `None` for
     /// another.
     fn store_native(
@@ -258,12 +425,15 @@ impl FnWriter<'_> {
         args: &[Value],
         ind: usize,
     ) -> Result<Option<E>, String> {
+        if let Some(e) = self.lazy_native(name, args, ind)? {
+            return Ok(Some(e));
+        }
         match (name, args) {
             ("n_store_persist_copy", [r, path]) => {
                 // The image's sidecar is the store's root type's: the value's static type
                 // names it, and the runtime writes nothing for a store minted otherwise.
                 let tp = self
-                    .value_type(r)
+                    .store_value_type(r)
                     .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
                     .ok_or("a persisted value whose store type is not known here")?;
                 // The image is a deep copy of the store's root: a type the copy cannot walk
@@ -281,31 +451,37 @@ impl FnWriter<'_> {
                     K::Bool,
                 )))
             }
-            ("n_store_load", [r, path]) => {
+            ("n_store_load" | "n_store_load_untrusted", [r, path]) => {
                 // The gate reads the layout of the store's root type, the value's static type.
                 let tp = self
-                    .value_type(r)
+                    .store_value_type(r)
                     .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
                     .ok_or("a loaded value whose store type is not known here")?;
+                // A store holding references is re-pointed at its slot by a walk of its type.
                 if self.cx.holds_stored_refs(tp) {
-                    return Err("a loaded store holding references".into());
+                    self.cx.copy_type(tp)?;
+                    self.cx.name_types();
                 }
                 let sc = self.cx.sidecar_of(tp);
                 let (r, path) = self.two(name, &[r.clone(), path.clone()], ind)?;
                 Ok(Some(E::new(
                     format!(
-                        "(uint8_t) loft_image_load({}, {}, {sc})",
+                        "(uint8_t) loft_image_load({}, {}, {sc}, {})",
                         as_ref(r)?,
-                        as_view(path)?
+                        as_view(path)?,
+                        u8::from(name == "n_store_load_untrusted")
                     ),
                     K::Bool,
                 )))
+            }
+            ("n_store_load_url" | "n_store_load_url_trusted", [r, url, rest @ ..]) => {
+                self.load_url(name, r, url, rest, ind).map(Some)
             }
             ("n_store_verify", [r]) => {
                 // The walk reads the store's own type, so every type the value reaches is
                 // described.
                 let tp = self
-                    .value_type(r)
+                    .store_value_type(r)
                     .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
                     .ok_or("a verified value whose store type is not known here")?;
                 self.cx.name_types();
@@ -337,6 +513,88 @@ impl FnWriter<'_> {
         }
     }
 
+    /// `store_bind_lazy(local, source)` (`Stores::bind_lazy`): a kind an image cannot page — any
+    /// but a hash, a trie or a spatial — is refused at the bind (`unservable_kind`); else the
+    /// binding carries a fetch for one key written here from the collection's paged plan, the
+    /// loader a lookup of that kind takes (`fetch_from_file`).
+    fn bind_lazy(&mut self, local: &Value, source: &Value, ind: usize) -> Result<E, String> {
+        use crate::database::Parts;
+        let root = self
+            .store_value_type(local)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+            .filter(|tp| (*tp as usize) < self.cx.stores.types.len())
+            .ok_or("a lazily bound value whose store type is not known here")?;
+        let stores = self.cx.stores;
+        let coll = stores.collection_type_of_store(root);
+        let parts = stores.types.get(coll as usize).map(|t| &t.parts);
+        // A struct wrapping several keyed collections roots no one collection.
+        let element = super::c_string(if coll == u16::MAX {
+            ""
+        } else {
+            stores.element_type_name(coll)
+        });
+        let (unservable, fetch) = match parts {
+            Some(Parts::Hash(..) | Parts::Trie(..) | Parts::Radix(..)) => {
+                let radix = matches!(parts, Some(Parts::Radix(..)));
+                let name = match parts {
+                    Some(Parts::Radix(..)) => "n_store_load_box",
+                    Some(Parts::Trie(..)) => "n_store_load_key_text",
+                    _ => "n_store_load_key",
+                };
+                let plan = self.paged_plan(name, local)?;
+                let k = self.cx.lazy_fetchers.get();
+                self.cx.lazy_fetchers.set(k + 1);
+                let PagedPlan {
+                    sc,
+                    refusal,
+                    content,
+                    keys,
+                    nk,
+                    kind,
+                    coll_name,
+                } = plan;
+                // A point is the degenerate box, and it loads every record at that point.
+                let load = if radix {
+                    format!(
+                        "n > 0 ? loft_pg_load_box_kv(loft_types, coll, path, {sc}, {refusal}, {content}, {keys}, {nk}, key, n, key, n, -1, {coll_name}) : 0"
+                    )
+                } else {
+                    format!(
+                        "n == 1 ? loft_pg_load_keys(loft_types, coll, path, {sc}, {refusal}, {content}, {keys}, {nk}, {kind}, key, 1) : 0"
+                    )
+                };
+                let f = format!("loft_lazy_fetch{k}");
+                let sig = format!(
+                    "static int64_t {f}(loft_ref coll, loft_str path, const loft_kv *key, int n)"
+                );
+                let _ = writeln!(self.cx.gen_decls.borrow_mut(), "{sig};");
+                let _ = writeln!(
+                    self.cx.gen_bodies.borrow_mut(),
+                    "\n{sig} {{\n    return {load};\n}}"
+                );
+                ("0".to_string(), f)
+            }
+            _ => (
+                super::c_string(&format!(
+                    "a lazily-bound `.store` image is read a page at a time, which only a `hash`, a \
+                     `trie` or a `spatial` supports, and `{}` is none of them — read it whole with \
+                     `store_load` (or `store_load_url_trusted` for a URL), which carries every kind",
+                    stores.type_name(root)
+                )),
+                "0".to_string(),
+            ),
+        };
+        let (r, source) = self.two("n_store_bind_lazy", &[local.clone(), source.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_lazy_bind_coll({}, {}, {fetch}, {element}, {unservable})",
+                as_ref(r)?,
+                as_view(source)?
+            ),
+            K::Bool,
+        ))
+    }
+
     /// What a working-set loader can serve, asked of the Rust store once, when the program is
     /// written: the collection the local's store roots (`Stores::collection_type_of_store`;
     /// `load_range` reads the root itself), whether the loader reads that kind, and whether the
@@ -346,7 +604,7 @@ impl FnWriter<'_> {
     fn paged_plan(&mut self, name: &str, local: &Value) -> Result<PagedPlan, String> {
         use crate::database::Parts;
         let root = self
-            .value_type(local)
+            .store_value_type(local)
             .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
             .filter(|tp| (*tp as usize) < self.cx.stores.types.len())
             .ok_or("a loaded value whose store type is not known here")?;
@@ -497,6 +755,9 @@ impl FnWriter<'_> {
         args: &[Value],
         ind: usize,
     ) -> Result<Option<E>, String> {
+        if let Some(e) = self.group_operator(name, args, ind)? {
+            return Ok(Some(e));
+        }
         match (name, args) {
             ("OpGetRecord", [data, tp, _, vals @ ..]) => {
                 self.get_record(data, tp, vals, ind).map(Some)
@@ -590,6 +851,20 @@ impl FnWriter<'_> {
                     K::Void,
                 )))
             }
+            ("OpSizeSpatial" | "OpSizeTrie", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_rx_table_bytes({})", as_ref(r)?),
+                    K::Int,
+                )))
+            }
+            ("OpSizeIndex", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_bt_table_bytes({})", as_ref(r)?),
+                    K::Int,
+                )))
+            }
             ("OpLengthIndex", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(Some(E::new(
@@ -649,6 +924,7 @@ impl FnWriter<'_> {
             // A vector walk: its state is the index; forward, the successor moves into the
             // removed slot, so the index steps back to visit it.
             0 if !self.cx.stores.is_linked(tp) => "loft_vec_walk_remove",
+            0 => "loft_array_walk_remove",
             1 => {
                 let (_, elem, _) = self.keyed_of(tp)?;
                 let (keys, n) = self.cx.keys_of(tp);
@@ -707,8 +983,8 @@ impl FnWriter<'_> {
 
     /// `OpFillKeyed(parent, src, tp, ptp, fld)`: `coll += vector`, each element filed into the
     /// keyed collection at the parent's field (the parent itself for field `u16::MAX`) as a deep
-    /// copy under its own key.  A member of a linked group is refused: its record enters every
-    /// member, which `loft_set_keyed` does not do.
+    /// copy under its own key; in a member of a linked group the copy enters every member
+    /// (`insert_keyed_copy`'s `record_finish`).
     fn fill_keyed(
         &mut self,
         parent: &Value,
@@ -723,9 +999,15 @@ impl FnWriter<'_> {
         let tp = raw & 0x7FFF;
         let (kind, elem, _) = self.keyed_of(tp)?;
         let (place, _, coll) = self.record_collection(parent, ptp, fld, ind)?;
-        if !matches!(coll, Coll::Keyed(_)) {
-            return Err("a fill of a linked group member".into());
-        }
+        let group = match coll {
+            Coll::Keyed(_) => "0".to_string(),
+            Coll::Group(parent, members) => {
+                let (rows, n) = self.cx.member_rows(&members)?;
+                let (_, held, nullable) = self.cx.group_release(&members)?;
+                format!("&(const loft_group){{ {parent}, {rows}, {n}, {held}, {nullable} }}")
+            }
+            Coll::Vector => return Err("a fill of a vector".into()),
+        };
         self.cx.copy_type(elem)?;
         let src = self.expr(src, ind)?;
         let src = as_ref(src)?;
@@ -742,7 +1024,7 @@ impl FnWriter<'_> {
         let linked = i32::from(self.cx.stores.is_linked(elem));
         Ok(E::new(
             format!(
-                "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kind}, {keys}, {nk}, {linked}, {})",
+                "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kind}, {keys}, {nk}, {linked}, {}, {group})",
                 i32::from(raw & 0x8000 != 0)
             ),
             K::Void,
@@ -795,7 +1077,7 @@ impl FnWriter<'_> {
         };
         Ok(E::new(
             format!(
-                "loft_set_keyed(loft_types, {elem}, {coll}, {value}, {kind}, {keys}, {nk}, {kv}, {n}, {})",
+                "loft_set_keyed(loft_types, {elem}, {coll}, {value}, {kind}, {keys}, {nk}, {kv}, {n}, {}, 0)",
                 i32::from(raw & 0x8000 != 0)
             ),
             K::Void,
@@ -832,6 +1114,30 @@ impl FnWriter<'_> {
         let n = values.len();
         let kv = value_array(&values);
         let (keys, nk) = self.cx.keys_of(tp);
+        let find = match kind {
+            Keyed::Hash => format!("loft_h_find({data}, {keys}, {kv}, {n})"),
+            Keyed::Sorted => format!("loft_seq_find({data}, {size}, {keys}, {nk}, {kv}, {n})"),
+            Keyed::Index => format!("loft_ix_find({data}, {keys}, {nk}, {kv}, {n})"),
+            Keyed::Ordered => format!("loft_seq_find({data}, 0, {keys}, {nk}, {kv}, {n})"),
+            Keyed::Spatial | Keyed::Trie => format!(
+                "loft_rx_find({data}, {keys}, {nk}, {}, {kv}, {n})",
+                u8::from(kind == Keyed::Trie)
+            ),
+            Keyed::Array => return Err("a keyed lookup in an array".into()),
+        };
+        // `@PLN129` — a miss on a collection bound to a source fetches the key and looks again
+        // (`State::get_record`); only a unit that binds one asks.
+        if self.cx.lazy.get() {
+            let t = self.temp(CType::Ref);
+            self.line(ind, &format!("{t} = {find};"));
+            self.line(
+                ind,
+                &format!(
+                    "if ({t}.rec == 0 && loft_lazy_bound({data}) && loft_lazy_miss({data}, {kv}, {n})) {t} = {find};"
+                ),
+            );
+            return Ok(E::new(t, K::Ref));
+        }
         Ok(E::new(
             match kind {
                 Keyed::Hash => format!("loft_h_find({data}, {keys}, {kv}, {n})"),
@@ -970,4 +1276,81 @@ struct PagedPlan {
     nk: usize,
     kind: &'static str,
     coll_name: String,
+}
+
+/// The members of a linked group (`@FR-Col-Group`), as the C writes them: a function's group
+/// operators and a parse's record finish read the same rows.
+impl crate::c::Cx<'_> {
+    /// One member of a linked group as a `loft_member` row: its byte position, kind and keys.
+    pub(crate) fn member_row(&self, pos: u16, tp: u16) -> Result<String, String> {
+        let (kind, _) = self
+            .keyed(tp)
+            .ok_or("a linked group member that is not a collection")?;
+        let (keys, n) = self.keys_of(tp);
+        let kind = match kind {
+            Keyed::Array => "LOFT_M_ARRAY",
+            Keyed::Hash => "LOFT_M_HASH",
+            Keyed::Index => "LOFT_M_INDEX",
+            Keyed::Ordered => "LOFT_M_ORDERED",
+            Keyed::Sorted => return Err("a sorted member of a linked group".into()),
+            Keyed::Spatial => "LOFT_M_SPATIAL",
+            Keyed::Trie => "LOFT_M_TRIE",
+        };
+        Ok(format!("{{ {pos}, {kind}, {keys}, {n} }}"))
+    }
+
+    /// The members of `members` as a `loft_member` array literal and its length.
+    pub(crate) fn member_rows(&self, members: &[(u16, u16)]) -> Result<(String, usize), String> {
+        let rows = members
+            .iter()
+            .map(|&(pos, tp)| self.member_row(pos, tp))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((
+            format!("(const loft_member[]){{ {} }}", rows.join(", ")),
+            rows.len(),
+        ))
+    }
+
+    /// The record type of a group's members and whether a vector member holds its records
+    /// (`settle_displaced`'s `held_by_vector`): a displaced record nothing holds is released,
+    /// through the type table — and whether its records are `vector<S?>` elements, whose
+    /// null ones no keyed member files.
+    pub(crate) fn group_release(&self, members: &[(u16, u16)]) -> Result<(u16, i32, i32), String> {
+        let mut held = 0;
+        let mut elem = u16::MAX;
+        let mut nullable = 0;
+        for &(_, tp) in members {
+            let (kind, e) = self
+                .keyed(tp)
+                .ok_or("a linked group member that is not a collection")?;
+            elem = e;
+            held |= i32::from(kind == Keyed::Array);
+            nullable |= i32::from(self.stores.nullable_some_variant(e).is_some());
+        }
+        self.name_types();
+        self.describe_type(elem);
+        Ok((elem, held, nullable))
+    }
+
+    /// The members of field `fld` of struct `ptp`'s linked group beside the field itself, as
+    /// (position, type).
+    pub(crate) fn group_siblings(&self, ptp: u16, fld: u16) -> Vec<(u16, u16)> {
+        let stores = self.stores;
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &stores.types[ptp as usize].parts
+        else {
+            return Vec::new();
+        };
+        fields
+            .get(fld as usize)
+            .map(|f| {
+                f.other_indexes()
+                    .iter()
+                    .copied()
+                    .filter(|m| *m != u16::MAX)
+                    .map(|m| (stores.field_position(ptp, m), stores.field_type(ptp, m)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }

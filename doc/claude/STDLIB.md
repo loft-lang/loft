@@ -322,7 +322,7 @@ for row in rows { cache += Entry { key: row.id, value: row.value }; }
 ```
 
 Filling a million-entry hash rebuilds the table 18 times without it. Measured on
-`--native-release`, 1M `integer` keys (2026-09-21): **240 → ~120 ms**, and the finished
+a `--ship` build, 1M `integer` keys: **240 → ~120 ms**, and the finished
 table is **a third smaller** (11.5 MB → 8.0 MB) — the growth ladder doubles *past* the
 trigger and lands at load 0.35, while a reserved table sits at the 0.5 it asked for. So
 it buys time and memory at once.
@@ -619,6 +619,14 @@ a `.` or an exponent (`1.5`, `1e3`), or one that overflows `i64`, is a **`JNumbe
 `integer` field read a `JInteger` exactly and truncate a `JNumber`; `as_number()`/a
 `float` field read a `JNumber` as-is and widen a `JInteger`. Serialisation is exact
 in both cases. `json_number(x)` always builds a `JNumber` (it takes a `float`).
+
+**A `JsonValue` given no value is `JNull` (`@FR-D-Json`).** A record field of type
+`JsonValue` holds whatever JSON stands at its key — copied into the record's own store —
+and `JNull` when the key is missing or spelled `null`, in both `T.parse(text)` and
+`T.parse(json_parse(text))`; a literal that leaves the field out gives it `JNull` too.  A
+`null` element of a `vector<JsonValue>` is `JNull`.  Declare the field `JsonValue?` to tell
+a missing value apart: it then holds `null` (`info == null`).  Guard:
+`loft-suite/rules/types/D-Json/a-jsonvalue-given-no-value-is-jnull.loft`.
 
 | Function | Description |
 |---|---|

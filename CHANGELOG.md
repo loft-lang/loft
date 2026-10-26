@@ -16,6 +16,17 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**`--ship` builds the program you hand to someone; `--native-release` is gone.**  Write
+`loft --ship prog.loft` where you wrote `--native-release`: the same fully optimised binary,
+now with its native libraries linked into it (add `--dynamic` to keep them beside it).  It
+builds every compiled target the same way — `--ship --native-wasm`, `--ship --html`,
+`--ship --native-android` — where `--native-release` changed only the host binary.  Every
+fault check stays in a shipped build.
+
+**A registry maintainer runs `loft maintain-registry`.**  It is the command `loft ship` was —
+publish every own library newer than the index, fold in the submissions, sign — renamed so it
+is not mistaken for the `--ship` build.  `LOFT_SHIP_SCRIPT` is `LOFT_MAINTAIN_REGISTRY_SCRIPT`.
+
 **A store image is read only beside its `.dschema` sidecar.**  `store_load`,
 `store_load_untrusted`, `store_load_url` and the paged loaders (`store_load_key`, `store_load_box`,
 `store_load_prefix`, …) refuse an image with no sidecar beside it, and over HTTP one whose sidecar
@@ -153,17 +164,20 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 **A self-call in tail position runs to any depth.**  `fn count(n: integer, acc: integer) ->
 integer { if n == 0 { acc } else { count(n - 1, acc + 1) } }` no longer stops at 10 000 frames:
-in a function whose parameters are scalars, a self-call that is the last thing the function
-does becomes a jump to its entry, on both backends; a local held in a store (a text, a vector,
-a record) is released before the jump.  A self-call anywhere else is still a call.
-`LOFT_NO_TAIL_SELF` keeps the calls.  (loft-lang/plans#202)
+a self-call that is the last thing the function does becomes a jump to its entry, on both
+backends, whatever the result — a number, a text, a record, a vector, a generic's — and whatever
+the parameters: a local held in a store (a text, a vector, a record) is released before the jump,
+a vector or record parameter is passed through as the pointer the call shares.  A self-call
+anywhere else is still a call.  `LOFT_NO_TAIL_SELF` keeps the calls.  (loft-lang/plans#202)
 
 **A tail self-call that cannot be a jump is a compile error.**  A function that calls itself
 in tail position handing a store-held parameter a fresh value (`f(n - 1, acc + "x")`) or a
-local, rebinding such a parameter in its body, or returning a text or record, used to compile
-and stop at 10 000 frames; it is now refused at the call, naming the variable and the cure.  A
-parameter passed through (`f(v, i + 1)`, `f(r.next, n)`) jumps like a scalar one.  A self-call
-that is an operand, or bound to a local before it is returned (`r = f(…); r`), is unchanged.
+local, handing a text parameter another text (`swap(n - 1, b, a)` over two texts), or rebinding
+such a parameter in its body, used to compile and stop at 10 000 frames; it is now refused at
+the call — a generic at each instance (`swap<text>` where `swap<S>` jumps) — naming the variable
+and the cure.  A parameter passed through (`f(v, i + 1)`, `f(r.next, n)`) jumps like a scalar
+one.  A self-call that is an operand, or bound to a local before it is returned (`r = f(…); r`),
+is unchanged.
 
 **`[]` and `[x, ..rest]` are a complete match.**  Slice arms that together cover every length
 — an exact arm for each short length, a rest arm from there on, no guards — need no `_`:
@@ -178,8 +192,9 @@ match says where.  `LOFT_NO_SCALAR_HOLE` keeps a deliberate hole quiet.  (loft-l
 **A record with some fields changed, in one expression.**  `d = Unit { hp: 0, ..u }` is a copy
 of `u` with `hp` written — what `d = u; d.hp = 0;` does, so `u` keeps its value, a `text` or
 collection field releases what the copy brought, and a `const` field is refused.  `..base` is the
-last entry; the base must be a `Unit` and present.  A variant is not updated this way: `match` on
-it and build the variant from its fields.  (loft-lang/plans#202)
+last entry; the base must be a `Unit` and present.  A variant updates the same way when the base
+is known to be that variant — `Bin { l: 9, ..b }` with `b` a `Bin`, or `..(n as Bin)` inside
+`if n is Bin`; a base that may hold any variant of its enum is refused.  (loft-lang/plans#202)
 
 **A loop that discharges a null or divides runs faster.**  This is visible only as speed,
 under `--native`.  A `for` loop that changes nothing but its own numbers and booleans first

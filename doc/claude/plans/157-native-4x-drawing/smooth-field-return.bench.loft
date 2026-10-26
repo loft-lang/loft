@@ -1,4 +1,4 @@
-// A CEILING PROBE, not a guard: run it by hand with `loft --native-release`.  It is the
+// A CEILING PROBE, not a guard: run it by hand with `loft --ship`.  It is the
 // @PLN157 § V-ah measurement — the same kernel written twice, so the two rows are the
 // before and after of returning the two floats instead of the record.
 // Ceiling probe for @PLN157: what does `smooth_pts` cost if `ctrl` and `half_chord` return

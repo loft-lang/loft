@@ -14,7 +14,7 @@
 // `LOFT_POISON_CLAIM=1` (every claim filled with 0xDEADBEEF) must answer identically: a
 // byte the copy did not write reads as poison there.
 //
-// @falsify-tier: native-release
+// @falsify-tier: ship
 // @falsified-by: tests/falsified/a-fresh-copy-into-a-minted-slot-needs-no-prefill.patch — native exit 1 -> 0, native panicked -> clean; interpret INERT (expected for a backend-divergence guard — only one side can move)
 //   CHANNEL: the PANIC channel, native only — the patch drops the append copy's FRESH flag
 //   and admits the copy anyway, so the slot is minted without its prefill and the copy

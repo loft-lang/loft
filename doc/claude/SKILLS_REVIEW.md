@@ -88,7 +88,7 @@ row whose skill was deleted.
 | `loft-debug` | 2026-10-16 | `9b38efb1a` |
 | `loft-optimize` | 2026-10-16 | `49e0cad5d` |
 | `loft-plan-workflow` | 2026-10-16 | `21f750017` |
-| `loft-ship` | 2026-10-16 | `46ec215e0` |
+| `loft-library` | 2026-10-16 | `46ec215e0` |
 | `loft-test` | 2026-10-16 | `502a37917` |
 | `loft-write` | 2026-10-16 | `9b38efb1a` |
 | `split-file` | 2026-10-16 | `231a813a9` |
@@ -120,6 +120,6 @@ verified against the tree before being acted on):**
 - **Machine-specific values leak into skills** (a sibling checkout's absolute path, a
   toolchain version pair) — CLAUDE.md's "keep machine-specific values out of shared
   docs" applies to skills with full force.
-- **The small routing skills aged best.** `loft-ship`'s 117-line SKILL.md needed one
+- **The small routing skills aged best.** `loft-library`'s 117-line SKILL.md needed one
   wording fix; the two largest restaters produced most of the findings. When adding
   to a skill, prefer the pointer.

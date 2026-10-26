@@ -365,8 +365,8 @@ function on types, shared with the `S{}` zero value (one home per fact,
   (D-NoRef)    has_default(&τ) = FALSE
                  a bare reference / non-null DbRef has no zero: there is no "the null pointer"
                  in a language whose storage is non-null by default.
-  (D-NoEnumF)  has_default_field(f : E) = FALSE  when E is a BARE (non-optional) enum and f
-               carries no `= expr`.
+  (D-NoEnumF)  has_default_field(f : E) = FALSE  when E is a BARE (non-optional) enum other
+               than `JsonValue` (D-Json) and f carries no `= expr`.
                  An enum's 0 IS its null (variants are 1-based), so a non-null enum field may
                  not silently zero-fill to it; and choosing a variant as a record's default is
                  a real decision the author must make.  Fix by supplying the field, giving it
@@ -378,6 +378,13 @@ function on types, shared with the `S{}` zero value (one home per fact,
                  checked `text as T?` answers null when the text leaves one without a value
                  (omitted, `null`, or a variant the enum lacks, which is listed under
                  `#errors`, @C148).  A declared `= <variant>` fills an omitted field.
+  (D-Json)     construct_default(JsonValue) = JNull, and has_default_field(f : JsonValue) = TRUE.
+                 `JsonValue` is the one enum with a stated zero: JSON's own absence, the value
+                 `json_parse` answers for malformed text and `field` / `item` for a miss.  So a
+                 BARE `JsonValue` that is given no value holds `JNull` — an omitted field of a
+                 literal, a key a parse leaves out or spells `null` (both parse forms), an
+                 element `null` in a `vector<JsonValue>`.  A field declared `JsonValue?` holds
+                 `null` in those cases, by (D-Opt).
 ```
 
 **In words.** Every type either has one obvious zero or it has none, and `x?` is exactly

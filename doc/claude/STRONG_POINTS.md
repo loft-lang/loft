@@ -73,7 +73,7 @@ open is the exact trust-break above.
 | 9 | Embeddable + sandboxable | hosts running player scripts / mods | a script escapes, or its effects can't be rolled back |
 | 10 | Ships and is legible | a newcomer who just discovered loft | they install, hit a library that fights them, and leave |
 | 11 | The method is the moat | contributors who value a project that fixes the class | the rough-spot lists stop shrinking |
-| 12 | Keeps running under fault | game/server authors who can't take a crash-on-fault | a degraded null can be hard to trace to its source |
+| 12 | Keeps running under fault | game/server authors who can't take a crash-on-fault | a degraded null can be hard to trace to its source; a ship build answers a wrapped value where testing never reached |
 | 13 | Layout control with a safety net | performance-conscious devs turned off by "only C++ is valid" | the cache win only shows on `--native`; or layout becomes a mandatory tax, not an optional power |
 
 Read top-down: the turn-offs are roughly in trust-cost order — #1–#5 break the
@@ -396,6 +396,17 @@ halts cleanly at the first logic fault"): loft's promise is **"it won't stop."**
 [DESIGN_DECISIONS.md @C80](DESIGN_DECISIONS.md) and
 [formal/operational.md § E-Uncomp](formal/operational.md).
 
+The guarantee is not a speed tax on the product.  A game is developed against the CHECKED build,
+where every fault answers null as above; what ships is a second build of the same source, the
+libraries recompiled inside it, that drops an overflow, divide-by-zero or cast-range check only at
+the sites the checked runs show never faulted ([plans/201-ship-tier](plans/201-ship-tier/README.md),
+licensed by [DESIGN_DECISIONS.md @C120](DESIGN_DECISIONS.md)).  Memory safety, a null the program
+tests itself, and file and network errors are never dropped, and a published library keeps every
+check.  The release build's speed is
+EARNED per site from the program's own evidence rather than chosen as one policy for the whole
+program.  What is built today is the measurement of that speed (`stats.py --lanes ship`); the
+ledger that licenses a site and the ship build itself are designed.
+
 **Who it wins.** Anyone building something that must **stay up** — and that is not just games.
 A **game** dev iterating on something half-working (one bad mob doesn't freeze the world); a
 **server** author who refuses an outage on one bad request; at the limit a **kernel** where
@@ -408,12 +419,20 @@ pinpointing the bug. The person who loves "keeps running" is the same one who cu
 can't trace. The report covers part of it: with a logger attached, an unguarded divide-by-zero
 or out-of-range read logs one warning line at its site, while an overflow stays silent
 ([formal/operational.md § E-Report](formal/operational.md)).
+The ship build adds a second one: at a site it licensed, a fault the testing never met answers
+the processor's WRAPPED value, not null, so in the shipped game "keeps running" can mean "keeps
+running on a wrong number" exactly where the tests did not go.  How much coverage licenses a site
+(the function ran, or the operator itself ran) is still open, and the cheaper form licenses a
+site in a branch the tests never took.
 
 **Raise it higher.** Close the turn-off with **null provenance** — when the programmer asks, show
 *where* a degraded value first went null, overflow included, so "keeps running" never costs them
 the root cause.
+For the ship build, license a site by the operator's own executions, not its function's, so
+the tier is exactly as safe as the testing's coverage and an untested branch keeps its check.
 *Check:* a deliberate `s/0` deep in a call chain keeps the program running AND, with the debug
-log on, names the originating site.
+log on, names the originating site; and a ship build, run on its ledger's own inputs, answers
+what the checked build answers.
 
 ---
 

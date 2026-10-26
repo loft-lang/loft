@@ -126,14 +126,14 @@ over-optimistic — the push was ~4 ns of the per-call cost, and the remaining
 floor (the `live_flipped` check, the watchdog breadcrumb, the call itself, and
 `smooth`'s sentinel-heavy float body) is P3's, so `smooth`'s bulk moves there.
 Ops note: a stale `target/release/loft` binary beside the rebuilt rlib makes
-`--native-release` fail its LINK with undefined thread-local internals —
+`--ship` fail its LINK with undefined thread-local internals —
 rebuild both (`cargo build --release`), per the known lib-only-rebuild trap.
 
 ---
 
 ## P2 — let the rlib inline (M4)
 
-**Facts.** `--native-release` differs from `--native` by exactly `-O`
+**Facts.** `--ship` differs from `--native` by exactly `-O`
 (`src/main.rs:11040-11042`).  `Cargo.toml` has **no `[profile.release]`**, so
 cargo passes `-Cembed-bitcode=no` and the shipped rlib has no `.llvmbc`
 (verified on the artifact) — `-C lto` is impossible today.  The per-element
@@ -165,7 +165,7 @@ so thin LTO can do it.*
    alternative (RUSTFLAGS) is five Makefile sites plus one Rust site, each a
    silent omission.  Omission *stays loud* anyway: `-C lto=thin` against a
    bitcode-free rlib is a hard rustc error — which is also the upgrade hazard:
-   a stale installed rlib turns every `--native-release` red until rebuilt.
+   a stale installed rlib turns every `--ship` red until rebuilt.
    Mitigation: the existing self-heal path rebuilds through the same profile;
    `make check-rlib` names it.
 
@@ -538,7 +538,7 @@ interpret / native / `LOFT_HOIST_VERIFY`.
 ## Consumer 14-row re-run (2026-09-07, after P4d)
 
 `compare.py --skip-interp` with this tree's binary + auto-built
-`--native-release` cdylibs — so these carry the NAMED prelude, not the
+`--ship` cdylibs — so these carry the NAMED prelude, not the
 `--lean` gate row (`hash` reads 15.8x here vs 5.4x lean; the gap is M1,
 which `--lean` or P2's LTO closes for a consumer).  Every row hashes agree.
 
@@ -564,7 +564,7 @@ shrinking it.
 ## Consumer 14-row re-run (2026-09-08, after § V + § V-c)
 
 Same recipe as the 2026-09-07 run (`compare.py --skip-interp`, this tree's
-binary, auto-built `--native-release` cdylibs from a scratch clone of
+binary, auto-built `--ship` cdylibs from a scratch clone of
 `drawing-lock` — so these carry the NAMED prelude and the cdylib boundary; the
 standalone gate row reads `lock` 5.3× where this lane reads 9.2×).  Every row's
 hash agrees.  The box had just finished a gate (load ~12 falling), so the
@@ -824,7 +824,7 @@ Fixed in this unit: the script accepts `<= 2`, samples `cpu-clock:u` with
 
 The head of § V-e's residual queue, worked in profile order on the same
 standalone `smooth` row (perf, `cpu-clock:u`, 100 000 reps; timings are
-`--native-release` medians of 3 at 4 000 reps).  Every step is
+`--ship` medians of 3 at 4 000 reps).  Every step is
 behaviour-preserving: hash `1a36fee4` exact, every consumer hash agreeing.
 
 **1. The claims set is a bitset** (residual 1).  `Store::claims` was a
@@ -1058,7 +1058,7 @@ the callee's `__retbuf` for a projection-returning callee, which is threaded but
 adopted (not a store today — the labelled log showed none per `ctrl` call — so a
 signature question, not an allocation one).
 
-## The shipped tier — `--native-release` is lean and fully optimised (owner's rule, 2026-09-08)
+## The shipped tier — `--ship` is lean and fully optimised (owner's rule, 2026-09-08)
 
 Not a compiler unit: a flags decision, asked for by the owner as a clear divergence —
 *semantics tests may run unoptimised, performance tests and every built binary run fully
@@ -1080,7 +1080,7 @@ numbers.  Measured on the consumer bench at `--n 50`, two runs each:
 Opt-level 3 alone and `-C target-cpu=native` moved nothing; the runtime rlib rebuilt with
 one codegen unit moved neither `lock` nor `hash` (its hot accessors are `#[inline]`
 already), so the rlib stays on cargo's default profile.  Now the default for
-`--native-release` programs and for every library cdylib (`native_lib.rs`, whose recorded
+`--ship` programs and for every library cdylib (`native_lib.rs`, whose recorded
 rustc arguments had been `-C opt-level=2` with the named prelude); `native_ratio.sh` and
 `run_bench.sh` measure the same tier.  Consumer table after (best of 3, every hash
 agreeing): `hash` **9.1×** (16×), `hair` **2.6×** (3.3×), `smooth` 18.9× (20.8×),
@@ -1245,7 +1245,7 @@ element is its own record and is never skipped — its walk is what frees it.  T
 `debug_assert` pinning the keystone's element count to the length header now admits the
 empty list.
 
-**Measured** (`vr_fronds.loft`, `--native-release`, 4 000 reps, three runs): 902–907k →
+**Measured** (`vr_fronds.loft`, `--ship`, 4 000 reps, three runs): 902–907k →
 **838–840k ns/op (−7 %)**, hash `ebcfd875` on both backends; `LOFT_STORES=warn` clean on
 `--interpret`, `LOFT_NATIVE_LEAK_CHECK=1` clean on `--native`; store and runtime subject
 suites green locally (the codegen suite was killed by memory pressure mid-run and is the
@@ -1890,7 +1890,7 @@ once (before the loop instead of on the first trip; nothing runs between), `till
 per iteration as before.  `Value::Iter`'s init carries the seed as one more `Set` in the
 prelude the slice clamp already uses.
 
-**Measured** (ABAB × 3, Apple lane, `--native-release`, values exact throughout): a bare
+**Measured** (ABAB × 3, Apple lane, `--ship`, values exact throughout): a bare
 loop with a trivial body **0.79 → 0.54 ns/iteration (−32 %)**; a `pil_hline`-shaped
 contiguous fill `d[x] = v` **1.41 → 1.16 ns/write (−18 %)**; the INTERPRETER **−11 %** on
 both probes (the select, the not and the null conversion go, one `Set` comes).  Consumer
@@ -2046,7 +2046,7 @@ and earns no twin, which is (R-Callee) unchanged.
 `kernel.perf_event_paranoid ≤ 2`, which `sudo sysctl -w` sets for the boot).  The recipe:
 a copy of the consumer bench whose `main` prints only `bench_wide_line`
 (`bench/wl_only.loft` in the scratch clone), profiled with `scripts/profile.sh --engine
---calls -- --native-release <absolute path> --n 300000` — the path must be absolute (the
+--calls -- --ship <absolute path> --n 300000` — the path must be absolute (the
 script changes directory) and the iteration count large enough for the program to
 dominate: at `--n 3000` the row is 50 ms and 55 % of the samples are loft's own front end
 hashing the build fingerprint.  Self time: `n_polygon_generic` **62.8 %** (with
@@ -2055,7 +2055,7 @@ hashing the build fingerprint.  Self time: `n_polygon_generic` **62.8 %** (with
 twin declines, c6), `get_vector` + `vec_get_or_raise_runtime` **12.5 %**, `n_round_up` +
 `n_round_down` **3.5 %**.
 
-**The shape.**  The release-tier emission (`--native-release --native-emit`) showed the
+**The shape.**  The release-tier emission (`--ship --native-emit`) showed the
 scanline `while` and the crossing `for i in 0..pg_ec` inside it deriving NO header, while
 the insertion sort and the hline loop beside them hoisted `pg_xx` and `cv.data`.  The
 blocker is one statement: `pg_cur = pg_table[i]?`.  A `?` read of a RECORD element
@@ -2548,7 +2548,7 @@ measurement before any design.
    `LOFT_STRICT_STORES` and `LOFT_NO_VALUE_RECORD`); `tests/value_record.rs` pins which
    of them the emission admits; `scripts/emission_audit.py` clean on the probe.
 
-   *Measured on the probes* (`--native-release`, three runs, hashes exact; the
+   *Measured on the probes* (`--ship`, three runs, hashes exact; the
    two-kernel A form is the shipped `smooth` shape):
 
    | probe form | before | after |
@@ -3084,7 +3084,7 @@ pixel, all of a record the caller's loop had already proved invariant.
 INLINED into the caller's loop (IR cloning, a variable-table merge, tail-return handling,
 the pre-eval map over cloned nodes — § V-o's finding 2 in full), or the parameter's
 invariant fields PASSED across the call.  Both were built by hand in the emitted Rust of
-the bench (`loft --native-release --native-emit`, rebuilt with the exact `rustc` line loft
+the bench (`loft --ship --native-emit`, rebuilt with the exact `rustc` line loft
 runs, captured with `strace`) and timed on the same binary form:
 
 | form | ns/op | vs Rust (101k) |
@@ -3413,7 +3413,7 @@ measured decision for when a judged row shows it.
 ## V-t — a record append emits through the push header (2026-09-11)
 
 **The evidence.**  `smooth` re-profiled on this box (macOS `sample` on the standalone
-probe, `--native-release --native-debug`, 3M reps, 5 267 program samples) after § V-s and
+probe, `--ship --native-debug`, 3M reps, 5 267 program samples) after § V-s and
 the cold-half outlining: the program's own code is 23 %; the k-loop's append
 `sp_out += [pt(…)]` is ~53 % — per element a `record_new` dispatch, a
 `set_default_value_nullable` type walk (356 samples) + `zero_range` (268) over fields the
@@ -3588,7 +3588,7 @@ row.  No switch: a parser lowering, like § V-m's fused push; git is the bisect.
 `fronds` + helpers, noise's `seed_wave`, raster's `Pt`, the bench's four-byte FNV), hash
 `ebcfd875` and 1296 points exactly as the consumer bench prints them, on both backends —
 `vr_fronds.loft` in this session's scratchpad, rebuilt from the consumer's sources by the
-same recipe as `vr_smooth.loft`.  Baseline 0.97–1.06M ns/op at `--native-release`.
+same recipe as `vr_smooth.loft`.  Baseline 0.97–1.06M ns/op at `--ship`.
 
 **The census** (labelled `LOFT_STORES=log`, per call): a `fd_sides` literal per frond, a
 `fd_pts` and a `fd_wid` builder per side, a `FrondSpec` record per sub-array, the

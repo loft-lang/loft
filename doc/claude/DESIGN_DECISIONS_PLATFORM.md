@@ -215,7 +215,7 @@ moves for both backends at once, as @C106 requires.  Decided 2026-08-10 — [rec
 **Decision.** The contract is what a program computes and can observe — values, faults, effect order
 — never representation or copy count.  A rewrite needs only its conditions, validated on the IR, and
 declines otherwise.  A construction escaping the unit keeps the promised representation; which API
-is a boundary is a BUILD fact (`--native-release` compiles its loft libraries into the unit; a
+is a boundary is a BUILD fact (`--ship` compiles its loft libraries into the unit; a
 `#rust` native, live reload, a stored layout and a placed library stay boundaries).  **Why.** What a
 program cannot observe is the compiler's; what it can is the language's (@C120, other side).
 
@@ -248,7 +248,7 @@ boundary by the store format's guard (`tests/layout_golden.rs`).
 
 ## C136 — A routine over 3× its Rust twin is a defect; a class whose median is over 3× is a systemic one
 
-**Decision.** On the reference host, a routine whose `--native-release` time is over 3× its
+**Decision.** On the reference host, a routine whose `--ship` time is over 3× its
 like-for-like Rust twin is a defect.  When its mechanism class's median is at or under 3×, it is
 an ordinary `performance` issue.  When the class median is over 3×, the class is the defect and
 its plan owns the routine.  `bench/stats.py`'s 2× stays the stricter "ok" line of that report and

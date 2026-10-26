@@ -7,7 +7,7 @@
 //! stack of `loft_keyed.h`, which the loop reads by row and pops.  The interpreter's half is
 //! `src/parallel_natives.rs`.
 
-use super::{CType, E, FnWriter, K, as_int, as_ref};
+use super::{CType, E, FnWriter, K, as_int, as_ref, as_shape};
 use crate::c::c_name;
 use crate::data::{Type, Value};
 
@@ -33,6 +33,9 @@ impl FnWriter<'_> {
                 | "n_parallel_discard",
                 [input, esz, _, _, func, rest @ ..],
             ) => self.par_queue(name, input, esz, func, rest, ind).map(Some),
+            ("n_parallel_fold", [input, init, func, threads, rest @ ..]) => self
+                .par_fold(input, init, func, threads, rest, ind)
+                .map(Some),
             ("n_parallel_buf_get", [_]) => get(self, "loft_par_get", K::Int),
             ("n_parallel_buf_get_float", [_]) => get(self, "loft_par_get_float", K::Float),
             ("n_parallel_buf_get_single", [_]) => get(self, "loft_par_get_single", K::Single),
@@ -91,10 +94,19 @@ impl FnWriter<'_> {
         let def = cx.data.def(d);
         let input = self.expr(input, ind)?;
         let input = as_ref(input)?;
+        // Each extra is the worker's next visible parameter, in that parameter's shape: a
+        // captured scalar of any kind crosses.
+        let shapes: Vec<CType> = def
+            .attributes()
+            .iter()
+            .filter(|a| !a.hidden)
+            .skip(1)
+            .map(|a| cx.ctype(&a.typedef).unwrap_or(CType::Int))
+            .collect();
         let mut extra = Vec::new();
-        for x in extras {
+        for (i, x) in extras.iter().enumerate() {
             let e = self.expr(x, ind)?;
-            extra.push(as_int(e)?);
+            extra.push(as_shape(e, shapes.get(i).copied().unwrap_or(CType::Int))?);
         }
         let WorkerCall {
             args: call_args,
@@ -174,6 +186,72 @@ impl FnWriter<'_> {
             },
         ))
     }
+    /// `parallel_fold(input, init, fold, threads)` (`parallel::run_parallel_fold`): the rows
+    /// split into `min(threads, rows)` slices as `par_pool::parallel_workers` splits them, each
+    /// folded from `init`, then the partials folded from `init` in slice order — the answer a
+    /// fold that is no monoid gets on the interpreter too.
+    fn par_fold(
+        &mut self,
+        input: &Value,
+        init: &Value,
+        func: &Value,
+        threads: &Value,
+        rest: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        if rest.iter().any(|x| !matches!(x.unspan(), Value::Int(0))) {
+            return Err("a par fold with extra arguments".into());
+        }
+        let d = u32::try_from(Self::literal(func, "fold")?)
+            .map_err(|_| "a fold out of range".to_string())?;
+        let def = self.cx.data.def(d);
+        if def.attributes().len() != 2 || self.cx.ctype(def.returned()) != Some(CType::Int) {
+            return Err("a par fold whose function is not fold(integer, integer)".into());
+        }
+        let f = c_name(self.cx.data, d);
+        let es = self.args(&[input.clone(), init.clone(), threads.clone()], ind)?;
+        let [input, init, threads] =
+            <[E; 3]>::try_from(es).map_err(|_| "a par fold without its operands".to_string())?;
+        let (input, init, threads) = (as_ref(input)?, as_int(init)?, as_int(threads)?);
+        let r = self.temp(CType::Int);
+        self.line(ind, "{");
+        self.line(
+            ind + 1,
+            &format!("uint64_t loft_n = (uint64_t) loft_vec_len({input});"),
+        );
+        self.line(
+            ind + 1,
+            &format!("uint64_t loft_t = (uint64_t) (int64_t) (int32_t) {threads};"),
+        );
+        self.line(ind + 1, "if (loft_t < 1) loft_t = 1;");
+        self.line(
+            ind + 1,
+            "if (loft_t > (loft_n > 1 ? loft_n : 1)) loft_t = loft_n > 1 ? loft_n : 1;",
+        );
+        self.line(ind + 1, &format!("{r} = {init};"));
+        self.line(ind + 1, "if (loft_n > 0) {");
+        self.line(
+            ind + 2,
+            "for (uint64_t loft_k = 0; loft_k < loft_t; loft_k++) {",
+        );
+        self.line(ind + 3, &format!("int64_t loft_p = {init};"));
+        self.line(
+            ind + 3,
+            "for (uint64_t loft_i = loft_k * loft_n / loft_t; loft_i < (loft_k + 1) * loft_n / loft_t; loft_i++)",
+        );
+        self.line(
+            ind + 4,
+            &format!(
+                "loft_p = {f}(loft_p, loft_i64_bits(loft_par_arg(loft_vec_get({input}, 8, (int64_t) loft_i), 8)));"
+            ),
+        );
+        self.line(ind + 3, &format!("{r} = {f}({r}, loft_p);"));
+        self.line(ind + 2, "}");
+        self.line(ind + 1, "}");
+        self.line(ind, "}");
+        Ok(E::new(r, K::Int))
+    }
+
     /// The worker's arguments: the row first, then the extras for its next visible parameters,
     /// a work buffer for each hidden text, a buffer for a hidden heap result.
     fn worker_call(
@@ -222,7 +300,11 @@ impl FnWriter<'_> {
                     CType::Single => format!("loft_f32((uint32_t) {bits})"),
                     CType::Char => format!("(uint32_t) {bits}"),
                     CType::Bool | CType::Enum => format!("(uint8_t) {bits}"),
-                    _ => return Err("a par worker over rows of tuples or functions".into()),
+                    // A function row is its definition number.
+                    CType::Fn => format!("loft_fn_of((int64_t) (uint32_t) {bits})"),
+                    CType::Tuple(_) => stored_value(cx, "loft_e", a.typedef.base())
+                        .ok_or("a par worker over rows of tuples holding references")?,
+                    CType::Void => return Err("a par worker over rows of nothing".into()),
                 });
             } else {
                 call_args.push(
@@ -247,4 +329,46 @@ struct WorkerCall {
     args: Vec<String>,
     texts: Vec<String>,
     vectors: Vec<String>,
+}
+
+/// The value of type `tp` stored at place `at` (a `loft_ref` expression), as its C shape: a
+/// scalar through its field getter — a narrow integer through its kind's, with its `min` — and
+/// a tuple member by member at the offsets of its `__tuple<…>` record, a text lent.  `None` for
+/// a kind held by reference (a record).
+fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
+    Some(match tp.base() {
+        Type::Integer(_) => match crate::data::NarrowSlot::of_type(tp) {
+            Some(n) => {
+                let f = match n.get_op() {
+                    "OpGetByte" => "loft_get_byte",
+                    "OpGetByteNullable" => "loft_get_byte_nullable",
+                    "OpGetShort" => "loft_get_short",
+                    _ => "loft_get_short_raw",
+                };
+                format!("{f}({at}, 0, INT64_C({}))", n.min)
+            }
+            None => format!("loft_get_int({at}, 0)"),
+        },
+        Type::Float => format!("loft_get_float({at}, 0)"),
+        Type::Single => format!("loft_get_single({at}, 0)"),
+        Type::Boolean => format!("loft_get_bool({at}, 0)"),
+        Type::Character => format!("loft_get_char({at}, 0)"),
+        Type::Enum(_, false, _) => format!("loft_get_enum({at}, 0)"),
+        // A tuple parameter's text is the caller's — the callee copies one it writes — so the
+        // row lends the stored bytes.
+        Type::Text(_) => format!("loft_text_lend(loft_get_text({at}, 0))"),
+        Type::Tuple(elems) => {
+            let offsets = crate::data::stored_tuple_offsets(cx.data, cx.stores, elems)?;
+            let CType::Tuple(id) = cx.ctype(tp)? else {
+                return None;
+            };
+            let members = elems
+                .iter()
+                .zip(&offsets)
+                .map(|(e, o)| stored_value(cx, &format!("loft_field({at}, {o})"), e.base()))
+                .collect::<Option<Vec<_>>>()?;
+            format!("((loft_tup{id}) {{ {} }})", members.join(", "))
+        }
+        _ => return None,
+    })
 }

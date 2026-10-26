@@ -512,12 +512,12 @@ a list.
 ### C4 — across the boundary  ·  S
 
 Two variables in a `use`d library, as a member of an overload set (arc B),
-`cargo test --release --test ir_schema_roundtrip`, `--native-release`.  Closes the arc:
+`cargo test --release --test ir_schema_roundtrip`, `--ship`.  Closes the arc:
 cells graduate, `G-Key` is written into `formal/interfaces.md`.
 
 - **Built** (2026-09-21).  The library cell ([boundary/](probes/boundary/), and
   `tests/lib/genericlib.loft` behind `a-library-carries-generics-across-the-boundary`) answers
-  on the interpreter, native and `--native-release`; `ir_schema_roundtrip` 8/8.  The GitHub
+  on the interpreter, native and `--ship`; `ir_schema_roundtrip` 8/8.  The GitHub
   gate on C2 found what the local runs could not: the test HARNESS starts each program from
   a prepared stdlib, with a parser that has no record of the stdlib's type-variable
   placeholders, and `bind_header_var` then reused a placeholder by its spelling alone — a
@@ -830,7 +830,7 @@ step is cells and whatever they find.
 ### D10 — across the boundary  ·  S
 
 A library exports a generic struct and a consumer instantiates it at its own type;
-`api_surface` golden; `ir_schema_roundtrip`; `--native-release`; the debugger and the LSP
+`api_surface` golden; `ir_schema_roundtrip`; `--ship`; the debugger and the LSP
 show `Grid<integer>`.
 
 - **Found on the way** (2026-09-22).  The first consumer cell failed: `t: Grid<text> =
@@ -857,7 +857,7 @@ show `Grid<integer>`.
   Corpus against D9: the new guard, dead temporaries and two orphan lambdas gone from the
   D4–D7 guards, and the three moved carets.
 - **Built** (2026-09-22).  [boundary-types/](probes/boundary-types/) b01–b08 over
-  `tests/lib/gridlib.loft`, green on both backends and under `--native-release`: the
+  `tests/lib/gridlib.loft`, green on both backends and under `--ship`: the
   consumer's own instances, the library's enum, field check, default, self-naming struct and
   two-variable struct, a qualified `gridlib::Grid<integer>`, and the consumer's generics
   (a function, a struct) over the library's.  The widened cells found five defects, none of

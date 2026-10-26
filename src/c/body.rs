@@ -142,6 +142,11 @@ pub(crate) struct FnWriter<'a> {
     gen_elem: Option<CType>,
     /// The `yield`s written so far, each a resume label.
     yields: u32,
+    /// The source line the statements now being written come from (`Value::Line`), which a
+    /// call records as its frame's site when the unit keeps frames (`Cx::frames`).
+    cur_line: u32,
+    /// `LOFT_C_WHERE` reported this function's refusal already.
+    where_told: bool,
 }
 
 impl<'a> FnWriter<'a> {
@@ -164,7 +169,17 @@ impl<'a> FnWriter<'a> {
             links: (0..def.variables().count())
                 .map(|v| matches!(def.variables().tp(v).base(), crate::data::Type::RefVar(_)))
                 .collect(),
-            store_links: store_links(cx, def),
+            // A store instance's text parameter (`n_app@st1`, `parser/store_text.rs`) is a
+            // store link: the IR reads and writes it as the field it names.
+            store_links: {
+                let vars = def.variables();
+                let seed: Vec<u16> = vars
+                    .arguments()
+                    .into_iter()
+                    .filter(|&a| vars.is_store_text_link(a))
+                    .collect();
+                store_links(cx, def, &seed)
+            },
             ret,
             body: String::new(),
             temps: Vec::new(),
@@ -173,6 +188,8 @@ impl<'a> FnWriter<'a> {
             labels: 0,
             headers: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
+            cur_line: 0,
+            where_told: false,
             decls: Vec::new(),
             // A parameter arrives bound: its first `Set` is a rebind.
             bound: {
@@ -188,6 +205,56 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// loft#1254 — a stub with an empty body answers its type's default (`Data::to_default`),
+    /// a handle-carried result the null reference, as the bytecode writer's stub path does;
+    /// `None` for any other body, or a type with no default.
+    fn empty_stub_default(&self) -> Option<Value> {
+        use crate::data::Type;
+        if !matches!(self.code, Value::Block(b) if b.operators.is_empty()) {
+            return None;
+        }
+        let data = self.cx.data;
+        let ret = data.def(self.d).returned();
+        if data.has_default(ret).is_err() {
+            return None;
+        }
+        Some(
+            if matches!(
+                ret.base(),
+                Type::Reference(..)
+                    | Type::Vector(..)
+                    | Type::Sorted(..)
+                    | Type::Index(..)
+                    | Type::Hash(..)
+                    | Type::Radix(..)
+                    | Type::Trie(..)
+                    | Type::Enum(_, true, _)
+            ) {
+                Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new())
+            } else {
+                crate::data::to_default(ret, data)
+            },
+        )
+    }
+
+    /// This is the place twin for `mask` (`twin_name`): each `&` parameter whose bit is set is
+    /// a store link — a `loft_ref` to the place — as a `&` local bound to a field is.
+    pub(crate) fn places(mut self, mask: u64) -> Self {
+        if mask != 0 {
+            let def = self.cx.data.def(self.d);
+            let seed: Vec<u16> = self
+                .vars
+                .arguments()
+                .iter()
+                .enumerate()
+                .filter(|&(i, &a)| mask & (1 << i) != 0 || self.vars.is_store_text_link(a))
+                .map(|(_, &a)| a)
+                .collect();
+            self.store_links = store_links(self.cx, def, &seed);
+        }
+        self
+    }
+
     /// This function is a generator of `elem`s: written by `write_gen`.
     pub(crate) fn yielding(mut self, elem: CType) -> Self {
         self.gen_elem = Some(elem);
@@ -200,6 +267,8 @@ impl<'a> FnWriter<'a> {
         if self.ret == CType::Void {
             self.stmt(code, 1)?;
             self.epilogue(1);
+        } else if let Some(dflt) = self.empty_stub_default() {
+            self.ret_value(Some(&dflt), 1)?;
         } else {
             self.ret_value(Some(code), 1)?;
         }
@@ -276,11 +345,7 @@ impl<'a> FnWriter<'a> {
         // The texts a tuple local owns.
         for v in (0..self.shapes.len()).filter(|&v| !self.params[v] && !self.links[v]) {
             if let CType::Tuple(id) = self.shapes[v] {
-                for (i, c) in self.cx.tuple_shapes(id).into_iter().enumerate() {
-                    if c == CType::Text {
-                        texts.push(format!("{}.f{i}", self.var(v as u16)));
-                    }
-                }
+                self.tuple_text_leaves(&self.var(v as u16), id, &mut texts);
             }
         }
         texts.extend(
@@ -289,6 +354,18 @@ impl<'a> FnWriter<'a> {
                 .filter(|(_, c)| *c == CType::Text)
                 .map(|(t, _)| t.clone()),
         );
+        // And the texts a tuple temporary holds.
+        let tuple_temps: Vec<(String, u32)> = self
+            .temps
+            .iter()
+            .filter_map(|(t, c)| match c {
+                CType::Tuple(id) => Some((t.clone(), *id)),
+                _ => None,
+            })
+            .collect();
+        for (t, id) in tuple_temps {
+            self.tuple_text_leaves(&t, id, &mut texts);
+        }
         for t in texts {
             self.line(ind, &format!("loft_text_free(&{t});"));
         }
@@ -480,16 +557,24 @@ impl<'a> FnWriter<'a> {
 
     /// Return the value temporary `r` already holds, of the function's result shape.
     fn ret_held(&mut self, r: &str, ind: usize) {
-        if self.ret == CType::Text {
-            // The result leaves the function: its buffer moves out before the
-            // epilogue frees every text the function holds.
-            self.line(ind, &format!("loft_text {r}_out = {r};"));
-            self.line(ind, &format!("{r}.p = 0;"));
-            self.epilogue(ind);
-            self.line(ind, &format!("return {r}_out;"));
-        } else {
+        // The result leaves the function: its text buffers — its own, or the ones a tuple
+        // holds — move out before the epilogue frees every text the function holds.
+        let mut moved = Vec::new();
+        match self.ret {
+            CType::Text => moved.push(r.to_string()),
+            CType::Tuple(id) => self.tuple_text_leaves(r, id, &mut moved),
+            _ => {}
+        }
+        if moved.is_empty() {
             self.epilogue(ind);
             self.line(ind, &format!("return {r};"));
+        } else {
+            self.line(ind, &format!("{} {r}_out = {r};", held(self.ret)));
+            for m in moved {
+                self.line(ind, &format!("{m}.p = 0;"));
+            }
+            self.epilogue(ind);
+            self.line(ind, &format!("return {r}_out;"));
         }
     }
 
@@ -577,8 +662,49 @@ impl<'a> FnWriter<'a> {
         self.line(ind, &s);
     }
 
+    /// loft#1753 — a statement that calls into a frame first records the line it calls from,
+    /// which `stack_trace()` reports as the callee frame's `line` (`cr_call_site`).
+    fn note_site(&mut self, v: &Value, ind: usize) {
+        if let Value::Line(n) = v.unspan() {
+            self.cur_line = *n;
+        } else if self.cur_line != 0
+            && !matches!(
+                v.unspan(),
+                Value::Block(_) | Value::Insert(_) | Value::Span(_)
+            )
+            && crate::opt::frame_calls::calls_a_frame(self.cx.data, v)
+        {
+            self.line(ind, &format!("loft_frame_site({});", self.cur_line));
+        }
+    }
+
     /// Emit `v` for its effect.
     fn stmt(&mut self, v: &Value, ind: usize) -> Result<(), String> {
+        let r = self.stmt_kind(v, ind);
+        // `LOFT_C_WHERE=1`: a refusal names the innermost statement it came from, on stderr.
+        if let Err(why) = &r
+            && !self.where_told
+            && std::env::var("LOFT_C_WHERE").is_ok_and(|w| w != "0")
+            && !matches!(
+                v.unspan(),
+                Value::Block(_) | Value::Loop(_) | Value::If(..) | Value::Insert(_)
+            )
+        {
+            self.where_told = true;
+            let mut at = format!("{v:?}");
+            at.truncate(600);
+            eprintln!(
+                "loft: --emit-c: {}: {why}\n  at: {at}",
+                self.cx.data.def(self.d).original_name()
+            );
+        }
+        r
+    }
+
+    fn stmt_kind(&mut self, v: &Value, ind: usize) -> Result<(), String> {
+        if self.cx.frames.get() {
+            self.note_site(v, ind);
+        }
         match v {
             // A value block's result where nothing takes it: a leaf has no effect.
             Value::Null
@@ -587,6 +713,9 @@ impl<'a> FnWriter<'a> {
             | Value::Int(_)
             | Value::Long(_)
             | Value::Boolean(_)
+            | Value::Float(_)
+            | Value::Single(_)
+            | Value::Enum(..)
             | Value::Text(_) => Ok(()),
             Value::Span(b) => self.stmt(&b.1, ind),
             Value::Block(b) => self.block_stmt(b, ind),
@@ -655,6 +784,16 @@ impl<'a> FnWriter<'a> {
             // `parallel { … }`: the arms run one after another — each arm's effect is the one
             // its thread has (State's `OpParallelBegin`).
             Value::Parallel(arms) => arms.iter().try_for_each(|a| self.stmt(a, ind)),
+            // A dropped branch or block runs as a statement: each arm for its effect, a value
+            // arm's value discarded (`@FR-F-Drop`) — where an arm assigns, it has no value to read.
+            Value::Drop(x)
+                if matches!(
+                    x.unspan(),
+                    Value::If(..) | Value::Block(_) | Value::Insert(_)
+                ) =>
+            {
+                self.stmt(x, ind)
+            }
             Value::Drop(_) | Value::Call(..) | Value::CallRef(..) => {
                 let x = if let Value::Drop(x) = v { &**x } else { v };
                 let e = self.expr(x, ind)?;
@@ -689,10 +828,10 @@ impl<'a> FnWriter<'a> {
     /// over a fresh store, an elided view and a minted store are adopted; anything else is
     /// copied, its source freed when `call_return_frees_source` says the copy owns it.  The
     /// record's store type and that flag; `None` to adopt.
-    fn call_copy(&self, v: u16, x: &Value) -> Result<Option<(u16, bool)>, String> {
-        if self.join_bind(v, x).is_some() {
-            return Err("a rebind of a result fresh on one arm and borrowed on the other".into());
-        }
+    /// A rebind whose result is fresh on one arm and borrowed on the other (`Own::Join`) that
+    /// `join_stmt` does not bind — the call reads the variable, or the variable does not own
+    /// what it displaces — is this copy, as the bytecode writer's #360 path copies it.
+    fn call_copy(&self, v: u16, x: &Value) -> Option<(u16, bool)> {
         use crate::data::Type;
         use crate::use_analysis as ua;
         let data = self.cx.data;
@@ -700,27 +839,25 @@ impl<'a> FnWriter<'a> {
         // A `τ?` that `first_bind_shape` leaves wrapped (`LOFT_NO_NULLABLE_RETBUF`) is not
         // bound here, as in the bytecode writer.
         if matches!(shape, Type::Optional(_)) {
-            return Ok(None);
+            return None;
         }
         let (Type::Reference(d, _) | Type::Enum(d, true, _)) = shape.base().clone() else {
-            return Ok(None);
+            return None;
         };
-        let Some(f) = ua::callee_of(data, self.d, x) else {
-            return Ok(None);
-        };
+        let f = ua::callee_of(data, self.d, x)?;
         if !data.def(f).is_loft_defined() {
-            return Ok(None);
+            return None;
         }
         if data.def(f).return_adopts_fresh_store()
             || self.vars.is_view_elided(v)
             || ua::adopts_minted_at_bind(data, self.vars, v, x)
         {
-            return Ok(None);
+            return None;
         }
-        Ok(Some((
+        Some((
             data.def(d).known_type(),
             ua::call_return_frees_source(data, self.d, x),
-        )))
+        ))
     }
 
     /// `v = f(…)` where the callee's result is fresh on one arm and a view of `base` on the
@@ -836,26 +973,44 @@ impl<'a> FnWriter<'a> {
         }
     }
 
-    /// `p = x` for a `&` record parameter: the caller's variable takes the new record and the
-    /// record it held is released unless the new one lives in its store (the bytecode's
-    /// `SetStackRef` + `FreeRefIfDistinct`, @FR-B-Ref-Repoint).
+    /// `p = x` for a `&` parameter of a heap kind — a record, a vector, a struct-enum, a keyed
+    /// collection: the caller's variable takes the new value (`OpSetStackRef`), and when the
+    /// value is OWNED the one it held is released unless the new one lives in its store
+    /// (`OpFreeRefIfDistinct`, @FR-B-Ref-Repoint) — the interpreter's `set_var` on a link.
     fn link_rebind(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
-        let crate::data::Type::RefVar(inner) = self.vars.tp(var).base() else {
+        use crate::data::Type;
+        let Type::RefVar(inner) = self.vars.tp(var).base() else {
             return Err("a link that is not a parameter".into());
         };
-        if !matches!(inner.base(), crate::data::Type::Reference(..))
-            || !matches!(x.unspan(), Value::Block(_))
-        {
+        if !matches!(
+            inner.base(),
+            Type::Reference(..)
+                | Type::Vector(..)
+                | Type::Enum(_, true, _)
+                | Type::Hash(..)
+                | Type::Sorted(..)
+                | Type::Index(..)
+                | Type::Radix(..)
+                | Type::Trie(..)
+        ) {
             return Err(format!("a rebind of a & {} parameter", type_word(inner)));
         }
+        let owned = matches!(
+            crate::use_analysis::ownership_of(self.cx.data, self.d, x),
+            crate::use_analysis::Own::Owned
+        );
         let e = self.expr(x, ind)?;
         let r = self.temp(CType::Ref);
-        let old = self.temp(CType::Ref);
         let name = self.var(var);
         self.line(ind, &format!("{r} = {};", as_ref(e)?));
-        self.line(ind, &format!("{old} = {name};"));
-        self.line(ind, &format!("{name} = {r};"));
-        self.line(ind, &format!("loft_free_displaced({old}, {name});"));
+        if owned {
+            let old = self.temp(CType::Ref);
+            self.line(ind, &format!("{old} = {name};"));
+            self.line(ind, &format!("{name} = {r};"));
+            self.line(ind, &format!("loft_free_displaced({old}, {name});"));
+        } else {
+            self.line(ind, &format!("{name} = {r};"));
+        }
         self.flush(ind);
         Ok(())
     }
@@ -867,17 +1022,8 @@ impl<'a> FnWriter<'a> {
         if self.store_links[var as usize] {
             return self.store_link_set(var, x, ind);
         }
-        if self.links[var as usize] && !self.params[var as usize] {
-            if let Some(target) = self.stack_target(x) {
-                self.bound[var as usize] = true;
-                let name = var_name(self.vars.name(var), var);
-                let to = self.var(target);
-                self.line(ind, &format!("{name} = &{to};"));
-                return Ok(());
-            }
-            if !self.bound[var as usize] {
-                return Err("an & local bound to something other than a variable".into());
-            }
+        if self.link_repoint(var, x, ind)? {
+            return Ok(());
         }
         if self.links[var as usize] && self.shapes[var as usize] == CType::Ref {
             return self.link_rebind(var, x, ind);
@@ -918,7 +1064,7 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(());
         }
-        if let Some((tp, frees)) = self.call_copy(var, x)? {
+        if let Some((tp, frees)) = self.call_copy(var, x) {
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
@@ -977,19 +1123,95 @@ impl<'a> FnWriter<'a> {
 
     /// The variable `OpCreateStack(v)` names, whose shape a link to it shares; `None` for any
     /// other value, and for a target that is itself a parameter passed by value.
-    fn stack_target(&self, x: &Value) -> Option<u16> {
-        match x.unspan() {
-            Value::Call(d, args) if self.cx.data.def(*d).name() == "OpCreateStack" => {
-                match args.as_slice() {
-                    [Value::Var(t)]
-                        if !(self.params[*t as usize]
-                            && !self.links[*t as usize]
-                            && self.shapes[*t as usize] == CType::Text) =>
-                    {
-                        Some(*t)
-                    }
-                    _ => None,
-                }
+    /// `var = x` for a `&` variable that `x` re-points (`@FR-B-Ref-Repoint`): it points at a
+    /// variable, a tuple member, what another link names, or a store place from here on.
+    /// Answers whether it wrote the re-point; a write through the link is no re-point.
+    fn link_repoint(&mut self, var: u16, x: &Value, ind: usize) -> Result<bool, String> {
+        let repoint = self.links[var as usize]
+            && (!self.params[var as usize]
+                || crate::scopes::link_set_repoints(self.cx.data, self.vars, var, x));
+        if !repoint {
+            return Ok(false);
+        }
+        let to = match self.stack_target(x) {
+            Some(to) => Some(to),
+            None if self.shapes[var as usize] != CType::Ref => self.direct_place(var, x, ind)?,
+            None => None,
+        };
+        if let Some(to) = to {
+            self.bound[var as usize] = true;
+            let name = var_name(self.vars.name(var), var);
+            self.line(ind, &format!("{name} = {to};"));
+            return Ok(true);
+        }
+        if !self.bound[var as usize] {
+            return Err("an & local bound to something other than a variable".into());
+        }
+        Ok(false)
+    }
+
+    /// A link of `var`'s kind re-pointed to a store place — a field or an element — whose bytes
+    /// are the C value itself (an 8-byte integer, a float, a single, a character, a boolean, a
+    /// plain enum): the address of the place, as `--native` takes it.  An absent place (a null
+    /// record) is a temporary holding the null, which a write through the link leaves unseen.
+    fn direct_place(&mut self, var: u16, x: &Value, ind: usize) -> Result<Option<String>, String> {
+        use crate::data::Type;
+        let Value::Call(d, _) = x.unspan() else {
+            return Ok(None);
+        };
+        if !matches!(self.cx.data.def(*d).name(), "OpGetVector" | "OpGetField") {
+            return Ok(None);
+        }
+        let Type::RefVar(tp) = self.vars.tp(var).base() else {
+            return Ok(None);
+        };
+        let direct = match tp.base() {
+            Type::Integer(_) => crate::data::NarrowSlot::of_type(tp).is_none(),
+            Type::Float | Type::Single | Type::Character | Type::Boolean => true,
+            Type::Enum(_, false, _) => true,
+            _ => false,
+        };
+        if !direct {
+            return Ok(None);
+        }
+        let c = self.shapes[var as usize];
+        let absent = self.temp(c);
+        self.null_into(&absent, c, ind);
+        let e = self.expr(x, ind)?;
+        Ok(Some(format!(
+            "({} *) loft_place({}, &{absent})",
+            held(c),
+            as_ref(e)?
+        )))
+    }
+
+    fn stack_target(&self, x: &Value) -> Option<String> {
+        let Value::Call(d, args) = x.unspan() else {
+            return None;
+        };
+        match (self.cx.data.def(*d).name(), args.as_slice()) {
+            ("OpCreateStack", [Value::Var(t)])
+                if !(self.params[*t as usize]
+                    && !self.links[*t as usize]
+                    && self.shapes[*t as usize] == CType::Text) =>
+            {
+                Some(format!("&{}", self.var(*t)))
+            }
+            // A member of a tuple local is a place a link names (`@FR-B-Ref-Lvalue`).
+            // A text member of a tuple parameter is the caller's: no link writes it.
+            ("OpCreateStack", [Value::TupleGet(t, i)])
+                if !self.params[*t as usize]
+                    || self.links[*t as usize]
+                    || !matches!(self.shapes[*t as usize], CType::Tuple(id)
+                        if self.cx.tuple_shapes(id).get(*i as usize) == Some(&CType::Text)) =>
+            {
+                Some(format!("&{}.f{i}", self.var(*t)))
+            }
+            // A link to a link names what that link names.
+            ("OpVarRef", [Value::Var(t)])
+                if self.links[*t as usize] && !self.store_links[*t as usize] =>
+            {
+                Some(var_name(self.vars.name(*t), *t))
             }
             _ => None,
         }
@@ -1074,7 +1296,9 @@ impl<'a> FnWriter<'a> {
             ind,
             &format!("if (loft_fnref_minted({src}, (uint64_t) {since}, {clos})) {{"),
         );
-        if !witnessed {
+        // A parameter's displaced store is the caller's (a promoted return buffer the caller
+        // pools, `@FR-R-Reuse`): the adopt only rebinds it, as `State::bind_fn_ref_result` does.
+        if !witnessed && !self.params[var as usize] {
             self.line(
                 ind + 1,
                 &format!(
@@ -1164,14 +1388,7 @@ impl<'a> FnWriter<'a> {
             {
                 let CType::Tuple(id) = c else { unreachable!() };
                 let from = format!("{}.f{i}", self.var(*src));
-                for (j, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
-                    let line = if e == CType::Text {
-                        format!("loft_text_set(&{target}.f{j}, loft_view(&{from}.f{j}));")
-                    } else {
-                        format!("{target}.f{j} = {from}.f{j};")
-                    };
-                    self.line(ind, &line);
-                }
+                self.copy_member(&from, target, CType::Tuple(id), ind);
                 Ok(())
             }
             // A function value read out of a store: its definition number and its closure, the
@@ -1182,10 +1399,22 @@ impl<'a> FnWriter<'a> {
                     .iter()
                     .filter(|o| !matches!(o.unspan(), Value::Line(_)))
                     .collect();
-                let [d, clos] = ops[..] else {
+                // The definition number is pushed first; statements between the two values
+                // (a displaced record's release) run before the closure is read.
+                let (Some(d), Some(clos)) = (ops.first(), ops.last()) else {
                     return Err("a function value read with an unexpected shape".into());
                 };
-                let (d, clos) = self.two("fn_ref_field_read", &[d.clone(), clos.clone()], ind)?;
+                if ops.len() < 2 {
+                    return Err("a function value read with an unexpected shape".into());
+                }
+                let first = self.expr(d, ind)?;
+                let dt = self.temp(CType::Int);
+                self.line(ind, &format!("{dt} = {};", as_int(first)?));
+                for o in &ops[1..ops.len() - 1] {
+                    self.stmt(o, ind)?;
+                }
+                let d = E::new(dt, K::Int);
+                let clos = self.expr(clos, ind)?;
                 self.line(
                     ind,
                     &format!(
@@ -1220,8 +1449,20 @@ impl<'a> FnWriter<'a> {
             }
             Value::Tuple(vals) => self.assign_tuple(vals, target, c, ind),
             v @ (Value::Return(_) | Value::Break(_) | Value::Continue(_)) => self.stmt(v, ind),
+            // A self tail call's loop (`opt::tail_self`) leaves only by a `return`: it has no
+            // value to put anywhere.
+            v @ Value::Loop(lp) if lp.name == "tail_self" => self.stmt(v, ind),
             v => {
                 let e = self.expr(v, ind)?;
+                // A temporary tuple that owns texts keeps them — its buffers are reused and the
+                // epilogue frees them — so the target takes copies; a call's result moves.
+                if let CType::Tuple(id) = c
+                    && self.cx.tuple_has_text(id)
+                    && self.temps.iter().any(|(t, _)| *t == e.code)
+                {
+                    self.copy_member(&e.code, target, c, ind);
+                    return Ok(());
+                }
                 let s = match c {
                     CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
                     CType::Void => format!("{};", e.code),
@@ -1291,10 +1532,13 @@ impl<'a> FnWriter<'a> {
             return self.ops_stmt(ops, ind);
         }
         // The value is the last operator that is not a free: frees after it run once it is
-        // taken, as they run under it on the bytecode's evaluation stack.
+        // taken, as they run under it on the bytecode's evaluation stack.  A `Set` has no value,
+        // so the reset that follows a free (`__disp = OpNullRefSentinel()`) is one of them.
         let at = ops
             .iter()
-            .rposition(|o| !matches!(o.unspan(), Value::Line(_)) && !self.is_free(o))
+            .rposition(|o| {
+                !matches!(o.unspan(), Value::Line(_) | Value::Set(..)) && !self.is_free(o)
+            })
             .ok_or("a value block with no value")?;
         ops[..at].iter().try_for_each(|o| self.stmt(o, ind))?;
         self.assign(&ops[at], target, c, ind)?;
@@ -1304,7 +1548,7 @@ impl<'a> FnWriter<'a> {
 
     /// `to = from` for a value of shape `c` at two C places: a text copied, a tuple member by
     /// member at any depth (its texts the destination's own), anything else assigned.
-    fn copy_member(&mut self, from: &str, to: &str, c: CType, ind: usize) {
+    pub(super) fn copy_member(&mut self, from: &str, to: &str, c: CType, ind: usize) {
         match c {
             CType::Text => self.line(ind, &format!("loft_text_set(&{to}, loft_view(&{from}));")),
             CType::Tuple(id) => {
@@ -1316,8 +1560,25 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `t = null` for a tuple whose texts stay where they are: every member but a text set to
+    /// its null, so the text buffers are reused rather than lost.
+    fn null_tuple_keeping_texts(&mut self, t: &str, c: CType, ind: usize) {
+        match c {
+            CType::Text => {}
+            CType::Tuple(id) => {
+                for (j, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
+                    self.null_tuple_keeping_texts(&format!("{t}.f{j}"), e, ind);
+                }
+            }
+            other => {
+                let init = self.cx.initial(other);
+                self.line(ind, &format!("{t} = ({}) {init};", super::held(other)));
+            }
+        }
+    }
+
     /// Every text a tuple of struct `id` at C place `at` holds, nested tuples included.
-    fn tuple_text_leaves(&self, at: &str, id: u32, out: &mut Vec<String>) {
+    pub(super) fn tuple_text_leaves(&self, at: &str, id: u32, out: &mut Vec<String>) {
         for (j, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
             match e {
                 CType::Text => out.push(format!("{at}.f{j}")),
@@ -1603,7 +1864,12 @@ impl<'a> FnWriter<'a> {
                 Value::Int(_) | Value::Long(_) | Value::Boolean(_) | Value::Text(_) => true,
                 _ => false,
             };
-            if simple || matches!(e.kind, K::View | K::Void) {
+            // A temporary is already stable — and a second one would share the texts a tuple
+            // temporary owns, which the epilogue frees through each.
+            if simple
+                || matches!(e.kind, K::View | K::Void)
+                || self.temps.iter().any(|(t, _)| *t == e.code)
+            {
                 out.push(e);
                 continue;
             }
@@ -1679,6 +1945,14 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.unicode_native(def.name(), args, ind)? {
             return Ok(e);
         }
+        if let Some(e) = self.struct_json_native(def.name(), args, ind)? {
+            return Ok(e);
+        }
+        if def.name() == "n_env_variables" {
+            // The element is the stdlib's `EnvVariable`, sized from this program's table.
+            let size = self.cx.stores.size(self.cx.stores.name("EnvVariable"));
+            return Ok(E::new(format!("loft_env_variables({size})"), K::Ref));
+        }
         let callee = def.original_name();
         let ret = cx
             .ctype(def.returned())
@@ -1700,23 +1974,19 @@ impl<'a> FnWriter<'a> {
             return Err("a call whose arguments do not match its parameters".into());
         }
         let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
-        let linked: Vec<bool> = def
-            .attributes()
-            .iter()
-            .map(|a| matches!(a.typedef.base(), crate::data::Type::RefVar(_)))
-            .collect();
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
-        let mut values = Vec::new();
-        for (i, a) in args.iter().enumerate() {
-            if linked[i] {
-                xs[i] = self.link_arg(a, shapes[i], ind)?;
-            } else {
-                values.push(i);
-            }
-        }
+        let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
         self.value_args(args, &shapes, &values, &mut xs, ind)?;
+        let name = if places == 0 {
+            name
+        } else if super::native_c(def.name()).is_some() || args.len() > 64 {
+            return Err(format!("a store place handed to a & parameter of {callee}"));
+        } else {
+            cx.request_twin(d, places);
+            super::twin_name(cx.data, d, places)
+        };
         let call = format!("{name}({})", xs.join(", "));
         Ok(match ret {
             CType::Text => {
@@ -1770,24 +2040,49 @@ impl<'a> FnWriter<'a> {
             return Err("a call through a value that is not a function".into());
         };
         let cx = self.cx;
-        let shapes = params
+        // A `&` parameter passes the address of the caller's variable, as a direct call does.
+        let sig_params = params
             .iter()
             .map(|p| match p.base() {
-                crate::data::Type::RefVar(_) => None,
-                p => cx.ctype(p).filter(|c| *c != CType::Void),
+                crate::data::Type::RefVar(inner) => cx
+                    .ctype(inner)
+                    .filter(|c| *c != CType::Void)
+                    .map(|c| (c, true)),
+                p => cx
+                    .ctype(p)
+                    .filter(|c| *c != CType::Void)
+                    .map(|c| (c, false)),
             })
             .collect::<Option<Vec<_>>>()
-            .ok_or("a function value with a & parameter")?;
+            .ok_or("a function value with a parameter of no C shape")?;
+        let shapes: Vec<CType> = sig_params.iter().map(|(c, _)| *c).collect();
         let ret = cx
             .ctype(&ret)
             .ok_or_else(|| format!("a function value returning {}", type_word(&ret)))?;
         if args.len() < shapes.len() {
             return Err("a call through a function value with arguments left out".into());
         }
-        let sig = cx.fn_sig(shapes.clone(), ret);
         let mut xs = vec![String::new(); shapes.len()];
-        let all: Vec<usize> = (0..shapes.len()).collect();
-        self.value_args(&args[..shapes.len()], &shapes, &all, &mut xs, ind)?;
+        let mut values = Vec::new();
+        // Each parameter's mode: a value (0), a link to a variable (1), a store place (2) —
+        // the last reaches each function through its place twin (`twin_name`).
+        let mut modes = Vec::with_capacity(shapes.len());
+        for (i, (c, link)) in sig_params.iter().enumerate() {
+            if *link {
+                if let Some(p) = self.place_arg(&args[i], &params[i], ind)? {
+                    xs[i] = p;
+                    modes.push((*c, 2));
+                } else {
+                    xs[i] = self.link_arg(&args[i], *c, ind)?;
+                    modes.push((*c, 1));
+                }
+            } else {
+                values.push(i);
+                modes.push((*c, 0));
+            }
+        }
+        let sig = cx.fn_sig(modes, ret);
+        self.value_args(&args[..shapes.len()], &shapes, &values, &mut xs, ind)?;
         let mut list = vec![self.var(v)];
         list.extend(xs);
         let call = format!("loft_call{sig}({})", list.join(", "));
@@ -1800,6 +2095,82 @@ impl<'a> FnWriter<'a> {
             }
             c => E::new(call, kind_of(c)),
         })
+    }
+
+    /// The `&` arguments of a call to `d` into `xs`: the address of a variable, or the
+    /// `loft_ref` of a store place — a field, an element, a store link the caller holds —
+    /// which calls the callee's place twin, taking that parameter as a `loft_ref`.  Answers
+    /// the positions of the value arguments and the twin's mask.
+    fn link_args(
+        &mut self,
+        d: u32,
+        args: &[Value],
+        shapes: &[CType],
+        xs: &mut [String],
+        ind: usize,
+    ) -> Result<(Vec<usize>, u64), String> {
+        let def = self.cx.data.def(d);
+        let callee_args = def.variables().arguments();
+        let mut values = Vec::new();
+        let mut places = 0u64;
+        for (i, arg) in args.iter().enumerate() {
+            let param = &def.attributes()[i].typedef;
+            if !matches!(param.base(), crate::data::Type::RefVar(_)) {
+                values.push(i);
+                continue;
+            }
+            let Some(p) = self.place_arg(arg, param, ind)? else {
+                xs[i] = self.link_arg(arg, shapes[i], ind)?;
+                continue;
+            };
+            // A store instance takes the place as it is; a text place reaches no other
+            // function (the IR retargets each such call to its instance).
+            if !callee_args
+                .get(i)
+                .is_some_and(|&v| def.variables().is_store_text_link(v))
+            {
+                if matches!(param.peel_link().base(), crate::data::Type::Text(_)) {
+                    return Err(format!("a text place handed to {}", def.original_name()));
+                }
+                places |= 1 << i;
+            }
+            xs[i] = p;
+        }
+        Ok((values, places))
+    }
+
+    /// A `&` argument that names a store place — a field (`OpGetField`), an element
+    /// (`OpGetVector`), a store link the caller holds — as the `loft_ref` of the place, for a
+    /// parameter of a kind a store link carries (`store_links`); `None` for a variable.
+    fn place_arg(
+        &mut self,
+        a: &Value,
+        param: &crate::data::Type,
+        ind: usize,
+    ) -> Result<Option<String>, String> {
+        let crate::data::Type::RefVar(inner) = param.base() else {
+            return Ok(None);
+        };
+        if !link_kind(inner) {
+            return Ok(None);
+        }
+        match a.unspan() {
+            Value::Var(v) if self.store_links[*v as usize] => {
+                Ok(Some(var_name(self.vars.name(*v), *v)))
+            }
+            Value::Call(op, _)
+                if matches!(
+                    self.cx.data.def(*op).name(),
+                    "OpGetField" | "OpGetVector" | "OpVarRef"
+                ) =>
+            {
+                let e = self.expr(a, ind)?;
+                let t = self.temp(CType::Ref);
+                self.line(ind, &format!("{t} = {};", as_ref(e)?));
+                Ok(Some(t))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// The address a `&` argument passes: the caller's own variable, or a link it holds.
@@ -1817,6 +2188,17 @@ impl<'a> FnWriter<'a> {
                 match xs.as_slice() {
                     [x] => match x.unspan() {
                         Value::Var(v) => *v,
+                        Value::TupleGet(tup, member) => {
+                            let CType::Tuple(id) = self.shapes[*tup as usize] else {
+                                return Err("a link to a member of no tuple".into());
+                            };
+                            if self.cx.tuple_shapes(id).get(*member as usize) != Some(&c) {
+                                return Err("a link to a member of another shape".into());
+                            }
+                            return self
+                                .stack_target(a)
+                                .ok_or_else(|| "a link to a tuple member it cannot name".into());
+                        }
                         _ => return Err("a link to a computed place".into()),
                     },
                     _ => return Err("OpCreateStack without one operand".into()),
@@ -2046,6 +2428,57 @@ impl<'a> FnWriter<'a> {
         ))
     }
 
+    /// `T.to_json()` / `T.to_json_pretty()` of a record (`Stores::show_json`): its type's
+    /// render function in the JSON form; `T.parse(JsonValue)`, the walk over the tree; `None`
+    /// for another native.
+    fn struct_json_native(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let pretty = match name {
+            "n_struct_to_json" => 0,
+            "n_struct_to_json_pretty" => 1,
+            // `T.parse(JsonValue)`: the struct walk over the tree (`loft_parse.h`).
+            "n_struct_from_jsonvalue" => {
+                let [val, tp] = args else {
+                    return Err(format!("{name} with an unexpected operand list"));
+                };
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                self.cx.parse_type(tp)?;
+                let val = self.expr(val, ind)?;
+                return Ok(Some(E::new(
+                    format!(
+                        "loft_struct_from_jsonvalue(loft_ptypes, {}, {tp})",
+                        as_ref(val)?
+                    ),
+                    K::Ref,
+                )));
+            }
+            _ => return Ok(None),
+        };
+        let [val, tp] = args else {
+            return Err(format!("{name} with an unexpected operand list"));
+        };
+        let tp = u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+        self.cx.show_type(tp)?;
+        let val = self.expr(val, ind)?;
+        let t = self.temp(CType::Text);
+        self.line(ind, &format!("loft_text_free(&{t});"));
+        self.line(
+            ind,
+            &format!(
+                "{}(&{t}, {}, {}, 0);",
+                super::Cx::show_fn(tp),
+                as_ref(val)?,
+                2 | pretty
+            ),
+        );
+        Ok(Some(self.held(t, CType::Text)))
+    }
+
     /// `{v}` of a record or a vector: the type's render function (`show.rs`).
     fn format_database(&mut self, args: &[Value], ind: usize) -> Result<E, String> {
         let [dest, val, tp, fmt] = args else {
@@ -2152,7 +2585,47 @@ impl<'a> FnWriter<'a> {
                     K::View,
                 ))
             }
+            "OpCastVectorFromText" | "OpCastEnumFromText" => self.cast_from_text(name, args, ind),
             _ => self.float_operator(name, args, ind),
+        }
+    }
+
+    /// A value read from a text: a type's whole record (`Stores::record_from_text`) or a plain
+    /// enum's value by its name (`Stores::to_enum`).
+    fn cast_from_text(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
+        match name {
+            // `Stores::record_from_text`: a new store holding the type the text describes.
+            "OpCastVectorFromText" => {
+                let [v, tp] = args else {
+                    return Err("OpCastVectorFromText with an unexpected operand list".into());
+                };
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type out of range".to_string())?;
+                self.cx.parse_type(tp)?;
+                let v = self.expr(v, ind)?;
+                Ok(E::new(
+                    format!("loft_record_from_text(loft_ptypes, {}, {tp})", as_view(v)?),
+                    K::Ref,
+                ))
+            }
+            // `Stores::to_enum`: the value whose name the text is, 0 for none.
+            "OpCastEnumFromText" => {
+                let [v, tp] = args else {
+                    return Err("OpCastEnumFromText with an unexpected operand list".into());
+                };
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type out of range".to_string())?;
+                let names = self.cx.enum_names(tp);
+                let v = self.expr(v, ind)?;
+                Ok(E::new(
+                    format!(
+                        "loft_enum_of_text({names}, sizeof {names} / sizeof *{names}, {})",
+                        as_view(v)?
+                    ),
+                    K::Enum,
+                ))
+            }
+            _ => Err(format!("operator {name}")),
         }
     }
 
@@ -2376,7 +2849,10 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            ("OpFreeRefIfDistinct", [_, _]) => {
+            // `OpFreeRefOrHandUp` (@PLN150): the placeholder is freed unless the lambda hands
+            // its store back — then the caller decides, as for any value a call through a
+            // function value returns (`loft_fnref_minted`), so nothing is released here.
+            ("OpFreeRefIfDistinct" | "OpFreeRefOrHandUp", [_, _]) => {
                 let (p, w) = self.two(name, args, ind)?;
                 Ok(E::new(
                     format!("loft_free_displaced({}, {})", as_ref(p)?, as_ref(w)?),
@@ -2462,19 +2938,8 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            ("OpMoveField", [src, dst, tp]) => {
-                let tp = Self::literal(tp, "type")?;
-                let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
-                let tp = self.copyable(tp)?;
-                let (src, dst) = self.two(name, &[(*src).clone(), (*dst).clone()], ind)?;
-                Ok(E::new(
-                    format!(
-                        "loft_move_field(loft_types, {tp}, {}, {})",
-                        as_ref(src)?,
-                        as_ref(dst)?
-                    ),
-                    K::Void,
-                ))
+            ("OpMoveRecord" | "OpMoveField", [src, dst, tp]) => {
+                self.move_op(name, src, dst, tp, ind)
             }
             ("OpGetField", [r, fld, _] | [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -2483,6 +2948,102 @@ impl<'a> FnWriter<'a> {
             }
             _ => self.ref_operator(name, args, ind),
         }
+    }
+
+    /// `OpEvacuate(holder, fld, home, tp)` (`Stores::evacuate`, `@FR-H-RefHome`): the copy is
+    /// placed in the holder's store as `OpPlaceRecord` places one.
+    fn evacuate(
+        &mut self,
+        holder: &Value,
+        fld: &Value,
+        home: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let name = "OpEvacuate";
+        let fld = Self::literal(fld, "field")?;
+        let tp = u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+        let tp = self.copyable(tp)?;
+        let size = self.cx.stores.enum_parent_size(tp);
+        let (image, n) = self.cx.default_image(tp);
+        // The copy is placed in the holder's store as `OpPlaceRecord` places one.
+        let foreign = self
+            .value_type(holder)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+            .and_then(|kt| self.cx.stores.root_vector_element_of(kt))
+            .is_some_and(|elem| elem != tp);
+        let (holder, home) = self.two(name, &[holder.clone(), home.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_evacuate(loft_types, {tp}, {}, {fld}, {}, {size}, {image}, {n}, {})",
+                as_ref(holder)?,
+                as_ref(home)?,
+                u8::from(foreign)
+            ),
+            K::Void,
+        ))
+    }
+
+    /// `OpMoveRecord` (`Stores::move_record_out`, `@FR-R-MoveLast`) and `OpMoveField`: a record
+    /// moved into the field `dst` names.
+    fn move_op(
+        &mut self,
+        name: &str,
+        src: &Value,
+        dst: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let tp = Self::literal(tp, "type")?;
+        let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
+        let tp = self.copyable(tp)?;
+        let (src, dst) = self.two(name, &[src.clone(), dst.clone()], ind)?;
+        let f = if name == "OpMoveRecord" {
+            "loft_move_record_out"
+        } else {
+            "loft_move_field"
+        };
+        Ok(E::new(
+            format!("{f}(loft_types, {tp}, {}, {})", as_ref(src)?, as_ref(dst)?),
+            K::Void,
+        ))
+    }
+
+    /// `OpAppendVector(v, other, tp)` (`Stores::vector_add`, a linked element type's records by
+    /// `vector_add_array`) and `OpPrependVector` (`Stores::prepend_vector`), `tp` the element.
+    fn append_vector_op(
+        &mut self,
+        name: &str,
+        v: &Value,
+        other: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let tp = u16::try_from(Self::literal(tp, "element type")?)
+            .map_err(|_| "an element type out of range")?;
+        let linked = self.cx.stores.is_linked(tp);
+        self.cx.copy_type(tp)?;
+        let (v, other) = self.two(name, &[v.clone(), other.clone()], ind)?;
+        let (v, other) = (as_ref(v)?, as_ref(other)?);
+        Ok(if name == "OpPrependVector" {
+            E::new(
+                format!(
+                    "loft_vec_prepend(loft_types, {tp}, {v}, {other}, {})",
+                    i32::from(linked)
+                ),
+                K::Bool,
+            )
+        } else if linked {
+            E::new(
+                format!("loft_vec_add_array(loft_types, {tp}, {v}, {other})"),
+                K::Void,
+            )
+        } else {
+            E::new(
+                format!("loft_vec_add(loft_types, {tp}, {v}, {other})"),
+                K::Void,
+            )
+        })
     }
 
     /// References as values: constants, whole references in fields, raw rebinds.
@@ -2562,6 +3123,7 @@ impl<'a> FnWriter<'a> {
                     K::Ref,
                 ))
             }
+            ("OpEvacuate", [holder, fld, home, tp]) => self.evacuate(holder, fld, home, tp, ind),
             ("OpFreeRecordIn", [r, tp]) => {
                 let tp =
                     u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
@@ -3037,48 +3599,50 @@ impl<'a> FnWriter<'a> {
 
     /// The whole-vector operators: append, replace, remove, repeat — each with the deep
     /// copies its store method makes.
+    /// OpAdoptVector (`Stores::vector_adopt`): a local takes a native call's vector answer.
+    fn adopt_vector(
+        &mut self,
+        v: &Value,
+        other: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let name = "OpAdoptVector";
+        let tp = u16::try_from(Self::literal(tp, "element type")?)
+            .map_err(|_| "an element type out of range")?;
+        if self.cx.stores.is_linked(tp) {
+            return Err("an adopted vector of linked records".into());
+        }
+        self.cx.copy_type(tp)?;
+        let (v, other) = self.two(name, &[v.clone(), other.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_vec_adopt(loft_types, {tp}, {}, {})",
+                as_ref(v)?,
+                as_ref(other)?
+            ),
+            K::Void,
+        ))
+    }
+
     fn collection_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
-            ("OpAppendVector", [v, other, tp]) => {
-                let tp = u16::try_from(Self::literal(tp, "element type")?)
-                    .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    self.cx.copy_type(tp)?;
-                    let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
-                    return Ok(E::new(
-                        format!(
-                            "loft_vec_add_array(loft_types, {tp}, {}, {})",
-                            as_ref(v)?,
-                            as_ref(other)?
-                        ),
-                        K::Void,
-                    ));
-                }
-                self.cx.copy_type(tp)?;
-                let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
-                Ok(E::new(
-                    format!(
-                        "loft_vec_add(loft_types, {tp}, {}, {})",
-                        as_ref(v)?,
-                        as_ref(other)?
-                    ),
-                    K::Void,
-                ))
+            ("OpAdoptVector", [v, other, tp]) => self.adopt_vector(v, other, tp, ind),
+            ("OpPrependVector" | "OpAppendVector", [v, other, tp]) => {
+                self.append_vector_op(name, v, other, tp, ind)
             }
             ("OpReplaceVector", [v, other, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    return Err("a replace of a linked element type".into());
-                }
+                let f = if self.cx.stores.is_linked(tp) {
+                    "loft_vec_replace_array"
+                } else {
+                    "loft_vec_replace"
+                };
                 self.cx.copy_type(tp)?;
                 let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
                 Ok(E::new(
-                    format!(
-                        "loft_vec_replace(loft_types, {tp}, {}, {})",
-                        as_ref(v)?,
-                        as_ref(other)?
-                    ),
+                    format!("{f}(loft_types, {tp}, {}, {})", as_ref(v)?, as_ref(other)?),
                     K::Void,
                 ))
             }
@@ -3143,17 +3707,15 @@ impl<'a> FnWriter<'a> {
             ("OpMoveVector", [dst, src, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    return Err("a move of a linked element type".into());
-                }
+                let f = if self.cx.stores.is_linked(tp) {
+                    "loft_move_vector_array"
+                } else {
+                    "loft_move_vector"
+                };
                 self.cx.copy_type(tp)?;
                 let (dst, src) = self.two(name, &[(*dst).clone(), (*src).clone()], ind)?;
                 Ok(E::new(
-                    format!(
-                        "loft_move_vector(loft_types, {tp}, {}, {})",
-                        as_ref(dst)?,
-                        as_ref(src)?
-                    ),
+                    format!("{f}(loft_types, {tp}, {}, {})", as_ref(dst)?, as_ref(src)?),
                     K::Void,
                 ))
             }
@@ -3317,6 +3879,10 @@ fn c_long(n: i64) -> String {
 fn as_int(e: E) -> Result<String, String> {
     match e.kind {
         K::Int => Ok(e.code),
+        // The slot the bytecode writes is the integer's: a character's code point, a
+        // boolean's byte, a function value's definition number (`FnRefDnr`).
+        K::Char | K::Bool => Ok(format!("((int64_t) ({}))", e.code)),
+        K::Fn => Ok(format!("(({}).d)", e.code)),
         k => Err(format!("an integer expected, a {k:?} found")),
     }
 }
@@ -3375,6 +3941,9 @@ fn as_single(e: E) -> Result<String, String> {
 fn as_char(e: E) -> Result<String, String> {
     match e.kind {
         K::Char => Ok(e.code),
+        // An integer written as a character: its low 32 bits, as the store keeps them (an
+        // integer null is the character null, 0).
+        K::Int => Ok(format!("((uint32_t) ({}))", e.code)),
         k => Err(format!("a character expected, a {k:?} found")),
     }
 }
@@ -3505,6 +4074,7 @@ const OP_REF: &[&str] = &[
     "OpInsertVector",
     "OpRefFromChildRec",
     "OpChildRec",
+    "OpCoroutineRetain",
 ];
 const OP_ENUM: &[&str] = &[
     "OpGetEnum",
@@ -3515,6 +4085,8 @@ const OP_ENUM: &[&str] = &[
 const OP_TEXT: &[&str] = &[
     "OpGetText",
     "OpCastTextFromEnum",
+    "OpCastEnumFromText",
+    "OpCastVectorFromText",
     "OpConvTextFromNull",
     "OpCastTextFromBool",
     "OpGetTextSub",
@@ -3644,11 +4216,27 @@ fn unsupported(v: &Value) -> String {
     format!("the construct {kind}")
 }
 
+/// A kind a store link carries: the place's own get and set read and write it
+/// (`FnWriter::link_access`).
+fn link_kind(tp: &crate::data::Type) -> bool {
+    use crate::data::Type;
+    matches!(
+        tp.base(),
+        Type::Integer(_)
+            | Type::Character
+            | Type::Single
+            | Type::Float
+            | Type::Boolean
+            | Type::Enum(_, false, _)
+            | Type::Text(_)
+    )
+}
+
 /// The `&` locals of `def` that link a store place: every bind (`link_set_repoints`) names an
 /// element or a field, or another store link (`OpVarRef`), none a variable (`OpCreateStack`),
 /// and the kind has a field operator.  A link to a link follows it, so the answer is the
 /// fixpoint over the binds.
-fn store_links(cx: &Cx, def: &crate::data::Definition) -> Vec<bool> {
+fn store_links(cx: &Cx, def: &crate::data::Definition, seed: &[u16]) -> Vec<bool> {
     use crate::data::Type;
     let vars = def.variables();
     let n = vars.count() as usize;
@@ -3667,18 +4255,12 @@ fn store_links(cx: &Cx, def: &crate::data::Definition) -> Vec<bool> {
         let Type::RefVar(tp) = vars.tp(v as u16).base() else {
             return false;
         };
-        matches!(
-            tp.base(),
-            Type::Integer(_)
-                | Type::Character
-                | Type::Single
-                | Type::Float
-                | Type::Boolean
-                | Type::Enum(_, false, _)
-                | Type::Text(_)
-        )
+        link_kind(tp)
     };
     let mut store = vec![false; n];
+    for &a in seed {
+        store[a as usize] = true;
+    }
     loop {
         let mut changed = false;
         for v in 0..n {

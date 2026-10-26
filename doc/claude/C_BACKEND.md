@@ -23,6 +23,7 @@ python3 scripts/c_sweep.py --poison  # the store poison modes, against the inter
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
+LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
 ```
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
@@ -76,7 +77,12 @@ module and the C header and compare every answer and every byte of the store.
 | `loft_paged.h` | `src/paged_reader.rs`, ported: an image read a page at a time, every read past its end 0 |
 | `loft_paged_load.h` | the working-set loaders (`store_load_key`, `_keys`, `_key_text`, `_keys_text`, `_prefix`, `_box`, `_range`) and their relocating copy |
 | `loft_keyed.h` | sorted and ordered (`src/vector.rs`), the walks, renders and keyed writes |
-| `loft_io.h` | files and the filesystem, pasted last |
+| `loft_json.h` | `src/json.rs`' `JParser` and the lexer's JSON mode, ported; the JsonValue tree in a store and its natives (`LOFT_JSON`, `LOFT_JV_*`) |
+| `loft_parse.h` | `T.parse(text)` and `T.parse(JsonValue)`: the walks into a type, read from the `loft_ptypes` table `parse.rs` writes, and the per-store `#errors` (`LOFT_PARSE`) |
+| `loft_io.h` | files and the filesystem |
+| `loft_lazy.h` | lazy stores: the bindings, their pins, the fault channel, the miss path (`LOFT_LAZY`) |
+| `loft_net.h` | whole-image loads over a URL: `file://`, HTTP/1.1, SHA-256 (`LOFT_NET`) |
+| `deliver.rs` | `deliver(tag, value)`'s byte form: one walker per type the value reaches |
 
 ## The macro modes
 
@@ -128,9 +134,18 @@ element bind.  A deep copy walks a table of the program's types (`loft_types`).
 
 **`&` parameters and locals.**  A link is a pointer to the variable it names — the caller's, for
 a parameter; the one `b = &a` names (`OpCreateStack(a)`), for a local — and every read and write
-of it goes through the pointer.  A link into a store place (a field, a vector element) is not
-carried yet.  A text result's hidden buffer is a link the caller makes for the
-call.  A rebind of a `&` record releases the record it displaces.
+of it goes through the pointer; a re-point (`@FR-B-Ref-Repoint`) points it at another variable,
+a tuple member, or what another link names.  A link into a STORE place (a field, a vector
+element) is a store link: a `loft_ref` to the place, read and written through the place's own
+get and set — a local bound only to places is one, and a call that hands a place to a `&`
+parameter calls the callee's PLACE TWIN (`<name>_pl<mask>`, `--native`'s `_st` twins), the
+function written again with that parameter a store link; the IR's own text instances
+(`n_app@st1`, `parser/store_text.rs`) take their place the same way, and a function value's
+dispatcher has a place variant per signature.  A link that moves between a variable and a
+store place whose bytes ARE the C value (an 8-byte integer, a float, a character, a boolean, a
+plain enum) holds the place's address, as `--native` does; a narrow or a text place reached
+that way is refused.  A text result's hidden buffer is a link the caller makes for the call.  A
+rebind of a `&` record releases the record it displaces.
 
 **Held vectors.**  Before a loop, each vector `opt::header::hoistable_vectors` admits — a loop
 that writes no store but in place, so no record moves and no length changes — is held in a
@@ -159,8 +174,10 @@ written from word 0 to past its last live record, padded to the 1024-word floor,
 the sidecar gated (`classify`: the same hash and dump, `Release::admits`), the image adopted
 into the slot as `Store::load` builds one (no parked lists, no lazy frees, the allocator state
 re-derived from the blocks).  A file of another layout is refused, where the interpreter
-converts it; a store holding references is refused at emit time until the reference remap
-(`rebase_stored_refs`) is ported; compaction on load is not done (it declines for an image
+converts it; a store holding references has them re-pointed at its slot from the slot its
+sidecar recorded (`rebase_stored_refs`), read off the image's bytes before it is adopted, so a
+refusal leaves the store as it was; `store_load_untrusted` validates the block structure first
+(`Store::validate_structure`); compaction on load is not done (it declines for an image
 `store_persist_copy` wrote, which is already dense).  `tests/c_emit.rs` crosses a file written
 by each backend with every reader — the interpreter, the C, `--native` — on a store of every
 collection kind, and checks the C's image and sidecar against the interpreter's byte for byte.
@@ -176,7 +193,8 @@ texts and vectors relocated, then filed by the collection's own insert.  Which c
 loader serves and which entry types it can copy is the Rust store's answer
 (`collection_type_of_store`, `is_copyable_entry`), asked when the program is written to C; a
 loader that cannot serve its collection runs and answers 0, saying why on stderr, as the
-interpreter does.  An `http(s)://` source is not carried.  `tests/c_emit.rs` crosses every
+interpreter does.  A paged load from an `http(s)://` source answers that it cannot open it as
+a paged source: the C has no ranged HTTP transport.  `tests/c_emit.rs` crosses every
 loader with every writer and reader, and
 `tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft` mutates every record of
 each image.  The key compare, the range search and the sorted insert are
@@ -198,6 +216,24 @@ drops it; a mapped vector copied as a record's field is copied element by elemen
 interpreter does without `mmap`.  The emitter defines `LOFT_FOREIGN` only for a unit that
 reaches `file_map`, so no other program pays the record test in `loft_at`.
 
+**JSON and `T.parse`.**  `loft_json.h` is `JParser` over the lexer's JSON mode, token for
+token: the offsets, the JSON pointer and the message of every error are json.rs's, and
+`tests/c_emit.rs` reads some 28 000 documents and their mutations through both, in both
+dialects.  `json_parse` writes the tree into a store of its own at the program's JsonValue
+layout, and its readers and builders follow `native.rs`.  `T.parse(text)` reads the text as it
+writes the store (`read_into`), and `T.parse(json_parse(t))` walks the tree
+(`struct_from_jsonvalue`); both read what each type takes, and what an absent or misfit value
+leaves, from a table of the program's types (`parse.rs`: field names, declared nullability and
+defaults, narrow encodings, variants).  The errors a parse files are the record's `#errors`,
+kept per store and carried as the interpreter carries them — by a record copy into another
+store's root, a bind, an exchange, and a whole-vector write.  A second differential in
+`tests/c_emit.rs` parses some 1 750 documents into a record of every field kind, a vector of
+records, the checked cast and the staged form, on the interpreter and as C.  A keyed
+collection is read as `record_new` / `record_finish` read it, each element filed under its key
+(a displaced one released through `loft_types`); a member of a linked group files every element
+into every member, and its views take no absent value; a `vector<S?>` element reads a present
+object as the `Some` variant's payload (`walk_parsed_into`'s @PLN25 E2 arm).
+
 **Files.**  A `File` record keeps the interpreter's fields (size, positions, path, handle,
 format); its handle indexes a table of open `FILE *`s, opened on first use, flushed after every
 write (the interpreter writes unbuffered, so another handle on the path reads it), and turned
@@ -213,7 +249,13 @@ generator outlives the caller's view), a resume function and a release.  The res
 restores the locals from the frame, jumps to the label after the last `yield`, and at the next
 `yield` saves them and returns the value through its `out` pointer; the body between is written
 as any other function's.  An iterator value is a handle into the runtime's generator table
-(`loft_gen_*`), released by `OpFreeRef` like a store.
+(`loft_gen_*`), released by `OpFreeRef` like a store, and held anywhere a value is
+(`(G-Hold)`): a step on a handle in a field, an element, a tuple member or a keyed record reads
+the handle's type off the place.  A frame holds the store of every heap argument for its life
+(`@FR-G-Arg-Rebind`, `Stores::hold_for_frame`): a free of a held store orphans it, the last
+release frees it, and a re-mint or an exchange of one takes a fresh store, so a caller's whole
+rebind after the call is not seen.  A tuple holding texts is yielded member by member, the
+consumer's texts its own copies.
 
 **Closures.**  A closure record's release (`OpDropFnRef`) runs the record type's drop cascade,
 which runs the drop hooks of what it captured; the unit brings the cascade of every lambda it
@@ -223,7 +265,19 @@ reaches, and `loft_drop_closure` picks it by the value's definition.
 after another — each row's result is the one a thread would compute — into a buffer on a stack
 the loop reads by row and pops (`loft_par_*`).  A row goes to the worker by its stored bits
 (1, 4 or 8 bytes by the element's width) or as a reference, as `worker_row_arg` hands it; a
-vector result gets a fresh buffer per row, a record result mints its own.
+vector result gets a fresh buffer per row, a record result mints its own; a tuple row is read
+member by member at its `__tuple<…>` record's offsets, a function row is its definition
+number.  `par_fold` is `run_parallel_fold`'s arithmetic: the rows in `min(threads, rows)`
+slices as `parallel_workers` splits them, each folded from `init`, the partials folded from
+`init` in slice order.
+
+**Linked groups.**  A record type several collections of one struct share (`@FR-Col-Group`)
+enters every member (`loft_group_finish`); an element write through the vector member hands
+the record to the others again (`OpLinkRecord`), a whole vector is indexed into each view
+(`OpIndexGroup`, `settle_group`), and a record a repeated key displaces leaves every keyed and
+tree member, released when no vector member holds it (`settle_displaced`).  A copy of a record
+holding a group copies the vector member and indexes the views over the copy
+(`relink_group_views`).
 
 **Removed records.**  The allocator never reuses a record, but one a collection removes keeps
 its claim word negated, so a stored reference to it reads null (`@FR-H-Removed`) — today the
@@ -251,12 +305,40 @@ only by failing with one of its messages — the annotations are read by the sam
 5. A sweep that turns up a `differ` is a defect to fix before going on — it is usually an
    older rule the new construct now reaches.
 
+**Lazy stores.**  `store_bind_lazy` binds a collection to a `.store` image (`LAZY_STORES.md`):
+a keyed lookup that misses on a bound collection fetches that one key through the paged
+loader the collection's kind takes — a hash's and a trie's key, a spatial's point as the
+degenerate box — and looks again, so the collection stays the only authority on what is
+resident.  The binding pins the source (length, modification time, inode) and a fetch after
+it moved refuses; the fault channel (`store_lazy_error`, `_faults`, `_clear`, `_fail`) keeps
+every failure's count and the first reason.  A kind an image cannot page is refused at the
+bind.  A database (`sqlite:`) or a loft driver's scheme answers unreachable — this runtime has
+no SQL driver — and `store_lazy_query` / `store_lazy_range` refuse the same way; a program that
+declares its own driver (`fn lazy_fetch…`) is refused at emit time.  The miss hook is written
+only into a unit that binds.
+
+**URL loads.**  `store_load_url` and `store_load_url_trusted` fetch the sidecar and the image
+(`file://` from the filesystem, `http://` as one HTTP/1.1 GET over a POSIX socket), gate the
+layout as `store_load` does, pin the bytes by SHA-256 for the first, and adopt them validated.
+An `https://` URL answers as a build without a TLS transport answers (`net::fetch_bytes`).
+
+**`#c` bindings.**  A function bound to a C symbol (`#c "abs" "int(int)"`) is a wrapper that
+declares the callee with the author's own signature text — so it agrees with a system header
+that declares it too — passes each scalar cast to its declared type and each text as a
+NUL-terminated copy, and widens the result as `c_call` does.  A vector argument is refused.  A
+`#native` function whose library is not loaded answers every call with the interpreter stub's
+panic.
+
+**`deliver`.**  `deliver(tag, value)` prints the loopback host's line: the value's bytes as
+`read_via_descriptor` reads them through its layout, as hex, or the refusal of the first
+store-internal kind it reaches.  `expose` and `release` lock and unlock the value's store; a
+walk over a hash in a locked store keeps its snapshot in a store of its own
+(`build_rec_scratch`).
+
 ## Not carried yet
 
-The sweep's ranking is the current list.  The large families: text parsed into a typed value
-(`T.parse`, `as vector<T>`, JSON), the image loaders over a URL, a lazy binding
-(`store_bind_lazy`), `store_reclaim`, a linked group with a spatial or trie member,
-`parallel { }` blocks, and the native library calls; of the generators, one held in a record
-field and one of tuples; of the `&` locals, a link into a store place; of `par`, a worker over
-tuples or function values.  A record holding a linked group is not copied yet: its members name one record set,
-which a field-by-field copy would split.
+No program of the corpus is refused.  What the C runtime does not have, it answers at run time
+the way a build without it answers: a ranged or a TLS transport for a URL, a SQL driver for a
+lazy database source.  Refused at emit time: a program declaring a loft lazy driver, a `#c`
+binding taking a vector, a link re-pointed to a narrow or a text store place, a par row of a
+tuple holding a reference.

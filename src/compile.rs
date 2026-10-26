@@ -461,7 +461,7 @@ fn register_native_stubs(state: &mut State, data: &Data) {
                      poisoned contents were used as the call index, in which case the real \
                      fault is a store lifetime bug that happened EARLIER. Tell them apart: \
                      if the run is green with LOFT_POISON unset, or an earlier line reports \
-                     `BUG (#306)` / a strict-store violation, it is (b) — re-run with \
+                     a `BUG` refusal of a store free / a strict-store violation, it is (b) — re-run with \
                      `LOFT_STRICT_STORES=1` to name the access and the free.",
                     stub_symbol_now()
                 );

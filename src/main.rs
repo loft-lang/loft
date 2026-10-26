@@ -186,11 +186,12 @@ fn print_help() {
         "  --dump                        compile to bytecode, dump to stderr, and exit (no execution)"
     );
     println!("  --native                      compile to native Rust via rustc and run (default)");
-    println!("  --native-release              like --native but emit only reachable functions,");
-    println!("                                compile fully optimised (opt-level 3, one codegen");
-    println!("                                unit) and strip the live/debug tier as --lean does:");
-    println!("                                a SHIPPED binary.  --native keeps every tier — the");
-    println!("                                semantics run");
+    println!("  --ship                        build the program as it ships: only reachable");
+    println!("                                functions, fully optimised, no live/debug tier,");
+    println!("                                native libraries linked in (unless --dynamic or");
+    println!("                                `#link dynamic`).  With --native-wasm, --html or");
+    println!("                                --native-android it builds that target the same");
+    println!("                                way.  Every fault check stays");
     println!("  --static                      with a native build: link every native library INTO");
     println!(
         "                                the binary — one file that runs with no loft, rustc or"
@@ -217,7 +218,7 @@ fn print_help() {
     println!(
         "                                and preserve the generated .rs on disk; combine with"
     );
-    println!("                                --native-release for optimised + debug-info");
+    println!("                                --ship for optimised + debug-info");
     println!("  --lean                        strip the live/debug tier — smallest binary, no");
     println!("                                live-flip/breakpoints");
     println!("  --dev-soft-halt               demote dev-mode runtime raises to log-and-continue");
@@ -4301,7 +4302,7 @@ fn native_cache_bypassed() -> bool {
 // rename them (the same call `cache::cache_decision` makes).
 #[allow(clippy::fn_params_excessive_bools)]
 fn native_source_key_fingerprint(
-    native_release: bool,
+    ship_build: bool,
     native_debug: bool,
     lean: bool,
     html_names: bool,
@@ -4309,7 +4310,7 @@ fn native_source_key_fingerprint(
 ) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    native_release.hash(&mut h);
+    ship_build.hash(&mut h);
     native_debug.hash(&mut h);
     lean.hash(&mut h);
     html_names.hash(&mut h);
@@ -5564,7 +5565,7 @@ fn api_surface_of(
     Ok((surface, identity))
 }
 
-/// @PLN102 @C96 — `loft ship [args…]`: the maintainer ship verb.  Locates
+/// @PLN102 @C96 — `loft maintain-registry [args…]`: the maintainer's registry verb.  Locates
 /// `scripts/registry_maintain.sh` (env override, exe-relative, or CWD) and runs it.
 /// On a KEY-PRESENT machine (`~/.loft/trust-root/registry-signing-key.bin` exists) it
 /// defaults the local file signer + non-interactive `--yes` — autonomous package →
@@ -5573,9 +5574,9 @@ fn api_surface_of(
 /// routine in review mode (which reports what a key holder must fold in).  Explicit
 /// `LOFT_REGISTRY_SIGNER` / passing `--dry-run` / `--yes` are respected as given.
 /// Exit code is the script's.
-fn run_ship_command(args: &[String]) -> i32 {
+fn run_maintain_registry_command(args: &[String]) -> i32 {
     use std::path::PathBuf;
-    let script = std::env::var("LOFT_SHIP_SCRIPT")
+    let script = std::env::var("LOFT_MAINTAIN_REGISTRY_SCRIPT")
         .ok()
         .map(PathBuf::from)
         .filter(|p| fa::is_file(p))
@@ -5597,7 +5598,7 @@ fn run_ship_command(args: &[String]) -> i32 {
         });
     let Some(script) = script else {
         eprintln!(
-            "loft ship: cannot find scripts/registry_maintain.sh — run from the loft repo, or set LOFT_SHIP_SCRIPT."
+            "loft maintain-registry: cannot find scripts/registry_maintain.sh — run from the loft repo, or set LOFT_MAINTAIN_REGISTRY_SCRIPT."
         );
         return 1;
     };
@@ -5619,7 +5620,7 @@ fn run_ship_command(args: &[String]) -> i32 {
         }
     } else {
         eprintln!(
-            "loft ship: no trust-root key here (~/.loft/trust-root/registry-signing-key.bin) — this machine cannot sign."
+            "loft maintain-registry: no trust-root key here (~/.loft/trust-root/registry-signing-key.bin) — this machine cannot sign."
         );
         eprintln!(
             "           Prepare a submission for a key holder to fold in (see REGISTRY_SUBMIT.md); running in review mode below."
@@ -5634,7 +5635,10 @@ fn run_ship_command(args: &[String]) -> i32 {
     match cmd.status() {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => {
-            eprintln!("loft ship: failed to run {}: {e}", script.display());
+            eprintln!(
+                "loft maintain-registry: failed to run {}: {e}",
+                script.display()
+            );
             1
         }
     }
@@ -7504,9 +7508,9 @@ fn main() {
     // Tracked separately because the `test`/`--tests` handlers force interpreter
     // unless native was explicitly requested (regardless of arg order).
     let mut native_requested = false;
-    let mut native_release = false;
+    let mut ship_build = false;
     // Plan-0.8.5 NDB.0 — `--native-debug` flag: pass `-Cdebuginfo=2`
-    // to rustc, drop `-O` (unless `--native-release` is also set),
+    // to rustc, drop `-O` (unless `--ship` is also set),
     // and preserve the generated `.rs` on disk so DWARF's `.debug_line`
     // table points at a real file the debugger can show.
     let mut native_debug = false;
@@ -7792,12 +7796,13 @@ fn main() {
         } else if a == "--native" {
             native_mode = true;
             native_requested = true;
-        } else if a == "--native-release" {
-            native_mode = true;
-            native_requested = true;
-            native_release = true;
+        } else if a == "--ship" {
+            // The shipped build of whichever compiled target the run names — the host binary
+            // by default (NATIVE.md § Optimisation tiers).  Which target is decided after every flag is
+            // read; only the host default sets `native_mode` there.
+            ship_build = true;
         } else if a == "--native-debug" {
-            // NDB.0 — emit DWARF; combine with --native-release if
+            // NDB.0 — emit DWARF; combine with --ship if
             // optimised + debug-info is wanted.
             native_mode = true;
             native_requested = true;
@@ -8776,13 +8781,13 @@ fn main() {
                 eprintln!("loft pin: this binary was built without the `registry` feature.");
                 std::process::exit(1);
             }
-        } else if a == "ship" {
-            // @C96 — the maintainer ship verb.  On a key-present machine (the local
+        } else if a == "maintain-registry" {
+            // @C96 — the maintainer's registry verb.  On a key-present machine (the local
             // trust-root file key exists) it packages + signs + pushes every own lib
             // newer than the index, autonomously; a key-absent machine can only defer
             // to a submission.  Wraps scripts/registry_maintain.sh (which chains the
             // CAS-retry sign+push in registry-sign.sh).
-            std::process::exit(run_ship_command(&argv[i..]));
+            std::process::exit(run_maintain_registry_command(&argv[i..]));
         } else if a == "registry" {
             handle_registry(&argv, &mut i);
             return;
@@ -9141,6 +9146,28 @@ fn main() {
             user_args.push(a.to_string());
         }
     }
+    // `--ship` builds a program; a run that builds none says so rather than ignoring it.
+    if ship_build {
+        let refusal = if debug_name.is_some() {
+            Some("a shipped page has no debug channel; drop --debug")
+        } else if tests_dir.is_some() {
+            Some("tests run on the checked build; --ship builds the program you ship")
+        } else if emit_c.is_some() {
+            Some("--emit-c writes C source only; compile it with your C compiler's release flags")
+        } else if !native_mode
+            && native_wasm.is_none()
+            && html_out.is_none()
+            && native_android.is_none()
+        {
+            Some("--interpret runs the program without building it; drop one of the two")
+        } else {
+            None
+        };
+        if let Some(why) = refusal {
+            eprintln!("loft: --ship: {why}");
+            std::process::exit(2);
+        }
+    }
     // Resolve sentinel empty paths to .loft/ defaults now that file_name is known.
     if let Some(ref mut p) = native_wasm
         && p.is_empty()
@@ -9468,13 +9495,16 @@ fn main() {
     if let Ok(src) = fa::read_to_string(&abs_file) {
         native_utils::apply_link_directive(&src);
     }
+    if ship_build {
+        native_utils::link_static_unless_named();
+    }
     // Computed where it is used — the fast path's lookup and the sidecar a native build
     // saves — never on a run that takes neither (an `--interpret` run, a check).  Computing it
     // can spawn `rustc --version` (the runtime rlib's lookup asks which rustc wrote it), and
     // on macOS that spawn also starts the driver-death watcher shell (loft#2070).
     let native_fingerprint = || {
         native_source_key_fingerprint(
-            native_release,
+            ship_build,
             native_debug,
             lean,
             html_names,
@@ -9555,7 +9585,7 @@ fn main() {
         || native_emit.is_some()
         || native_android.is_some()
     {
-        !(lean || native_release)
+        !(lean || ship_build)
     } else {
         false
     };
@@ -10192,7 +10222,7 @@ fn main() {
     // live tier's dispatch table — `--html --debug` flipped one function where it had two
     // (html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm).  Each path's
     // live-tier decision is the one its `Output::emit_live` makes below; `--interpret`,
-    // `--lean` and `--native-release` ship none and keep the pass.
+    // `--lean` and `--ship` ship none and keep the pass.
     if ships_live_tier {
         p.data.open_world = true;
     }
@@ -10389,8 +10419,10 @@ fn main() {
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
-            out.lean = lean;
-            if lean {
+            // `--ship` asks for both, as on the host.
+            let shipped = lean || ship_build;
+            out.lean = shipped;
+            if shipped {
                 out.emit_live = false;
                 out.lean_tier = true;
             }
@@ -10409,6 +10441,7 @@ fn main() {
             &rs_path,
             std::path::Path::new(&android_out),
             &p.data.native_packages,
+            ship_build,
         );
         if std::env::var("LOFT_KEEP_NATIVE_RS").is_err() {
             let _ = fa::remove_file(&rs_path);
@@ -10476,8 +10509,10 @@ fn main() {
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
-            out.lean = lean;
-            if lean {
+            // `--ship` asks for both, as on the host.
+            let shipped = lean || ship_build;
+            out.lean = shipped;
+            if shipped {
                 out.emit_live = false;
                 out.lean_tier = true;
             }
@@ -10497,11 +10532,15 @@ fn main() {
             .arg("--target")
             .arg("wasm32-wasip2")
             .arg("--crate-type")
-            .arg("bin")
-            .arg("-O")
-            .arg("-o")
-            .arg(wasm_out)
-            .arg(&rs_path);
+            .arg("bin");
+        // A shipped build is fully optimised (`src/native_release_args.txt`); every other
+        // wasm build keeps the faster `-O`.
+        if ship_build {
+            cmd.push_args(loft::cache::release_rustc_args());
+        } else {
+            cmd.push_arg("-O");
+        }
+        cmd.push_arg("-o").push_arg(wasm_out).push_arg(&rs_path);
         // @PLN100 Slice 1 — build loft's own wasm runtime rlib on stale/missing and
         // locate it, instead of silently skipping the `--extern loft=…` (which used
         // to surface as an opaque "wasm compilation failed" when the rlib was absent).
@@ -10768,11 +10807,15 @@ fn main() {
             .push_arg("--target")
             .push_arg("wasm32-unknown-unknown")
             .push_arg("--crate-type")
-            .push_arg("cdylib")
-            .push_arg("-O")
-            .push_arg("-o")
-            .push_arg(&wasm_path)
-            .push_arg(&rs_path);
+            .push_arg("cdylib");
+        // A shipped page is fully optimised (`src/native_release_args.txt`) and keeps its
+        // named frames: the panic hook's frame block is a pinned contract.
+        if ship_build {
+            cmd.push_args(loft::cache::release_rustc_args());
+        } else {
+            cmd.push_arg("-O");
+        }
+        cmd.push_arg("-o").push_arg(&wasm_path).push_arg(&rs_path);
         if let Some(lib_dir) = html_runtime_dir.clone() {
             cmd.push_args(loft::native_lib::loft_extern_args(
                 &lib_dir.join("libloft.rlib"),
@@ -10933,8 +10976,13 @@ fn main() {
                 .push_arg("--crate-type")
                 .push_arg("rlib")
                 .push_arg("--crate-name")
-                .push_arg(&crate_ident)
-                .push_arg("-O")
+                .push_arg(&crate_ident);
+            if ship_build {
+                build.push_args(loft::cache::release_rustc_args());
+            } else {
+                build.push_arg("-O");
+            }
+            build
                 .push_arg("-o")
                 .push_arg(&bridge_rlib)
                 .push_arg(&bridge_src);
@@ -11711,7 +11759,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
-            // `--native-release` asks for both: a shipped binary is fully optimised,
+            // `--ship` asks for both: a shipped binary is fully optimised,
             // and the named per-call frame push was the largest single cost the tier
             // carried (measured on the drawing pass, consumer lane: `hash` 4.7M → 1.2M
             // ns/op, `hair` −55 %, `wide_line` −32 %, the pixel rows −13–19 %).
@@ -11719,7 +11767,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // the live channel are worth their cost.  The browser (`--html`) path is
             // separate and keeps its named frames: its panic hook's frame block is a
             // pinned contract.
-            let shipped = lean || native_release;
+            let shipped = lean || ship_build;
             out.lean = shipped;
             if shipped {
                 out.emit_live = false;
@@ -11733,7 +11781,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // it names.  PERFORMANCE.md § Attributing a row.
             out.keep_fn_names = html_names;
             let t_emit = std::time::Instant::now();
-            let result = if native_release {
+            let result = if ship_build {
                 let main_nr = p.data.def_nr("n_main");
                 let entry_defs: Vec<u32> = if main_nr < end_def {
                     vec![main_nr]
@@ -11839,7 +11887,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         if native_emit.is_some() {
             return; // --native-emit: just write the file, don't compile
         }
-        // --native / --native-release: compile with rustc and run.
+        // --native / --ship: compile with rustc and run.
         // Cache compiled binaries in .loft/cache/ next to the source file,
         // keyed by a hash of the generated Rust source so recompilation is
         // skipped when the output hasn't changed.
@@ -11859,8 +11907,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // and `--native --native-debug` returns whichever build
             // ran first — debugger sees a stripped binary, or a
             // user accidentally runs an unoptimised build under
-            // `--native-release` because the debug build was cached.
-            native_release.hash(&mut h);
+            // `--ship` because the debug build was cached.
+            ship_build.hash(&mut h);
             native_debug.hash(&mut h);
             loft::cache::release_rustc_args().hash(&mut h);
             // And whether the build strips its symbols (`LOFT_NATIVE_KEEP_SYMBOLS`): the
@@ -12033,7 +12081,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     );
             }
             cmd.push_arg(&emit_path);
-            if native_release {
+            if ship_build {
                 // A shipped binary: full optimisation and aligned loops, the list and
                 // its measurements in `src/native_release_args.txt`.  Semantics runs
                 // (`--native`, the test runner) keep the faster compile.
@@ -12048,7 +12096,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             }
             // NDB.0 — when --native-debug is set, emit DWARF debug
             // info so stock GDB / LLDB can step through the native
-            // binary.  Combines with --native-release: the user gets
+            // binary.  Combines with --ship: the user gets
             // an optimised build with debug info if both flags are
             // present.
             if native_debug {

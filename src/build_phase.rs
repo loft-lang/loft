@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 /// The compile action a target maps to — named by the target's `shape`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
-    /// `--native-release --out dist`: the shipped program and its libraries in `dist/`.
+    /// `--ship --out dist`: the shipped program and its libraries in `dist/`.
     Native,
     /// `--html`: a self-contained browser page (wasm32-unknown-unknown).
     Html,
@@ -50,7 +50,7 @@ impl Shape {
     #[must_use]
     pub fn compile_args(self) -> &'static [&'static str] {
         match self {
-            Shape::Native => &["--native-release", "--out", "dist"],
+            Shape::Native => &["--ship", "--out", "dist"],
             Shape::Html => &["--html"],
             Shape::Wasi => &["--native-wasm"],
         }

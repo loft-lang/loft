@@ -374,6 +374,12 @@ static uint32_t loft_bt_arena_of(loft_ref data) {
     return loft_collection_rec(loft_store_of(data), data.rec, data.pos);
 }
 
+/* btree::table_bytes: the bytes of the index's node table (`OpSizeIndex`). */
+static int64_t loft_bt_table_bytes(loft_ref data) {
+    uint32_t a = loft_bt_arena_of(data);
+    return a == 0 ? 0 : (int64_t) (loft_bt_hdr(loft_store_of(data), a, LOFT_BT_H_CAP) - 1) * LOFT_BT_NODE;
+}
+
 static uint32_t loft_bt_create(loft_store_t *s, loft_ref data) {
     uint32_t a = loft_st_claim(s, loft_bt_arena_words(LOFT_BT_FIRST_CAP));
     loft_bt_set_hdr(s, a, LOFT_BT_H_HEIGHT, 0);

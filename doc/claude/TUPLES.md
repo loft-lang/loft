@@ -32,7 +32,7 @@ synthetic `__tuple<…>` struct** instead — the same record a stored tuple use
 
 The distinction is worth keeping honest because the boxing is not free: it claims and
 frees a store record on **every call**. loft#808 measured a `(float, float, float)`
-helper at 728 ms boxed against 129 ms as a value on `--native-release` — the identical
+helper at 728 ms boxed against 129 ms as a value on `--ship` — the identical
 arithmetic, ~5.6x, entirely from crossing a function boundary. Boxing every tuple
 return is what that issue was.
 

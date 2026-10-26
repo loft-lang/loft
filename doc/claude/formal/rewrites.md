@@ -115,7 +115,7 @@ closed unit (every use is in the compilation; a fn-ref call is a match over know
 definitions), so every condition is decidable in it and the only boundaries left are
 where a representation is turned back into the promised one: a call into a `use`d
 library, the live-reload arm, and a record's layout in a store (@C122's corollary).
-And the UNIT is a build decision: a release copy of a program (`--native-release`)
+And the UNIT is a build decision: a release copy of a program (`--ship`)
 emits its `use`d loft libraries' reachable functions into the one program it compiles,
 so there a loft-to-loft library API is no boundary at all — a library is recompiled
 with the game rather than reused as a binary — and what remains is a package's `#rust`
@@ -2983,11 +2983,11 @@ instance 4, `LOFT_TRACE_APART=1`).  Instance 4 measured on dryopea `truncate_to`
 µs inlined the boundary with the layout's constants; the built form asks the element type's
 plan at run time.  Instance 4's guard `tests/scripts/158-apart-records.loft`, its pins
 `tests/apart_records.rs`; like instance 2 it is made only where no live tier ships
-(`--native-release`).  Not admitted yet: an
+(`--ship`).  Not admitted yet: an
 element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
 text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
 Guards `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:
-native-release`) and `a-local-float-vector-lives-in-an-inline-buffer.loft`; pins and both
+ship`) and `a-local-float-vector-lives-in-an-inline-buffer.loft`; pins and both
 out-of-range reports `tests/apart_value.rs`.  Design:
 [APART_VALUES.md](../APART_VALUES.md).
 
@@ -3125,7 +3125,7 @@ the walks; `LOFT_NO_STREAM_WALK=1`, `LOFT_TRACE_STREAM_WALK=1`).  zttext's
 **4.60× → 2.98× of Rust**, hash unchanged.  Not admitted yet: a walk by `for e in v`, a
 narrow integer, enum, boolean or character field, a body that reads the index, a walk
 that leaves early.  Guard `tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft`
-(`@falsify-tier: native-release`), pin `tests/stream_walk.rs`.
+(`@falsify-tier: ship`), pin `tests/stream_walk.rs`.
 
 ### A keyed insert writes the entry its key names
 
@@ -5386,8 +5386,8 @@ each inlined call, each decline and each reduction below.
 ### A self-call in tail position is a jump
 
 ```
-  (R-TailSelf)   In a function whose result is a scalar or nothing, the body is wrapped in
-                 a loop and every SELF-call
+  (R-TailSelf)   In a function whose result is a scalar, nothing, a text or a store-held
+                 value, the body is wrapped in a loop and every SELF-call
                  in TAIL position — the value a `return` answers, the value an `if` arm or
                  a block answers in that position, the last statement of a void body, the
                  value of the temporary the scope pass hands to a `return` — binds its
@@ -5404,14 +5404,24 @@ each inlined call, each decline and each reduction below.
                  rebound when the argument is such a pointer — the parameter itself (then
                  nothing moves), another parameter, a projection rooted at one (`p.next`,
                  `v[i]`); a text or `&` parameter only as itself (a text's assignment owns,
-                 a `&` assignment writes through: neither moves a pointer).  REFUSED (@C155), at the call, naming
-                 the variable and the cure: a tail self-call in a frame the jump cannot
-                 reuse — an argument that MAKES a value (a call, a literal, an operator
-                 result) or names a local the jump releases, a parameter the body REBINDS
-                 (the frame then owns its store), a `&` local, a result delivered into the
-                 caller's buffer, a generator, a `parallel` block or a closure in the body.
-                 It is never left a call.  A self-call whose value is bound to a local
-                 before it is returned (`r = f(…); r`) is not in tail position: a call.
+                 a `&` assignment writes through: neither moves a pointer).  A result held
+                 in a store is DELIVERED as the call would deliver it: through the place the
+                 scope pass hands to the `return` — the `&text` buffer, the return buffer,
+                 the `__ret_N` temporary, the join's two-step `tmp = E; x = tmp` — which the
+                 final arm writes, while the jump's path writes nothing (a `Set` on such a
+                 place would release what it holds).  REFUSED (@C155), at the call — and
+                 for a generic at each INSTANCE — naming the variable and the cure: a tail
+                 self-call in a frame the jump cannot reuse — an argument that MAKES a
+                 value (a call, a literal, an operator result) or names a local the jump
+                 releases, a text or `&` parameter handed anything but itself, a parameter
+                 the body REBINDS (the frame then owns its store), a `&` local, a result of
+                 another kind (a tuple, a closure), a generator, a `parallel` block or a
+                 closure in the body.  It is never left a call.  A self-call whose value is
+                 bound to a local before it is returned (`r = f(…); r`) is not in tail
+                 position: a call.  Two readers of a body learn the loop: `(O-Oracle)` reads
+                 the jump's pointer writes as definitions (a parameter swapped there is one
+                 of several caller stores, as the call's swapped argument made it) and a
+                 `Loop` in tail position as no value site (the returns inside it are).
 ```
 
 **In words.** Applies in: the IR phase, both backends, every lane.  The recursion a compiler's
@@ -5433,11 +5443,19 @@ What is refused is what a call does not do either: an argument the frame MAKES (
 result, a literal, an operator result) would have to be handed into the frame's ownership; a
 local as the argument is released by the jump under its own pointer; a parameter the body
 rebinds (`(F-ParamRebind)`) holds a store this frame owns, which the epilogue frees after the
-temporary read it.  A heap result is delivered into the caller's hidden buffer (`___acc =
-f(…)`, `__retbuf`) and has no clause yet.  Those shapes are REFUSED rather than left a call
-(@C155): the refusal in the parser and the pass share `admit_frame`, so a program that
-compiles is one whose tail self-calls all jump; `r = f(…); r` is the spelling that keeps a call
-on purpose.  The remaining clause (loft-lang/plans#202 P5b) is the heap result's delivery.  `LOFT_NO_TAIL_SELF=1` keeps the calls;
+temporary read it; a text parameter handed another text has no pointer move (a text's
+assignment owns), so a swap of two text parameters (`pick<text>`) is refused where `pick<S>`
+jumps — the one clause left (loft-lang/plans#202 P5b).  Those shapes are REFUSED rather than
+left a call (@C155): the refusal in the parser — for a generic at each instance, since the
+template cannot decide a type variable — and the pass share `tail_frame::admit_frame`, so a
+program that compiles is one whose tail self-calls all jump; `r = f(…); r` is the spelling that
+keeps a call on purpose.  A result held in a store needs no runtime check: the scope pass already
+delivers it through a place the final arm writes (`___acc_N = E`, `__retbuf`, `__ret_N`, the
+join's `tmp = E; x = tmp`), so the jump's arm writes nothing and the caller reads what the call
+would have put there.  What the caller then OWNS is the ownership oracle's answer about the
+callee, and the oracle reads the loop as it read the recursion: a pointer write (`OpPutRef`) is a
+definition, so a parameter swapped at the jump may hold any of the caller's stores and the caller
+copies (`(O-Oracle)`, loft-suite 1888); a `Loop` in tail position is no value site.  `LOFT_NO_TAIL_SELF=1` keeps the calls;
 `LOFT_TRACE_TAIL_SELF=1` names each rewrite and each decline, and the census (`make
 rewrite-census`) records the admissions and the declines by reason.
 

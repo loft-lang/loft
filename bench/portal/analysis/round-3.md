@@ -3,7 +3,7 @@
 Taken 2026-09-22 on x86-64 from the portal re-measured at `8009e8c5b` (every routine
 **1.85×**, shipped routines **1.63×**, 30 rows at or over 2×, 17 over 3×).  An ANALYSIS: every
 figure below is a HAND-PRICE — the emitted Rust of the routine edited to the form a rewrite
-would emit, compiled with the `--native-release` flags, run on one core with the result hash
+would emit, compiled with the `--ship` flags, run on one core with the result hash
 unchanged — and nothing here was built when it was taken; § Built records what has been
 since, with the measurement.  Two rows were priced and DID NOT MOVE; they are listed as
 what they are, with what was learned.
@@ -281,7 +281,7 @@ priced here.
 
 ### The single-row harness, 2026-09-22 — and what it attributed
 
-`loft --native-release --names` already existed (loft#954, the browser build's frame
+`loft --ship --names` already existed (loft#954, the browser build's frame
 naming) and only needed the flag routed to the host-native path: every generated function
 is `#[inline(never)]`, a row has a symbol, `perf annotate` attributes it.  Recipe in
 `PERFORMANCE.md` § Attributing a bench ROW.  The named build times `mesh_aabb` and
@@ -639,7 +639,7 @@ measurement instead of a story.
 
 ## Method
 
-`--native-release --native-emit` for the routine's Rust; the edit a rewrite would make,
+`--ship --native-emit` for the routine's Rust; the edit a rewrite would make,
 applied by script; `bench/portal/hand_price.sh`; the lane binary on one core (`taskset -c 0`),
 three runs, the hash column compared.  `perf record -e cycles:u` + `perf annotate` where a
 form did not move, which is how the two unattributed rows were found to be unattributable.

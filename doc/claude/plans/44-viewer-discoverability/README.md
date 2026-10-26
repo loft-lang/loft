@@ -12,7 +12,7 @@ Phase 3 shipped option **(b)**, not (a): `/welcome` turned out to list no tags a
 not a sensible target for a link named `tags`.  The new `/tags` route lists every canonical `@`-tag in
 `index/tags.json`, grouped by family, with its reference count, and links each to `/tag/<bare>`.
 It was checked against the index (1060 tags; the counts for `@PLN157` and `@FR-B-Copy` agree), and
-the page is byte-identical on `--interpret` and `--native-release`.  Opened 2026-05-15 from a
+the page is byte-identical on `--interpret` and `--ship`.  Opened 2026-05-15 from a
 structure evaluation of the viewer's routes and inbound-link graph.
 
 ## Why

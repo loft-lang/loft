@@ -4,7 +4,7 @@
 // stop-gap for loft code the backend cannot yet run fast; the ratio says how far it still is, and
 // a kernel whose loft body comes within the register's bar there is due to be removed there.
 //
-//     make kernel-ratio               (both backends: `--interpret` and `--native-release`)
+//     make kernel-ratio               (both backends: `--interpret` and `--ship`)
 //
 // Each row also checks that the two answer the same, so the loft body stays an oracle for the
 // kernel as well as its measure.

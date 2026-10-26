@@ -191,13 +191,15 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed("fn up() -> integer { v = \"[1,2]\" as vector<integer>; len(v) }\n");
+    let p = parsed(
+        "fn c_sum(v: vector<i32>) -> integer;   #c \"c_sum\" \"int(const int*, size_t)\"\nfn up() -> integer { c_sum([1, 2]) }\n",
+    );
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
-        .expect_err("text parsed into a vector is not carried yet");
-    assert_eq!(refusal.function, "up");
+        .expect_err("a C binding taking a vector is not carried yet");
+    assert_eq!(refusal.function, "c_sum");
     assert!(
-        refusal.why.contains("OpCastVectorFromText"),
+        refusal.why.contains("a C binding taking a vector"),
         "names the construct: {refusal}"
     );
 }
@@ -2053,4 +2055,405 @@ small true 20 len=1 verify=true
             "the C's .{suffix} image is the interpreter's"
         );
     }
+}
+
+/// One parse's answer in the form both sides print: the value tree, or the error's offset,
+/// JSON pointer and message.
+fn json_dump(r: &Result<loft::json::Parsed, loft::json::ParseError>) -> String {
+    use loft::json::Parsed;
+    fn hex(s: &str) -> String {
+        s.bytes().map(|b| format!("{b:02x}")).collect()
+    }
+    fn val(p: &Parsed, out: &mut String) {
+        match p {
+            Parsed::Null => out.push('n'),
+            Parsed::Bool(b) => out.push_str(if *b { "b1" } else { "b0" }),
+            Parsed::Number(n) => {
+                let _ = write!(out, "N{:016x}", n.to_bits());
+            }
+            Parsed::Int(i) => {
+                let _ = write!(out, "I{i}");
+            }
+            Parsed::Str(s) => {
+                let _ = write!(out, "S{}", hex(s));
+            }
+            Parsed::Ident(s) => {
+                let _ = write!(out, "D{}", hex(s));
+            }
+            Parsed::Array(items) => {
+                out.push('[');
+                for (i, x) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    val(x, out);
+                }
+                out.push(']');
+            }
+            Parsed::Object(fields) => {
+                out.push('{');
+                for (i, (k, off, x)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    let _ = write!(out, "{}@{off}=", hex(k));
+                    val(x, out);
+                }
+                out.push('}');
+            }
+            Parsed::Constructor(tag, off, body) => {
+                let _ = write!(out, "C{}@{off}(", hex(tag));
+                val(body, out);
+                out.push(')');
+            }
+        }
+    }
+    match r {
+        Ok(p) => {
+            let mut s = String::new();
+            val(p, &mut s);
+            s
+        }
+        Err(e) => format!("E{}|{}|{}", e.byte_offset, hex(&e.path), hex(&e.message)),
+    }
+}
+
+/// The texts the JSON differential reads: valid documents of every shape, loft literals, and
+/// each of them cut short, with a character dropped, replaced and inserted — the mutations
+/// reach the escapes, the number grammar and every delimiter's error.
+fn json_inputs() -> Vec<String> {
+    let seeds = [
+        r#"{"a": 1, "b": [true, false, null], "c": {"d": "e"}}"#,
+        r#"[1, -2, 3.5, -0.25e3, 1E+9, 0, -0, 12345678901234567890]"#,
+        r#""plain""#,
+        r#""esc \" \\ \/ \b \f \n \r \t \u00e9 \ud83d\ude00 \ud800x \udc00 \ud800\u0041""#,
+        r#"{"k": "\u12", "q": "\x41"}"#,
+        "[ \"tab\there\", \"nl\nx\" ]",
+        "{name: \"x\", v: 7, tag: Color.Red, e: Point{x: 1, y: 2}, w: Daily}",
+        "[Red, Green{v: 1}, null, true]",
+        "  \r\n {\"x\" :\t[ ] , \"y\" : { } }  ",
+        "#!/usr/bin/x\n[1, 2]",
+        "\u{feff}{\"bom\": 1}",
+        "[1, 2,]",
+        "{\"a\" 1}",
+        "{\"a\": 1,}",
+        "[007, 0x1f, 1_0, 1., .5, -, - 5, 1e, 1e+]",
+        "{\"é\": \"ünï\", 'c': 1}",
+        "[1..2, 1.a, 0b101, 0o17, 0xFFz, 1_000_0, 1__0, 2.5f, 2.5q, 1e5x, 12abc]",
+        r#"["\u{41}\u{1F600}\u{}\u{110000}", "\x7f\x80\xg", "\0\'\`", "\ud83d😀", "\ud83d\"x"]"#,
+        r#"{'a': 'b\'c', 'd': '', 'A': 1, k: 'x\ud800y'}"#,
+        r#"{"deep": [[[{"x": [1, {"y": [true, "é"]}]}]]], "z": -0.0e-0}"#,
+        "nul",
+        "truex",
+        "@",
+        "",
+    ];
+    let alphabet = [
+        "\"", "\\", "u", "{", "}", "[", "]", ",", ":", "-", ".", "e", "0", "9", "x", "_", " ",
+        "\n", "\t", "é", "'", "n", "t", "f", "/", "d", "8", "a",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    for s in seeds {
+        out.push(s.to_string());
+        let cuts: Vec<usize> = (0..=s.len()).filter(|&i| s.is_char_boundary(i)).collect();
+        for &i in &cuts {
+            out.push(s[..i].to_string());
+        }
+        for w in cuts.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            out.push(format!("{}{}", &s[..a], &s[b..]));
+            for c in alphabet {
+                out.push(format!("{}{c}{}", &s[..a], &s[b..]));
+                out.push(format!("{}{c}{}", &s[..a], &s[a..]));
+            }
+        }
+    }
+    out.retain(|s| !s.contains('`'));
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The C reads JSON and loft literals as `json::parse_with` reads them (`loft_json.h`, a port
+/// of `JParser` over loft's JSON-mode lexer): over every input, in both dialects, the same
+/// value tree, or the same error at the same offset with the same JSON pointer.  The inputs
+/// are documents and their mutations (`json_inputs`); a backtick is left out, where the lexer
+/// opens a loft text block the port does not read.
+#[test]
+fn the_c_reads_json_as_json_rs_does() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let inputs = json_inputs();
+    let mut want = String::new();
+    for lenient in [false, true] {
+        let dialect = if lenient {
+            loft::json::Dialect::Lenient
+        } else {
+            loft::json::Dialect::Strict
+        };
+        for s in &inputs {
+            let r = std::panic::catch_unwind(|| loft::json::parse_with(s, dialect));
+            let Ok(r) = r else {
+                panic!("json.rs panicked reading {s:?} ({dialect:?})");
+            };
+            let _ = writeln!(want, "{}", json_dump(&r));
+        }
+    }
+    let mut c = String::from("#define LOFT_JSON 1\n");
+    for part in [
+        include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_store.h"),
+        include_str!("../src/c/loft_rt.h"),
+        include_str!("../src/c/loft_json.h"),
+    ] {
+        c.push_str(part);
+    }
+    c.push_str(
+        r#"
+static void loft_init(void) {}
+
+static void hex(const char *p, size_t n) {
+    for (size_t i = 0; i < n; i++) printf("%02x", (unsigned char) p[i]);
+}
+
+static void dump(const loft_jv *v) {
+    switch (v->kind) {
+    case LOFT_JV_NULL: printf("n"); return;
+    case LOFT_JV_BOOL: printf(v->b ? "b1" : "b0"); return;
+    case LOFT_JV_NUMBER: { uint64_t u; memcpy(&u, &v->n, 8); printf("N%016llx", (unsigned long long) u); return; }
+    case LOFT_JV_INT: printf("I%lld", (long long) v->i); return;
+    case LOFT_JV_STR: printf("S"); hex(v->s.p, v->s.len); return;
+    case LOFT_JV_IDENT: printf("D"); hex(v->s.p, v->s.len); return;
+    case LOFT_JV_ARRAY:
+        printf("[");
+        for (size_t i = 0; i < v->nkids; i++) { if (i) printf(","); dump(&v->kids[i]); }
+        printf("]");
+        return;
+    case LOFT_JV_OBJECT:
+        printf("{");
+        for (size_t i = 0; i < v->nkids; i++) {
+            if (i) printf(",");
+            hex(v->keys[i].p, v->keys[i].len);
+            printf("@%zu=", v->key_offs[i]);
+            dump(&v->kids[i]);
+        }
+        printf("}");
+        return;
+    case LOFT_JV_CTOR:
+        printf("C"); hex(v->s.p, v->s.len); printf("@%zu(", v->off); dump(&v->kids[0]); printf(")");
+        return;
+    }
+}
+
+int main(int argc, char **argv) {
+    FILE *f = fopen(argv[1], "rb");
+    if (!f) return 2;
+    static char buf[1 << 16];
+    size_t n;
+    for (int lenient = 0; lenient < 2; lenient++) {
+        rewind(f);
+        /* The length, exactly one newline, then the bytes: `%zu\n` would eat an input's
+         * leading whitespace. */
+        while (fscanf(f, "%zu", &n) == 1) {
+            if (fgetc(f) != '\n') return 4;
+            if (n > 0 && fread(buf, 1, n, f) != n) return 3;
+            loft_jv v;
+            loft_jfault e;
+            loft_text path = { 0, 0, 0 };
+            if (loft_json_parse((const uint8_t *) buf, n, lenient, &v, &e, &path)) {
+                dump(&v);
+            } else {
+                printf("E%zu|", e.at);
+                hex(path.p ? path.p : "", path.len);
+                printf("|");
+                hex(e.msg, strlen(e.msg));
+            }
+            printf("\n");
+            loft_jv_free(&v);
+            loft_text_free(&path);
+        }
+    }
+    (void) argc;
+    return 0;
+}
+"#,
+    );
+    let dir = scratch("json");
+    let (src, exe, data) = (dir.join("json.c"), dir.join("json"), dir.join("inputs"));
+    fa::write(&src, &c).expect("write C");
+    let mut bytes = Vec::new();
+    for s in &inputs {
+        bytes.extend_from_slice(format!("{}\n", s.len()).as_bytes());
+        bytes.extend_from_slice(s.as_bytes());
+    }
+    fa::write(&data, &bytes).expect("write inputs");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-Wno-unused-function"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected loft_json.h:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .arg(&data)
+        .output()
+        .expect("run the json program");
+    let got = String::from_utf8_lossy(&out.stdout);
+    let n = inputs.len();
+    let mut bad = Vec::new();
+    for (i, (w, g)) in want.lines().zip(got.lines()).enumerate() {
+        if w != g {
+            bad.push(format!(
+                "{} {:?}\n    json.rs {w}\n    the C   {g}",
+                if i < n { "strict " } else { "lenient" },
+                inputs[i % n]
+            ));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of {} reads differ, the first:\n{}",
+        bad.len(),
+        2 * n,
+        bad.iter().take(12).cloned().collect::<Vec<_>>().join("\n")
+    );
+    assert_eq!(got.lines().count(), 2 * n, "the C stopped early");
+}
+
+/// The types `T.parse` is crossed with (`the_c_parses_text_as_the_interpreter_does`): every
+/// scalar, every narrow width, nullable and declared-default fields, a plain and a struct enum,
+/// a nested record, vectors of scalars and records — and a non-null enum without a default,
+/// which the checked `text as E2?` answers null for when the text leaves it out.
+const PARSE_TYPES: &str = r##"enum Color { Red, Green, Blue }
+enum Shape { Circle { radius: float }, Square { side: integer = 4 }, Dot }
+struct Inner { p: integer, q: text = "dq" }
+struct E2 { m: Color, a: integer }
+struct J2 { a: integer, c: text, d: boolean, e: character, f: u8, g: i8?, n: Inner, o: vector<integer>, r: vector<Inner>,
+  x: JsonValue, v: vector<JsonValue>, u: single, y: float = 2.5, t: integer?, w: vector<text> }
+struct Rec { a: integer, b: float, c: text, d: boolean, e: character, f: u8, g: i8, h: u16, i: i16, j: i32, k: u32,
+  l: integer = 5, m: Color = Blue, n: Inner, o: vector<integer>, r: vector<Inner>, s: Shape = Dot, t: integer?, u: single,
+  v: text?, w: u8?, x: boolean?, y: float = 2.5, z: Color? }
+fn check(t: text) {
+  println("#check");
+  r = Rec.parse(t);
+  println("{r} {r#errors} [{json_errors()}]");
+  w = vector<Inner>.parse(t);
+  println("{w} {w#errors}");
+  e = t as E2?;
+  println("{e} [{json_errors()}]");
+  q = J2.parse(json_parse(t));
+  println("{q.a} {q.c} {q.d} {q.e} {q.f} {q.g} {q.n} {q.o} {q.r} {q.u} {q.y} {q.t} {q.w} {q.x.to_json()} {q#errors} [{json_errors()}]");
+  for jv in q.v { print("{jv.to_json()};"); }
+  println("");
+}
+"##;
+
+/// The documents: seeds that reach every field kind, a misfit of each, a malformed document,
+/// the tagged and qualified spellings, and every truncation, deletion and replacement of them.
+fn parse_inputs() -> Vec<String> {
+    let seeds = [
+        r#"{"a":1,"b":2.5,"c":"x","d":true,"e":"Q","f":200,"g":-100,"h":60000,"i":-30000,"j":70000,"k":4000000000,"l":3,"m":Blue,"n":{"p":1,"q":"w"},"o":[1,2,3],"r":[{"p":4,"q":"z"}],"s":Circle{radius:2.0},"t":null,"u":1.25}"#,
+        r#"{a:7, m: Color.Red, s: Square{side: 3}, o: [], r: [{p: 1}, null, {q: "k"}], n: null}"#,
+        r#"{"s":"Dot","m":"Green","e":65,"c":null,"b":"bad","d":1}"#,
+        "Rec{a: 1, k: -1, f: 256, h: 70000, i: 40000, l: 9, t: 5}",
+        r#"{"o":[1,"x",3],"r":[{"p":"no"},{"p":2}],"n":{"q":1,"zz":[1,{"y":2}]}}"#,
+        r#"{"a":-9223372036854775808,"u":1e400,"b":-0.0,"g":127,"l":-1,"c":"é\n"}"#,
+        r#"[{"p":5},{"q":"r"}]"#,
+        r#"{"s":{"Circle":{"radius":1}},"z":Purple,"x":false}"#,
+        r#"{"a":3.7,"c":5,"d":"t","e":"xy","f":300,"g":null,"x":{"k":[1,{"m":"n"}]},"v":["s",[2],{"o":null},7,true],"w":["a",1,null]}"#,
+        r#"{"e":97,"o":[1.9,"q",null],"r":[{"p":"z"},7],"x":"str","n":{"p":2.5,"q":["no"]},"y":null,"u":2}"#,
+    ];
+    let alphabet = ["{", "}", "[", "]", ":", ",", "\"", "1", "null", "Blue"];
+    let mut out: Vec<String> = Vec::new();
+    for s in seeds {
+        let cuts: Vec<usize> = (0..=s.len()).filter(|&i| s.is_char_boundary(i)).collect();
+        for &i in &cuts {
+            out.push(s[..i].to_string());
+        }
+        for (k, w) in cuts.windows(2).enumerate() {
+            let (a, b) = (w[0], w[1]);
+            out.push(format!("{}{}", &s[..a], &s[b..]));
+            out.push(format!(
+                "{}{}{}",
+                &s[..a],
+                alphabet[k % alphabet.len()],
+                &s[b..]
+            ));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// `T.parse(text)` in the C (`loft_parse.h`, a port of `record_from_text` and its walk)
+/// answers what the interpreter answers: over every document, the record, its `#errors` and
+/// `json_errors()`, for a record, a vector of records, the checked cast, and the two-stage
+/// `T.parse(json_parse(text))` (`struct_from_jsonvalue`).  Two seeds'
+/// answers are pinned as hand-checked values, so an empty run cannot pass.
+#[test]
+fn the_c_parses_text_as_the_interpreter_does() {
+    let inputs = parse_inputs();
+    let mut program = PARSE_TYPES.to_string();
+    program.push_str("fn main() {\n");
+    for d in &inputs {
+        let mut lit = String::new();
+        for ch in d.chars() {
+            match ch {
+                '{' => lit.push_str("{{"),
+                '}' => lit.push_str("}}"),
+                '"' => lit.push_str("\\\""),
+                '\\' => lit.push_str("\\\\"),
+                '\n' => lit.push_str("\\n"),
+                c => lit.push(c),
+            }
+        }
+        program.push_str(&format!("  check(\"{lit}\");\n"));
+    }
+    program.push_str("}\n");
+    let Some(x) = Crossed::new("parse", &program) else {
+        return;
+    };
+    let path = x.dir().join("unused");
+    let want = x.run("interpret", "", &path);
+    let got = x.run("c", "", &path);
+    // Each check's answers follow its `#check` line: a text can hold a line break.
+    let split =
+        |out: &str| -> Vec<String> { out.split("#check\n").skip(1).map(str::to_string).collect() };
+    let (want, got) = (split(&want), split(&got));
+    assert_eq!(want.len(), inputs.len(), "the interpreter ran every check");
+    for pinned in [
+        r#"{a:7,b:0,c:"",d:false,e:null,f:0,g:-128,h:0,i:-32768,j:0,k:0,l:5,m:Red,n:{p:0,q:"dq"},o:[],r:[{p:1,q:"dq"},{p:0,q:"dq"},{p:0,q:"k"}],s:Square {side:3},t:null,u:0,v:null,w:null,x:null,y:2.5,z:null} [] []"#,
+        r#"{a:0,b:0,c:"",d:false,e:'A',f:0,g:-128,h:0,i:-32768,j:0,k:0,l:5,m:Green,n:{p:0,q:"dq"},o:[],r:[],s:Dot {},t:null,u:0,v:null,w:null,x:null,y:2.5,z:null} ["line 1:40 path:b","line 1:50 path:d"] [line 1:40 path:b|line 1:50 path:d]"#,
+    ] {
+        assert!(
+            want.iter().any(|w| w.lines().next() == Some(pinned)),
+            "the interpreter answers {pinned}"
+        );
+    }
+    let mut bad = Vec::new();
+    for (i, (w, g)) in want.iter().zip(&got).enumerate() {
+        if w != g {
+            bad.push(format!(
+                "{:?}\n    interpreter {w}\n    the C       {g}",
+                inputs[i]
+            ));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of {} checks differ, the first:\n{}",
+        bad.len(),
+        inputs.len(),
+        bad.iter().take(8).cloned().collect::<Vec<_>>().join("\n")
+    );
+    assert_eq!(got.len(), want.len(), "the C stopped early");
 }

@@ -433,6 +433,15 @@ pub struct Parser {
     /// @PLN187 — the locals declared with a PLAIN type annotation: an abstract value is not
     /// one of those.
     pub(crate) plain_declared: std::collections::HashSet<(u32, u16)>,
+    /// `@FR-F-Ret` (loft#2179) — the parameters an early `return` has merged into the return's
+    /// deps, by `(function, first_pass)`.  A mid-body `return` site sees only its own value, so
+    /// it cannot tell a parameter another `return` borrows from a stale one; this is how it
+    /// knows (`ref_return`'s D-own-2 prune).
+    pub(crate) mid_return_param_deps: std::collections::HashSet<(u32, bool, u16)>,
+    /// loft#2188 — the parser is reading the right-hand side of a plain local's `=`: a branch
+    /// there is a VALUE being bound, whose arms `lift_borrowing_call_value` lifts.  Cleared
+    /// inside a lambda's body, whose tail is a return position again (`ref_return`'s).
+    pub(crate) in_bind_rhs: bool,
     /// @PLN187 — the fact a producer that is not a variable or a call (a field read, a
     /// literal, a branch's value) left for `settle_operand` to take.
     pub(crate) produced: Option<crate::data::AliasFact>,
@@ -1901,6 +1910,8 @@ impl Parser {
             operand_fact: crate::data::AliasFact::Plain,
             abstract_vars: std::collections::HashMap::new(),
             plain_declared: std::collections::HashSet::new(),
+            mid_return_param_deps: std::collections::HashSet::new(),
+            in_bind_rhs: false,
             produced: None,
             pending_lambda_facts: Vec::new(),
             lambda_result: crate::data::AliasFact::Plain,

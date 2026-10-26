@@ -2384,6 +2384,21 @@ impl Function {
         v.target_mentions = v.target_mentions.saturating_add(1);
     }
 
+    /// `var_nr`'s use count and taken-back target mentions — saved and put back with
+    /// [`Self::restore_mentions`] around an assignment the parser builds itself, whose target
+    /// was never parsed as an expression: the assignment path takes a target's mention back
+    /// (one way or the other), and with none counted that took back a REAL read.
+    pub fn save_mentions(&self, var_nr: u16) -> (u16, u16) {
+        let v = &self.variables[var_nr as usize];
+        (v.uses, v.target_mentions)
+    }
+
+    pub fn restore_mentions(&mut self, var_nr: u16, (uses, mentions): (u16, u16)) {
+        let v = &mut self.variables[var_nr as usize];
+        v.uses = uses;
+        v.target_mentions = mentions;
+    }
+
     pub fn in_use(&mut self, var_nr: u16, plus: bool) {
         if plus {
             self.variables[var_nr as usize].uses += 1;

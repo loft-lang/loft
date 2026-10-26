@@ -950,14 +950,14 @@ index:  ## Refresh index/tags.json via the loft scanner
 	    echo "host loft binary missing; run: cargo build --release"; exit 1; \
 	fi
 	@mkdir -p index
-	@# `--native-release` (rather than bare `--native`) instructs rustc
+	@# `--ship` (rather than bare `--native`) instructs rustc
 	@# to emit `-O` (opt-level=2) and the loft codegen to emit only
 	@# reachable functions.  For a hot loop like scan.loft the
 	@# difference is dramatic: scan loop 1.7s → 165ms, total 5s → 1.3s
 	@# warm-cache.  Cold compile costs ~6s but the per-source cache
 	@# (tools/indexer/src/.loft/cache/) survives across runs, so the
 	@# everyday `make index` invocation is the warm path.
-	@LOFT_INDEX_BUCKETED=1 ./target/release/loft --native-release --no-warnings --lib lib/ \
+	@LOFT_INDEX_BUCKETED=1 ./target/release/loft --ship --no-warnings --lib lib/ \
 	    tools/indexer/src/scan.loft > index/tags.json
 
 index-install-hook:
@@ -1288,7 +1288,7 @@ view: view-refresh
 	    echo "host loft binary missing; run: make view-build"; \
 	    exit 1; \
 	fi
-	# Default to --native-release (rustc -O).  Bare --native runs
+	# Default to --ship (rustc -O).  Bare --native runs
 	# unoptimised generated Rust — for an HTTP server that handles
 	# repeated requests, the per-request cost difference is large
 	# (10× on hot loops; see PERFORMANCE.md § Measuring native code).  Cold
@@ -1302,7 +1302,7 @@ view: view-refresh
 	@if [ -n "$$LOFT_VIEW_INTERP" ]; then \
 	    ./target/release/loft --interpret --lib lib/ tools/viewer/src/main.loft; \
 	else \
-	    ./target/release/loft --native-release --lib lib/ tools/viewer/src/main.loft; \
+	    ./target/release/loft --ship --lib lib/ tools/viewer/src/main.loft; \
 	fi
 
 # game: rebuild the efficient browser build of Brick Buster from any
@@ -1531,13 +1531,13 @@ play:
 	@echo ""
 	@echo "    Controls: ←/→ or A/D to move, Space to launch, Esc to quit"
 	@echo ""
-	@# --native-release (rustc -O) for the game frame loop; bare
+	@# --ship (rustc -O) for the game frame loop; bare
 	@# --native runs unoptimised generated Rust and burns frame
 	@# budget on call-ABI / null-sentinel bookkeeping the optimiser
 	@# normally elides.  Cold compile is ~6s; cached binary survives
 	@# across runs.
 	@$(MAKE) --no-print-directory brick-buster-pack
-	@./target/release/loft --native-release \
+	@./target/release/loft --ship \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    tools/brick-buster/25-brick-buster.loft
 
@@ -1573,10 +1573,10 @@ native-editor:
 	@echo "  [3/3] launching Moros editor ..."
 	@echo "    Controls: WASD move / Arrows camera / 1-6 tools / Ctrl-Z undo"
 	@echo "              Left-click paint / F5 save / F9 load / F11 fullscreen / Esc quit"
-	@# --native-release for the editor's UI / paint frame loop —
+	@# --ship for the editor's UI / paint frame loop —
 	@# same rationale as `make play`.  Cached binary survives across
 	@# runs via lib/graphics/examples/.loft/cache/.
-	@./target/release/loft --native-release \
+	@./target/release/loft --ship \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    lib/graphics/examples/moros_editor.loft
 
@@ -1588,8 +1588,8 @@ editor-dist:
 	@cd lib/graphics/native && cargo build --release -q 2>/tmp/loft_dist_graphics.log || { \
 	    echo "    FAIL: graphics cdylib — see /tmp/loft_dist_graphics.log"; \
 	    tail -20 /tmp/loft_dist_graphics.log; exit 1; }
-	@echo "  [2/5] compiling native_editor.loft with --native-release ..."
-	@./target/release/loft --native-release \
+	@echo "  [2/5] compiling native_editor.loft with --ship ..."
+	@./target/release/loft --ship \
 	    --path "$$(pwd)/" --lib "$$(pwd)/lib/" \
 	    --native-emit /tmp/moros_editor_dist.rs \
 	    lib/graphics/examples/moros_editor.loft >/dev/null
@@ -1598,7 +1598,7 @@ editor-dist:
 	@# with source, so a glob finds the freshest file.
 	@CACHED=$$(ls -t lib/graphics/examples/.loft/cache/moros_editor-* 2>/dev/null | head -1); \
 	if [ -z "$$CACHED" ]; then \
-	    echo "    FAIL: loft --native-release did not produce a cached binary"; \
+	    echo "    FAIL: loft --ship did not produce a cached binary"; \
 	    echo "    looked in lib/graphics/examples/.loft/cache/"; \
 	    exit 1; \
 	fi; \
@@ -2959,7 +2959,7 @@ compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdli
 kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)
 	@cargo build --release --bin loft -q
 	@echo "== --interpret"; LOFT_TIMEOUT=600 target/release/loft --interpret scripts/kernel_ratio
-	@echo "== --native-release"; LOFT_TIMEOUT=600 target/release/loft --native-release scripts/kernel_ratio
+	@echo "== --ship"; LOFT_TIMEOUT=600 target/release/loft --ship scripts/kernel_ratio
 
 .PHONY: script-twin
 script-twin:  ## @PLN179 does a port leave the same world as its original?  ORIG=<script> PORT=<script> [ARGS="…"] [FILES=<dir>] [BY_CONTENT=1] [REPLAY=<recording dir>] [RUNS=n]

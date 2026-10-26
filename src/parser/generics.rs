@@ -812,6 +812,9 @@ impl Parser {
         // forwards a nested generic's borrow (`g5<T>(x) -> T { g1(x) }`) read the TEMPLATE's
         // dep-free `-> T` above.  Only where no dep was derived, so nothing is written twice.
         self.derive_monomorph_return_deps(d_nr, g_nr);
+        // loft#2179 — what the deps could not name, the body now copies: an instance declared
+        // fresh returns no parameter's store.
+        self.copy_param_returns_of_fresh_instance(d_nr);
         // The body's text-return promotion ran while its tail call still named the nested
         // TEMPLATE (`inner(s, c)` in `outer<S>(s: S) -> S?`): not a text call, nothing to
         // promote.  Now that the call names `inner`'s monomorph, ask again — a `-> text?`
@@ -828,6 +831,7 @@ impl Parser {
             // "Unknown function" error — the satisfaction error is sufficient.
             // The function won't execute because parsing will halt on errors.
         }
+        self.refuse_instance_tail(d_nr, g_nr, &bindings);
         d_nr
     }
 
@@ -1356,6 +1360,14 @@ impl Parser {
         for (holder, bound_to) in bindings {
             vars.substitute_type(*holder, bound_to);
         }
+        // loft#2156 — and each vector backing's wrapper, which names the variable only
+        // through its field (`Self::instance_vector_wrapper`).
+        for v in 0..vars.count() {
+            let tp = vars.tp(v).clone();
+            if let Some(fresh) = self.instance_vector_wrapper(&tp, bindings) {
+                vars.set_type(v, fresh);
+            }
+        }
         vars.drop_scalar_deps();
         // @FR-G-Mono — a match payload binding is decided by its FIELD's type, and the template
         // decided it before that type was known: a field of type `T` reads as a record, so the
@@ -1681,6 +1693,73 @@ impl Parser {
     /// Re-deriving reaches further generics (a template body that calls another one), and
     /// those are stale for the same reason, so it drains to a fixpoint.  Bounded because a
     /// re-derived monomorph is never recorded again.
+    /// `@FR-R-TailSelf` (@C155) — the refusal the template could not decide: whether a frame
+    /// can be reused depends on the type arguments (a text passed through only as itself, a
+    /// record result delivered), so it is asked of EACH instance once its body is final — at
+    /// instantiation, and again when a stale instance is rebuilt.  The self-call names the
+    /// instance, or still the template when the nested calls have not been renamed yet; both
+    /// are read.  The same predicate as `definitions.rs` and the pass.
+    fn refuse_instance_tail(&mut self, d_nr: u32, g_nr: u32, bindings: &[(u32, Type)]) {
+        if self.first_pass || crate::tail_frame::off() {
+            return;
+        }
+        let def = &self.data.definitions[d_nr as usize];
+        let (d_self, calls) = {
+            let own = crate::tail_frame::tail_calls(&def.code, d_nr, &def.variables, &self.data);
+            if own.is_empty() {
+                (
+                    g_nr,
+                    crate::tail_frame::tail_calls(&def.code, g_nr, &def.variables, &self.data),
+                )
+            } else {
+                (d_nr, own)
+            }
+        };
+        if std::env::var_os("LOFT_TRACE_TAIL_SELF").is_some() {
+            eprintln!(
+                "tail-rule: instance {} — {} tail call(s)",
+                self.data.def(d_nr).name(),
+                calls.len()
+            );
+        }
+        let Some(call) = calls.into_iter().next() else {
+            return;
+        };
+        let Err(why) = crate::tail_frame::admit_frame(
+            &def.variables,
+            def.returned(),
+            &def.code,
+            &self.data,
+            &crate::tail_frame::declared_params(def),
+            d_self,
+        ) else {
+            return;
+        };
+        let name = self
+            .data
+            .def(g_nr)
+            .name()
+            .trim_start_matches("n_")
+            .to_string();
+        let shown: Vec<String> = bindings
+            .iter()
+            .map(|(_, t)| t.source_name(&self.data))
+            .collect();
+        let msg = format!(
+            "`{name}<{}>` calls itself in tail position, where a self-call is a jump that \
+             reuses the frame — but this frame cannot be reused: {why}.  Left a call it \
+             would stop at 10 000 frames, so write the recursion as a loop (`while`), or \
+             keep that value outside the frame",
+            shown.join(", ")
+        );
+        match call.at {
+            Some(pos) => {
+                diagnostic_at!(self.lexer, &pos, crate::diagnostics::Level::Error, "{msg}")
+            }
+            None => diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{msg}"),
+        }
+    }
+
     pub(super) fn rebuild_stale_monomorphs(&mut self) {
         let mut rounds = 0;
         while !self.stale_monomorphs.is_empty() && rounds < 16 {
@@ -1706,6 +1785,9 @@ impl Parser {
                 // The body is fresh, so every call it makes to ANOTHER generic has to be
                 // retargeted at that one's monomorph again.
                 self.instantiate_nested_generics(d_nr, &bindings);
+                // loft#2179 — and the refilled body copies its parameter returns again: the
+                // deps kept from the first instantiation still say fresh.
+                self.copy_param_returns_of_fresh_instance(d_nr);
                 // And the text-return promotion has to be asked again: the first
                 // instantiation asked it of the pass-1 body, whose tail call still named
                 // the nested TEMPLATE (`-> S?` — not text, so nothing to promote), and the
@@ -1720,6 +1802,7 @@ impl Parser {
                     }
                     self.promote_monomorph_text_return(d_nr);
                 }
+                self.refuse_instance_tail(d_nr, g_nr, &bindings);
             }
         }
     }

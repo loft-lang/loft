@@ -87,7 +87,7 @@ hash-DoS argument only ever existed to license E. **Q4 is NOT settled** by these
 And **lookup ORDER outweighs every arc**: 87 ns ascending vs 225 ns shuffled at 1M, and
 every figure in this plan before 2026-08-09 was taken in insertion order.
 
-Measured on `--native-release`, 1M `integer` keys, before → after A + B + C:
+Measured on `--ship`, 1M `integer` keys, before → after A + B + C:
 
 | | before | after | C# |
 |---|---|---|---|
@@ -118,7 +118,7 @@ Close the integer-key `hash<T[key]>` gap to `Dictionary<long,long>`, starting wi
 
 ## The measurement (2026-08-08)
 
-Ubuntu 24.04 x86_64, 24 cores · loft 2026.8.0 `--native-release` · .NET 9.0.316 ·
+Ubuntu 24.04 x86_64, 24 cores · loft 2026.8.0 `--ship` · .NET 9.0.316 ·
 1M inserts + 1M lookups, `integer` keys. Corpus:
 `Moros-Economy-Development/loft_eval/bench/hash_bench.loft` and a matched
 `Dictionary<long,long>` port. The consumer's reported ~980 ms reproduces here.
@@ -339,7 +339,7 @@ is not a split: **the record read is 82% of a 1M random lookup and the bucket re
 (what the same payload costs read densely), `probes/q1-store-footprint.loft` (bytes per
 entry, read off a persisted image). Ablation patch: `probes/q1-ablation.patch`.
 
-Machine: AMD Ryzen AI 9 HX 370, 24 threads, 61 GB · `--native-release` · min of 5.
+Machine: AMD Ryzen AI 9 HX 370, 24 threads, 61 GB · `--ship` · min of 5.
 **Not the box the 2026-08-08 table was taken on** — read the deltas, not the absolutes.
 
 ### Where a lookup's time goes
@@ -420,7 +420,7 @@ the same way § What arc H can buy measured H's ceiling: the layout is a shape t
 can already build.
 
 `probes/q5-chunked-arena.loft`, 1M `Entry{integer,integer}`, shuffled order, one
-configuration per PROCESS, min of 3, `--native-release`. Same box as the Q1 table; read
+configuration per PROCESS, min of 3, `--ship`. Same box as the Q1 table; read
 the deltas, not the absolutes.
 
 | shape | ns | vs today |
@@ -568,7 +568,7 @@ misread it. Re-measure against **34 MB**, not 49.
 ## What H actually bought (2026-08-10) — insert and bytes, not lookup
 
 Built, and measured against the installed `v2026.8.0` as a before-oracle, alternating
-A/B on a quiet box (24 cores, load 3.6), 1M `integer` keys, `--native-release`:
+A/B on a quiet box (24 cores, load 3.6), 1M `integer` keys, `--ship`:
 
 | | before | after | |
 |---|---|---|---|
@@ -620,7 +620,7 @@ anything was built for them, and neither earns its cost.
 
 **The from-scratch re-hash at every resize — worth ≤12% of one insert case.**
 `reserve(h, n)` already removes it entirely, so the only case it costs anything in is
-an unreserved fill. Measured, 1M `integer` keys, `--native-release`, alternating
+an unreserved fill. Measured, 1M `integer` keys, `--ship`, alternating
 reserved against grown so the gap IS the resize:
 
 | round | reserved | grown | resize |

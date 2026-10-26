@@ -13,7 +13,7 @@
 // group in these shapes, so no sabotage has an admitted defect to expose.  The slot-reuse
 // cells are the channel a wrong admission would move (stale fields), checked on both
 // backends, and `LOFT_POISON_CLAIM=1` (a claim filled with poison, not zeros) answers
-// identically on `--native` and `--native-release` (2026-10-20); `tests/complete_write.rs`
+// identically on `--native` and `--ship` (2026-10-20); `tests/complete_write.rs`
 // pins which sites drop the prefill.
 struct R { x: integer, y: integer, w: integer, h: integer }
 struct B { id: integer, r: R, label: text, flag: boolean, n: float }

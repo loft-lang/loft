@@ -242,8 +242,8 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
   fi
   # A guard of a rewrite that a build shipping the live tier never makes (an IR-phase rewrite,
   # `@FR-R-Apart`) names the release tier, or its native side runs code the defect is not in.
-  if grep -qE '^// @falsify-tier: native-release' "$1"; then
-    MODE_N=(--native-release)
+  if grep -qE '^// @falsify-tier: ship' "$1"; then
+    MODE_N=(--ship)
   fi
 }
 [ -n "$BULK$SELF_TEST" ] || entry_modes "$GUARD_PATH"
@@ -405,6 +405,13 @@ fi
 signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|leak|panic|refusals|expect"
   local bin="$1" tree="$2" file="$3"; shift 3
   local out rc
+  # A control built before `--ship` names the shipped tier `--native-release`: the same
+  # build, asked for by the spelling that binary knows.
+  if [[ " $* " == *" --ship "* ]] && ! "$bin" --help 2>/dev/null | grep -q -- '--ship '; then
+    local a; local -a mapped=()
+    for a in "$@"; do [ "$a" = "--ship" ] && mapped+=(--native-release) || mapped+=("$a"); done
+    set -- "${mapped[@]}"
+  fi
   # `timeout` as well as `LOFT_TIMEOUT`, and the outer one is not redundant: an OLD control
   # running a NEW guard can hang somewhere loft's own watchdog does not reach, and a bulk
   # sweep then stops silently on one file.  Measured — a control run sat for ten minutes

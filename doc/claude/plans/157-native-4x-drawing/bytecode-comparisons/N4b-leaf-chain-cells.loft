@@ -1,4 +1,4 @@
-// @PLN157 row 11 cells (`@FR-R-LeafChain`) — in the lean tier (`--native-release`), a
+// @PLN157 row 11 cells (`@FR-R-LeafChain`) — in the lean tier (`--ship`), a
 // function whose whole call tree is frameless carries no prelude: every user function it
 // reaches has a loft body, none is on a cycle, and none calls a fn-ref.  The interpreter is
 // the oracle; the emission pins live in `tests/leaf_chain.rs`.  Expected values are written

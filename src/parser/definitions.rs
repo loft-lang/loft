@@ -1170,9 +1170,14 @@ impl Parser {
         if !self.parse_enum_values(d_nr) {
             return false;
         }
-        // `@FR-G-Regular` — an enum template names itself only regularly, as a struct does.
-        if !conflict && self.data.def_type(d_nr) == DefType::TypeTemplate {
-            self.template_is_regular(d_nr, &[]);
+        // `@FR-G-Regular` — an enum template names itself only regularly, as a struct does, and
+        // an instance its own variants minted gets the fields parsed after that mention, as a
+        // struct's does (@PLN165 D7, loft#2171).
+        if !conflict
+            && self.data.def_type(d_nr) == DefType::TypeTemplate
+            && self.template_is_regular(d_nr, &[])
+        {
+            self.data.refresh_instances(&mut self.lexer, d_nr);
         }
         // Skip type-completion when this enum conflicts with a builtin of the
         // same name (e.g. `enum hash`): `d_nr` is then the existing builtin, and
@@ -3347,7 +3352,7 @@ impl Parser {
         // Everywhere ELSE the boxing is pure cost: it turns `(float, float, float)`
         // into a store record claimed and freed on every call, so the SAME arithmetic
         // ran ~5.6x slower crossing a function boundary than inline (loft#808 measured
-        // 728ms vs 129ms on `--native-release`; the local compiles to a real Rust
+        // 728ms vs 129ms on `--ship`; the local compiles to a real Rust
         // `(f64, f64, f64)`).  A tuple return keeps Rust's tuple ABI unless it is a
         // worker's.  See `Parser::par_worker_defs` for why the set is complete here on
         // pass 2 and topped up between the passes.

@@ -42,7 +42,7 @@ recompiles the library's native crate from source.  The C-ABI shared object seal
 dependencies and is what a precompiled library is.  The ship build recompiles every library
 from source anyway (@PLN201), so there the static link costs nothing extra; measured on web
 and random it added no build time to speak of (1.4 → 1.6 s, 1.5 → 1.5 s) and changed the
-binary size by under 3 %.  `--native` and `--native-release` keep the dynamic default.
+binary size by under 3 %.  `--native` and `--ship` keep the dynamic default.
 
 ## Measured on the way, and not kept as levers
 

@@ -8,7 +8,7 @@ systemic classes that LOOKS like a throwaway.  An ANALYSIS: numbers are from one
 a promise.
 
 Taken 2026-10-04 on arm64 macOS (`firewall02`), branch `157-native-4x` at `5737f6413`,
-`--native-release` flags against `rustc -O`, `--n 20`, three alternated rounds per form, every
+`--ship` flags against `rustc -O`, `--n 20`, three alternated rounds per form, every
 hash equal to the committed row's.  The library checkouts are the portal's
 (`loft-libs-assets` `4ff6203`, `loft-libs-world` `a8e48d0`).
 
@@ -117,7 +117,7 @@ into a parent that keeps them, and those are destination passing's.
 ## Built — instance 2, 2026-10-14
 
 `(R-Apart)` instance 2 (`formal/rewrites.md` § A record of fixed-length vectors travels as a
-value), x86-64 laptop, `--native-release`, branch `157-native-4x` at `f82d8df0e`.  Not the
+value), x86-64 laptop, `--ship`, branch `157-native-4x` at `f82d8df0e`.  Not the
 tuple the order above proposed: each apart type is a value struct of its own (`Apart<n>`, a
 `[f64; N]` per field) and each admitted function a twin (`n_<f>__apv`), because
 `(R-ValueRecord)`'s return-buffer protocol is the part an array field does not need.
@@ -141,7 +141,7 @@ first `e2` was declined on it), `len(v)` through the stdlib wrapper, and fields 
 
 ## Built — instance 3, 2026-10-14
 
-`(R-Apart)` instance 3, x86-64 laptop, `--native-release`, at `dab609a29`: a `vector<float>`
+`(R-Apart)` instance 3, x86-64 laptop, `--ship`, at `dab609a29`: a `vector<float>`
 local or work buffer as `codegen_runtime::ApVec<64>` (64 elements inline, a heap spill past
 them).  The hand form re-taken on this box first: 1545 → 692 ns a call (the arm64 price was
 −48 %).

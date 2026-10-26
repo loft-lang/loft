@@ -1661,8 +1661,16 @@ or build a local and use that."
         name
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// loft#2188 — a lambda's body is a return position of its own, not the bind around it.
     pub(crate) fn parse_lambda(&mut self, code: &mut Value) -> Type {
+        let outer_bind_rhs = std::mem::replace(&mut self.in_bind_rhs, false);
+        let tp = self.parse_lambda_body(code);
+        self.in_bind_rhs = outer_bind_rhs;
+        tp
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_lambda_body(&mut self, code: &mut Value) -> Type {
         if self.discovering > 0 {
             return self.lambda_signature();
         }
@@ -1962,11 +1970,19 @@ or build a local and use that."
     // false when `||` was consumed (zero params, no closing `|`).
     // Types are inferred from `lambda_hint` (set by the call-site parser) when omitted.
     // Produces Type::Function; runtime representation is d_nr as i32, same as fn-ref.
+    /// loft#2188 — a lambda's body is a return position of its own, not the bind around it.
+    pub(crate) fn parse_lambda_short(&mut self, code: &mut Value, expect_close: bool) -> Type {
+        let outer_bind_rhs = std::mem::replace(&mut self.in_bind_rhs, false);
+        let tp = self.parse_lambda_short_body(code, expect_close);
+        self.in_bind_rhs = outer_bind_rhs;
+        tp
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "one context save/restore spans the whole body; a split would need unsafe borrowing"
     )]
-    pub(crate) fn parse_lambda_short(&mut self, code: &mut Value, expect_close: bool) -> Type {
+    fn parse_lambda_short_body(&mut self, code: &mut Value, expect_close: bool) -> Type {
         if self.discovering > 0 {
             self.skip_short_lambda(expect_close);
             return Type::Unknown(0);
@@ -5622,12 +5638,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // Reads only: the build's WRITES are emitted from `vec` / `dest` after this, so the
         // rename cannot redirect an append.
         if let Some(place) = field_place {
+            // A field is appended to by `+=` and replaced by `=` (`assign_replaces`).
+            let appending = !self.assign_replaces;
+            let is_dest = |n: &Value| self.field_place(n).is_some_and(|p| p == place);
             for part in parts.iter_mut() {
-                part.map_nodes(&mut |n| {
-                    if self.field_place(n).is_some_and(|p| p == place) {
-                        *n = Value::Var(src);
-                    }
-                });
+                let mut rename = |part: &mut Value| {
+                    part.map_nodes(&mut |n| {
+                        if is_dest(n) {
+                            *n = Value::Var(src);
+                        }
+                    });
+                };
+                if appending {
+                    self.rename_reads_keeping_ref_places(part, &is_dest, &mut rename);
+                } else {
+                    rename(part);
+                }
             }
         } else {
             // A `&` link shares the destination's store, so a read spelled through the link
@@ -5637,13 +5663,113 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // to clear, and the literal answered zeros.
             let mut names = vec![vec];
             names.extend(self.vector_link_partner_vars(vec));
+            // An APPEND keeps its destination's records where they are, so a `&` into the
+            // destination names that record and not the snapshot's copy of it.
+            let appending = !(vec == self.assign_target && self.assign_replaces);
             for name in names {
                 for part in parts.iter_mut() {
-                    crate::parser::collections::rename_var(part, name, src);
+                    let mut rename =
+                        |part: &mut Value| crate::parser::collections::rename_var(part, name, src);
+                    if appending {
+                        let is_dest = |n: &Value| matches!(n, Value::Var(v) if *v == name);
+                        self.rename_reads_keeping_ref_places(part, &is_dest, &mut rename);
+                    } else {
+                        rename(part);
+                    }
                 }
             }
         }
         Some(snap)
+    }
+
+    /// loft#2163 — the snapshot rename of an APPEND, sparing the place a `reference<T>` field
+    /// is set to.
+    ///
+    /// `(H-RefSet)` makes a pointer field name the record of the place it is assigned
+    /// (`OpSetDbRef(holder, pos, <place>)`), and `(H-LongRef)` gives every element of a
+    /// reference target's collection a record of its own, which growing the collection does
+    /// not move.  So in `nodes += [N { c: &nodes[len(nodes) - 1] }]` the field names a record
+    /// of `nodes`.  Renamed onto the snapshot with every other read, it named the SNAPSHOT's
+    /// copy instead, and the snapshot is minted again on the next pass of a loop, which
+    /// removes its records: the interpreter read null (H-Removed) and `--native` read the
+    /// freed record, for every node but the last, silently.
+    ///
+    /// Only the place's ROOT is spared — the destination at the end of the chain of element and
+    /// field steps, `is_dest` saying which node that is (a variable, or a field place such as
+    /// `h.list`).  What the place READS to get there (the index, `len(nodes) - 1`) is a read like
+    /// any other and still sees the snapshot, as `(I-Comp)` asks: `rename` runs over everything
+    /// else.  A `=` replace detaches its destination, so it keeps the plain rename.
+    fn rename_reads_keeping_ref_places(
+        &self,
+        part: &mut Value,
+        is_dest: &dyn Fn(&Value) -> bool,
+        rename: &mut dyn FnMut(&mut Value),
+    ) {
+        // A place step: its FIRST argument is the record or vector the step reads into.
+        let steps: [u32; 5] = [
+            "OpVectorRef",
+            "OpVectorRefNullable",
+            "OpGetVector",
+            "OpGetVectorNullable",
+            "OpGetField",
+        ]
+        .map(|n| self.data.def_nr(n));
+        let set_ref = self.data.def_nr("OpSetDbRef");
+        // Walks each pointer-field place down its steps to the destination and hands that
+        // node to `at_root`.  The second walk meets the same places in the same order: the
+        // rename changes what a place reads, never its steps.
+        let walk = |part: &mut Value, at_root: &mut dyn FnMut(&mut Value) -> bool| {
+            part.map_nodes(&mut |n| {
+                let Value::Call(d, args) = n else { return };
+                if *d != set_ref || args.len() < 3 {
+                    return;
+                }
+                let mut at = &mut args[2];
+                loop {
+                    if at_root(at) {
+                        break;
+                    }
+                    match at {
+                        Value::Span(sp) => at = &mut sp.1,
+                        Value::Call(op, step_args)
+                            if steps.contains(op) && !step_args.is_empty() =>
+                        {
+                            at = &mut step_args[0];
+                        }
+                        _ => break,
+                    }
+                }
+            });
+        };
+        // Out of the rename's way behind a placeholder no variable is, and back after it.
+        let mut roots: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+        walk(part, &mut |n| {
+            if is_dest(n) {
+                roots.push_back(std::mem::replace(n, Value::Var(u16::MAX)));
+                true
+            } else {
+                false
+            }
+        });
+        if roots.is_empty() {
+            rename(part);
+            return;
+        }
+        rename(part);
+        walk(part, &mut |n| {
+            if matches!(n, Value::Var(v) if *v == u16::MAX) {
+                if let Some(root) = roots.pop_front() {
+                    *n = root;
+                }
+                true
+            } else {
+                false
+            }
+        });
+        debug_assert!(
+            roots.is_empty(),
+            "a pointer-field place lost its root in the rename"
+        );
     }
 
     /// Does a comprehension being built into `vec` READ `vec` itself?
@@ -7379,7 +7505,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// through a bogus offset, corrupting the interpreter free path (a heap
     /// write that SIGSEGVs at teardown after the correct value prints).  Finish
     /// immediately so the position is laid out before codegen consumes it.
-    fn vector_wrapper_known_type(&mut self, vec_def: u32) -> u16 {
+    pub(super) fn vector_wrapper_known_type(&mut self, vec_def: u32) -> u16 {
         let tp = self.data.def(vec_def).known_type();
         if tp != u16::MAX {
             return tp;

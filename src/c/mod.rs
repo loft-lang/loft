@@ -17,9 +17,12 @@
 //! reaches loft's runtime is @PLN91's decision.
 
 mod body;
+mod deliver;
 mod eq;
 mod files;
 mod fnval;
+mod parse;
+mod reflect;
 mod show;
 mod unicode;
 
@@ -43,7 +46,12 @@ const RUNTIME: &str = concat!(
     include_str!("loft_radix_walk.h"),
     include_str!("loft_paged_load.h"),
     include_str!("loft_keyed.h"),
-    include_str!("loft_io.h")
+    include_str!("loft_json.h"),
+    include_str!("loft_parse.h"),
+    include_str!("loft_reflect.h"),
+    include_str!("loft_io.h"),
+    include_str!("loft_lazy.h"),
+    include_str!("loft_net.h")
 );
 
 /// Why a function cannot be written as C yet.
@@ -136,10 +144,13 @@ pub(crate) struct Cx<'a> {
     defaults: std::cell::RefCell<std::collections::BTreeMap<u16, Vec<u8>>>,
     /// Every type the unit renders as text (`loft_show{tp}`), by type number.
     show_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// Every type a `deliver` walks (`loft_dlv{tp}`, `deliver.rs`).
+    deliver_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
     consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The signatures the unit calls function values through: `loft_call{n}`.
-    fn_sigs: std::cell::RefCell<Vec<(Vec<CType>, CType)>>,
+    /// The dispatcher signatures: each parameter's shape and whether it is a `&` link.
+    fn_sigs: std::cell::RefCell<Vec<(Vec<(CType, u8)>, CType)>>,
     /// Every function the unit uses as a value, by definition number.
     fn_values: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// Every type the unit compares by content (`loft_eq{tp}`), by type number.
@@ -155,9 +166,21 @@ pub(crate) struct Cx<'a> {
     /// The Unicode tables the unit reads (`crate::c::unicode`).
     unicode: std::cell::RefCell<std::collections::BTreeSet<String>>,
     /// The generators' frames and prototypes, written before the unit's functions.
-    gen_decls: std::cell::RefCell<String>,
+    pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
-    gen_bodies: std::cell::RefCell<String>,
+    pub(crate) gen_bodies: std::cell::RefCell<String>,
+    /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
+    parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
+    pub(crate) frames: std::cell::Cell<bool>,
+    /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
+    /// consults the binding on a miss (`loft_lazy_miss`).
+    pub(crate) lazy: std::cell::Cell<bool>,
+    /// The lazy fetch functions written so far (`loft_lazy_fetch{n}`).
+    pub(crate) lazy_fetchers: std::cell::Cell<usize>,
+    /// The place twins the unit calls (`twin_name`): a function by definition number, with
+    /// the mask of its `&` parameters that receive a store place rather than a variable.
+    twins: std::cell::RefCell<Vec<(u32, u64)>>,
 }
 
 /// The record collections beside a plain vector the C carries; each layout is described in
@@ -188,6 +211,7 @@ impl<'a> Cx<'a> {
             scratch: std::cell::RefCell::new(None),
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             show_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            deliver_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_sigs: std::cell::RefCell::new(Vec::new()),
             fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -199,6 +223,11 @@ impl<'a> Cx<'a> {
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
+            parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            frames: std::cell::Cell::new(false),
+            lazy: std::cell::Cell::new(false),
+            lazy_fetchers: std::cell::Cell::new(0),
+            twins: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -347,9 +376,14 @@ impl<'a> Cx<'a> {
             );
             let _ = writeln!(
                 out,
-                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {} }};",
+                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {} }};",
                 id.layout_hash,
-                body::c_string(&self.stores.release().oldest)
+                body::c_string(&self.stores.release().oldest),
+                if self.holds_stored_refs(tp) {
+                    "loft_types"
+                } else {
+                    "0"
+                }
             );
         }
         out
@@ -408,10 +442,7 @@ impl<'a> Cx<'a> {
                 // A text inside a tuple would be copied with the tuple and freed twice.
                 let shapes = elems
                     .iter()
-                    .map(|e| {
-                        self.ctype(e)
-                            .filter(|c| !matches!(c, CType::Void | CType::Fn))
-                    })
+                    .map(|e| self.ctype(e).filter(|c| !matches!(c, CType::Void)))
                     .collect::<Option<Vec<_>>>()?;
                 Some(CType::Tuple(self.tuple_id(shapes)))
             }
@@ -420,19 +451,11 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// Does a tuple of these shapes hold a text, which it owns and must copy and free?
+    /// Does tuple struct `id` hold a text at any depth, which it owns and must copy and free?
     pub(crate) fn tuple_has_text(&self, id: u32) -> bool {
-        self.tuple_shapes(id).contains(&CType::Text)
-    }
-
-    /// Is tuple struct `id` plain scalars at every depth — no text, no reference, no function
-    /// value — so that a struct copy of it is a whole move?
-    pub(crate) fn tuple_is_plain(&self, id: u32) -> bool {
-        self.tuple_shapes(id).into_iter().all(|c| match c {
-            CType::Int | CType::Bool | CType::Enum | CType::Float | CType::Single | CType::Char => {
-                true
-            }
-            CType::Tuple(inner) => self.tuple_is_plain(inner),
+        self.tuple_shapes(id).into_iter().any(|c| match c {
+            CType::Text => true,
+            CType::Tuple(inner) => self.tuple_has_text(inner),
             _ => false,
         })
     }
@@ -490,13 +513,8 @@ impl<'a> Cx<'a> {
             .ok_or("an unknown type")?;
         self.copy_types.borrow_mut().insert(tp);
         let r = match &t.parts {
-            // A linked group's members name one record set, which a field-by-field copy
-            // would split into one per member.
-            Parts::Struct(fields) | Parts::EnumValue(_, fields)
-                if fields.iter().any(|f| !f.other_indexes().is_empty()) =>
-            {
-                Err("a copy of a record holding a linked group".to_string())
-            }
+            // A linked group's members name one record set: its views are indexed again over
+            // the copied owner (`loft_relink_group_views`), whatever collection it is.
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 fields.iter().try_for_each(|f| self.copy_type(f.content))
             }
@@ -603,28 +621,54 @@ impl<'a> Cx<'a> {
     /// A struct's field rows, `loft_fields{tp}`: each field's byte position, its type, whether it
     /// is a view member of a linked group (it borrows its records) and whether it is hidden (a
     /// `#`-named field).
-    fn field_rows(tp: u16, fields: &[crate::database::Field]) -> String {
+    fn field_rows(&self, tp: u16, fields: &[crate::database::Field]) -> String {
         let list: Vec<String> = fields
             .iter()
-            .map(|f| {
-                let view = f.other_indexes().first() == Some(&u16::MAX);
+            .enumerate()
+            .map(|(i, f)| {
                 let hidden = u8::from(f.name.starts_with('#'));
+                let (view, group) = match Self::group_owner(fields, i) {
+                    Some(o) if o != i => {
+                        let elem = self.stores.content(f.content);
+                        let nullable =
+                            elem != u16::MAX && self.stores.nullable_some_variant(elem).is_some();
+                        (1 + u8::from(nullable), o + 1)
+                    }
+                    Some(o) => (0, o + 1),
+                    None => (0, 0),
+                };
                 format!(
-                    "{{ {}, {}, {}, {hidden} }}",
-                    f.position,
-                    f.content,
-                    u8::from(view)
+                    "{{ {}, {}, {view}, {hidden}, {group} }}",
+                    f.position, f.content
                 )
             })
             .collect();
         format!(
             "static const loft_fld loft_fields{tp}[] = {{ {} }};",
             if list.is_empty() {
-                "{ 0, 0, 0, 0 }".into()
+                "{ 0, 0, 0, 0, 0 }".into()
             } else {
                 list.join(", ")
             }
         )
+    }
+
+    /// The owner of field `i`'s linked group — the member that holds the records, the one
+    /// whose `other_indexes` does not start with the view marker — or `None` outside a group.
+    fn group_owner(fields: &[crate::database::Field], i: usize) -> Option<usize> {
+        let others = fields[i].other_indexes();
+        if others.is_empty() {
+            return None;
+        }
+        if others.first() != Some(&u16::MAX) {
+            return Some(i);
+        }
+        others
+            .iter()
+            .copied()
+            .filter(|m| *m != u16::MAX)
+            .map(usize::from)
+            .find(|&m| fields[m].other_indexes().first() != Some(&u16::MAX))
     }
 
     /// The copy table: one `loft_tdesc` per registered type, at its type number.
@@ -653,7 +697,7 @@ impl<'a> Cx<'a> {
                     format!("{{ LOFT_T_TEXT, {size}, 0, 0, 0, 0 }}")
                 }
                 Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                    let _ = writeln!(out, "{}", Self::field_rows(tp, fields));
+                    let _ = writeln!(out, "{}", self.field_rows(tp, fields));
                     format!(
                         "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_fields{tp}, 0 }}",
                         fields.len()
@@ -690,7 +734,11 @@ impl<'a> Cx<'a> {
             // own flag.
             let keys = if matches!(
                 t.parts,
-                Parts::Hash(..) | Parts::Index(..) | Parts::Radix(..) | Parts::Trie(..)
+                Parts::Hash(..)
+                    | Parts::Index(..)
+                    | Parts::Radix(..)
+                    | Parts::Trie(..)
+                    | Parts::Ordered(..)
             ) {
                 let (name, n) = self.keys_of(tp);
                 format!("{name}, {n}")
@@ -784,6 +832,7 @@ impl<'a> Cx<'a> {
             );
         }
         out.push_str(&self.show_code());
+        out.push_str(&self.deliver_code());
         out.push_str(&self.eq_code());
         out.push_str(&self.ser_code());
         out.push_str(&self.unicode_code());
@@ -844,6 +893,28 @@ pub(crate) fn type_word(tp: &Type) -> String {
 
 /// The C name of definition `d`: the identifier every compiled target gives it.
 #[must_use]
+/// The C name of `d`'s place twin for `mask` (`_pl<mask>`; `_st` is the IR's own text
+/// instances, `parser/store_text.rs`): the function written again with each `&`
+/// parameter whose bit is set receiving a store place (a field, an element) as a `loft_ref`
+/// — `--native`'s `_st` twins.  Mask 0 is the function itself.
+pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
+    if mask == 0 {
+        c_name(data, d)
+    } else {
+        format!("{}_pl{mask}", c_name(data, d))
+    }
+}
+
+impl Cx<'_> {
+    /// The place twin `(d, mask)` is called: it is written with the unit.
+    pub(crate) fn request_twin(&self, d: u32, mask: u64) {
+        let mut t = self.twins.borrow_mut();
+        if !t.contains(&(d, mask)) {
+            t.push((d, mask));
+        }
+    }
+}
+
 pub fn c_name(data: &Data, d: u32) -> String {
     let dups = crate::opt::names::duplicate_fn_names(data);
     crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
@@ -887,9 +958,17 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_trie_prefix" => Some("loft_trie_prefix"),
         "n_file_map" => Some("loft_file_map"),
         "n_store_persist_copy" => Some("loft_image_write"),
-        "n_store_load" => Some("loft_image_load"),
+        "n_store_load" | "n_store_load_untrusted" => Some("loft_image_load"),
+        "n_store_load_url" => Some("loft_store_load_url"),
+        "n_store_load_url_trusted" => Some("loft_store_load_url_trusted"),
         "n_store_memory" => Some("loft_store_memory"),
         "n_store_verify" => Some("loft_store_verify"),
+        "n_store_bind_lazy" => Some("loft_lazy_bind_coll"),
+        "n_store_lazy_error" => Some("loft_lazy_error"),
+        "n_store_lazy_faults" => Some("loft_lazy_faults"),
+        "n_store_lazy_clear" => Some("loft_lazy_clear"),
+        "n_store_lazy_fail" => Some("loft_lazy_fail"),
+        "n_store_lazy_query" | "n_store_lazy_range" => Some("loft_lazy_db_fetch"),
         "n_store_load_key"
         | "n_store_load_key_text"
         | "n_store_load_keys"
@@ -922,6 +1001,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         | "n_parallel_queue_narrow"
         | "n_parallel_queue_fn"
         | "n_parallel_discard"
+        | "n_parallel_fold"
         | "n_parallel_buf_get"
         | "n_parallel_buf_get_float"
         | "n_parallel_buf_get_single"
@@ -934,6 +1014,104 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         | "n_parallel_buf_drop_narrow"
         | "n_parallel_buf_drop_fn"
         | "n_parallel_buf_drop_ref" => Some("loft_par"),
+        _ => host_native_c(name).or_else(|| json_native_c(name)),
+    }
+}
+
+/// A native a function value may name: its C function takes the visible arguments and answers
+/// the result, as `FnWriter::call` calls it.  The natives with an emission of their own (an
+/// intercept in `body/`) and the shared names that are no function are not.
+pub(crate) fn plain_native(name: &str) -> Option<&'static str> {
+    const OWN: &[&str] = &[
+        "n_hash_sorted",
+        "n_hash_unsorted",
+        "n_radix_sorted",
+        "n_spatial_range",
+        "n_trie_prefix",
+        "t_4hash_len",
+        "n_store_load",
+        "n_store_load_untrusted",
+        "n_store_load_url",
+        "n_store_load_url_trusted",
+        "n_store_persist_copy",
+        "n_store_memory",
+        "n_store_verify",
+        "n_store_bind_lazy",
+        "n_store_lazy_query",
+        "n_store_lazy_range",
+        "n_struct_from_jsonvalue",
+        "n_struct_to_json",
+        "n_struct_to_json_pretty",
+        "n_env_variables",
+    ];
+    if OWN.contains(&name) || name.starts_with("n_parallel_") || name.starts_with("n_store_load_") {
+        return None;
+    }
+    native_c(name).filter(|c| !matches!(*c, "loft_unicode" | "loft_show" | "loft_pg_load_keys"))
+}
+
+/// The C of the host natives the runtime answers itself: directories, the date, the
+/// environment, logging without a configuration, store locks, reflection, stack traces.
+fn host_native_c(name: &str) -> Option<&'static str> {
+    match name {
+        "n_os_cache_dir" => Some("loft_os_cache_dir"),
+        "n_directory" => Some("loft_directory"),
+        "n_user_directory" => Some("loft_user_directory"),
+        "n_program_directory" => Some("loft_program_directory"),
+        "n_set_store_lock" => Some("loft_set_store_lock"),
+        "n_store_reclaim" => Some("loft_store_reclaim"),
+        "n_yield_frame" => Some("loft_yield_frame"),
+        "n_reflect_type" => Some("loft_reflect_type"),
+        "n_stack_trace" => Some("loft_stack_trace"),
+        "n_type_named" => Some("loft_type_named"),
+        "n_reflect_field" => Some("loft_reflect_field"),
+        "n_reflect_field_path" => Some("loft_reflect_field_path"),
+        "n_get_store_lock" => Some("loft_get_store_lock"),
+        "n_log_info" | "n_log_warn" | "n_log_error" | "n_log_fatal" => {
+            Some("loft_log_unconfigured")
+        }
+        "n_ymd_days_ago" => Some("loft_ymd_days_ago"),
+        "n_env_variables" => Some("loft_env_variables"),
+        _ => None,
+    }
+}
+
+/// Does the unit reach a function whose name `pred` accepts?
+fn reachable_has(data: &Data, roots: &[u32], pred: impl Fn(&str) -> bool) -> bool {
+    crate::opt::names::reachable_functions(data, roots)
+        .iter()
+        .any(|&d| pred(data.def(d).name()))
+}
+
+/// The C of the JSON natives (`loft_json.h`): the reader, the readers of a JsonValue tree and
+/// its builders.
+fn json_native_c(name: &str) -> Option<&'static str> {
+    match name {
+        "n_json_parse" => Some("loft_json_parse_value"),
+        "n_json_errors" => Some("loft_json_errors"),
+        "n_parse_errors_of" => Some("loft_parse_errors_of"),
+        // Written by the type's render function (`struct_json_native`).
+        "n_struct_to_json" | "n_struct_to_json_pretty" => Some("loft_show"),
+        "n_struct_from_jsonvalue" => Some("loft_struct_from_jsonvalue"),
+        "n_json_null" => Some("loft_json_null"),
+        "n_json_bool" => Some("loft_json_bool"),
+        "n_json_number" => Some("loft_json_number"),
+        "n_json_string" => Some("loft_json_string"),
+        "n_json_array" => Some("loft_json_array"),
+        "n_json_object" => Some("loft_json_object"),
+        "t_9JsonValue_fields" => Some("loft_jv_fields"),
+        "t_9JsonValue_field" => Some("loft_jv_field"),
+        "t_9JsonValue_has_field" => Some("loft_jv_has_field"),
+        "t_9JsonValue_item" => Some("loft_jv_item"),
+        "t_9JsonValue_len" => Some("loft_jv_len"),
+        "t_9JsonValue_as_text" => Some("loft_jv_as_text"),
+        "t_9JsonValue_as_number" => Some("loft_jv_as_number"),
+        "t_9JsonValue_as_long" => Some("loft_jv_as_long"),
+        "t_9JsonValue_as_bool" => Some("loft_jv_as_bool"),
+        "t_9JsonValue_kind" => Some("loft_jv_kind"),
+        "t_9JsonValue_keys" => Some("loft_jv_keys"),
+        "t_9JsonValue_to_json" => Some("loft_jv_to_json"),
+        "t_9JsonValue_to_json_pretty" => Some("loft_jv_to_json_pretty"),
         _ => None,
     }
 }
@@ -968,33 +1146,92 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
+    // Without a `log.conf` beside the program the log calls do nothing (`Logger`); the C
+    // writes no log, so a program that has one is not carried.
+    if reachable_has(data, &all, |n| n.starts_with("n_log_"))
+        && crate::file_access::exists(format!("{}/log.conf", stores.source_dir).as_str())
+    {
+        return Err(Refusal {
+            function: "main".into(),
+            why: "a program with a log.conf".into(),
+        });
+    }
+    // A program's own lazy driver (`fn lazy_fetch…`, @PLN133 S8) is called by the miss path,
+    // which the C does not route to loft code.
+    if (0..data.definitions()).any(|d| {
+        let def = data.def(d);
+        def.source == crate::data::MAIN_SOURCE && def.name().starts_with("n_lazy_fetch")
+    }) {
+        return Err(Refusal {
+            function: "main".into(),
+            why: "a program with a lazy driver".into(),
+        });
+    }
     let cx = Cx::new(data, stores);
+    cx.frames
+        .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
+    cx.lazy
+        .set(reachable_has(data, &all, |n| n == "n_store_bind_lazy"));
     let mut protos = String::new();
     let mut bodies = String::new();
     for &d in &fns {
-        let (sig, body) = function(&cx, d).map_err(|why| Refusal {
+        let (sig, body) = function(&cx, d, 0).map_err(|why| Refusal {
             function: data.def(d).original_name().clone(),
             why,
         })?;
         let _ = writeln!(protos, "{sig};");
         let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
     }
-    let dispatch = cx.dispatch_code(&fns).map_err(|why| Refusal {
-        function: data.def(roots[0]).original_name().clone(),
-        why,
-    })?;
+    // The place twins the functions call, and the ones those call in turn.
+    let mut written = 0;
+    while written < cx.twins.borrow().len() {
+        let (d, mask) = cx.twins.borrow()[written];
+        written += 1;
+        let (sig, body) = function(&cx, d, mask).map_err(|why| Refusal {
+            function: data.def(d).original_name().clone(),
+            why,
+        })?;
+        let _ = writeln!(protos, "{sig};");
+        let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
+    }
+    // The dispatchers call place twins too: those are written, and the dispatchers again,
+    // until nothing new is asked.
+    let dispatch = loop {
+        let dispatch = cx.dispatch_code(&fns).map_err(|why| Refusal {
+            function: data.def(roots[0]).original_name().clone(),
+            why,
+        })?;
+        if written == cx.twins.borrow().len() {
+            break dispatch;
+        }
+        while written < cx.twins.borrow().len() {
+            let (d, mask) = cx.twins.borrow()[written];
+            written += 1;
+            let (sig, body) = function(&cx, d, mask).map_err(|why| Refusal {
+                function: data.def(d).original_name().clone(),
+                why,
+            })?;
+            let _ = writeln!(protos, "{sig};");
+            let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
+        }
+    };
     // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
     // it compiles `loft_at` without the foreign record's test.
     let mut out = String::new();
-    if crate::opt::names::reachable_functions(data, &all)
-        .iter()
-        .any(|&d| data.def(d).name() == "n_file_map")
-    {
-        out.push_str("#define LOFT_FOREIGN 1\n");
-    }
+    let reached = crate::opt::names::reachable_functions(data, &all);
+    let (defines, parses, reflects) = unit_defines(data, stores, &cx, &reached);
+    out.push_str(&defines);
     out.push_str(RUNTIME);
     out.push('\n');
     out.push_str(&cx.typedefs());
+    if parses {
+        out.push_str(&cx.parse_table());
+        out.push_str(&cx.main_vector_test());
+    }
+    if reflects {
+        out.push_str(&cx.reflect_table());
+        out.push_str(REFLECT_ENTRY);
+    }
     out.push_str(&cx.gen_decls.borrow());
     out.push_str(&protos);
     out.push_str(&dispatch);
@@ -1002,6 +1239,128 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
     Ok(out)
+}
+
+/// The macros a unit's runtime is compiled under, from what it reaches: a foreign store, the
+/// JSON reader and tree, the typed parse, reflection, frames — and whether it parses and
+/// reflects, which add tables after the runtime.
+fn unit_defines(
+    data: &Data,
+    stores: &Stores,
+    cx: &Cx,
+    reached: &std::collections::HashSet<u32>,
+) -> (String, bool, bool) {
+    let mut out = String::new();
+    if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
+        out.push_str("#define LOFT_FOREIGN 1\n");
+    }
+    // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
+    // tree with its layout read from this program's type table for one that reaches a JSON
+    // native, the typed walk (`loft_parse.h`) for one that parses a type.
+    let json_tree = reached.iter().any(|&d| {
+        let n = data.def(d).name();
+        n.starts_with("n_json_") || n.starts_with("t_9JsonValue_") || n == "n_struct_from_jsonvalue"
+    });
+    let parses = !cx.parse_types.borrow().is_empty()
+        || reached
+            .iter()
+            .any(|&d| data.def(d).name() == "n_parse_errors_of");
+    if json_tree || parses {
+        out.push_str("#define LOFT_JSON 1\n");
+    }
+    if json_tree {
+        out.push_str(&json_layout(stores));
+    }
+    if parses {
+        out.push_str("#define LOFT_PARSE 1\n");
+    }
+    let reflects = reached.iter().any(|&d| {
+        matches!(
+            data.def(d).name(),
+            "n_reflect_type" | "n_type_named" | "n_reflect_field" | "n_reflect_field_path"
+        )
+    });
+    if reflects {
+        out.push_str("#define LOFT_REFLECT 1\n");
+    }
+    if cx.lazy.get() {
+        out.push_str("#define LOFT_LAZY 1\n");
+    }
+    if reached.iter().any(|&d| {
+        matches!(
+            data.def(d).name(),
+            "n_store_load_url" | "n_store_load_url_trusted"
+        )
+    }) {
+        out.push_str("#define LOFT_NET 1\n");
+    }
+    if cx.frames.get() {
+        let sf = stores.name("StackFrame");
+        let at = |f: &str| stores.position(sf, f);
+        let _ = writeln!(
+            out,
+            "#define LOFT_FRAMES 1\n#define LOFT_SF_SIZE {}\n#define LOFT_SF_FUNCTION {}\n\
+             #define LOFT_SF_FILE {}\n#define LOFT_SF_LINE {}\n#define LOFT_SF_ARGS {}\n\
+             #define LOFT_SF_VARS {}",
+            stores.size(sf),
+            at("function"),
+            at("file"),
+            at("line"),
+            at("arguments"),
+            at("variables")
+        );
+    }
+    (out, parses, reflects)
+}
+
+/// `reflect_type` and `type_named` over the emitted table (`reflect.rs`, `loft_reflect.h`).
+const REFLECT_ENTRY: &str = r##"
+static loft_ref loft_reflect_type(int64_t kt) {
+    uint16_t k = (uint16_t) kt;
+    if (k < loft_nrtypes) return loft_reflect_build(&loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);
+    char b[16];
+    snprintf(b, sizeof b, "#%u", (unsigned) k);
+    return loft_reflect_build(&loft_rlay, &loft_rnone, b);
+}
+
+static loft_ref loft_reflect_field(loft_ref value, int64_t position, int64_t kt) {
+    return loft_reflect_field_at(&loft_rlay, loft_rtypes, loft_nrtypes, value, value.pos, (uint16_t) kt, position);
+}
+
+static loft_ref loft_reflect_field_path(loft_ref value, loft_ref path, int64_t kt) {
+    return loft_reflect_field_path_at(&loft_rlay, loft_rtypes, loft_nrtypes, value, path, (uint16_t) kt);
+}
+
+static loft_ref loft_type_named(loft_str name) {
+    for (uint32_t k = 0; k < loft_nrtypes; k++)
+        if (strlen(loft_rtypes[k].lookup) == name.len && memcmp(loft_rtypes[k].lookup, name.p, name.len) == 0)
+            return loft_reflect_build(&loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);
+    return loft_ref_null();
+}
+"##;
+
+/// The offsets of the JsonValue tree, as `native.rs` reads them through
+/// `Stores::position`: each variant's payload, a JsonField's name and value, and the sizes of
+/// a JsonValue, a JsonField and a text.
+fn json_layout(stores: &Stores) -> String {
+    let at = |tp: &str, field: &str| stores.position(stores.name(tp), field);
+    format!(
+        "#define LOFT_JV_SIZE {}\n#define LOFT_JF_SIZE {}\n#define LOFT_TEXT_SIZE {}\n\
+         #define LOFT_JF_NAME {}\n#define LOFT_JF_VALUE {}\n#define LOFT_JV_BOOL_VALUE {}\n\
+         #define LOFT_JV_NUMBER_VALUE {}\n#define LOFT_JV_INT_VALUE {}\n#define LOFT_JV_STRING_VALUE {}\n\
+         #define LOFT_JV_ITEMS {}\n#define LOFT_JV_FIELDS {}\n",
+        stores.size(stores.name("JsonValue")),
+        stores.size(stores.name("JsonField")),
+        stores.size(stores.name("text")),
+        at("JsonField", "name"),
+        at("JsonField", "value"),
+        at("JBool", "value"),
+        at("JNumber", "value"),
+        at("JInteger", "value"),
+        at("JString", "value"),
+        at("JArray", "items"),
+        at("JObject", "fields"),
+    )
 }
 
 /// C99 for the whole program: [`emit_unit`] from `main`, and the C `main` that calls it.
@@ -1048,15 +1407,25 @@ fn anchor(stores: &Stores) -> String {
 }
 
 /// The signature and the body of function `d`.
-fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
+fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
     let data = cx.data;
     let def = data.def(d);
-    if def.code() == &Value::Null {
+    // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
+    if def.code() == &Value::Null && !def.c_sig.is_empty() {
+        return c_binding(cx, d);
+    }
+    // A `#native` function of a library the program does not load: the interpreter's stub
+    // (`compile.rs`) answers every call with this panic.
+    let unloaded = def.code() == &Value::Null && !def.native().is_empty();
+    if def.code() == &Value::Null && !unloaded {
         return Err(format!("native {}", def.original_name()));
     }
     let ret = cx
         .ctype(def.returned())
         .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
+    if unloaded {
+        return unloaded_native(cx, d, ret);
+    }
     let vars = def.variables();
     // The parameters are the argument variables, in number order: `ref_return` can promote a
     // local into the return buffer's place, so parameter i is not always variable i.
@@ -1078,6 +1447,12 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
             shapes.push(CType::Int);
             continue;
         }
+        // A local only ever bound to `null` (`x = null;`, never given a type) holds the
+        // integer null; nothing reads it as another kind.
+        if matches!(tp, Type::Null) && !args.contains(&v) {
+            shapes.push(CType::Int);
+            continue;
+        }
         let c = cx.ctype(tp).filter(|c| *c != CType::Void).ok_or_else(|| {
             let what = if args.contains(&v) {
                 "parameter"
@@ -1090,10 +1465,13 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
     }
     let params: Vec<String> = args
         .iter()
-        .map(|&a| {
+        .enumerate()
+        .map(|(i, &a)| {
             let c = shapes[a as usize];
             let name = body::var_name(vars.name(a), a);
-            if matches!(vars.tp(a).base(), Type::RefVar(_)) {
+            if places & (1 << i) != 0 || vars.is_store_text_link(a) {
+                format!("loft_ref {name}")
+            } else if matches!(vars.tp(a).base(), Type::RefVar(_)) {
                 format!("{} *{name}", held(c))
             } else {
                 format!("{} {name}", passed(c))
@@ -1105,17 +1483,17 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
     } else {
         params.join(", ")
     };
-    let sig = format!("static {} {}({params})", held(ret), c_name(data, d));
+    let name = twin_name(data, d, places);
+    let sig = format!("static {} {name}({params})", held(ret));
     if let Type::Iterator(elem, _) = def.returned().base() {
-        // A tuple rides the frame and the yield as a struct copy, which is a move only for
-        // plain scalars: a text or a record a tuple yields is handed over (`(G-Own)`).
+        if places != 0 {
+            return Err("a generator handed a store place for a & parameter".into());
+        }
+        // A tuple rides the frame as a struct copy, a move; a yield copies its texts into the
+        // consumer's value (`gen_yield`), and a record it holds is handed over (`(G-Own)`).
         let elem = cx
             .ctype(elem)
-            .filter(|c| match c {
-                CType::Void => false,
-                CType::Tuple(id) => cx.tuple_is_plain(*id),
-                _ => true,
-            })
+            .filter(|c| *c != CType::Void)
             .ok_or_else(|| format!("a generator of {}", type_word(elem)))?;
         let (body, parts) = body::FnWriter::new(cx, d, shapes, CType::Void)
             .yielding(elem)
@@ -1124,8 +1502,235 @@ fn function(cx: &Cx, d: u32) -> Result<(String, String), String> {
         cx.gen_bodies.borrow_mut().push_str(&parts.bodies);
         return Ok((sig, body));
     }
-    let body = body::FnWriter::new(cx, d, shapes, ret).write()?;
+    let body = body::FnWriter::new(cx, d, shapes, ret)
+        .places(places)
+        .write()?;
+    if cx.frames.get() {
+        return Ok((sig, framed(cx, d, &name, &params, ret, &body)));
+    }
     Ok((sig, body))
+}
+
+/// A `#c` binding (`c_signature`, `c_call`): a wrapper declaring the callee by the author's own
+/// signature text — so it agrees with a system header that declares it too — and calling it with
+/// each scalar cast to its declared C type and each text as a NUL-terminated copy; an integer
+/// result widened to 64 bits by its signedness, a floating one as is.  A vector argument is not
+/// carried yet.
+fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
+    use crate::c_signature::{self as cs, CArg};
+    let data = cx.data;
+    let def = data.def(d);
+    let sig = cs::of(data, d, cs::CTarget::host())
+        .ok_or("a C binding without a signature")?
+        .map_err(|e| format!("a C binding whose signature does not parse: {e}"))?;
+    let params: Vec<Type> = def.attributes().iter().map(|a| a.typedef.clone()).collect();
+    let plan = cs::plan(&params, &sig).map_err(|_| "a C binding whose arguments do not fit")?;
+    // The author's spelling: `<ret>(<param>, …)`.
+    let text = def.c_sig.trim();
+    let open = text
+        .find('(')
+        .ok_or("a C signature without its parameters")?;
+    let ret_text = text[..open].trim();
+    let inner = text[open + 1..].trim_end().trim_end_matches(')').trim();
+    let c_params: Vec<&str> = if inner.is_empty() || inner == "void" {
+        Vec::new()
+    } else {
+        inner.split(',').map(str::trim).collect()
+    };
+    let ret = cx
+        .ctype(def.returned())
+        .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
+    let mut decl_params = Vec::new();
+    let mut body = String::new();
+    let mut args = Vec::new();
+    let mut frees = Vec::new();
+    for (i, (arg, tp)) in plan.iter().zip(&params).enumerate() {
+        let c = cx
+            .ctype(tp)
+            .filter(|c| *c != CType::Void)
+            .ok_or_else(|| format!("parameter of type {}", type_word(tp)))?;
+        decl_params.push(format!("{} a{i}", passed(c)));
+        let ct = c_params.get(args.len()).copied().unwrap_or("int");
+        match arg {
+            CArg::Scalar => args.push(format!("({ct}) a{i}")),
+            CArg::TextPointer => {
+                let _ = writeln!(body, "    char *s{i} = loft_cstr_own(a{i});");
+                args.push(format!("s{i}"));
+                frees.push(format!("    free(s{i});"));
+            }
+            CArg::VectorPtr | CArg::VectorPtrCount => {
+                return Err("a C binding taking a vector".into());
+            }
+        }
+    }
+    let decl = format!(
+        "    extern {ret_text} {}({});",
+        sig.symbol,
+        if c_params.is_empty() {
+            "void".to_string()
+        } else {
+            c_params.join(", ")
+        }
+    );
+    let call = format!("{}({})", sig.symbol, args.join(", "));
+    let mut out = format!("{decl}\n{body}");
+    c_binding_result(cx, &mut out, &sig.ret, ret, &call, &frees);
+    let sig_c = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(data, d),
+        if decl_params.is_empty() {
+            "void".to_string()
+        } else {
+            decl_params.join(", ")
+        }
+    );
+    Ok((sig_c, out))
+}
+
+/// The call of a `#c` binding and its result: an integer widened to 64 bits by its signedness, a
+/// floating one as is, each text argument's copy freed after the call.
+fn c_binding_result(
+    cx: &Cx,
+    out: &mut String,
+    c_ret: &crate::c_signature::CType,
+    ret: CType,
+    call: &str,
+    frees: &[String],
+) {
+    use crate::c_signature as cs;
+    match (c_ret, ret) {
+        (cs::CType::Void, _) | (_, CType::Void) => {
+            let _ = writeln!(out, "    {call};");
+            for f in frees {
+                let _ = writeln!(out, "{f}");
+            }
+            if ret != CType::Void {
+                let _ = writeln!(
+                    out,
+                    "    {{ {} r = {}; return r; }}",
+                    held(ret),
+                    cx.initial(ret)
+                );
+            }
+        }
+        (r, c) => {
+            let widened = match r {
+                cs::CType::Int { signed: false, .. } => format!("(int64_t) (uint64_t) {call}"),
+                cs::CType::Int { .. } => format!("(int64_t) {call}"),
+                _ => format!("(double) {call}"),
+            };
+            let value = match c {
+                CType::Float => format!("(double) ({widened})"),
+                CType::Single => format!("(float) ({widened})"),
+                CType::Bool => format!("(uint8_t) (({widened}) != 0)"),
+                _ => format!("(int64_t) ({widened})"),
+            };
+            let _ = writeln!(out, "    {} r = {value};", held(c));
+            for f in frees {
+                let _ = writeln!(out, "{f}");
+            }
+            out.push_str("    return r;\n");
+        }
+    }
+}
+
+/// The body of a `#native` function whose library is not loaded: the panic the interpreter's
+/// stub raises (`compile.rs`), then the result's null for a caller that is past it.
+fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), String> {
+    let def = cx.data.def(d);
+    // A body-less declaration has no variables: its parameters are its attributes.
+    let mut params = Vec::new();
+    for (i, a) in def.attributes().iter().enumerate() {
+        let c = cx
+            .ctype(a.typedef.peel_link())
+            .filter(|c| *c != CType::Void)
+            .ok_or_else(|| format!("parameter of type {}", type_word(&a.typedef)))?;
+        params.push(if matches!(a.typedef.base(), Type::RefVar(_)) {
+            format!("{} *a{i}", held(c))
+        } else {
+            format!("{} a{i}", passed(c))
+        });
+    }
+    let sig = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(cx.data, d),
+        if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        }
+    );
+    let msg = format!(
+        "native function {} not loaded. Either (a) its library's native cdylib is missing or \
+         stale — commonly built against a different libloft.rlib; rebuild with `make \
+         rebuild-native-cdylibs`, or `cargo build --release` in the library's `native/` dir — or \
+         (b) a freed store was read and its poisoned contents were used as the call index, in \
+         which case the real fault is a store lifetime bug that happened EARLIER. Tell them \
+         apart: if the run is green with LOFT_POISON unset, or an earlier line reports a `BUG` \
+         refusal of a store free / a strict-store violation, it is (b) — re-run with `LOFT_STRICT_STORES=1` to \
+         name the access and the free.",
+        def.native()
+    );
+    let mut out = String::new();
+    for i in 0..params.len() {
+        let _ = writeln!(out, "    (void) a{i};");
+    }
+    let _ = writeln!(
+        out,
+        "    loft_panic(loft_lit({}, {}), loft_lit(\"\", 0), 0);",
+        body::c_string(&msg),
+        msg.len()
+    );
+    if ret != CType::Void {
+        let _ = writeln!(
+            out,
+            "    {{ {} r = {}; return r; }}",
+            held(ret),
+            cx.initial(ret)
+        );
+    }
+    Ok((sig, out))
+}
+
+/// A function of a unit that keeps frames: its body becomes `<name>__fr`, and the function
+/// pushes its frame (`cr_call_push`'s name and file), calls the body and pops the frame, so
+/// every return of the body leaves the frame stack as it found it.
+fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> String {
+    let def = cx.data.def(d);
+    let _ = writeln!(
+        cx.gen_decls.borrow_mut(),
+        "static {} {name}__fr({params});",
+        held(ret)
+    );
+    let _ = write!(
+        cx.gen_bodies.borrow_mut(),
+        "\nstatic {} {name}__fr({params}) {{\n{body}}}\n",
+        held(ret)
+    );
+    let args: Vec<String> = if params == "void" {
+        Vec::new()
+    } else {
+        params
+            .split(", ")
+            .map(|p| p.rsplit([' ', '*']).next().unwrap_or("").to_string())
+            .collect()
+    };
+    let call = format!("{name}__fr({})", args.join(", "));
+    let push = format!(
+        "    loft_frame_push({}, {});\n",
+        body::c_string(&def.original_name()),
+        body::c_string(&def.position().file)
+    );
+    if ret == CType::Void {
+        format!("{push}    {call};\n    loft_frame_pop();\n")
+    } else {
+        format!(
+            "{push}    {} r = {call};\n    loft_frame_pop();\n    return r;\n",
+            held(ret)
+        )
+    }
 }
 
 /// The program's tests, the way `loft --tests` picks them: its own zero-parameter functions,
@@ -1177,7 +1782,7 @@ fn emit_tests(
         if subs.is_empty() {
             let _ = writeln!(
                 out,
-                "    if (setjmp(loft_test_jmp) == 0) {}(); else {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
+                "    LOFT_FRAMES_RESET();\n    if (setjmp(loft_test_jmp) == 0) {}(); else {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }}",
                 c_name(data, d),
             );
         } else {
@@ -1188,7 +1793,7 @@ fn emit_tests(
                 .collect();
             let _ = writeln!(
                 out,
-                "    {{ const loft_str want[] = {{ {} }};\n      \
+                "    LOFT_FRAMES_RESET();\n    {{ const loft_str want[] = {{ {} }};\n      \
                  if (setjmp(loft_test_jmp) == 0) {{ {}(); failed++; fputs(\"FAIL {name} (expected to fail)\\n\", stderr); }}\n      \
                  else if (!loft_failed_with(want, {})) {{ failed++; fputs(\"FAIL {name}\\n\", stderr); }} }}",
                 list.join(", "),

@@ -9,16 +9,16 @@
 // record already carries it without a store), c13 (inside a loop, a local copied out cannot be
 // a loop record, and the literal would mint a store a pass), c4 (`(R-Place)` builds the record into `keep` already) and
 // `make` (the target is the function's own return buffer).  A vector VARIABLE argument is
-// still copied (c2).  Applies in the IR phase, so the interpreter and `--native-release` take
+// still copied (c2).  Applies in the IR phase, so the interpreter and `--ship` take
 // it; plain `--native` compiles open-world and keeps the calls.  Every value is hand-computed.
 //
 // @falsified-at: hand-measured (sabotage, 2026-10-08) — with the rewrite dropping a literal
-//   argument's first push, c1 fails on --interpret and --native-release; with the refill
+//   argument's first push, c1 fails on --interpret and --ship; with the refill
 //   clause's vector empties not emitted (the literal's zero strands the kept vector), c9's
-//   live-record count grows on --native-release while every value holds; with
+//   live-record count grows on --ship while every value holds; with
 //   `vector_add`'s fits path writing one element short, c10 fails on --interpret and c2 on
-//   --native-release.  Restored, every cell holds on --interpret, --native and
-//   --native-release, under each switch (`LOFT_NO_CTOR_LITERAL`, `LOFT_NO_LOOP_RECORD_REFILL`,
+//   --ship.  Restored, every cell holds on --interpret, --native and
+//   --ship, under each switch (`LOFT_NO_CTOR_LITERAL`, `LOFT_NO_LOOP_RECORD_REFILL`,
 //   `LOFT_NO_VADD_FITS`) and under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
 //   and LOFT_NATIVE_LEAK_CHECK=1.  With the loop-record gate disabled (no site ever restored),
 //   c13's call is rewritten and `tests/ctor_literal.rs` fails on the trace while every value

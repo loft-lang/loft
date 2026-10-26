@@ -1,8 +1,8 @@
-diff --git b/src/data.rs a/src/data.rs
-index e255d55cb..9e687de6a 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -5511,15 +5511,7 @@ impl Definition {
+diff --git a/src/data.rs b/src/data.rs
+index 309e6b400..627e923c5 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -5098,17 +5098,9 @@ impl Definition {
                  sites.push((**inner).clone());
              }
          });
@@ -14,16 +14,18 @@ index e255d55cb..9e687de6a 100644
 -            Value::Insert(ops) => ops.last().unwrap_or(&self.code),
 -            other => other,
 -        };
+         // A `Loop` tail is no value (`(R-TailSelf)`'s frame loop): the function's values are
+         // the `return`s inside it, collected above.
 -        if let Value::Block(bl) = body
 +        if let Value::Block(bl) = &self.code
              && let Some(tail) = bl.operators.last()
-             && !matches!(tail.unspan(), Value::Return(_))
+             && !matches!(tail.unspan(), Value::Return(_) | Value::Loop(_))
          {
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index ace15d6a8..c88afe2af 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -13494,12 +13494,8 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 970933061..72647cbe6 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -14777,12 +14777,8 @@ impl Parser {
              // The tail arrives either already wrapped in a `Return` or as the bare branch —
              // a monomorph's body is the substituted TEMPLATE's, whose delivery has not run.
              let branch_is_tail = match bl.operators[last].unspan() {
@@ -38,8 +40,8 @@ index ace15d6a8..c88afe2af 100644
              };
              if branch_is_tail {
                  let tmp = self.create_unique("__ret_join", &ret);
-@@ -13525,60 +13521,6 @@ impl Parser {
-         self.context = saved_ctx;
+@@ -14965,60 +14961,6 @@ impl Parser {
+         }
      }
  
 -    /// loft#1872, `@FR-F-Ret` — a value branch whose leaves hand back a PARAMETER on one arm
@@ -99,7 +101,7 @@ index ace15d6a8..c88afe2af 100644
      pub(crate) fn promote_monomorph_vector_return(
          &mut self,
          d_nr: u32,
-@@ -13627,56 +13569,22 @@ impl Parser {
+@@ -15067,56 +15009,22 @@ impl Parser {
              for op in &mut bl.operators {
                  self.rewrite_generic_vector_binds(op, &tv_typed, &mut declared);
              }
@@ -160,7 +162,7 @@ index ace15d6a8..c88afe2af 100644
                      }
                      bl.operators
                          .insert(0, crate::data::v_set(copy, Value::Null));
-@@ -14022,67 +13930,6 @@ impl Parser {
+@@ -15368,67 +15276,6 @@ impl Parser {
              _ => {}
          }
      }
@@ -228,11 +230,11 @@ index ace15d6a8..c88afe2af 100644
      /// @PLN165 D5 — a template returning an OPEN instance (`-> Box<T>`) declares the
      /// `__retbuf` its twin has (a record whatever `T` becomes), but its literal tail was a
      /// deferred `TV_OBJECT` the template's own parse could not deliver.  Lowered, it is the
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 3a83f6b62..59187826d 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
-@@ -739,15 +739,7 @@ impl Parser {
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index 80b8e0d1d..e86130c86 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -753,15 +753,7 @@ impl Parser {
                  Value::Var(w) if self.vars.is_caller_hidden_buf(*w) => Some(*w),
                  _ => None,
              })

@@ -117,6 +117,8 @@ impl FnWriter<'_> {
                 ))
             }
             ("OpConvRefFromNull", []) => Ok(E::new("loft_ref_null()", K::Ref)),
+            // `DbRef::NULL_REPORTED`: a null whose absence is accounted for, `pos`'s top bit set.
+            ("OpNullReported", []) => Ok(E::new("loft_ref_null_reported()", K::Ref)),
             // The operand runs for its effect; the answer is the type's constant size.
             ("OpSizeScalar", [v, sz]) => {
                 let sz = Self::literal(sz, "size")?;

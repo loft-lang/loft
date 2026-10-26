@@ -401,6 +401,33 @@ pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definit
     rust_fn_ident(&base)
 }
 
+/// The identifier a LIBRARY artifact exports function `d_nr`'s bridge under
+/// (`loft_shared_<this>`), given the library's export set `exports` (loft#2180).
+///
+/// [`disambiguated_fn_ident`] answers over the whole PROGRAM's duplicates, which is right for
+/// the emitted Rust (one flat namespace) and wrong for a symbol a cached artifact carries into
+/// OTHER programs: the artifact is keyed by its library and the host's type layout, not by who
+/// built it, so a program that could see a second `cell` named the bridge `cell_m<hash>` and a
+/// program that could not looked up `cell`, missed it, and ran the function interpreted.  The
+/// export name therefore asks only the library's own exports: two of them share a name only
+/// when two files of the one library define it, and then the file hash tells them apart in
+/// every program alike.
+#[must_use]
+pub fn library_bridge_ident(data: &Data, exports: &HashSet<u32>, d_nr: u32) -> String {
+    let name = data.def(d_nr).name();
+    let shared = exports
+        .iter()
+        .filter(|&&e| data.def(e).name() == name)
+        .count()
+        > 1;
+    let dups: HashSet<String> = if shared {
+        std::iter::once(name.to_string()).collect()
+    } else {
+        HashSet::new()
+    };
+    disambiguated_fn_ident(&dups, data.def(d_nr))
+}
+
 /// Flatten a loft def name into a valid Rust identifier.  Most names already are
 /// (`n_foo`, `t_4Pair_first`), but a generic instantiated over a TUPLE carries the
 /// synthetic tuple struct's schema name verbatim — `t_24__tuple<integer,integer>_first`

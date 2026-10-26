@@ -22,7 +22,7 @@ canonical home ([DEVELOPMENT.md § Inserting Discovered Enhancements](doc/claude
 **Two-agent split:** this stream BUILDS + FIXES the language and documents the contract; the
 consumer's own agent USES + adversarially BREAKS it and reports gaps.
 **Library work is in scope HERE (owner, 2026-09-25)** — the `loft-libs-*` repos (the published
-libraries: fix, test, republish via the **loft-ship skill**) are this stream's to edit, never
+libraries: fix, test, republish via the **loft-library skill**) are this stream's to edit, never
 delegated to a dogfood project's agent — a consumer reports the gap, this stream builds it and
 tests it on the library's TESTBED (its own CI run locally, declared dependencies only, no consumer
 in the loop): [LIBRARY_AUTHORING.md § The testbed](doc/claude/LIBRARY_AUTHORING.md).  The
@@ -365,7 +365,7 @@ src/main.rs            CLI; loads default/ then user file
 - **Three optimisation tiers, kept apart** (NATIVE.md § Optimisation tiers): a SEMANTICS run
   (`--native`, the test runner) keeps every tier and a fast compile; a PERFORMANCE lane
   (`native_ratio.sh`, `run_bench.sh`, a consumer bench) and a SHIPPED binary
-  (`--native-release`, every library cdylib) are lean and fully optimised
+  (`--ship`, every library cdylib) are lean and fully optimised
   (`-C opt-level=3 -C codegen-units=1`).  A perf number taken on the semantics build
   is not a measurement of what ships.
 - **User-facing output** (anything a command PRINTS): silence when nothing needs acting
@@ -689,7 +689,7 @@ printable with `make pdf-doc` ·
 [LIBRARY_AUTHORING.md § The library contract](doc/claude/LIBRARY_AUTHORING.md) first** (the
 standing rules, one line each, each pointing at its home); the rest of LIBRARY_AUTHORING is the
 how (testbed → develop → publish → maintain), [LIBRARY_CHECKLIST.md](doc/claude/LIBRARY_CHECKLIST.md)
-what a registry review checks, and publishing is the **loft-ship skill**.  A library's API:
+what a registry review checks, and publishing is the **loft-library skill**.  A library's API:
 `LIBRARIES.md` (generated on demand — `make libcatalogue`, not committed) · in-flight branches:
 [LIBRARY_BRANCHES.md](doc/claude/LIBRARY_BRANCHES.md) · reference: [PACKAGES.md](doc/claude/PACKAGES.md)
 format/targets · [API_SURFACE.md](doc/claude/API_SURFACE.md) · [REGISTRY_SUBMIT.md](doc/claude/REGISTRY_SUBMIT.md) /
@@ -729,7 +729,7 @@ The posts themselves are in [loft-lang/blog](https://github.com/loft-lang/blog)
 every word.
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
-`loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-ship` (library cross-target + publish) · `engineering-rigor` /
+`loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-library` (library cross-target + publish) · `engineering-rigor` /
 `design-protocol` (rigor) · `doc-quality` · `draw` ([DRAWING.md](doc/claude/DRAWING.md), the method it follows) · `loft-plan-workflow`.
 
 ## Environment switches

@@ -305,7 +305,7 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
     };
     // The chain's assignment lands in the phantom, declared at its tuple's zero and bound
     // from the callee's tuple call — no buffer argument, no mint, no copy.
-    for name in ["n_read_uint", "n_pick", "n_count_down"] {
+    for name in ["n_read_uint", "n_pick"] {
         let body = body_of(name);
         assert!(
             body.contains("let mut var___ref_1: (bool, i64, f64) = Default::default();"),
@@ -316,6 +316,22 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
             "{name} mints and copies nothing"
         );
     }
+    // `count_down`'s chain is a self-call in tail position, a jump to its entry
+    // (`@FR-R-TailSelf`): no call result lands anywhere, so it has no phantom at all — its
+    // one exit returns the tuple it builds, and it mints and copies nothing.
+    let body = body_of("n_count_down");
+    assert!(
+        body.contains("continue") && !body.contains("n_count_down(cell"),
+        "n_count_down jumps instead of calling itself"
+    );
+    assert!(
+        !body.contains("OpDatabase(cell,") && !body.contains("OpCopyRecord(cell,"),
+        "n_count_down mints and copies nothing"
+    );
+    assert!(
+        !body.contains("return return"),
+        "n_count_down's exit is one return"
+    );
     // The promoted local IS the phantom: read field-wise off the tuple, returned whole.
     let body = body_of("n_at_width");
     assert!(

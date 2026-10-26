@@ -16,6 +16,8 @@ typedef struct {
     uint64_t hash;
     const char *dump;
     const char *oldest;
+    /* The type can hold a stored reference, which a load re-points at its slot (`types` walks it). */
+    const loft_tdesc *types;
 } loft_sidecar;
 
 /* ── radix_tree::rtree_relayout: the nodes renumbered in van Emde Boas order ── */
@@ -368,32 +370,27 @@ static int loft_version_triple(const char *v, size_t n, unsigned long t[3]) {
 /* The schema gate (`check_beside`, `classify`, `Release::admits`): the sidecar beside `path`
  * against the layout the program reads its store as.  1 when the image may be read as it is: its
  * sidecar names this layout.  `who` names the caller in what a refusal says. */
-static int loft_image_gate(const char *path, const loft_sidecar *sc, const char *who) {
-    char *side = (char *) malloc(strlen(path) + 9);
-    if (!side) { fputs("loft: out of memory\n", stderr); abort(); }
-    sprintf(side, "%s.dschema", path);
-    FILE *f = fopen(side, "rb");
-    free(side);
-    if (!f) {
-        /* `@FR-S-Gate`: an image with no sidecar records no layout and is never read raw. */
-        fprintf(stderr, "%s: refusing %s — it has no layout sidecar (`.dschema`) beside it, so nothing "
-                "records the layout its records were written with; write it with store_persist_copy, which "
-                "writes both.\n", who, path);
-        return 0;
-    }
-    size_t cap = 4096, n = 0, got;
-    char *text = (char *) malloc(cap + 1);
-    if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
-    while ((got = fread(text + n, 1, cap - n, f)) > 0) {
-        n += got;
-        if (n == cap) {
-            cap *= 2;
-            text = (char *) realloc(text, cap + 1);
-            if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
-        }
-    }
-    fclose(f);
-    text[n] = 0;
+/* `Stores::paged_refusal`: the last refusal a loader made, which a lazy fetch reads back as the
+ * reason its source could not serve it (loft#802). */
+static char *loft_pg_refusal = 0;
+
+static void loft_pg_record(const char *path, const char *reason) {
+    size_t n = strlen(path) + strlen(reason) + 32;
+    free(loft_pg_refusal);
+    loft_pg_refusal = (char *) malloc(n);
+    if (!loft_pg_refusal) { fputs("loft: out of memory\n", stderr); abort(); }
+    snprintf(loft_pg_refusal, n, "refusing %s — %s", path, reason);
+}
+
+/* A refusal of the gate: said on stderr, and recorded as a loader's is. */
+static void loft_gate_refuse(const char *who, const char *path, const char *reason) {
+    fprintf(stderr, "%s: refusing %s — %s.\n", who, path, reason);
+    loft_pg_record(path, reason);
+}
+
+/* `classify` over a sidecar's TEXT (`verdict_for_sidecar_text`): its layout must be this
+ * program's for the type, else the image is refused, saying why; `text` is consumed. */
+static int loft_image_gate_text(const char *path, char *text, const loft_sidecar *sc, const char *who) {
     /* `LayoutIdentity::from_sidecar`: the magic, the header lines, the `--` fence, the dump. */
     int ok = 0, ver = 0;
     unsigned long long hash = 0;
@@ -422,7 +419,7 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc, const char 
         ok = ok && has_hash;
     }
     if (!ok) {
-        fprintf(stderr, "%s: refusing %s — its layout sidecar cannot be read.\n", who, path);
+        loft_gate_refuse(who, path, "its layout sidecar cannot be read");
         free(text);
         return 0;
     }
@@ -435,27 +432,193 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc, const char 
     if (sc->oldest[0] && loft_version_triple(version, version_len, w) &&
         loft_version_triple(sc->oldest, strlen(sc->oldest), o) &&
         (w[0] < o[0] || (w[0] == o[0] && (w[1] < o[1] || (w[1] == o[1] && w[2] < o[2]))))) {
-        fprintf(stderr,
-                "%s: refusing %s — this store was written by %.*s, and this program reads stores from %s on; "
-                "open it once with a release that reads both, then with this one.\n",
-                who, path, (int) version_len, version, sc->oldest);
+        char why[512];
+        snprintf(why, sizeof why,
+                 "this store was written by %.*s, and this program reads stores from %s on; open it once with a "
+                 "release that reads both, then with this one",
+                 (int) version_len, version, sc->oldest);
+        loft_gate_refuse(who, path, why);
         free(text);
         return 0;
     }
     ok = hash == sc->hash && strcmp(dump, sc->dump) == 0;
-    if (!ok) fprintf(stderr, "%s: refusing %s — it was written with a different layout, and it cannot be converted to this program's.\n", who, path);
+    if (!ok) loft_gate_refuse(who, path, "it was written with a different layout, and it cannot be converted to this program's");
     free(text);
     return ok;
 }
 
-/* Stores::load_path (`store_load`): the image at `path` replaces the store `r` names, the slot
- * keeping its type and its liveness; its allocator state is re-derived from the image's own
- * blocks (`Store::load`: no parked lists, no lazy frees).  0 when the gate refuses the file, it
- * cannot be read, or it is not a store image. */
-static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc) {
+/* The sidecar `<path>.dschema` read whole, malloc'd and NUL-terminated, or 0. */
+static char *loft_image_sidecar(const char *path) {
+    char *side = (char *) malloc(strlen(path) + 9);
+    if (!side) { fputs("loft: out of memory\n", stderr); abort(); }
+    sprintf(side, "%s.dschema", path);
+    FILE *f = fopen(side, "rb");
+    free(side);
+    if (!f) return 0;
+    size_t cap = 4096, n = 0, got;
+    char *text = (char *) malloc(cap + 1);
+    if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
+    while ((got = fread(text + n, 1, cap - n, f)) > 0) {
+        n += got;
+        if (n == cap) {
+            cap *= 2;
+            text = (char *) realloc(text, cap + 1);
+            if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
+        }
+    }
+    fclose(f);
+    text[n] = 0;
+    return text;
+}
+
+/* The layout gate of an image at `path` (`layout_gate_ok`): its sidecar must say it was written
+ * with this program's layout for the type; an image with none is never read raw (`@FR-S-Gate`). */
+static int loft_image_gate(const char *path, const loft_sidecar *sc, const char *who) {
+    char *text = loft_image_sidecar(path);
+    if (!text) {
+        loft_gate_refuse(who, path, "it has no layout sidecar (`.dschema`) beside it, so nothing records the "
+                         "layout its records were written with; write it with store_persist_copy, which writes both");
+        return 0;
+    }
+    return loft_image_gate_text(path, text, sc, who);
+}
+
+/* `Store::validate_structure`: the block chain of `words` words from word 1 partitions the image
+ * — no zero-size block, none past the end — so nothing walks garbage headers. */
+static int loft_image_structure_ok(const uint8_t *bytes, uint32_t words) {
+    uint32_t pos = LOFT_ST_PRIMARY;
+    while (pos < words) {
+        int32_t claim;
+        memcpy(&claim, bytes + (size_t) pos * 8, 4);
+        uint32_t span = claim < 0 ? (uint32_t) -(int64_t) claim : (uint32_t) claim;
+        if (span == 0 || (uint64_t) pos + span > words) return 0;
+        pos += span;
+    }
+    return pos == words;
+}
+
+/* `store_load` (`load_path`), and with `untrusted` `store_load_untrusted`
+ * (`load_path_untrusted`): an image whose block structure does not hold is rejected before it is
+ * adopted, and the slot keeps the store it had. */
+/* `LayoutIdentity::from_sidecar`'s slot: the `slot=` line of a v2 sidecar, -1 for none. */
+static long loft_sidecar_slot(const char *text) {
+    if (!text || strncmp(text, "LOFT-DSCHEMA v", 14) != 0 || atoi(text + 14) < 2) return -1;
+    const char *fence = strstr(text, "\n--\n");
+    for (const char *line = strchr(text, '\n'); line && (!fence || line < fence); line = strchr(line + 1, '\n')) {
+        if (strncmp(line + 1, "slot=", 5) == 0) {
+            long v = strtol(line + 6, 0, 10);
+            return v >= 0 && v <= 0xFFFF ? v : -1;
+        }
+    }
+    return -1;
+}
+
+/* `stored_ref_slots`: every stored reference the `tp` at `at` reaches, through its fields,
+ * variants, child records and the elements of its collections. */
+typedef struct { loft_ref *p; size_t n, cap; } loft_refs;
+
+static void loft_refs_push(loft_refs *o, loft_ref r) {
+    if (o->n == o->cap) {
+        o->cap = o->cap ? o->cap * 2 : 16;
+        o->p = (loft_ref *) realloc(o->p, o->cap * sizeof *o->p);
+        if (!o->p) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    o->p[o->n++] = r;
+}
+
+static void loft_ref_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_refs *out, int depth) {
+    const loft_tdesc *d = &T[tp];
+    if (depth > 64 || at.rec == 0) return;
+    loft_store_t *s = loft_store_of(at);
+    switch (d->kind) {
+    case LOFT_T_DBREF: loft_refs_push(out, at); return;
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++) loft_ref_slots(T, d->fields[i].type, loft_field(at, d->fields[i].pos), out, depth + 1);
+        return;
+    case LOFT_T_ENUM: {
+        int e = (int) *loft_at(s, at.rec, at.pos) - 1;
+        if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_ref_slots(T, d->variants[e], at, out, depth + 1);
+        return;
+    }
+    default: break;
+    }
+    uint32_t cur = loft_u32(s, at.rec, at.pos);
+    if (cur == 0 || cur == 0xFFFFFFFFu) return;
+    if (d->kind == LOFT_T_CHILD) {
+        loft_ref c = { at.store_nr, cur, 8 };
+        loft_ref_slots(T, d->elem, c, out, depth + 1);
+    } else if (d->kind == LOFT_T_VECTOR) {
+        uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
+        for (uint32_t i = 0; i < len; i++) {
+            loft_ref e = { at.store_nr, cur, 8 + i * size };
+            loft_ref_slots(T, d->elem, e, out, depth + 1);
+        }
+    } else if (d->kind == LOFT_T_ORDERED) {
+        uint32_t len = loft_u32(s, cur, 4);
+        for (uint32_t i = 0; i < len; i++) {
+            loft_ref e = { at.store_nr, loft_u32(loft_store_of(at), cur, 8 + 4 * i), 8 };
+            loft_ref_slots(T, d->elem, e, out, depth + 1);
+        }
+    } else if (d->kind == LOFT_T_HASH) {
+        uint32_t n = 0;
+        loft_hent *all = loft_h_entries_of(at, &n);
+        for (uint32_t i = 0; i < n; i++) loft_ref_slots(T, d->elem, all[i].e, out, depth + 1);
+        free(all);
+    } else if (d->kind == LOFT_T_INDEX || d->kind == LOFT_T_RADIX || d->kind == LOFT_T_TRIE) {
+        uint32_t n = 0, *ids = d->kind == LOFT_T_INDEX ? loft_bt_records(at, &n) : loft_rx_records(at, &n);
+        for (uint32_t i = 0; i < n; i++) {
+            loft_ref e = { at.store_nr, ids[i], 8 };
+            loft_ref_slots(T, d->elem, e, out, depth + 1);
+        }
+        free(ids);
+    }
+}
+
+/* `rebase_stored_refs`: the image now in slot `nr` names the slot it was written from
+ * (`recorded`); its stored references into that slot are made to name `nr`.  0 with `why` set,
+ * nothing rewritten, for a reference into any other store — not part of the file — or for
+ * references a sidecar recording no slot cannot tell apart. */
+static int loft_rebase_refs(const loft_sidecar *sc, uint16_t nr, long recorded, const char **why) {
+    loft_ref root = { nr, LOFT_ST_PRIMARY, 8 };
+    loft_refs all = { 0, 0, 0 };
+    loft_ref_slots(sc->types, sc->tp, root, &all, 0);
+    loft_store_t *s = &loft_stores[nr];
+    int ok = 1;
+    size_t live = 0;
+    for (size_t i = 0; i < all.n; i++) {
+        uint32_t st = loft_u32(s, all.p[i].rec, all.p[i].pos), rec = loft_u32(s, all.p[i].rec, all.p[i].pos + 4);
+        if ((uint16_t) st == 0xFFFF && rec == 0) continue;
+        live++;
+        if (recorded < 0) {
+            *why = "it holds references, and it was written by a version of loft that did not record which of them "
+                   "point into the store itself";
+            ok = 0;
+            break;
+        }
+        if ((long) (uint16_t) st != recorded) {
+            *why = "it holds a reference into another store, which is not part of the file";
+            ok = 0;
+            break;
+        }
+    }
+    if (ok && live)
+        for (size_t i = 0; i < all.n; i++) {
+            uint32_t st = loft_u32(s, all.p[i].rec, all.p[i].pos), rec = loft_u32(s, all.p[i].rec, all.p[i].pos + 4);
+            if ((uint16_t) st == 0xFFFF && rec == 0) continue;
+            loft_set_u32(s, all.p[i].rec, all.p[i].pos, nr);
+        }
+    free(all.p);
+    return ok;
+}
+
+static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted, const loft_sidecar *sc,
+                            long recorded, const char *what, const char *who);
+
+static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, int untrusted) {
+    const char *who = untrusted ? "store_load_untrusted" : "store_load";
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return 0;
     char *p = loft_cpath(path, 0);
-    if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc, "store_load"))) {
+    if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc, who))) {
         free(p);
         return 0;
     }
@@ -474,6 +637,26 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc) {
         }
     }
     fclose(f);
+    long recorded = -1;
+    if (sc && sc->types) {
+        char *q = loft_cpath(path, 0);
+        char *text = loft_image_sidecar(q);
+        recorded = loft_sidecar_slot(text);
+        free(text);
+        free(q);
+    }
+    char *what = loft_cstr_own(path);
+    int ok = loft_image_adopt(r, bytes, n, untrusted, sc, recorded, what, untrusted ? "store_load_untrusted" : "store_load");
+    free(what);
+    return ok;
+}
+
+/* `load_bytes_from` / `Store::load`: image `bytes` (malloc'd, `n` long, taken over) adopted as the
+ * store `r` names — a store keeps its type and its liveness, its allocator state re-derived from
+ * the image's own blocks; with `validate` an image whose block structure does not hold is
+ * rejected first and the slot keeps the store it had. */
+static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted, const loft_sidecar *sc,
+                            long recorded, const char *what, const char *who) {
     uint32_t sig;
     if (n < 16 || (memcpy(&sig, bytes, 4), sig != LOFT_ST_SIGNATURE)) {
         free(bytes);
@@ -484,7 +667,28 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc) {
     bytes = (uint8_t *) realloc(bytes, (size_t) words * 8);
     if (!bytes) { fputs("loft: out of memory\n", stderr); abort(); }
     memset(bytes + n, 0, (size_t) words * 8 - n);
+    if (untrusted && !loft_image_structure_ok(bytes, words)) {
+        free(bytes);
+        return 0;
+    }
     loft_store_t *s = &loft_stores[r.store_nr];
+    /* `adopt_image`: the image's references re-pointed at this slot, read off its own bytes; a
+     * refusal leaves the store as it was. */
+    if (sc && sc->types && loft_stores[r.store_nr].known == sc->tp) {
+        uint8_t *old_buf = s->buf;
+        uint32_t old_size = s->size;
+        s->buf = bytes;
+        s->size = words;
+        const char *why = 0;
+        int ok = loft_rebase_refs(sc, r.store_nr, recorded, &why);
+        s->buf = old_buf;
+        s->size = old_size;
+        if (!ok) {
+            fprintf(stderr, "%s: refusing %s — %s.\n", who, what, why);
+            free(bytes);
+            return 0;
+        }
+    }
     free(s->buf);
     s->buf = bytes;
     s->size = words;

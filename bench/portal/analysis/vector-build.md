@@ -3,7 +3,7 @@
 Taken 2026-09-21 on x86-64, right after the record shapes (`records.md` § Built), from the
 portal's 24 rows still over 3×.  An ANALYSIS: every figure below is a HAND-PRICE — the
 emitted Rust of the routine edited to the form a rewrite would emit, compiled with the
-`--native-release` flags, run in-process with the result hash unchanged.  **V1–V3 and F1 are BUILT
+`--ship` flags, run in-process with the result hash unchanged.  **V1–V3 and F1 are BUILT
 (§ Built, § F1 built); T1 is re-sized (it needs a refactor first — § T1 re-priced) and C1
 is priced with its condition CORRECTED (§ C1's condition — the premise below is false);
 neither is built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
@@ -202,7 +202,7 @@ not read, so the loop holds no header either.
 
 ## C1: every call constructs a guard for fn-ref buffers it cannot have
 
-A `--native-release` function enters with `cr_call_push_lean`, a `CallGuard` and
+A `--ship` function enters with `cr_call_push_lean`, a `CallGuard` and
 `FnRefBufGuard::new(cell, false)` — the last one two `Cell` reads on every exit, for return
 buffers a fn-ref dispatch arm allocated.  `(R-LeafChain)` drops the frame for a call tree
 off any cycle and free of fn-refs; a RECURSIVE function keeps all three.  The depth count is
@@ -420,7 +420,7 @@ or under it.
 
 ## Method
 
-`--native-release --native-emit` for the routine's Rust; the edit a rewrite would make,
+`--ship --native-emit` for the routine's Rust; the edit a rewrite would make,
 applied by script to that function alone; `bench/portal/hand_price.sh`, which is `rustc`
 with loft's own release line (captured once with a logging `rustc` shim on `PATH`); the lane's own binary run with `--n`, the hash
 column compared.  A figure is quoted only where the hash is unchanged and two runs agree.

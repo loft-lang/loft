@@ -5490,11 +5490,12 @@ impl Stores {
             | Parts::Int(_, null)
             | Parts::IntRaw(_, null)
             | Parts::ShortRaw(_, null) => (false, !null),
+            // `@FR-D-Json`: a `JsonValue`'s default is `JNull`, a tag, not the zero.
             Parts::Enum(values) => (
                 values
                     .iter()
                     .any(|(v, _)| *v != u16::MAX && self.derive_facts(*v, seen).0),
-                true,
+                row.name != "JsonValue",
             ),
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 let mut owns = false;

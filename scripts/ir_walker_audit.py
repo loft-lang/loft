@@ -1130,6 +1130,29 @@ def pattern_variants(pats):
     return set(PATTERN_VARIANT.findall(pats))
 
 
+def _arm_end(block, j):
+    """The `,` that ends an arm body written without braces, at bracket depth 0.
+
+    Unlike `_scan_to` this counts `{`/`}` too: a body that is itself a `match x { … }` holds
+    commas of its own, and stopping at the first of them read the nested match's arms as
+    the outer match's patterns — a `match v.unspan()` over `Value` then counted as a `Type`
+    test that cannot see through `τ?` (`c/body/generator.rs::held_type`).
+    """
+    depth = 0
+    while j < len(block):
+        c = block[j]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                return j
+            depth -= 1
+        elif c == "," and depth == 0:
+            return j
+        j += 1
+    return j
+
+
 def arm_patterns(block):
     """The PATTERN halves of a match's arms — no bodies, no guards.
 
@@ -1158,7 +1181,7 @@ def arm_patterns(block):
             if j < len(block) and block[j] == "{":
                 j = _balanced(block, j, "{", "}")
             else:
-                j = _scan_to(block, j, ",")
+                j = _arm_end(block, j)
             i, arm, depth = j + 1, j + 1, 0
             continue
         i += 1

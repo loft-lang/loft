@@ -13,7 +13,7 @@ un-inlined `note_format_fault` whose fast path is one `bool` test).
     scripts/native_call_census.py <binary> [--fn <substring>] [--top N]
 
 `<binary>` is a program compiled from `loft --native-emit … --lean` (or the binary
-`--native-release` leaves behind); `--fn` restricts the per-function count to functions
+`--ship` leaves behind); `--fn` restricts the per-function count to functions
 whose symbol contains the substring.  Prints the call targets ranked by call SITES —
 a site count, not a dynamic count: pair it with `scripts/profile.sh --engine` to know
 which sites are hot.  A `#[cold]` slow half showing up here is the design working; the

@@ -400,6 +400,31 @@ fn p137_html_hello_world_does_not_trap() {
     );
 }
 
+/// `--ship --html` builds the page with the shipped rustc arguments (opt-level 3, one codegen
+/// unit, aligned loops) and the page answers what the ordinary page answers.
+#[test]
+fn a_shipped_page_answers_as_the_ordinary_page_does() {
+    let src = "fn main() {\n  t = 0;\n  for x in 0..1000 { t = (t * 31 + x) % 1000003; }\n  println(\"shipped {t}\");\n}\n";
+    let Some((stdout, stderr, ok)) = run_html_wasm_full(
+        "ship_page",
+        src,
+        &[],
+        &[],
+        &["--ship"],
+        "tools/wasm_repro.mjs",
+    ) else {
+        return;
+    };
+    assert!(
+        ok,
+        "the shipped page trapped.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("shipped 729977"),
+        "the shipped page's answer.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
 /// P137 follow-up: arithmetic + control flow exercise the bytecode
 /// dispatch path in the WASM build.  If a future change introduces a
 /// panic-able std call inside the dispatch loop (e.g. an unchecked

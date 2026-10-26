@@ -39,29 +39,86 @@ static void loft_set_anchor(const char *dir, int program_relative) {
     loft_program_relative = program_relative;
     env = getenv("LOFT_PATHS");
     if (env) loft_program_relative = (env[0] == 'p' || env[0] == 'P');
+#if defined(LOFT_POSIX)
+    /* The interpreter runs a program-relative program in its own directory (main.rs, before
+     * the run), so the working directory `directory()` answers is that one. */
+    if (loft_program_relative && *loft_anchor && chdir(loft_anchor) != 0) {}
+#endif
 }
 
-/* file_access::name_refusal: a name no platform takes, or 0. */
-static const char *loft_name_refusal(const char *p, size_t n) {
+/* Rust's `{c:?}` of a character: quoted, the escapes Rust writes, `\u{…}` for a control. */
+static void loft_char_debug(loft_text *t, uint32_t c) {
+    char b[16];
+    loft_push_char(t, '\'');
+    switch (c) {
+    case 0: loft_push_cstr(t, "\\0"); break;
+    case '\t': loft_push_cstr(t, "\\t"); break;
+    case '\r': loft_push_cstr(t, "\\r"); break;
+    case '\n': loft_push_cstr(t, "\\n"); break;
+    case '\'': loft_push_cstr(t, "\\'"); break;
+    case '\\': loft_push_cstr(t, "\\\\"); break;
+    default:
+        if (c < 0x20 || (c >= 0x7F && c <= 0x9F)) {
+            snprintf(b, sizeof b, "\\u{%x}", (unsigned) c);
+            loft_push_cstr(t, b);
+        } else {
+            size_t n = loft_utf8(c, b);
+            loft_push(t, b, n);
+        }
+    }
+    loft_push_char(t, '\'');
+}
+
+/* file_access::name_refusal: why no platform takes the name, or 0 (the reason malloc'd). */
+static char *loft_name_refusal(const char *p, size_t n) {
     if (n == 0 || (n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.')) return 0;
+    loft_text t = { 0, 0, 0 };
     for (size_t i = 0; i < n; i++) {
         unsigned char c = (unsigned char) p[i];
-        if (c < 0x20 || c == 0x7F || strchr("<>:\"|?*", c)) return "holds a character a file name cannot hold on every platform";
+        uint32_t cp = c;
+        /* A control character (U+0000–001F, U+007F–009F) or one of `<>:"\|?*`. */
         if (c == 0xC2 && i + 1 < n && (unsigned char) p[i + 1] >= 0x80 && (unsigned char) p[i + 1] <= 0x9F)
-            return "holds a character a file name cannot hold on every platform";
+            cp = (unsigned char) p[i + 1];
+        else if (!(c < 0x20 || c == 0x7F || strchr("<>:\"\\|?*", c)))
+            continue;
+        loft_push_cstr(&t, "the name `");
+        loft_push(&t, p, n);
+        loft_push_cstr(&t, "` holds ");
+        loft_char_debug(&t, cp);
+        loft_push_cstr(&t, ", which a file name cannot hold on every platform");
+        break;
     }
-    size_t stem = 0;
-    while (stem < n && p[stem] != '.') stem++;
-    char up[5] = { 0, 0, 0, 0, 0 };
-    if (stem == 3 || stem == 4) {
-        for (size_t i = 0; i < stem; i++) up[i] = (char) (p[i] >= 'a' && p[i] <= 'z' ? p[i] - 32 : p[i]);
-        if (stem == 3 && (!strcmp(up, "CON") || !strcmp(up, "PRN") || !strcmp(up, "AUX") || !strcmp(up, "NUL")))
-            return "is a device name on Windows, so no platform takes it";
-        if (stem == 4 && (!strncmp(up, "COM", 3) || !strncmp(up, "LPT", 3)) && up[3] >= '1' && up[3] <= '9')
-            return "is a device name on Windows, so no platform takes it";
+    if (!t.len) {
+        size_t stem = 0;
+        while (stem < n && p[stem] != '.') stem++;
+        char up[5] = { 0, 0, 0, 0, 0 };
+        int device = 0;
+        if (stem == 3 || stem == 4) {
+            for (size_t i = 0; i < stem; i++) up[i] = (char) (p[i] >= 'a' && p[i] <= 'z' ? p[i] - 32 : p[i]);
+            device = (stem == 3 && (!strcmp(up, "CON") || !strcmp(up, "PRN") || !strcmp(up, "AUX") || !strcmp(up, "NUL")))
+                || (stem == 4 && (!strncmp(up, "COM", 3) || !strncmp(up, "LPT", 3)) && up[3] >= '1' && up[3] <= '9');
+        }
+        const char *why = device ? "` is a device name on Windows, so no platform takes it"
+            : p[n - 1] == '.' || p[n - 1] == ' ' ? "` ends in a dot or a space, which Windows drops" : 0;
+        if (!why) return 0;
+        loft_push_cstr(&t, "the name `");
+        loft_push(&t, p, n);
+        loft_push_cstr(&t, why);
     }
-    if (p[n - 1] == '.' || p[n - 1] == ' ') return "ends in a dot or a space, which Windows drops";
-    return 0;
+    loft_push_char(&t, 0);
+    return t.p;
+}
+
+/* `log_refusal_once`: one line per refused path per process. */
+static void loft_log_refusal_once(loft_str raw, const char *why) {
+    static loft_text *said = 0;
+    static size_t nsaid = 0;
+    for (size_t i = 0; i < nsaid; i++)
+        if (said[i].len == raw.len && memcmp(said[i].p, raw.p, raw.len) == 0) return;
+    said = (loft_text *) realloc(said, (nsaid + 1) * sizeof *said);
+    if (!said) { fputs("loft: out of memory\n", stderr); abort(); }
+    said[nsaid++] = loft_text_own(raw);
+    fprintf(stderr, "loft: the path `%.*s` is refused: %s\n", (int) raw.len, raw.p, why);
 }
 
 /* PathText's normal form of `raw`, malloc'd: '.' dropped, '..' folded, '/' between names — under
@@ -89,9 +146,10 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
         size_t n = i - s;
         i++;
         if (n == 0 || (n == 1 && name[0] == '.')) continue;
-        const char *why = check ? loft_name_refusal(name, n) : 0;
+        char *why = check ? loft_name_refusal(name, n) : 0;
         if (why) {
-            fprintf(stderr, "loft: the path `%.*s` is refused: the name `%.*s` %s\n", (int) raw.len, raw.p, (int) n, name, why);
+            loft_log_refusal_once(raw, why);
+            free(why);
             free(parts);
             free(at);
             free(out);
@@ -129,8 +187,113 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
 
 /* Stores::resolve_path: the path the program's `raw` names — a relative one under the
  * program's directory unless the program said `#cwd` — or 0 for a refused name. */
+#if defined(LOFT_POSIX)
+/* ASCII case-insensitive equality of two names. */
+static int loft_name_fold_eq(const char *a, size_t an, const char *b, size_t bn) {
+    if (an != bn) return 0;
+    for (size_t i = 0; i < an; i++) {
+        char x = a[i] >= 'A' && a[i] <= 'Z' ? (char) (a[i] + 32) : a[i];
+        char y = b[i] >= 'A' && b[i] <= 'Z' ? (char) (b[i] + 32) : b[i];
+        if (x != y) return 0;
+    }
+    return 1;
+}
+
+/* `@FR-Path-Case` (file_access::case_clash): why a name on `full`'s way names another entry's
+ * spelling, or 0 (malloc'd).  The longest existing prefix is compared with its on-disk
+ * spelling where the file system folds case (macOS); the first missing name below it with
+ * the entries of its directory. */
+static char *loft_case_clash(const char *full) {
+    size_t len = strlen(full);
+    char *existing = (char *) malloc(len + 2);
+    if (!existing) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(existing, full, len + 1);
+    char *missing = 0;
+    struct stat st;
+    while (stat(existing, &st) != 0) {
+        char *slash = strrchr(existing, '/');
+        if (!slash) { free(existing); free(missing); return 0; }
+        free(missing);
+        missing = (char *) malloc(strlen(slash + 1) + 1);
+        if (!missing) { fputs("loft: out of memory\n", stderr); abort(); }
+        strcpy(missing, slash + 1);
+        if (slash == existing) slash[1] = 0; else *slash = 0;
+    }
+    loft_text why = { 0, 0, 0 };
+#if defined(__APPLE__)
+    char real[4096];
+    if (realpath(existing, real)) {
+        /* The trailing names, compared pairwise from the end. */
+        const char *ae = existing + strlen(existing), *re = real + strlen(real);
+        while (ae > existing && re > real) {
+            const char *as = ae, *rs = re;
+            while (as > existing && as[-1] != '/') as--;
+            while (rs > real && rs[-1] != '/') rs--;
+            size_t an = (size_t) (ae - as), rn = (size_t) (re - rs);
+            if ((an != rn || memcmp(as, rs, an) != 0) && loft_name_fold_eq(as, an, rs, rn)) {
+                loft_push_char(&why, '`');
+                loft_push(&why, as, an);
+                loft_push_cstr(&why, "` is spelled `");
+                loft_push(&why, rs, rn);
+                loft_push_cstr(&why, "` on disk");
+                break;
+            }
+            ae = as > existing ? as - 1 : as;
+            re = rs > real ? rs - 1 : rs;
+            if (as == existing || rs == real) break;
+        }
+    }
+#endif
+    if (!why.len && missing) {
+        DIR *d = opendir(existing);
+        if (d) {
+            char *best = 0;
+            size_t mn = strlen(missing);
+            struct dirent *e;
+            while ((e = readdir(d)) != 0) {
+                size_t en = strlen(e->d_name);
+                if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+                if ((en != mn || memcmp(e->d_name, missing, mn) != 0) && loft_name_fold_eq(e->d_name, en, missing, mn)
+                    && (!best || strcmp(e->d_name, best) < 0)) {
+                    free(best);
+                    best = (char *) malloc(en + 1);
+                    if (!best) { fputs("loft: out of memory\n", stderr); abort(); }
+                    strcpy(best, e->d_name);
+                }
+            }
+            closedir(d);
+            if (best) {
+                loft_push_char(&why, '`');
+                loft_push_cstr(&why, missing);
+                loft_push_cstr(&why, "` would be a second spelling of `");
+                loft_push_cstr(&why, best);
+                loft_push_char(&why, '`');
+                free(best);
+            }
+        }
+    }
+    free(existing);
+    free(missing);
+    if (!why.len) return 0;
+    loft_push_char(&why, 0);
+    return why.p;
+}
+#endif
+
 static char *loft_resolve(loft_str raw) {
-    return loft_normalize(raw, loft_program_relative ? loft_anchor : "", 1);
+    char *full = loft_normalize(raw, loft_program_relative ? loft_anchor : "", 1);
+#if defined(LOFT_POSIX)
+    if (full && raw.len) {
+        char *why = loft_case_clash(full);
+        if (why) {
+            loft_log_refusal_once(raw, why);
+            free(why);
+            free(full);
+            return 0;
+        }
+    }
+#endif
+    return full;
 }
 
 /* file_access::given: a directory the OS hands the program, in the portable form. */
@@ -810,6 +973,137 @@ static uint8_t loft_is_file_at(loft_str raw) {
 static loft_text loft_os_temp_dir(void) {
     const char *t = getenv("TMPDIR");
     return loft_given(t && *t ? t : "/tmp");
+}
+
+/* `dir_with_sub`: `base` in the portable form, `sub` joined to it as `Path::join` does. */
+static loft_text loft_dir_with_sub(const char *base, loft_str sub) {
+    if (!sub.len || loft_str_is_null(sub) || !*base) return loft_given(base);
+    loft_text t = { 0, 0, 0 };
+    if (sub.p[0] != '/') {
+        loft_push_cstr(&t, base);
+        if (t.len && t.p[t.len - 1] != '/') loft_push_char(&t, '/');
+    }
+    loft_text_append(&t, sub);
+    loft_push_char(&t, 0);
+    loft_text r = loft_given(t.p);
+    loft_text_free(&t);
+    return r;
+}
+
+/* directory (Stores::os_directory_native): the working directory, `sub` joined to it. */
+static loft_text loft_directory(loft_str sub) {
+    char buf[4096];
+    const char *base = "";
+#if defined(LOFT_POSIX)
+    if (getcwd(buf, sizeof buf)) base = buf;
+#else
+    (void) buf;
+#endif
+    return loft_dir_with_sub(base, sub);
+}
+
+/* user_directory (Stores::os_home_native): the home directory, `sub` joined to it. */
+static loft_text loft_user_directory(loft_str sub) {
+    const char *h = getenv("HOME");
+    return loft_dir_with_sub(h ? h : "", sub);
+}
+
+/* program_directory (Stores::os_executable_native): the directory holding the running
+ * executable — `current_exe`'s answer: `/proc/self/exe` on Linux, `_NSGetExecutablePath` on
+ * macOS, else `argv[0]` — `sub` joined to it. */
+#if defined(__APPLE__)
+extern int _NSGetExecutablePath(char *buf, uint32_t *size);
+#endif
+static loft_text loft_program_directory(loft_str sub) {
+    char buf[4096];
+    buf[0] = 0;
+#if defined(__linux__) && defined(LOFT_POSIX)
+    /* `readlink` is POSIX: a LOFT_NO_POSIX build has no <unistd.h> and answers no path. */
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    buf[n > 0 ? n : 0] = 0;
+#elif defined(__APPLE__)
+    uint32_t size = sizeof buf;
+    if (_NSGetExecutablePath(buf, &size) != 0) buf[0] = 0;
+#endif
+#if defined(LOFT_POSIX)
+    if (!buf[0] && loft_argv && loft_argv[0]) {
+        char real[4096];
+        if (realpath(loft_argv[0], real)) strcpy(buf, real);
+    }
+#endif
+    char *slash = strrchr(buf, '/');
+    if (slash) *(slash == buf ? slash + 1 : slash) = 0; else buf[0] = 0;
+    return loft_dir_with_sub(buf, sub);
+}
+
+/* log_info / log_warn / log_error / log_fatal with no log configuration: nothing is written. */
+static void loft_log_unconfigured(loft_str message, loft_str file, int64_t line) {
+    (void) message;
+    (void) file;
+    (void) line;
+}
+
+/* os_cache_dir (cache::cache_base_dir): $XDG_CACHE_HOME/loft, else $HOME/.cache/loft, else the
+ * temporary directory's. */
+static loft_text loft_os_cache_dir(void) {
+    loft_text t = { 0, 0, 0 };
+    const char *x = getenv("XDG_CACHE_HOME"), *h = getenv("HOME"), *tmp = getenv("TMPDIR");
+    if (x) {
+        loft_push_cstr(&t, x);
+    } else if (h) {
+        loft_push_cstr(&t, h);
+        loft_push_cstr(&t, "/.cache");
+    } else {
+        loft_push_cstr(&t, tmp && *tmp ? tmp : "/tmp");
+    }
+    if (t.len && t.p[t.len - 1] != '/') loft_push_char(&t, '/');
+    loft_push_cstr(&t, "loft");
+    loft_push_char(&t, 0);
+    loft_text r = loft_given(t.p);
+    loft_text_free(&t);
+    return r;
+}
+
+/* ymd_days_ago (Stores::ymd_days_ago_native): the UTC date `days` before today, `YYYY-MM-DD`,
+ * by logger::days_to_ymd's civil-from-days. */
+static loft_text loft_ymd_days_ago(int64_t days) {
+    uint64_t now = (uint64_t) time(0);
+    uint64_t today = now / 86400, back = days > 0 ? (uint64_t) days : 0;
+    int64_t z = (int64_t) (today > back ? today - back : 0) + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    uint64_t doe = (uint64_t) (z - era * 146097);
+    uint64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t y = (int64_t) yoe + era * 400;
+    uint64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    uint64_t mp = (5 * doy + 2) / 153;
+    uint64_t d = doy - (153 * mp + 2) / 5 + 1;
+    uint64_t m = mp < 10 ? mp + 3 : mp - 9;
+    if (m <= 2) y++;
+    char b[32];
+    int n = snprintf(b, sizeof b, "%04u-%02u-%02u", (unsigned) (uint32_t) y, (unsigned) m, (unsigned) d);
+    return loft_text_own(loft_lit(b, (size_t) n));
+}
+
+/* env_variables (Stores::os_variables): every environment variable as an EnvVariable (name at 0,
+ * value at 4) of `size` bytes, in the environment's order, in a vector of its own store. */
+#if defined(LOFT_POSIX)
+extern char **environ;
+#endif
+static loft_ref loft_env_variables(uint32_t size) {
+    loft_ref vec = loft_ref_null();
+    loft_database(&vec, size * 8 - 8);
+    loft_set_u32(loft_store_of(vec), vec.rec, vec.pos, 0);
+#if defined(LOFT_POSIX)
+    for (char **e = environ; e && *e; e++) {
+        const char *eq = strchr(*e, '=');
+        if (!eq) continue;
+        loft_ref el = loft_vec_append(vec, size);
+        loft_set_text(el, 0, loft_lit(*e, (size_t) (eq - *e)));
+        loft_set_text(el, 4, loft_lit(eq + 1, strlen(eq + 1)));
+        loft_vec_finish(vec);
+    }
+#endif
+    return vec;
 }
 
 /* source_dir: the program's own directory. */

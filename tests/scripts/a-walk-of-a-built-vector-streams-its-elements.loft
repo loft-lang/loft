@@ -9,9 +9,9 @@
 // `LOFT_NO_STREAM_WALK=1` answering identically.  Which cells stream is pinned by
 // `tests/stream_walk.rs`.
 //
-// @falsify-tier: native-release
+// @falsify-tier: ship
 // @falsified-at: hand-measured (sabotage, 2026-10-20) — three gates broken one at a time on
-// `--native-release`, each restored byte-identically: the body's quiet check answering ok
+// `--ship`, each restored byte-identically: the body's quiet check answering ok
 // made c10 stream and answer 31475 (its body rewrote an item the builder had not read yet);
 // the builder's quiet check answering ok made c19 stream and answer 25 (the builder's log
 // grew while the body read its length); the body's reach check answering no made c20

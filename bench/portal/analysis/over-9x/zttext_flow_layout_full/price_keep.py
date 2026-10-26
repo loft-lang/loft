@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Hand-price the collection clause on the full zttext bench's emission at 5bec988cb
-   (`loft --native-release --native-emit zt.rs bench/bench.loft` in the library checkout;
+   (`loft --ship --native-emit zt.rs bench/bench.loft` in the library checkout;
    the line numbers are that file's, each asserted before it is edited).
    A: token_width's slice_runs buffer pooled across calls (one static, never freed).
    F: slice_runs refills its kept elements: element i's text through refill_str, style
