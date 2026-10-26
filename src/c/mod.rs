@@ -177,6 +177,8 @@ pub(crate) struct Cx<'a> {
     pub(crate) lazy: std::cell::Cell<bool>,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
+    /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
+    pub(crate) sql_plans: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The lazy fetch functions written so far (`loft_lazy_fetch{n}`).
     pub(crate) lazy_fetchers: std::cell::Cell<usize>,
     /// The place twins the unit calls (`twin_name`): a function by definition number, with
@@ -227,6 +229,7 @@ impl<'a> Cx<'a> {
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
             par_sites: std::cell::Cell::new(0),
+            sql_plans: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
         }
