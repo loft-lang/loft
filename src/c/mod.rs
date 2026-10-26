@@ -1354,7 +1354,7 @@ fn lazy_driver_table(
 fn c_libraries(data: &Data) -> String {
     let mut out = String::new();
     // A required library is linked: the file the package ships, else its soname in the system
-    // linker's spelling.  An optional one (`[c] optional-libs`, @PLN24 arc G) never is — it is
+    // linker's spelling.  An optional one (`[c] optional-libs`) never is — it is
     // opened when its package's symbol is first called, or when `c_library_available` asks.
     let os = crate::platform::host_lib_os();
     let mut links: Vec<String> = Vec::new();
@@ -1869,7 +1869,7 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         c_params.join(", ")
     };
     // A symbol of a package with `[c] optional-libs` is resolved when first called, through
-    // the program and then the package's optional libraries (`loft_c_lazy_sym`, @PLN24 arc G):
+    // the program and then the package's optional libraries (`loft_c_lazy_sym`):
     // a `#c` declaration does not name its library, so the whole package goes this way.
     let file = def.position().file.to_string();
     let (decl, call) = if data.c_symbol_is_lazy(&file) {

@@ -639,7 +639,7 @@ impl Scopes<'_> {
     ///
     /// The callee cannot tell; the call site can.  It snapshots the store the local names,
     /// marks it protected for the call — `free_displaced` refuses it, exactly as for loft#1287's
-    /// foreign binding — and releases it after the call when the local no longer names it.  The
+    /// foreign binding — and releases it after the call when the local names another store.  The
     /// local is this frame's own (not a parameter, not a view), so that release is this frame's
     /// to make; a call that did not rebind leaves the snapshot naming the local's store, and
     /// nothing is freed.
