@@ -5,60 +5,66 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # c-store-gaps — where the C99 lane loses, by mechanism
 
-An ANALYSIS of the C lane (`bench/stats.py --lanes rust,c --samples 5`, laptop, 2026-10-26, at
-`99b797739`): 79 routines against their Rust twin, median 3.40×, 37 over 3.5×.  Each over-bar
-routine was set beside its committed NATIVE ratio (`bench/portal/results/laptop.tsv`), and the
-benches 12–18 were profiled as C (`-O3 -g -fno-omit-frame-pointer
--fno-inline-functions-called-once`, `perf record --call-graph fp` on the efficiency cores),
-each sample folded under the routine `main` called and attributed to its innermost runtime
-frame (`target/cstore/prof/tools/fold.py`, scratch).
+An ANALYSIS of the C lane against the Rust twins (`bench/stats.py --lanes rust,c,cship
+--samples 5`, laptop), each routine over 3.5× set beside its committed native ratio
+(`bench/portal/results/laptop.tsv`) and profiled as C: `-O3 -g -fno-omit-frame-pointer
+-fno-inline-functions-called-once`, `perf record --call-graph fp` on the efficiency cores, every
+sample folded under the routine `main` called and attributed to its innermost runtime frame.
+Every run is filed under subject `c-store-port` (`make perf-local ARGS="--subject c-store-port"`).
 
 ## The finding
 
-**The C is behind loft's own native build, not behind the store model.**  Of the 37 routines
-over 3.5× (hash_fill, at 3.50×, is listed too), 33 are more than 2.5× slower than `--native` on
-the same program, most 3–15×.  Native
-pays the same store layout, claims bitset, null sentinels and SipHash; what it has and the C
-lacks is (a) the Rust generator's rewrites that keep a vector's header, a walk's text or a record
-copy out of the loop, and (b) a few runtime routines the C implements by a slower algorithm.
-So the work is a PORT in both halves, each item with a native counterpart to measure against.
+**The C is behind loft's own native build, not behind the store model.**  Native pays the same
+store layout, claims bitset, null sentinels and SipHash; what it has and the C lacks is the Rust
+generator's rewrites and a few runtime routines with a faster algorithm.  So every gap is a PORT,
+with native as its oracle.
 
-## By mechanism
+**Checked arithmetic is not the cost.**  The `cship` lane drops every arithmetic check; for 28 of
+the 32 routines over 3.5× it moves the ratio by under 4 % (`build_vis` 27 %, `enum_match` 11 %,
+`char_roundtrip` 8.5 %, `truncate_to` 8 % are the exceptions).  `loft_add` looks large in a
+profile only because the inlined loop body's lines are attributed to it: the overflow builtin in
+its place moved bench 14 by −2.3 % of instructions and bench 16 by −0.2 %.
 
-c/nat is the C's time over native's; the routines are those over 3.5× of Rust.
+## Built
 
-| class | routines (c/rust · c/nat) | where the C time goes | native has | half |
+| step | what | effect (c / rust) |
+|---|---|---|
+| return-buffer adoption | `@FR-R-RetAdopt` read from `hoist::ret_adopt` | `split` −23 % instructions |
+| push window | counted loops (`hoist::push_loop`, `mint_loop`) reserve once, push through a `loft_win` | push 4.21 → 0.39, record_append 7.46 → 0.97, f32_build 7.90 → 0.64, grid 8.56 → 3.02, comprehension 4.93 → 2.48, mesh_emit 6.05 → 3.58 |
+| complete-write mints | no default image copied where `hoist::complete_writes` proves every literal complete | inside the windows above |
+| flat copy | `@FR-R-FlatCopy`: a record owning no heap gets no claim walk on copy or release | bench 17 −13.4 % instructions, hashes equal |
+
+After the window (before the flat copy): median 3.40× → 2.89×, routines over 3.5× 38 → 32.
+
+## What is left, by mechanism
+
+c/rust is the checked C lane after the push window; nat is the committed native ratio.  The
+bug bar reads `cship` (bench/README.md § When a gap is a bug), which is within 4 % of `c` for 28
+of these 32, so the lists coincide.
+
+| class | routines (c/rust · nat) | where the C time goes | native has | half · size |
 |---|---|---|---|---|
-| **vector push** | push 4.2 · 14.5, f32_build 7.9 · 8.9, record_append 7.5 · 7.5, grid 8.6 · 5.6, comprehension 4.9 · 4.1, mesh_emit 6.1 · 3.2, enum_match 17.7 · 7.5 | `loft_vec_push_slot` / `_push_int` / `_push_single` / `loft_vec_append` 35–60 %, a `memcpy` call per element 8–28 % | `@FR-R-Push` push window: base, length and room held across the loop, the length written back once | generator (+ runtime) |
-| **text walk / build** | split_walk 12.1 · 11.7, replace 9.6 · 12.0, split 9.6 · 8.9, join 10.4 · 8.3, trim_lower 6.0 · 4.5, char_roundtrip 8.3 · 3.5 | per character `loft_text_char` + `loft_char_len` + checked `loft_add`; `loft_push` / `loft_reserve` / memmove in replace and join | `@FR-R-CharWalk` ASCII arm with the null test asked once, `@FR-R-LazySplit` (split_walk builds no vector), a walked parameter borrowed | generator |
-| **element access** | talus_relax 6.8 · 5.5, sum 6.5 · 3.1, build_vis 6.3 · 3.0, binary_map 5.0 · 3.1, hydro_pitfill 4.4 · 2.3, truncate_to 7.7 · 4.5 | `loft_at` / `loft_vec_get` / `loft_vec_len` / `loft_store_of` per access: a table index, the vector field, the record, the bound, every time | `@FR-R-Header`'s kept clause and nested headers (`@FR-R-RecPtr`); the C holds a header only in a loop that grows no store, one level deep | generator |
-| **record copy** | slope_path_with_undo 21.4 · 6.3, emit_to_material 6.3 · 4.7, resolve_move 4.4 · 2.9, reload_and_record 6.9 · 2.6, mapfile_to_painted 6.6 · 3.0 | `loft_copy_claims` 28–52 % — every text and sub-record of a copied record claimed again | move rewrites that never copy (`@FR-R-MoveAppend`, swaps, value records) | generator, then runtime |
-| **float text** | quadratic_out 4.8 · 8.6, parse_num 7.3 · 7.7, catalog, panel_build, format_specs | `loft_push_shortest`: up to 17 `snprintf("%.*e")` + `strtod` round trips per number (glibc's bignum `__mpn_*`); `strtod` for every parse | Rust's shortest-digits printer and fast-path parse | runtime |
-| **keyed walk** | hash_walk 8.6 · 5.3 (hash_fill 3.5 · 2.6) | `qsort` with a function-pointer compare over `loft_hent`, then a recursive merge sort through the generic key interpreter, per walk | the same orders (`@FR-Col-Order`), sorted by monomorphised `sort_unstable_by_key` | runtime |
-| **file read** | binary_read 18.5 · 6.6 | `loft_read_file`: a `malloc` per read, the file's state read and written through its store record | the runtime's buffered handle | runtime |
-| **par** | par 10.9 · 4.1, par_text, par_reduce, par_records, par_map_float | the C runs the rows in order | threads | @PLN203 C4, not store work |
-
-Hash find / update / composite (1.4–1.6× native) are close: the SipHash and probe are a
-faithful port and cost what native's do.
+| **record copy and record results** | slope_path_with_undo 19.1 · 3.4, truncate_to 7.9 · 1.7, emit_to_material 6.0 · 1.4, resolve_move 4.4 · 1.5, reload_and_record 6.7 · 2.6, mapfile_to_painted 6.4 · 2.2 | `loft_copy_claims` 28–52 % (now partly the flat copy); a function returning a record by value (`map_get_hex`) mints a store per call (`loft_database_typed`), copies the element in, and the caller reads one field | value records (`@FR-R-ValueRecord`), the hand-over and rotate (`@FR-R-HandOver`), apart records (`@FR-R-Apart`) | generator · M |
+| **text walk and text build** | split_walk 12.0 · 1.0, join 10.2 · 1.3, replace 9.6 · 0.8, split 9.6 · 1.1, trim_lower 6.1 · 1.4, char_roundtrip 8.6 · 2.4 | `join` copies every element twice per pass (`loft_text_own` then `loft_text_set`, a malloc and free each); `replace` scans and pushes byte by byte; `split`/`trim_lower` walk a character at a time through `loft_text_char` + `loft_char_len`; `char_roundtrip` rebuilds `big + "{c}"` per character | `@FR-R-TextBorrow` (a walked element is a `&str`), `@FR-R-LazySplit` (split_walk builds no vector), `@FR-R-CharWalk` (ASCII arm), Rust's `str::replace` | generator S–M per rewrite, `replace` runtime XS |
+| **float text** | quadratic_out 4.8 · 0.6, parse_num 7.4 · 1.0; the 40–50 % `snprintf` share of `catalog`, `panel_build`, `format_specs` and the par rows | `loft_push_shortest`: up to 17 `snprintf("%.*e")` + `strtod` round trips per number; `strtod` for every parse | Rust's shortest-digits printer and its fast parse | runtime · S (Ryu/Schubfach in C99) |
+| **element access across calls** | talus_relax 6.8 · 1.2, build_vis 6.5 · 2.1, hydro_pitfill 4.4 · 1.9 | `loft_at`/`loft_vec_get`/`loft_vec_len` per access: a loop that calls a store-writing function (`shed`) holds no header, and the callee re-derives everything | `@FR-R-Header`'s kept clause (headers handed into `__kh` twins), nested headers (`@FR-R-RecPtr`) | generator · M |
+| **uncounted pushes** | enum_match 9.2 · 2.4, binary_read 16.5 · 2.8, mesh_emit 3.6 · 1.9 | `loft_vec_append` + `loft_copy_bytes` per element in loops the counted window declines (a `while`, a push under `if`); `binary_read` also mallocs and frees a buffer per 2-byte read and reads the file's position through its store record | `@FR-R-Push` push headers (no reservation, a growth arm), the scalar file read | generator S + runtime XS |
+| **keyed walk** | hash_walk 8.6 · 1.6 | `qsort` with a function-pointer compare over the entries, then a recursive merge sort through the generic key interpreter, per walk | the same orders (`@FR-Col-Order`), monomorphised `sort_unstable_by_key` | runtime · S |
+| **kernels** | sum 6.4 · 2.1 | `loft_vector_sum_int` reads each element through `loft_vec_get` | `sum_blocks_i64`: base once, blocks a magnitude bound proves overflow-free | runtime · XS |
+| **par** | par 10.9, par_text 8.8, par_reduce 8.2, par_records 6.5, par_map_float 6.3 | the C runs the rows one after another | threads | @PLN203 C4, not store work |
+| **near native** | hash_update 3.9, composite_hash 3.8, hash_find 3.7, hash_fill 3.5, map_json 3.6 | SipHash and the probe, the JSON tokenizer | the same algorithms; 1.4–1.6× of native | — |
 
 ## The order to take them
 
-1. **Vector push** — the most routines, the profile names the functions outright, and the
-   shared admission already has the tier: `opt::header::hoistable_vectors` is called with
-   `HoistTiers::default()` (push off), so a loop that pushes holds nothing.  Port the push
-   window: a held `loft_vp` (store, record, length, room, base) refreshed by the out-of-line grow,
-   the element written at a constant width (no `memcpy` call), the length stored at loop exit.
-   Price first: hand-edit `14_stdlib_vector`'s `v_push` loop in the emitted C.
-2. **Element access** — the held header across a loop that grows ANOTHER store (the kept
-   clause), then nested headers; the same `loft_vh` plus the admission's facts.
-3. **Text walk** — the CharWalk arm and LazySplit; a walked text parameter borrowed instead of
-   copied into the loop's local (`loft_text_set(&for_text, self)` per call).
-4. **Float text** — a shortest-digits printer (Ryu or Schubfach, C99) and a fast parse path.
-   Self-contained, no generator change.
-5. **Record copy** — first find which native rewrite removes each copy, then port it; tune
-   `loft_copy_claims` only for the copies that remain.
-6. **Keyed walk**, **file read** — small runtime changes, one routine each.
+1. **Record copy and record results** — the worst routine (19×) and five more; native's value
+   record and hand-over remove the stores and copies outright.  Re-measure after the flat copy
+   first: it already removes the claim walk of every heap-free copy.
+2. **Uncounted pushes** — the push header for loops the counted window declines, beside the
+   window already built; then the small file read.
+3. **Float text** — self-contained runtime work with no generator change, and it is 40–50 % of
+   four more routines under the bar.
+4. **Text walk** — borrowing a walked text is the shared piece of join, split and trim_lower.
+5. **Element access across calls**, the kernel, the keyed walk.
 
-Not priced yet: every class above is read off a profile and a code comparison; each fix is
-hand-priced on the emitted C before it is built (the `split` adoption predicted its −23 %
-exactly that way).
+Each fix is hand-priced on the emitted C before it is built (`perf stat -e instructions` on a
+fast core: timings of a single short run here swing several-fold).

@@ -92,7 +92,10 @@ the threaded page (`html_embed.rs`, `html_fonts.rs`).  `c_shim::wasm_objects` an
 
 **C7 — performance.**  `scripts/native_ratio.sh` and `bench/stats.py` gain a C lane
 (`--emit-c` + `cc -O3 -DLOFT_SHIP_PROBE` once the ledger exists), the perf portal a column;
-the `FnPlan` families of @PLN200 B3.4 move as C's rows ask.
+the `FnPlan` families of @PLN200 B3.4 move as C's rows ask.  The bar is the Rust writer's: a
+routine whose `cship` time is over 3.5× its Rust twin is a bug, one issue per problem class
+(bench/README.md § When a gap is a bug), from the moment the initial store port has landed;
+the work before that is bench/portal/analysis/c-store-gaps.md.
 
 **C8 — platforms and CI.**  MSVC: the macro layer's `_MSC_VER` arms built and swept on the
 Windows runner; the C sweep as a job in `ci.yml` beside the native leg, ASan and poison in the
