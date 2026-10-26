@@ -14834,6 +14834,12 @@ impl Parser {
         let Value::Call(fn_nr, _) = code.unspan() else {
             return None;
         };
+        // A SELF call is `(R-TailSelf)`'s to judge — a jump, or the @C155 refusal — and bound
+        // into a local it would no longer stand in tail position for either.  And only a branch
+        // being BOUND: a function's own return branch is delivered per arm by `ref_return`.
+        if *fn_nr == self.context || !self.in_bind_rhs {
+            return None;
+        }
         let callee = self.data.def(*fn_nr);
         if !callee.is_loft_defined() || !callee.returns_borrowed_view() {
             return None;
@@ -14900,14 +14906,15 @@ impl Parser {
     /// return position — under a `return`, or as the tail when `tail` — becomes a copy into a
     /// fresh local, which is then what the site returns.
     fn copy_returned_params(&mut self, node: &mut Value, ret: &Type, tail: bool) {
+        // `@FR-N-Shape` — a NULLABLE parameter is left alone, by its marker: under a presence
+        // guard `return a?` lowers to the bare `a` of a `T?`, whose discharge delivers it.
         let is_param = |p: &Self, v: &Value| match v.unspan() {
             Value::Var(x) => {
+                let (shape, nullable) = p.vars.tp(*x).peel_optional();
                 p.vars.is_argument(*x)
                     && !p.vars.name(*x).starts_with("__")
-                    && matches!(
-                        p.vars.tp(*x).base(),
-                        Type::Reference(_, _) | Type::Enum(_, true, _)
-                    )
+                    && !nullable
+                    && matches!(shape.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
             }
             _ => false,
         };
