@@ -38,6 +38,10 @@ pub struct CLibrary {
     /// a `dlopen` happened to succeed — that would make one package required on
     /// one machine and optional on the next.
     pub optional: bool,
+    /// The ANSI-C sources a `[c] shim` entry was built from, as absolute paths; empty for a
+    /// declared library.  The C backend compiles a shim from its sources into the unit it
+    /// writes, where the interpreter and `--native` take the built library (`c_shim::build`).
+    pub shim: Vec<String>,
 }
 
 /// Wrapper for `*const ()` that is Send — function pointers from cdylibs are
@@ -624,6 +628,7 @@ pub fn register_native(libs: &[(&str, &str)], syms: &[(&str, &[&str])]) {
                     // which are already settled by the time a binary exists.
                     // Nothing downstream of here reads it.
                     optional: true,
+                    shim: Vec::new(),
                 })
                 .collect(),
         );

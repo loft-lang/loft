@@ -191,15 +191,15 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed(
-        "fn c_sum(v: vector<i32>) -> integer;   #c \"c_sum\" \"int(const int*, size_t)\"\nfn up() -> integer { c_sum([1, 2]) }\n",
-    );
+    // A stdlib native the runtime has not ported is refused by its name, never written as C
+    // that answers differently.
+    let p = parsed("fn up() -> integer { eprintln(\"up\"); 1 }\n");
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
-        .expect_err("a C binding taking a vector is not carried yet");
-    assert_eq!(refusal.function, "c_sum");
+        .expect_err("a native without a C port is not carried");
+    assert_eq!(refusal.function, "eprint");
     assert!(
-        refusal.why.contains("a C binding taking a vector"),
+        refusal.why.contains("native eprint"),
         "names the construct: {refusal}"
     );
 }
@@ -2587,4 +2587,81 @@ fn the_c_case_mapping_crosses_ascii_and_the_table_as_rust_does() {
         String::from_utf8_lossy(&out.stdout),
         "hello σας world\nÀBÇ STRASSE\n[]\n"
     );
+}
+
+/// A package's `[c] shim` as C (@PLN200 B5): the shim's sources are compiled into the unit, a
+/// scalar and a text binding answer what the interpreter's `dlopen`ed shim answers, a vector
+/// crosses by element pointer and count, and a vector the C writes through comes back written.
+/// Each value is computed by hand: `lcs_shim_sum` weights element i by i+1; `lcs_shim_fill`
+/// writes (start + i) / 1000.
+#[test]
+fn a_c_shim_compiled_into_the_unit_answers_what_the_interpreter_answers() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let src = "use lcshim::*;\n\
+fn main() {\n\
+  v = [10, 20, 30];\n\
+  out: vector<float> = [0.0, 0.0, 0.0];\n\
+  shim_fill(out, 1500);\n\
+  println(\"{shim_mod(17, 5)} {wrapped_owned(7)} {shim_sum(v)} {out}\");\n\
+}\n";
+    // 17 % 5 = 2; shim-7 bracketed; 10*1 + 20*2 + 30*3 = 140; 1.5, 1.501, 1.502.
+    let want = "2 <shim-7> 140 [1.5,1.501,1.502]\n";
+    let libdir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = scratch("shim");
+    let file = dir.join("shim.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+    let c = dir.join("shim.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "the shim program is carried: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    assert!(
+        unit.contains("lc_shim.c\""),
+        "the shim's source is included into the unit"
+    );
+    let exe = dir.join("shim");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the shim C:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the shim C program");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }

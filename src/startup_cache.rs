@@ -283,11 +283,15 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
     let mut c_libraries = Vec::new();
     while let Some(rest) = next.and_then(|l| l.strip_prefix("clib ")) {
         let (flag, rest) = rest.split_once(' ')?;
-        let (name, pkg_dir) = rest.split_once('\t')?;
+        let mut fields = rest.split('\t');
+        let name = fields.next()?;
+        let pkg_dir = fields.next()?;
         c_libraries.push(crate::data::CLibrary {
             name: name.to_string(),
             pkg_dir: pkg_dir.to_string(),
             optional: flag == "1",
+            // A shim's sources follow its package dir, one per TAB-separated field.
+            shim: fields.map(str::to_string).collect(),
         });
         next = lines.next();
     }
@@ -689,13 +693,17 @@ pub fn save_program(
     }
     // The `[c]` library declarations, read back into `Data::c_libraries` by a warm load.
     for lib in &p.data.c_libraries {
-        let _ = writeln!(
+        let _ = write!(
             lines,
             "clib {} {}\t{}",
             u8::from(lib.optional),
             lib.name,
             lib.pkg_dir
         );
+        for src in &lib.shim {
+            let _ = write!(lines, "\t{src}");
+        }
+        lines.push('\n');
     }
     // loft#1684 — the native-library context, then each auto-native cdylib (see
     // `ManifestState::auto_native_libs`).
@@ -965,11 +973,13 @@ mod ncrate_manifest_tests {
                     name: "libpq.so.5".to_string(),
                     pkg_dir: "/pkgs/my db".to_string(),
                     optional: false,
+                    shim: Vec::new(),
                 },
                 crate::data::CLibrary {
                     name: "lib/own.so".to_string(),
                     pkg_dir: "/pkgs/foo".to_string(),
                     optional: true,
+                    shim: Vec::new(),
                 },
             ],
             "each clib header round-trips, a package dir keeping its space"

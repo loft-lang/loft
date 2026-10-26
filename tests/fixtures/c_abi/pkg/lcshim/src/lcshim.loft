@@ -16,3 +16,8 @@ pub fn shim_owned(n: integer) -> text;                         #c "lcs_shim_owne
 // `a_loft_wrapper_over_a_c_binding_compiles`).
 pub fn wrapped_mod(a: integer, b: integer) -> integer { shim_mod(a, b) + 100 }
 pub fn wrapped_owned(n: integer) -> text { "<{shim_owned(n)}>" }
+
+// A vector in by pointer and count, and one the C writes back through — the crossings the C
+// backend carries by `loft_cvec_ptr` (`tests/c_emit.rs`).
+pub fn shim_sum(v: vector<integer>) -> integer;                #c "lcs_shim_sum" "int64_t(const int64_t*, int64_t)"
+pub fn shim_fill(out: vector<float>, start_milli: integer);    #c "lcs_shim_fill" "void(double*, int64_t, int64_t)"

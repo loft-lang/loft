@@ -1223,6 +1223,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push_str(&defines);
     out.push_str(RUNTIME);
     out.push('\n');
+    out.push_str(&c_libraries(data));
     out.push_str(&cx.typedefs());
     if parses {
         out.push_str(&cx.parse_table());
@@ -1239,6 +1240,34 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
     Ok(out)
+}
+
+/// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim`'s
+/// ANSI-C sources are compiled INTO the unit (`#include`d by path, so one `cc` of the unit is
+/// the whole build), where the interpreter and `--native` take the library `c_shim::build`
+/// made of them; a declared library (`libs`, `optional-libs`) is named for whoever links the
+/// unit, its symbols declared where the bindings call them.
+fn c_libraries(data: &Data) -> String {
+    let mut out = String::new();
+    for lib in &data.c_libraries {
+        if lib.shim.is_empty() {
+            let _ = writeln!(
+                out,
+                "/* `#c` library {} (package {}): link it when building this unit. */",
+                lib.name, lib.pkg_dir
+            );
+        } else {
+            for src in &lib.shim {
+                let _ = writeln!(
+                    out,
+                    "/* `[c] shim` of package {} */\n#include \"{}\"",
+                    lib.pkg_dir,
+                    src.replace('\\', "/")
+                );
+            }
+        }
+    }
+    out
 }
 
 /// The macros a unit's runtime is compiled under, from what it reaches: a foreign store, the
@@ -1558,8 +1587,14 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
                 args.push(format!("s{i}"));
                 frees.push(format!("    free(s{i});"));
             }
+            // A vector crosses as its element pointer, and a count where the C signature has
+            // one (@C107), exactly as the interpreter's `c_call` hands them.
             CArg::VectorPtr | CArg::VectorPtrCount => {
-                return Err("a C binding taking a vector".into());
+                args.push(format!("({ct}) loft_cvec_ptr(a{i})"));
+                if *arg == CArg::VectorPtrCount {
+                    let cn = c_params.get(args.len()).copied().unwrap_or("int64_t");
+                    args.push(format!("({cn}) loft_vec_len(a{i})"));
+                }
             }
         }
     }
@@ -1614,10 +1649,20 @@ fn c_binding_result(
                 );
             }
         }
+        // A `char *` return is copied up to its NUL, NULL the null text (`c_call`).
+        (cs::CType::Pointer { .. }, CType::Text) => {
+            let _ = writeln!(out, "    loft_text r = loft_text_from_cstr({call});");
+            for f in frees {
+                let _ = writeln!(out, "{f}");
+            }
+            out.push_str("    return r;\n");
+        }
         (r, c) => {
             let widened = match r {
                 cs::CType::Int { signed: false, .. } => format!("(int64_t) (uint64_t) {call}"),
                 cs::CType::Int { .. } => format!("(int64_t) {call}"),
+                // A handle: the pointer's value as an integer.
+                cs::CType::Pointer { .. } => format!("(int64_t) (intptr_t) {call}"),
                 _ => format!("(double) {call}"),
             };
             let value = match c {

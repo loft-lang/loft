@@ -1287,6 +1287,15 @@ LOFT_HOT_INLINE int64_t loft_vec_len(loft_ref v) {
     return r == 0 ? 0 : (int64_t) loft_u32(s, r, 4);
 }
 
+/* A vector handed to a `#c` binding: its element bytes, valid for the call only (the store may
+ * move on the next claim), NULL for an absent vector — as `c_call` hands them. */
+LOFT_HOT_INLINE uint8_t *loft_cvec_ptr(loft_ref v) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return NULL;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    return r == 0 ? NULL : loft_elem_base(s, r);
+}
+
 static void loft_vec_prealloc(loft_ref v, uint32_t count, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return;
     loft_store_t *s = loft_store_of(v);
@@ -3371,6 +3380,34 @@ static int loft_utf8_valid(const unsigned char *p, size_t n) {
         i += len;
     }
     return 1;
+}
+
+/* A `char *` a `#c` binding returns, as `c_call` reads it: NULL is the null text, the bytes end
+ * at the first NUL, and an invalid UTF-8 byte is U+FFFD (`String::from_utf8_lossy`). */
+static loft_text loft_text_from_cstr(const char *c) {
+    loft_text t = { 0, 0, 0 };
+    if (!c) {
+        loft_push_char(&t, 0);
+        return t;
+    }
+    size_t n = strlen(c);
+    const unsigned char *p = (const unsigned char *) c;
+    if (loft_utf8_valid(p, n)) {
+        loft_push(&t, c, n);
+        return t;
+    }
+    for (size_t i = 0; i < n;) {
+        size_t len = p[i] < 0x80 ? 1 : (p[i] >= 0xC2 && p[i] <= 0xDF) ? 2
+                   : (p[i] >= 0xE0 && p[i] <= 0xEF) ? 3 : (p[i] >= 0xF0 && p[i] <= 0xF4) ? 4 : 0;
+        if (len && i + len <= n && loft_utf8_valid(p + i, len)) {
+            loft_push(&t, c + i, len);
+            i += len;
+        } else {
+            loft_push(&t, "\xEF\xBF\xBD", 3);
+            i++;
+        }
+    }
+    return t;
 }
 
 /* text_from_bytes (Stores::text_from_bytes_native): the bytes of a vector<u8> as a text; bytes

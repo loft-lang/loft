@@ -1876,10 +1876,24 @@ impl Parser {
     }
 
     pub(super) fn register_c_libraries(&mut self, m: &manifest::Manifest, pkg_dir: &str) {
-        let mut entries: Vec<String> = m.c_libs.clone();
+        let mut entries: Vec<(String, Vec<String>)> =
+            m.c_libs.iter().map(|l| (l.clone(), Vec::new())).collect();
         if !m.c_shim.is_empty() {
             match crate::c_shim::build(pkg_dir, &m.c_shim) {
-                Ok(so) => entries.push(so.to_string_lossy().into_owned()),
+                // The built library, with the sources it was built from: the C backend
+                // compiles those into the unit it writes instead of linking the library.
+                Ok(so) => entries.push((
+                    so.to_string_lossy().into_owned(),
+                    m.c_shim
+                        .iter()
+                        .map(|s| {
+                            std::path::Path::new(pkg_dir)
+                                .join(s)
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                        .collect(),
+                )),
                 // Reported, not swallowed: without the shim its symbols are
                 // absent, and the failure the author would otherwise meet is
                 // "`#c` symbol not found" at the call — which names neither the
@@ -1893,11 +1907,12 @@ impl Parser {
         // optional: the package ships its source and loft just built it, so it
         // is present by construction and an absent one is a build failure the
         // author has already been told about.
-        let entries = entries
-            .into_iter()
-            .map(|l| (l, false))
-            .chain(m.c_optional_libs.iter().map(|l| (l.clone(), true)));
-        for (lib, optional) in entries {
+        let entries = entries.into_iter().map(|(l, shim)| (l, shim, false)).chain(
+            m.c_optional_libs
+                .iter()
+                .map(|l| (l.clone(), Vec::new(), true)),
+        );
+        for (lib, shim, optional) in entries {
             if !self
                 .data
                 .c_libraries
@@ -1908,6 +1923,7 @@ impl Parser {
                     name: lib,
                     pkg_dir: pkg_dir.to_string(),
                     optional,
+                    shim,
                 });
             }
         }

@@ -332,10 +332,18 @@ An `https://` URL answers as a build without a TLS transport answers (`net::fetc
 
 **`#c` bindings.**  A function bound to a C symbol (`#c "abs" "int(int)"`) is a wrapper that
 declares the callee with the author's own signature text — so it agrees with a system header
-that declares it too — passes each scalar cast to its declared type and each text as a
-NUL-terminated copy, and widens the result as `c_call` does.  A vector argument is refused.  A
-`#native` function whose library is not loaded answers every call with the interpreter stub's
-panic.
+that declares it too — passes each scalar cast to its declared type, each text as a
+NUL-terminated copy and each vector as its element pointer with a count where the signature has
+one (`loft_cvec_ptr`, @C107; the C may write through it), and reads the result as `c_call`
+does: an integer widened by its signedness, a `char *` copied to its NUL (NULL the null text,
+invalid UTF-8 replaced), a handle as the pointer's value.  A package's **`[c] shim`** sources
+are `#include`d into the unit by path, so one `cc` of the unit builds the shim with it, where
+the interpreter and `--native` take the library `c_shim::build` made of them; a declared
+`[c] libs` entry is named in a comment for whoever links the unit.  This is how a library
+ships its native part without a Rust crate: ANSI C beside its loft, one source for all three
+backends.  A `#native` function — a Rust cdylib's — is NOT reached: the C answers every call
+with the interpreter's unloaded-library panic, so a library a C program needs is one whose
+native part is a `[c] shim`.
 
 **`deliver`.**  `deliver(tag, value)` prints the loopback host's line: the value's bytes as
 `read_via_descriptor` reads them through its layout, as hex, or the refusal of the first
@@ -347,6 +355,7 @@ walk over a hash in a locked store keeps its snapshot in a store of its own
 
 No program of the corpus is refused.  What the C runtime does not have, it answers at run time
 the way a build without it answers: a ranged or a TLS transport for a URL, a SQL driver for a
-lazy database source.  Refused at emit time: a program declaring a loft lazy driver, a `#c`
-binding taking a vector, a link re-pointed to a narrow or a text store place, a par row of a
-tuple holding a reference.
+lazy database source.  Refused at emit time: a program declaring a loft lazy driver, a link re-pointed to a narrow
+or a text store place, a par row of a tuple holding a reference, and a stdlib native the runtime
+has not ported (`eprint`, `is_symlink`, the `store_upgrade_owed_*` family) — each by name.  Not
+refused and not carried: a `#native` function (above).
