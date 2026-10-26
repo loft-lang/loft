@@ -174,6 +174,32 @@ python3 bench/portal/local.py add 13_stdlib_text/split --lane c-probe --value 4.
 python3 bench/portal/local.py import run.tsv --subject s   # a saved `--tsv` run
 ```
 
+## Pricing and profiling one change: `ab.py`, `c_profile.py`
+
+Two builds of one bench program against each other — a hand-edited unit beside the one it
+was made from, or two runtimes' builds — are a STATISTICS question the same as a lane against
+its twin.  `portal/ab.py A B` calibrates `--n` once, alternates the two (A B, B A, …) pinned to
+the fastest core, and answers per routine both medians, B/A with its range and a verdict that
+reads the range (`faster`/`slower` only when all of it is past ±2 %); a routine whose hash
+differs fails the run, since a price whose answer moved is no price.  `--subject` files it
+with the local results.  `portal/hand_price_c.sh` compiles an emitted C unit as the `c` lane
+does — the C counterpart of `hand_price.sh`.
+
+```
+loft --emit-c /tmp/b.c --path $PWD/ bench/13_stdlib_text/bench.loft
+cp /tmp/b.c /tmp/b_v1.c                                    # …edit by script
+bench/portal/hand_price_c.sh /tmp/b.c /tmp/b && bench/portal/hand_price_c.sh /tmp/b_v1.c /tmp/b_v1
+python3 bench/portal/ab.py /tmp/b /tmp/b_v1 --routine replace --subject c-replace
+make c-profile ARGS="13 --routine format,parse"            # where each routine's samples land
+make c-profile ARGS="13 --c /tmp/b_v1.c --leaf"            # the same, for an edited unit
+```
+
+`c_profile.py` profiles the C lane's build (`-g`, frame pointers, once-called helpers kept
+apart) under `perf --call-graph dwarf` and charges each sample to its ROUTINE — the outermost
+loft function below `main`, inlined or not — then to the innermost runtime function
+(`loft_*`, libc's memory calls) or `(generated)`; `--leaf` charges the innermost frame of any
+kind.  Shares, not times: the times are `stats.py`'s.
+
 ## The portal: where we stand, by class
 
 `bench/portal/` turns the measurements into ONE page —

@@ -212,7 +212,9 @@ static char *loft_case_clash(const char *full) {
     struct stat st;
     while (stat(existing, &st) != 0) {
         char *slash = strrchr(existing, '/');
-        if (!slash) { free(existing); free(missing); return 0; }
+        /* The walk ends at the root: where even `/` cannot be stat'ed (WASI reaches only its
+         * pre-opened directories), no prefix exists to compare spellings against. */
+        if (!slash || (slash == existing && existing[1] == 0)) { free(existing); free(missing); return 0; }
         free(missing);
         missing = (char *) malloc(strlen(slash + 1) + 1);
         if (!missing) { fputs("loft: out of memory\n", stderr); abort(); }

@@ -33,6 +33,7 @@ python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's 
 python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: CI splits the sweep
                                                #   over linux-probe.yml runs (`-f run=…`)
 python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
+python3 scripts/c_sweep.py --no-limit          # no kill at three times the last sweep's time
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
 python3 bench/stats.py --lanes rust,c,cship    # every bench program as C, against its Rust twin
 ```
@@ -59,8 +60,19 @@ Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
 it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It
-builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`) or `refused`, and ranks the
-refusals by reason — that ranking is the work list.  `--wasm` builds each unit with clang for
+builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`), `slow` or `refused`, and ranks the
+refusals by reason — that ranking is the work list.  Each program gets a directory of its own
+(its unit `p.c`, its binary, and a `tmp/` that is its `TMPDIR` in every run) under the sweep's
+scratch, `<temp>/loft-c-sweep-<checkout>/<pid>/` (`scripts/run_scratch.py`): a program that
+matched or was refused loses it at once, every other keeps it and the report prints its path
+under the verdict, to read the C of a slow or differing program; the next sweep removes it
+first.  Every run's time is filed per mode
+set (`bench/portal/local/c_sweep/<modes>.tsv`, uncommitted); the next sweep of the same modes
+gives each run three times its last time (never less than ten seconds over it) and kills it
+past that as `slow` — a hang shows in seconds rather than at the 300 s bound, and its time is
+not filed, so the limit holds until it is fixed (`--no-limit` runs to the bound).  Beside the
+verdict it lists the runs three times slower than the last sweep and the compiled runs three
+times slower than the interpreter — a report, never a verdict.  `--wasm` builds each unit with clang for
 `wasm32-wasi` instead and runs it under wasmtime: setjmp through the exception-handling proposal
 in its standard encoding (`-mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false`, wasi-libc's
 `-lsetjmp`, wasmtime's `-W exceptions=y`), `clock` and `signal` from WASI's emulation
@@ -72,7 +84,7 @@ network fetch answers that the build has no transport.  It
 needs clang, lld, wasi-libc and the wasm32 compiler-rt (Ubuntu: `clang lld wasi-libc
 libclang-rt-dev-wasm32`); a program linking a `[c] shim` archive is refused, the archive being
 built for the host.
-`differ`, `cc-error` and `sanitizer` are defects of the backend and must stay at 0; a change
+`differ`, `cc-error`, `sanitizer` and `slow` are defects of the backend and must stay at 0; a change
 that grows `match` is measured by the sweep, by `--asan` and by `--poison` before it is
 committed.  A sanitizer cannot see inside a store — a store is one allocation — so a read of a
 freed store, of a record a growth moved, or of a claim nothing wrote is valid memory to it; the

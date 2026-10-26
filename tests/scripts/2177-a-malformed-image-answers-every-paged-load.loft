@@ -67,7 +67,12 @@ fn variants(p: text) -> integer {
 }
 
 fn main() {
-  base = "{temp_dir() ?? "/tmp"}/loft_2177_{now()}_{ticks()}";
+  // Its own directory, emptied and removed at the end: the 328 files it writes would otherwise
+  // stay behind in the shared temp directory, and every later name a program checks there is
+  // compared against all of them (`@FR-Path-Case`).
+  dir = "{temp_dir() ?? "/tmp"}/loft_2177_{now()}_{ticks()}";
+  assert(mkdir(dir) == FileResult.Ok, "make {dir}");
+  base = "{dir}/img";
   h: hash<Rec[id]> = [];
   for i in 0..6 {
     h += Rec { id: i, name: "rec{i}", tags: [i, i + 1], sub: Item { tag: "s{i}", n: -i }, items: [Item { tag: "a{i}", n: i }, Item { tag: "b{i}", n: 2 * i }] };
@@ -133,5 +138,7 @@ fn main() {
     seen += 1;
   }
   assert(seen == made && made > 100, "answered {seen} of {made} variants");
+  for f in list_dir(dir) ?? [] { assert(delete("{dir}/{f}") == FileResult.Ok, "remove {f}"); }
+  assert(rmdir(dir) == FileResult.Ok && !is_dir(dir), "remove {dir}");
   println("answered every variant");
 }
