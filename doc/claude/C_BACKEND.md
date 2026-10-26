@@ -53,7 +53,11 @@ refusals by reason — that ranking is the work list.  `--wasm` builds each unit
 `wasm32-wasi` instead and runs it under wasmtime: setjmp through the exception-handling proposal
 in its standard encoding (`-mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false`, wasi-libc's
 `-lsetjmp`, wasmtime's `-W exceptions=y`), `clock` and `signal` from WASI's emulation
-libraries, the program's directory and the temporary directory mapped under their own paths.  It
+libraries, an 8 MiB stack (wasm-ld's default is 64 KiB), the program's directory and the
+temporary directory mapped under their own resolved paths, and the host's environment.  WASI
+counts as POSIX in `loft_cc.h` for files, directories and the monotonic clock; what it lacks —
+sockets, `mmap`, `realpath` — stands under `LOFT_POSIX_HOST`, so a mapped file is read and a
+network fetch answers that the build has no transport.  It
 needs clang, lld, wasi-libc and the wasm32 compiler-rt (Ubuntu: `clang lld wasi-libc
 libclang-rt-dev-wasm32`); a program linking a `[c] shim` archive is refused, the archive being
 built for the host.

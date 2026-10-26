@@ -21,10 +21,14 @@
 /* The OS beyond C99 — a monotonic clock, a path's kind, directories, truncate — is POSIX where
  * the platform is one (`LOFT_POSIX`); `-DLOFT_NO_POSIX` builds against ISO C99 alone, where the
  * clock is `clock()` and the directory operations answer Other.  The request precedes every
- * system header. */
-#if !defined(LOFT_NO_POSIX) && (defined(__unix__) || defined(__unix) || defined(__APPLE__))
+ * system header.  WASI (wasm32-wasi) is POSIX for files, directories and clocks, and has no
+ * sockets, `mmap` or `realpath`: those stand under `LOFT_POSIX_HOST`, a POSIX host OS. */
+#if !defined(LOFT_NO_POSIX) && (defined(__unix__) || defined(__unix) || defined(__APPLE__) || defined(__wasi__))
 #define LOFT_POSIX 1
 #define _POSIX_C_SOURCE 200809L
+#if !defined(__wasi__)
+#define LOFT_POSIX_HOST 1
+#endif
 #endif
 #include <stdint.h>
 #include <stdio.h>

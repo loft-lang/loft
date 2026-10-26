@@ -68,16 +68,24 @@ ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-s
 WASM_CC = [os.environ.get("LOFT_WASM_CC") or "clang", "--target=wasm32-wasi", "-std=c99", "-O1", "-w",
            "-mllvm", "-wasm-enable-sjlj", "-mllvm", "-wasm-use-legacy-eh=false",
            "-D_WASI_EMULATED_PROCESS_CLOCKS", "-D_WASI_EMULATED_SIGNAL"]
-WASM_LIBS = ["-lm", "-lsetjmp", "-lwasi-emulated-process-clocks", "-lwasi-emulated-signal"]
+# wasm-ld reserves a 64 KiB stack by default; a native program has Linux's 8 MiB, and a deep
+# recursion that fits there ran off the bottom of the wasm one (a fault at an address past the
+# end of linear memory).
+WASM_LIBS = ["-Wl,-z,stack-size=8388608", "-lm", "-lsetjmp", "-lwasi-emulated-process-clocks",
+             "-lwasi-emulated-signal"]
 
 
 def wasm_run(wasm: str, cwd: Path) -> list[str]:
     """wasmtime over `wasm`, with the program's directory reachable both as `.` and under its
-    own absolute path (the runtime anchors a relative path at the program's directory) and
-    the temporary directory under its own path, as a native run reaches them."""
-    tmp = tempfile.gettempdir()
+    own absolute path — resolved, as the runtime normalises the directory it anchors a relative
+    path at — the temporary directory under its own path, and the host's environment, as a
+    native run reaches them."""
+    tmp = os.path.realpath(tempfile.gettempdir())
+    cwd = cwd.resolve()
+    # The host's environment, every variable inherited as a native run inherits it.
+    env = [a for k in sorted(os.environ) if k != "TMPDIR" for a in ("--env", k)]
     return ["wasmtime", "-W", "exceptions=y", "--dir=.", f"--dir={cwd}::{cwd}",
-            f"--dir={tmp}::{tmp}", "--env", f"TMPDIR={tmp}", wasm]
+            f"--dir={tmp}::{tmp}", "--env", f"TMPDIR={tmp}", *env, wasm]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
 

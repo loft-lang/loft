@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
-#if defined(LOFT_FOREIGN)
+#if defined(LOFT_FOREIGN) && defined(LOFT_POSIX_HOST)
 #include <fcntl.h>
 #include <sys/mman.h>
 #endif
@@ -862,7 +862,7 @@ static loft_ref loft_read_bytes(loft_str raw) {
 }
 
 #if defined(LOFT_FOREIGN)
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX_HOST)
 static void loft_unmap(void *bytes, size_t n) { munmap(bytes, n); }
 #endif
 
@@ -871,7 +871,7 @@ static void loft_unmap(void *bytes, size_t n) { munmap(bytes, n); }
  * missing or unreadable one.  An empty file, or one that is not a regular file, is read as
  * read_bytes reads it; so is every file where there is no mmap. */
 static loft_ref loft_file_map(loft_str raw) {
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX_HOST)
     char *path = loft_resolve(raw);
     if (!path) return loft_ref_null();
     int fd = open(path, O_RDONLY);
@@ -1095,11 +1095,15 @@ static loft_text loft_program_directory(loft_str sub) {
     uint32_t size = sizeof buf;
     if (_NSGetExecutablePath(buf, &size) != 0) buf[0] = 0;
 #endif
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX_HOST)
     if (!buf[0] && loft_argv && loft_argv[0]) {
         char real[4096];
         if (realpath(loft_argv[0], real)) strcpy(buf, real);
     }
+#else
+    /* No `realpath` (WASI): an absolute `argv[0]` is taken as it stands. */
+    if (!buf[0] && loft_argv && loft_argv[0] && loft_argv[0][0] == '/' && strlen(loft_argv[0]) < sizeof buf)
+        strcpy(buf, loft_argv[0]);
 #endif
     char *slash = strrchr(buf, '/');
     if (slash) *(slash == buf ? slash + 1 : slash) = 0; else buf[0] = 0;

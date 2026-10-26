@@ -5,7 +5,7 @@
  * runtime has none.  `integrity::verify_sha256` pins an image's bytes.  Pasted only into a unit
  * that loads over a URL (`LOFT_NET`). */
 #ifdef LOFT_NET
-#ifdef LOFT_POSIX
+#ifdef LOFT_POSIX_HOST
 #include <netdb.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -40,7 +40,7 @@ static int loft_fetch_file(const char *path, loft_bytes *out, char *err, size_t 
     return 1;
 }
 
-#ifdef LOFT_POSIX
+#ifdef LOFT_POSIX_HOST
 /* One GET of `http://host[:port]/path`: the 2xx body, a chunked one decoded. */
 static int loft_fetch_http(const char *url, loft_bytes *out, char *err, size_t cap) {
     const char *rest = url + 7, *slash = strchr(rest, '/');
@@ -141,7 +141,7 @@ static int loft_fetch(const char *url, loft_bytes *out, char *err, size_t cap) {
     out->p = 0;
     out->n = 0;
     if (strncmp(url, "file://", 7) == 0) return loft_fetch_file(url + 7, out, err, cap);
-#ifdef LOFT_POSIX
+#ifdef LOFT_POSIX_HOST
     if (strncmp(url, "http://", 7) == 0) return loft_fetch_http(url, out, err, cap);
 #endif
     snprintf(err, cap, "this build has no HTTP transport, so it cannot fetch %s — a store it carries reads with "
