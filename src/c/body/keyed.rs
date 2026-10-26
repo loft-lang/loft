@@ -529,11 +529,20 @@ impl FnWriter<'_> {
         let stores = self.cx.stores;
         let coll = stores.collection_type_of_store(root);
         let parts = stores.types.get(coll as usize).map(|t| &t.parts);
-        // A struct wrapping several keyed collections roots no one collection.
-        let element = super::c_string(if coll == u16::MAX {
+        // The element a miss is fetched for is the BOUND collection's own (the interpreter
+        // keys its driver on the lookup's collection type): a field of a struct holding several
+        // keyed collections names its own, where the store's root names no one collection.
+        let own = self
+            .value_type(local)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+            .filter(|tp| (*tp as usize) < stores.types.len())
+            .map(|tp| stores.collection_type_of_store(tp))
+            .filter(|c| *c != u16::MAX)
+            .unwrap_or(coll);
+        let element = super::c_string(if own == u16::MAX {
             ""
         } else {
-            stores.element_type_name(coll)
+            stores.element_type_name(own)
         });
         let (unservable, fetch) = match parts {
             Some(Parts::Hash(..) | Parts::Trie(..) | Parts::Radix(..)) => {
