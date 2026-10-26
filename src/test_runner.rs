@@ -587,6 +587,16 @@ fn parse_args_annotation(s: &str, ann: &mut Annotations) {
 /// Run all zero-parameter functions in `.loft` files under `root_dir` as tests.
 /// Supports `@ARGS`, `@EXPECT_ERROR`, and `@EXPECT_FAIL` file annotations.
 /// Returns 0 if all pass, 1 if any fail.
+/// Which backend a test run compiles its tests for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum TestBackend {
+    Interpreter,
+    /// `--native`: the Rust writer and rustc.
+    NativeRust,
+    /// `--native-c` / `LOFT_NATIVE_BACKEND=c`: the C backend and the host's C compiler.
+    NativeC,
+}
+
 #[allow(clippy::too_many_arguments)]
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn run_tests(
@@ -596,10 +606,11 @@ pub(crate) fn run_tests(
     deny_warnings: bool,
     lib_dirs: &[String],
     project: Option<&str>,
-    native_mode: bool,
-    native_c: bool,
+    backend: TestBackend,
     extra_native_libs: &[String],
 ) -> i32 {
+    let native_mode = backend != TestBackend::Interpreter;
+    let native_c = backend == TestBackend::NativeC;
     use crate::data::DefType;
     use std::collections::BTreeMap;
 

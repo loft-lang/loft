@@ -9354,8 +9354,13 @@ fn main() {
             deny_warnings,
             &lib_dirs,
             project.as_deref(),
-            native_mode,
-            native_c,
+            if !native_mode {
+                test_runner::TestBackend::Interpreter
+            } else if native_c {
+                test_runner::TestBackend::NativeC
+            } else {
+                test_runner::TestBackend::NativeRust
+            },
             &native_lib_paths,
         );
         // Phase 6t Tier 4 — `loft test --deps` walks the current
