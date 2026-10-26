@@ -24,7 +24,15 @@ python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing 
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
+python3 bench/stats.py --lanes rust,c,cship    # every bench program as C, against its Rust twin
 ```
+
+`bench/stats.py`'s `c` lane builds each bench program as C (`-std=c99 -O3`) and requires its
+result hash to be the Rust twin's — a disagreement fails the run — and reports its time over the
+twin's; `cship` builds it under `LOFT_RELEASE_PASS_PROBE=1`, where the generator writes the
+release-pass probe's forms (`loft_wrap_*` in `loft_rt.h`: the processor's arithmetic with every
+wrap defined, for exactly the operators the Rust probe changes) — the ship tier's ceiling, as the
+Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes).
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
 it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It

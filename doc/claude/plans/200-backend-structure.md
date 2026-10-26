@@ -372,8 +372,8 @@ branch; its guard cell is on the language suite's branch of the same name, so th
 extend it: [C_BACKEND.md](../C_BACKEND.md).
 
 **⚠ NEXT — the quality of the C the generator writes: read this before the next feature (owner, 2026-10-24).**
-The C backend validates the generator and gets no benchmark lanes or twins (@PLN201, owner),
-so nothing here is a speed bar.  These are defects in the emitted C, found by taking one
+The C backend gets no twins of the bench routines (owner); `bench/stats.py`'s `c` and `cship`
+lanes measure it against the Rust twins (bench/README.md § The C lanes), a report, never a bar.  These are defects in the emitted C, found by taking one
 program apart by hand: `bench/10_sort`'s `insertion_sort` at `7d370d10`, built `cc -std=c99 -O2`,
 ran 8.8 s where `--native` ran 0.65 s.  Forcing the access helpers inline gave 1.3 s; holding
 the vector header and element base in locals before the loop gave 0.34 s.  Removing the

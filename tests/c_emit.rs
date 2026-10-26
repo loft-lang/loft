@@ -2457,3 +2457,77 @@ fn the_c_parses_text_as_the_interpreter_does() {
     );
     assert_eq!(got.len(), want.len(), "the C stopped early");
 }
+
+/// The C is strict C99 where it uses the math constants (`PI`, `E` — `M_PI` and `M_E` are
+/// POSIX and `-std=c99` declares neither), and the release-pass probe
+/// (`LOFT_RELEASE_PASS_PROBE=1`, @PLN201) gives the C generator the ship tier's forms: an
+/// overflowing product the checked C answers as null wraps — DEFINED, through unsigned
+/// arithmetic — while a zero divisor stays null and a value that never faulted is the same.
+/// Values hand-computed: 3037000500² = 9223372037000250000, which is 2⁶⁴ −
+/// 9223372036709301616 past `i64::MAX`.
+#[test]
+fn the_c_is_strict_c99_and_the_probe_wraps_where_the_checked_c_answers_null() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("probe");
+    let file = dir.join("probe.loft");
+    fa::write(
+        &file,
+        "fn big(n: integer) -> integer { n * n }\n\
+         fn d(a: integer, b: integer) -> integer { a / b }\n\
+         fn neg(a: integer) -> integer { -a }\n\
+         fn main() {\n\
+           println(\"{PI > 3.141592653589 and PI < 3.141592653590} {E > 2.718281828459 and E < 2.718281828460}\");\n\
+           println(\"{big(3037000500)} {big(1000)} {d(7, 2)} {d(7, 0)} {neg(5)}\");\n\
+         }\n",
+    )
+    .expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let run = |probe: bool| -> String {
+        let c = dir.join(if probe { "ship.c" } else { "checked.c" });
+        let mut emit = loft::platform::process::harness_command(loft);
+        emit.arg("--emit-c").arg(&c).arg(&file);
+        if probe {
+            emit.env("LOFT_RELEASE_PASS_PROBE", "1");
+        } else {
+            emit.env_remove("LOFT_RELEASE_PASS_PROBE");
+        }
+        let emitted = emit.output().expect("run loft --emit-c");
+        assert!(
+            emitted.status.success(),
+            "the program is carried: {}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+        let exe = dir.join(if probe { "ship" } else { "checked" });
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O2", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc rejected the {} C:\n{}",
+            if probe { "probed" } else { "checked" },
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the C program");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(
+        run(false),
+        "true true\nnull 1000000 3 null -5\n",
+        "the checked C"
+    );
+    assert_eq!(
+        run(true),
+        "true true\n-9223372036709301616 1000000 3 null -5\n",
+        "the probed C"
+    );
+}

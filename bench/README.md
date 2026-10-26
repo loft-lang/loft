@@ -37,6 +37,7 @@ python3 bench/stats.py --tsv out.tsv         # keep the run, to diff against the
 python3 bench/stats.py --show-samples        # every sample under its row
 python3 bench/stats.py --routine check_request,cbor/decode   # one routine, or a set
 python3 bench/stats.py --lanes native,rust,ship   # add the SHIPPED-GAME speed per routine
+python3 bench/stats.py --lanes rust,c,cship    # the C99 backend against the Rust twin
 ```
 
 **The ship lane** builds each program once more, its libraries' loft code included, under
@@ -47,6 +48,15 @@ BOTH is slow for a reason the checks do not explain.  A routine slow only CHECKE
 its checks, which a range proof or a fault-flag rewrite can take back.  Its hash is reported, not
 required to agree: a fault wraps there instead of answering null, and a row whose ship hash
 differs is marked `ship (hash differs)` and carries no ship ratio.
+
+**The C lanes** measure the C99 backend (@PLN200, [C_BACKEND.md](../doc/claude/C_BACKEND.md))
+against the same Rust twin: `c` builds each program with `loft --emit-c` and `cc -std=c99 -O3`
+(`--cc`, `--c-flags`), every expression's fault check kept, and `cship` builds it under the
+release-pass probe, the C generator's twin of the ship lane.  The checked `c` lane VALIDATES the
+generator: its hash must be the twin's, a row whose hash differs reads `c HASH DIFFERS` and the
+run exits 1.  `cship` is marked as `ship` is.  Each row gains `c N.NN` and `cship N.NN` over the
+Rust twin, and the run closes with each lane's median.  A program the C backend does not carry
+keeps its other lanes and is listed with the reason (`c lane not built for …`).
 
 `--routine` takes `name` or `bench/name` (the qualified form for a name several programs
 use, such as `hash`).  On its own it builds only the programs `portal/routines.tsv` places

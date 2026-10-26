@@ -93,9 +93,10 @@ for both: a fault site is named by the function, its body hash and the operator'
 never by the emitted text.  One ledger then licenses a ship build on either backend.  The C
 generator implements the same two tiers as the Rust one: the CHECKED tier, where every fault
 answers null exactly as the interpreter does, and the SHIP tier, where a check the ledger
-licenses is dropped.  Only the text each generator emits for an operator differs.  The C backend validates the
-generator only: it gets no benchmark lanes and no twins of the bench routines (owner), so
-the ship tier is measured on the Rust backend alone.
+licenses is dropped.  Only the text each generator emits for an operator differs.  The C backend gets no twins of
+the bench routines (owner); `bench/stats.py`'s `c` and `cship` lanes measure it against the
+same Rust twins, checked (its hash validated) and under the probe, so the ship tier's ceiling
+is measured on both generators (bench/README.md § The C lanes).
 
 ## See also
 

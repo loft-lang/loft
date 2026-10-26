@@ -385,6 +385,25 @@ LOFT_HOT_INLINE int64_t loft_rem(int64_t a, int64_t b) {
     return a % b;
 }
 
+/* The release-pass probe's forms (`LOFT_RELEASE_PASS_PROBE=1`, @PLN201): the processor's
+ * wrapping arithmetic, as `generation::ops::int_arith::probe_form` emits it for Rust — a
+ * MEASUREMENT of the ship tier's ceiling, never a build anyone ships (@C129).  Each wrap is
+ * DEFINED here: the sum, difference, product and negation are taken in unsigned arithmetic,
+ * and `INT64_MIN / -1` answers what Rust's `wrapping_div` answers; a zero divisor still
+ * answers null, as the probe keeps it. */
+LOFT_HOT_INLINE int64_t loft_wrap_add(int64_t a, int64_t b) { return (int64_t) ((uint64_t) a + (uint64_t) b); }
+LOFT_HOT_INLINE int64_t loft_wrap_sub(int64_t a, int64_t b) { return (int64_t) ((uint64_t) a - (uint64_t) b); }
+LOFT_HOT_INLINE int64_t loft_wrap_mul(int64_t a, int64_t b) { return (int64_t) ((uint64_t) a * (uint64_t) b); }
+LOFT_HOT_INLINE int64_t loft_wrap_neg(int64_t a) { return (int64_t) (0 - (uint64_t) a); }
+LOFT_HOT_INLINE int64_t loft_wrap_div(int64_t a, int64_t b) {
+    if (b == 0) return LOFT_NULL;
+    return b == -1 ? loft_wrap_neg(a) : a / b;
+}
+LOFT_HOT_INLINE int64_t loft_wrap_rem(int64_t a, int64_t b) {
+    if (b == 0) return LOFT_NULL;
+    return b == -1 ? 0 : a % b;
+}
+
 /* `assert`: a failed one ends the running test (the test main catches it) or, outside a
  * test, the program, with the interpreter's message on stderr and exit status 1. */
 static jmp_buf loft_test_jmp;

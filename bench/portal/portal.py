@@ -350,10 +350,16 @@ def render():
             if doc:
                 w(f"Why it is slow, priced, and what to build: "
                   f"[analysis/{doc}](../../bench/portal/analysis/{doc})\n")
-            # The SHIP column (@PLN201): the routine compiled as a game's release build would be,
-            # the fault checks dropped — present when the run measured `--lanes …,ship`.
-            ship = any(r.get("ship_ratio") or r.get("ship_hash") for r in rs)
-            ship_head, ship_rule = (" ship × Rust |", "---:|") if ship else ("", "")
+            # The optional columns, each present when the run measured its lane: SHIP (@PLN201),
+            # the routine compiled as a game's release build would be, the fault checks dropped
+            # (`--lanes …,ship`); C and C SHIP (@PLN200), the C99 backend's checked and probed
+            # builds against the same Rust twin (`--lanes …,c,cship`).  A checked C row whose
+            # hash is not the twin's is a validation failure and says so.
+            extra = [(lane, head) for lane, head in
+                     (("ship", "ship × Rust"), ("c", "C × Rust"), ("cship", "C ship × Rust"))
+                     if any(r.get(f"{lane}_ratio") or r.get(f"{lane}_hash") for r in rs)]
+            ship_head = "".join(f" {head} |" for _, head in extra)
+            ship_rule = "---:|" * len(extra)
             w(f"| routine | lane | population | × Rust |{ship_head} range | native | Rust | | what it stands for |")
             w(f"|---|---|---|---:|{ship_rule}---|---:|---:|---|---|")
             for r in sorted(rs, key=lambda r: -r["ratio_f"]):
@@ -362,14 +368,14 @@ def render():
                 if older:
                     flags += f" †{r['commit']}"
                     any_older.append(r)
-                if not ship:
-                    ship_cell = ""
-                elif r.get("ship_ratio"):
-                    ship_cell = f" {float(r['ship_ratio']):.2f} |"
-                elif r.get("ship_hash"):
-                    ship_cell = " hash differs |"
-                else:
-                    ship_cell = " — |"
+                ship_cell = ""
+                for lane, _ in extra:
+                    if r.get(f"{lane}_ratio"):
+                        ship_cell += f" {float(r[f'{lane}_ratio']):.2f} |"
+                    elif r.get(f"{lane}_hash"):
+                        ship_cell += " **hash differs** |" if lane == "c" else " hash differs |"
+                    else:
+                        ship_cell += " — |"
                 w(f"| `{r['routine']}` | {r['bench']} | {r['pop']} | **{r['ratio_f']:.2f}** |{ship_cell} "
                   f"{float(r['ratio_lo']):.2f}–{float(r['ratio_hi']):.2f}{flags} | {fmt_ns(r['native_ns'])} | "
                   f"{fmt_ns(r['rust_ns'])} | {verdict_mark(r['ratio_f'])} | {r['what']} |")

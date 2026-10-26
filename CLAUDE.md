@@ -150,7 +150,10 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   adds a library's own bench; ARGS="--lanes
                                          #   native,rust,ship" adds a SHIP column per routine:
                                          #   the program as a game's release build would be
-                                         #   compiled, fault checks dropped (@PLN201).  A
+                                         #   compiled, fault checks dropped (@PLN201);
+                                         #   `,c,cship` adds the C99 backend checked and
+                                         #   probed against the same twin, its hash
+                                         #   VALIDATED (bench/README.md § The C lanes).  A
                                          #   REPORT, never a gate
 make perf-check [ARGS="--only 16,17"]     # ONCE PER ARC, IN THE BACKGROUND, never a foreground
                                          #   wait — a commit needs the matrix, the pins, clippy

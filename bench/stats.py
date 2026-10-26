@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """stats.py — the benchmark suite as STATISTICS: is each routine within its bar of Rust?
 
-    python3 bench/stats.py [--only 01,08] [--lanes native,rust[,ship]] [--samples 7]
+    python3 bench/stats.py [--only 01,08] [--lanes native,rust[,ship][,c,cship]] [--samples 7]
                            [--target-ms 400] [--bar 2.0] [--tsv out.tsv] [--no-pin]
                            [--package DIR[=NAME]]... [--routine [BENCH/]NAME[,…]]...
 
@@ -47,6 +47,14 @@ ratio column is native / rust; `ship` adds `ship_ratio` (ship / rust) to each ro
 of the shipped product beside the speed of the checked build.  The ship hash is not one of the
 hashes that must agree: a fault the checked lanes answer as null wraps there, so a row whose
 ship hash differs is marked and carries no ship ratio.
+`c` and `cship` measure the C99 backend (@PLN200, `loft --emit-c`, built by `--cc` with
+`--c-flags`, `-std=c99 -O3`) against the same Rust twin: `c` is the CHECKED C — every
+expression's fault check kept, as the interpreter answers — and VALIDATES the C generator: its
+hash must be the twin's, a row whose hash differs is reported and the run exits 1; `cship` is
+the C under `LOFT_RELEASE_PASS_PROBE=1`, the ship tier's ceiling as the Rust `ship` lane has it,
+and like that lane a differing hash is marked, never fatal.  Each row adds `c_ratio` and
+`cship_ratio` (over rust).  A program the C backend does not carry yet keeps its other lanes;
+the C lanes are reported as not built, with the reason.
 
 `--package DIR` measures a LIBRARY's own bench — `DIR/bench/bench.loft` beside its twin
 `DIR/bench/bench.rs`, the layout the drawing library set (@PLN158).  A package has
@@ -161,6 +169,12 @@ NICE = ["nice", "-n", "10"] if shutil.which("nice") else []
 # The environment a SHIP-lane build runs under: the release-pass probe, the form a game's
 # release build would emit once its checked runs licensed it (@PLN201).
 SHIP_ENV = {**os.environ, "LOFT_RELEASE_PASS_PROBE": "1"}
+# The C lanes' compiler command (`--cc` and `--c-flags`, set in `main`), and what they found:
+# a program the C backend did not build, and a checked C row whose hash is not the twin's.
+C_CMD = ["cc", "-std=c99", "-O3"]
+C_SKIPS = []
+C_MISMATCHES = []
+C_LANES = ("c", "cship")
 
 
 def mem_available_gb():
@@ -229,6 +243,31 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
                     reserve_gb)
         os.remove(rs)
         cmds["ship"] = [exe]
+    for lane, env in (("c", None), ("cship", SHIP_ENV)):
+        # The C99 backend (@PLN200): checked, and under the release-pass probe.  A program it
+        # does not carry yet drops these two lanes, never the program's others.
+        if lane not in lanes:
+            continue
+        src = os.path.join(out, f"stats_{lane}.c")
+        exe = os.path.join(out, f"stats_{lane}")
+        try:
+            run_checked([loft, "--emit-c", src, "--path", ROOT + "/", os.path.join(d, "bench.loft")],
+                        f"{bench}: loft --emit-c ({lane})", times, f"{lane}-emit", reserve_gb,
+                        **({"env": env} if env else {}))
+            run_checked([*C_CMD, "-o", exe, src, "-lm"], f"{bench}: {C_CMD[0]} ({lane} lane)",
+                        times, f"{lane}-cc", reserve_gb)
+            cmds[lane] = [exe]
+        except BuildFailed as e:
+            # The reason a reader can act on: the backend's own refusal, or the compiler's
+            # first error, not the caret line that ends its output.
+            lines = [l.strip() for l in str(e).splitlines() if l.strip()]
+            why = next((l for l in lines if "does not carry" in l), None) \
+                or next((l for l in lines if "error:" in l), None) \
+                or (lines[-1] if lines else str(e))
+            C_SKIPS.append((bench, lane, why))
+        finally:
+            if os.path.exists(src):
+                os.remove(src)
     if "rust" in lanes and os.path.exists(os.path.join(d, "bench.rs")):
         exe = os.path.join(out, "stats_rs")
         run_checked(["rustc", *ref_flags, "-o", exe, os.path.join(d, "bench.rs")],
@@ -290,6 +329,10 @@ def build_package(pkg_dir, lanes, loft, ref_flags, times, reserve_gb):
         cmds["rust"] = [exe]
     if "interp" in lanes:
         cmds["interp"] = [loft, "--interpret", "bench/bench.loft"]
+    for lane in C_LANES:
+        if lane in lanes:
+            C_SKIPS.append((os.path.basename(pkg_dir.rstrip("/")), lane,
+                            "a library bench: its native bridges have no C build"))
     return cmds
 
 
@@ -505,11 +548,12 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
     names = [n for n in next(iter(samples.values())) if keep is None or keep(n)]
     for name in names:
         seen = {lane: hashes[lane].get(name) for lane in cmds
-                if name in hashes[lane] and lane != "ship"}
-        if len(set(seen.values())) != 1:
+                if name in hashes[lane] and lane not in ("ship", *C_LANES)}
+        if len(set(seen.values())) > 1:
             fail(f"{bench}/{name}: the lanes compute different results — {seen}")
         line = f"{bench:15} {name:13}"
-        rec = dict(bench=bench, routine=name, hash=next(iter(seen.values())),
+        rec = dict(bench=bench, routine=name,
+                   hash=next(iter(seen.values()), hashes.get("c", {}).get(name)),
                    commit=stamp["commit"], date=stamp["date"])
         for lane in lanes:
             xs = samples.get(lane, {}).get(name)
@@ -554,6 +598,25 @@ def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
             ship_ratio = statistics.median(shp) / statistics.median(ref)
             line += f"  ship {ship_ratio:.2f}"
             rec.update(ship_ratio=ship_ratio)
+        # The C99 backend.  The checked `c` lane validates the generator: its value must be the
+        # twin's.  `cship` is the probe's tier, where a fault wraps, so a differing hash only
+        # marks the row.
+        for lane in C_LANES:
+            xs = samples.get(lane, {}).get(name)
+            if not xs:
+                continue
+            h = hashes[lane][name]
+            if h != rec["hash"]:
+                rec[f"{lane}_hash"] = h
+                if lane == "c":
+                    line += "  c HASH DIFFERS"
+                    C_MISMATCHES.append((bench, name, rec["hash"], h))
+                else:
+                    line += "  cship (hash differs)"
+            elif ref:
+                r = statistics.median(xs) / statistics.median(ref)
+                line += f"  {lane} {r:.2f}"
+                rec[f"{lane}_ratio"] = r
         lines.append(line)
         if a.show_samples:
             for lane in lanes:
@@ -655,6 +718,10 @@ def main():
                     help="the rounds a program with a noisy row takes in all: its speed modes are "
                          "per process, so more processes settle the median where longer runs do not")
     ap.add_argument("--ref-flags", default="-O", help="rustc flags for the reference lane")
+    ap.add_argument("--cc", default=os.environ.get("CC", "cc"),
+                    help="the C compiler of the c / cship lanes")
+    ap.add_argument("--c-flags", default="-std=c99 -O3",
+                    help="its flags for the c / cship lanes (-lm is appended)")
     ap.add_argument("--package-target-ms", type=float, default=4000.0,
                     help="the run length a --package lane is calibrated to: a library's bench "
                          "prints routines a thousand times apart in cost under ONE --n, so its "
@@ -707,11 +774,14 @@ def main():
     subprocess.run([os.path.join(ROOT, "scripts", "disk_janitor.sh"), "--background"], check=False)
 
     lanes = [x for x in a.lanes.split(",") if x]
-    unknown = set(lanes) - {"native", "rust", "interp", "python", "ship"}
+    unknown = set(lanes) - {"native", "rust", "interp", "python", "ship", *C_LANES}
     if unknown:
         fail(f"unknown lane(s): {', '.join(sorted(unknown))}")
     if not os.access(a.loft, os.X_OK):
         fail(f"no loft binary at {a.loft} (cargo build --release)")
+    C_CMD[:] = [a.cc, *a.c_flags.split()]
+    if set(lanes) & set(C_LANES) and not shutil.which(a.cc):
+        fail(f"no C compiler `{a.cc}` for the C lanes (--cc)")
     if "interp" in lanes and not a.allow_declined_stdlib:
         require_compiled_stdlib(a.loft)
     benches = sorted(b for b in os.listdir(HERE)
@@ -785,6 +855,15 @@ def main():
         print(f"\n{len(ratios)} routine(s): median ratio {statistics.median(ratios):.2f}x, "
               f"worst {max(ratios):.2f}x · within {a.bar}x: {verdicts['ok']} · over: {verdicts['OVER']} · "
               f"unclear: {verdicts['unclear']}")
+    for lane in C_LANES:
+        cr = [r[f"{lane}_ratio"] for r in out_rows if f"{lane}_ratio" in r]
+        if cr:
+            print(f"{lane}: {len(cr)} routine(s) against the Rust twin — median {statistics.median(cr):.2f}x, "
+                  f"worst {max(cr):.2f}x")
+    for bench, lane, why in sorted(C_SKIPS):
+        print(f"# {lane} lane not built for {bench}: {why}")
+    for bench, name, want, got in C_MISMATCHES:
+        failed.append((f"{bench}/{name}", f"the checked C answers hash {got}, the twin {want}"))
     if a.tsv:
         keys = sorted({k for r in out_rows for k in r})
         keys = ["bench", "routine"] + [k for k in keys if k not in ("bench", "routine")]
@@ -813,7 +892,7 @@ def main():
         print(f"wrote {a.build_tsv}")
     if failed:
         for bench, err in failed:
-            sys.stderr.write(f"stats.py: {bench}: {err}\n" if bench == "--routine"
+            sys.stderr.write(f"stats.py: {bench}: {err}\n" if bench == "--routine" or "/" in bench
                              else f"stats.py: {bench} did not build — {err}\n")
         sys.exit(1)
 

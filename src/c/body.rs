@@ -2254,6 +2254,9 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.gen_operator(name, args, ind)? {
             return Ok(e);
         }
+        if let Some(e) = self.probe_operator(name, args, ind)? {
+            return Ok(e);
+        }
         let arith = match name {
             // The `Nullable` forms answer the same values; only the overflow report differs.
             "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
@@ -2287,6 +2290,53 @@ impl<'a> FnWriter<'a> {
             return Ok(compare(&as_int(a)?, op, &as_int(b)?));
         }
         self.text_operator(name, args, ind)
+    }
+
+    /// `LOFT_RELEASE_PASS_PROBE=1` (generation time): the release-pass probe's form of an
+    /// integer operator — the processor's wrapping arithmetic, each wrap defined
+    /// (`loft_wrap_*` in `loft_rt.h`) — for exactly the operators and operand shapes
+    /// `generation::ops::int_arith::probe_form` gives the Rust generator, so the C and Rust
+    /// ship lanes measure the same tier.  The `Nullable` forms and the null test keep their
+    /// checks: they are the language's null semantics, not fault protection.  A MEASUREMENT
+    /// instrument (@C129), never a build anyone ships.
+    fn probe_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        if !crate::env_once!(std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0")) {
+            return Ok(None);
+        }
+        let shift_k =
+            || matches!(args.get(1).map(Value::unspan), Some(Value::Int(k)) if (0..64).contains(k));
+        let form = match (name, args.len()) {
+            ("OpAddInt", 2) => "loft_wrap_add",
+            ("OpMinInt", 2) => "loft_wrap_sub",
+            ("OpMulInt", 2) => "loft_wrap_mul",
+            ("OpDivInt", 2) => "loft_wrap_div",
+            ("OpRemInt", 2) => "loft_wrap_rem",
+            ("OpLandInt", 2) => "&",
+            ("OpLorInt", 2) => "|",
+            ("OpEorInt", 2) => "^",
+            ("OpSRightInt", 2) if shift_k() => ">>",
+            ("OpMinSingleInt", 1) => {
+                let a = self.one(name, args, ind)?;
+                return Ok(Some(E::new(
+                    format!("loft_wrap_neg({})", as_int(a)?),
+                    K::Int,
+                )));
+            }
+            _ => return Ok(None),
+        };
+        let (a, b) = self.two(name, args, ind)?;
+        let (a, b) = (as_int(a)?, as_int(b)?);
+        let text = if form.starts_with("loft_") {
+            format!("{form}({a}, {b})")
+        } else {
+            format!("(({a}) {form} ({b}))")
+        };
+        Ok(Some(E::new(text, K::Int)))
     }
 
     /// The boolean and text operators, and printing.
@@ -2745,8 +2795,10 @@ impl<'a> FnWriter<'a> {
                 let a = self.one(name, args, ind)?;
                 Ok(E::new(format!("((double) {})", as_single(a)?), K::Float))
             }
-            ("OpMathPiFloat", []) => Ok(E::new("M_PI", K::Float)),
-            ("OpMathEFloat", []) => Ok(E::new("M_E", K::Float)),
+            // The constants as the shortest literals that round-trip to Rust's own: `M_PI` and
+            // `M_E` are POSIX, and `-std=c99` does not declare them.
+            ("OpMathPiFloat", []) => Ok(E::new(format!("{:?}", std::f64::consts::PI), K::Float)),
+            ("OpMathEFloat", []) => Ok(E::new(format!("{:?}", std::f64::consts::E), K::Float)),
             ("OpMathFuncFloat" | "OpMathFuncSingle", [id, v]) => {
                 let id = Self::literal(id, "math function")?;
                 let a = self.expr(v, ind)?;
