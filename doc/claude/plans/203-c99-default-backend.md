@@ -92,7 +92,14 @@ them beside the binary, which C8 takes.  The two link-mode tests over `native_sc
 `[native] crate` tests and move to `--native-rust` with C9.  The `in_binary` libraries (natives inside
 loft's own binary): the C runtime carries `lib/process`'s and `lib/git`'s
 (`loft_process.h`, POSIX hosts); an in-binary native it does not carry refuses the unit by
-name — `engine_host`'s 52, which go with the C worker processes above.
+name.  `engine_host`'s kernel is carried (`loft_engine.h`: listener, connector, UDP sync, debug
+channel, `http_fetch` over plain HTTP); its build swap and background rebuild are not — the swap
+needs the world written and read through the store converter (@PLN196) for a type known only at
+run time.  HTTPS for `http_fetch` (and `store_load_url`) waits on a TLS transport in the runtime:
+BearSSL's engine vendored as crypto's primitives are, or the host's TLS library opened at run
+time.  The live tier (flips, live edits, a breakpoint's eval) embeds the interpreter in a
+compiled program, which the C does not: after C9 the edit loop runs interpreted, and the
+`engine_host_*` scenarios that drive a live edit keep an interpreted leg.
 
 **C6 — the wasm and browser targets.**  The runtime under `-DLOFT_NO_POSIX` is the start: the
 WASI libc gives files for `--native-wasm`; the browser needs the host imports the Rust writer

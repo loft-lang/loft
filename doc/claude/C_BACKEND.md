@@ -445,6 +445,21 @@ backends.  A `#native` function — a Rust cdylib's — is NOT reached: the C an
 with the interpreter's unloaded-library panic, so a library a C program needs is one whose
 native part is a `[c] shim`.
 
+**The libraries inside loft's binary.**  A `#native` of an `in_binary` library (`[native]
+in_binary = true`: its natives live in loft's own binary, `native::FUNCTIONS`) is a call into
+the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and refuses the unit
+by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
+native of its own binary.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
+drains every pipe, a child leads its own process group, the timeout stops the tree) and
+`lib/git` (`git_query`).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
+the connector over WebSockets, the UDP state-sync channel, the events, ticks and `post`, the
+`D!:` debug channel answering as a build with no live tier, and `http_fetch` on a worker thread
+— plain HTTP only, since the runtime has no TLS transport.  Not carried, so refused by name: the
+build swap and the background rebuild (`swap_world`, `swap_start`, `rebuild_*`).  The live tier
+— a flip, a live edit, a breakpoint's eval — runs the interpreter inside the program, which a C
+build has not got: a C program's swap step serves and `live_flip` answers false, and the edit
+loop runs interpreted.  All of it POSIX hosts.
+
 **`deliver`.**  `deliver(tag, value)` prints the loopback host's line: the value's bytes as
 `read_via_descriptor` reads them through its layout, as hex, or the refusal of the first
 store-internal kind it reaches.  `expose` and `release` lock and unlock the value's store; a
