@@ -170,7 +170,7 @@ pub(crate) struct FnWriter<'a> {
     /// `@FR-R-LazySplit` (`hoist::lazy_splits`, native's analysis): the hidden vectors of
     /// `for piece in t.split(c)` loops, by variable — each walked as a `loft_ls` over the text,
     /// the vector never built.  `LOFT_NO_LAZY_SPLIT=1` builds them, as on native.
-    lazy: std::collections::BTreeMap<u16, crate::generation::hoist::LazySplit>,
+    lazy: std::collections::BTreeMap<u16, crate::opt::lazy_split::LazySplit>,
     /// `@FR-R-CompleteWrite` (`hoist::complete_writes`): the element types every mint of this
     /// function writes completely, so the default image copied into a fresh element writes
     /// nothing that survives; computed on first use.
@@ -212,7 +212,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
         &std::collections::BTreeSet::new(),
         &std::collections::BTreeMap::new(),
     );
-    let store = crate::generation::hoist::borrowed_store_texts(cx.data, d, &walks);
+    let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
     let plain = store
         .locals
         .iter()
@@ -327,7 +327,7 @@ impl<'a> FnWriter<'a> {
             lazy: if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
             } else {
-                crate::generation::hoist::lazy_splits(cx.data, d)
+                crate::opt::lazy_split::lazy_splits(cx.data, d)
             },
             char_walks: if std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
@@ -1566,7 +1566,7 @@ impl<'a> FnWriter<'a> {
     fn lazy_split_bind(
         &mut self,
         var: u16,
-        ls: &crate::generation::hoist::LazySplit,
+        ls: &crate::opt::lazy_split::LazySplit,
         x: &Value,
         ind: usize,
     ) -> Result<(), String> {
