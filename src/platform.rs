@@ -1653,6 +1653,21 @@ pub fn c_link_args_for_file(file: &std::path::Path) -> Vec<String> {
     vec![crate::file_access::portable(file)]
 }
 
+/// How a C backend program links a shared library it found at `file` (@PLN203 C5): by NAME on
+/// Linux (`-L<dir> -l:<file>`), because GNU ld records a library without a SONAME by the path it
+/// was given, and the program would then name the build tree; by its path elsewhere, where the
+/// library's own install name (macOS) or the DLL's name (Windows) is what the program records.
+#[must_use]
+pub fn c_link_shared_args(file: &std::path::Path) -> Vec<String> {
+    match (file.parent(), crate::file_access::file_name(file)) {
+        (Some(dir), Some(name)) if cfg!(target_os = "linux") => vec![
+            format!("-L{}", crate::file_access::portable(dir)),
+            format!("-l:{name}"),
+        ],
+        _ => vec![crate::file_access::portable(file)],
+    }
+}
+
 /// The run path a C backend program finds a linked library through (@PLN203 C5): the library's
 /// own directory (`Some`) for a program run from its build, the program's own directory
 /// (`None`: `$ORIGIN`, `@executable_path`) for one written out with its libraries beside it

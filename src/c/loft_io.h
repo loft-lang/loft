@@ -78,8 +78,9 @@ static void loft_char_debug(loft_text *t, uint32_t c) {
     loft_push_char(t, '\'');
 }
 
-/* file_access::name_refusal: why no platform takes the name, or 0 (the reason malloc'd). */
-static char *loft_name_refusal(const char *p, size_t n) {
+/* file_access::name_refusal: why no platform takes the name, or 0 (the reason malloc'd, its
+ * length in `*len` — the name it quotes may hold a NUL). */
+static char *loft_name_refusal(const char *p, size_t n, size_t *len) {
     if (n == 0 || (n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.')) return 0;
     loft_text t = { 0, 0, 0 };
     for (size_t i = 0; i < n; i++) {
@@ -114,12 +115,14 @@ static char *loft_name_refusal(const char *p, size_t n) {
         loft_push(&t, p, n);
         loft_push_cstr(&t, why);
     }
+    *len = t.len;
     loft_push_char(&t, 0);
     return t.p;
 }
 
-/* `log_refusal_once`: one line per refused path per process. */
-static void loft_log_refusal_once(loft_str raw, const char *why) {
+/* `log_refusal_once`: one line per refused path per process, written byte for byte — a path
+ * and the reason quoting it may hold a NUL, which the interpreter writes as it is. */
+static void loft_log_refusal_once(loft_str raw, const char *why, size_t why_len) {
     static loft_text *said = 0;
     static size_t nsaid = 0;
     for (size_t i = 0; i < nsaid; i++)
@@ -127,7 +130,11 @@ static void loft_log_refusal_once(loft_str raw, const char *why) {
     said = (loft_text *) realloc(said, (nsaid + 1) * sizeof *said);
     if (!said) { fputs("loft: out of memory\n", stderr); abort(); }
     said[nsaid++] = loft_text_own(raw);
-    fprintf(stderr, "loft: the path `%.*s` is refused: %s\n", (int) raw.len, raw.p, why);
+    fputs("loft: the path `", stderr);
+    fwrite(raw.p, 1, raw.len, stderr);
+    fputs("` is refused: ", stderr);
+    fwrite(why, 1, why_len, stderr);
+    fputc('\n', stderr);
 }
 
 /* PathText's normal form of `raw`, malloc'd: '.' dropped, '..' folded, '/' between names — under
@@ -155,9 +162,10 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
         size_t n = i - s;
         i++;
         if (n == 0 || (n == 1 && name[0] == '.')) continue;
-        char *why = check ? loft_name_refusal(name, n) : 0;
+        size_t why_len = 0;
+        char *why = check ? loft_name_refusal(name, n, &why_len) : 0;
         if (why) {
-            loft_log_refusal_once(raw, why);
+            loft_log_refusal_once(raw, why, why_len);
             free(why);
             free(parts);
             free(at);
@@ -297,7 +305,7 @@ static char *loft_resolve(loft_str raw) {
     if (full && raw.len) {
         char *why = loft_case_clash(full);
         if (why) {
-            loft_log_refusal_once(raw, why);
+            loft_log_refusal_once(raw, why, strlen(why));
             free(why);
             free(full);
             return 0;

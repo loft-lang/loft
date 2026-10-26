@@ -261,12 +261,17 @@ pub(crate) fn build(
     // when the program is written out with its libraries beside it (`--out`).
     let ext = format!(".{}", loft::platform::dll_extension());
     let mut rpaths: Vec<String> = Vec::new();
+    let mut link_args: Vec<String> = Vec::new();
     for l in &links {
         let p = std::path::Path::new(l);
         let shared = l.ends_with(&ext) || l.contains(".so.");
+        if !shared {
+            link_args.push(l.clone());
+            continue;
+        }
+        link_args.extend(loft::platform::c_link_shared_args(p));
         let dir = if relocatable { None } else { p.parent() };
-        if shared
-            && let Some(arg) = loft::platform::c_rpath_arg(dir)
+        if let Some(arg) = loft::platform::c_rpath_arg(dir)
             && !rpaths.contains(&arg)
         {
             rpaths.push(arg);
@@ -292,7 +297,7 @@ pub(crate) fn build(
     let mut cmd = Spawn::new(Program::os(&cc));
     cmd.push_args(&flags);
     cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
-    cmd.push_args(&links);
+    cmd.push_args(&link_args);
     cmd.push_arg("-lm");
     let out = cmd.run(b"");
     let keep = std::env::var_os("LOFT_KEEP_NATIVE_C").is_some();
