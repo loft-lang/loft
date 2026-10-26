@@ -759,8 +759,10 @@ fn main() {
 /// bump — whose length is written back at the loop's exit.  Every push kind is here (integer,
 /// float, single, i32, u8, character, boolean, enum), a record mint whose literal writes every
 /// field (no default image copied, `@FR-R-CompleteWrite`), a comprehension inside a
-/// comprehension, and a window reopened on every pass of an outer loop.  The C declines where
-/// native declines: the enum vector, and a mint under an `if` arm.  Each value is computed by
+/// comprehension, and a window reopened on every pass of an outer loop (with the deep window
+/// off, `LOFT_NO_DEEP_WINDOW=1`; by default that outer loop holds one deep window instead).
+/// The counted rule declines where native's does: the enum vector (native's repeat fill), and
+/// a mint under an `if` arm; the deep window (`hoist::deep_window_ok`) takes the enum loop.  Each value is computed by
 /// hand; `LOFT_NO_PUSH_WINDOW=1` opens none and answers the same; the proofs are checked under
 /// `LOFT_VERIFY`.  A window cannot serve a locked store, so its pushes take the growth arm,
 /// the ordinary append, which refuses as the interpreter does.
@@ -881,10 +883,18 @@ fn main() {
             .output()
             .expect("run the C program")
     };
-    for (mode, off, windows, slots) in [("windowed", "0", 10, 1), ("unwindowed", "1", 0, 0)] {
+    // `counted` keeps the deep window off, so the inner loop of `reopened` reopens its counted
+    // window on every outer pass; by default the outer loop holds one deep window instead, and
+    // `narrow`'s enum loop — native's repeat fill, which the C does not have — takes one too.
+    for (mode, off, deep_off, windows, slots) in [
+        ("windowed", "0", "0", 11, 1),
+        ("counted", "0", "1", 10, 1),
+        ("unwindowed", "1", "0", 0, 0),
+    ] {
         let c = dir.join(format!("{mode}.c"));
         let emit = loft::platform::process::harness_command(loft)
             .env("LOFT_NO_PUSH_WINDOW", off)
+            .env("LOFT_NO_DEEP_WINDOW", deep_off)
             .arg("--emit-c")
             .arg(&c)
             .arg(&file)
@@ -3789,4 +3799,188 @@ fn native_c_html_page_runs_its_program() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// `@FR-R-FileHold` as C (`lower::file_hold::held_file`, native's gate): a loop that reads one
+/// `File` through fixed-width integer reads keeps the record's cursor in a `loft_fcur` — read
+/// once, served from a 4 KB buffer, given back on EVERY exit: the loop's end, a `break` of an
+/// outer loop from inside it, a `return` from inside it.  Loft has no exception, so those are
+/// all the exits.  Beside it the deep push window (`hoist::deep_window_ok`), which the reading
+/// loop of cell 1 pushes through.  The program checks its own hand-computed values — the k-th
+/// little-endian i16 of the bytes 0, 1, 2, ... is 514k + 256, the big-endian one 514k + 1 —
+/// and the record's position after each exit; the C must print its `ok` in the strict and the
+/// verify builds.
+#[test]
+fn a_held_file_cursor_gives_its_position_back_on_every_exit() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"// The k-th little-endian i16 of bytes 0, 1, 2, ... is 514k + 256; big-endian 514k + 1.
+fn one(f: File) -> integer { f#read(2) as i16 as integer }
+
+fn first_over(f: File, limit: integer) -> integer {
+  k = 0;
+  while k < 100 {
+    v = f#read(2) as i16 as integer;
+    if v > limit { return k; }
+    k += 1;
+  }
+  -1
+}
+
+fn main() {
+  dir = "{temp_dir() ?? "/tmp"}/loft_fh_{ticks()}";
+  assert(mkdir(dir) == FileResult.Ok, "mkdir");
+  p = "{dir}/b.bin";
+  bytes: vector<u8> = [];
+  for i in 0..40 { bytes += [(i & 255) as u8]; }
+  assert(write_bytes(p, bytes), "write");
+
+  // 1. A whole loop, then a read through the record: positions 0..4, then 5.
+  f1 = file(p);
+  f1#format = LittleEndian;
+  s1 = 0;
+  for _k in 0..5 { s1 += f1#read(2) as i16 as integer; }
+  assert(s1 == 514 * 10 + 256 * 5, "1 loop: {s1}");
+  assert(one(f1) == 514 * 5 + 256, "1 after: {one(f1)}");
+
+  // 2. A break after three: the record goes on at the fourth.
+  f2 = file(p);
+  f2#format = LittleEndian;
+  n2 = 0;
+  for _k in 0..10 { _x = f2#read(2) as i16 as integer; n2 += 1; if n2 == 3 { break; } }
+  assert(one(f2) == 514 * 3 + 256, "2 after a break");
+
+  // 3. A return from inside the loop: values 256, 770, 1284, ... the first over 1500 is k = 3
+  //    (1798), and the caller reads on at the fifth.
+  f3 = file(p);
+  f3#format = LittleEndian;
+  assert(first_over(f3, 1500) == 3, "3 return");
+  assert(one(f3) == 514 * 4 + 256, "3 after a return");
+
+  // 4. A break of the OUTER loop from the inner one, which alone holds the file (the outer
+  //    loop names the file outside a read): two rounds of two reads, the third round's first
+  //    read breaks out — five reads, and the record goes on at the sixth.
+  f4 = file(p);
+  f4#format = LittleEndian;
+  rounds = 0;
+  for r in 0..5 {
+    rounds += 1;
+    if f4#format != LittleEndian { break; }
+    for k in 0..2 {
+      _y = f4#read(2) as i16 as integer;
+      if r == 2 && k == 0 { r#break; }
+    }
+  }
+  assert(rounds == 3, "4 rounds: {rounds}");
+  assert(one(f4) == 514 * 5 + 256, "4 after an outer break");
+
+  // 5. Past the end: 20 values, the 21st read answers null and the cursor stays.
+  f5 = file(p);
+  f5#format = LittleEndian;
+  got = 0;
+  nulls = 0;
+  for _k in 0..22 { v = f5#read(2) as i16; if v == null { nulls += 1; } else { got += 1; } }
+  assert(got == 20 && nulls == 2, "5 end: {got} {nulls}");
+
+  // 6. Big-endian, the file's default.
+  f6 = file(p);
+  s6 = 0;
+  for _k in 0..4 { s6 += f6#read(2) as i16 as integer; }
+  assert(s6 == 514 * 6 + 4, "6 big-endian: {s6}");
+
+  // 7. Across the cursor's 4096-byte block: one byte, then 2499 i16s at odd offsets, one of
+  //    them straddling byte 4096; the expected sum is taken from the byte vector itself.
+  p7 = "{dir}/c.bin";
+  big: vector<u8> = [];
+  for i in 0..5000 { big += [((i * 7) & 255) as u8]; }
+  assert(write_bytes(p7, big), "write 7");
+  want = 0;
+  for k in 0..2499 {
+    lo = (big[1 + 2 * k] ?? 0) as integer;
+    hi = (big[2 + 2 * k] ?? 0) as integer;
+    v = lo + hi * 256;
+    if v >= 32768 { v = v - 65536; }
+    want += v;
+  }
+  f7 = file(p7);
+  f7#format = LittleEndian;
+  first = f7#read(1) as u8 as integer;
+  s7 = 0;
+  for _k in 0..2499 { s7 += f7#read(2) as i16 as integer; }
+  assert(first == 0 && s7 == want, "7 across the block: {first} {s7} {want}");
+  assert(delete(p7) == FileResult.Ok, "cleanup 7");
+
+  assert(delete(p) == FileResult.Ok && rmdir(dir) == FileResult.Ok, "cleanup");
+  println("ok");
+}
+"#;
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("file-hold");
+    let tmp = dir.join("tmp");
+    fa::create_dir_all(&tmp).expect("make the temporary directory");
+    let file = dir.join("hold.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .env("TMPDIR", &tmp)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        "ok\n",
+        "the interpreter"
+    );
+    let c = dir.join("hold.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let holds = text.matches("loft_fcur_hold(").count();
+    let releases = text.matches("loft_fcur_release(").count();
+    assert!(holds >= 6, "the reading loops hold their file: {holds}");
+    assert!(
+        releases > holds,
+        "the return and the outer break give the cursor back too: {releases} for {holds}"
+    );
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let run = loft::platform::process::harness_command(&exe)
+            .env("TMPDIR", &tmp)
+            .output()
+            .expect("run the C");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "ok\n",
+            "{mode}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
 }
