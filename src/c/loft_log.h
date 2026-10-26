@@ -510,3 +510,58 @@ static int loft_log_production_fault(int sev, const char *label, const char *pre
     loft_had_fatal = 1;
     return 1;
 }
+
+/* `LOFT_NATIVE_LEAK_CHECK` (`collect_store_leaks`, the generated Rust's leak tail): at a run's
+ * end, the live stores nothing pinned or locked, by type, most first — `kt=<n> <Type>×<count>`,
+ * five named and a count of the rest — as one warning the test runner reads as the verdict. */
+static void loft_leak_report(void) {
+    uint32_t *kt, *count, nk = 0, i, j, total = 0;
+    loft_text out = { 0, 0, 0 };
+    char buf[96];
+    if (!getenv("LOFT_NATIVE_LEAK_CHECK")) return;
+    kt = (uint32_t *) calloc(loft_nstores + 1, sizeof *kt);
+    count = (uint32_t *) calloc(loft_nstores + 1, sizeof *count);
+    if (!kt || !count) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (i = 0; i < loft_nstores; i++) {
+        const loft_store_t *s = &loft_stores[i];
+        if (!s->live || s->pinned || s->read_only) continue;
+        for (j = 0; j < nk && kt[j] != s->known; j++) {}
+        if (j == nk) { kt[nk] = s->known; count[nk] = 0; nk++; }
+        count[j]++;
+    }
+    /* Ordered by type number (the Rust map's key), then most-leaked first, stably. */
+    for (i = 1; i < nk; i++)
+        for (j = i; j > 0 && kt[j - 1] > kt[j]; j--) {
+            uint32_t a = kt[j], b = count[j];
+            kt[j] = kt[j - 1]; count[j] = count[j - 1]; kt[j - 1] = a; count[j - 1] = b;
+        }
+    for (i = 1; i < nk; i++)
+        for (j = i; j > 0 && count[j - 1] < count[j]; j--) {
+            uint32_t a = kt[j], b = count[j];
+            kt[j] = kt[j - 1]; count[j] = count[j - 1]; kt[j - 1] = a; count[j - 1] = b;
+        }
+    for (i = 0; i < nk; i++) {
+        if (i == 5) break;
+        if (i) loft_push(&out, ", ", 2);
+        sprintf(buf, "kt=%u ", (unsigned) kt[i]);
+        loft_push(&out, buf, strlen(buf));
+        if (kt[i] < loft_ntnames) loft_push(&out, loft_tnames[kt[i]], strlen(loft_tnames[kt[i]]));
+        else loft_push(&out, "?", 1);
+        sprintf(buf, "\xc3\x97%u", (unsigned) count[i]);
+        loft_push(&out, buf, strlen(buf));
+    }
+    total = nk;
+    if (nk > 5) {
+        sprintf(buf, " ... and %u more", (unsigned) (nk - 5));
+        loft_push(&out, buf, strlen(buf));
+    }
+    if (total) {
+        fflush(stdout);
+        fprintf(stderr, "Warning: %u stores not freed at program exit: ", (unsigned) total);
+        fwrite(out.p, 1, out.len, stderr);
+        fputc('\n', stderr);
+    }
+    free(out.p);
+    free(kt);
+    free(count);
+}

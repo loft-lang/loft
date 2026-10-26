@@ -3315,9 +3315,12 @@ fn native_c_runs_a_files_tests_one_process_each() {
     )
     .expect("write tests");
     for backend in ["--native-c", "--interpret"] {
+        // Under the leak gate, as the language suite runs `loft test`: a store the C leaves
+        // behind would fail a test that passes.
         let out = loft::platform::process::harness_command(loft)
             .args(["--tests", backend])
             .arg(&file)
+            .env("LOFT_LEAK_CHECK", "1")
             .output()
             .expect("run loft --tests");
         let all = format!(

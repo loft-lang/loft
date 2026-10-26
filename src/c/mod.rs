@@ -1482,7 +1482,7 @@ pub fn emit_program(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    {}\n    loft_start(argc, argv);\n    {}();\n    return loft_had_fatal;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    {}\n    loft_start(argc, argv);\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
         anchor(stores),
         c_name(data, main)
     );
@@ -1941,6 +1941,6 @@ pub fn emit_tests_of(
         }
         out.push_str("    }\n");
     }
-    out.push_str("    return failed ? 1 : 0;\n}\n");
+    out.push_str("    if (!failed) loft_leak_report();\n    return failed ? 1 : 0;\n}\n");
     Ok(out)
 }

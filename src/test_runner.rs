@@ -706,6 +706,7 @@ pub(crate) fn run_tests(
         db: &loft::database::Stores,
         fns: &[(u32, String)],
         abs_file: &str,
+        leak_check: bool,
     ) -> Vec<(String, Result<(), String>)> {
         let all = |msg: String| -> Vec<(String, Result<(), String>)> {
             fns.iter()
@@ -741,13 +742,23 @@ pub(crate) fn run_tests(
                 cmd.push_env("LOFT_SOURCE_DIR", dir);
             }
             cmd = cmd.stdout(std::process::Stdio::inherit());
+            if leak_check {
+                cmd.push_env("LOFT_NATIVE_LEAK_CHECK", "1");
+            }
             let out = cmd
                 .run(b"")
                 .map_err(|e| format!("native run failed: {e}"))?;
             let stderr = String::from_utf8_lossy(&out.stderr);
             eprint!("{stderr}");
             if out.status.success() {
-                Ok(())
+                // A residue is a warning with exit 0; under the gate it is the verdict.
+                match stderr
+                    .lines()
+                    .find(|l| l.contains("stores not freed at program exit"))
+                {
+                    Some(line) => Err(line.trim().to_string()),
+                    None => Ok(()),
+                }
             } else {
                 Err(native_failure(out.status, &stderr))
             }
@@ -1700,7 +1711,7 @@ pub(crate) fn run_tests(
                     }
                 } else if native_c {
                     for (fn_name, outcome) in
-                        c_file_tests(&native_data, &native_db, &native_fns, &abs_file)
+                        c_file_tests(&native_data, &native_db, &native_fns, &abs_file, leak_check)
                     {
                         let passed = outcome.is_ok();
                         file_result.tests.push((fn_name, passed, outcome.err()));
