@@ -1268,6 +1268,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     let mut bind = String::from(
         "\nstatic void loft_bind_tables(void) {\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    \
          loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
+         loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
          loft_fault_logger = loft_log_production_fault;\n",
     );
     if cx.lazy.get() {
@@ -1348,35 +1349,21 @@ fn lazy_driver_table(
 )]
 fn c_libraries(data: &Data) -> String {
     let mut out = String::new();
-    // `c_library_available` (`loft_c_library_available`): the libraries this unit carries — a
-    // shim is compiled in, so its library is there; a declared library is not linked by the
-    // unit itself and no C build opens one at run time, so it answers false as an unloaded
-    // library does on the other backends.
-    // A declared library the package ships is linked by its file; a required one known only by
-    // its soname, by the system linker's spelling of it.  An optional one the package does not
-    // ship is left out: the C opens no library at run time, so it answers unavailable.
+    // A required library is linked: the file the package ships, else its soname in the system
+    // linker's spelling.  An optional one (`[c] optional-libs`, @PLN24 arc G) never is — it is
+    // opened when its package's symbol is first called, or when `c_library_available` asks.
     let os = crate::platform::host_lib_os();
     let mut links: Vec<String> = Vec::new();
     let mut carried: Vec<String> = Vec::new();
-    // A linked library is available only when it exports every symbol its package declares
+    // A library is available only when it exports every symbol its package declares
     // (`c_libs::library_available`): the symbols each one is asked for at run time.
-    let mut syms: Vec<Vec<String>> = Vec::new();
-    for lib in data.c_libraries.iter().filter(|l| l.shim.is_empty()) {
-        let dir = std::path::Path::new(&lib.pkg_dir);
-        if let Some(file) = crate::platform::existing_lib_beside(dir, &lib.name, os) {
-            links.extend(crate::platform::c_link_args_for_file(&dir.join(file)));
-        } else if lib.optional {
-            continue;
-        } else {
-            links.push(crate::platform::c_link_arg_for_soname(&lib.name));
-        }
-        carried.push(body::c_string(&lib.name));
+    let pkg_syms = |pkg: &str| -> Vec<String> {
         let mut own: Vec<String> = (0..data.definitions())
             .filter(|&d| {
                 let def = data.def(d);
                 !def.c_sig.is_empty()
                     && def.code() == &Value::Null
-                    && data.c_owner_pkg(def.position().file.as_str()) == Some(lib.pkg_dir.as_str())
+                    && data.c_owner_pkg(def.position().file.as_str()) == Some(pkg)
             })
             .filter_map(|d| {
                 crate::c_signature::of(data, d, crate::c_signature::CTarget::host())
@@ -1386,7 +1373,75 @@ fn c_libraries(data: &Data) -> String {
             .collect();
         own.sort();
         own.dedup();
-        syms.push(own);
+        own
+    };
+    let mut syms: Vec<Vec<String>> = Vec::new();
+    let mut optional: Vec<String> = Vec::new();
+    for lib in data.c_libraries.iter().filter(|l| l.shim.is_empty()) {
+        let dir = std::path::Path::new(&lib.pkg_dir);
+        let shipped = crate::platform::existing_lib_beside(dir, &lib.name, os);
+        if lib.optional {
+            // Where `dlopen` looks: the file beside the package, else the name's spellings.
+            let mut cands: Vec<String> = Vec::new();
+            if let Some(file) = &shipped {
+                cands.push(body::c_string(&crate::file_access::portable(
+                    &dir.join(file),
+                )));
+            }
+            for v in crate::platform::lib_variants(&lib.name, os) {
+                let c = body::c_string(&v);
+                if !cands.contains(&c) {
+                    cands.push(c);
+                }
+            }
+            cands.push("0".to_string());
+            let mut own = pkg_syms(&lib.pkg_dir);
+            own.push("0".to_string());
+            let i = optional.len();
+            let _ = writeln!(
+                out,
+                "static const char *const loft_coptc{i}[] = {{ {} }};\n\
+                 static const char *const loft_copts{i}[] = {{ {} }};",
+                cands.join(", "),
+                own.join(", ")
+            );
+            optional.push(format!(
+                "{{ {}, {}, loft_coptc{i}, loft_copts{i} }}",
+                body::c_string(&lib.name),
+                body::c_string(&lib.pkg_dir)
+            ));
+            continue;
+        }
+        if let Some(file) = &shipped {
+            links.extend(crate::platform::c_link_args_for_file(&dir.join(file)));
+        } else {
+            links.push(crate::platform::c_link_arg_for_soname(&lib.name));
+        }
+        carried.push(body::c_string(&lib.name));
+        syms.push(pkg_syms(&lib.pkg_dir));
+    }
+    let _ = writeln!(
+        out,
+        "static const loft_c_optlib loft_coptlibs[] = {{ {} }};\n\
+         static const uint32_t loft_ncoptlibs = {};",
+        if optional.is_empty() {
+            "{ 0, 0, 0, 0 }".to_string()
+        } else {
+            optional.join(", ")
+        },
+        optional.len()
+    );
+    // A shim of a package with optional libraries is reached through the program's own
+    // symbols (`loft_c_lazy_sym`), which the linker exports only when asked.
+    if data.c_libraries.iter().any(|l| {
+        !l.shim.is_empty()
+            && data
+                .c_libraries
+                .iter()
+                .any(|o| o.optional && o.pkg_dir == l.pkg_dir)
+    }) && let Some(arg) = crate::platform::c_export_dynamic_arg()
+    {
+        links.push(arg.to_string());
     }
     // A shim is linked into the binary: its symbols are there, and asked for nothing.
     for lib in data.c_libraries.iter().filter(|l| !l.shim.is_empty()) {
@@ -1794,16 +1849,35 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
             }
         }
     }
-    let decl = format!(
-        "    extern {ret_text} {}({});",
-        sig.symbol,
-        if c_params.is_empty() {
-            "void".to_string()
-        } else {
-            c_params.join(", ")
-        }
-    );
-    let call = format!("{}({})", sig.symbol, args.join(", "));
+    let params_text = if c_params.is_empty() {
+        "void".to_string()
+    } else {
+        c_params.join(", ")
+    };
+    // A symbol of a package with `[c] optional-libs` is resolved when first called, through
+    // the program and then the package's optional libraries (`loft_c_lazy_sym`, @PLN24 arc G):
+    // a `#c` declaration does not name its library, so the whole package goes this way.
+    let file = def.position().file.to_string();
+    let (decl, call) = if data.c_symbol_is_lazy(&file) {
+        let pkg = data.c_owner_pkg(&file).unwrap_or_default();
+        (
+            format!(
+                "    static {ret_text} (*loft_cfp)({params_text}) = 0;\n    \
+                 if (!loft_cfp) {{ void *loft_p = loft_c_lazy_sym({}, {}); \
+                 memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
+                 if (!loft_cfp) loft_c_missing_symbol({});",
+                body::c_string(&sig.symbol),
+                body::c_string(pkg),
+                body::c_string(&sig.symbol)
+            ),
+            format!("loft_cfp({})", args.join(", ")),
+        )
+    } else {
+        (
+            format!("    extern {ret_text} {}({params_text});", sig.symbol),
+            format!("{}({})", sig.symbol, args.join(", ")),
+        )
+    };
     let mut out = format!("{decl}\n{body}");
     c_binding_result(cx, &mut out, &sig.ret, ret, &call, &frees);
     let sig_c = format!(

@@ -360,6 +360,61 @@ static const char *const *const *loft_cls = 0;
 #if defined(LOFT_POSIX_HOST)
 #include <dlfcn.h>
 #endif
+/* `[c] optional-libs` (@PLN24 arc G): a library a package works without is never linked; it is
+ * opened when a symbol of its package is first called, or when `c_library_available` asks.  Each
+ * entry: its declared name, its package, where to look (the file the package ships, else the
+ * soname's spellings) and its package's declared symbols.  Bound by a unit's `main`. */
+typedef struct { const char *name, *pkg; const char *const *cands; const char *const *syms; } loft_c_optlib;
+static const loft_c_optlib *loft_col = 0;
+static uint32_t loft_ncol = 0;
+
+#if defined(LOFT_POSIX_HOST)
+/* The handle of optional library `i`, opened once; null when none of its candidates opens. */
+static void *loft_c_optlib_open(uint32_t i) {
+    static void *handles[64];
+    static uint8_t tried[64];
+    if (i >= 64) return 0;
+    if (!tried[i]) {
+        tried[i] = 1;
+        for (const char *const *c = loft_col[i].cands; *c && !handles[i]; c++) handles[i] = dlopen(*c, RTLD_NOW);
+    }
+    return handles[i];
+}
+#endif
+
+/* `c_libs::resolve`: a `#c` symbol of a package with optional libraries — in this program
+ * (its linked libraries, its shims), else in one of the package's optional libraries, opened
+ * now.  Null when nothing exports it. */
+static void *loft_c_lazy_sym(const char *sym, const char *pkg) {
+#if defined(LOFT_POSIX_HOST)
+    void *self = dlopen(0, RTLD_LAZY), *p = self ? dlsym(self, sym) : 0;
+    for (uint32_t i = 0; !p && i < loft_ncol; i++) {
+        if (strcmp(loft_col[i].pkg, pkg) != 0) continue;
+        void *h = loft_c_optlib_open(i);
+        if (h) p = dlsym(h, sym);
+    }
+    return p;
+#else
+    (void) sym;
+    (void) pkg;
+    return 0;
+#endif
+}
+
+static void loft_panic(loft_str message, loft_str file, int64_t line);
+
+/* `c_libs::missing_symbol_message`: a call of a symbol nothing exports halts, saying why. */
+static void loft_c_missing_symbol(const char *sym) {
+    char m[512];
+    snprintf(m, sizeof m,
+             "`#c` symbol '%s' not found — it is not in this process and no loaded library exports it. If it "
+             "comes from an `[c] optional-libs` library, that library is not installed: ask "
+             "`c_library_available(\"<soname>\")` before calling. Otherwise declare the library it comes from, "
+             "or check the spelling",
+             sym);
+    loft_panic(loft_lit(m, strlen(m)), loft_lit("", 0), 0);
+}
+
 static uint8_t loft_c_library_available(loft_str name) {
     for (uint32_t i = 0; i < loft_ncl; i++) {
         if (strlen(loft_cl[i]) == name.len && memcmp(loft_cl[i], name.p, name.len) == 0) {
@@ -374,6 +429,18 @@ static uint8_t loft_c_library_available(loft_str name) {
             return 1;
         }
     }
+#if defined(LOFT_POSIX_HOST)
+    /* An optional library: available when it opens and exports every symbol its package
+     * declares (from it or from what the program already has). */
+    for (uint32_t i = 0; i < loft_ncol; i++) {
+        if (strlen(loft_col[i].name) != name.len || memcmp(loft_col[i].name, name.p, name.len) != 0) continue;
+        void *h = loft_c_optlib_open(i), *self = dlopen(0, RTLD_LAZY);
+        if (!h) return 0;
+        for (const char *const *s = loft_col[i].syms; *s; s++)
+            if (!dlsym(h, *s) && !(self && dlsym(self, *s))) return 0;
+        return 1;
+    }
+#endif
     return 0;
 }
 

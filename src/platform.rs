@@ -1681,6 +1681,18 @@ pub fn c_link_arg_for_soname(soname: &str) -> String {
     format!("-l{stem}")
 }
 
+/// The `cc` argument that exports a C backend program's own symbols to the dynamic table, so a
+/// `dlsym` over the program finds a shim linked into it (@PLN203 C5, optional libraries): GNU
+/// ld's `-rdynamic`; macOS exports them already, and Windows resolves no symbol that way.
+#[must_use]
+pub fn c_export_dynamic_arg() -> Option<&'static str> {
+    if cfg!(target_os = "linux") {
+        Some("-rdynamic")
+    } else {
+        None
+    }
+}
+
 /// The system libraries a C backend unit links (@PLN203 C4, C5): POSIX threads for `par`, and
 /// the dynamic loader `c_library_available` asks; Windows' C runtime carries both.
 #[must_use]
