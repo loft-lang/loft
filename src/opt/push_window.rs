@@ -34,7 +34,7 @@ use std::collections::{HashMap, HashSet};
 /// witness, or a user-named local record that owns its store.  Never fresh: the witness a
 /// return-buffer adoption left unallocated (`RetAdopt`: the local IS the caller's buffer), a
 /// buffer `(R-Place)` claimed in a parameter's store, and an emitter-owned buffer or witness
-/// ([`HoistOwned`]: a § V-z witness binds an element's slot).  Two arguments, or an argument
+/// ([`HoistOwned`](crate::opt::writes::HoistOwned): a § V-z witness binds an element's slot).  Two arguments, or an argument
 /// beside the return buffer, are never proven apart — a caller can hand two fields of one
 /// record — and a chain that forks (a tuple's union) or leaves the table answers nothing.
 pub struct StoreFacts<'a> {
@@ -461,7 +461,7 @@ pub(crate) fn push_loop_body(lp: &Block) -> Option<Vec<&Value>> {
 /// store, or a parameter while the root is no return buffer.  A view taken before the loop
 /// (`d = &v`) fails it, which is the point: `len(d)` in the body would go through the
 /// runtime and meet the lagging length.  And NOTHING ELSE GROWS A STORE: every other
-/// statement, and every pushed value, writes no store at all ([`may_write_store`]), so no
+/// statement, and every pushed value, writes no store at all ([`may_write_store`](crate::opt::writes::may_write_store)), so no
 /// buffer is reallocated under the base.  [`push_loop`] already secured the single exit
 /// (no `break`, `return`, `continue` or inner loop), so the close that follows the loop
 /// runs on every path out of it.
@@ -523,6 +523,17 @@ pub fn push_window_ok(
     )
 }
 
+/// The window clause's aliasing test over the `parts` of a loop body that are NOT the
+/// pushes themselves: none names a pushed root, none names a variable that may view a
+/// root's store, and none writes a store.  Shared by the scalar window
+/// ([`push_window_ok`]), the several-paths one (`generation::hoist::push_windows_ok`) and the record one
+/// ([`mint_window_ok`]).  `root_is_retbuf` is whether ANY root is the return buffer.  With
+/// `facts`, a variable whose store they prove apart from every root's (`@FR-R-Base`'s growth
+/// clause, an `@FR-R-Alias` versioned copy's runtime test) cannot view one either.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the window's facts, one per argument"
+)]
 pub(crate) fn window_parts_ok(
     parts: &[&Value],
     roots: &[u16],
@@ -812,6 +823,21 @@ pub(crate) fn copies_heap_into_fresh(
     })
 }
 
+/// `@FR-R-PushFill`'s record clause — may the record-append loop `lp`, which [`mint_loop`]
+/// answered `m` for, run its mints through a [`crate::vector::PushWindow`]?  The scalar
+/// window's condition, with a mint group's own ops as "the pushes": the fresh element's
+/// field sets write the slot the window handed out and are not store writes to this test,
+/// while their VALUE operands, the group's reservation count and every other statement are
+/// the parts that must name neither the root nor a variable that may view its store, and
+/// write no store.
+///
+/// # Errors
+///
+/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.
+#[expect(
+    clippy::too_many_lines,
+    reason = "inherited; the window test's store facts wrapped its call"
+)]
 pub fn mint_window_ok(
     lp: &Block,
     m: &MintLoop,
@@ -935,7 +961,7 @@ pub fn mint_window_ok(
 }
 
 /// @PLN157 § V-t (`@FR-R-PushRec`) — may this mint group EMIT through a push header?  The
-/// schema is asked, not the op shape: `vector_tp` — the type [`mint_target`] resolved, from
+/// schema is asked, not the op shape: `vector_tp` — the type [`mint_target`](crate::opt::writes::mint_target) resolved, from
 /// either spelling of the append — must be a plain inline-element vector (`Parts::Vector`
 /// — an `array`/`ordered` conversion holds 4-byte handles, and a keyed container's
 /// same-named ops place records), and the element a plain struct that owns no heap — a raw slot carries stale

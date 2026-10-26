@@ -3748,18 +3748,6 @@ pub fn deep_window_ok(
     )
 }
 
-/// The window clause's aliasing test over the `parts` of a loop body that are NOT the
-/// pushes themselves: none names a pushed root, none names a variable that may view a
-/// root's store, and none writes a store.  Shared by the scalar window
-/// ([`push_window_ok`]), the several-paths one ([`push_windows_ok`]) and the record one
-/// ([`mint_window_ok`]).  `root_is_retbuf` is whether ANY root is the return buffer.  With
-/// `facts`, a variable whose store they prove apart from every root's (`@FR-R-Base`'s growth
-/// clause, an `@FR-R-Alias` versioned copy's runtime test) cannot view one either.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the window's facts, one per argument"
-)]
-
 /// `@FR-R-PushFill`'s hash clause — a counted loop that inserts records into ONE hash local:
 /// the hash, its type, the most inserts one pass runs, and the loop's counters.  Reserving
 /// the table for them up front changes capacity only — never `len` or contents — so no
@@ -3889,22 +3877,6 @@ fn leaves_early(body: &Block) -> bool {
         })
     })
 }
-
-/// `@FR-R-PushFill`'s record clause — may the record-append loop `lp`, which [`mint_loop`]
-/// answered `m` for, run its mints through a [`crate::vector::PushWindow`]?  The scalar
-/// window's condition, with a mint group's own ops as "the pushes": the fresh element's
-/// field sets write the slot the window handed out and are not store writes to this test,
-/// while their VALUE operands, the group's reservation count and every other statement are
-/// the parts that must name neither the root nor a variable that may view its store, and
-/// write no store.
-///
-/// # Errors
-///
-/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.
-#[expect(
-    clippy::too_many_lines,
-    reason = "inherited; the window test's store facts wrapped its call"
-)]
 
 /// `(R-Mint)`'s rebound clause — is every `Set(root, rhs)` in `body` alias-free: a null, or
 /// the field projection of an emitter-owned buffer var (`buffers`: a § V-al loop buffer or a

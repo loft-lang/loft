@@ -1183,6 +1183,10 @@ pub fn unported_natives(data: &Data) -> Vec<String> {
 ///
 /// # Errors
 /// The first [`Refusal`], the roots' own first.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the unit in its order: runtime, tables, prototypes, bodies, entry, bind table"
+)]
 pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, Refusal> {
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
