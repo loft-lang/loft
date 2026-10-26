@@ -33,6 +33,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+/* `bool`, which a `#c` binding's signature may name (C99 spells it in this header). */
+#include <stdbool.h>
 
 /* `par` on threads (@PLN203 C4): POSIX threads on a POSIX host, the CRT's on Windows, none under
  * `-DLOFT_STRICT` (ISO C99 has no thread-local storage), `-DLOFT_NO_POSIX` or WASI, where a

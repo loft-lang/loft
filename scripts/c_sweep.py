@@ -156,8 +156,12 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         # A shared library the unit links is found at run time in its own directory.
         links += sorted({f"-Wl,-rpath,{os.path.dirname(l)}" for l in links
                          if l.endswith((".so", ".dylib")) or ".so." in l})
-        if "wasm" in modes and links:
-            return path, "refused", "a `[c] shim` archive is built for the host, not wasm32", None
+        # A wasm32 build compiles the shims' sources, which the unit names, instead of linking
+        # the host archives; a declared system library has no wasm32 build.
+        shim_sources = re.findall(r"^/\* shim-source: (.*) \*/$",
+                                  Path(c).read_text(encoding="utf-8", errors="replace"), re.M)
+        if "wasm" in modes and any(not l.endswith(".a") and not l.startswith("-Wl,") for l in links):
+            return path, "refused", "a declared C library has no wasm32 build", None
         tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
         # A program without `main` is its tests: the C runs them as `loft --tests` does,
         # and the two exit statuses say whether every test passed.
@@ -170,7 +174,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             if i_out is None:
                 i_out = i_plain = run(interp, ORACLE_TIMEOUT, cwd=src.parent)
             if mode == "wasm":
-                code, _, err = run(WASM_CC + [c, "-o", exe + ".wasm"] + WASM_LIBS, 120)
+                code, _, err = run(WASM_CC + [c] + shim_sources + ["-o", exe + ".wasm"] + WASM_LIBS, 120)
             else:
                 code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"] + links, 120)
             if code != 0:

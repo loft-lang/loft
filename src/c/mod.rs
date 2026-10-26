@@ -1274,13 +1274,14 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     Ok(out)
 }
 
-/// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim`
-/// of ONE source is `#include`d by path, so one `cc` of the unit is the whole build; one of
-/// several sources is built into its static archive by `cc` + `ar` (`c_shim::cc_archive`; off
-/// Windows the same artefact a `--static` program links) and named in a `/* link: <path> */`
-/// line for whoever compiles
-/// the unit — several sources cannot share a translation unit, since each may carry its own
-/// `static` names (the vendored BearSSL does).  A declared library (`libs`, `optional-libs`)
+/// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim` is
+/// built into its static archive by `cc` + `ar` (`c_shim::cc_archive`; off Windows the same
+/// artefact a `--static` program links) and named in a `/* link: <path> */` line for whoever
+/// compiles the unit, its sources in `/* shim-source: <path> */` lines for a wasm32 build.  A
+/// shim is never a part of the unit's own translation unit: its sources may carry `static`
+/// names of their own (the vendored BearSSL does), and a binding declares its callee by the
+/// signature the package wrote, which need only match the shim's ABI (`void *` against the
+/// shim's `void **`), not its spelling.  A declared library (`libs`, `optional-libs`)
 /// is named the same way, for the linker.  `scripts/c_sweep.py` and `tests/c_emit.rs` read
 /// the `link:` lines.
 fn c_libraries(data: &Data) -> String {
@@ -1329,16 +1330,10 @@ fn c_libraries(data: &Data) -> String {
                 "/* `#c` library {} (package {}) */",
                 lib.name, lib.pkg_dir
             );
-        } else if lib.shim.len() == 1 {
-            let _ = writeln!(
-                out,
-                "/* `[c] shim` of package {} */\n#include \"{}\"",
-                lib.pkg_dir,
-                crate::file_access::portable_str(&lib.shim[0])
-            );
         } else if let Ok(archive) = crate::c_shim::cc_archive(&lib.pkg_dir, &lib.shim) {
             // Archived by `cc` + `ar` whatever the host's static-link archiver is: `cc` links
-            // this unit, and MinGW's `ld` cannot read an MSVC archive.
+            // this unit, and MinGW's `ld` cannot read an MSVC archive.  The sources are named
+            // too, for a wasm32 build, which compiles them instead of linking the host archive.
             let _ = writeln!(
                 out,
                 "/* `[c] shim` of package {}, {} sources */\n/* link: {} */",
@@ -1346,6 +1341,13 @@ fn c_libraries(data: &Data) -> String {
                 lib.shim.len(),
                 crate::file_access::portable(&archive)
             );
+            for src in &lib.shim {
+                let _ = writeln!(
+                    out,
+                    "/* shim-source: {} */",
+                    crate::file_access::portable_str(src)
+                );
+            }
         } else {
             let _ = writeln!(
                 out,

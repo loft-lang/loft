@@ -10560,7 +10560,6 @@ fn main() {
                 .data
                 .c_libraries
                 .iter()
-                .filter(|l| l.shim.len() > 1)
                 .flat_map(|l| l.shim.iter().cloned())
                 .collect();
             if let Err(e) = c_driver::build_wasm(
