@@ -401,15 +401,26 @@ impl FnWriter<'_> {
                     K::Void,
                 )))
             }
-            // A database's explicit fetches: a C build has no driver to run them.
-            ("n_store_lazy_query" | "n_store_lazy_range", [local, rest @ ..]) => {
-                let mut all = vec![local.clone()];
-                all.extend(rest.iter().cloned());
-                let mut es = self.args(&all, ind)?.into_iter();
-                let r = as_ref(es.next().ok_or("a lazy fetch without its collection")?)?;
-                let rest: Vec<String> = es.map(|e| format!("(void) ({}), ", e.code)).collect();
+            // A database's explicit fetches (`lazy_query`, `lazy_range`), run by the runtime's
+            // sqlite source.
+            ("n_store_lazy_query", [local, condition]) => {
+                let (r, c) = self.two(name, &[local.clone(), condition.clone()], ind)?;
                 Ok(Some(E::new(
-                    format!("({}loft_lazy_db_fetch({r}))", rest.concat()),
+                    format!("loft_lazy_query({}, {})", as_ref(r)?, as_view(c)?),
+                    K::Int,
+                )))
+            }
+            ("n_store_lazy_range", [local, lo, hi]) => {
+                let es = self.args(&[local.clone(), lo.clone(), hi.clone()], ind)?;
+                let [r, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a range fetch without its three operands".to_string())?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_lazy_range({}, {}, {})",
+                        as_ref(r)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
                     K::Int,
                 )))
             }
