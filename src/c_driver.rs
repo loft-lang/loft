@@ -384,8 +384,7 @@ pub(crate) fn html_page(title: &str, wasm: &[u8]) -> String {
   memory = inst.exports.memory;
   let code = 0;
   try {{ inst.exports._start(); }}
-  catch (e) {{ if (e instanceof Exit) code = e.code; else {{ write(2, String(e) + "
-"); code = 1; }} }}
+  catch (e) {{ if (e instanceof Exit) code = e.code; else {{ write(2, String(e) + "\n"); code = 1; }} }}
   for (const fd of [1, 2]) write(fd, decs[fd].decode());
   if (code) document.title += " (exit " + code + ")";
   window.loftExit = code;
