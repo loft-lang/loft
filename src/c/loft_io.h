@@ -308,20 +308,29 @@ static char *loft_file_path(loft_ref f) {
     return loft_resolve(loft_get_text(f, 24));
 }
 
-/* The open handles a File record's byte 28 indexes (Stores::files), never reused, and which of
- * them were opened for reading only (LoftFile::reader). */
+/* The open handles a File record's byte 28 indexes (Stores::files), never reused, which of
+ * them were opened for reading only (LoftFile::reader), and the resolved path each was opened
+ * on (a delete closes this program's own handles on its path where the OS refuses an open
+ * file's: `loft_fs_delete`). */
 static FILE **loft_files = 0;
 static uint8_t *loft_files_ro = 0;
+static char **loft_files_path = 0;
 static int32_t loft_nfiles = 0;
 
-static int32_t loft_file_handle_add(FILE *h, int ro) {
+static int32_t loft_file_handle_add(FILE *h, int ro, const char *path) {
     FILE **n = (FILE **) realloc(loft_files, (size_t) (loft_nfiles + 1) * sizeof *n);
     uint8_t *r = (uint8_t *) realloc(loft_files_ro, (size_t) (loft_nfiles + 1));
-    if (!n || !r) { fputs("loft: out of memory\n", stderr); abort(); }
+    char **ps = (char **) realloc(loft_files_path, (size_t) (loft_nfiles + 1) * sizeof *ps);
+    size_t len = strlen(path);
+    char *copy = (char *) malloc(len + 1);
+    if (!n || !r || !ps || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(copy, path, len + 1);
     loft_files = n;
     loft_files_ro = r;
+    loft_files_path = ps;
     loft_files[loft_nfiles] = h;
     loft_files_ro[loft_nfiles] = (uint8_t) ro;
+    loft_files_path[loft_nfiles] = copy;
     return loft_nfiles++;
 }
 
@@ -469,8 +478,8 @@ static void loft_write_file(loft_ref f, const loft_text *bytes) {
             free(path);
             return;
         }
+        int32_t nr = loft_file_handle_add(h, 0, path);
         free(path);
-        int32_t nr = loft_file_handle_add(h, 0);
         memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
         if (format == 5) *loft_at(loft_store_of(f), f.rec, f.pos + 32) = 1;
     } else if (!(h = loft_file_writable(f, h))) {
@@ -500,12 +509,13 @@ static int64_t loft_read_file(loft_ref f, int64_t n, int text, int64_t width, ui
     if (!h) {
         char *path = loft_file_path(f);
         h = path ? fopen(path, "rb") : 0;
-        free(path);
         if (!h) {
             fprintf(stderr, "file open error: %s\n", strerror(errno));
+            free(path);
             return -1;
         }
-        int32_t nr = loft_file_handle_add(h, 1);
+        int32_t nr = loft_file_handle_add(h, 1, path);
+        free(path);
         memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
     }
     fseek(h, (long) next, SEEK_SET);
@@ -606,7 +616,23 @@ static int loft_is_dir(const char *path) {
     return loft_stat(path, &size) == 4;
 }
 
-/* OpDelete: the file goes; a directory is refused as one. */
+/* Close this program's own handles on `path`; answers whether there was one.  A later read or
+ * write through a closed handle reopens by path, as after a truncate. */
+static int loft_close_handles_on(const char *path) {
+    int closed = 0;
+    for (int32_t i = 0; i < loft_nfiles; i++) {
+        if (loft_files[i] && strcmp(loft_files_path[i], path) == 0) {
+            fclose(loft_files[i]);
+            loft_files[i] = 0;
+            closed = 1;
+        }
+    }
+    return closed;
+}
+
+/* OpDelete: the file goes; a directory is refused as one.  Windows refuses to delete a file a C
+ * stream holds open, where the other backends' handles share deletion: a failed `remove` closes
+ * this program's own handles on the path and tries once more, so `delete` answers alike. */
 static int64_t loft_fs_delete(loft_str raw) {
     char *path = loft_resolve(raw);
     if (!path) return LOFT_FS_OTHER;
@@ -614,7 +640,9 @@ static int64_t loft_fs_delete(loft_str raw) {
 #if defined(LOFT_POSIX)
     if (unlink(path) != 0) code = loft_is_dir(path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(errno);
 #else
-    if (remove(path) != 0) code = loft_fs_code(errno);
+    if (remove(path) != 0 && !(loft_close_handles_on(path) && remove(path) == 0)) {
+        code = loft_fs_code(errno);
+    }
 #endif
     free(path);
     return code;
@@ -882,12 +910,13 @@ static uint8_t loft_write_text_raw(loft_ref f, loft_str v) {
         char *path = loft_file_path(f);
         if (!path) return 0;
         h = fopen(path, "w+b");
-        free(path);
         if (!h) {
             fprintf(stderr, "loft: cannot create a file for writing: %s — write skipped\n", strerror(errno));
+            free(path);
             return 0;
         }
-        int32_t nr = loft_file_handle_add(h, 0);
+        int32_t nr = loft_file_handle_add(h, 0, path);
+        free(path);
         memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
     } else if (!(h = loft_file_writable(f, h))) {
         return 0;

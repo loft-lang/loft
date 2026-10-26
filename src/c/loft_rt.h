@@ -3169,7 +3169,17 @@ static loft_text loft_text_case(loft_str s, const loft_umap *m, size_t n, int lo
 
 /* Called first by `main`: the arguments, the clock's start, the constants. */
 static void loft_init(void);
+#if defined(_WIN32)
+#include <io.h>
+#include <fcntl.h>
+#endif
+
 static void loft_start(int argc, char **argv) {
+#if defined(_WIN32)
+    /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
     loft_argc = argc;
     loft_argv = argv;
     loft_start_us = loft_now_us();
