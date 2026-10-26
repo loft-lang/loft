@@ -22,6 +22,7 @@ pub mod names;
 pub mod native_key;
 pub mod non_sentinel;
 pub mod range;
+pub mod ret_adopt;
 pub mod store_text_borrow;
 pub mod tail_self;
 pub mod text_borrow;

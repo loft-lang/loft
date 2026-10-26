@@ -148,10 +148,10 @@ pub(crate) struct FnWriter<'a> {
     /// `LOFT_C_WHERE` reported this function's refusal already.
     where_told: bool,
     /// `@FR-R-RetAdopt` — the result local that IS the hidden return buffer
-    /// (`generation::hoist::ret_adopt`, the analysis the Rust generator reads): it builds in
+    /// (`opt::ret_adopt::ret_adopt`, the analysis the Rust generator reads): it builds in
     /// the caller's buffer, its witness store is never minted, and the delivery copy at the
     /// exit has nothing to move.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies.
-    adopt: Option<crate::generation::hoist::RetAdopt>,
+    adopt: Option<crate::opt::ret_adopt::RetAdopt>,
     /// Inside an adopted function's `one_buffer_vec_copy` delivery block.
     in_delivery: u32,
     /// `@FR-R-PushFill`'s window clause — the push windows the enclosing counted loops hold:
@@ -319,7 +319,7 @@ impl<'a> FnWriter<'a> {
             adopt: if std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0") {
                 None
             } else {
-                crate::generation::hoist::ret_adopt(cx.data, d)
+                crate::opt::ret_adopt::ret_adopt(cx.data, d)
             },
             in_delivery: 0,
             windows: Vec::new(),
@@ -684,7 +684,7 @@ impl<'a> FnWriter<'a> {
             return false;
         }
         if self.complete_mints.is_none() {
-            let c = crate::generation::hoist::complete_writes(self.cx.data, self.cx.stores, self.d);
+            let c = crate::opt::ret_adopt::complete_writes(self.cx.data, self.cx.stores, self.d);
             self.complete_mints = Some(if c.fresh_fields.is_empty() {
                 c.mint_tps
             } else {
@@ -2001,7 +2001,7 @@ impl<'a> FnWriter<'a> {
     /// travels the same route; an offered one is emptied, as the delivery's clear did.
     fn adopted_init(
         &mut self,
-        a: crate::generation::hoist::RetAdopt,
+        a: crate::opt::ret_adopt::RetAdopt,
         ind: usize,
     ) -> Result<(), String> {
         let mint =
