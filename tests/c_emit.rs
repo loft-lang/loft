@@ -308,8 +308,10 @@ fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
         let out = loft::platform::process::harness_command(&exe)
             .output()
             .expect("run the overflow program");
+        // The program is the macros under a bare `printf` main, not loft's runtime, so a
+        // Windows stdout writes `\r\n`; what is compared is the arithmetic.
         assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
             want,
             "{mode}: the overflow macros disagree with checked arithmetic"
         );
