@@ -686,7 +686,7 @@ impl<'a> FnWriter<'a> {
             && !self.where_told
             && std::env::var("LOFT_C_WHERE").is_ok_and(|w| w != "0")
             && !matches!(
-                v,
+                v.unspan(),
                 Value::Block(_) | Value::Loop(_) | Value::If(..) | Value::Insert(_)
             )
         {

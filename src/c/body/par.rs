@@ -336,7 +336,7 @@ struct WorkerCall {
 /// a tuple member by member at the offsets of its `__tuple<…>` record, a text lent.  `None` for
 /// a kind held by reference (a record).
 fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
-    Some(match tp {
+    Some(match tp.base() {
         Type::Integer(_) => match crate::data::NarrowSlot::of_type(tp) {
             Some(n) => {
                 let f = match n.get_op() {
