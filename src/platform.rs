@@ -1646,18 +1646,27 @@ pub fn c_long_bits() -> u8 {
     if cfg!(windows) { 32 } else { 64 }
 }
 
-/// The `cc` arguments that link a C library a package ships, at `file`, into a C backend
-/// program (@PLN203 C5): the file itself, and where the program finds it when it runs — a run
-/// path on Unix; on Windows the DLL is staged beside the binary (`stage_native_dlls`).
+/// The `cc` argument that links a C library a package ships, at `file`, into a C backend
+/// program (@PLN203 C5); where the program finds it at run time is [`c_rpath_arg`]'s.
 #[must_use]
 pub fn c_link_args_for_file(file: &std::path::Path) -> Vec<String> {
-    let mut out = vec![crate::file_access::portable(file)];
-    if !cfg!(windows)
-        && let Some(dir) = file.parent()
-    {
-        out.push(format!("-Wl,-rpath,{}", crate::file_access::portable(dir)));
+    vec![crate::file_access::portable(file)]
+}
+
+/// The run path a C backend program finds a linked library through (@PLN203 C5): the library's
+/// own directory (`Some`) for a program run from its build, the program's own directory
+/// (`None`: `$ORIGIN`, `@executable_path`) for one written out with its libraries beside it
+/// (`--out`).  Nothing on Windows, where the DLL is staged beside the binary.
+#[must_use]
+pub fn c_rpath_arg(dir: Option<&std::path::Path>) -> Option<String> {
+    if cfg!(windows) {
+        return None;
     }
-    out
+    Some(match dir {
+        Some(d) => format!("-Wl,-rpath,{}", crate::file_access::portable(d)),
+        None if cfg!(target_os = "macos") => "-Wl,-rpath,@executable_path".to_string(),
+        None => "-Wl,-rpath,$ORIGIN".to_string(),
+    })
 }
 
 /// The `cc` argument that links a system C library known by its soname (`libpq.so.5`) into a

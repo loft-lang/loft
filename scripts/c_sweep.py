@@ -153,6 +153,9 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             return path, "refused", "the program does not compile in loft", None
         # A `[c] shim` of several sources is a static archive the unit names (`/* link: … */`).
         links = re.findall(r"^/\* link: (.*) \*/$", Path(c).read_text(encoding="utf-8", errors="replace"), re.M)
+        # A shared library the unit links is found at run time in its own directory.
+        links += sorted({f"-Wl,-rpath,{os.path.dirname(l)}" for l in links
+                         if l.endswith((".so", ".dylib")) or ".so." in l})
         if "wasm" in modes and links:
             return path, "refused", "a `[c] shim` archive is built for the host, not wasm32", None
         tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))

@@ -237,7 +237,9 @@ pub(crate) struct Built {
     pub cached: bool,
 }
 
-/// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path.
+/// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path;
+/// `relocatable` finds the linked libraries beside the binary (`--out`) rather than where they
+/// were built.
 /// The binary is compiled under the scratch directory and published by an atomic rename, so
 /// a concurrent run of the same program reads either no binary or a complete one.  With
 /// `no_cache` the binary stays a per-process scratch file the caller deletes after the run.
@@ -250,10 +252,27 @@ pub(crate) fn build(
     tier: Tier,
     cache_dir: &std::path::Path,
     no_cache: bool,
+    relocatable: bool,
 ) -> Result<Built, BuildError> {
     let cc = cc_program();
-    let flags = cc_flags(tier);
+    let mut flags = cc_flags(tier);
     let links = link_inputs(c);
+    // Where a linked shared library is found at run time: its own directory, or the binary's
+    // when the program is written out with its libraries beside it (`--out`).
+    let ext = format!(".{}", loft::platform::dll_extension());
+    let mut rpaths: Vec<String> = Vec::new();
+    for l in &links {
+        let p = std::path::Path::new(l);
+        let shared = l.ends_with(&ext) || l.contains(".so.");
+        let dir = if relocatable { None } else { p.parent() };
+        if shared
+            && let Some(arg) = loft::platform::c_rpath_arg(dir)
+            && !rpaths.contains(&arg)
+        {
+            rpaths.push(arg);
+        }
+    }
+    flags.extend(rpaths);
     let key = build_key(c, &cc, &flags, &links);
     let exe = std::env::consts::EXE_SUFFIX;
     let cached = cache_dir.join(format!("native-c-{key}{exe}"));

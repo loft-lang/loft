@@ -11886,7 +11886,13 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 .join(".loft")
                 .join("cache");
             let t_compile = std::time::Instant::now();
-            let built = match c_driver::build(&c, tier, &cache_dir, native_cache_bypassed()) {
+            let built = match c_driver::build(
+                &c,
+                tier,
+                &cache_dir,
+                native_cache_bypassed(),
+                dist_dir.is_some(),
+            ) {
                 Ok(b) => b,
                 // @C102 — no C compiler never stops a run: it interprets, saying why where
                 // native was asked for (`--native`) or in a source checkout, and silently from a
