@@ -114,7 +114,9 @@ runners before they are written down, and what each piece buys is stated per tar
 binary: `cc` only; `--native-wasm`: all four; `--html`: clang and `lld`).
 
 **C9 — the flip.**  `--native` is the C backend; `--native-rust` the Rust writer for one
-release; then `src/generation/`, `native_adopt.rs`, `compiled_stdlib*.rs`, `native_build.rs`,
+release (the tests of the `[native] crate` mechanism itself — a package cdylib linked by C-ABI,
+a remapped symbol, a crate linked statically — run there and leave with it: the C does not
+bridge a crate, it waits for the library's own C); then `src/generation/`, `native_adopt.rs`, `compiled_stdlib*.rs`, `native_build.rs`,
 the `#rust` templates and NATIVE.md's rustc content go to history.
 
 ## Decisions this plan takes
