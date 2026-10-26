@@ -23,7 +23,7 @@ static void loft_pg_refuse(const char *path, const char *reason) {
  * recorded type, then the refusal the emitter found): 1 with the reader open, else 0. */
 static int loft_pg_begin(loft_pg *r, loft_ref local, loft_str path, const loft_sidecar *sc, const char *refusal) {
     memset(r, 0, sizeof *r);
-    if (local.store_nr == 0xFFFF || local.store_nr >= loft_nstores) return 0;
+    if (local.store_nr == 0xFFFF || local.store_nr >= loft_nstores || loft_path_refused(path)) return 0;
     char *p = loft_cpath(path, 0);
     uint16_t known = loft_stores[local.store_nr].known;
     int ok = known == 0xFFFF || loft_image_gate(p, sc, 0);

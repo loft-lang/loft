@@ -274,6 +274,16 @@ static uint32_t loft_image_live_end(const loft_store_t *s) {
     return rec == s->size ? live_end : 0;
 }
 
+/* A loader's path a name check refuses (`file_access`: a control character, a device name …),
+ * said once on stderr as file I/O says it (`loft_normalize`'s check, in loft_io.h). */
+static char *loft_normalize(loft_str raw, const char *base, int check);
+static int loft_path_refused(loft_str p) {
+    char *checked = loft_normalize(p, "", 1);
+    if (!checked) return 1;
+    free(checked);
+    return 0;
+}
+
 static char *loft_cpath(loft_str p, const char *suffix) {
     size_t extra = suffix ? strlen(suffix) : 0;
     char *c = (char *) malloc(p.len + extra + 1);
@@ -625,7 +635,7 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
 
 static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, int untrusted) {
     const char *who = untrusted ? "store_load_untrusted" : "store_load";
-    if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return 0;
+    if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores || loft_path_refused(path)) return 0;
     char *p = loft_cpath(path, 0);
     if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc, who))) {
         free(p);
