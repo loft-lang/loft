@@ -52,7 +52,8 @@ const RUNTIME: &str = concat!(
     include_str!("loft_io.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
-    include_str!("loft_net.h")
+    include_str!("loft_net.h"),
+    include_str!("loft_process.h")
 );
 
 /// Why a function cannot be written as C yet.
@@ -1650,6 +1651,12 @@ fn unit_defines(
     }) {
         out.push_str("#define LOFT_NET 1\n");
     }
+    if reached
+        .iter()
+        .any(|&d| in_binary_native(data.def(d).native()) == Some("loft_process_run"))
+    {
+        out.push_str("#define LOFT_PROCESS 1\n");
+    }
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
         let at = |f: &str| stores.position(sf, f);
@@ -1776,6 +1783,9 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
         .ctype(def.returned())
         .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
     if unloaded {
+        if let Some(runtime) = in_binary_native(def.native()) {
+            return forwarded_native(cx, d, ret, runtime);
+        }
         return unloaded_native(cx, d, ret);
     }
     let vars = def.variables();
@@ -2062,9 +2072,20 @@ fn c_binding_result(
 
 /// The body of a `#native` function whose library is not loaded: the panic the interpreter's
 /// stub raises (`compile.rs`), then the result's null for a caller that is past it.
-fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), String> {
+/// The runtime function behind a native of an `in_binary` library — one whose natives live in
+/// loft's own binary (`[native] in_binary = true`, `native.rs`' table): the C runtime carries
+/// each one the C programs reach.
+fn in_binary_native(native: &str) -> Option<&'static str> {
+    match native {
+        "n_process_run" => Some("loft_process_run"),
+        _ => None,
+    }
+}
+
+/// The parameters of a body-less declaration — its attributes, a `&` one as a pointer — each
+/// declared as `a<i>`.
+fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
     let def = cx.data.def(d);
-    // A body-less declaration has no variables: its parameters are its attributes.
     let mut params = Vec::new();
     for (i, a) in def.attributes().iter().enumerate() {
         let c = cx
@@ -2077,6 +2098,41 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
             format!("{} a{i}", passed(c))
         });
     }
+    Ok(params)
+}
+
+/// An `in_binary` native the runtime carries: a body that hands its arguments on.
+fn forwarded_native(
+    cx: &Cx,
+    d: u32,
+    ret: CType,
+    runtime: &str,
+) -> Result<(String, String), String> {
+    let params = declared_params(cx, d)?;
+    let sig = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(cx.data, d),
+        if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        }
+    );
+    let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
+    let call = format!("{runtime}({})", args.join(", "));
+    let body = if ret == CType::Void {
+        format!("    {call};\n")
+    } else {
+        format!("    return {call};\n")
+    };
+    Ok((sig, body))
+}
+
+fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), String> {
+    let def = cx.data.def(d);
+    // A body-less declaration has no variables: its parameters are its attributes.
+    let params = declared_params(cx, d)?;
     let sig = format!(
         "static {} {}({})",
         held(ret),
