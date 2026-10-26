@@ -1,8 +1,7 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 907376984..626601af9 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -1054,7 +1054,7 @@ impl StoreFacts<'_> {
+diff --git a/src/opt/push_window.rs b/src/opt/push_window.rs
+--- a/src/opt/push_window.rs
++++ b/src/opt/push_window.rs
+@@ -181,7 +181,7 @@
          };
          // A run-time test proved the two ROOTS apart: a view of a parameter's element lives
          // in that parameter's store, so it is apart from whatever the parameter is apart from.

@@ -1,8 +1,7 @@
 diff --git a/src/database/format.rs b/src/database/format.rs
-index 96855be6b..fbf3c9619 100644
 --- a/src/database/format.rs
 +++ b/src/database/format.rs
-@@ -1193,21 +1193,14 @@ impl ShowDb<'_> {
+@@ -1382,21 +1382,14 @@
              }
          } else if self.known_type == 2 {
              let v = self.store().get_single(self.rec, self.pos);
@@ -13,9 +12,9 @@ index 96855be6b..fbf3c9619 100644
 -                s.push_str("null");
 -            } else if self.loft {
 +            if self.loft {
-                 s.push_str(&ensure_decimal(&format!("{v}")));
+                 s.push_str(&ensure_decimal(&crate::ops::shortest_f32(v)));
              } else {
-                 write!(s, "{v}").unwrap();
+                 s.push_str(&crate::ops::shortest_f32(v));
              }
          } else if self.known_type == 3 {
              let v = self.store().get_float(self.rec, self.pos);
@@ -23,6 +22,6 @@ index 96855be6b..fbf3c9619 100644
 -                s.push_str("null");
 -            } else if self.loft {
 +            if self.loft {
-                 s.push_str(&ensure_decimal(&format!("{v}")));
+                 s.push_str(&ensure_decimal(&crate::ops::shortest_f64(v)));
              } else {
-                 write!(s, "{v}").unwrap();
+                 s.push_str(&crate::ops::shortest_f64(v));

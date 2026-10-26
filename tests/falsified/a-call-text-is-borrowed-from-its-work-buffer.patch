@@ -1,8 +1,7 @@
-diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
-index 95d909d6f..2264da6bb 100644
---- b/src/generation/hoist.rs
-+++ a/src/generation/hoist.rs
-@@ -4978,7 +4978,7 @@ fn own_call_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
+diff --git a/src/opt/store_text_borrow.rs b/src/opt/store_text_borrow.rs
+--- a/src/opt/store_text_borrow.rs
++++ b/src/opt/store_text_borrow.rs
+@@ -466,7 +466,7 @@
      }
      // Every return of the callee answers its work buffer.
      let is_out = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == out);
