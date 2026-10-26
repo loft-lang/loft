@@ -223,7 +223,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
         if i < n
             && !vars.is_argument(v)
             && matches!(vars.tp(v).base(), crate::data::Type::Text(_))
-            && !matches!(vars.tp(v), crate::data::Type::RefVar(_))
+            && !matches!(vars.tp(v).base(), crate::data::Type::RefVar(_))
         {
             b[i] = true;
         }
@@ -265,7 +265,7 @@ fn view_bind(cx: &Cx, vars: &Function, borrowed: &[bool], x: &Value) -> bool {
             borrowed.get(*w as usize).copied().unwrap_or(false)
                 || (vars.is_argument(*w)
                     && matches!(vars.tp(*w).base(), crate::data::Type::Text(_))
-                    && !matches!(vars.tp(*w), crate::data::Type::RefVar(_)))
+                    && !matches!(vars.tp(*w).base(), crate::data::Type::RefVar(_)))
         }
         Value::Text(_) => true,
         // A substring is left out: the C may copy its source into a statement temporary first,
