@@ -1763,9 +1763,16 @@ fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> 
             .collect()
     };
     let call = format!("{name}__fr({})", args.join(", "));
+    // The frame's name as `--native`'s `cr_call_push` and the interpreter spell it: a plain
+    // function by its source name, a method by its definition name (`t_4Tick_go`).
+    let frame_name = if def.name().starts_with("n_") {
+        def.original_name()
+    } else {
+        def.name().to_string()
+    };
     let push = format!(
         "    loft_frame_push({}, {});\n",
-        body::c_string(&def.original_name()),
+        body::c_string(&frame_name),
         body::c_string(&def.position().file)
     );
     if ret == CType::Void {

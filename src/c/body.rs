@@ -968,7 +968,14 @@ impl<'a> FnWriter<'a> {
     /// a view of another record at that moment, and refilling its store in place wrote the copy
     /// into the viewed record.  An owned store is refilled, which is its free and a fresh mint.
     fn fresh_unless_owned(&mut self, var: u16, x: &Value, first: bool, name: &str, ind: usize) {
-        if !first && !self.vars.owns_displaced_store(var, x, self.cx.data) {
+        // A witnessed local (`@FR-O-Witness`) never owns the store its slot names — its witness
+        // does — and its slot may hold a VIEW into another store when its declaration runs again
+        // in a loop; the bytecode's `OpInitRef` resets it there, so the copy mints a fresh store
+        // instead of clearing the viewed one (the hash the view was into, measured).
+        let witnessed = self.vars.owner_witness(var).is_some();
+        if (first && witnessed)
+            || (!first && !self.vars.owns_displaced_store(var, x, self.cx.data))
+        {
             self.line(ind, &format!("{name} = loft_ref_null();"));
         }
     }

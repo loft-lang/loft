@@ -287,9 +287,13 @@ pub(crate) fn source_content_hash(pkg_dirs: &[String]) -> u64 {
                 stack.push(p);
                 continue;
             }
-            let is_src = crate::file_access::extension(&p)
-                .is_some_and(|x| x.eq_ignore_ascii_case("loft"))
-                || name == "loft.toml";
+            // A `[c] shim`'s C sources are part of the library's code too: edited, the cdylib
+            // that statically linked the shim is as stale as after a `.loft` edit.
+            let is_src = crate::file_access::extension(&p).is_some_and(|x| {
+                x.eq_ignore_ascii_case("loft")
+                    || x.eq_ignore_ascii_case("c")
+                    || x.eq_ignore_ascii_case("h")
+            }) || name == "loft.toml";
             if is_src {
                 files.push(p);
             }
@@ -361,9 +365,13 @@ pub(crate) fn source_newer_than(pkg_dirs: &[String], artifact: &std::path::Path)
                 stack.push(p);
                 continue;
             }
-            let is_src = crate::file_access::extension(&p)
-                .is_some_and(|x| x.eq_ignore_ascii_case("loft"))
-                || name == "loft.toml";
+            // A `[c] shim`'s C sources are part of the library's code too: edited, the cdylib
+            // that statically linked the shim is as stale as after a `.loft` edit.
+            let is_src = crate::file_access::extension(&p).is_some_and(|x| {
+                x.eq_ignore_ascii_case("loft")
+                    || x.eq_ignore_ascii_case("c")
+                    || x.eq_ignore_ascii_case("h")
+            }) || name == "loft.toml";
             if is_src
                 && let Ok(mt) = crate::file_access::symlink_metadata(&e).and_then(|m| m.modified())
                 && newest.is_none_or(|n| mt > n)
