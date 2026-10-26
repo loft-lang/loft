@@ -463,6 +463,19 @@ fn guarded_mint(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
     Some((*v, u16::try_from(*tp).ok()?))
 }
 
+/// @PLN157 § V-y (`@FR-R-CompleteWrite`) — the literal groups whose write set is
+/// COMPLETE, so the default prefill writes nothing that survives: the parser's lowering
+/// writes every field explicitly (a named value, the declared default, the interned
+/// empty text, the null sentinel, `false`, the variant tag), and the emitter's proof is
+/// coverage of every schema field position by the group's contiguous `OpSet*`s.
+/// `db_vars` is keyed by the LOCAL (every `OpDatabase(v, …)` site must head a covering
+/// group — a var built completely in one branch and partially in another declines);
+/// `mint_tps` by the ELEMENT TYPE (every `Set(_, OpNewRecord(…, tp, …))` group in the
+/// function must cover it).  The interpreter keeps the prefill and is the oracle.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scan classifying both group heads (locals and mint types) beside its site counts"
+)]
 pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWrites {
     let def = data.def(def_nr);
     let body = def.code();
