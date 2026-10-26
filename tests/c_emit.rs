@@ -2531,3 +2531,60 @@ fn the_c_is_strict_c99_and_the_probe_wraps_where_the_checked_c_answers_null() {
         "the probed C"
     );
 }
+
+/// The C case mapping takes an ASCII run by its own rule (A-Z and a-z, no table search) and
+/// every other character through the table, the final-sigma rule included — so a text that
+/// crosses between the two answers what Rust's `str::to_lowercase` / `to_uppercase` answer.
+/// Values hand-computed: in "ΣΑΣ" the first Σ precedes a letter (σ) and the last ends the
+/// word (ς); ß upper-cases to "SS".
+#[test]
+fn the_c_case_mapping_crosses_ascii_and_the_table_as_rust_does() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("case");
+    let file = dir.join("case.loft");
+    fa::write(
+        &file,
+        "fn main() {\n\
+           println(\"{\\\"HeLLo ΣΑΣ wOrLd\\\".to_lowercase()}\");\n\
+           println(\"{\\\"àbç straße\\\".to_uppercase()}\");\n\
+           println(\"[{\\\"\\\".to_lowercase()}]\");\n\
+         }\n",
+    )
+    .expect("write program");
+    let c = dir.join("case.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let exe = dir.join("case");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the C program");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "hello σας world\nÀBÇ STRASSE\n[]\n"
+    );
+}

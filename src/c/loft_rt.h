@@ -3165,7 +3165,26 @@ static loft_text loft_text_case(loft_str s, const loft_umap *m, size_t n, int lo
     if (loft_str_is_null(s)) return loft_text_own(s);
     size_t i = 0;
     uint32_t prev = 0;
+    /* The result is about as long as the input: one reservation, not one per character. */
+    loft_reserve(&out, s.len);
     while (i < s.len) {
+        /* An ASCII run maps by its own rule, A-Z and a-z, with no table search: every ASCII
+         * letter's mapping is its other case and no other ASCII character has one. */
+        if ((uint8_t) s.p[i] < 0x80) {
+            size_t j = i;
+            while (j < s.len && (uint8_t) s.p[j] < 0x80) j++;
+            loft_reserve(&out, j - i);
+            char *d = out.p + out.len;
+            for (size_t k = i; k < j; k++) {
+                char ch = s.p[k];
+                if (lower ? (ch >= 'A' && ch <= 'Z') : (ch >= 'a' && ch <= 'z')) ch ^= 0x20;
+                *d++ = ch;
+            }
+            out.len += j - i;
+            prev = (uint8_t) s.p[j - 1];
+            i = j;
+            continue;
+        }
         size_t w;
         uint32_t c = loft_decode(s, i, &w);
         const char *to = loft_umap_find(m, n, c);
