@@ -562,7 +562,7 @@ static int64_t loft_lazy_sql_rows(loft_lazy_bind *b, const char *target, const c
         for (int k = 0; k < nk; k++) {
             int col = -1;
             for (int c = 0; c < nc; c++)
-                if (pl->cols[c].pos == pl->keys[k].position) { col = c; break; }
+                if (pl->cols[c].pos == pl->keys[k].pos) { col = c; break; }
             if (col < 0 || row[col].kind == 0) { found_all = 0; break; }
             memset(&key[k], 0, sizeof key[k]);
             const loft_sql_cell *cell = &row[col];
