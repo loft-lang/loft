@@ -4040,3 +4040,148 @@ fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
         "the refusal names the native: {err}"
     );
 }
+
+/// @PLN203 C5 — `lib/engine_host`'s kernel on the C (`loft_engine.h`) and on the interpreter,
+/// driven from outside by a WebSocket and a UDP peer, every message written out by hand: the
+/// 101 response carries the UDP cookie (`X-Loft-UDP`); the connect handler's greeting arrives
+/// (`hello 0`, the first slot's cid); a text frame is echoed; `H:<cookie>` is acked `A:0`; a
+/// seq-stamped datagram of a declared sync kind reaches `on_event` at the next tick and is
+/// echoed over the WebSocket; `quit` stops the run and the program exits 0.
+#[test]
+fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    if !have_cc() || !cfg!(unix) {
+        eprintln!("skipped: no cc on PATH, or not a POSIX host");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    for backend in ["--native-c", "--interpret"] {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .map(|a| a.port())
+            .expect("a free port");
+        let dir = scratch(&format!("kernel{}", &backend[2..]));
+        let file = dir.join("k.loft");
+        fa::write(
+            &file,
+            format!(
+                "use engine_host;\nstruct W {{ n: integer not null }}\nfn main() {{\n  \
+                 w = W {{ n: 0 }};\n  engine_host::sync_class(7);\n  \
+                 engine_host::run({port}, 5000,\n    fn(ev: engine_host::Event) {{\n      \
+                 if ev.kind == 0 {{ engine_host::send(ev.cid, \"hello {{ev.cid}}\"); }}\n      \
+                 if ev.kind == 1 {{\n        \
+                 if ev.payload == \"quit\" {{ engine_host::stop(); return; }}\n        \
+                 engine_host::broadcast(\"echo:{{ev.payload}}\");\n      }}\n    }},\n    \
+                 fn() {{ w.n += 1; }});\n}}\n"
+            ),
+        )
+        .expect("write program");
+        let mut child = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&file)
+            .env("LOFT_TIMEOUT", "120")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("start the kernel");
+        // The C build compiles first: wait for the listener.
+        let deadline = Instant::now() + Duration::from_secs(90);
+        let ws = loop {
+            if let Ok(s) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+                break s;
+            }
+            if Instant::now() > deadline || child.try_wait().ok().flatten().is_some() {
+                let _ = child.kill();
+                let out = child.wait_with_output().expect("kernel output");
+                panic!(
+                    "{backend}: the kernel never listened\n{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        ws.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        (&ws)
+            .write_all(
+                b"GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+                  Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+            )
+            .unwrap();
+        let mut head = Vec::new();
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            (&ws).read_exact(&mut b).unwrap();
+            head.push(b[0]);
+        }
+        let head = String::from_utf8_lossy(&head).to_string();
+        assert!(head.starts_with("HTTP/1.1 101 "), "{backend}: {head}");
+        assert!(
+            head.contains("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"),
+            "{backend}: the RFC 6455 sample key's accept value: {head}"
+        );
+        let cookie = head
+            .lines()
+            .find_map(|l| l.strip_prefix("X-Loft-UDP: "))
+            .unwrap_or_else(|| panic!("{backend}: no cookie: {head}"))
+            .trim()
+            .to_string();
+        assert_eq!(cookie.len(), 16, "{backend}: a 16-hex cookie: {cookie}");
+        let recv = || -> String {
+            let mut h = [0u8; 2];
+            (&ws).read_exact(&mut h).unwrap();
+            assert_eq!(h[0], 0x81, "{backend}: an unmasked final text frame");
+            let mut payload = vec![0u8; usize::from(h[1] & 0x7F)];
+            (&ws).read_exact(&mut payload).unwrap();
+            String::from_utf8(payload).unwrap()
+        };
+        let send = |text: &str| {
+            let mask = [0x21u8, 0x43, 0x65, 0x87];
+            let mut frame = vec![0x81u8, 0x80 | u8::try_from(text.len()).unwrap()];
+            frame.extend_from_slice(&mask);
+            frame.extend(text.bytes().enumerate().map(|(i, c)| c ^ mask[i % 4]));
+            (&ws).write_all(&frame).unwrap();
+        };
+        assert_eq!(recv(), "hello 0", "{backend}: the connect greeting");
+        send("ping");
+        assert_eq!(recv(), "echo:ping", "{backend}: the echo");
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        udp.set_read_timeout(Some(Duration::from_millis(300)))
+            .unwrap();
+        let mut ack = String::new();
+        for _ in 0..20 {
+            udp.send_to(format!("H:{cookie}").as_bytes(), ("127.0.0.1", port))
+                .unwrap();
+            let mut buf = [0u8; 64];
+            if let Ok((n, _)) = udp.recv_from(&mut buf) {
+                ack = String::from_utf8_lossy(&buf[..n]).to_string();
+                break;
+            }
+        }
+        assert_eq!(ack, "A:0", "{backend}: the hello's ack");
+        udp.send_to(b"S:5:7:pose", ("127.0.0.1", port)).unwrap();
+        assert_eq!(
+            recv(),
+            "echo:7:pose",
+            "{backend}: the sync datagram, at the next tick"
+        );
+        send("quit");
+        let out = child.wait_with_output().expect("kernel output");
+        assert!(
+            out.status.success(),
+            "{backend}: exit {:?}\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(&format!(
+                "engine_host: listening on ws://0.0.0.0:{port}/ (tick every 5000 us)"
+            )),
+            "{backend}: the listen line"
+        );
+    }
+}

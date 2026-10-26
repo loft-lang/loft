@@ -22,6 +22,7 @@
 #include <poll.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #if !defined(LOFT_NO_THREADS) && !defined(LOFT_STRICT)
 #include <pthread.h>
