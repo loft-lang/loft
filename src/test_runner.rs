@@ -2588,6 +2588,11 @@ pub(crate) fn run_tests(
     // exit: a suite run used to end without the summary, so a leak in a `main`-less guard
     // was invisible to the one instrument built to see it (loft#1357).  No-op unarmed.
     loft::interp::state::text_timeline_summary();
+    // The test ledger's last program is written here, not left to the C `atexit` handler: on
+    // Windows `std::process::exit` ends the process without running that table, so a run of
+    // N files recorded the first N-1.  A no-op when nothing is armed; the handler then finds
+    // nothing to write.
+    loft::ledger::flush();
     if total_fail == 0 {
         println!(
             "test result: ok. {total_pass} passed; {total_files} file{}  {scope}",
