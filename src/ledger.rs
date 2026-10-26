@@ -348,14 +348,7 @@ pub fn merge(mut existing: Vec<Entry>, rows: &[(Site, u64, u64)]) -> Vec<Entry> 
 #[cfg(not(target_arch = "wasm32"))]
 fn merge_into(path: &str, rows: &[(Site, u64, u64)]) -> Result<(), String> {
     let lock_path = format!("{path}.lock");
-    let lock = crate::file_access::open_with(
-        lock_path.as_str(),
-        std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true),
-    )
-    .map_err(|e| e.to_string())?;
+    let lock = crate::file_access::open_lock_file(lock_path.as_str()).map_err(|e| e.to_string())?;
     lock.lock().map_err(|e| e.to_string())?;
     let existing = read(path)?;
     let text = render(&merge(existing, rows));
