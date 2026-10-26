@@ -9194,14 +9194,24 @@ fn guarded_mint(stmt: &Value, data: &Data) -> Option<(u16, u16)> {
 /// group — a var built completely in one branch and partially in another declines);
 /// `mint_tps` by the ELEMENT TYPE (every `Set(_, OpNewRecord(…, tp, …))` group in the
 /// function must cover it).  The interpreter keeps the prefill and is the oracle.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scan classifying both group heads (locals and mint types) beside its site counts"
+)]
 pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWrites {
     let def = data.def(def_nr);
     let body = def.code();
     let mut out = CompleteWrites::default();
     let mut db_declined: HashSet<u16> = HashSet::new();
     let mut mint_declined: HashSet<u16> = HashSet::new();
+    // loft#2193 — complete only when EVERY site heads a covering group: a site the scan below
+    // never reaches is neither covered nor declined, so all sites are counted against it.
+    let (db_sites, mint_sites) = mint_site_counts(body, data);
+    let mut db_covered: HashMap<u16, u32> = HashMap::new();
+    let mut mint_covered: HashMap<u16, u32> = HashMap::new();
     body.any_node(&mut |n| {
-        if let Value::Block(bl) = n {
+        // A loop's body is a statement list as a block's is: its groups are classified too.
+        if let Value::Block(bl) | Value::Loop(bl) = n {
             let ops = &bl.operators;
             for (i, stmt) in ops.iter().enumerate() {
                 match stmt.unspan() {
@@ -9222,6 +9232,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                         };
                         if group_covers_type(ops, i + 1, *v, tp, data, stores, &out.fresh_fields) {
                             out.db_vars.insert(*v);
+                            *db_covered.entry(*v).or_default() += 1;
                         } else {
                             db_declined.insert(*v);
                         }
@@ -9232,6 +9243,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                     Value::If(_, _, _) if let Some((v, tp)) = guarded_mint(stmt, data) => {
                         if group_covers_type(ops, i + 1, v, tp, data, stores, &out.fresh_fields) {
                             out.db_vars.insert(v);
+                            *db_covered.entry(v).or_default() += 1;
                         } else {
                             db_declined.insert(v);
                         }
@@ -9276,6 +9288,7 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
                             ) || call_pair_covers(ops, i + 1, *e, etp, data, stores))
                         {
                             out.mint_tps.insert(ptp);
+                            *mint_covered.entry(ptp).or_default() += 1;
                         } else {
                             mint_declined.insert(ptp);
                         }
@@ -9286,9 +9299,82 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
         }
         false
     });
-    out.db_vars.retain(|v| !db_declined.contains(v));
-    out.mint_tps.retain(|t| !mint_declined.contains(t));
+    if std::env::var("LOFT_TRACE_COMPLETE_WRITE").is_ok_and(|v| v != "0") {
+        trace_complete_declines(
+            def,
+            &out,
+            (&db_covered, &db_sites),
+            (&mint_covered, &mint_sites),
+        );
+    }
+    out.db_vars
+        .retain(|v| !db_declined.contains(v) && db_covered.get(v) == db_sites.get(v));
+    out.mint_tps
+        .retain(|t| !mint_declined.contains(t) && mint_covered.get(t) == mint_sites.get(t));
     out
+}
+
+/// loft#2193 — every `OpDatabase(v, …)` site per local and every `OpNewRecord(…, tp, …)` site
+/// per type in `body`, wherever it stands: what [`complete_writes`] compares its covered
+/// sites against.
+fn mint_site_counts(body: &Value, data: &Data) -> (HashMap<u16, u32>, HashMap<u16, u32>) {
+    let mut db_sites: HashMap<u16, u32> = HashMap::new();
+    let mut mint_sites: HashMap<u16, u32> = HashMap::new();
+    body.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+        {
+            match data.def(*d).name() {
+                "OpDatabase" => {
+                    if let Some(Value::Var(v)) = args.first().map(Value::unspan) {
+                        *db_sites.entry(*v).or_default() += 1;
+                    }
+                }
+                "OpNewRecord" => {
+                    if let Some(Value::Int(ptp)) = args.get(1).map(Value::unspan)
+                        && let Ok(ptp) = u16::try_from(*ptp)
+                    {
+                        *mint_sites.entry(ptp).or_default() += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    });
+    (db_sites, mint_sites)
+}
+
+/// `LOFT_TRACE_COMPLETE_WRITE=1` — each local and type [`complete_writes`] declines because
+/// not every one of its sites heads a covering group, with the counts.
+#[allow(clippy::type_complexity)]
+fn trace_complete_declines(
+    def: &crate::data::Definition,
+    out: &CompleteWrites,
+    db: (&HashMap<u16, u32>, &HashMap<u16, u32>),
+    mint: (&HashMap<u16, u32>, &HashMap<u16, u32>),
+) {
+    for v in out.db_vars.iter().filter(|v| db.0.get(v) != db.1.get(v)) {
+        eprintln!(
+            "complete-write: {} local {} declined: {:?} of {:?} sites covered",
+            def.name(),
+            def.variables().name(*v),
+            db.0.get(v),
+            db.1.get(v)
+        );
+    }
+    for t in out
+        .mint_tps
+        .iter()
+        .filter(|t| mint.0.get(t) != mint.1.get(t))
+    {
+        eprintln!(
+            "complete-write: {} mint type {t} declined: {:?} of {:?} sites covered",
+            def.name(),
+            mint.0.get(t),
+            mint.1.get(t)
+        );
+    }
 }
 
 /// @PLN157 § V-z — one paired temp of an ELEMENT-FIRST append: the local `tmp` (declared

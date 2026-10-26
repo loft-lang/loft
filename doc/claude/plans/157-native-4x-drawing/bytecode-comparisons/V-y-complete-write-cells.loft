@@ -139,4 +139,14 @@ fn c10() {
   println("c10 {t} {len(b.ns)}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); }
+// c11 — loft#2193: one element type minted by a covering literal AND by a slice copy, whose
+// element mint sits directly in the copy loop's body and whose copy into the element is not
+// FRESH.  A type is complete only when every one of its mint sites is, so no site skips: the
+// slice's element keeps the prefill its copy's release reads.
+fn c11() {
+  recs = [S { name: "a", k: 1 }, S { name: "b", k: 2 }, S { name: "c", k: 3 }];
+  rs = recs[-2..];
+  println("c11 {len(rs)} {rs[0].name}{rs[0].k} {rs[1].name}{rs[1].k}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); }

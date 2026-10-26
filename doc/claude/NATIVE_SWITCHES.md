@@ -868,8 +868,8 @@ prefill again — with it off, a literal group the emitter PROVES writes every f
 complete by construction) calls a no-prefill `OpDatabaseNP`/`OpNewRecordNP` twin —
 and is the bisect step for a wrong default or sentinel in a literal-built record
 on native.  It leaves the null arm of a record copy into a minted element's field
-in place (that arm writes the field's default, `@C137`): the arm is what
-the copy owes a destination just created, not part of the elision.
+in place (that arm writes the field's default, `@C137`), not part of the elision.  A type is
+complete only if every mint site is; `LOFT_TRACE_COMPLETE_WRITE=1` names each one declined.
 **`LOFT_NO_LITERAL_HOIST=1`** (@PLN157 § V-x) makes an invariant loop-body vector
 literal rebuild per iteration again — with it off, `v: vector<float> = [1.0, 2.0]`
 (or an if-of-literals on a const-param field) under a loop builds ONCE per activation,
