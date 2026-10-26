@@ -1017,7 +1017,8 @@ extern int _NSGetExecutablePath(char *buf, uint32_t *size);
 static loft_text loft_program_directory(loft_str sub) {
     char buf[4096];
     buf[0] = 0;
-#if defined(__linux__)
+#if defined(__linux__) && defined(LOFT_POSIX)
+    /* `readlink` is POSIX: a LOFT_NO_POSIX build has no <unistd.h> and answers no path. */
     ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
     buf[n > 0 ? n : 0] = 0;
 #elif defined(__APPLE__)
