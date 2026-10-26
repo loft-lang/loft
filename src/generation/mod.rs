@@ -1078,7 +1078,7 @@ pub struct Output<'a> {
     /// different targets, not two names for one — and the only thing that reads
     /// their disjunction is [`Self::no_c_abi`].
     pub wasm_wasi: bool,
-    /// @PLN24 arc E, the shim route — the packages whose `[c] shim` the wasm build compiled
+    /// The shim route — the packages whose `[c] shim` the wasm build compiled
     /// to wasm32 objects and links into the module: their `#c` bindings are declared as
     /// typed externs at wasm32's widths and called directly, where every other `#c` call on
     /// a wasm target is refused.  Set by the build before emission; empty on a host target.
@@ -12668,7 +12668,7 @@ extern crate loft;"
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_c_direct_call(&self, w: &mut dyn Write, d_nr: u32) -> std::io::Result<()> {
         let def = self.data.def(d_nr);
-        // The shim route (arc E): a binding of a package whose `[c] shim` the wasm build
+        // The shim route: a binding of a package whose `[c] shim` the wasm build
         // linked into the module is called directly, at wasm32's widths.
         let via_shim = self.no_c_abi()
             && self

@@ -66,7 +66,7 @@ impl CTarget {
     }
 
     /// The wasm32 targets (`--native-wasm`, `--html`), where a package's `[c] shim` is
-    /// compiled by a C cross-compiler and linked into the module (arc E, the shim route):
+    /// compiled by a C cross-compiler and linked into the module (the shim route):
     /// ILP32 — `long` is 32 bits — and clang's wasm32 `char` is signed.
     #[must_use]
     pub fn wasm32() -> CTarget {

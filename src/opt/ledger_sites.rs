@@ -14,8 +14,9 @@
 //!
 //! Under `LOFT_LEDGER` each site `OpAddInt(a, b)` is instrumented as `__ledger(site, kind, a,
 //! b)` (`__ledger_div` for a division, which reports a zero divisor), builtins both backends
-//! call ([`crate::ledger::op`]): each answers what the operator answers and counts the site.  The rewritten operators no longer match the patterns later rewrites
-//! look for, so those decline — a ledger run is a CHECKED run, and only its speed differs.
+//! call ([`crate::ledger::op`]): each answers what the operator answers and counts the site.
+//! The instrumented calls match none of the patterns later rewrites look for, so those
+//! decline: a ledger run is a CHECKED run, and only its speed differs.
 
 use crate::data::{Data, DefType, Value};
 use crate::ledger::{self, Site};

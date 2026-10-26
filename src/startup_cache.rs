@@ -646,6 +646,10 @@ fn hashed_sources(p: &Parser, default_dir: &str) -> Vec<String> {
 ///
 /// @C70 — the whole-program bundle is the image; a library is never imaged on its own.
 #[cfg(feature = "mmap")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one road in order: who may save, the keys, the sources, the bundle, then the manifest"
+)]
 pub fn save_program(
     p: &Parser,
     script_abspath: &str,

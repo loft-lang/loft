@@ -1149,6 +1149,10 @@ fn write_twins(
 ///
 /// # Errors
 /// The first [`Refusal`], the roots' own first.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one unit in order: the reach, the runtime, the shims, the prototypes, the bodies"
+)]
 pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, Refusal> {
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.

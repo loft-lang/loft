@@ -5395,7 +5395,7 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
 /// registry-installed package) must never reach cargo.  Only inline `[dependencies]`
 /// entries are recognised (a `[dependencies.foo]` sub-table is not), matching the
 /// shape every shipped bridge manifest uses.
-/// @PLN24 arc E, the shim route — every `[c] shim` the program's packages ship, compiled to
+/// The shim route — every `[c] shim` the program's packages ship, compiled to
 /// wasm32 objects (`c_shim::wasm_objects`): the package directory with its objects, for the
 /// generator (its bindings are declared and called directly) and the link line.  A shim
 /// that does not compile for wasm32 ends the build with the compiler's words: a wasm program
@@ -10565,7 +10565,7 @@ fn main() {
             // to a sysroot symbol used to build and then trap at the call; the
             // generator refuses the call instead.
             out.wasm_wasi = true;
-            // @PLN24 arc E, the shim route — every `[c] shim` compiled to wasm32 objects and
+            // The shim route — every `[c] shim` compiled to wasm32 objects and
             // linked into the module; its bindings are then called directly.
             for (pkg, _) in &wasm_shim_objects {
                 out.wasm_shim_pkgs.push(pkg.clone());
@@ -10788,7 +10788,7 @@ fn main() {
             p.data.namespace_colliding_native_fns();
             let mut out = generation::Output::new(&p.data, &state.database);
             out.wasm_browser = true;
-            // @PLN24 arc E, the shim route (as for `--native-wasm`).
+            // The shim route, as for `--native-wasm`.
             for (pkg, _) in &wasm_shim_objects {
                 out.wasm_shim_pkgs.push(pkg.clone());
             }

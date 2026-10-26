@@ -446,7 +446,7 @@ fn stem_of(pkg_dir: &str) -> String {
     }
 }
 
-/// @PLN24 arc E, the shim route — the shim as wasm32 OBJECTS for a wasm target
+/// The shim route — the shim as wasm32 OBJECTS for a wasm target
 /// (`--native-wasm`, `--html`): each source compiled by a C cross-compiler
 /// (`LOFT_WASM_CC`, else `clang`) freestanding against the headers of `src/c/wasm/`, plus
 /// loft's own freestanding C library (`loft_wasm_libc.c`) built the same way, so one set of
