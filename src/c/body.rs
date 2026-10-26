@@ -609,7 +609,7 @@ impl<'a> FnWriter<'a> {
     /// `LOFT_NO_RECORD_PUSH` / `LOFT_NO_HEAP_RECORD_PUSH` as on native).  A path an enclosing
     /// loop holds a window on is served by that window: a reservation would move its record.
     fn window_loop<'b>(&mut self, lp: &'b Block) -> Option<WindowLoop<'b>> {
-        use crate::generation::hoist;
+        use crate::opt::push_window as hoist;
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         let data = self.cx.data;
         let open = |w: &Self, path: &crate::opt::writes::PathKey| {
