@@ -973,8 +973,7 @@ impl<'a> FnWriter<'a> {
         // in a loop; the bytecode's `OpInitRef` resets it there, so the copy mints a fresh store
         // instead of clearing the viewed one (the hash the view was into, measured).
         let witnessed = self.vars.owner_witness(var).is_some();
-        if (first && witnessed)
-            || (!first && !self.vars.owns_displaced_store(var, x, self.cx.data))
+        if (first && witnessed) || (!first && !self.vars.owns_displaced_store(var, x, self.cx.data))
         {
             self.line(ind, &format!("{name} = loft_ref_null();"));
         }

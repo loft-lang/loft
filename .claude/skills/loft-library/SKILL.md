@@ -21,6 +21,7 @@ variant ([PACKAGES_BUILD.md § Target matrix](../../../doc/claude/PACKAGES_BUILD
 |---|---|---|---|---|
 | Pure loft | ✓ | ✓ | ✓ | ✓ |
 | `#native` external (Rust) | ✓ rlib | ✓ rlib | ✓ wasm rlib | **✗ → needs a `wasm.bridge` crate** |
+| `#c` over the package's own `[c] shim` (ANSI C) | ✓ `cc` | ✓ linked | ✓ clang → wasm32 | ✓ clang → wasm32 — pure computation only (no files, clock, entropy) |
 
 **The master invariant: `interpret == native == native-wasm == browser`.** A library is not
 shipped until it produces the *same observable result* on every target it claims. That
@@ -36,6 +37,11 @@ step, because the two tiers differ by an order of magnitude:
   `loft.toml` → cross-mode test → publish. Most libraries are here; keep them here.
   (`#rust"…"` is NOT a library route: it is the standard library's own template, and the
   parser refuses it outside `default/` — @C87.)
+- **Tier 1½ — a `[c] shim`.** A native part written in ANSI C beside the loft, bound by
+  `#c` (PACKAGES_C_BINDING.md): loft builds it with `cc` for the host and with `clang` for
+  both wasm targets, so every column is ✓ from one source as long as the C is pure
+  computation (`random`, `regex`, `crypto`).  No Rust crate, no rustc, no bridge.  A shim
+  that touches files or the OS keeps the host columns and is refused at the call on wasm.
 - **Tier 2 — `#native` external Rust bindings.** The browser column has no automatic path:
   you must hand-build a **`wasm.bridge` crate** (host-import module + JS/WASI host shim). This
   is where the real cost and nearly all the bugs live. Only pay it when the library needs a

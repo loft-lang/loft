@@ -5381,6 +5381,39 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
 /// registry-installed package) must never reach cargo.  Only inline `[dependencies]`
 /// entries are recognised (a `[dependencies.foo]` sub-table is not), matching the
 /// shape every shipped bridge manifest uses.
+/// @PLN24 arc E, the shim route — every `[c] shim` the program's packages ship, compiled to
+/// wasm32 objects (`c_shim::wasm_objects`): the package directory with its objects, for the
+/// generator (its bindings are declared and called directly) and the link line.  A shim
+/// that does not compile for wasm32 ends the build with the compiler's words: a wasm program
+/// that reaches the binding could not run, and one that does not is still asked to carry a
+/// library it names, as `--native` carries every library the program loads.
+fn wasm_shim_objects_or_exit(
+    data: &loft::data::Data,
+    flag: &str,
+) -> (
+    Vec<(String, Vec<std::path::PathBuf>)>,
+    Vec<(String, String)>,
+) {
+    let mut out: Vec<(String, Vec<std::path::PathBuf>)> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
+    for lib in &data.c_libraries {
+        if lib.shim.is_empty()
+            || out.iter().any(|(p, _)| *p == lib.pkg_dir)
+            || failed.iter().any(|(p, _)| *p == lib.pkg_dir)
+        {
+            continue;
+        }
+        match loft::c_shim::wasm_objects(&lib.pkg_dir, &lib.shim) {
+            Ok(objs) => out.push((lib.pkg_dir.clone(), objs)),
+            // Not fatal: the bindings stay refused at a REACHED call, with these words — a
+            // program that never calls into the shim still builds (`{flag}` keeps the
+            // refusal's reachability scope).
+            Err(why) => failed.push((lib.pkg_dir.clone(), format!("({flag}) {why}"))),
+        }
+    }
+    (out, failed)
+}
+
 fn bridge_nonloft_deps(cargo_text: &str) -> Vec<(String, String)> {
     let mut deps = Vec::new();
     let mut in_deps = false;
@@ -10488,6 +10521,8 @@ fn main() {
         // generated source (a shared path let one rustc read another's program).
         let build_dir = platform::build_scratch_dir("wasm");
         let rs_path = build_dir.join("prog.rs");
+        let (wasm_shim_objects, wasm_shim_failed) =
+            wasm_shim_objects_or_exit(&p.data, "--native-wasm");
         {
             let mut f = match fa::create(&rs_path) {
                 Ok(f) => f,
@@ -10508,6 +10543,12 @@ fn main() {
             // to a sysroot symbol used to build and then trap at the call; the
             // generator refuses the call instead.
             out.wasm_wasi = true;
+            // @PLN24 arc E, the shim route — every `[c] shim` compiled to wasm32 objects and
+            // linked into the module; its bindings are then called directly.
+            for (pkg, _) in &wasm_shim_objects {
+                out.wasm_shim_pkgs.push(pkg.clone());
+            }
+            out.wasm_shim_failed.clone_from(&wasm_shim_failed);
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
@@ -10568,6 +10609,12 @@ fn main() {
             Some("wasm32-wasip2"),
             wasm_deps_dir.as_deref(),
         );
+        for (_, objs) in &wasm_shim_objects {
+            for o in objs {
+                cmd.push_arg("-C")
+                    .push_arg(format!("link-arg={}", o.display()));
+            }
+        }
         let status = cmd.status();
         if std::env::var("LOFT_KEEP_NATIVE_RS").is_err() {
             let _ = fa::remove_file(&rs_path);
@@ -10700,6 +10747,7 @@ fn main() {
         // from racing on the old shared scratch/loft_html.{rs,wasm}.
         let build_dir = platform::build_scratch_dir("html");
         let rs_path = build_dir.join("prog.rs");
+        let (wasm_shim_objects, wasm_shim_failed) = wasm_shim_objects_or_exit(&p.data, "--html");
         // @PLN117 — does this program actually run anything in parallel?  Set
         // from the emitted reachable set below; it is what decides whether the
         // page carries loft's thread pool.
@@ -10718,6 +10766,11 @@ fn main() {
             p.data.namespace_colliding_native_fns();
             let mut out = generation::Output::new(&p.data, &state.database);
             out.wasm_browser = true;
+            // @PLN24 arc E, the shim route (as for `--native-wasm`).
+            for (pkg, _) in &wasm_shim_objects {
+                out.wasm_shim_pkgs.push(pkg.clone());
+            }
+            out.wasm_shim_failed.clone_from(&wasm_shim_failed);
             // @PLN98 P3.4 — a browser client is debug-OFF by default (a production
             // client should not ship a live-flip / breakpoint channel): the live
             // tier is opt-IN via `--debug[=name]`.  `--lean` also forces it off.
@@ -11037,6 +11090,12 @@ fn main() {
             if let Some(ref deps) = bridge_dep_search {
                 cmd.push_arg("-L")
                     .push_arg(format!("dependency={}", deps.display()));
+            }
+        }
+        for (_, objs) in &wasm_shim_objects {
+            for o in objs {
+                cmd.push_arg("-C")
+                    .push_arg(format!("link-arg={}", o.display()));
             }
         }
         let status = cmd.status();

@@ -427,3 +427,137 @@ fn stem_of(pkg_dir: &str) -> String {
         cleaned
     }
 }
+
+/// @PLN24 arc E, the shim route — the shim as wasm32 OBJECTS for a wasm target
+/// (`--native-wasm`, `--html`): each source compiled by a C cross-compiler
+/// (`LOFT_WASM_CC`, else `clang`) freestanding against the headers of `src/c/wasm/`, plus
+/// loft's own freestanding C library (`loft_wasm_libc.c`) built the same way, so one set of
+/// objects links into the WASI module beside Rust's libc and into the browser module where
+/// there is none.  A `#c` call then reaches the shim's symbol directly, which is what makes
+/// a `[c] shim` library a wasm library too; a declared `[c] libs` entry still has no route.
+/// Cached under `native-auto/`, keyed as [`build`] keys the shared library plus the
+/// cross-compiler's identity.
+///
+/// # Errors
+/// An unreadable source, no cross-compiler, or a compile that fails — a shim that opens a
+/// file or needs a function this library does not carry is one such failure, and the right
+/// one: the browser has no files.
+pub fn wasm_objects(pkg_dir: &str, sources: &[String]) -> Result<Vec<std::path::PathBuf>, String> {
+    let (stem, paths, out_dir) = identity(pkg_dir, sources)?;
+    let cc = wasm_cc_program();
+    let key = crate::cache::stable_hash(&[
+        wasm_cc_identity(&cc).as_bytes(),
+        WASM_LIBC.as_bytes(),
+        WASM_STRING_H.as_bytes(),
+        WASM_STDLIB_H.as_bytes(),
+        WASM_STDIO_H.as_bytes(),
+    ]);
+    let dir = out_dir.join(format!("{stem}.wasm32-{key:016x}"));
+    let mut objects: Vec<std::path::PathBuf> = (0..paths.len())
+        .map(|i| dir.join(format!("{i}.o")))
+        .collect();
+    objects.push(dir.join("loft_wasm_libc.o"));
+    if objects.iter().all(crate::file_access::exists) {
+        return Ok(objects);
+    }
+    // Staged and renamed whole, as the shared library is: a concurrent build sees no
+    // directory or a complete one.
+    let stage = out_dir.join(format!(".stage-w.{}", std::process::id()));
+    let include = stage.join("include");
+    crate::file_access::create_dir_all(&include).map_err(|e| format!("cannot create {e}"))?;
+    let fail = |msg: String| {
+        let _ = crate::file_access::remove_dir_all(&stage);
+        Err(msg)
+    };
+    for (name, text) in [
+        ("string.h", WASM_STRING_H),
+        ("stdlib.h", WASM_STDLIB_H),
+        ("stdio.h", WASM_STDIO_H),
+        ("loft_wasm_libc.c", WASM_LIBC),
+    ] {
+        if let Err(e) = crate::file_access::write(include.join(name), text) {
+            return fail(format!("cannot write {name}: {e}"));
+        }
+    }
+    let mut sources_to_build: Vec<(std::path::PathBuf, std::path::PathBuf)> = paths
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.clone(), stage.join(format!("{i}.o"))))
+        .collect();
+    sources_to_build.push((
+        include.join("loft_wasm_libc.c"),
+        stage.join("loft_wasm_libc.o"),
+    ));
+    for (src, obj) in &sources_to_build {
+        let run = Spawn::new(Program::os(&cc))
+            .arg("--target=wasm32-unknown-unknown")
+            .arg("-ffreestanding")
+            .arg("-nostdlib")
+            .arg("-O2")
+            .arg("-fvisibility=default")
+            .arg("-I")
+            .arg(&include)
+            .arg("-c")
+            .arg(src)
+            .arg("-o")
+            .arg(obj)
+            .run(b"");
+        match run {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                return fail(format!(
+                    "`{}` does not compile for wasm32.\n{}",
+                    src.display(),
+                    String::from_utf8_lossy(&o.stderr).trim_end()
+                ));
+            }
+            Err(e) => {
+                return fail(format!(
+                    "a `[c] shim` on a wasm target needs a C compiler that targets wasm32 \
+                     (`clang`; LOFT_WASM_CC names another) and `{cc}` could not be run ({e})"
+                ));
+            }
+        }
+    }
+    let _ = crate::file_access::remove_dir_all(&include);
+    if !crate::file_access::exists(&dir) && crate::file_access::rename(&stage, &dir).is_err() {
+        // Another build published the same directory first; its objects are the same.
+        let _ = crate::file_access::remove_dir_all(&stage);
+    }
+    if objects.iter().all(crate::file_access::exists) {
+        Ok(objects)
+    } else {
+        Err(format!(
+            "the wasm objects were not published to {}",
+            dir.display()
+        ))
+    }
+}
+
+/// The freestanding C library and headers a shim sees on a wasm target (`src/c/wasm/`).
+const WASM_LIBC: &str = include_str!("c/wasm/loft_wasm_libc.c");
+const WASM_STRING_H: &str = include_str!("c/wasm/string.h");
+const WASM_STDLIB_H: &str = include_str!("c/wasm/stdlib.h");
+const WASM_STDIO_H: &str = include_str!("c/wasm/stdio.h");
+
+fn wasm_cc_program() -> String {
+    std::env::var("LOFT_WASM_CC").unwrap_or_else(|_| "clang".to_string())
+}
+
+fn wasm_cc_identity(cc: &str) -> String {
+    Spawn::new(Program::os(cc))
+        .arg("--version")
+        .run(b"")
+        .ok()
+        .filter(|o| o.status.success())
+        .map_or_else(
+            || cc.to_string(),
+            |o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            },
+        )
+}

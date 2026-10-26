@@ -417,9 +417,28 @@ parser reports it again, with the `use` site, if the package is actually used.
 
 #### The wasm and browser targets — arc E
 
-**A `#c` binding is refused on both wasm targets, at the call.**  `--native-wasm`
-(wasip2) and `--html` (the browser) each report one message naming the loft
-function, the C symbol, the declaring package and the target:
+**A package's `[c] shim` reaches both wasm targets; a declared library does not.**  On
+`--native-wasm` (wasip2) and `--html` (the browser) loft compiles the shim's C sources to
+wasm32 objects itself — `clang --target=wasm32-unknown-unknown`, freestanding, against the
+headers of `src/c/wasm/` and loft's own small C library (`loft_wasm_libc.c`: the string
+functions, an allocator over the module's memory, `snprintf`, `abort`) — and links them
+into the module (`c_shim::wasm_objects`, cached under `native-auto/`).  The bindings of such
+a package are declared as typed externs at **wasm32's widths** (ILP32: `long` is 32 bits)
+and called directly, exactly as `--native` calls them.  So a library whose native part is a
+`[c] shim` of pure computation — `random`, `regex`, `crypto` — is a wasm and a browser
+library with no bridge crate, from the one C source.  `LOFT_WASM_CC` names another
+compiler than `clang`; `gcc` has no wasm backend.
+
+What the shim may use there is the C the small library carries: `<string.h>`, `<stdlib.h>`,
+`<stdio.h>`'s `snprintf` (a `stderr` write goes nowhere), and the freestanding headers
+clang itself provides (`<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, `<limits.h>`).  A shim that
+opens a file, reads a clock or asks for entropy does not compile for wasm32, and that is the
+right answer — the browser has none of those — so such a package's bindings are **refused
+at the call** on the wasm targets, with the compiler's words in the message, while a program
+that never reaches them still builds (`imaging`, whose codec reads files).
+
+**A declared `[c] libs` / `optional-libs` entry is still refused at the call**, naming the
+loft function, the C symbol, the declaring package and the target:
 
 ```
 error: loft: `client_info` is bound to the C symbol 'mysql_get_client_info' with #c
@@ -429,26 +448,14 @@ error: loft: `client_info` is bound to the C symbol 'mysql_get_client_info' with
        --native-wasm claim (@PLN24 arc E)
 ```
 
-**Refused at the CALL, so a declaration is still portable.**  A library may
-declare `#c` bindings and still build for wasm as long as the wasm program does
-not reach one — the same rule `#native` follows for a routeless browser symbol.
-
-**Why refusal rather than support**, in the order the measurements came in.
-`wasm32-wasip2` links a libc, so a binding to `strlen` did *resolve* — and then
-trapped, because wasm32 is a third data model (ILP32: `long`, `size_t` and every
-pointer are 32 bits) while the extern carried the host's widths.  A symbol the
-sysroot does *not* export gave a raw linker error naming neither package nor
-library.  Neither is a capability a library can rely on: a `#c` library binds a
-system library, and there is no `dlopen` in wasm to reach one with.
-
-The two routes that do work are a **wasm implementation of the library** (the
-same answer `#native` needs — a `[wasm.bridge]`), or **hosting the C out of
-process** ([@PLN119](https://github.com/loft-lang/plans/issues/119)), where
-"another process" and "another machine" are already one mechanism.  Compiling a package's
-own `[c] shim` to wasm with a C cross-compiler is a third, and is not built: it
-needs a `wasm32-wasi` C toolchain in the build environment, and it would cover
-only a shim that is pure computation — never a database client, whose capability
-does not exist in a browser at all.
+Refused at the CALL, so a declaration is still portable: a library may declare such
+bindings and still build for wasm as long as the wasm program does not reach one.  Why a
+system library has no route: `wasm32-wasip2` links a libc, so a binding to `strlen` did
+*resolve* — and then trapped, because the extern carried the host's widths; a symbol the
+sysroot does not export gave a raw linker error naming neither package nor library; and
+there is no `dlopen` in wasm to reach a system library with.  The routes for one are a
+**wasm implementation of the library** (a `[wasm.bridge]`) or **hosting the C out of
+process** ([@PLN119](https://github.com/loft-lang/plans/issues/119)).
 
 `c_library_available` compiles on both wasm targets and answers **false** there,
 so the guard an optional backend already writes keeps working when the same

@@ -1078,6 +1078,14 @@ pub struct Output<'a> {
     /// different targets, not two names for one — and the only thing that reads
     /// their disjunction is [`Self::no_c_abi`].
     pub wasm_wasi: bool,
+    /// @PLN24 arc E, the shim route — the packages whose `[c] shim` the wasm build compiled
+    /// to wasm32 objects and links into the module: their `#c` bindings are declared as
+    /// typed externs at wasm32's widths and called directly, where every other `#c` call on
+    /// a wasm target is refused.  Set by the build before emission; empty on a host target.
+    pub wasm_shim_pkgs: Vec<String>,
+    /// The packages whose `[c] shim` did NOT compile for wasm32, with the compiler's words:
+    /// a reached binding of theirs is refused with that reason.
+    pub wasm_shim_failed: Vec<(String, String)>,
     /// When true, the host-native backend: emit `unsafe extern "C"` declarations
     /// for `#native` package functions (instead of `extern crate <pkg>`) and link
     /// each package's cdylib `.so` by C-ABI, sealing the package's Rust crate graph
@@ -1976,6 +1984,8 @@ impl<'a> Output<'a> {
             call_stack_prefix: None,
             wasm_browser: false,
             wasm_wasi: false,
+            wasm_shim_pkgs: Vec::new(),
+            wasm_shim_failed: Vec::new(),
             native_cabi: false,
             native_bind: false,
             library_unit: false,
@@ -7989,11 +7999,16 @@ fn loft_ckpt_report() {{
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the header is written from the build's whole target description"
+    )]
     fn emit_file_header(
         w: &mut dyn Write,
         data: &Data,
         wasm_browser: bool,
         no_c_abi: bool,
+        wasm_shim_pkgs: &[String],
         package_link: PackageLink,
         reachable: &HashSet<u32>,
         checkpoints: CkptMode,
@@ -8421,6 +8436,52 @@ extern crate loft;"
         // a non-wasm target's generated Rust is unchanged, byte for byte, by
         // arc E.
         let mut lazy = String::new();
+        if no_c_abi && !wasm_shim_pkgs.is_empty() {
+            // The shim route: the package's shim is linked into the module as wasm32 objects,
+            // so its symbols ARE there, at wasm32's widths — one typed extern each, called
+            // directly by `output_c_direct_call`.  A binding of any other package keeps the
+            // refusal at its call.
+            let target = crate::c_signature::CTarget::wasm32();
+            let mut declared_c: HashSet<String> = HashSet::new();
+            let mut block = String::new();
+            for d_nr in 0..data.definitions() {
+                let def = data.def(d_nr);
+                if def.c_sig.is_empty() || *def.code() != Value::Null {
+                    continue;
+                }
+                let owned = data
+                    .c_owner_pkg(def.position().file.as_str())
+                    .is_some_and(|p| wasm_shim_pkgs.iter().any(|w| w == p));
+                if !owned {
+                    continue;
+                }
+                let Some(Ok(sig)) = crate::c_signature::of(data, d_nr, target) else {
+                    continue;
+                };
+                if !declared_c.insert(sig.symbol.clone()) {
+                    continue;
+                }
+                let params = sig
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| format!("a{i}: {}", t.rust_type()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret = match sig.ret {
+                    crate::c_signature::CType::Void => String::new(),
+                    ref t => format!(" -> {}", t.rust_type()),
+                };
+                use std::fmt::Write as _;
+                let _ = writeln!(block, "    #[link_name = \"{}\"]", sig.symbol);
+                let _ = writeln!(block, "    fn __c_{}({params}){ret};", sig.symbol);
+            }
+            if !block.is_empty() {
+                writeln!(w, "unsafe extern \"C\" {{")?;
+                write!(w, "{block}")?;
+                writeln!(w, "}}")?;
+            }
+        }
         if !no_c_abi {
             let target = crate::c_signature::CTarget::host();
             let mut declared_c: HashSet<String> = HashSet::new();
@@ -8709,6 +8770,7 @@ extern crate loft;"
             self.data,
             self.wasm_browser,
             self.no_c_abi(),
+            &self.wasm_shim_pkgs,
             self.package_link(),
             &self.reachable,
             self.checkpoints,
@@ -8853,6 +8915,7 @@ extern crate loft;"
             self.data,
             self.wasm_browser,
             self.no_c_abi(),
+            &self.wasm_shim_pkgs,
             self.package_link(),
             &reachable,
             self.checkpoints,
@@ -12605,7 +12668,18 @@ extern crate loft;"
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_c_direct_call(&self, w: &mut dyn Write, d_nr: u32) -> std::io::Result<()> {
         let def = self.data.def(d_nr);
-        let target = crate::c_signature::CTarget::host();
+        // The shim route (arc E): a binding of a package whose `[c] shim` the wasm build
+        // linked into the module is called directly, at wasm32's widths.
+        let via_shim = self.no_c_abi()
+            && self
+                .data
+                .c_owner_pkg(def.position().file.as_str())
+                .is_some_and(|p| self.wasm_shim_pkgs.iter().any(|w| w == p));
+        let target = if via_shim {
+            crate::c_signature::CTarget::wasm32()
+        } else {
+            crate::c_signature::CTarget::host()
+        };
         // The declaration already reported a parse failure; emit a body anyway so
         // the wrapper compiles into a coherent error rather than an E0308 cascade.
         let Some(Ok(sig)) = crate::c_signature::of(self.data, d_nr, target) else {
@@ -12615,7 +12689,7 @@ extern crate loft;"
             )?;
             return Ok(());
         };
-        if self.no_c_abi() {
+        if self.no_c_abi() && !via_shim {
             // @PLN24 arc E — the refusal, at the only site that knows a `#c`
             // binding is actually CALLED.  Reachability-scoped for free, which
             // is the property that matters: a library declaring bindings a wasm
@@ -12641,16 +12715,23 @@ extern crate loft;"
             // this symbol's — and one of them is the shim loft built itself,
             // which arc D deliberately made indistinguishable from a declared
             // one.  The package is the thing the author can act on.
-            let from = self
-                .data
-                .c_owner_pkg(def.position().file.as_str())
-                .map_or_else(String::new, |pkg| {
-                    let stem = crate::file_access::name_of(pkg);
-                    format!(" (package `{stem}`)")
+            let owner = self.data.c_owner_pkg(def.position().file.as_str());
+            let from = owner.map_or_else(String::new, |pkg| {
+                let stem = crate::file_access::name_of(pkg);
+                format!(" (package `{stem}`)")
+            });
+            // The shim route was tried and the shim did not compile for wasm32: say why.
+            let shim_why = owner
+                .and_then(|pkg| self.wasm_shim_failed.iter().find(|(p, _)| p == pkg))
+                .map_or_else(String::new, |(_, why)| {
+                    format!(
+                        " Its `[c] shim` does not build for wasm32: {}.",
+                        why.replace('\\', "\\\\").replace('"', "\\\"")
+                    )
                 });
             writeln!(
                 w,
-                "{{ compile_error!(\"loft: `{name}` is bound to the C symbol '{}' with #c{from}, and the {which} target has no C ABI to reach it — a wasm module cannot open a shared library. Give the library a wasm implementation, host it out of process, or drop the {flag} claim\") }}",
+                "{{ compile_error!(\"loft: `{name}` is bound to the C symbol '{}' with #c{from}, and the {which} target has no C ABI to reach it — a wasm module cannot open a shared library.{shim_why} Give the library a wasm implementation, host it out of process, or drop the {flag} claim\") }}",
                 sig.symbol
             )?;
             return Ok(());
