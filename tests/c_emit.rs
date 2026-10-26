@@ -3578,6 +3578,10 @@ fn native_c_writes_a_wasm_module_a_wasi_host_runs() {
         .arg(&file)
         .output()
         .expect("run loft --native-wasm");
+    if String::from_utf8_lossy(&build.stderr).contains("toolchain is incomplete") {
+        eprintln!("skipped: no WASI sysroot for clang");
+        return;
+    }
     assert!(
         build.status.success(),
         "the module builds: {}",
@@ -3712,4 +3716,77 @@ fn main() {
         .filter_map(|l| l.split("distinct_workers=").nth(1).map(str::to_string))
         .collect();
     assert_eq!(workers, ["4", "4", "4", "1"], "workers per par loop");
+}
+
+/// @PLN203 C6 — `--native-c --html` writes a page that hosts the program's wasm32-wasi module
+/// with a WASI layer of its own: the page's script, run here under Node with a `document` of two
+/// methods, writes what the program prints into the page and records the exit status.
+/// Hand-computed: Σi² over 1..=10 = 385; a text built in a loop; a hash lookup; `exit(3)`.
+/// Skipped where clang, `wasm-ld` or Node is missing.
+#[test]
+fn native_c_html_page_runs_its_program() {
+    let have = |tool: &str| {
+        loft::platform::process::harness_command(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !have("clang") || !have("wasm-ld") || !have("node") {
+        eprintln!("skipped: needs clang, wasm-ld and node");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("html");
+    let file = dir.join("page.loft");
+    fa::write(
+        &file,
+        "struct P { k: integer, v: text }\nfn main() {\n  s = 0;\n  for i in 1..=10 { s += i * i; }\n  \
+         t = \"\";\n  for i in 0..4 { t += \"{i}-\"; }\n  h: hash<P[k]> = [P { k: 7, v: \"seven\" }];\n  \
+         println(\"{s} {t} {h[7].v}\");\n  exit(3);\n}\n",
+    )
+    .expect("write program");
+    let html = dir.join("page.html");
+    let build = loft::platform::process::harness_command(loft)
+        .args(["--native-c", "--html"])
+        .arg(&html)
+        .arg(&file)
+        .output()
+        .expect("run loft --html");
+    if String::from_utf8_lossy(&build.stderr).contains("toolchain is incomplete") {
+        eprintln!("skipped: no WASI sysroot for clang");
+        return;
+    }
+    assert!(
+        build.status.success(),
+        "the page builds: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let runner = dir.join("run.js");
+    fa::write(
+        &runner,
+        "const fs = require('fs');\n\
+         const html = fs.readFileSync(process.argv[2], 'utf8');\n\
+         const js = html.split('<script id=\"loft-run\">')[1].split('</script>')[0];\n\
+         let text = '';\n\
+         globalThis.window = globalThis;\n\
+         globalThis.document = { title: '',\n\
+           getElementById: () => ({ appendChild: (n) => { text += n.data !== undefined ? n.data : n.textContent; } }),\n\
+           createTextNode: (t) => ({ data: t }),\n\
+           createElement: () => ({ className: '', textContent: '' }) };\n\
+         eval(js);\n\
+         const t = setInterval(() => { if (window.loftExit !== undefined) { clearInterval(t);\n\
+           process.stdout.write(text + 'exit=' + window.loftExit + '\\n'); } }, 10);\n",
+    )
+    .expect("write runner");
+    let out = loft::platform::process::harness_command("node")
+        .arg(&runner)
+        .arg(&html)
+        .output()
+        .expect("run node");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "385 0-1-2-3- seven\nexit=3\n",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

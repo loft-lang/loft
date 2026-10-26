@@ -10567,6 +10567,7 @@ fn main() {
                 std::path::Path::new(wasm_out),
                 &shim_sources,
                 ship_build,
+                false,
             ) {
                 eprintln!("loft: {e}");
                 std::process::exit(1);
@@ -10711,6 +10712,43 @@ fn main() {
         } else {
             html_path.clone()
         };
+        // @PLN203 C6 — through the C: the program's wasm32-wasi module in a page that hosts it.
+        if native_c {
+            let ann =
+                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
+            let expected = |name: &str| ann.expected_failure(name);
+            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+                Ok(c) => c,
+                Err(r) => {
+                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    std::process::exit(2);
+                }
+            };
+            let shim_sources: Vec<String> = p
+                .data
+                .c_libraries
+                .iter()
+                .flat_map(|l| l.shim.iter().cloned())
+                .collect();
+            let wasm = platform::build_scratch_dir("html-c").join("prog.wasm");
+            if let Err(e) = c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true) {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+            let bytes = fa::read(&wasm).unwrap_or_default();
+            let title = fa::file_stem(&abs_file).unwrap_or_else(|| "loft".to_string());
+            let page = c_driver::html_page(&title, &bytes);
+            if let Err(e) = fa::write(&html_path, &page) {
+                eprintln!("loft: cannot write {html_path}: {e}");
+                std::process::exit(1);
+            }
+            println!(
+                "wrote {html_path} ({} KB, WASM {} KB)",
+                page.len() / 1024,
+                bytes.len() / 1024
+            );
+            return;
+        }
         // @PLN146 F5 — the fonts this page has to carry, decided BEFORE the build:
         // a manifest that cannot produce a working page should not cost a wasm
         // compile first.  Two sources, because a main script's own package is never
