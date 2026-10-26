@@ -496,19 +496,7 @@ impl<'a> Cx<'a> {
         self.copy_types.borrow_mut().insert(tp);
         let r = match &t.parts {
             // A linked group's members name one record set: its views are indexed again over
-            // the copied owner (`loft_relink_group_views`), which is a vector member.
-            Parts::Struct(fields) | Parts::EnumValue(_, fields)
-                if (0..fields.len()).any(|i| {
-                    Self::group_owner(fields, i).is_some_and(|o| {
-                        !matches!(
-                            self.stores.types[fields[o].content as usize].parts,
-                            Parts::Array(_) | Parts::Ordered(..)
-                        )
-                    })
-                }) =>
-            {
-                Err("a copy of a record whose linked group no vector member holds".to_string())
-            }
+            // the copied owner (`loft_relink_group_views`), whatever collection it is.
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 fields.iter().try_for_each(|f| self.copy_type(f.content))
             }
@@ -951,7 +939,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_trie_prefix" => Some("loft_trie_prefix"),
         "n_file_map" => Some("loft_file_map"),
         "n_store_persist_copy" => Some("loft_image_write"),
-        "n_store_load" => Some("loft_image_load"),
+        "n_store_load" | "n_store_load_untrusted" => Some("loft_image_load"),
         "n_store_memory" => Some("loft_store_memory"),
         "n_store_verify" => Some("loft_store_verify"),
         "n_store_load_key"
@@ -1015,6 +1003,7 @@ pub(crate) fn plain_native(name: &str) -> Option<&'static str> {
         "n_trie_prefix",
         "t_4hash_len",
         "n_store_load",
+        "n_store_load_untrusted",
         "n_store_persist_copy",
         "n_store_memory",
         "n_store_verify",
@@ -1038,6 +1027,8 @@ fn host_native_c(name: &str) -> Option<&'static str> {
         "n_user_directory" => Some("loft_user_directory"),
         "n_program_directory" => Some("loft_program_directory"),
         "n_set_store_lock" => Some("loft_set_store_lock"),
+        "n_store_reclaim" => Some("loft_store_reclaim"),
+        "n_yield_frame" => Some("loft_yield_frame"),
         "n_reflect_type" => Some("loft_reflect_type"),
         "n_stack_trace" => Some("loft_stack_trace"),
         "n_type_named" => Some("loft_type_named"),
@@ -1363,12 +1354,18 @@ fn anchor(stores: &Stores) -> String {
 fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
     let data = cx.data;
     let def = data.def(d);
-    if def.code() == &Value::Null {
+    // A `#native` function of a library the program does not load: the interpreter's stub
+    // (`compile.rs`) answers every call with this panic.
+    let unloaded = def.code() == &Value::Null && !def.native().is_empty();
+    if def.code() == &Value::Null && !unloaded {
         return Err(format!("native {}", def.original_name()));
     }
     let ret = cx
         .ctype(def.returned())
         .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
+    if unloaded {
+        return unloaded_native(cx, d, ret);
+    }
     let vars = def.variables();
     // The parameters are the argument variables, in number order: `ref_return` can promote a
     // local into the return buffer's place, so parameter i is not always variable i.
@@ -1452,6 +1449,65 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
         return Ok((sig, framed(cx, d, &name, &params, ret, &body)));
     }
     Ok((sig, body))
+}
+
+/// The body of a `#native` function whose library is not loaded: the panic the interpreter's
+/// stub raises (`compile.rs`), then the result's null for a caller that is past it.
+fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), String> {
+    let def = cx.data.def(d);
+    // A body-less declaration has no variables: its parameters are its attributes.
+    let mut params = Vec::new();
+    for (i, a) in def.attributes().iter().enumerate() {
+        let c = cx
+            .ctype(a.typedef.peel_link())
+            .filter(|c| *c != CType::Void)
+            .ok_or_else(|| format!("parameter of type {}", type_word(&a.typedef)))?;
+        params.push(if matches!(a.typedef.base(), Type::RefVar(_)) {
+            format!("{} *a{i}", held(c))
+        } else {
+            format!("{} a{i}", passed(c))
+        });
+    }
+    let sig = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(cx.data, d),
+        if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        }
+    );
+    let msg = format!(
+        "native function {} not loaded. Either (a) its library's native cdylib is missing or \
+         stale — commonly built against a different libloft.rlib; rebuild with `make \
+         rebuild-native-cdylibs`, or `cargo build --release` in the library's `native/` dir — or \
+         (b) a freed store was read and its poisoned contents were used as the call index, in \
+         which case the real fault is a store lifetime bug that happened EARLIER. Tell them \
+         apart: if the run is green with LOFT_POISON unset, or an earlier line reports `BUG \
+         (#306)` / a strict-store violation, it is (b) — re-run with `LOFT_STRICT_STORES=1` to \
+         name the access and the free.",
+        def.native()
+    );
+    let mut out = String::new();
+    for i in 0..params.len() {
+        let _ = writeln!(out, "    (void) a{i};");
+    }
+    let _ = writeln!(
+        out,
+        "    loft_panic(loft_lit({}, {}), loft_lit(\"\", 0), 0);",
+        body::c_string(&msg),
+        msg.len()
+    );
+    if ret != CType::Void {
+        let _ = writeln!(
+            out,
+            "    {{ {} r = {}; return r; }}",
+            held(ret),
+            cx.initial(ret)
+        );
+    }
+    Ok((sig, out))
 }
 
 /// A function of a unit that keeps frames: its body becomes `<name>__fr`, and the function

@@ -192,14 +192,14 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
     let p = parsed(
-        "struct Rc { n: integer }\nfn up() -> integer { r = Rc { n: 1 }; store_reclaim(r) }\n",
+        "struct Rc { n: integer }\nfn up() -> boolean { r = Rc { n: 1 }; store_load_url(r, \"https://example.org/x.store\", \"\") }\n",
     );
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
-        .expect_err("a store reclaim is not carried yet");
-    assert_eq!(refusal.function, "store_reclaim");
+        .expect_err("a load over a URL is not carried");
+    assert_eq!(refusal.function, "store_load_url");
     assert!(
-        refusal.why.contains("native store_reclaim"),
+        refusal.why.contains("native store_load_url"),
         "names the construct: {refusal}"
     );
 }

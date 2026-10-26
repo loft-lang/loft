@@ -317,6 +317,18 @@ impl FnWriter<'_> {
         }
     }
 
+    /// The static type of the value whose store `v` names: a variable's, and for a field of a
+    /// record (`OpGetField`) the record's — the field lives in the record's store, whose root
+    /// a whole-store native reads.
+    fn store_value_type(&self, v: &Value) -> Option<crate::data::Type> {
+        match v.unspan() {
+            Value::Call(d, args) if self.cx.data.def(*d).name() == "OpGetField" => {
+                self.store_value_type(args.first()?)
+            }
+            _ => self.value_type(v),
+        }
+    }
+
     /// The natives over a whole store — its image, its verify, its report — or `None` for
     /// another.
     fn store_native(
@@ -330,7 +342,7 @@ impl FnWriter<'_> {
                 // The image's sidecar is the store's root type's: the value's static type
                 // names it, and the runtime writes nothing for a store minted otherwise.
                 let tp = self
-                    .value_type(r)
+                    .store_value_type(r)
                     .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
                     .ok_or("a persisted value whose store type is not known here")?;
                 // The image is a deep copy of the store's root: a type the copy cannot walk
@@ -348,10 +360,10 @@ impl FnWriter<'_> {
                     K::Bool,
                 )))
             }
-            ("n_store_load", [r, path]) => {
+            ("n_store_load" | "n_store_load_untrusted", [r, path]) => {
                 // The gate reads the layout of the store's root type, the value's static type.
                 let tp = self
-                    .value_type(r)
+                    .store_value_type(r)
                     .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
                     .ok_or("a loaded value whose store type is not known here")?;
                 if self.cx.holds_stored_refs(tp) {
@@ -361,9 +373,10 @@ impl FnWriter<'_> {
                 let (r, path) = self.two(name, &[r.clone(), path.clone()], ind)?;
                 Ok(Some(E::new(
                     format!(
-                        "(uint8_t) loft_image_load({}, {}, {sc})",
+                        "(uint8_t) loft_image_load({}, {}, {sc}, {})",
                         as_ref(r)?,
-                        as_view(path)?
+                        as_view(path)?,
+                        u8::from(name == "n_store_load_untrusted")
                     ),
                     K::Bool,
                 )))
@@ -372,7 +385,7 @@ impl FnWriter<'_> {
                 // The walk reads the store's own type, so every type the value reaches is
                 // described.
                 let tp = self
-                    .value_type(r)
+                    .store_value_type(r)
                     .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
                     .ok_or("a verified value whose store type is not known here")?;
                 self.cx.name_types();
@@ -413,7 +426,7 @@ impl FnWriter<'_> {
     fn paged_plan(&mut self, name: &str, local: &Value) -> Result<PagedPlan, String> {
         use crate::database::Parts;
         let root = self
-            .value_type(local)
+            .store_value_type(local)
             .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
             .filter(|tp| (*tp as usize) < self.cx.stores.types.len())
             .ok_or("a loaded value whose store type is not known here")?;
@@ -792,8 +805,8 @@ impl FnWriter<'_> {
 
     /// `OpFillKeyed(parent, src, tp, ptp, fld)`: `coll += vector`, each element filed into the
     /// keyed collection at the parent's field (the parent itself for field `u16::MAX`) as a deep
-    /// copy under its own key.  A member of a linked group is refused: its record enters every
-    /// member, which `loft_set_keyed` does not do.
+    /// copy under its own key; in a member of a linked group the copy enters every member
+    /// (`insert_keyed_copy`'s `record_finish`).
     fn fill_keyed(
         &mut self,
         parent: &Value,
@@ -808,9 +821,15 @@ impl FnWriter<'_> {
         let tp = raw & 0x7FFF;
         let (kind, elem, _) = self.keyed_of(tp)?;
         let (place, _, coll) = self.record_collection(parent, ptp, fld, ind)?;
-        if !matches!(coll, Coll::Keyed(_)) {
-            return Err("a fill of a linked group member".into());
-        }
+        let group = match coll {
+            Coll::Keyed(_) => "0".to_string(),
+            Coll::Group(parent, members) => {
+                let (rows, n) = self.cx.member_rows(&members)?;
+                let (_, held, nullable) = self.cx.group_release(&members)?;
+                format!("&(const loft_group){{ {parent}, {rows}, {n}, {held}, {nullable} }}")
+            }
+            Coll::Vector => return Err("a fill of a vector".into()),
+        };
         self.cx.copy_type(elem)?;
         let src = self.expr(src, ind)?;
         let src = as_ref(src)?;
@@ -827,7 +846,7 @@ impl FnWriter<'_> {
         let linked = i32::from(self.cx.stores.is_linked(elem));
         Ok(E::new(
             format!(
-                "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kind}, {keys}, {nk}, {linked}, {})",
+                "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kind}, {keys}, {nk}, {linked}, {}, {group})",
                 i32::from(raw & 0x8000 != 0)
             ),
             K::Void,
@@ -880,7 +899,7 @@ impl FnWriter<'_> {
         };
         Ok(E::new(
             format!(
-                "loft_set_keyed(loft_types, {elem}, {coll}, {value}, {kind}, {keys}, {nk}, {kv}, {n}, {})",
+                "loft_set_keyed(loft_types, {elem}, {coll}, {value}, {kind}, {keys}, {nk}, {kv}, {n}, {}, 0)",
                 i32::from(raw & 0x8000 != 0)
             ),
             K::Void,

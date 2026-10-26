@@ -1399,10 +1399,22 @@ impl<'a> FnWriter<'a> {
                     .iter()
                     .filter(|o| !matches!(o.unspan(), Value::Line(_)))
                     .collect();
-                let [d, clos] = ops[..] else {
+                // The definition number is pushed first; statements between the two values
+                // (a displaced record's release) run before the closure is read.
+                let (Some(d), Some(clos)) = (ops.first(), ops.last()) else {
                     return Err("a function value read with an unexpected shape".into());
                 };
-                let (d, clos) = self.two("fn_ref_field_read", &[d.clone(), clos.clone()], ind)?;
+                if ops.len() < 2 {
+                    return Err("a function value read with an unexpected shape".into());
+                }
+                let first = self.expr(d, ind)?;
+                let dt = self.temp(CType::Int);
+                self.line(ind, &format!("{dt} = {};", as_int(first)?));
+                for o in &ops[1..ops.len() - 1] {
+                    self.stmt(o, ind)?;
+                }
+                let d = E::new(dt, K::Int);
+                let clos = self.expr(clos, ind)?;
                 self.line(
                     ind,
                     &format!(
@@ -3622,17 +3634,15 @@ impl<'a> FnWriter<'a> {
             ("OpReplaceVector", [v, other, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    return Err("a replace of a linked element type".into());
-                }
+                let f = if self.cx.stores.is_linked(tp) {
+                    "loft_vec_replace_array"
+                } else {
+                    "loft_vec_replace"
+                };
                 self.cx.copy_type(tp)?;
                 let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
                 Ok(E::new(
-                    format!(
-                        "loft_vec_replace(loft_types, {tp}, {}, {})",
-                        as_ref(v)?,
-                        as_ref(other)?
-                    ),
+                    format!("{f}(loft_types, {tp}, {}, {})", as_ref(v)?, as_ref(other)?),
                     K::Void,
                 ))
             }
@@ -3697,17 +3707,15 @@ impl<'a> FnWriter<'a> {
             ("OpMoveVector", [dst, src, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
                     .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    return Err("a move of a linked element type".into());
-                }
+                let f = if self.cx.stores.is_linked(tp) {
+                    "loft_move_vector_array"
+                } else {
+                    "loft_move_vector"
+                };
                 self.cx.copy_type(tp)?;
                 let (dst, src) = self.two(name, &[(*dst).clone(), (*src).clone()], ind)?;
                 Ok(E::new(
-                    format!(
-                        "loft_move_vector(loft_types, {tp}, {}, {})",
-                        as_ref(dst)?,
-                        as_ref(src)?
-                    ),
+                    format!("{f}(loft_types, {tp}, {}, {})", as_ref(dst)?, as_ref(src)?),
                     K::Void,
                 ))
             }

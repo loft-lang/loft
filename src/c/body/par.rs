@@ -303,7 +303,7 @@ impl FnWriter<'_> {
                     // A function row is its definition number.
                     CType::Fn => format!("loft_fn_of((int64_t) (uint32_t) {bits})"),
                     CType::Tuple(_) => stored_value(cx, "loft_e", a.typedef.base())
-                        .ok_or("a par worker over rows of tuples holding text or references")?,
+                        .ok_or("a par worker over rows of tuples holding references")?,
                     CType::Void => return Err("a par worker over rows of nothing".into()),
                 });
             } else {
@@ -333,8 +333,8 @@ struct WorkerCall {
 
 /// The value of type `tp` stored at place `at` (a `loft_ref` expression), as its C shape: a
 /// scalar through its field getter — a narrow integer through its kind's, with its `min` — and
-/// a tuple member by member at the offsets of its `__tuple<…>` record.  `None` for a kind held
-/// by reference (a text, a record).
+/// a tuple member by member at the offsets of its `__tuple<…>` record, a text lent.  `None` for
+/// a kind held by reference (a record).
 fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
     Some(match tp {
         Type::Integer(_) => match crate::data::NarrowSlot::of_type(tp) {
@@ -354,6 +354,9 @@ fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
         Type::Boolean => format!("loft_get_bool({at}, 0)"),
         Type::Character => format!("loft_get_char({at}, 0)"),
         Type::Enum(_, false, _) => format!("loft_get_enum({at}, 0)"),
+        // A tuple parameter's text is the caller's — the callee copies one it writes — so the
+        // row lends the stored bytes.
+        Type::Text(_) => format!("loft_text_lend(loft_get_text({at}, 0))"),
         Type::Tuple(elems) => {
             let offsets = crate::data::stored_tuple_offsets(cx.data, cx.stores, elems)?;
             let CType::Tuple(id) = cx.ctype(tp)? else {

@@ -14,6 +14,24 @@ static uint32_t loft_keyed_rec(loft_ref c) {
     return loft_collection_rec(loft_store_of(c), c.rec, c.pos);
 }
 
+#define LOFT_M_ARRAY 0
+#define LOFT_M_HASH 1
+#define LOFT_M_INDEX 2
+#define LOFT_M_ORDERED 3
+#define LOFT_M_SPATIAL 4
+#define LOFT_M_TRIE 5
+
+/* One member of a linked group: its field's byte position, its kind (an index and an ordered
+ * share LOFT_M_INDEX) and its key parts. */
+typedef struct { uint32_t pos; int kind; const loft_key *keys; int nk; } loft_member;
+
+/* A linked group a keyed write files into (`@FR-Col-Group`): the struct holding it, its members,
+ * the record type, whether a vector member holds the records and whether they are `vector<S?>`
+ * elements (`loft_group_finish`). */
+typedef struct { loft_ref parent; const loft_member *m; int n; int held; int nullable; } loft_group;
+static void loft_group_finish(const loft_tdesc *T, uint16_t elem, int held, int nullable, loft_ref parent,
+                              loft_ref rec, const loft_member *m, int n);
+
 /* A new entry of an index (Stores::record_new): a record of its own in the collection's store,
  * naming at byte 4 the record that holds the collection, filed by `finish` once its fields are
  * written. */
@@ -476,7 +494,8 @@ static loft_ref loft_keyed_find(loft_ref c, int kind, uint32_t size, const loft_
  * the subscript's key (or, with no full subscript, under its own), replacing the element that
  * key named; a value the bind gives up is freed. */
 static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref value, int kind,
-                           const loft_key *keys, int nk, const loft_kv *sub, int nsub, int free_source) {
+                           const loft_key *keys, int nk, const loft_kv *sub, int nsub, int free_source,
+                           const loft_group *g) {
     if (value.store_nr == 0xFFFF || value.rec == 0 || c.store_nr == 0xFFFF || c.rec == 0) return;
     uint32_t size = T[etp].size;
     int full = nsub > 0 && nsub == nk;
@@ -516,7 +535,9 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     loft_copy_bytes(e, 0, source, 0, size);
     loft_copy_claims(T, etp, source, e);
     if (full) for (int i = 0; i < n; i++) loft_key_set(e, &keys[i], key[i]);
-    if (kind == LOFT_KEYED_HASH) (void) loft_hash_insert(T, etp, c, e, keys, nk, 0);
+    /* A member of a linked group: the record enters every member (`record_finish`). */
+    if (g) loft_group_finish(T, etp, g->held, g->nullable, g->parent, e, g->m, g->n);
+    else if (kind == LOFT_KEYED_HASH) (void) loft_hash_insert(T, etp, c, e, keys, nk, 0);
     else if (kind == LOFT_KEYED_SORTED) loft_sorted_finish(c, size, keys, nk);
     else if (kind == LOFT_KEYED_INDEX) (void) loft_ix_insert(T, etp, c, e, keys, nk, 0);
     else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
@@ -533,7 +554,7 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
  * before the first insert, which may grow a store they share.  A source the bind gives up is
  * freed. */
 static void loft_fill_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref src, int kind,
-                            const loft_key *keys, int nk, int linked, int free_source) {
+                            const loft_key *keys, int nk, int linked, int free_source, const loft_group *g) {
     if (src.store_nr == 0xFFFF || src.store_nr >= loft_nstores) return;
     int64_t len = loft_vec_len(src);
     uint32_t width = linked ? 4u : T[etp].size;
@@ -552,7 +573,7 @@ static void loft_fill_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_
             recs[n++] = slot;
         }
     }
-    for (int64_t i = 0; i < n; i++) loft_set_keyed(T, etp, c, recs[i], kind, keys, nk, 0, 0, 0);
+    for (int64_t i = 0; i < n; i++) loft_set_keyed(T, etp, c, recs[i], kind, keys, nk, 0, 0, 0, g);
     free(recs);
     if (free_source && src.store_nr != c.store_nr && !loft_free_protected(src)) loft_free_ref(src);
 }
@@ -635,6 +656,39 @@ static void loft_vec_add_array(const loft_tdesc *T, uint16_t tp, loft_ref v, lof
         }
         loft_vec_finish(v);
     }
+}
+
+/* OpReplaceVector of a linked element type (Stores::vector_replace): an absent source leaves the
+ * destination absent; else the destination emptied — an array's clear is the plain reset — and
+ * the source's records copied in as `loft_vec_add_array` copies them. */
+static void loft_vec_replace_array(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref o) {
+    int absent = o.store_nr == 0xFFFF
+        || (o.rec != 0 && o.pos != 0 && loft_u32(loft_store_of(o), o.rec, o.pos) == 0xFFFFFFFFu);
+    if (absent) {
+        loft_vec_clear(v);
+        if (v.store_nr != 0xFFFF && v.rec != 0 && v.pos != 0) loft_set_u32(loft_store_of(v), v.rec, v.pos, 0xFFFFFFFFu);
+        return;
+    }
+    if (v.store_nr == o.store_nr) {
+        uint32_t dr = loft_u32(loft_store_of(v), v.rec, v.pos);
+        if (dr != 0 && dr == loft_u32(loft_store_of(o), o.rec, o.pos)) return;
+    }
+    loft_vec_clear(v);
+    loft_vec_add_array(T, tp, v, o);
+}
+
+/* OpMoveVector of a linked element type (Stores::move_vector): the slot list handed over within
+ * one store into an empty destination, else its records copied. */
+static void loft_move_vector_array(const loft_tdesc *T, uint16_t tp, loft_ref dst, loft_ref src) {
+    if (src.store_nr == 0xFFFF || src.rec == 0 || dst.store_nr == 0xFFFF || dst.rec == 0) return;
+    uint32_t h = loft_collection_rec(loft_store_of(src), src.rec, src.pos);
+    if (h == 0) return;
+    if (src.store_nr == dst.store_nr && loft_collection_rec(loft_store_of(dst), dst.rec, dst.pos) == 0) {
+        loft_set_u32(loft_store_of(dst), dst.rec, dst.pos, h);
+        loft_set_u32(loft_store_of(src), src.rec, src.pos, 0);
+        return;
+    }
+    loft_vec_add_array(T, tp, dst, src);
 }
 
 /* Stores::insert_vector_element of a linked element type: a record-id slot inserted at `index`,
@@ -756,16 +810,6 @@ static void loft_array_append(loft_ref v, loft_ref rec) {
     loft_vec_finish(v);
 }
 
-#define LOFT_M_ARRAY 0
-#define LOFT_M_HASH 1
-#define LOFT_M_INDEX 2
-#define LOFT_M_ORDERED 3
-#define LOFT_M_SPATIAL 4
-#define LOFT_M_TRIE 5
-
-/* One member of a linked group: its field's byte position, its kind (an index and an ordered
- * share LOFT_M_INDEX) and its key parts. */
-typedef struct { uint32_t pos; int kind; const loft_key *keys; int nk; } loft_member;
 
 /* Does keyed member `m` of `parent` file record `dr` under its own key? */
 static int loft_member_files(loft_ref parent, const loft_member *m, loft_ref dr) {
@@ -880,38 +924,57 @@ static void loft_index_group(loft_ref primary, uint32_t prim, int nullable, cons
     }
 }
 
+/* One record a group's owner holds, filed into every view of that owner. */
+static void loft_relink_record(const loft_tdesc *T, const loft_tdesc *d, uint16_t o, loft_ref to, loft_ref r) {
+    for (uint16_t v = 0; v < d->n; v++) {
+        const loft_fld *vf = &d->fields[v];
+        if (!vf->view || vf->group != o + 1u) continue;
+        const loft_tdesc *vt = &T[vf->type];
+        /* A null element of a `vector<S?>` owner has no key (view 2). */
+        if (vf->view == 2 && *loft_at(loft_store_of(r), r.rec, 8) != 2) continue;
+        loft_ref c = loft_field(to, vf->pos);
+        if (vt->kind == LOFT_T_HASH) (void) loft_hash_insert(0, 0, c, r, vt->keys, vt->nk, 1);
+        else if (vt->kind == LOFT_T_INDEX) (void) loft_ix_insert(0, 0, c, r, vt->keys, vt->nk, 1);
+        else if (vt->kind == LOFT_T_RADIX || vt->kind == LOFT_T_TRIE)
+            (void) loft_rx_insert_record(0, 0, c, r, vt->keys, vt->nk, vt->kind == LOFT_T_TRIE, 1);
+        else if (vt->kind == LOFT_T_ORDERED && vt->nk) (void) loft_ordered_insert(0, 0, c, r, vt->keys, vt->nk, 1);
+        else if (vt->kind == LOFT_T_ORDERED) loft_array_append(c, r);
+    }
+}
+
 /* `relink_group_views`: every view member of record `to` indexed over the records its copied
- * owner holds, in the owner's order, as inserts through the owner would — a later record under
- * a repeated key takes the key, the state the source settled to.  An owner is a vector member
- * (a slot list of record numbers); a view only unlinks what it displaces, so nothing the owner
- * holds is freed. */
+ * owner holds, in the owner's order (`for_each_owned_child`), as inserts through the owner
+ * would — a later record under a repeated key takes the key, the state the source settled to.
+ * A view only unlinks what it displaces, so nothing the owner holds is freed. */
 static void loft_relink_group_views(const loft_tdesc *T, uint16_t tp, loft_ref to) {
     const loft_tdesc *d = &T[tp];
     for (uint16_t o = 0; o < d->n; o++) {
         const loft_fld *of = &d->fields[o];
-        if (of->view || of->group != o + 1u || T[of->type].kind != LOFT_T_ORDERED) continue;
+        if (of->view || of->group != o + 1u) continue;
         loft_ref owner = loft_field(to, of->pos);
-        int64_t len = loft_vec_len(owner);
-        uint32_t arr = loft_collection_rec(loft_store_of(owner), owner.rec, owner.pos);
-        if (len == 0 || arr == 0) continue;
-        for (int64_t i = 0; i < len; i++) {
-            loft_ref r = { owner.store_nr, loft_u32(loft_store_of(owner), arr, 8 + 4 * (uint32_t) i), 8 };
-            if (r.rec == 0) continue;
-            for (uint16_t v = 0; v < d->n; v++) {
-                const loft_fld *vf = &d->fields[v];
-                if (!vf->view || vf->group != o + 1u) continue;
-                const loft_tdesc *vt = &T[vf->type];
-                /* A null element of a `vector<S?>` owner has no key (view 2). */
-                if (vf->view == 2 && *loft_at(loft_store_of(r), r.rec, 8) != 2) continue;
-                loft_ref c = loft_field(to, vf->pos);
-                if (vt->kind == LOFT_T_HASH) (void) loft_hash_insert(0, 0, c, r, vt->keys, vt->nk, 1);
-                else if (vt->kind == LOFT_T_INDEX) (void) loft_ix_insert(0, 0, c, r, vt->keys, vt->nk, 1);
-                else if (vt->kind == LOFT_T_RADIX || vt->kind == LOFT_T_TRIE)
-                    (void) loft_rx_insert_record(0, 0, c, r, vt->keys, vt->nk, vt->kind == LOFT_T_TRIE, 1);
-                else if (vt->kind == LOFT_T_ORDERED && vt->nk) (void) loft_ordered_insert(0, 0, c, r, vt->keys, vt->nk, 1);
-                else if (vt->kind == LOFT_T_ORDERED) loft_array_append(c, r);
-            }
+        uint8_t kind = T[of->type].kind;
+        uint32_t n = 0, *ids = 0;
+        if (kind == LOFT_T_HASH) {
+            loft_hent *all = loft_h_entries_of(owner, &n);
+            for (uint32_t i = 0; i < n; i++) loft_relink_record(T, d, o, to, all[i].e);
+            free(all);
+            continue;
         }
+        if (kind == LOFT_T_INDEX) ids = loft_bt_records(owner, &n);
+        else if (kind == LOFT_T_RADIX || kind == LOFT_T_TRIE) ids = loft_rx_records(owner, &n);
+        else if (kind == LOFT_T_ORDERED) {
+            int64_t len = loft_vec_len(owner);
+            uint32_t arr = loft_collection_rec(loft_store_of(owner), owner.rec, owner.pos);
+            if (len == 0 || arr == 0) continue;
+            ids = (uint32_t *) malloc((size_t) len * 4);
+            if (!ids) { fputs("loft: out of memory\n", stderr); abort(); }
+            for (int64_t i = 0; i < len; i++) ids[n++] = loft_u32(loft_store_of(owner), arr, 8 + 4 * (uint32_t) i);
+        }
+        for (uint32_t i = 0; i < n; i++) {
+            loft_ref r = { owner.store_nr, ids[i], 8 };
+            if (r.rec != 0) loft_relink_record(T, d, o, to, r);
+        }
+        free(ids);
     }
 }
 

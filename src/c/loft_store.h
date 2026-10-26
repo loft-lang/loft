@@ -1125,6 +1125,43 @@ static loft_usage loft_st_usage(const loft_store_t *s) {
     return u;
 }
 
+/* `Store::shrink_to` (a heap store): the buffer cut to `words`, never under the end of the last
+ * claimed block nor the two-word floor, and the free space left above it re-tiled as one block
+ * ending the store, the free tree rebuilt (`retile_tail`).  0 when it did not shrink. */
+static int loft_st_shrink_to(loft_store_t *s, uint32_t words) {
+    if (s->read_only) return 0;
+    loft_flush_parked(s);
+    loft_usage u = loft_st_usage(s);
+    if (!u.walk_complete) return 0;
+    uint32_t mark = u.live_end_words;
+    if (words < mark) return 0;
+    if (words < LOFT_ST_PRIMARY + 1) words = LOFT_ST_PRIMARY + 1;
+    if (words >= s->size) return 0;
+    uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) words * 8);
+    if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+    s->buf = b;
+    s->size = words;
+    uint32_t tail = mark > LOFT_ST_PRIMARY ? mark : LOFT_ST_PRIMARY;
+    if (tail < s->size) loft_set_free_header(s, tail, (int32_t) (s->size - tail));
+    loft_fl_rebuild(s);
+    return 1;
+}
+
+/* `Store::reclaim_tail`: parked blocks flushed and the free blocks merged, lazy frees off for
+ * good, and the tail given back down to the live end plus an eighth of slack (`slack_target`);
+ * the words it shrank by. */
+static uint32_t loft_st_reclaim_tail(loft_store_t *s) {
+    loft_flush_parked(s);
+    if (s->needs_coalesce) loft_coalesce_free(s);
+    s->lazy = 0;
+    s->dead_words = 0;
+    loft_bits_clear(&s->lazy_free);
+    uint32_t before = s->size;
+    uint32_t mark = loft_st_usage(s).live_end_words;
+    uint32_t target = mark + mark / 8 < mark ? UINT32_MAX : mark + mark / 8;
+    return loft_st_shrink_to(s, target) ? before - s->size : 0;
+}
+
 /* `Store::claim_at`: the record at exactly `pos`, `size` words, carved out of the free blocks
  * that cover it (an image's tombstones are placed this way). */
 static uint32_t loft_st_claim_at(loft_store_t *s, uint32_t pos, uint32_t size) {

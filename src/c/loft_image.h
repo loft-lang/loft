@@ -452,10 +452,28 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc, const char 
  * keeping its type and its liveness; its allocator state is re-derived from the image's own
  * blocks (`Store::load`: no parked lists, no lazy frees).  0 when the gate refuses the file, it
  * cannot be read, or it is not a store image. */
-static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc) {
+/* `Store::validate_structure`: the block chain of `words` words from word 1 partitions the image
+ * — no zero-size block, none past the end — so nothing walks garbage headers. */
+static int loft_image_structure_ok(const uint8_t *bytes, uint32_t words) {
+    uint32_t pos = LOFT_ST_PRIMARY;
+    while (pos < words) {
+        int32_t claim;
+        memcpy(&claim, bytes + (size_t) pos * 8, 4);
+        uint32_t span = claim < 0 ? (uint32_t) -(int64_t) claim : (uint32_t) claim;
+        if (span == 0 || (uint64_t) pos + span > words) return 0;
+        pos += span;
+    }
+    return pos == words;
+}
+
+/* `store_load` (`load_path`), and with `untrusted` `store_load_untrusted`
+ * (`load_path_untrusted`): an image whose block structure does not hold is rejected before it is
+ * adopted, and the slot keeps the store it had. */
+static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, int untrusted) {
+    const char *who = untrusted ? "store_load_untrusted" : "store_load";
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return 0;
     char *p = loft_cpath(path, 0);
-    if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc, "store_load"))) {
+    if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc, who))) {
         free(p);
         return 0;
     }
@@ -484,6 +502,10 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc) {
     bytes = (uint8_t *) realloc(bytes, (size_t) words * 8);
     if (!bytes) { fputs("loft: out of memory\n", stderr); abort(); }
     memset(bytes + n, 0, (size_t) words * 8 - n);
+    if (untrusted && !loft_image_structure_ok(bytes, words)) {
+        free(bytes);
+        return 0;
+    }
     loft_store_t *s = &loft_stores[r.store_nr];
     free(s->buf);
     s->buf = bytes;

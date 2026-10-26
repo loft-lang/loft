@@ -67,7 +67,7 @@ def corpus() -> list[str]:
 
 # The interpreter is the oracle, and the slowest of the runs: a program near a minute on it
 # (tests/scripts/2177-…, ~60 s alone) timed out under a full sweep's load and read as a differ.
-ORACLE_TIMEOUT = 180
+ORACLE_TIMEOUT = 300
 
 
 def run(cmd, timeout, cwd=None, env=None):

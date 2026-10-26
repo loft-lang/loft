@@ -715,6 +715,26 @@ static void loft_set_store_lock(loft_ref r, uint8_t locked) {
     loft_stores[r.store_nr].read_only = locked == 1;
 }
 
+/* A text lent as a `loft_text` that owns nothing (capacity 0): a borrowed member of a by-value
+ * tuple, which no one frees or writes. */
+static loft_text loft_text_lend(loft_str s) {
+    loft_text t;
+    t.p = (char *) s.p;
+    t.len = s.len;
+    t.cap = 0;
+    return t;
+}
+
+/* `yield_frame()`: a compiled program has no host loop to return to, so a frame-driven program
+ * runs straight through, as `--native` does. */
+static void loft_yield_frame(void) {}
+
+/* `store_reclaim(r)` (`Stores::reclaim_store`): the bytes the store holding `r` gave back. */
+static int64_t loft_store_reclaim(loft_ref r) {
+    if (r.store_nr >= loft_nstores) return 0;
+    return (int64_t) loft_st_reclaim_tail(&loft_stores[r.store_nr]) * 8;
+}
+
 static uint8_t loft_get_store_lock(loft_ref r) {
     return (uint8_t) (r.rec != 0 && r.store_nr < loft_nstores && loft_stores[r.store_nr].read_only);
 }
