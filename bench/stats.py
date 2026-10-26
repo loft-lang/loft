@@ -729,6 +729,11 @@ def main():
     ap.add_argument("--coarse-us", type=float, default=200.0,
                     help="a row timed over fewer microseconds than this is flagged coarse")
     ap.add_argument("--tsv", default="")
+    ap.add_argument("--subject", default="",
+                    help="the arc this run belongs to, filed with every routine's row in the "
+                         "checkout's local results (portal/local.py); LOFT_RESULT_SUBJECT too")
+    ap.add_argument("--no-local", action="store_true",
+                    help="file nothing in the local results (portal/local.py)")
     ap.add_argument("--build-jobs", type=int, default=5,
                     help="programs compiled at the same time, each at low priority")
     ap.add_argument("--batch", type=int, default=20,
@@ -864,6 +869,15 @@ def main():
         print(f"# {lane} lane not built for {bench}: {why}")
     for bench, name, want, got in C_MISMATCHES:
         failed.append((f"{bench}/{name}", f"the checked C answers hash {got}, the twin {want}"))
+    if out_rows and not a.no_local:
+        # Every run, full or partial, is kept per routine in the checkout (git-ignored): the
+        # committed history holds full runs only (bench/README.md § Local results).
+        sys.path.insert(0, os.path.join(HERE, "portal"))
+        import local
+        local.record_stats(out_rows, lanes, stamp, a.subject or local.subject_default(),
+                           "stats.py " + " ".join(sys.argv[1:]))
+        print(f"# filed {len(out_rows)} routine(s) in bench/portal/local/ "
+              f"(subject {a.subject or local.subject_default()}; portal/local.py shows them)")
     if a.tsv:
         keys = sorted({k for r in out_rows for k in r})
         keys = ["bench", "routine"] + [k for k in keys if k not in ("bench", "routine")]

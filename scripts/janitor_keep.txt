@@ -15,6 +15,7 @@ fuzz/corpus                          # the fuzzer's accumulated inputs: fuzzing 
 fuzz/artifacts                       # the crashes it found
 registry-signing-key.*               # a key is never swept
 tests/fixtures/libs/*/native/.cargo  # machine-specific linker configuration, on disk on purpose (.gitignore says why)
+bench/portal/local                   # every measurement this checkout took (bench/portal/local.py): nothing regenerates it
 tools/viewer/bin                     # the frozen viewer binary
 tools/viewer/BUILD_NOTES.md
 

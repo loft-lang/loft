@@ -172,6 +172,10 @@ make perf-trend [ARGS="--routine ease"]   # how each routine MOVED over the comm
                                          #   the commits each point sits between (the bisect
                                          #   range).  A report; ratios compare within one
                                          #   machine only
+make perf-local [ARGS="13/split"]        # every measurement THIS checkout took — each stats.py
+                                         #   run, full or partial, per routine, tagged by
+                                         #   --subject; hand prices via `local.py add`.  Local,
+                                         #   never committed — bench/README.md § Local results
 python3 bench/stats.py                   # native vs the Rust reference per bench routine, as
                                          #   STATISTICS: --n calibrated per lane, a warm-up
                                          #   round dropped, 7 interleaved samples pinned to the

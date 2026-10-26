@@ -145,6 +145,24 @@ can sit over its bar repeatably (a cloud Xeon read `sum_loop` at 3.1–3.5 again
 laptop), which is a calibration question to raise, never a reason to re-bless the oracle
 on that box.
 
+## Local results: `portal/local.py`
+
+Every `stats.py` run, full or partial, files each routine's row per lane in
+`bench/portal/local/<bench>/<routine>.tsv` — git-ignored, kept by the disk janitor, never
+committed: the committed history (`portal/results/<host>.tsv`) is full runs only.  A row
+carries its commit (`*` when the tree was dirty), the lane, ns/op, spread and the ratio to the
+Rust twin, and a SUBJECT: the arc it was taken for (`--subject c-store-port`, or
+`LOFT_RESULT_SUBJECT`; `-` without one).  `--no-local` files nothing.
+
+```
+make perf-local ARGS="13/split"                 # one routine's every measurement
+make perf-local ARGS="14 --subject c-store-port --lane c --last 3"
+make perf-local ARGS=subjects                   # the subjects, newest first
+python3 bench/portal/local.py add 13_stdlib_text/split --lane c-probe --value 4.69e9 \
+    --unit instructions --subject c-store-port --note "hand-priced: adopted buffer"
+python3 bench/portal/local.py import run.tsv --subject s   # a saved `--tsv` run
+```
+
 ## The portal: where we stand, by class
 
 `bench/portal/` turns the measurements into ONE page —
