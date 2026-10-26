@@ -14,6 +14,8 @@
     scripts/c_sweep.py --poison         # the store poison modes instead: the C built with
                                         # -DLOFT_POISON / -DLOFT_POISON_CLAIM against the
                                         # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1
+    scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
+                                        # wasmtime instead (LOFT_WASM_CC names another clang)
     LOFT_BIN=<loft> scripts/c_sweep.py  # another build (default target/release/loft)
 
 For each program: `loft --emit-c` writes it as C, `cc` builds it in each macro mode of
@@ -58,6 +60,24 @@ POISON_MODES = {
     "poison-claim": (["-DLOFT_POISON_CLAIM", "-w"], {"LOFT_POISON_CLAIM": "1"}),
 }
 ASAN = ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
+# `--wasm`: the same unit for wasm32-wasi.  The runtime's recoverable faults use setjmp, which
+# wasm has through the exception-handling proposal (clang's `-wasm-enable-sjlj` in its standard
+# encoding — clang 22's default is the legacy `try`, which wasmtime refuses — wasmtime's
+# `exceptions`, wasi-libc's libsetjmp); `clock` and `signal` are WASI's emulation libraries.  Needs clang, lld,
+# wasi-libc and the wasm32 compiler-rt (Ubuntu: clang lld wasi-libc libclang-rt-dev-wasm32).
+WASM_CC = [os.environ.get("LOFT_WASM_CC") or "clang", "--target=wasm32-wasi", "-std=c99", "-O1", "-w",
+           "-mllvm", "-wasm-enable-sjlj", "-mllvm", "-wasm-use-legacy-eh=false",
+           "-D_WASI_EMULATED_PROCESS_CLOCKS", "-D_WASI_EMULATED_SIGNAL"]
+WASM_LIBS = ["-lm", "-lsetjmp", "-lwasi-emulated-process-clocks", "-lwasi-emulated-signal"]
+
+
+def wasm_run(wasm: str, cwd: Path) -> list[str]:
+    """wasmtime over `wasm`, with the program's directory reachable both as `.` and under its
+    own absolute path (the runtime anchors a relative path at the program's directory) and
+    the temporary directory under its own path, as a native run reaches them."""
+    tmp = tempfile.gettempdir()
+    return ["wasmtime", "-W", "exceptions=y", "--dir=.", f"--dir={cwd}::{cwd}",
+            f"--dir={tmp}::{tmp}", "--env", f"TMPDIR={tmp}", wasm]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
 
@@ -121,6 +141,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             return path, "refused", "the program does not compile in loft", None
         # A `[c] shim` of several sources is a static archive the unit names (`/* link: … */`).
         links = re.findall(r"^/\* link: (.*) \*/$", Path(c).read_text(errors="replace"), re.M)
+        if "wasm" in modes and links:
+            return path, "refused", "a `[c] shim` archive is built for the host, not wasm32", None
         tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
         # A program without `main` is its tests: the C runs them as `loft --tests` does,
         # and the two exit statuses say whether every test passed.
@@ -132,13 +154,17 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             i_out = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env=env) if env else i_plain
             if i_out is None:
                 i_out = i_plain = run(interp, ORACLE_TIMEOUT, cwd=src.parent)
-            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"] + links, 120)
+            if mode == "wasm":
+                code, _, err = run(WASM_CC + [c, "-o", exe + ".wasm"] + WASM_LIBS, 120)
+            else:
+                code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"] + links, 120)
             if code != 0:
                 first = err.decode(errors="replace").strip().split("\n")[0]
                 return path, "cc-error", f"[{mode}] {first}", None
             # The same bound as the oracle's: 2177 rewrites image files for ~30 s of system
             # time alone, and a loaded sweep doubles it.
-            c_out = run([exe], ORACLE_TIMEOUT, cwd=src.parent)
+            c_out = run(wasm_run(exe + ".wasm", src.parent) if mode == "wasm" else [exe],
+                        ORACLE_TIMEOUT, cwd=src.parent)
             if asan and (b"Sanitizer" in c_out[2] or b"runtime error:" in c_out[2]):
                 line = next((l for l in c_out[2].decode(errors="replace").split("\n")
                              if "Sanitizer" in l or "runtime error:" in l), "")
@@ -158,6 +184,8 @@ def main(argv: list[str]) -> int:
         return 0
     verbose = "--verbose" in argv
     modes = tuple(POISON_MODES) if "--poison" in argv else tuple(MODES)
+    if "--wasm" in argv:
+        modes = ("wasm",)
     if "--mode" in argv:
         i = argv.index("--mode")
         modes = (argv[i + 1],)

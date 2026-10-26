@@ -28,6 +28,7 @@ python3 scripts/c_sweep.py --poison  # the store poison modes, against the inter
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
+python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
 python3 bench/stats.py --lanes rust,c,cship    # every bench program as C, against its Rust twin
 ```
@@ -48,7 +49,14 @@ itself).
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
 it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It
 builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`) or `refused`, and ranks the
-refusals by reason — that ranking is the work list.
+refusals by reason — that ranking is the work list.  `--wasm` builds each unit with clang for
+`wasm32-wasi` instead and runs it under wasmtime: setjmp through the exception-handling proposal
+in its standard encoding (`-mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false`, wasi-libc's
+`-lsetjmp`, wasmtime's `-W exceptions=y`), `clock` and `signal` from WASI's emulation
+libraries, the program's directory and the temporary directory mapped under their own paths.  It
+needs clang, lld, wasi-libc and the wasm32 compiler-rt (Ubuntu: `clang lld wasi-libc
+libclang-rt-dev-wasm32`); a program linking a `[c] shim` archive is refused, the archive being
+built for the host.
 `differ`, `cc-error` and `sanitizer` are defects of the backend and must stay at 0; a change
 that grows `match` is measured by the sweep, by `--asan` and by `--poison` before it is
 committed.  A sanitizer cannot see inside a store — a store is one allocation — so a read of a
