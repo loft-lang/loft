@@ -82,7 +82,11 @@ loft functions, which `@PLN199`'s cdylib layer defined for Rust).  Measure compi
 largest consumer before choosing.  `engine_host` and placement (PLACEMENT.md) become C worker
 processes over the same protocol.  The remaining Rust-crate libraries: `graphics` over the
 OS's windowing, GL and audio through `[c] libs`; `web` and `server` over BearSSL's TLS engine
-(vendored like its primitives, with a minimal trust store) or the OS's; `ssh` parked.
+(vendored like its primitives, with a minimal trust store) or the OS's; `ssh` parked.  The link
+modes of @PLN195 owe a C form too: `--dynamic` keeps a library beside the binary and `--static`
+links its archive in, and a binary missing a library it binds stops at start naming the package
+and where it searched — the C links every shim in and a declared library by name today, so
+`native::a_shipped_c_library_travels_with_the_program`'s controls do not hold on it yet.
 
 **C6 — the wasm and browser targets.**  The runtime under `-DLOFT_NO_POSIX` is the start: the
 WASI libc gives files for `--native-wasm`; the browser needs the host imports the Rust writer
