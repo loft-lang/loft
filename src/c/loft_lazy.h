@@ -25,6 +25,21 @@ typedef struct {
 /* A collection's failures (`Stores::lazy_errors`): how many, and the first reason. */
 typedef struct { loft_ref coll; int64_t count; loft_text reason; } loft_lazy_err;
 
+/* A program's own lazy drivers (`Data::lazy_fetch_drivers`, @PLN133 S8/S9): one per element type,
+ * each an adapter the unit writes with the driver's fixed shape, bound by the unit's `main`; or
+ * the reason the program's drivers were refused, which every miss then reports. */
+typedef int64_t (*loft_lazy_driver_fn)(loft_ref coll, loft_str source, int64_t key_int, loft_str key_text);
+typedef struct { const char *element; loft_lazy_driver_fn fn; } loft_lazy_driver;
+static const loft_lazy_driver *loft_lazy_drivers = 0;
+static uint32_t loft_nlazy_drivers = 0;
+static const char *loft_lazy_driver_refusal = 0;
+
+static loft_lazy_driver_fn loft_lazy_driver_for(const char *element) {
+    for (uint32_t i = 0; element && i < loft_nlazy_drivers; i++)
+        if (!strcmp(loft_lazy_drivers[i].element, element)) return loft_lazy_drivers[i].fn;
+    return 0;
+}
+
 static loft_lazy_bind *loft_lazy_binds = 0;
 static size_t loft_nlazy = 0, loft_lazy_cap = 0;
 static loft_lazy_err *loft_lazy_errs = 0;
@@ -165,6 +180,59 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
         }
     }
     int db = loft_lazy_database(loft_view(&b->source));
+    /* A driver WINS over the source core drives itself (@PLN133 S9), and a refused driver set
+     * is reported at every miss rather than falling back. */
+    loft_lazy_driver_fn driver = loft_lazy_driver_for(b->element);
+    if (db && loft_lazy_driver_refusal) {
+        loft_lazy_refuse(coll, loft_lit(loft_lazy_driver_refusal, strlen(loft_lazy_driver_refusal)));
+        return 0;
+    }
+    if (db && driver) {
+        /* One key, whichever spelling it arrived in: fetching the WRONG row is worse than
+         * answering absent. */
+        int64_t key_int = 0;
+        loft_str key_text = loft_lit("", 0);
+        if (n == 1 && key[0].kind == LOFT_KV_INT) key_int = key[0].i;
+        else if (n == 1 && key[0].kind == LOFT_KV_TEXT) key_text = key[0].s;
+        else {
+            static const char composite[] = "a composite key cannot be fetched — a driver is given one key";
+            loft_lazy_refuse(coll, loft_lit(composite, sizeof composite - 1));
+            return 0;
+        }
+        jmp_buf jb;
+        jmp_buf *volatile outer = loft_lazy_jmp;
+        volatile uint64_t serial0 = loft_stores_allocated;
+#if defined(LOFT_CALL_CHAIN)
+        volatile size_t depth = loft_nframes;
+#endif
+        volatile int64_t answer = 0;
+        if (setjmp(jb) == 0) {
+            loft_lazy_jmp = &jb;
+            answer = driver(coll, loft_view(&b->source), key_int, key_text);
+            loft_lazy_jmp = outer;
+        } else {
+            /* The driver faulted: the stores its abandoned frames made are freed (the teardown
+             * the fault skipped, `lazy_watch_end`), and the fault is the collection's failure. */
+            loft_lazy_jmp = outer;
+            for (uint32_t i = 0; i < loft_nstores; i++)
+                if (loft_stores[i].live && loft_stores[i].serial > serial0) {
+                    loft_ref r = { (uint16_t) i, 0, 0 };
+                    loft_free_ref(r);
+                }
+#if defined(LOFT_CALL_CHAIN)
+            loft_nframes = depth;
+#endif
+            loft_lazy_refuse(coll, loft_view(&loft_lazy_fault));
+            return 0;
+        }
+        if (answer != 0 && answer != 1) {
+            snprintf(why, sizeof why, "`lazy_fetch` answered %lld; it must answer 1 (inserted) or 0 (absent)",
+                     (long long) answer);
+            loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
+            return 0;
+        }
+        return (int) answer;
+    }
     if (db == 2) {
         /* `no_lazy_driver`: a loft driver's scheme, and this program declares none. */
         snprintf(why, sizeof why,

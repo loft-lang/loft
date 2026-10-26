@@ -459,6 +459,19 @@ static LOFT_TLS int loft_in_test = 0;
 static LOFT_TLS loft_text loft_fail_msg = { 0, 0, 0 };
 
 static void loft_fault_where(loft_str file, int64_t line);
+/* A fault inside a lazy driver is CONTAINED (`call_frames::in_lazy_driver`): it ends the driver,
+ * not the program — `loft_lazy_miss` set the jump and records `<kind>: <message>` as the
+ * collection's failure, as the interpreter's `panic_any(label: message)` does. */
+static LOFT_TLS jmp_buf *loft_lazy_jmp = 0;
+static LOFT_TLS loft_text loft_lazy_fault = { 0, 0, 0 };
+static void loft_lazy_contain(const char *label, loft_str message) {
+    loft_lazy_fault.len = 0;
+    loft_push(&loft_lazy_fault, label, strlen(label));
+    loft_push(&loft_lazy_fault, ": ", 2);
+    loft_push(&loft_lazy_fault, message.p, message.len);
+    longjmp(*loft_lazy_jmp, 1);
+}
+
 /* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
  * in a runtime built without one, where every fault halts. */
 static int (*loft_fault_logger)(int sev, const char *label, const char *prefix, loft_str message,
@@ -466,6 +479,7 @@ static int (*loft_fault_logger)(int sev, const char *label, const char *prefix, 
 
 static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t line) {
     if (test == 1) return;
+    if (loft_lazy_jmp) loft_lazy_contain("assertion_failed", message);
     if (!loft_in_test && loft_fault_logger &&
         loft_fault_logger(2, "assertion_failed", "assertion failed: ", message, file, line))
         return;
@@ -592,6 +606,7 @@ static void loft_fault_where(loft_str file, int64_t line) {
 
 /* panic(message): the program stops as a failed assertion stops it, saying `panic:`. */
 static void loft_panic(loft_str message, loft_str file, int64_t line) {
+    if (loft_lazy_jmp) loft_lazy_contain("user_panic", message);
     if (!loft_in_test && loft_fault_logger && loft_fault_logger(3, "user_panic", "panic: ", message, file, line))
         return;
     fflush(stdout);

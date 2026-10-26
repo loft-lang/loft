@@ -1183,6 +1183,16 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
+    // Every lazy driver is a root (@PLN133 S9): a miss calls it through the table the unit
+    // writes, and a driver left out would be a pointer to a body never written.
+    let drivers = data.lazy_fetch_drivers();
+    if let Ok(found) = &drivers {
+        for &(_, d) in found {
+            if !all.contains(&d) {
+                all.push(d);
+            }
+        }
+    }
     for d in crate::opt::names::reachable_functions(data, roots) {
         let cascade = data.drop_cascade_nr(data.def(d).closure_record());
         if cascade != u32::MAX && !all.contains(&cascade) {
@@ -1199,17 +1209,6 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
-    // A program's own lazy driver (`fn lazy_fetch…`, @PLN133 S8) is called by the miss path,
-    // which the C does not route to loft code.
-    if (0..data.definitions()).any(|d| {
-        let def = data.def(d);
-        def.source == crate::data::MAIN_SOURCE && def.name().starts_with("n_lazy_fetch")
-    }) {
-        return Err(Refusal {
-            function: "main".into(),
-            why: "a program with a lazy driver".into(),
-        });
-    }
     let cx = Cx::new(data, stores);
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
@@ -1250,13 +1249,6 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push('\n');
     out.push_str(&c_libraries(data));
     out.push_str(&cx.typedefs());
-    // The unit's tables, for the runtime's reports (`loft_tn`, `loft_cl`): a generated `main`
-    // binds them before it starts.
-    out.push_str(
-        "static void loft_bind_tables(void) {\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    \
-         loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
-         loft_fault_logger = loft_log_production_fault;\n}\n",
-    );
     if parses {
         out.push_str(&cx.parse_table());
         out.push_str(&cx.main_vector_test());
@@ -1271,6 +1263,72 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push_str(&cx.drop_code(&fns));
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
+    // The unit's tables, for the runtime (`loft_tn`, `loft_cl`, the lazy drivers): a generated
+    // `main` binds them before it starts.  Written last, so it can name every function.
+    let mut bind = String::from(
+        "\nstatic void loft_bind_tables(void) {\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    \
+         loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
+         loft_fault_logger = loft_log_production_fault;\n",
+    );
+    if cx.lazy.get() {
+        out.push_str(&lazy_driver_table(&cx, drivers)?);
+        bind.push_str(
+            "    loft_lazy_drivers = loft_lazy_driver_table;\n    \
+             loft_nlazy_drivers = loft_nlazy_driver_table;\n    \
+             loft_lazy_driver_refusal = loft_lazy_driver_refusal_text;\n",
+        );
+    }
+    bind.push_str("}\n");
+    out.push_str(&bind);
+    Ok(out)
+}
+
+/// The program's lazy drivers as the runtime calls them (`loft_lazy_miss`): an adapter per
+/// driver with the fixed shape `(coll, source, key_int, key_text) -> integer`, the table of
+/// them by the element type each serves (`Data::lazy_fetch_drivers`, the one answer both
+/// backends read), or — when the drivers were refused — the reason, which every miss reports.
+fn lazy_driver_table(
+    cx: &Cx,
+    drivers: Result<Vec<(String, u32)>, String>,
+) -> Result<String, Refusal> {
+    let mut out = String::new();
+    let (found, refusal) = match drivers {
+        Ok(found) => (found, None),
+        Err(why) => (Vec::new(), Some(why)),
+    };
+    let mut rows = Vec::new();
+    for (i, (element, d)) in found.iter().enumerate() {
+        let def = cx.data.def(*d);
+        if def.attributes().iter().any(|a| a.hidden) {
+            return Err(Refusal {
+                function: def.original_name().clone(),
+                why: "a lazy driver with a hidden parameter".into(),
+            });
+        }
+        let _ = writeln!(
+            out,
+            "static int64_t loft_lazydrv{i}(loft_ref c, loft_str s, int64_t ki, loft_str kt) {{ \
+             return {}(c, s, ki, kt); }}",
+            c_name(cx.data, *d)
+        );
+        rows.push(format!(
+            "{{ {}, loft_lazydrv{i} }}",
+            body::c_string(element)
+        ));
+    }
+    let _ = writeln!(
+        out,
+        "static const loft_lazy_driver loft_lazy_driver_table[] = {{ {} }};\n\
+         static const uint32_t loft_nlazy_driver_table = {};\n\
+         static const char *const loft_lazy_driver_refusal_text = {};",
+        if rows.is_empty() {
+            "{ 0, 0 }".to_string()
+        } else {
+            rows.join(", ")
+        },
+        rows.len(),
+        refusal.map_or_else(|| "0".to_string(), |w| body::c_string(&w))
+    );
     Ok(out)
 }
 
