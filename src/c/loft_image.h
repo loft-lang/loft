@@ -374,7 +374,7 @@ static int loft_version_triple(const char *v, size_t n, unsigned long t[3]) {
  * sidecar names this layout.  `who` names the caller in what a refusal says. */
 /* `Stores::paged_refusal`: the last refusal a loader made, which a lazy fetch reads back as the
  * reason its source could not serve it (loft#802). */
-static char *loft_pg_refusal = 0;
+static LOFT_TLS char *loft_pg_refusal = 0;
 
 static void loft_pg_record(const char *path, const char *reason) {
     size_t n = strlen(path) + strlen(reason) + 32;

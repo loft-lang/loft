@@ -188,9 +188,9 @@ typedef struct {
 #endif
 } loft_store_t;
 
-static loft_store_t *loft_stores = 0;
-static uint32_t loft_nstores = 0;
-static uint64_t loft_stores_allocated = 0;
+static LOFT_TLS loft_store_t *loft_stores = 0;
+static LOFT_TLS uint32_t loft_nstores = 0;
+static LOFT_TLS uint64_t loft_stores_allocated = 0;
 
 /* ── The heap ceiling (store_budget.rs) ──────────────────────────────────────────────────
  * `loft_heap_total` is the bytes every store's buffer holds; `LOFT_MEMORY_LIMIT` sets
@@ -201,7 +201,9 @@ static uint64_t loft_stores_allocated = 0;
  * (`loft_bind_tables`); a runtime built without a unit names no type. */
 static const char *const *loft_tn = 0;
 static uint32_t loft_ntn = 0;
-static uint64_t loft_heap_total = 0, loft_heap_limit = 0;
+/* Each thread counts its own stores' bytes; the limit is the program's. */
+static LOFT_TLS uint64_t loft_heap_total = 0;
+static uint64_t loft_heap_limit = 0;
 
 static void loft_heap_human(char *out, uint64_t b) {
     if (b >= ((uint64_t) 1 << 30)) sprintf(out, "%.1f GiB", (double) b / (double) ((uint64_t) 1 << 30));

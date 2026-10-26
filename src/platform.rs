@@ -1646,6 +1646,13 @@ pub fn c_long_bits() -> u8 {
     if cfg!(windows) { 32 } else { 64 }
 }
 
+/// The `cc` arguments a C backend unit links its `par` threads with (@PLN203 C4): POSIX
+/// threads on a Unix host; the C runtime's own on Windows, which needs none.
+#[must_use]
+pub fn c_thread_link_args() -> &'static [&'static str] {
+    if cfg!(windows) { &[] } else { &["-pthread"] }
+}
+
 /// What to install so the C backend can build a host program, said for this host (@PLN203
 /// C10).  Only the Debian/Ubuntu list is measured; the others name the tools, not packages.
 #[must_use]

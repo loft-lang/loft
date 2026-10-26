@@ -40,6 +40,11 @@ pub(crate) fn cc_program() -> String {
 /// the cache key, since each one changes the binary.
 fn cc_flags(tier: Tier) -> Vec<String> {
     let mut flags: Vec<String> = vec!["-std=c99".into(), "-w".into()];
+    flags.extend(
+        loft::platform::c_thread_link_args()
+            .iter()
+            .map(|a| (*a).to_string()),
+    );
     // A fault in a semantics or a debug build names the frames it fired under; a shipped
     // binary compiles the pushes away, as the Rust writer's lean tier drops its frame names.
     match tier {

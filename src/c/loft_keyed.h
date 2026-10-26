@@ -987,8 +987,8 @@ static void (*loft_relink_hook)(const loft_tdesc *T, uint16_t tp, loft_ref to) =
  * and pops (`parallel_buf_drop*`). */
 typedef struct { int64_t i; double f; float g; loft_text t; loft_ref r; loft_fn fn; uint8_t adopted; } loft_par_slot;
 typedef struct { loft_par_slot *rows; int64_t n; } loft_par_buf;
-static loft_par_buf *loft_par_bufs = 0;
-static int loft_npar = 0, loft_par_cap = 0;
+static LOFT_TLS loft_par_buf *loft_par_bufs = 0;
+static LOFT_TLS int loft_npar = 0, loft_par_cap = 0;
 
 static loft_par_slot *loft_par_push(int64_t n) {
     if (loft_npar == loft_par_cap) {
@@ -1035,6 +1035,135 @@ static void loft_par_drop(int refs) {
         if (refs && b->rows[i].adopted) loft_free_ref(b->rows[i].r);
     }
     free(b->rows);
+}
+
+/* ── par on threads (@PLN203 C4, tier 1) ──
+ * `loft_par_run(n, threads, body, ctx)` runs `body(ctx, lo, hi)` over `min(threads, n)`
+ * contiguous slices of the rows, as `par_pool::parallel_workers` splits them: the calling thread
+ * takes the first slice, a thread each the others.  A worker starts from a COPY of the caller's
+ * store table — every entry live and pinned, so it reads the caller's stores through the same
+ * buffers and never frees, grows or reuses one (@FR-C-Impure) — and makes its own stores past
+ * them, destroyed when it ends.  Each slice writes only its own rows of the result buffer.
+ * `LOFT_TRACE_PAR_WORKERS` reports how many workers ran rows (@PLN117's instrument).  Without
+ * `LOFT_THREADS` every slice runs here, in order: the same answer (@FR-C-Det). */
+typedef void (*loft_par_body)(void *ctx, int64_t lo, int64_t hi);
+
+#if defined(LOFT_THREADS)
+#if defined(_WIN32)
+#include <process.h>
+__declspec(dllimport) unsigned long __stdcall WaitForSingleObject(void *handle, unsigned long ms);
+__declspec(dllimport) int __stdcall CloseHandle(void *handle);
+#else
+#include <pthread.h>
+#endif
+
+typedef struct {
+    loft_par_body body;
+    void *ctx;
+    int64_t lo, hi;
+    loft_store_t *table;
+    uint32_t n, parent_n;
+} loft_par_job;
+
+/* A worker's end: the stores it made are destroyed with its table and its frames. */
+static void loft_par_job_run(loft_par_job *j) {
+    uint32_t i;
+    loft_stores = j->table;
+    loft_nstores = j->n;
+    j->body(j->ctx, j->lo, j->hi);
+    for (i = j->parent_n; i < loft_nstores; i++) {
+        loft_store_t *s = &loft_stores[i];
+        free(s->buf);
+        free(s->claims.bits);
+        free(s->referenced.bits);
+        free(s->removed.bits);
+        free(s->lazy_free.bits);
+        free(s->parked_set.bits);
+        free(s->placed);
+    }
+    free(loft_stores);
+    loft_stores = 0;
+    loft_nstores = 0;
+#if defined(LOFT_CALL_CHAIN)
+    free(loft_frames);
+    loft_frames = 0;
+#endif
+}
+
+#if defined(_WIN32)
+static unsigned __stdcall loft_par_thread(void *arg) {
+    loft_par_job_run((loft_par_job *) arg);
+    return 0;
+}
+#else
+static void *loft_par_thread(void *arg) {
+    loft_par_job_run((loft_par_job *) arg);
+    return 0;
+}
+#endif
+#endif
+
+static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *ctx) {
+    int64_t t = threads == LOFT_NULL || threads < 1 ? 1 : threads;
+    if (t > n) t = n > 1 ? n : 1;
+    if (getenv("LOFT_TRACE_PAR_WORKERS"))
+        fprintf(stderr, "loft: LOFT_TRACE_PAR_WORKERS c n_rows=%lld threads=%lld distinct_workers=%lld\n",
+                (long long) n, (long long) t, (long long) (n > 0 ? t : 0));
+#if defined(LOFT_THREADS)
+    if (t > 1) {
+        int64_t k;
+        loft_par_job *jobs = (loft_par_job *) calloc((size_t) t, sizeof *jobs);
+#if defined(_WIN32)
+        void **ids = (void **) calloc((size_t) t, sizeof *ids);
+#else
+        pthread_t *ids = (pthread_t *) calloc((size_t) t, sizeof *ids);
+#endif
+        if (!jobs || !ids) { fputs("loft: out of memory\n", stderr); abort(); }
+        for (k = 1; k < t; k++) {
+            uint32_t i, room = loft_nstores + 16;
+            loft_par_job *j = &jobs[k];
+            j->body = body;
+            j->ctx = ctx;
+            j->lo = k * n / t;
+            j->hi = (k + 1) * n / t;
+            /* Copied here, before any thread runs: the caller's own slice may grow its table. */
+            j->table = (loft_store_t *) calloc(room, sizeof *j->table);
+            if (!j->table) { fputs("loft: out of memory\n", stderr); abort(); }
+            memcpy(j->table, loft_stores, (size_t) loft_nstores * sizeof *j->table);
+            for (i = 0; i < loft_nstores; i++) {
+                j->table[i].live = 1;
+                j->table[i].pinned = 1;
+            }
+            j->n = room;
+            j->parent_n = loft_nstores;
+        }
+        for (k = 1; k < t; k++) {
+            /* A thread that cannot start: its slice runs here, on this thread's own table. */
+#if defined(_WIN32)
+            ids[k] = (void *) _beginthreadex(0, 0, loft_par_thread, &jobs[k], 0, 0);
+            if (!ids[k]) {
+#else
+            if (pthread_create(&ids[k], 0, loft_par_thread, &jobs[k]) != 0) {
+#endif
+                free(jobs[k].table);
+                jobs[k].table = 0;
+                body(ctx, jobs[k].lo, jobs[k].hi);
+            }
+        }
+        body(ctx, 0, n / t);
+        for (k = 1; k < t; k++) {
+#if defined(_WIN32)
+            if (jobs[k].table) { WaitForSingleObject(ids[k], 0xFFFFFFFFul); CloseHandle(ids[k]); }
+#else
+            if (jobs[k].table) pthread_join(ids[k], 0);
+#endif
+        }
+        free(ids);
+        free(jobs);
+        return;
+    }
+#endif
+    body(ctx, 0, n);
 }
 
 /* parallel_buf_get_narrow: a 1-, 2- or 4-byte result, its low bytes extended as `signed` says. */

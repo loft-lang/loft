@@ -430,11 +430,11 @@ LOFT_HOT_INLINE int64_t loft_wrap_rem(int64_t a, int64_t b) {
 
 /* `assert`: a failed one ends the running test (the test main catches it) or, outside a
  * test, the program, with the interpreter's message on stderr and exit status 1. */
-static jmp_buf loft_test_jmp;
-static int loft_in_test = 0;
+static LOFT_TLS jmp_buf loft_test_jmp;
+static LOFT_TLS int loft_in_test = 0;
 
 /* The message of the last failed assert, for a test expected to fail with it. */
-static loft_text loft_fail_msg = { 0, 0, 0 };
+static LOFT_TLS loft_text loft_fail_msg = { 0, 0, 0 };
 
 static void loft_fault_where(loft_str file, int64_t line);
 /* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
@@ -485,8 +485,8 @@ static void loft_locked_write(void) {
 /* The frames the program is running (call_frames.rs, `cr_call_push`): each function's name and
  * file, and the line it is calling from (`cr_call_site`), outermost first. */
 typedef struct { const char *fn, *file; uint32_t site; } loft_frame;
-static loft_frame *loft_frames = 0;
-static size_t loft_nframes = 0, loft_capframes = 0;
+static LOFT_TLS loft_frame *loft_frames = 0;
+static LOFT_TLS size_t loft_nframes = 0, loft_capframes = 0;
 
 static void loft_frame_push(const char *fn, const char *file) {
     if (loft_nframes == loft_capframes) {
@@ -1034,8 +1034,8 @@ static loft_fn loft_fn_of(int64_t d) {
  * evacuated to, per holder store, so a second holder in that store shares the one copy; an
  * entry goes with the store its record lived in. */
 typedef struct { loft_ref old; uint16_t holder; loft_ref copy; } loft_evac;
-static loft_evac *loft_evacs = 0;
-static uint32_t loft_nevacs = 0, loft_evac_cap = 0;
+static LOFT_TLS loft_evac *loft_evacs = 0;
+static LOFT_TLS uint32_t loft_nevacs = 0, loft_evac_cap = 0;
 
 /* OpFreeRef: the whole store goes, everything the root owned with it. */
 static void loft_gen_free(loft_ref g);
@@ -1085,8 +1085,8 @@ typedef struct { int32_t state; int32_t done; } loft_gen_head;
 /* `holds`: the holders that share the frame (`(G-Hold)`) — a release by one of several gives its
  * hold back, and the last one releases the frame. */
 typedef struct { void *frame; void (*resume)(void *frame, void *out); void (*release)(void *frame); uint32_t holds; } loft_gen_slot;
-static loft_gen_slot *loft_gens = 0;
-static uint32_t loft_ngens = 0;
+static LOFT_TLS loft_gen_slot *loft_gens = 0;
+static LOFT_TLS uint32_t loft_ngens = 0;
 
 static loft_ref loft_gen_new(void *frame, void (*resume)(void *, void *), void (*release)(void *)) {
     uint32_t i = 0;
@@ -2689,7 +2689,7 @@ static int loft_cmp_f64(const void *a, const void *b) {
 }
 
 /* The store a text-vector sort compares in (qsort has no context). */
-static loft_store_t *loft_sort_store = 0;
+static LOFT_TLS loft_store_t *loft_sort_store = 0;
 static int loft_cmp_text_rec(const void *a, const void *b) {
     uint32_t x, y;
     memcpy(&x, a, 4);
@@ -3668,8 +3668,8 @@ static int loft_eq_child(loft_ref a, loft_ref b, loft_eq_fn f) {
 }
 
 /* The record pairs under comparison: a pair met again is equal, which is where a cycle ends. */
-static loft_ref *loft_eq_seen = 0;
-static size_t loft_eq_seen_n = 0, loft_eq_seen_cap = 0;
+static LOFT_TLS loft_ref *loft_eq_seen = 0;
+static LOFT_TLS size_t loft_eq_seen_n = 0, loft_eq_seen_cap = 0;
 
 static int loft_eq_reference(loft_ref fa, loft_ref fb, uint16_t target, loft_eq_fn f) {
     loft_ref ra = loft_get_dbref(fa, 0), rb = loft_get_dbref(fb, 0);

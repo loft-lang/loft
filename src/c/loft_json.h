@@ -841,8 +841,8 @@ static void loft_jp_render_path(const loft_jp *p, loft_text *out) {
 
 /* `stores.last_json_errors`: the errors of the last parse, in order; `json_errors()` reads them
  * joined by `|`. */
-static loft_text *loft_jerr = 0;
-static size_t loft_jerr_n = 0, loft_jerr_cap = 0;
+static LOFT_TLS loft_text *loft_jerr = 0;
+static LOFT_TLS size_t loft_jerr_n = 0, loft_jerr_cap = 0;
 
 static void loft_jerr_clear(void) {
     for (size_t i = 0; i < loft_jerr_n; i++) loft_text_free(&loft_jerr[i]);
@@ -968,8 +968,8 @@ static loft_ref loft_jv_alloc(void) {
 
 /* `jv_null_sentinel`: the one JNull the readers answer for a miss, in a store nothing frees. */
 static loft_ref loft_jv_null(void) {
-    static loft_ref sentinel;
-    static int made = 0;
+    static LOFT_TLS loft_ref sentinel;
+    static LOFT_TLS int made = 0;
     if (!made) {
         sentinel = loft_jv_alloc();
         loft_set_byte(sentinel, 0, LOFT_JD_NULL);

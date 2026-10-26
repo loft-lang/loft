@@ -175,6 +175,8 @@ pub(crate) struct Cx<'a> {
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
     /// consults the binding on a miss (`loft_lazy_miss`).
     pub(crate) lazy: std::cell::Cell<bool>,
+    /// The `par` sites written on threads so far, which numbers each one's body and context.
+    pub(crate) par_sites: std::cell::Cell<u32>,
     /// The lazy fetch functions written so far (`loft_lazy_fetch{n}`).
     pub(crate) lazy_fetchers: std::cell::Cell<usize>,
     /// The place twins the unit calls (`twin_name`): a function by definition number, with
@@ -224,6 +226,7 @@ impl<'a> Cx<'a> {
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
+            par_sites: std::cell::Cell::new(0),
             lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
         }

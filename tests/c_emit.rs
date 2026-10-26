@@ -3346,3 +3346,71 @@ fn native_c_runs_a_files_tests_one_process_each() {
         );
     }
 }
+
+/// @PLN203 C4 — `par` on threads in the C (`loft_par_run`): a scalar worker, one with a captured
+/// extra, and a text worker over records each run on four threads and answer what the rows give
+/// in order; `LOFT_TRACE_PAR_WORKERS` reports four workers for each and ONE for `par(…, 1)`, so
+/// the instrument can fail.  Hand-computed: Σi² over 0..10000 = 9999·10000·19999/6 =
+/// 333283335000; 3·Σi = 3·49995000 = 149985000; the labels `n0`…`n99` are 10·2 + 90·3 = 290
+/// characters.
+#[test]
+fn par_runs_on_threads_in_the_c_and_answers_as_in_order() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct It { name: text, n: integer }
+fn sq(x: integer) -> integer { x * x }
+fn label(it: const It) -> text { "{it.name}{it.n}" }
+fn scaled(x: integer, k: integer) -> integer { x * k }
+fn main() {
+  v: vector<integer> = [];
+  for i in 0..10000 { v += [i]; }
+  s = 0;
+  for x in v par(r = sq(x), 4) { s += r; }
+  k = 3;
+  u = 0;
+  for x in v par(m = scaled(x, k), 4) { u += m; }
+  items: vector<It> = [];
+  for i in 0..100 { items += [It { name: "n", n: i }]; }
+  t = 0;
+  for it in items par(l = label(it), 4) { t += len(l); }
+  one = 0;
+  for x in v par(r = sq(x), 1) { one += r; }
+  println("{s} {u} {t} {one}");
+}
+"#;
+    let want = "333283335000 149985000 290 333283335000\n";
+    let dir = scratch("parthreads");
+    let file = dir.join("p.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&file)
+        .env("LOFT_TRACE_PAR_WORKERS", "1")
+        .output()
+        .expect("run loft --native-c");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        want,
+        "the C: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let workers: Vec<String> = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter_map(|l| l.split("distinct_workers=").nth(1).map(str::to_string))
+        .collect();
+    assert_eq!(workers, ["4", "4", "4", "1"], "workers per par loop");
+}

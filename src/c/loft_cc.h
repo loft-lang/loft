@@ -34,6 +34,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* `par` on threads (@PLN203 C4): POSIX threads on a POSIX host, the CRT's on Windows, none under
+ * `-DLOFT_STRICT` (ISO C99 has no thread-local storage), `-DLOFT_NO_POSIX` or WASI, where a
+ * `par` loop runs its rows in order — the same answer (@FR-C-Det).  `LOFT_TLS` marks the
+ * runtime state each thread keeps its own of; empty without threads. */
+#if !defined(LOFT_STRICT) && !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32))
+#define LOFT_THREADS 1
+#if defined(_MSC_VER)
+#define LOFT_TLS __declspec(thread)
+#elif defined(__GNUC__) || defined(__clang__)
+#define LOFT_TLS __thread
+#else
+#define LOFT_TLS _Thread_local
+#endif
+#else
+#define LOFT_TLS
+#endif
+
 /* A file's modification time in nanoseconds from a `struct stat` (a lazy source's pin): Darwin
  * names the fraction `st_mtimensec` under POSIX, the others `st_mtim`. */
 #if defined(LOFT_POSIX) && defined(__APPLE__)

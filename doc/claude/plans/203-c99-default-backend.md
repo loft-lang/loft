@@ -60,6 +60,21 @@ pool (`loft_cc.h` chooses C11 `<threads.h>`, pthreads, or the sequential form un
 — the generator table, the frame stack, the open-file table, the `#c` text buffers — become
 per-thread.  THREADING.md's guards are the acceptance, with the `par` bench rows.
 
+*C4's design.*  The runtime's process-wide state (33 variables and the function-local caches —
+the store table, the frame stack, the generator and evacuation tables, the parse and JSON error
+lists, the par buffers, the heap counter) becomes per-thread under one macro, `LOFT_TLS`
+(`_Thread_local`, GNU `__thread`, MSVC `__declspec(thread)`), and empty where the build has no
+threads (`-DLOFT_STRICT`, `-DLOFT_NO_POSIX`, WASI), which keeps the sequential form.  What
+stays shared is the program's: the open files, the lazy bindings, the arguments, the logger.
+A worker starts from a COPY of its parent's store table — every entry live and pinned, so it
+reads the parent's stores through the same buffers and never frees, grows or reuses one
+(@FR-C-Impure: a worker that writes shared state has no defined behaviour) — and makes its own
+stores past them, freed when it ends.  Tier 1 runs on threads the workers whose result is a
+scalar, a text or nothing, each writing its own rows of the parent's result buffer; a worker
+returning a record or a function value stays sequential until tier 2 adopts the worker's stores
+into the parent and translates its references (`StoreRebase`, as `parallel.rs` does).  The rows
+split into `min(threads, rows)` contiguous slices, as `par_pool::parallel_workers` splits them.
+
 **C5 — libraries and hosts.**  The decision: a library compiled whole into each program (the
 C does this today; the cost is compile time per program, bounded by the cache) or a C archive
 per library (`c_shim::archive`'s shape over the library's own loft, needing a stable C ABI for
