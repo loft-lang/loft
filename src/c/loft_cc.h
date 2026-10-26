@@ -29,6 +29,11 @@
 #if !defined(__wasi__)
 #define LOFT_POSIX_HOST 1
 #endif
+/* `realpath` is XSI, not base POSIX: glibc declares it only under _XOPEN_SOURCE (or by accident
+ * through _FORTIFY_SOURCE, which Ubuntu turns on from -O1 — so an -O0 build failed). */
+#if defined(LOFT_POSIX_HOST) && !defined(__APPLE__)
+#define _XOPEN_SOURCE 700
+#endif
 #endif
 #include <stdint.h>
 #include <stdio.h>

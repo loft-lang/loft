@@ -1892,6 +1892,9 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         return;
     }
     case LOFT_T_STRUCT: {
+        /* `@FR-R-FlatCopy` (Stores::copy_struct_fields): a record that owns no heap is its bytes,
+         * which came with the block copy — no field has a claim to copy. */
+        if (!d->owns_heap) return;
         /* `copy_struct_fields` (@FR-Col-Group): a view member of a linked group holds the
          * records its owner holds — copied as a collection of its own it would hold copies a
          * write through the owner does not reach — so it starts empty and is indexed over the
@@ -2396,6 +2399,8 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     const loft_tdesc *d = &T[tp];
+    /* `@FR-R-FlatCopy`: a record that owns no heap holds no claim to release. */
+    if (d->kind == LOFT_T_STRUCT && !d->owns_heap) return;
     loft_store_t *s = loft_store_of(r);
     if (d->kind == LOFT_T_TEXT) {
         uint32_t cur = loft_u32(s, r.rec, r.pos);
