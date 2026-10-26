@@ -986,7 +986,9 @@ static void (*loft_relink_hook)(const loft_tdesc *T, uint16_t tp, loft_ref to) =
  * one a thread would compute — into a buffer on a stack the loop reads (`parallel_buf_get*`)
  * and pops (`parallel_buf_drop*`). */
 typedef struct { int64_t i; double f; float g; loft_text t; loft_ref r; loft_fn fn; uint8_t adopted; } loft_par_slot;
-typedef struct { loft_par_slot *rows; int64_t n; } loft_par_buf;
+/* `res` is the store a threaded site's record results were copied into (@PLN203 C4 tier 2),
+ * released with the buffer; null for every other site. */
+typedef struct { loft_par_slot *rows; int64_t n; loft_ref res; } loft_par_buf;
 /* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
  * state: no threads. */
 #ifndef LOFT_TLS
@@ -1010,8 +1012,14 @@ static loft_par_slot *loft_par_push(int64_t n) {
     }
     loft_par_bufs[loft_npar].rows = rows;
     loft_par_bufs[loft_npar].n = n;
+    loft_par_bufs[loft_npar].res = loft_ref_null();
     loft_npar++;
     return rows;
+}
+
+/* The top buffer's result store: freed when the buffer is dropped. */
+static void loft_par_hold(loft_ref res) {
+    if (loft_npar > 0) loft_par_bufs[loft_npar - 1].res = res;
 }
 
 static loft_par_slot *loft_par_row(int64_t i) {
@@ -1039,6 +1047,7 @@ static void loft_par_drop(int refs) {
          * result that names a store which was there before (a pass-through of its element). */
         if (refs && b->rows[i].adopted) loft_free_ref(b->rows[i].r);
     }
+    if (refs) loft_free_ref(b->res);
     free(b->rows);
 }
 
@@ -1052,6 +1061,14 @@ static void loft_par_drop(int refs) {
  * `LOFT_TRACE_PAR_WORKERS` reports how many workers ran rows (@PLN117's instrument).  Without
  * `LOFT_THREADS` every slice runs here, in order: the same answer (@FR-C-Det). */
 typedef void (*loft_par_body)(void *ctx, int64_t lo, int64_t hi);
+
+/* @PLN203 C4 tier 2 — a worker whose result is a RECORD makes it in a store of its own table.
+ * `adopt(ctx, lo, hi, parent_n)` runs in the caller after that worker joined, with the worker's
+ * table current, and copies each of the rows `lo..hi` whose record lies in a store the worker
+ * made (number `parent_n` or past it) into the caller's result store — its bytes and the claims
+ * it owns, as `Stores::copy_from_worker` does — so the worker's stores can go.  A reference held
+ * in such a record is copied as it stands, as native copies it. */
+typedef void (*loft_par_adopt)(void *ctx, int64_t lo, int64_t hi, uint32_t parent_n);
 
 #if defined(LOFT_THREADS)
 #if defined(_WIN32)
@@ -1068,16 +1085,20 @@ typedef struct {
     int64_t lo, hi;
     loft_store_t *table;
     uint32_t n, parent_n;
+    /* Keep the stores it made when it ends: the caller copies the rows' records out first.
+     * The table as the worker leaves it — a growth may have moved it — is handed back in
+     * `kept`, written only by the worker and read by the caller after the join; `table`
+     * stays the caller's mark that the thread was started. */
+    int keep;
+    loft_store_t *kept;
+    uint32_t kept_n;
 } loft_par_job;
 
-/* A worker's end: the stores it made are destroyed with its table and its frames. */
-static void loft_par_job_run(loft_par_job *j) {
+/* The stores of `table` from `from` on, and the table: what a worker made. */
+static void loft_par_free_table(loft_store_t *table, uint32_t from, uint32_t n) {
     uint32_t i;
-    loft_stores = j->table;
-    loft_nstores = j->n;
-    j->body(j->ctx, j->lo, j->hi);
-    for (i = j->parent_n; i < loft_nstores; i++) {
-        loft_store_t *s = &loft_stores[i];
+    for (i = from; i < n; i++) {
+        loft_store_t *s = &table[i];
         free(s->buf);
         free(s->claims.bits);
         free(s->referenced.bits);
@@ -1086,7 +1107,21 @@ static void loft_par_job_run(loft_par_job *j) {
         free(s->parked_set.bits);
         free(s->placed);
     }
-    free(loft_stores);
+    free(table);
+}
+
+/* A worker's end: the stores it made are destroyed with its table and its frames — or, when it
+ * keeps them, its table as it now stands handed back for the caller to adopt from. */
+static void loft_par_job_run(loft_par_job *j) {
+    loft_stores = j->table;
+    loft_nstores = j->n;
+    j->body(j->ctx, j->lo, j->hi);
+    if (j->keep) {
+        j->kept = loft_stores;
+        j->kept_n = loft_nstores;
+    } else {
+        loft_par_free_table(loft_stores, j->parent_n, loft_nstores);
+    }
     loft_stores = 0;
     loft_nstores = 0;
 #if defined(LOFT_CALL_CHAIN)
@@ -1108,7 +1143,10 @@ static void *loft_par_thread(void *arg) {
 #endif
 #endif
 
-static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *ctx) {
+/* `adopt` is 0 for a site whose results are values; for a record site it copies each worker's
+ * rows into `res`, the caller's result store, made before the workers fork so every worker's
+ * table holds it below `parent_n` (see loft_par_adopt). */
+static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *ctx, loft_par_adopt adopt, uint16_t res) {
     int64_t t = threads == LOFT_NULL || threads < 1 ? 1 : threads;
     if (t > n) t = n > 1 ? n : 1;
     if (getenv("LOFT_TRACE_PAR_WORKERS"))
@@ -1141,6 +1179,7 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
             }
             j->n = room;
             j->parent_n = loft_nstores;
+            j->keep = adopt != 0;
         }
         for (k = 1; k < t; k++) {
             /* A thread that cannot start: its slice runs here, on this thread's own table. */
@@ -1163,11 +1202,32 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
             if (jobs[k].table) pthread_join(ids[k], 0);
 #endif
         }
+        /* Each worker's records copied out with its table current, one worker at a time; the
+         * result store's entry travels in from the caller's table and back, so a growth of it
+         * in one worker's adoption is seen by the next. */
+        for (k = 1; adopt && k < t; k++) {
+            loft_par_job *j = &jobs[k];
+            if (!j->table || !j->kept) continue;
+            loft_store_t *own = loft_stores;
+            uint32_t own_n = loft_nstores;
+            j->kept[res] = own[res];
+            loft_stores = j->kept;
+            loft_nstores = j->kept_n;
+            adopt(ctx, j->lo, j->hi, j->parent_n);
+            own[res] = loft_stores[res];
+            loft_stores = own;
+            loft_nstores = own_n;
+            /* The result store's entry is the caller's again: not freed with the worker's. */
+            loft_par_free_table(j->kept, j->parent_n, j->kept_n);
+            j->kept = 0;
+        }
         free(ids);
         free(jobs);
         return;
     }
 #endif
+    (void) adopt;
+    (void) res;
     body(ctx, 0, n);
 }
 
