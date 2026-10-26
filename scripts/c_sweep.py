@@ -122,7 +122,9 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
             if code != 0:
                 first = err.decode(errors="replace").strip().split("\n")[0]
                 return path, "cc-error", f"[{mode}] {first}", None
-            c_out = run([exe], 60, cwd=src.parent)
+            # The same bound as the oracle's: 2177 rewrites image files for ~30 s of system
+            # time alone, and a loaded sweep doubles it.
+            c_out = run([exe], ORACLE_TIMEOUT, cwd=src.parent)
             if asan and (b"Sanitizer" in c_out[2] or b"runtime error:" in c_out[2]):
                 line = next((l for l in c_out[2].decode(errors="replace").split("\n")
                              if "Sanitizer" in l or "runtime error:" in l), "")

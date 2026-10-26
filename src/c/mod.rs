@@ -495,12 +495,19 @@ impl<'a> Cx<'a> {
             .ok_or("an unknown type")?;
         self.copy_types.borrow_mut().insert(tp);
         let r = match &t.parts {
-            // A linked group's members name one record set, which a field-by-field copy
-            // would split into one per member.
+            // A linked group's members name one record set: its views are indexed again over
+            // the copied owner (`loft_relink_group_views`), which is a vector member.
             Parts::Struct(fields) | Parts::EnumValue(_, fields)
-                if fields.iter().any(|f| !f.other_indexes().is_empty()) =>
+                if (0..fields.len()).any(|i| {
+                    Self::group_owner(fields, i).is_some_and(|o| {
+                        !matches!(
+                            self.stores.types[fields[o].content as usize].parts,
+                            Parts::Array(_) | Parts::Ordered(..)
+                        )
+                    })
+                }) =>
             {
-                Err("a copy of a record holding a linked group".to_string())
+                Err("a copy of a record whose linked group no vector member holds".to_string())
             }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 fields.iter().try_for_each(|f| self.copy_type(f.content))
@@ -608,28 +615,54 @@ impl<'a> Cx<'a> {
     /// A struct's field rows, `loft_fields{tp}`: each field's byte position, its type, whether it
     /// is a view member of a linked group (it borrows its records) and whether it is hidden (a
     /// `#`-named field).
-    fn field_rows(tp: u16, fields: &[crate::database::Field]) -> String {
+    fn field_rows(&self, tp: u16, fields: &[crate::database::Field]) -> String {
         let list: Vec<String> = fields
             .iter()
-            .map(|f| {
-                let view = f.other_indexes().first() == Some(&u16::MAX);
+            .enumerate()
+            .map(|(i, f)| {
                 let hidden = u8::from(f.name.starts_with('#'));
+                let (view, group) = match Self::group_owner(fields, i) {
+                    Some(o) if o != i => {
+                        let elem = self.stores.content(f.content);
+                        let nullable =
+                            elem != u16::MAX && self.stores.nullable_some_variant(elem).is_some();
+                        (1 + u8::from(nullable), o + 1)
+                    }
+                    Some(o) => (0, o + 1),
+                    None => (0, 0),
+                };
                 format!(
-                    "{{ {}, {}, {}, {hidden} }}",
-                    f.position,
-                    f.content,
-                    u8::from(view)
+                    "{{ {}, {}, {view}, {hidden}, {group} }}",
+                    f.position, f.content
                 )
             })
             .collect();
         format!(
             "static const loft_fld loft_fields{tp}[] = {{ {} }};",
             if list.is_empty() {
-                "{ 0, 0, 0, 0 }".into()
+                "{ 0, 0, 0, 0, 0 }".into()
             } else {
                 list.join(", ")
             }
         )
+    }
+
+    /// The owner of field `i`'s linked group — the member that holds the records, the one
+    /// whose `other_indexes` does not start with the view marker — or `None` outside a group.
+    fn group_owner(fields: &[crate::database::Field], i: usize) -> Option<usize> {
+        let others = fields[i].other_indexes();
+        if others.is_empty() {
+            return None;
+        }
+        if others.first() != Some(&u16::MAX) {
+            return Some(i);
+        }
+        others
+            .iter()
+            .copied()
+            .filter(|m| *m != u16::MAX)
+            .map(usize::from)
+            .find(|&m| fields[m].other_indexes().first() != Some(&u16::MAX))
     }
 
     /// The copy table: one `loft_tdesc` per registered type, at its type number.
@@ -658,7 +691,7 @@ impl<'a> Cx<'a> {
                     format!("{{ LOFT_T_TEXT, {size}, 0, 0, 0, 0 }}")
                 }
                 Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                    let _ = writeln!(out, "{}", Self::field_rows(tp, fields));
+                    let _ = writeln!(out, "{}", self.field_rows(tp, fields));
                     format!(
                         "{{ LOFT_T_STRUCT, {size}, 0, {}, loft_fields{tp}, 0 }}",
                         fields.len()
@@ -695,7 +728,11 @@ impl<'a> Cx<'a> {
             // own flag.
             let keys = if matches!(
                 t.parts,
-                Parts::Hash(..) | Parts::Index(..) | Parts::Radix(..) | Parts::Trie(..)
+                Parts::Hash(..)
+                    | Parts::Index(..)
+                    | Parts::Radix(..)
+                    | Parts::Trie(..)
+                    | Parts::Ordered(..)
             ) {
                 let (name, n) = self.keys_of(tp);
                 format!("{name}, {n}")
@@ -949,6 +986,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         | "n_parallel_queue_narrow"
         | "n_parallel_queue_fn"
         | "n_parallel_discard"
+        | "n_parallel_fold"
         | "n_parallel_buf_get"
         | "n_parallel_buf_get_float"
         | "n_parallel_buf_get_single"
@@ -1349,6 +1387,12 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
         // second pass resolved it, so nothing binds it and the scope pass never scoped it.
         // It is declared as a placeholder nothing reads.
         if tp.is_unknown() && !args.contains(&v) && vars.scope(v) == u16::MAX {
+            shapes.push(CType::Int);
+            continue;
+        }
+        // A local only ever bound to `null` (`x = null;`, never given a type) holds the
+        // integer null; nothing reads it as another kind.
+        if matches!(tp, Type::Null) && !args.contains(&v) {
             shapes.push(CType::Int);
             continue;
         }

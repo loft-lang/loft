@@ -23,6 +23,7 @@ python3 scripts/c_sweep.py --poison  # the store poison modes, against the inter
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
+LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
 ```
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
@@ -130,9 +131,18 @@ element bind.  A deep copy walks a table of the program's types (`loft_types`).
 
 **`&` parameters and locals.**  A link is a pointer to the variable it names — the caller's, for
 a parameter; the one `b = &a` names (`OpCreateStack(a)`), for a local — and every read and write
-of it goes through the pointer.  A link into a store place (a field, a vector element) is not
-carried yet.  A text result's hidden buffer is a link the caller makes for the
-call.  A rebind of a `&` record releases the record it displaces.
+of it goes through the pointer; a re-point (`@FR-B-Ref-Repoint`) points it at another variable,
+a tuple member, or what another link names.  A link into a STORE place (a field, a vector
+element) is a store link: a `loft_ref` to the place, read and written through the place's own
+get and set — a local bound only to places is one, and a call that hands a place to a `&`
+parameter calls the callee's PLACE TWIN (`<name>_pl<mask>`, `--native`'s `_st` twins), the
+function written again with that parameter a store link; the IR's own text instances
+(`n_app@st1`, `parser/store_text.rs`) take their place the same way, and a function value's
+dispatcher has a place variant per signature.  A link that moves between a variable and a
+store place whose bytes ARE the C value (an 8-byte integer, a float, a character, a boolean, a
+plain enum) holds the place's address, as `--native` does; a narrow or a text place reached
+that way is refused.  A text result's hidden buffer is a link the caller makes for the call.  A
+rebind of a `&` record releases the record it displaces.
 
 **Held vectors.**  Before a loop, each vector `opt::header::hoistable_vectors` admits — a loop
 that writes no store but in place, so no record moves and no length changes — is held in a
@@ -212,8 +222,11 @@ defaults, narrow encodings, variants).  The errors a parse files are the record'
 kept per store and carried as the interpreter carries them — by a record copy into another
 store's root, a bind, an exchange, and a whole-vector write.  A second differential in
 `tests/c_emit.rs` parses some 1 750 documents into a record of every field kind, a vector of
-records, the checked cast and the staged form, on the interpreter and as C.  A parsed type
-holding a keyed collection, a linked group or a vector of nullable records is refused.
+records, the checked cast and the staged form, on the interpreter and as C.  A keyed
+collection is read as `record_new` / `record_finish` read it, each element filed under its key
+(a displaced one released through `loft_types`); a member of a linked group files every element
+into every member, and its views take no absent value; a `vector<S?>` element reads a present
+object as the `Some` variant's payload (`walk_parsed_into`'s @PLN25 E2 arm).
 
 **Files.**  A `File` record keeps the interpreter's fields (size, positions, path, handle,
 format); its handle indexes a table of open `FILE *`s, opened on first use, flushed after every
@@ -230,7 +243,13 @@ generator outlives the caller's view), a resume function and a release.  The res
 restores the locals from the frame, jumps to the label after the last `yield`, and at the next
 `yield` saves them and returns the value through its `out` pointer; the body between is written
 as any other function's.  An iterator value is a handle into the runtime's generator table
-(`loft_gen_*`), released by `OpFreeRef` like a store.
+(`loft_gen_*`), released by `OpFreeRef` like a store, and held anywhere a value is
+(`(G-Hold)`): a step on a handle in a field, an element, a tuple member or a keyed record reads
+the handle's type off the place.  A frame holds the store of every heap argument for its life
+(`@FR-G-Arg-Rebind`, `Stores::hold_for_frame`): a free of a held store orphans it, the last
+release frees it, and a re-mint or an exchange of one takes a fresh store, so a caller's whole
+rebind after the call is not seen.  A tuple holding texts is yielded member by member, the
+consumer's texts its own copies.
 
 **Closures.**  A closure record's release (`OpDropFnRef`) runs the record type's drop cascade,
 which runs the drop hooks of what it captured; the unit brings the cascade of every lambda it
@@ -240,7 +259,19 @@ reaches, and `loft_drop_closure` picks it by the value's definition.
 after another — each row's result is the one a thread would compute — into a buffer on a stack
 the loop reads by row and pops (`loft_par_*`).  A row goes to the worker by its stored bits
 (1, 4 or 8 bytes by the element's width) or as a reference, as `worker_row_arg` hands it; a
-vector result gets a fresh buffer per row, a record result mints its own.
+vector result gets a fresh buffer per row, a record result mints its own; a tuple row is read
+member by member at its `__tuple<…>` record's offsets, a function row is its definition
+number.  `par_fold` is `run_parallel_fold`'s arithmetic: the rows in `min(threads, rows)`
+slices as `parallel_workers` splits them, each folded from `init`, the partials folded from
+`init` in slice order.
+
+**Linked groups.**  A record type several collections of one struct share (`@FR-Col-Group`)
+enters every member (`loft_group_finish`); an element write through the vector member hands
+the record to the others again (`OpLinkRecord`), a whole vector is indexed into each view
+(`OpIndexGroup`, `settle_group`), and a record a repeated key displaces leaves every keyed and
+tree member, released when no vector member holds it (`settle_displaced`).  A copy of a record
+holding a group copies the vector member and indexes the views over the copy
+(`relink_group_views`).
 
 **Removed records.**  The allocator never reuses a record, but one a collection removes keeps
 its claim word negated, so a stored reference to it reads null (`@FR-H-Removed`) — today the
@@ -270,10 +301,8 @@ only by failing with one of its messages — the annotations are read by the sam
 
 ## Not carried yet
 
-The sweep's ranking is the current list.  The large families: a parse into a keyed collection
-or a vector of nullable records, the image loaders over a URL, a lazy binding
-(`store_bind_lazy`), `store_reclaim`, a linked group with a spatial or trie member,
-`parallel { }` blocks, and the native library calls; of the generators, one held in a record
-field and one of tuples; of the `&` locals, a link into a store place; of `par`, a worker over
-tuples or function values.  A record holding a linked group is not copied yet: its members name one record set,
-which a field-by-field copy would split.
+The sweep's ranking is the current list.  The families left: the image loaders over a URL, a
+lazy binding (`store_bind_lazy`), `store_reclaim`, a persisted or verified value whose store
+type is not known at the call, a loaded store holding references, `deliver` (its byte form),
+the native library calls; a fill of a linked group member, a group a keyed member owns, a
+replace or a move of a linked element type; a `par` worker over rows of tuples holding text.

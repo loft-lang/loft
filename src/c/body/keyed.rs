@@ -11,6 +11,7 @@ use super::{
 };
 use crate::c::{CType, Keyed};
 use crate::data::Value;
+use crate::database::Parts;
 use crate::keys::Key;
 
 /// The C description of key parts: a `loft_key` array literal.
@@ -152,30 +153,96 @@ impl FnWriter<'_> {
         rec: &str,
         members: &[(u16, u16)],
     ) -> Result<E, String> {
-        let mut rows = Vec::new();
-        for &(pos, tp) in members {
-            let (kind, _, _) = self.keyed_of(tp)?;
-            let (keys, n) = self.cx.keys_of(tp);
-            let kind = match kind {
-                Keyed::Array => "LOFT_M_ARRAY",
-                Keyed::Hash => "LOFT_M_HASH",
-                Keyed::Index => "LOFT_M_INDEX",
-                Keyed::Ordered => "LOFT_M_ORDERED",
-                Keyed::Sorted => return Err("a sorted member of a linked group".into()),
-                Keyed::Spatial | Keyed::Trie => {
-                    return Err("a tree member of a linked group".into());
-                }
-            };
-            rows.push(format!("{{ {pos}, {kind}, {keys}, {n} }}"));
-        }
+        let (rows, n) = self.cx.member_rows(members)?;
+        let (elem, held, nullable) = self.cx.group_release(members)?;
         Ok(E::new(
             format!(
-                "loft_group_finish({parent}, {rec}, (const loft_member[]){{ {} }}, {})",
-                rows.join(", "),
-                rows.len()
+                "loft_group_finish(loft_types, {elem}, {held}, {nullable}, {parent}, {rec}, {rows}, {n})"
             ),
             K::Void,
         ))
+    }
+
+    /// The operators that keep a linked group one record set (`@FR-Col-Group`): a record the
+    /// vector member holds handed to the other members after an element write
+    /// (`OpLinkRecord`), and a whole vector indexed into one view member (`OpIndexGroup`).
+    fn group_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        match (name, args) {
+            ("OpLinkRecord", [data, rec, ptp, fld]) => {
+                let ptp = u16::try_from(Self::literal(ptp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let fld = u16::try_from(Self::literal(fld, "field")?)
+                    .map_err(|_| "a field number out of range".to_string())?;
+                self.group_parent_plain(ptp)?;
+                let siblings = self.cx.group_siblings(ptp, fld);
+                let (data, rec) = self.two(name, &[data.clone(), rec.clone()], ind)?;
+                if siblings.is_empty() {
+                    return Ok(Some(E::new("(void) 0", K::Void)));
+                }
+                let (rows, n) = self.cx.member_rows(&siblings)?;
+                let stores = self.cx.stores;
+                let mut all = siblings.clone();
+                all.push((stores.field_position(ptp, fld), stores.field_type(ptp, fld)));
+                let (elem, held, nullable) = self.cx.group_release(&all)?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_group_finish(loft_types, {elem}, {held}, {nullable}, {}, {}, {rows}, {n})",
+                        as_ref(data)?,
+                        as_ref(rec)?
+                    ),
+                    K::Void,
+                )))
+            }
+            ("OpIndexGroup", [primary, _view, tp, ptp, fld]) => {
+                let tp = u16::try_from(Self::literal(tp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let ptp = u16::try_from(Self::literal(ptp, "type")?)
+                    .map_err(|_| "a type number out of range".to_string())?;
+                let fld = u16::try_from(Self::literal(fld, "field")?)
+                    .map_err(|_| "a field number out of range".to_string())?;
+                self.group_parent_plain(ptp)?;
+                let stores = self.cx.stores;
+                let prim = stores.field_position(ptp, fld);
+                let members = self.cx.group_siblings(ptp, fld);
+                let Some(&(vpos, _)) = members.iter().find(|(_, t)| *t == tp) else {
+                    return Err("a group view that is no member of the group".into());
+                };
+                let keyed: Vec<(u16, u16)> = members
+                    .iter()
+                    .copied()
+                    .filter(|&(_, t)| !matches!(self.keyed_of(t), Ok((Keyed::Array, _, _))))
+                    .collect();
+                let view = self.cx.member_row(vpos, tp)?;
+                let (rows, n) = self.cx.member_rows(&keyed)?;
+                let (_, _, nullable) = self.cx.group_release(&members)?;
+                let primary = self.expr(primary, ind)?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_index_group({}, {prim}, {nullable}, (const loft_member[]){{ {view} }}, {rows}, {n})",
+                        as_ref(primary)?
+                    ),
+                    K::Void,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// A group whose parent is a `__nullable<S>` payload reads its members through the
+    /// variant (`Stores::nullable_field_parent`), which the C does not carry yet.
+    fn group_parent_plain(&self, ptp: u16) -> Result<(), String> {
+        if self.cx.stores.types[ptp as usize]
+            .name
+            .starts_with("__nullable<")
+        {
+            return Err("a linked group inside a nullable record".into());
+        }
+        Ok(())
     }
 
     /// The natives over keyed collections, or `None` for another.
@@ -497,6 +564,9 @@ impl FnWriter<'_> {
         args: &[Value],
         ind: usize,
     ) -> Result<Option<E>, String> {
+        if let Some(e) = self.group_operator(name, args, ind)? {
+            return Ok(Some(e));
+        }
         match (name, args) {
             ("OpGetRecord", [data, tp, _, vals @ ..]) => {
                 self.get_record(data, tp, vals, ind).map(Some)
@@ -590,6 +660,20 @@ impl FnWriter<'_> {
                     K::Void,
                 )))
             }
+            ("OpSizeSpatial" | "OpSizeTrie", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_rx_table_bytes({})", as_ref(r)?),
+                    K::Int,
+                )))
+            }
+            ("OpSizeIndex", [r]) => {
+                let r = self.expr(r, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_bt_table_bytes({})", as_ref(r)?),
+                    K::Int,
+                )))
+            }
             ("OpLengthIndex", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(Some(E::new(
@@ -649,6 +733,7 @@ impl FnWriter<'_> {
             // A vector walk: its state is the index; forward, the successor moves into the
             // removed slot, so the index steps back to visit it.
             0 if !self.cx.stores.is_linked(tp) => "loft_vec_walk_remove",
+            0 => "loft_array_walk_remove",
             1 => {
                 let (_, elem, _) = self.keyed_of(tp)?;
                 let (keys, n) = self.cx.keys_of(tp);
@@ -970,4 +1055,81 @@ struct PagedPlan {
     nk: usize,
     kind: &'static str,
     coll_name: String,
+}
+
+/// The members of a linked group (`@FR-Col-Group`), as the C writes them: a function's group
+/// operators and a parse's record finish read the same rows.
+impl crate::c::Cx<'_> {
+    /// One member of a linked group as a `loft_member` row: its byte position, kind and keys.
+    pub(crate) fn member_row(&self, pos: u16, tp: u16) -> Result<String, String> {
+        let (kind, _) = self
+            .keyed(tp)
+            .ok_or("a linked group member that is not a collection")?;
+        let (keys, n) = self.keys_of(tp);
+        let kind = match kind {
+            Keyed::Array => "LOFT_M_ARRAY",
+            Keyed::Hash => "LOFT_M_HASH",
+            Keyed::Index => "LOFT_M_INDEX",
+            Keyed::Ordered => "LOFT_M_ORDERED",
+            Keyed::Sorted => return Err("a sorted member of a linked group".into()),
+            Keyed::Spatial => "LOFT_M_SPATIAL",
+            Keyed::Trie => "LOFT_M_TRIE",
+        };
+        Ok(format!("{{ {pos}, {kind}, {keys}, {n} }}"))
+    }
+
+    /// The members of `members` as a `loft_member` array literal and its length.
+    pub(crate) fn member_rows(&self, members: &[(u16, u16)]) -> Result<(String, usize), String> {
+        let rows = members
+            .iter()
+            .map(|&(pos, tp)| self.member_row(pos, tp))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((
+            format!("(const loft_member[]){{ {} }}", rows.join(", ")),
+            rows.len(),
+        ))
+    }
+
+    /// The record type of a group's members and whether a vector member holds its records
+    /// (`settle_displaced`'s `held_by_vector`): a displaced record nothing holds is released,
+    /// through the type table — and whether its records are `vector<S?>` elements, whose
+    /// null ones no keyed member files.
+    pub(crate) fn group_release(&self, members: &[(u16, u16)]) -> Result<(u16, i32, i32), String> {
+        let mut held = 0;
+        let mut elem = u16::MAX;
+        let mut nullable = 0;
+        for &(_, tp) in members {
+            let (kind, e) = self
+                .keyed(tp)
+                .ok_or("a linked group member that is not a collection")?;
+            elem = e;
+            held |= i32::from(kind == Keyed::Array);
+            nullable |= i32::from(self.stores.nullable_some_variant(e).is_some());
+        }
+        self.name_types();
+        self.describe_type(elem);
+        Ok((elem, held, nullable))
+    }
+
+    /// The members of field `fld` of struct `ptp`'s linked group beside the field itself, as
+    /// (position, type).
+    pub(crate) fn group_siblings(&self, ptp: u16, fld: u16) -> Vec<(u16, u16)> {
+        let stores = self.stores;
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &stores.types[ptp as usize].parts
+        else {
+            return Vec::new();
+        };
+        fields
+            .get(fld as usize)
+            .map(|f| {
+                f.other_indexes()
+                    .iter()
+                    .copied()
+                    .filter(|m| *m != u16::MAX)
+                    .map(|m| (stores.field_position(ptp, m), stores.field_type(ptp, m)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }

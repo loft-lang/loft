@@ -24,6 +24,9 @@
 #define LOFT_P_DBREF 15
 #define LOFT_P_CHILD 16
 #define LOFT_P_OTHER 17
+#define LOFT_P_KEYED 18
+/* The `keyed` of a linked vector's slot list (`Parts::Array`): its records are its own. */
+#define LOFT_P_ARRAY 6
 
 /* A declared default (`Field::default`), as the literal the walk reads it from. */
 #define LOFT_PD_NONE 0
@@ -43,6 +46,12 @@ typedef struct {
     uint64_t dbits; /* a NUMBER default's bits */
     const char *ds;
     size_t dslen;
+    /* A member of a linked group: its members, itself first, the record type, whether a vector
+     * member holds the records and whether they are `vector<S?>` elements. */
+    const loft_member *grp;
+    uint8_t ngrp;
+    uint16_t gelem;
+    uint8_t gheld, gnull;
 } loft_pfield;
 
 typedef struct {
@@ -60,7 +69,17 @@ typedef struct {
     const uint8_t *prefill;      /* a record's prefill image (`Stores::set_default_value`) */
     uint8_t variant;             /* a record that is an enum's variant (`Parts::EnumValue`) */
     const char *name;            /* the type's name, as a JsonValue walk's message says it */
+    uint8_t keyed;               /* a keyed collection's kind (`LOFT_KEYED_*`) */
+    const loft_key *keys;        /* its key parts */
+    uint8_t nk;
+    uint8_t linked;              /* its record type is linked (`loft_hash_entry`) */
+    uint8_t some;                /* a `__nullable<S>`'s `Some` value; 0 for any other enum */
+    uint16_t payload_tp, payload_pos; /* the `Some` variant's `payload` field */
 } loft_ptype;
+
+/* The program's type table (`loft_types`), which a keyed collection's insert releases a
+ * displaced record through; written after the runtime, beside `loft_ptypes`. */
+static const loft_tdesc *loft_parse_types(void);
 
 /* `WalkErr`: the offset an error reports and its path, segments in the order they were put in
  * front (the innermost first). */
@@ -137,7 +156,7 @@ static int loft_p_is_json(const loft_pw *w, uint16_t tp) {
 }
 
 static int loft_p_coll(const loft_pw *w, uint16_t tp) {
-    return tp != 0xFFFF && w->P[tp].kind == LOFT_P_VECTOR;
+    return tp != 0xFFFF && (w->P[tp].kind == LOFT_P_VECTOR || w->P[tp].kind == LOFT_P_KEYED);
 }
 
 /* `field_ref`: field `field` of the `rec_tp` at `to`; `to` itself for no field. */
@@ -270,6 +289,7 @@ static void loft_pw_default(loft_pw *w, uint16_t tp, int nullable, int final, lo
     }
     case LOFT_P_CHILD: loft_p_u32(rec, 0); return;
     case LOFT_P_VECTOR:
+    case LOFT_P_KEYED:
         /* An absent `vector<T>?` a parse hands out is the absent collection (loft#917). */
         loft_p_u32(rec, nullable && final ? 0xFFFFFFFFu : 0);
         return;
@@ -318,14 +338,49 @@ static int loft_pw_unfilled_record(const loft_pw *w, uint16_t rec_tp, uint16_t f
 
 /* `record_new` / `record_finish` on a plain vector: the slot of one more element, and the
  * element counted. */
+/* `record_new`: an element of the collection at field `field` of the `rec_tp` at `to` — a
+ * vector's appended slot, a sorted's staged one past its end, a hash's entry, an index's or a
+ * tree's record of its own. */
 static loft_ref loft_pw_new(loft_pw *w, loft_ref to, uint16_t rec_tp, uint16_t field) {
     uint16_t coll = field == 0xFFFF ? rec_tp : w->P[rec_tp].fields[field].content;
+    const loft_ptype *c = &w->P[coll];
     loft_ref d = loft_p_field_ref(w, to, rec_tp, field);
-    return loft_vec_append(d, w->P[w->P[coll].elem].size);
+    uint32_t size = w->P[c->elem].size;
+    if (c->kind != LOFT_P_KEYED) return loft_vec_append(d, size);
+    if (c->keyed == LOFT_KEYED_SORTED) return loft_sorted_new(d, size);
+    if (c->keyed == LOFT_KEYED_HASH) return loft_hash_entry(d, size, c->linked);
+    return loft_entry_new(d, size);
 }
 
-static void loft_pw_finish(loft_pw *w, loft_ref to, uint16_t rec_tp, uint16_t field) {
-    loft_vec_finish(loft_p_field_ref(w, to, rec_tp, field));
+/* `record_finish`: element `rec` filed — a vector's length taken, a keyed collection's record
+ * put under its key (`@FR-Col-Insert`: an equal key's element is replaced and released). */
+static void loft_pw_finish(loft_pw *w, loft_ref to, uint16_t rec_tp, uint16_t field, loft_ref rec) {
+    uint16_t coll = field == 0xFFFF ? rec_tp : w->P[rec_tp].fields[field].content;
+    const loft_ptype *c = &w->P[coll];
+    loft_ref d = loft_p_field_ref(w, to, rec_tp, field);
+    const loft_tdesc *T = loft_parse_types();
+    /* A member of a linked group: the record enters every member (`link_siblings`). */
+    if (field != 0xFFFF && rec_tp != 0xFFFF && w->P[rec_tp].kind == LOFT_P_RECORD
+        && w->P[rec_tp].fields[field].ngrp) {
+        const loft_pfield *g = &w->P[rec_tp].fields[field];
+        if (c->kind != LOFT_P_KEYED) loft_vec_finish(d);
+        loft_group_finish(T, g->gelem, g->gheld, g->gnull, to, rec, g->grp, g->ngrp);
+        return;
+    }
+    if (c->kind != LOFT_P_KEYED) {
+        loft_vec_finish(d);
+        return;
+    }
+    switch (c->keyed) {
+    case LOFT_KEYED_SORTED: loft_sorted_finish(d, w->P[c->elem].size, c->keys, c->nk); break;
+    case LOFT_KEYED_HASH: (void) loft_hash_insert(T, c->elem, d, rec, c->keys, c->nk, 0); break;
+    case LOFT_KEYED_INDEX: (void) loft_ix_insert(T, c->elem, d, rec, c->keys, c->nk, 0); break;
+    case LOFT_KEYED_ORDERED: (void) loft_ordered_insert(T, c->elem, d, rec, c->keys, c->nk, 0); break;
+    case LOFT_P_ARRAY: loft_array_append(d, rec); break;
+    default:
+        (void) loft_rx_insert_record(T, c->elem, d, rec, c->keys, c->nk, c->keyed == LOFT_KEYED_TRIE, 0);
+        break;
+    }
 }
 
 /* `Parsed::as_i64` / `as_f64`. */
@@ -470,7 +525,8 @@ static int loft_pw_walk(loft_pw *w, const loft_jv *v, uint16_t tp, uint16_t rec_
     case LOFT_P_INT: case LOFT_P_LONG: case LOFT_P_SINGLE: case LOFT_P_FLOAT:
     case LOFT_P_BOOL: case LOFT_P_TEXT: case LOFT_P_CHAR:
         return loft_pw_primitive(v, t->kind, to, at, errs);
-    case LOFT_P_VECTOR: {
+    case LOFT_P_VECTOR:
+    case LOFT_P_KEYED: {
         if (v->kind != LOFT_JV_ARRAY) return LOFT_PW_MISFIT(errs, at);
         loft_p_u32(loft_p_field_ref(w, to, rec_tp, field), 0);
         for (size_t i = 0; i < v->nkids; i++) {
@@ -480,7 +536,7 @@ static int loft_pw_walk(loft_pw *w, const loft_jv *v, uint16_t tp, uint16_t rec_
                 for (size_t k = seen; k < errs->n; k++) loft_werr_index(&errs->e[k], i);
                 return 0;
             }
-            loft_pw_finish(w, to, rec_tp, field);
+            loft_pw_finish(w, to, rec_tp, field, res);
         }
         return 1;
     }
@@ -492,6 +548,14 @@ static int loft_pw_walk(loft_pw *w, const loft_jv *v, uint16_t tp, uint16_t rec_
         return loft_pw_struct(w, body, tp, to, at, errs);
     }
     case LOFT_P_ENUM: {
+        /* @PLN25 E2: a `vector<S?>` element reads a present object as the `Some` variant, the
+         * object S's fields in its `payload`. */
+        if (t->some && (v->kind == LOFT_JV_OBJECT || v->kind == LOFT_JV_CTOR)) {
+            *loft_at(loft_store_of(to), to.rec, to.pos) = t->some;
+            loft_ref payload_to = to;
+            payload_to.pos += t->payload_pos;
+            return loft_pw_walk(w, v, t->payload_tp, rec_tp, field, payload_to, at, errs);
+        }
         const char *name;
         size_t len;
         const loft_jv *payload = 0;
@@ -576,7 +640,7 @@ static int loft_pr_array(loft_pw *w, loft_jp *p, loft_werrs *errs, uint16_t tp, 
             loft_werr_index(&errs->e[k], idx);
         }
         if (misfit) loft_pw_default(w, content, 1, 1, res);
-        loft_pw_finish(w, to, rec_tp, field);
+        loft_pw_finish(w, to, rec_tp, field, res);
         int r = loft_jp_next_item(p, start, &next, f);
         if (r < 0) return 0;
         more = r;
@@ -655,7 +719,7 @@ static int loft_pr_into(loft_pw *w, loft_jp *p, loft_werrs *errs, size_t value_a
     const loft_ptype *t = &w->P[tp];
     int open = loft_jp_opening(p);
     int record = t->kind == LOFT_P_RECORD;
-    if (t->kind == LOFT_P_VECTOR && open == LOFT_OPEN_ARRAY)
+    if ((t->kind == LOFT_P_VECTOR || t->kind == LOFT_P_KEYED) && open == LOFT_OPEN_ARRAY)
         return loft_pr_array(w, p, errs, tp, t->elem, rec_tp, field, to, at, f);
     if (record && open == LOFT_OPEN_OBJECT) return loft_pr_struct(w, p, errs, tp, rec_tp, field, to, f);
     loft_jv v;

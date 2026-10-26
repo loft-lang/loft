@@ -6,6 +6,15 @@ static uint32_t loft_rx_cap_for_words(uint32_t words) {
     return words * 8 > LOFT_RX_HDR ? (words * 8 - LOFT_RX_HDR) / LOFT_RX_NODE_SIZE : 0;
 }
 
+/* radix_db::table_bytes / trie_db::table_bytes (`OpSizeSpatial`, `OpSizeTrie`): the tree's node
+ * array, room included. */
+static int64_t loft_rx_table_bytes(loft_ref c) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return 0;
+    loft_store_t *s = loft_store_of(c);
+    uint32_t t = loft_collection_rec(s, c.rec, c.pos);
+    return t == 0 ? 0 : (int64_t) loft_u32(s, t, LOFT_RX_CAP) * LOFT_RX_NODE_SIZE;
+}
+
 static uint32_t loft_rx_init(loft_store_t *s, uint32_t initial) {
     uint32_t words = (LOFT_RX_HDR + LOFT_RX_NODE_SIZE * initial + 7) / 8;
     if (words < LOFT_RX_HDR / 8) words = LOFT_RX_HDR / 8;

@@ -41,6 +41,20 @@ impl FnWriter<'_> {
             Ok(Some(E::new(format!("{f}({})", as_view(a)?), K::Int)))
         };
         match (name, args) {
+            // `expose` / `release` off the browser (`Stores::expose_value`): the value's store
+            // locked read-only while the host holds it, and unlocked.
+            ("OpExpose" | "OpRelease", [tag, val, _]) => {
+                let (tag, val) = self.two(name, &[tag.clone(), val.clone()], ind)?;
+                Ok(Some(E::new(
+                    format!(
+                        "((void) ({}), loft_set_store_lock({}, {}))",
+                        as_int(tag)?,
+                        as_ref(val)?,
+                        u8::from(name == "OpExpose")
+                    ),
+                    K::Void,
+                )))
+            }
             ("OpGetFile", [_]) => one(self, "loft_get_file", K::Bool),
             ("OpSizeFile", [_]) => one(self, "loft_size_file", K::Int),
             ("OpSyncFile", [_]) => one(self, "loft_sync_file", K::Bool),

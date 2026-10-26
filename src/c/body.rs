@@ -145,6 +145,8 @@ pub(crate) struct FnWriter<'a> {
     /// The source line the statements now being written come from (`Value::Line`), which a
     /// call records as its frame's site when the unit keeps frames (`Cx::frames`).
     cur_line: u32,
+    /// `LOFT_C_WHERE` reported this function's refusal already.
+    where_told: bool,
 }
 
 impl<'a> FnWriter<'a> {
@@ -187,6 +189,7 @@ impl<'a> FnWriter<'a> {
             headers: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             cur_line: 0,
+            where_told: false,
             decls: Vec::new(),
             // A parameter arrives bound: its first `Set` is a rebind.
             bound: {
@@ -200,6 +203,38 @@ impl<'a> FnWriter<'a> {
             gen_elem: None,
             yields: 0,
         }
+    }
+
+    /// loft#1254 — a stub with an empty body answers its type's default (`Data::to_default`),
+    /// a handle-carried result the null reference, as the bytecode writer's stub path does;
+    /// `None` for any other body, or a type with no default.
+    fn empty_stub_default(&self) -> Option<Value> {
+        use crate::data::Type;
+        if !matches!(self.code, Value::Block(b) if b.operators.is_empty()) {
+            return None;
+        }
+        let data = self.cx.data;
+        let ret = data.def(self.d).returned();
+        if data.has_default(ret).is_err() {
+            return None;
+        }
+        Some(
+            if matches!(
+                ret.base(),
+                Type::Reference(..)
+                    | Type::Vector(..)
+                    | Type::Sorted(..)
+                    | Type::Index(..)
+                    | Type::Hash(..)
+                    | Type::Radix(..)
+                    | Type::Trie(..)
+                    | Type::Enum(_, true, _)
+            ) {
+                Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new())
+            } else {
+                crate::data::to_default(ret, data)
+            },
+        )
     }
 
     /// This is the place twin for `mask` (`twin_name`): each `&` parameter whose bit is set is
@@ -232,6 +267,8 @@ impl<'a> FnWriter<'a> {
         if self.ret == CType::Void {
             self.stmt(code, 1)?;
             self.epilogue(1);
+        } else if let Some(dflt) = self.empty_stub_default() {
+            self.ret_value(Some(&dflt), 1)?;
         } else {
             self.ret_value(Some(code), 1)?;
         }
@@ -643,6 +680,28 @@ impl<'a> FnWriter<'a> {
 
     /// Emit `v` for its effect.
     fn stmt(&mut self, v: &Value, ind: usize) -> Result<(), String> {
+        let r = self.stmt_kind(v, ind);
+        // `LOFT_C_WHERE=1`: a refusal names the innermost statement it came from, on stderr.
+        if let Err(why) = &r
+            && !self.where_told
+            && std::env::var("LOFT_C_WHERE").is_ok_and(|w| w != "0")
+            && !matches!(
+                v,
+                Value::Block(_) | Value::Loop(_) | Value::If(..) | Value::Insert(_)
+            )
+        {
+            self.where_told = true;
+            let mut at = format!("{v:?}");
+            at.truncate(600);
+            eprintln!(
+                "loft: --emit-c: {}: {why}\n  at: {at}",
+                self.cx.data.def(self.d).original_name()
+            );
+        }
+        r
+    }
+
+    fn stmt_kind(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         if self.cx.frames.get() {
             self.note_site(v, ind);
         }
@@ -654,6 +713,9 @@ impl<'a> FnWriter<'a> {
             | Value::Int(_)
             | Value::Long(_)
             | Value::Boolean(_)
+            | Value::Float(_)
+            | Value::Single(_)
+            | Value::Enum(..)
             | Value::Text(_) => Ok(()),
             Value::Span(b) => self.stmt(&b.1, ind),
             Value::Block(b) => self.block_stmt(b, ind),
@@ -766,10 +828,10 @@ impl<'a> FnWriter<'a> {
     /// over a fresh store, an elided view and a minted store are adopted; anything else is
     /// copied, its source freed when `call_return_frees_source` says the copy owns it.  The
     /// record's store type and that flag; `None` to adopt.
-    fn call_copy(&self, v: u16, x: &Value) -> Result<Option<(u16, bool)>, String> {
-        if self.join_bind(v, x).is_some() {
-            return Err("a rebind of a result fresh on one arm and borrowed on the other".into());
-        }
+    /// A rebind whose result is fresh on one arm and borrowed on the other (`Own::Join`) that
+    /// `join_stmt` does not bind — the call reads the variable, or the variable does not own
+    /// what it displaces — is this copy, as the bytecode writer's #360 path copies it.
+    fn call_copy(&self, v: u16, x: &Value) -> Option<(u16, bool)> {
         use crate::data::Type;
         use crate::use_analysis as ua;
         let data = self.cx.data;
@@ -777,27 +839,25 @@ impl<'a> FnWriter<'a> {
         // A `τ?` that `first_bind_shape` leaves wrapped (`LOFT_NO_NULLABLE_RETBUF`) is not
         // bound here, as in the bytecode writer.
         if matches!(shape, Type::Optional(_)) {
-            return Ok(None);
+            return None;
         }
         let (Type::Reference(d, _) | Type::Enum(d, true, _)) = shape.base().clone() else {
-            return Ok(None);
+            return None;
         };
-        let Some(f) = ua::callee_of(data, self.d, x) else {
-            return Ok(None);
-        };
+        let f = ua::callee_of(data, self.d, x)?;
         if !data.def(f).is_loft_defined() {
-            return Ok(None);
+            return None;
         }
         if data.def(f).return_adopts_fresh_store()
             || self.vars.is_view_elided(v)
             || ua::adopts_minted_at_bind(data, self.vars, v, x)
         {
-            return Ok(None);
+            return None;
         }
-        Ok(Some((
+        Some((
             data.def(d).known_type(),
             ua::call_return_frees_source(data, self.d, x),
-        )))
+        ))
     }
 
     /// `v = f(…)` where the callee's result is fresh on one arm and a view of `base` on the
@@ -1004,7 +1064,7 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(());
         }
-        if let Some((tp, frees)) = self.call_copy(var, x)? {
+        if let Some((tp, frees)) = self.call_copy(var, x) {
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
             let r = self.temp(CType::Ref);
@@ -2777,7 +2837,10 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            ("OpFreeRefIfDistinct", [_, _]) => {
+            // `OpFreeRefOrHandUp` (@PLN150): the placeholder is freed unless the lambda hands
+            // its store back — then the caller decides, as for any value a call through a
+            // function value returns (`loft_fnref_minted`), so nothing is released here.
+            ("OpFreeRefIfDistinct" | "OpFreeRefOrHandUp", [_, _]) => {
                 let (p, w) = self.two(name, args, ind)?;
                 Ok(E::new(
                     format!("loft_free_displaced({}, {})", as_ref(p)?, as_ref(w)?),
@@ -2863,19 +2926,8 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            ("OpMoveField", [src, dst, tp]) => {
-                let tp = Self::literal(tp, "type")?;
-                let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
-                let tp = self.copyable(tp)?;
-                let (src, dst) = self.two(name, &[(*src).clone(), (*dst).clone()], ind)?;
-                Ok(E::new(
-                    format!(
-                        "loft_move_field(loft_types, {tp}, {}, {})",
-                        as_ref(src)?,
-                        as_ref(dst)?
-                    ),
-                    K::Void,
-                ))
+            ("OpMoveRecord" | "OpMoveField", [src, dst, tp]) => {
+                self.move_op(name, src, dst, tp, ind)
             }
             ("OpGetField", [r, fld, _] | [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
@@ -2884,6 +2936,102 @@ impl<'a> FnWriter<'a> {
             }
             _ => self.ref_operator(name, args, ind),
         }
+    }
+
+    /// `OpEvacuate(holder, fld, home, tp)` (`Stores::evacuate`, `@FR-H-RefHome`): the copy is
+    /// placed in the holder's store as `OpPlaceRecord` places one.
+    fn evacuate(
+        &mut self,
+        holder: &Value,
+        fld: &Value,
+        home: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let name = "OpEvacuate";
+        let fld = Self::literal(fld, "field")?;
+        let tp = u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+        let tp = self.copyable(tp)?;
+        let size = self.cx.stores.enum_parent_size(tp);
+        let (image, n) = self.cx.default_image(tp);
+        // The copy is placed in the holder's store as `OpPlaceRecord` places one.
+        let foreign = self
+            .value_type(holder)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+            .and_then(|kt| self.cx.stores.root_vector_element_of(kt))
+            .is_some_and(|elem| elem != tp);
+        let (holder, home) = self.two(name, &[holder.clone(), home.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_evacuate(loft_types, {tp}, {}, {fld}, {}, {size}, {image}, {n}, {})",
+                as_ref(holder)?,
+                as_ref(home)?,
+                u8::from(foreign)
+            ),
+            K::Void,
+        ))
+    }
+
+    /// `OpMoveRecord` (`Stores::move_record_out`, `@FR-R-MoveLast`) and `OpMoveField`: a record
+    /// moved into the field `dst` names.
+    fn move_op(
+        &mut self,
+        name: &str,
+        src: &Value,
+        dst: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let tp = Self::literal(tp, "type")?;
+        let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
+        let tp = self.copyable(tp)?;
+        let (src, dst) = self.two(name, &[src.clone(), dst.clone()], ind)?;
+        let f = if name == "OpMoveRecord" {
+            "loft_move_record_out"
+        } else {
+            "loft_move_field"
+        };
+        Ok(E::new(
+            format!("{f}(loft_types, {tp}, {}, {})", as_ref(src)?, as_ref(dst)?),
+            K::Void,
+        ))
+    }
+
+    /// `OpAppendVector(v, other, tp)` (`Stores::vector_add`, a linked element type's records by
+    /// `vector_add_array`) and `OpPrependVector` (`Stores::prepend_vector`), `tp` the element.
+    fn append_vector_op(
+        &mut self,
+        name: &str,
+        v: &Value,
+        other: &Value,
+        tp: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let tp = u16::try_from(Self::literal(tp, "element type")?)
+            .map_err(|_| "an element type out of range")?;
+        let linked = self.cx.stores.is_linked(tp);
+        self.cx.copy_type(tp)?;
+        let (v, other) = self.two(name, &[v.clone(), other.clone()], ind)?;
+        let (v, other) = (as_ref(v)?, as_ref(other)?);
+        Ok(if name == "OpPrependVector" {
+            E::new(
+                format!(
+                    "loft_vec_prepend(loft_types, {tp}, {v}, {other}, {})",
+                    i32::from(linked)
+                ),
+                K::Bool,
+            )
+        } else if linked {
+            E::new(
+                format!("loft_vec_add_array(loft_types, {tp}, {v}, {other})"),
+                K::Void,
+            )
+        } else {
+            E::new(
+                format!("loft_vec_add(loft_types, {tp}, {v}, {other})"),
+                K::Void,
+            )
+        })
     }
 
     /// References as values: constants, whole references in fields, raw rebinds.
@@ -2963,6 +3111,7 @@ impl<'a> FnWriter<'a> {
                     K::Ref,
                 ))
             }
+            ("OpEvacuate", [holder, fld, home, tp]) => self.evacuate(holder, fld, home, tp, ind),
             ("OpFreeRecordIn", [r, tp]) => {
                 let tp =
                     u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
@@ -3467,31 +3616,8 @@ impl<'a> FnWriter<'a> {
     fn collection_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
             ("OpAdoptVector", [v, other, tp]) => self.adopt_vector(v, other, tp, ind),
-            ("OpAppendVector", [v, other, tp]) => {
-                let tp = u16::try_from(Self::literal(tp, "element type")?)
-                    .map_err(|_| "an element type out of range")?;
-                if self.cx.stores.is_linked(tp) {
-                    self.cx.copy_type(tp)?;
-                    let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
-                    return Ok(E::new(
-                        format!(
-                            "loft_vec_add_array(loft_types, {tp}, {}, {})",
-                            as_ref(v)?,
-                            as_ref(other)?
-                        ),
-                        K::Void,
-                    ));
-                }
-                self.cx.copy_type(tp)?;
-                let (v, other) = self.two(name, &[(*v).clone(), (*other).clone()], ind)?;
-                Ok(E::new(
-                    format!(
-                        "loft_vec_add(loft_types, {tp}, {}, {})",
-                        as_ref(v)?,
-                        as_ref(other)?
-                    ),
-                    K::Void,
-                ))
+            ("OpPrependVector" | "OpAppendVector", [v, other, tp]) => {
+                self.append_vector_op(name, v, other, tp, ind)
             }
             ("OpReplaceVector", [v, other, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "element type")?)
@@ -3745,6 +3871,10 @@ fn c_long(n: i64) -> String {
 fn as_int(e: E) -> Result<String, String> {
     match e.kind {
         K::Int => Ok(e.code),
+        // The slot the bytecode writes is the integer's: a character's code point, a
+        // boolean's byte, a function value's definition number (`FnRefDnr`).
+        K::Char | K::Bool => Ok(format!("((int64_t) ({}))", e.code)),
+        K::Fn => Ok(format!("(({}).d)", e.code)),
         k => Err(format!("an integer expected, a {k:?} found")),
     }
 }
@@ -3803,6 +3933,9 @@ fn as_single(e: E) -> Result<String, String> {
 fn as_char(e: E) -> Result<String, String> {
     match e.kind {
         K::Char => Ok(e.code),
+        // An integer written as a character: its low 32 bits, as the store keeps them (an
+        // integer null is the character null, 0).
+        K::Int => Ok(format!("((uint32_t) ({}))", e.code)),
         k => Err(format!("a character expected, a {k:?} found")),
     }
 }
