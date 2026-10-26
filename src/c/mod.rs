@@ -1273,6 +1273,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         "\nstatic void loft_bind_tables(void) {\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    \
          loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
          loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
+         loft_cbl = loft_cboundlibs;\n    loft_ncbl = loft_ncboundlibs;\n    \
          loft_fault_logger = loft_log_production_fault;\n",
     );
     if cx.lazy.get() {
@@ -1381,6 +1382,9 @@ fn c_libraries(data: &Data) -> String {
     };
     let mut syms: Vec<Vec<String>> = Vec::new();
     let mut optional: Vec<String> = Vec::new();
+    // The link inputs that are a library the package ships: a shipped program opens these at
+    // start instead (`/* bound: */`, read by `c_driver::build`).
+    let mut bound: Vec<String> = Vec::new();
     for lib in data.c_libraries.iter().filter(|l| l.shim.is_empty()) {
         let dir = std::path::Path::new(&lib.pkg_dir);
         let shipped = crate::platform::existing_lib_beside(dir, &lib.name, os);
@@ -1417,7 +1421,9 @@ fn c_libraries(data: &Data) -> String {
             continue;
         }
         if let Some(file) = &shipped {
-            links.extend(crate::platform::c_link_args_for_file(&dir.join(file)));
+            let args = crate::platform::c_link_args_for_file(&dir.join(file));
+            bound.extend(args.iter().cloned());
+            links.extend(args);
         } else {
             links.push(crate::platform::c_link_arg_for_soname(&lib.name));
         }
@@ -1434,6 +1440,33 @@ fn c_libraries(data: &Data) -> String {
             optional.join(", ")
         },
         optional.len()
+    );
+    // @PLN195 — the libraries a shipped program opens at start (`loft_c_bind_libraries`): each
+    // one's package, version and file, never its directory.
+    let rows: Vec<String> = data
+        .shipped_c_libraries()
+        .into_iter()
+        .map(|(lib, path)| {
+            let (package, version) = package_identity(&lib.pkg_dir);
+            format!(
+                "{{ {}, {}, {}, {} }}",
+                body::c_string(&package),
+                body::c_string(&version),
+                body::c_string(&crate::file_access::file_name(path.as_path()).unwrap_or_default()),
+                u8::from(!lib.shim.is_empty())
+            )
+        })
+        .collect();
+    let _ = writeln!(
+        out,
+        "static const loft_c_boundlib loft_cboundlibs[] = {{ {} }};\n\
+         static const uint32_t loft_ncboundlibs = {};",
+        if rows.is_empty() {
+            "{ 0, 0, 0, 0 }".to_string()
+        } else {
+            rows.join(", ")
+        },
+        rows.len()
     );
     // A shim of a package with optional libraries is reached through the program's own
     // symbols (`loft_c_lazy_sym`), which the linker exports only when asked.
@@ -1510,6 +1543,9 @@ fn c_libraries(data: &Data) -> String {
             let args = if lazy {
                 crate::platform::c_whole_archive_args(&path)
             } else {
+                // A shipped program links it whole, or not at all when its library goes beside
+                // the program (`c_driver::build`).
+                let _ = writeln!(out, "/* shim-archive: {path} */");
                 vec![path]
             };
             for a in args {
@@ -1533,10 +1569,28 @@ fn c_libraries(data: &Data) -> String {
             }
         }
     }
+    for l in bound {
+        let _ = writeln!(out, "/* bound: {l} */");
+    }
     for l in links {
         let _ = writeln!(out, "/* link: {l} */");
     }
     out
+}
+
+/// A package's name and version as its manifest states them — the directory's name and `0`
+/// where it states none, as the Rust writer's bind table spells them.
+fn package_identity(pkg_dir: &str) -> (String, String) {
+    let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
+    let package = manifest
+        .as_ref()
+        .and_then(|m| m.name.clone())
+        .or_else(|| crate::file_access::file_name(pkg_dir))
+        .unwrap_or_default();
+    let version = manifest
+        .and_then(|m| m.version)
+        .unwrap_or_else(|| "0".to_string());
+    (package, version)
 }
 
 /// The macros a unit's runtime is compiled under, from what it reaches: a foreign store, the
@@ -1890,6 +1944,26 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
             ),
             format!("loft_cfp({})", args.join(", ")),
         )
+    } else if let Some(when) = bound_by(data, &file) {
+        // @PLN195 — a library a shipped program opens at start is not linked, so its symbol is
+        // found once, in the program and then in that library; an ordinary build calls it.
+        (
+            format!(
+                "#if defined({when})\n    \
+                 static {ret_text} (*loft_cfp)({params_text}) = 0;\n    \
+                 if (!loft_cfp) {{ void *loft_p = loft_c_bound_sym({sym}); \
+                 memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
+                 if (!loft_cfp) loft_c_missing_symbol({sym});\n\
+                 #else\n    \
+                 extern {ret_text} {}({params_text});\n    \
+                 {ret_text} (*const loft_cfp)({params_text}) = {};\n\
+                 #endif",
+                sig.symbol,
+                sig.symbol,
+                sym = body::c_string(&sig.symbol),
+            ),
+            format!("loft_cfp({})", args.join(", ")),
+        )
     } else {
         (
             format!("    extern {ret_text} {}({params_text});", sig.symbol),
@@ -1909,6 +1983,24 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         }
     );
     Ok((sig_c, out))
+}
+
+/// The macro under which a `#c` symbol declared in `file` is found at run time rather than
+/// linked: `LOFT_BIND_LIBS` when its package ships a library of its own (a shipped program opens
+/// that at start), `LOFT_BIND_SHIMS` when it has only a `[c] shim` (opened at start only by a
+/// `--dynamic` build).  None for a package with neither — its symbols are the system's.
+fn bound_by(data: &Data, file: &str) -> Option<&'static str> {
+    let pkg = data.c_owner_pkg(file)?;
+    let shipped = data.shipped_c_libraries();
+    let own = shipped.iter().filter(|(l, _)| l.pkg_dir == pkg);
+    let mut shim = false;
+    for (l, _) in own {
+        if l.shim.is_empty() {
+            return Some("LOFT_BIND_LIBS");
+        }
+        shim = true;
+    }
+    shim.then_some("LOFT_BIND_SHIMS")
 }
 
 /// The call of a `#c` binding and its result: an integer widened to 64 bits by its signedness, a

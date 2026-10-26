@@ -75,6 +75,26 @@ pub(crate) fn link_inputs(c: &str) -> Vec<String> {
         .collect()
 }
 
+/// The link inputs the unit marks `/* <kind>: <input> */` — `bound` for a library its package
+/// ships, `shim-archive` for a `[c] shim`'s archive — each also named on its own link line.
+fn marked(c: &str, kind: &str) -> std::collections::HashSet<String> {
+    let open = format!("/* {kind}: ");
+    c.lines()
+        .filter_map(|l| l.strip_prefix(open.as_str())?.strip_suffix(" */"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Where a built program runs.  `Local`: from the cache, here, linking each library a package
+/// ships where it was built.  `Shipped` (`--out`): anywhere it is copied, opening those
+/// libraries at start through loft's search order (@PLN195) — a `[c] shim` inside the binary,
+/// or beside it under `--dynamic`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Placement {
+    Local,
+    Shipped { dynamic: bool },
+}
+
 /// The content key of one build: the C text, the compiler's identity, the flags, and each
 /// linked input's size and modification time (an archive is content-addressed by its name
 /// already; a raw shim source is not).
@@ -355,9 +375,8 @@ pub(crate) struct Built {
     pub cached: bool,
 }
 
-/// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path;
-/// `relocatable` finds the linked libraries beside the binary (`--out`) rather than where they
-/// were built.
+/// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path,
+/// placed as [`Placement`] says.
 /// The binary is compiled under the scratch directory and published by an atomic rename, so
 /// a concurrent run of the same program reads either no binary or a complete one.  With
 /// `no_cache` the binary stays a per-process scratch file the caller deletes after the run.
@@ -370,17 +389,42 @@ pub(crate) fn build(
     tier: Tier,
     cache_dir: &std::path::Path,
     no_cache: bool,
-    relocatable: bool,
+    placement: Placement,
 ) -> Result<Built, BuildError> {
     let cc = cc_program();
     let mut flags = cc_flags(tier);
     let links = link_inputs(c);
+    let relocatable = placement != Placement::Local;
+    // A shipped program opens the libraries its packages ship at start, where the host can
+    // (`loft_c_bind_libraries`); elsewhere it links them, found beside it.
+    let binds = relocatable && loft::platform::c_binds_libraries_at_start();
+    let dynamic = placement == (Placement::Shipped { dynamic: true });
+    let (bound, shims) = (marked(c, "bound"), marked(c, "shim-archive"));
+    if binds {
+        flags.push("-DLOFT_BIND_LIBS".to_string());
+        if dynamic {
+            flags.push("-DLOFT_BIND_SHIMS".to_string());
+        }
+    }
+    let mut export = false;
     // Where a linked shared library is found at run time: its own directory, or the binary's
     // when the program is written out with its libraries beside it (`--out`).
     let ext = format!(".{}", loft::platform::dll_extension());
     let mut rpaths: Vec<String> = Vec::new();
     let mut link_args: Vec<String> = Vec::new();
     for l in &links {
+        if binds && bound.contains(l) {
+            continue;
+        }
+        // A shim stays inside a static shipped program, linked whole and exported, so a symbol
+        // found by name (`loft_c_bound_sym`) is there; a dynamic one opens its library instead.
+        if binds && shims.contains(l) {
+            if !dynamic {
+                link_args.extend(loft::platform::c_whole_archive_args(l));
+                export = true;
+            }
+            continue;
+        }
         let p = std::path::Path::new(l);
         let shared = l.ends_with(&ext) || l.contains(".so.");
         if !shared {
@@ -396,6 +440,9 @@ pub(crate) fn build(
         }
     }
     flags.extend(rpaths);
+    if export && let Some(arg) = loft::platform::c_export_dynamic_arg() {
+        link_args.push(arg.to_string());
+    }
     let key = build_key(c, &cc, &flags, &links);
     let exe = std::env::consts::EXE_SUFFIX;
     let cached = cache_dir.join(format!("native-c-{key}{exe}"));

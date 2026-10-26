@@ -11928,7 +11928,13 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 tier,
                 &cache_dir,
                 native_cache_bypassed(),
-                dist_dir.is_some(),
+                if dist_dir.is_some() {
+                    c_driver::Placement::Shipped {
+                        dynamic: native_utils::native_cabi_enabled(),
+                    }
+                } else {
+                    c_driver::Placement::Local
+                },
             ) {
                 Ok(b) => b,
                 // @C102 — no C compiler never stops a run: it interprets, saying why where

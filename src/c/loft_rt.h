@@ -382,12 +382,37 @@ static void *loft_c_optlib_open(uint32_t i) {
 }
 #endif
 
+/* @PLN195 — a library a shipped program (`--out`) opens at start through loft's search order,
+ * as `native_bind::bind` does: its package, version and file, never a directory of the machine
+ * that built it.  `shim` marks a `[c] shim`'s own library, which only a `--dynamic` build opens
+ * (LOFT_BIND_SHIMS): a static one carries the shim inside.  Bound by a unit's `main`. */
+typedef struct { const char *pkg, *version, *file; uint8_t shim; } loft_c_boundlib;
+static const loft_c_boundlib *loft_cbl = 0;
+static uint32_t loft_ncbl = 0;
+#if defined(LOFT_POSIX_HOST)
+static void *loft_cbl_handles[64];
+static uint32_t loft_ncbl_handles = 0;
+#endif
+
+/* A `#c` symbol in this program (its linked libraries, its shims), else in a library
+ * `loft_c_bind_libraries` opened.  Null when nothing exports it. */
+static void *loft_c_bound_sym(const char *sym) {
+#if defined(LOFT_POSIX_HOST)
+    void *self = dlopen(0, RTLD_LAZY), *p = self ? dlsym(self, sym) : 0;
+    for (uint32_t i = 0; !p && i < loft_ncbl_handles; i++) p = dlsym(loft_cbl_handles[i], sym);
+    return p;
+#else
+    (void) sym;
+    return 0;
+#endif
+}
+
 /* `c_libs::resolve`: a `#c` symbol of a package with optional libraries — in this program
  * (its linked libraries, its shims), else in one of the package's optional libraries, opened
  * now.  Null when nothing exports it. */
 static void *loft_c_lazy_sym(const char *sym, const char *pkg) {
 #if defined(LOFT_POSIX_HOST)
-    void *self = dlopen(0, RTLD_LAZY), *p = self ? dlsym(self, sym) : 0;
+    void *p = loft_c_bound_sym(sym);
     for (uint32_t i = 0; !p && i < loft_ncol; i++) {
         if (strcmp(loft_col[i].pkg, pkg) != 0) continue;
         void *h = loft_c_optlib_open(i);
@@ -420,9 +445,8 @@ static uint8_t loft_c_library_available(loft_str name) {
         if (strlen(loft_cl[i]) == name.len && memcmp(loft_cl[i], name.p, name.len) == 0) {
 #if defined(LOFT_POSIX_HOST)
             if (loft_cls && loft_cls[i]) {
-                void *self = dlopen(0, RTLD_LAZY);
                 for (const char *const *s = loft_cls[i]; *s; s++) {
-                    if (!self || !dlsym(self, *s)) return 0;
+                    if (!loft_c_bound_sym(*s)) return 0;
                 }
             }
 #endif
@@ -434,10 +458,10 @@ static uint8_t loft_c_library_available(loft_str name) {
      * declares (from it or from what the program already has). */
     for (uint32_t i = 0; i < loft_ncol; i++) {
         if (strlen(loft_col[i].name) != name.len || memcmp(loft_col[i].name, name.p, name.len) != 0) continue;
-        void *h = loft_c_optlib_open(i), *self = dlopen(0, RTLD_LAZY);
+        void *h = loft_c_optlib_open(i);
         if (!h) return 0;
         for (const char *const *s = loft_col[i].syms; *s; s++)
-            if (!dlsym(h, *s) && !(self && dlsym(self, *s))) return 0;
+            if (!dlsym(h, *s) && !loft_c_bound_sym(*s)) return 0;
         return 1;
     }
 #endif
@@ -3944,6 +3968,129 @@ static void loft_arm_timeout(void) {
 #endif
 }
 
+#if defined(LOFT_BIND_LIBS) && defined(LOFT_POSIX_HOST)
+#include <dirent.h>
+#if defined(__APPLE__)
+extern int _NSGetExecutablePath(char *buf, uint32_t *size);
+#endif
+/* `native_bind::search_dirs`: LOFT_LIB_PATH's directories, the executable's, the user's
+ * `.loft/lib` (LOFT_HOME, else HOME) and the system root.  The first two may hold a library
+ * flat; every one may hold it in a `<package>-<version>/` directory. */
+typedef struct { char path[4096]; uint8_t flat; } loft_c_libdir;
+static uint32_t loft_c_lib_dirs(loft_c_libdir *d, uint32_t max) {
+    uint32_t n = 0;
+    const char *list = getenv("LOFT_LIB_PATH");
+    while (list && *list && n < max) {
+        const char *end = strchr(list, ':');
+        size_t len = end ? (size_t) (end - list) : strlen(list);
+        if (len > 0 && len < sizeof d[n].path) {
+            memcpy(d[n].path, list, len);
+            d[n].path[len] = 0;
+            d[n].flat = 1;
+            n++;
+        }
+        list = end ? end + 1 : 0;
+    }
+    char exe[4096], real[4096];
+    exe[0] = 0;
+#if defined(__linux__)
+    ssize_t k = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    exe[k > 0 ? k : 0] = 0;
+#elif defined(__APPLE__)
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0) exe[0] = 0;
+#endif
+    if (!exe[0] && loft_argv && loft_argv[0]) snprintf(exe, sizeof exe, "%s", loft_argv[0]);
+    if (exe[0] && realpath(exe, real)) snprintf(exe, sizeof exe, "%s", real);
+    char *slash = strrchr(exe, '/');
+    if (slash && n < max) {
+        *slash = 0;
+        snprintf(d[n].path, sizeof d[n].path, "%s", exe[0] ? exe : "/");
+        d[n].flat = 1;
+        n++;
+    }
+    const char *home = getenv("LOFT_HOME");
+    if (!home) home = getenv("HOME");
+    if (home && n < max) {
+        snprintf(d[n].path, sizeof d[n].path, "%s/.loft/lib", home);
+        d[n].flat = 0;
+        n++;
+    }
+    if (n < max) {
+        snprintf(d[n].path, sizeof d[n].path, "/usr/local/lib/loft");
+        d[n].flat = 0;
+        n++;
+    }
+    return n;
+}
+
+/* `native_bind::missing_library`: the package, the version wanted, every directory searched,
+ * any other version of the package those directories hold, why a file there would not load,
+ * and the cure.  Exit 1, before the program runs a line. */
+static void loft_c_missing_library(const loft_c_boundlib *l, const loft_c_libdir *d, uint32_t n,
+                                   const char *refused) {
+    fprintf(stderr, "loft: cannot find the native library of package `%s` %s (%s)\n  searched:", l->pkg,
+            l->version, l->file);
+    for (uint32_t i = 0; i < n; i++) fprintf(stderr, "\n    %s", d[i].path);
+    size_t plen = strlen(l->pkg);
+    int header = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        DIR *dir = opendir(d[i].path);
+        if (!dir) continue;
+        struct dirent *e;
+        while ((e = readdir(dir)) != 0) {
+            const char *nm = e->d_name;
+            if (strncmp(nm, l->pkg, plen) != 0 || nm[plen] != '-' || nm[plen + 1] < '0' || nm[plen + 1] > '9' ||
+                strcmp(nm + plen + 1, l->version) == 0)
+                continue;
+            if (!header) fprintf(stderr, "\n  other versions found (not used):");
+            header = 1;
+            fprintf(stderr, "\n    %s/%s", d[i].path, nm);
+        }
+        closedir(dir);
+    }
+    if (refused[0]) fprintf(stderr, "\n  %s", refused);
+    fprintf(stderr,
+            "\n  fix: put `%s` beside the program, in `%s-%s/` under one of these directories, or name its "
+            "directory with LOFT_LIB_PATH\n",
+            l->file, l->pkg, l->version);
+    exit(1);
+}
+
+/* `native_bind::bind`: open every library the program was shipped with, first found in search
+ * order; a library found nowhere ends the program naming it. */
+static void loft_c_bind_libraries(void) {
+    static loft_c_libdir dirs[32];
+    uint32_t nd = loft_c_lib_dirs(dirs, 32);
+    for (uint32_t i = 0; i < loft_ncbl; i++) {
+        const loft_c_boundlib *l = &loft_cbl[i];
+#if !defined(LOFT_BIND_SHIMS)
+        if (l->shim) continue;
+#endif
+        char refused[1024], p[8400];
+        refused[0] = 0;
+        void *h = 0;
+        for (uint32_t k = 0; k < nd && !h; k++) {
+            for (int flat = 0; flat < 2 && !h; flat++) {
+                if (flat && !dirs[k].flat) break;
+                if (flat) snprintf(p, sizeof p, "%s/%s", dirs[k].path, l->file);
+                else snprintf(p, sizeof p, "%s/%s-%s/%s", dirs[k].path, l->pkg, l->version, l->file);
+                if (access(p, F_OK) != 0) continue;
+                h = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
+                if (!h) {
+                    const char *why = dlerror();
+                    size_t used = strlen(refused);
+                    snprintf(refused + used, sizeof refused - used, "%s`%s` would not load: %s", used ? "\n  " : "", p,
+                             why ? why : "unknown error");
+                }
+            }
+        }
+        if (!h) loft_c_missing_library(l, dirs, nd, refused);
+        if (loft_ncbl_handles < 64) loft_cbl_handles[loft_ncbl_handles++] = h;
+    }
+}
+#endif
+
 static void loft_start(int argc, char **argv) {
 #if defined(_WIN32)
     /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
@@ -3957,6 +4104,9 @@ static void loft_start(int argc, char **argv) {
     loft_arm_timeout();
 #if defined(LOFT_POSIX_HOST)
     signal(SIGPIPE, SIG_IGN);
+#endif
+#if defined(LOFT_BIND_LIBS) && defined(LOFT_POSIX_HOST)
+    loft_c_bind_libraries();
 #endif
     LOFT_TRACE("M\n");
     loft_init();
