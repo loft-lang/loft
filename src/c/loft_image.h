@@ -237,6 +237,7 @@ static uint32_t loft_relayout_walk(const loft_tdesc *T, uint32_t ntypes, uint16_
 static uint16_t loft_store_scratch(uint32_t words) {
     uint32_t nr = loft_store_make(0);
     loft_store_t *s = &loft_stores[nr];
+    loft_heap_moved(s, s->size, words < 4 ? 4 : words);
     free(s->buf);
     s->size = words < 4 ? 4 : words;
     s->buf = (uint8_t *) calloc(s->size, 8);
@@ -250,6 +251,7 @@ static uint16_t loft_store_scratch(uint32_t words) {
  * (`Store::new_freed_sentinel`, four words, parking on) its next store is made in. */
 static void loft_store_drop(uint16_t nr) {
     loft_store_t *s = &loft_stores[nr];
+    loft_heap_moved(s, s->size, 4);
     free(s->buf);
     s->size = 4;
     s->buf = (uint8_t *) malloc((size_t) s->size * 8);
@@ -270,6 +272,16 @@ static uint32_t loft_image_live_end(const loft_store_t *s) {
         if (sz > 0) live_end = rec;
     }
     return rec == s->size ? live_end : 0;
+}
+
+/* A loader's path a name check refuses (`file_access`: a control character, a device name …),
+ * said once on stderr as file I/O says it (`loft_normalize`'s check, in loft_io.h). */
+static char *loft_normalize(loft_str raw, const char *base, int check);
+static int loft_path_refused(loft_str p) {
+    char *checked = loft_normalize(p, "", 1);
+    if (!checked) return 1;
+    free(checked);
+    return 0;
 }
 
 static char *loft_cpath(loft_str p, const char *suffix) {
@@ -370,9 +382,14 @@ static int loft_version_triple(const char *v, size_t n, unsigned long t[3]) {
 /* The schema gate (`check_beside`, `classify`, `Release::admits`): the sidecar beside `path`
  * against the layout the program reads its store as.  1 when the image may be read as it is: its
  * sidecar names this layout.  `who` names the caller in what a refusal says. */
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 /* `Stores::paged_refusal`: the last refusal a loader made, which a lazy fetch reads back as the
  * reason its source could not serve it (loft#802). */
-static char *loft_pg_refusal = 0;
+static LOFT_TLS char *loft_pg_refusal = 0;
 
 static void loft_pg_record(const char *path, const char *reason) {
     size_t n = strlen(path) + strlen(reason) + 32;
@@ -382,9 +399,11 @@ static void loft_pg_record(const char *path, const char *reason) {
     snprintf(loft_pg_refusal, n, "refusing %s — %s", path, reason);
 }
 
-/* A refusal of the gate: said on stderr, and recorded as a loader's is. */
+/* A refusal of the gate: said on stderr, and recorded as a loader's is.  A paged loader (no
+ * `who`) says it as `Stores::refuse_paged` does — a refusal reads as 0, like an absent key. */
 static void loft_gate_refuse(const char *who, const char *path, const char *reason) {
-    fprintf(stderr, "%s: refusing %s — %s.\n", who, path, reason);
+    if (who) fprintf(stderr, "%s: refusing %s — %s.\n", who, path, reason);
+    else fprintf(stderr, "store loader: refusing %s — %s; loaded NOTHING (a refusal, not an absent key)\n", path, reason);
     loft_pg_record(path, reason);
 }
 
@@ -616,7 +635,7 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
 
 static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, int untrusted) {
     const char *who = untrusted ? "store_load_untrusted" : "store_load";
-    if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return 0;
+    if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores || loft_path_refused(path)) return 0;
     char *p = loft_cpath(path, 0);
     if (p[0] == 0 || (sc && loft_stores[r.store_nr].known == sc->tp && !loft_image_gate(p, sc, who))) {
         free(p);
@@ -689,6 +708,7 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
             return 0;
         }
     }
+    loft_heap_moved(s, s->size, words);
     free(s->buf);
     s->buf = bytes;
     s->size = words;

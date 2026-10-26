@@ -254,3 +254,32 @@ the default.  Decided 2026-10-08 (owner) — [record](DESIGN_DECISIONS-history.m
 both backends render through it), `formal/formatting.md` `(F-Render-Fields)`, guard
 `loft-suite/rules/formatting/F-Render-Fields/a-record-renders-its-null-fields.loft`.
 **Catalogue:** @F1 (null model) · `formal/formatting.md` `(F-Render)`.
+
+## C156 — Every float-text conversion rounds correctly, an exact tie to the even digit
+
+**Decision.** A float or single becomes text, and text becomes a float, by one rule on every
+backend: correctly rounded to the nearest, an exact tie to the EVEN digit (IEEE 754
+roundTiesToEven).  The default rendering is the shortest digit string that reads back as the
+value — of the strings of that length that read back, the nearest, a tie to even, and the one
+that reads back when only one of a tied pair does.  `.P` rounds the exact binary value held, a
+tie to even (`{0.125:.2}` is `0.12`, `{2.675:.2}` is `2.67`).  A parse answers the nearest
+float, a tie to even.  The default rendering uses no exponent.
+**Why.** Ties-to-even is the rounding without bias and IEEE 754's default; `.P` and every parse
+already followed it, and only the shortest form broke a tie away from zero — Rust's `core::fmt`
+digit generator's choice, inherited rather than decided (a single's `1549.40625` printed
+`1549.4063`).  One rule for the three conversions is what a reader can predict.  Rounding the
+value HELD rather than the literal written is the only rule under which a rendering says what
+the program computes with.  The cost is nothing measurable: a tie needs the exact binary
+expansion to end one digit past the shortest form, which a few integer operations rule out for
+almost every value before any extra work.
+**Revisit when.** An exponent form for very large or small values is wanted — that is a separate
+decision (today `1e21` is `1000000000000000000000`), and a change of every backend's output under
+COMPATIBILITY.md.  Decided 2026-10-26 (owner) — [record](DESIGN_DECISIONS-history.md#c156--every-float-text-conversion-rounds-correctly-an-exact-tie-to-the-even-digit).
+**Holds at:** `@C156` — `./scripts/idx tag:@C156`: the Rust runtime's one shortest-form writer
+(`src/ops/number_text.rs` `push_shortest_f64`/`push_shortest_f32`, which `ops::format_float`, the
+record walker `src/database/format.rs` and the storage conversions call) and its fixed writer
+`push_fixed`; the C runtime's `loft_push_shortest` / `loft_push_fixed` / `loft_float_of_text`
+(`src/c/loft_rt.h`); `formal/formatting.md` `(F-Float-Text)`; guards
+`number_text::tests::shortest_breaks_a_tie_to_even` and `tests/c_emit.rs`
+`float_text_rounds_ties_to_even_on_every_path`.
+**Catalogue:** `formal/formatting.md` `(F-Render)`, `(F-Spec)`.

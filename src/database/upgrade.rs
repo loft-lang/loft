@@ -880,8 +880,8 @@ impl Stores {
                 .iter()
                 .map(|c| match c {
                     crate::keys::Content::Long(v) => v.to_string(),
-                    crate::keys::Content::Float(v) => v.to_string(),
-                    crate::keys::Content::Single(v) => v.to_string(),
+                    crate::keys::Content::Float(v) => crate::ops::shortest_f64(*v),
+                    crate::keys::Content::Single(v) => crate::ops::shortest_f32(*v),
                     crate::keys::Content::Str(t) => format!("\"{}\"", t.str()),
                 })
                 .collect::<Vec<_>>()

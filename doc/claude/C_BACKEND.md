@@ -14,6 +14,11 @@ writes C that answers differently from the interpreter.
 ## Running it
 
 ```bash
+loft --native-c prog.loft [args]   # emit, build with LOFT_CC / CC / cc, cache the binary in
+                                   #   .loft/cache/native-c-<key>, run it (exit 2 on a refusal);
+                                   #   --ship is -O3, --native-debug -O0 -g,
+                                   #   --native-emit [out.c] writes the C; LOFT_NATIVE_BACKEND=c
+                                   #   makes --native mean this; LOFT_KEEP_NATIVE_C=1 keeps the .c
 loft --emit-c out.c prog.loft      # write the C; exit 2 with "does not carry this program
                                    #   yet: <fn>: <why>" for a construct not carried
 cc -std=c99 out.c -o prog -lm && ./prog
@@ -23,14 +28,63 @@ python3 scripts/c_sweep.py --poison  # the store poison modes, against the inter
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
+python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's message, location
+                                               #   and chain), the driver's `advice:` notes aside
+python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: CI splits the sweep
+                                               #   over linux-probe.yml runs (`-f run=…`)
+python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
+python3 scripts/c_sweep.py --no-limit          # no kill at three times the last sweep's time
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
+python3 bench/stats.py --lanes rust,c,cship    # every bench program as C, against its Rust twin
 ```
+
+The C binary reads the run bounds itself: `LOFT_MEMORY_LIMIT` caps the bytes the stores' buffers
+hold (`loft_heap_moved`, called before every resize of one; a growth past it stops the run with
+101 and the report naming the type and the growth), and `LOFT_TIMEOUT` stops the run with 124
+at the deadline (`alarm` under POSIX; without it the driver's own bound ends the program with
+itself).
+
+The log calls write what the interpreter's `Logger` writes (`loft_log.h`): the same config
+search (`LOFT_LOG_CONF`, `.loft/log.conf`, `log.conf`), records, level overrides, rate limit,
+rotation and reload, and `production = true` turns a failed assert or a panic into a logged
+record the program continues past, the run then exiting 1.  The log file is opened at the first
+record; the interpreter opens it at start, so only a program that never logs differs (no empty
+`.loft/log.txt`).
+
+`bench/stats.py`'s `c` lane builds each bench program as C (`-std=c99 -O3`) and requires its
+result hash to be the Rust twin's — a disagreement fails the run — and reports its time over the
+twin's; `cship` builds it under `LOFT_RELEASE_PASS_PROBE=1`, where the generator writes the
+release-pass probe's forms (`loft_wrap_*` in `loft_rt.h`: the processor's arithmetic with every
+wrap defined, for exactly the operators the Rust probe changes) — the ship tier's ceiling, as the
+Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes).
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
 it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It
-builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`) or `refused`, and ranks the
-refusals by reason — that ranking is the work list.
-`differ`, `cc-error` and `sanitizer` are defects of the backend and must stay at 0; a change
+builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`), `slow` or `refused`, and ranks the
+refusals by reason — that ranking is the work list.  Each program gets a directory of its own
+(its unit `p.c`, its binary, and a `tmp/` that is its `TMPDIR` in every run) under the sweep's
+scratch, `<temp>/loft-c-sweep-<checkout>/<pid>/` (`scripts/run_scratch.py`): a program that
+matched or was refused loses it at once, every other keeps it and the report prints its path
+under the verdict, to read the C of a slow or differing program; the next sweep removes it
+first.  Every run's time is filed per mode
+set (`bench/portal/local/c_sweep/<modes>.tsv`, uncommitted); the next sweep of the same modes
+gives each run three times its last time (never less than ten seconds over it) and kills it
+past that as `slow` — a hang shows in seconds rather than at the 300 s bound, and its time is
+not filed, so the limit holds until it is fixed (`--no-limit` runs to the bound).  Beside the
+verdict it lists the runs three times slower than the last sweep and the compiled runs three
+times slower than the interpreter — a report, never a verdict.  `--wasm` builds each unit with clang for
+`wasm32-wasi` instead and runs it under wasmtime: setjmp through the exception-handling proposal
+in its standard encoding (`-mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false`, wasi-libc's
+`-lsetjmp`, wasmtime's `-W exceptions=y`), `clock` and `signal` from WASI's emulation
+libraries, an 8 MiB stack (wasm-ld's default is 64 KiB), the program's directory and the
+temporary directory mapped under their own resolved paths, and the host's environment.  WASI
+counts as POSIX in `loft_cc.h` for files, directories and the monotonic clock; what it lacks —
+sockets, `mmap`, `realpath` — stands under `LOFT_POSIX_HOST`, so a mapped file is read and a
+network fetch answers that the build has no transport.  It
+needs clang, lld, wasi-libc and the wasm32 compiler-rt (Ubuntu: `clang lld wasi-libc
+libclang-rt-dev-wasm32`); a program linking a `[c] shim` archive is refused, the archive being
+built for the host.
+`differ`, `cc-error`, `sanitizer` and `slow` are defects of the backend and must stay at 0; a change
 that grows `match` is measured by the sweep, by `--asan` and by `--poison` before it is
 committed.  A sanitizer cannot see inside a store — a store is one allocation — so a read of a
 freed store, of a record a growth moved, or of a claim nothing wrote is valid memory to it; the
@@ -153,6 +207,46 @@ that writes no store but in place, so no record moves and no length changes — 
 writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`, so
 `LOFT_VERIFY` catches a held vector that changed.  `LOFT_NO_VECTOR_HOIST=1` holds none and
 `LOFT_NO_WRITE_HOIST=1` none in a loop that writes, as for the Rust writer.
+
+**Adopted return buffers.**  A vector-returning function whose result local is delivered
+through the hidden return buffer builds in that buffer (`@FR-R-RetAdopt`): the C reads the Rust
+writer's own analysis, `generation::hoist::ret_adopt`.  The local's bind is the buffer — minted
+as its witness would have been when the caller offered none, emptied when it did — the witness
+store is never minted, and the exit's clear-and-append copy emits nothing.  The held-vector gate
+above stays sound: it holds nothing across a loop that grows a store, so a buffer that shares a
+parameter's store moves no held record.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies, as for the
+Rust writer; `tests/c_emit.rs` counts the adopted binds both ways against hand-computed values.
+
+**Push windows.**  A counted push loop the Rust writer's admission passes
+(`hoist::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record mint groups)
+reserves its pushes once and opens a `loft_win` on the vector — element 0's address, the length
+reached, the room — and every push of that path is a compare, a store and a bump; a record mint
+takes the window's next slot.  The record's length is written back at the loop's exit, and the
+cold growth arm (a locked store, an absent vector) is the ordinary append.  `LOFT_VERIFY` checks
+each push against a fresh derivation.  A mint of a type `hoist::complete_writes` proves every
+literal writes completely copies no default image (`@FR-R-CompleteWrite`), unless the function
+copies a record into a fresh element's field, where a null source leaves what the fill wrote.  `LOFT_NO_PUSH_FILL=1`,
+`LOFT_NO_PUSH_WINDOW=1`, `LOFT_NO_RECORD_PUSH=1` and `LOFT_NO_COMPLETE_WRITE=1` turn the pieces
+off, as on native.
+
+**Text walks.**  Three native rewrites, each read from the analysis native uses.  A
+`for p in t.split(c)` loop takes its pieces from the text through a `loft_ls`, with no vector
+built (`@FR-R-LazySplit`, `hoist::lazy_splits`); a source the function writes is walked as a
+copy.  A walked element, or a text local every bind of which is a view shape (another
+borrowed text or a text parameter, a literal, a field read, a block ending in one), is held as
+a `loft_str` view instead of an owned copy (`@FR-R-TextBorrow`,
+`opt::text_borrow::borrowed_text_walks` and the plain clause of `hoist::borrowed_store_texts`);
+a bind that would view a temporary is refused by name, never left dangling.  A `for c in t`
+walk takes an ASCII byte without decoding it and asks its null test once
+(`@FR-R-CharWalk`, `opt::char_walk::char_walks`).  `LOFT_NO_LAZY_SPLIT=1`,
+`LOFT_NO_TEXT_BORROW=1` and `LOFT_NO_CHAR_WALK=1` turn them off, as on native.
+
+**Float text.**  `(F-Float-Text)` (@C156): the shortest form takes `printf`'s nearest p-digit
+candidate from 15 digits up (6 for a single; from one digit for a subnormal), else its
+neighbour on the value's other side at the same length; `.P` up to 9 decimals is exact integer
+arithmetic; a parse takes Clinger's fast path where the significand fits 2^53 and the power of
+ten 10^22.  Where none applies, `printf` / `strtod` answer, so the C library must round
+correctly — glibc and wasi-libc do (both sweeps).
 
 **Keyed collections.**  A persisted image carries a collection's layout, so the layouts are
 loft's.  A hash is `src/hash.rs` ported (`loft_hash.h`): the seeded table, inline and arena
@@ -312,10 +406,15 @@ degenerate box — and looks again, so the collection stays the only authority o
 resident.  The binding pins the source (length, modification time, inode) and a fetch after
 it moved refuses; the fault channel (`store_lazy_error`, `_faults`, `_clear`, `_fail`) keeps
 every failure's count and the first reason.  A kind an image cannot page is refused at the
-bind.  A database (`sqlite:`) or a loft driver's scheme answers unreachable — this runtime has
-no SQL driver — and `store_lazy_query` / `store_lazy_range` refuse the same way; a program that
-declares its own driver (`fn lazy_fetch…`) is refused at emit time.  The miss hook is written
-only into a unit that binds.
+bind.  A `sqlite:` source is driven as core drives it: the binding carries its collection type's
+plan, derived when the unit is written by the same `sql_query::derive_select` the interpreter
+calls (the equality query, the filter's prefix, the range query, each column's field), and the
+runtime opens SQLite read-only through the system's library, checks the schema once per binding
+(columns, affinity, an index serving the lookup), and files each row with the collection's own
+insert; `store_lazy_query` and `store_lazy_range` materialise every row not yet resident.  A
+program's own driver (`fn lazy_fetch…`) is called on a miss through an adapter per element type,
+a fault inside it contained, as on the interpreter; a driver scheme with no driver answers
+unreachable.  The miss hook is written only into a unit that binds.
 
 **URL loads.**  `store_load_url` and `store_load_url_trusted` fetch the sidecar and the image
 (`file://` from the filesystem, `http://` as one HTTP/1.1 GET over a POSIX socket), gate the
@@ -324,10 +423,18 @@ An `https://` URL answers as a build without a TLS transport answers (`net::fetc
 
 **`#c` bindings.**  A function bound to a C symbol (`#c "abs" "int(int)"`) is a wrapper that
 declares the callee with the author's own signature text — so it agrees with a system header
-that declares it too — passes each scalar cast to its declared type and each text as a
-NUL-terminated copy, and widens the result as `c_call` does.  A vector argument is refused.  A
-`#native` function whose library is not loaded answers every call with the interpreter stub's
-panic.
+that declares it too — passes each scalar cast to its declared type, each text as a
+NUL-terminated copy and each vector as its element pointer with a count where the signature has
+one (`loft_cvec_ptr`, @C107; the C may write through it), and reads the result as `c_call`
+does: an integer widened by its signedness, a `char *` copied to its NUL (NULL the null text,
+invalid UTF-8 replaced), a handle as the pointer's value.  A package's **`[c] shim`** sources
+are `#include`d into the unit by path, so one `cc` of the unit builds the shim with it, where
+the interpreter and `--native` take the library `c_shim::build` made of them; a declared
+`[c] libs` entry is named in a comment for whoever links the unit.  This is how a library
+ships its native part without a Rust crate: ANSI C beside its loft, one source for all three
+backends.  A `#native` function — a Rust cdylib's — is NOT reached: the C answers every call
+with the interpreter's unloaded-library panic, so a library a C program needs is one whose
+native part is a `[c] shim`.
 
 **`deliver`.**  `deliver(tag, value)` prints the loopback host's line: the value's bytes as
 `read_via_descriptor` reads them through its layout, as hex, or the refusal of the first
@@ -337,8 +444,13 @@ walk over a hash in a locked store keeps its snapshot in a store of its own
 
 ## Not carried yet
 
+The work that makes this backend the only compiled target — a driver, diagnostics parity, the
+stdlib census, `par` with threads, libraries and hosts, the wasm targets, a perf lane, three
+platforms — is [@PLN203](plans/203-c99-default-backend.md), with the measured position it
+starts from.
+
 No program of the corpus is refused.  What the C runtime does not have, it answers at run time
-the way a build without it answers: a ranged or a TLS transport for a URL, a SQL driver for a
-lazy database source.  Refused at emit time: a program declaring a loft lazy driver, a `#c`
-binding taking a vector, a link re-pointed to a narrow or a text store place, a par row of a
-tuple holding a reference.
+the way a build without it answers: a ranged or a TLS transport for a URL; SQLite where the system
+has no `libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
+and a par row of a tuple holding a reference — each by name.  Not
+refused and not carried: a `#native` function (above).

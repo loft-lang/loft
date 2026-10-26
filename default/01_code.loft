@@ -1703,6 +1703,14 @@ pub fn panic(message: text, file: text, line: integer);
 pub fn exit(code: integer) process#update;
 #rust"loft::runtime_error::exit_program(@code)"
 #impure(host_io)
+// The test ledger's instrumented operators (@PLN201): what the operator `kind` answers on `a`
+// and `b`, with the fault site `site` counted.  Only `LOFT_LEDGER` runs call them; the
+// program never names them (`opt::ledger_sites`).  A division reports a zero divisor exactly
+// as `OpDivInt` does; every other kind needs no store, so its template names none.
+fn __ledger(site: integer, kind: integer, a: integer, b: integer) -> integer;
+#rust"loft::ledger::op(@site, @kind, @a, @b)"
+fn __ledger_div(site: integer, kind: integer, a: integer, b: integer) -> integer;
+#rust"{{ let __ledger_a = @a; let __ledger_b = @b; if __ledger_b == 0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} loft::ledger::op(@site, @kind, __ledger_a, __ledger_b) }}"
 /// Write a structured log record at the chosen severity.
 /// The file and line are injected by the compiler; do not pass them manually.
 /// Safe to call from `par` workers: the host serialises log writes across threads.

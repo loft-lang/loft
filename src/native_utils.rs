@@ -1677,6 +1677,13 @@ pub(crate) fn sweep_cached_binaries(
         }
         let name = path.parts().last().cloned().unwrap_or_default();
         if let Some(key) = name.strip_prefix("native-") {
+            // A C build (`c_driver`) is `native-c-<key>` with the host's executable suffix:
+            // the same directory, bounded by the same count.
+            let key = key.strip_prefix("c-").unwrap_or(key);
+            let key = key
+                .strip_suffix(std::env::consts::EXE_SUFFIX)
+                .filter(|_| !std::env::consts::EXE_SUFFIX.is_empty())
+                .unwrap_or(key);
             if is_key(key) {
                 let used = fa::metadata(&path).and_then(|m| m.modified()).ok();
                 keyed.push((used, path));

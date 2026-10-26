@@ -214,6 +214,9 @@ impl RuntimeErrorKind {
 /// which is what a shell sees of `exit 256` too.
 pub fn exit_program(code: i64) -> ! {
     use std::io::Write as _;
+    // The test ledger is written before the process ends: Windows' `std::process::exit` runs
+    // no C `atexit` handler, which is where it is written otherwise.
+    crate::ledger::flush();
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     // A status is one byte by contract, as a shell sees `exit 300`: Windows keeps all 32

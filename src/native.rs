@@ -15,6 +15,8 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_assert", n_assert),
     ("n_panic", n_panic),
     ("n_exit", n_exit),
+    ("n___ledger", n___ledger),
+    ("n___ledger_div", n___ledger_div),
     ("n_log_info", n_log_info),
     ("n_log_warn", n_log_warn),
     ("n_log_error", n_log_error),
@@ -827,6 +829,27 @@ fn n_exit(stores: &mut Stores, stack: &mut DbRef) {
     let v_code = stores.get::<i64>(stack);
     stores.raise_runtime_error(Box::new(crate::runtime_error::RuntimeError::exit(v_code)));
     stores.had_fatal = true;
+}
+
+/// The test ledger's instrumented operator (`loft::ledger::op`, @PLN201).
+fn n___ledger(stores: &mut Stores, stack: &mut DbRef) {
+    let v_b = stores.get::<i64>(stack);
+    let v_a = stores.get::<i64>(stack);
+    let v_kind = stores.get::<i64>(stack);
+    let v_site = stores.get::<i64>(stack);
+    stores.put(stack, crate::ledger::op(v_site, v_kind, v_a, v_b));
+}
+
+/// [`n___ledger`] for a division or remainder: a zero divisor reports as `OpDivInt` does.
+fn n___ledger_div(stores: &mut Stores, stack: &mut DbRef) {
+    let v_b = stores.get::<i64>(stack);
+    let v_a = stores.get::<i64>(stack);
+    let v_kind = stores.get::<i64>(stack);
+    let v_site = stores.get::<i64>(stack);
+    if v_b == 0 {
+        stores.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::DivideByZero);
+    }
+    stores.put(stack, crate::ledger::op(v_site, v_kind, v_a, v_b));
 }
 
 fn n_log_info(stores: &mut Stores, stack: &mut DbRef) {

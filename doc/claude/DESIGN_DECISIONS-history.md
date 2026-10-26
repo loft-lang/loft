@@ -5054,3 +5054,17 @@ of Rust, `map_json` 2.61x against 2.58x, `truncate_to` 1.76x against 1.71x, each
 other's sample range.  The fill was never these routines' cost; what the decision buys is the
 rule — no byte nobody wrote is read or leaves the process — made checkable (Miri,
 `Store::raw_bytes`).
+
+## C156 — Every float-text conversion rounds correctly, an exact tie to the even digit
+
+Decided 2026-10-26 by the owner — *"I like the most scientific correct path"*, with a less
+thorough approach allowed only if performance demanded it, which it did not.  Found while
+porting float text to the C backend: the C printed through `printf` (ties to even) and the
+interpreter and native through `core::fmt` (a shortest-form tie away from zero), and the
+formal rules said only "shortest round-trip form".  Measured before the decision: one tie in
+about 26,000 probe values, all singles; `.P` and parsing were ties-to-even on every backend
+already.  Options weighed: keep Rust's tie rule (no code change in the Rust runtime), adopt
+ties-to-even through the `ryu` crate (a new dependency), or a tie fix-up beside `core::fmt`
+(chosen: no dependency, an integer test that rules out almost every value at once).  The
+exponent question (`1e21` printing 22 digits) was left open as its own decision.
+

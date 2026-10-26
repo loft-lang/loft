@@ -100,7 +100,8 @@ always carries the checks; a game that has passed extended in-house testing unde
 checked build is compiled once more from every source it uses — its libraries recompiled
 at that level inside the game's build, never taken as published binaries — into the
 less safe artefact that ships to Steam or the browser.  A build, not a switch, and
-licensed by the testing's fault-free ledger: `--ship <ledger>`.  Precompiled libraries serve quick
+licensed by the testing's fault-free ledger: `--ship <ledger>`.  The ledger itself is
+recorded already: `LOFT_LEDGER=<file>` on a checked run, either backend (BOTH_BACKEND_SWITCHES.md).  Precompiled libraries serve quick
 development only; the release build recompiles every library from source, because the checks
 it drops live inside the library code.  Its design is @PLN201
 ([plans/201-ship-tier](plans/201-ship-tier/README.md)): a ledger of the checked runs' fault

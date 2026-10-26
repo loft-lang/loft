@@ -654,6 +654,7 @@ mod tests {
             name: so.to_string(),
             pkg_dir: String::new(),
             optional: true,
+            shim: Vec::new(),
         }]);
         let p = resolve("lc_strlen").expect("resolved after the miss opened the library");
 

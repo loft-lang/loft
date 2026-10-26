@@ -347,6 +347,8 @@ pub fn stdlib_cache_key(default_dir: &str, stdlib_sources: &[(String, String)]) 
 /// then emitted the unpromoted program; loft#1697).  Anything not named here counts, which
 /// costs a warm start and never a wrong answer.
 pub const INERT_ENV: &[&str] = &[
+    // The backend `--native` drives: the native fast path's fingerprint carries it.
+    "LOFT_NATIVE_BACKEND",
     "LOFT_TIMING",
     "LOFT_TIMING_LEDGER",
     "LOFT_TIMING_TEST",

@@ -401,15 +401,26 @@ impl FnWriter<'_> {
                     K::Void,
                 )))
             }
-            // A database's explicit fetches: a C build has no driver to run them.
-            ("n_store_lazy_query" | "n_store_lazy_range", [local, rest @ ..]) => {
-                let mut all = vec![local.clone()];
-                all.extend(rest.iter().cloned());
-                let mut es = self.args(&all, ind)?.into_iter();
-                let r = as_ref(es.next().ok_or("a lazy fetch without its collection")?)?;
-                let rest: Vec<String> = es.map(|e| format!("(void) ({}), ", e.code)).collect();
+            // A database's explicit fetches (`lazy_query`, `lazy_range`), run by the runtime's
+            // sqlite source.
+            ("n_store_lazy_query", [local, condition]) => {
+                let (r, c) = self.two(name, &[local.clone(), condition.clone()], ind)?;
                 Ok(Some(E::new(
-                    format!("({}loft_lazy_db_fetch({r}))", rest.concat()),
+                    format!("loft_lazy_query({}, {})", as_ref(r)?, as_view(c)?),
+                    K::Int,
+                )))
+            }
+            ("n_store_lazy_range", [local, lo, hi]) => {
+                let es = self.args(&[local.clone(), lo.clone(), hi.clone()], ind)?;
+                let [r, lo, hi] = <[E; 3]>::try_from(es)
+                    .map_err(|_| "a range fetch without its three operands".to_string())?;
+                Ok(Some(E::new(
+                    format!(
+                        "loft_lazy_range({}, {}, {})",
+                        as_ref(r)?,
+                        as_int(lo)?,
+                        as_int(hi)?
+                    ),
                     K::Int,
                 )))
             }
@@ -505,12 +516,102 @@ impl FnWriter<'_> {
             ("n_store_memory", []) => {
                 let t = self.temp(CType::Text);
                 self.line(ind, &format!("loft_text_free(&{t});"));
-                let names = self.cx.type_names();
+                // The type-name table every unit writes (`Cx::type_name_table`), by type
+                // number: the name `Stores::types` gives each, as the interpreter names them.
+                let names = "loft_tnames, loft_ntnames";
                 self.line(ind, &format!("{t} = loft_store_memory({names});"));
                 Ok(Some(self.held(t, CType::Text)))
             }
             _ => Ok(None),
         }
+    }
+
+    /// A `sqlite:` source's plan for keyed collection type `tp` (`loft_sql_plan`): the equality
+    /// query `sql_query::derive_select` derives from the layout — the same one the interpreter
+    /// derives at the miss — its table, each column's field, and the collection's own insert.
+    /// `"0"` where no query can be derived (a field that is not a column), which the miss reports.
+    fn sql_plan(&mut self, tp: u16) -> Result<String, String> {
+        use crate::database::Parts;
+        use crate::database::sql_query::{Mapping, QueryShape, derive_select};
+        let stores = self.cx.stores;
+        if tp == u16::MAX || (tp as usize) >= stores.types.len() {
+            return Ok("0".to_string());
+        }
+        let desc = stores.layout_descriptor(&[tp]);
+        let Some(sql) = derive_select(&desc, tp, &QueryShape::Equality, &Mapping::default()) else {
+            return Ok("0".to_string());
+        };
+        // The explicit forms (`lazy_query`, `lazy_range`): a filter is the select with the
+        // caller's predicate after its WHERE; a range exists only for an ordered collection.
+        let filter = derive_select(
+            &desc,
+            tp,
+            &QueryShape::Filter(String::new()),
+            &Mapping::default(),
+        )
+        .map(|s| s.text);
+        let range = derive_select(&desc, tp, &QueryShape::Range, &Mapping::default());
+        let Ok((kind, elem, size)) = self.keyed_of(tp) else {
+            return Ok("0".to_string());
+        };
+        let kind = match kind {
+            Keyed::Hash => "LOFT_KEYED_HASH",
+            Keyed::Sorted => "LOFT_KEYED_SORTED",
+            Keyed::Index => "LOFT_KEYED_INDEX",
+            Keyed::Ordered => "LOFT_KEYED_ORDERED",
+            Keyed::Spatial => "LOFT_KEYED_SPATIAL",
+            Keyed::Trie => "LOFT_KEYED_TRIE",
+            Keyed::Array => return Ok("0".to_string()),
+        };
+        let Parts::Struct(fields) = &stores.types[elem as usize].parts else {
+            return Ok("0".to_string());
+        };
+        self.cx.copy_type(elem)?;
+        let (keys, nk) = self.cx.keys_of(tp);
+        let table = sql
+            .text
+            .split(" FROM ")
+            .nth(1)
+            .and_then(|t| t.split(' ').next())
+            .unwrap_or("");
+        let cols: Vec<String> = sql
+            .columns
+            .iter()
+            .filter_map(|c| {
+                let f = fields.get(c.field)?;
+                Some(format!(
+                    "{{ {}, {}, {}, {} }}",
+                    super::c_string(&c.column),
+                    f.position,
+                    f.content,
+                    super::c_string(&stores.types[f.content as usize].name)
+                ))
+            })
+            .collect();
+        let name = format!("loft_sqlplan{tp}");
+        if self.cx.sql_plans.borrow_mut().insert(tp) {
+            let _ = writeln!(
+                self.cx.gen_decls.borrow_mut(),
+                "static const loft_sql_col loft_sqlcols{tp}[] = {{ {} }};\n\
+                 static const loft_sql_plan {name} = {{ {}, {}, {}, loft_types, loft_sqlcols{tp}, {}, {}, {elem}, {size}, {kind}, {keys}, {nk}, {}, {}, {} }};",
+                if cols.is_empty() {
+                    "{ 0, 0, 0, 0 }".to_string()
+                } else {
+                    cols.join(", ")
+                },
+                super::c_string(&sql.text),
+                super::c_string(table),
+                super::c_string(stores.element_type_name(tp)),
+                cols.len(),
+                sql.params.len(),
+                filter.map_or_else(|| "0".to_string(), |f| super::c_string(&f)),
+                range
+                    .as_ref()
+                    .map_or_else(|| "0".to_string(), |r| super::c_string(&r.text)),
+                range.as_ref().map_or(0, |r| r.params.len())
+            );
+        }
+        Ok(format!("&{name}"))
     }
 
     /// `store_bind_lazy(local, source)` (`Stores::bind_lazy`): a kind an image cannot page — any
@@ -527,11 +628,30 @@ impl FnWriter<'_> {
         let stores = self.cx.stores;
         let coll = stores.collection_type_of_store(root);
         let parts = stores.types.get(coll as usize).map(|t| &t.parts);
-        // A struct wrapping several keyed collections roots no one collection.
-        let element = super::c_string(if coll == u16::MAX {
+        // The element a miss is fetched for is the BOUND collection's own (the interpreter
+        // keys its driver on the lookup's collection type): a field of a struct holding several
+        // keyed collections names its own, where the store's root names no one collection.
+        let field_type = match local.unspan() {
+            // A field read names the field's own type as its third operand.
+            Value::Call(d, a) if a.len() == 3 && self.cx.data.def(*d).name() == "OpGetField" => {
+                match a[2].unspan() {
+                    Value::Int(tp) => u16::try_from(*tp).ok(),
+                    _ => None,
+                }
+            }
+            _ => self
+                .value_type(local)
+                .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source())),
+        };
+        let own = field_type
+            .filter(|tp| (*tp as usize) < stores.types.len())
+            .map(|tp| stores.collection_type_of_store(tp))
+            .filter(|c| *c != u16::MAX)
+            .unwrap_or(coll);
+        let element = super::c_string(if own == u16::MAX {
             ""
         } else {
-            stores.element_type_name(coll)
+            stores.element_type_name(own)
         });
         let (unservable, fetch) = match parts {
             Some(Parts::Hash(..) | Parts::Trie(..) | Parts::Radix(..)) => {
@@ -584,10 +704,11 @@ impl FnWriter<'_> {
                 "0".to_string(),
             ),
         };
+        let plan = self.sql_plan(own)?;
         let (r, source) = self.two("n_store_bind_lazy", &[local.clone(), source.clone()], ind)?;
         Ok(E::new(
             format!(
-                "loft_lazy_bind_coll({}, {}, {fetch}, {element}, {unservable})",
+                "loft_lazy_bind_coll({}, {}, {fetch}, {element}, {unservable}, {plan})",
                 as_ref(r)?,
                 as_view(source)?
             ),

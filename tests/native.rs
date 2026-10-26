@@ -5674,3 +5674,90 @@ fn a_generation_run_does_not_read_the_previous_programs_facts() {
     );
     let _ = fa::remove_dir_all(&dir);
 }
+
+/// @PLN24 arc E, the shim route — a package's `[c] shim` on the wasip2 target: loft compiles
+/// the shim's C to wasm32 objects (`c_shim::wasm_objects`, with its own freestanding libc),
+/// links them into the module, and the bindings are called directly at wasm32's widths.  The
+/// fixture's four crossings — a scalar, a `char *` return, a vector in by pointer and count,
+/// a vector of records as bytes — answer under `wasmtime` what the interpreter answers.
+/// Skips without `clang`, the `wasm32-wasip2` target or `wasmtime`.
+#[test]
+fn a_c_shim_links_into_the_wasm_target() -> std::io::Result<()> {
+    let have = |tool: &str| {
+        loft::platform::process::harness_command(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !have("clang") || !have("wasmtime") {
+        eprintln!("skipped: needs clang and wasmtime");
+        return Ok(());
+    }
+    let sysroot = loft::platform::process::harness_command("rustc")
+        .arg("--print")
+        .arg("sysroot")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if !fa::is_dir(PathBuf::from(&sysroot).join("lib/rustlib/wasm32-wasip2")) {
+        eprintln!("skipped: the wasm32-wasip2 target is not installed");
+        return Ok(());
+    }
+    let libdir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = std::env::temp_dir().join(format!("loft-shim-wasm-{}", std::process::id()));
+    fa::create_dir_all(&dir)?;
+    let src = "use lcshim::*;\n\
+fn main() {\n\
+  v = [10, 20, 30];\n\
+  out: vector<float> = [0.0, 0.0, 0.0];\n\
+  shim_fill(out, 1500);\n\
+  px = [Px { r: 1, g: 2, b: 3 }, Px { r: 0, g: 0, b: 255 }];\n\
+  println(\"{shim_mod(17, 5)} {wrapped_owned(7)} {shim_sum(v)} {out} {shim_rgb_sum(px)}\");\n\
+}\n";
+    // 17 % 5; shim-7 bracketed; 10 + 40 + 90; 1.5, 1.501, 1.502; 65536 + 512 + 3 + 255.
+    let want = "2 <shim-7> 140 [1.5,1.501,1.502] 66306\n";
+    let file = dir.join("w.loft");
+    fa::write(&file, src)?;
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()?;
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+    let wasm = dir.join("w.wasm");
+    let build = loft::platform::process::harness_command(loft)
+        .env("LOFT_TIMEOUT", "900")
+        .arg("--native-wasm")
+        .arg(&wasm)
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()?;
+    assert!(
+        build.status.success(),
+        "the wasm build with the shim linked in: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = loft::platform::process::harness_command("wasmtime")
+        .arg(&wasm)
+        .output()?;
+    assert!(
+        run.status.success(),
+        "wasmtime: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        want,
+        "the wasm program"
+    );
+    let _ = fa::remove_dir_all(&dir);
+    Ok(())
+}

@@ -40,6 +40,7 @@ use loft::log_config;
 use loft::logger;
 use loft::manifest;
 mod android;
+mod c_driver;
 mod native_utils;
 use loft::file_access;
 use loft::parser;
@@ -228,6 +229,10 @@ fn print_help() {
     );
     println!("  --native-emit [out.rs]        write generated Rust source and exit");
     println!("                                (default: .loft/<script>.rs beside the script)");
+    println!("  --native-c                    like --native but through C and the host's C");
+    println!("                                compiler (LOFT_CC, CC, else cc); combines with");
+    println!("                                --ship, --native-debug, --native-emit");
+    println!("                                [out.c]; LOFT_NATIVE_BACKEND=c selects it too");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
     println!(
         "  --native-android [out.apk]    cross-compile to a signed Android APK (needs \
@@ -4307,9 +4312,18 @@ fn native_source_key_fingerprint(
     lean: bool,
     html_names: bool,
     debug_name: Option<&str>,
+    native_c: bool,
 ) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    // @PLN203 C1 — a C build is the C text (written by THIS loft, whose runtime headers it
+    // carries) compiled by one compiler: both are inputs the sources do not pin.
+    native_c.hash(&mut h);
+    if native_c {
+        loft::cache::loft_exe_identity().hash(&mut h);
+        c_driver::cc_program().hash(&mut h);
+        c_driver::cc_identity(&c_driver::cc_program()).hash(&mut h);
+    }
     ship_build.hash(&mut h);
     native_debug.hash(&mut h);
     lean.hash(&mut h);
@@ -5381,6 +5395,39 @@ fn collect_lib_dirs(args: &[String]) -> Vec<String> {
 /// registry-installed package) must never reach cargo.  Only inline `[dependencies]`
 /// entries are recognised (a `[dependencies.foo]` sub-table is not), matching the
 /// shape every shipped bridge manifest uses.
+/// The shim route — every `[c] shim` the program's packages ship, compiled to
+/// wasm32 objects (`c_shim::wasm_objects`): the package directory with its objects, for the
+/// generator (its bindings are declared and called directly) and the link line.  A shim
+/// that does not compile for wasm32 ends the build with the compiler's words: a wasm program
+/// that reaches the binding could not run, and one that does not is still asked to carry a
+/// library it names, as `--native` carries every library the program loads.
+fn wasm_shim_objects_or_exit(
+    data: &loft::data::Data,
+    flag: &str,
+) -> (
+    Vec<(String, Vec<std::path::PathBuf>)>,
+    Vec<(String, String)>,
+) {
+    let mut out: Vec<(String, Vec<std::path::PathBuf>)> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
+    for lib in &data.c_libraries {
+        if lib.shim.is_empty()
+            || out.iter().any(|(p, _)| *p == lib.pkg_dir)
+            || failed.iter().any(|(p, _)| *p == lib.pkg_dir)
+        {
+            continue;
+        }
+        match loft::c_shim::wasm_objects(&lib.pkg_dir, &lib.shim) {
+            Ok(objs) => out.push((lib.pkg_dir.clone(), objs)),
+            // Not fatal: the bindings stay refused at a REACHED call, with these words — a
+            // program that never calls into the shim still builds (`{flag}` keeps the
+            // refusal's reachability scope).
+            Err(why) => failed.push((lib.pkg_dir.clone(), format!("({flag}) {why}"))),
+        }
+    }
+    (out, failed)
+}
+
 fn bridge_nonloft_deps(cargo_text: &str) -> Vec<(String, String)> {
     let mut deps = Vec::new();
     let mut in_deps = false;
@@ -7514,6 +7561,9 @@ fn main() {
     // and preserve the generated `.rs` on disk so DWARF's `.debug_line`
     // table points at a real file the debugger can show.
     let mut native_debug = false;
+    // @PLN203 C1 — `--native-c` (or `LOFT_NATIVE_BACKEND=c`): `--native` compiles through
+    // the C backend and the host's C compiler instead of rustc.
+    let mut native_c = c_driver::c_backend_selected();
     // @PLN98 P2 — `--lean`: strip the live/debug tier from the generated Rust
     // (no `live_flipped` entry checks, no `LOFT_LIVE_FNS`/`boot_stores`).  The
     // default keeps the live tier (non-breaking); this is opt-OUT.
@@ -7801,6 +7851,10 @@ fn main() {
             // by default (NATIVE.md § Optimisation tiers).  Which target is decided after every flag is
             // read; only the host default sets `native_mode` there.
             ship_build = true;
+        } else if a == "--native-c" {
+            native_mode = true;
+            native_requested = true;
+            native_c = true;
         } else if a == "--native-debug" {
             // NDB.0 — emit DWARF; combine with --ship if
             // optimised + debug-info is wanted.
@@ -9300,7 +9354,13 @@ fn main() {
             deny_warnings,
             &lib_dirs,
             project.as_deref(),
-            native_mode,
+            if !native_mode {
+                test_runner::TestBackend::Interpreter
+            } else if native_c {
+                test_runner::TestBackend::NativeC
+            } else {
+                test_runner::TestBackend::NativeRust
+            },
             &native_lib_paths,
         );
         // Phase 6t Tier 4 — `loft test --deps` walks the current
@@ -9497,6 +9557,8 @@ fn main() {
     }
     if ship_build {
         native_utils::link_static_unless_named();
+        // A shipped build is never a ledger run (@PLN201), whatever the environment says.
+        loft::ledger::suppress();
     }
     // Computed where it is used — the fast path's lookup and the sidecar a native build
     // saves — never on a run that takes neither (an `--interpret` run, a check).  Computing it
@@ -9509,6 +9571,7 @@ fn main() {
             lean,
             html_names,
             debug_name.as_deref(),
+            native_c,
         )
     };
     // loft#1684 — the program cache's key names the search path AS GIVEN, captured before
@@ -10481,11 +10544,43 @@ fn main() {
             wasm_out.clone()
         };
         let wasm_out = &wasm_out;
+        // @PLN203 C6 — through the C and clang when the C backend drives native builds.
+        if native_c {
+            let ann =
+                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
+            let expected = |name: &str| ann.expected_failure(name);
+            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+                Ok(c) => c,
+                Err(r) => {
+                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    std::process::exit(2);
+                }
+            };
+            let shim_sources: Vec<String> = p
+                .data
+                .c_libraries
+                .iter()
+                .flat_map(|l| l.shim.iter().cloned())
+                .collect();
+            if let Err(e) = c_driver::build_wasm(
+                &c,
+                std::path::Path::new(wasm_out),
+                &shim_sources,
+                ship_build,
+                false,
+            ) {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
         let end_def = p.data.definitions();
         // Per-process scratch so parallel `--native-wasm` runs never share the
         // generated source (a shared path let one rustc read another's program).
         let build_dir = platform::build_scratch_dir("wasm");
         let rs_path = build_dir.join("prog.rs");
+        let (wasm_shim_objects, wasm_shim_failed) =
+            wasm_shim_objects_or_exit(&p.data, "--native-wasm");
         {
             let mut f = match fa::create(&rs_path) {
                 Ok(f) => f,
@@ -10506,6 +10601,12 @@ fn main() {
             // to a sysroot symbol used to build and then trap at the call; the
             // generator refuses the call instead.
             out.wasm_wasi = true;
+            // The shim route — every `[c] shim` compiled to wasm32 objects and
+            // linked into the module; its bindings are then called directly.
+            for (pkg, _) in &wasm_shim_objects {
+                out.wasm_shim_pkgs.push(pkg.clone());
+            }
+            out.wasm_shim_failed.clone_from(&wasm_shim_failed);
             // @PLN98 P2 — `--lean` strips the live/debug tier from the emitted Rust.
             // @PLN157 — and, separately, the frame NAMES; `out.lean` is the one
             // home for that second question (see `generation::Output::lean`).
@@ -10566,6 +10667,12 @@ fn main() {
             Some("wasm32-wasip2"),
             wasm_deps_dir.as_deref(),
         );
+        for (_, objs) in &wasm_shim_objects {
+            for o in objs {
+                cmd.push_arg("-C")
+                    .push_arg(format!("link-arg={}", o.display()));
+            }
+        }
         let status = cmd.status();
         if std::env::var("LOFT_KEEP_NATIVE_RS").is_err() {
             let _ = fa::remove_file(&rs_path);
@@ -10605,6 +10712,43 @@ fn main() {
         } else {
             html_path.clone()
         };
+        // @PLN203 C6 — through the C: the program's wasm32-wasi module in a page that hosts it.
+        if native_c {
+            let ann =
+                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
+            let expected = |name: &str| ann.expected_failure(name);
+            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+                Ok(c) => c,
+                Err(r) => {
+                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    std::process::exit(2);
+                }
+            };
+            let shim_sources: Vec<String> = p
+                .data
+                .c_libraries
+                .iter()
+                .flat_map(|l| l.shim.iter().cloned())
+                .collect();
+            let wasm = platform::build_scratch_dir("html-c").join("prog.wasm");
+            if let Err(e) = c_driver::build_wasm(&c, &wasm, &shim_sources, ship_build, true) {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+            let bytes = fa::read(&wasm).unwrap_or_default();
+            let title = fa::file_stem(&abs_file).unwrap_or_else(|| "loft".to_string());
+            let page = c_driver::html_page(&title, &bytes);
+            if let Err(e) = fa::write(&html_path, &page) {
+                eprintln!("loft: cannot write {html_path}: {e}");
+                std::process::exit(1);
+            }
+            println!(
+                "wrote {html_path} ({} KB, WASM {} KB)",
+                page.len() / 1024,
+                bytes.len() / 1024
+            );
+            return;
+        }
         // @PLN146 F5 — the fonts this page has to carry, decided BEFORE the build:
         // a manifest that cannot produce a working page should not cost a wasm
         // compile first.  Two sources, because a main script's own package is never
@@ -10698,6 +10842,7 @@ fn main() {
         // from racing on the old shared scratch/loft_html.{rs,wasm}.
         let build_dir = platform::build_scratch_dir("html");
         let rs_path = build_dir.join("prog.rs");
+        let (wasm_shim_objects, wasm_shim_failed) = wasm_shim_objects_or_exit(&p.data, "--html");
         // @PLN117 — does this program actually run anything in parallel?  Set
         // from the emitted reachable set below; it is what decides whether the
         // page carries loft's thread pool.
@@ -10716,6 +10861,11 @@ fn main() {
             p.data.namespace_colliding_native_fns();
             let mut out = generation::Output::new(&p.data, &state.database);
             out.wasm_browser = true;
+            // The shim route, as for `--native-wasm`.
+            for (pkg, _) in &wasm_shim_objects {
+                out.wasm_shim_pkgs.push(pkg.clone());
+            }
+            out.wasm_shim_failed.clone_from(&wasm_shim_failed);
             // @PLN98 P3.4 — a browser client is debug-OFF by default (a production
             // client should not ship a live-flip / breakpoint channel): the live
             // tier is opt-IN via `--debug[=name]`.  `--lean` also forces it off.
@@ -11035,6 +11185,12 @@ fn main() {
             if let Some(ref deps) = bridge_dep_search {
                 cmd.push_arg("-L")
                     .push_arg(format!("dependency={}", deps.display()));
+            }
+        }
+        for (_, objs) in &wasm_shim_objects {
+            for o in objs {
+                cmd.push_arg("-C")
+                    .push_arg(format!("link-arg={}", o.display()));
             }
         }
         let status = cmd.status();
@@ -11714,6 +11870,151 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         if !(native_mode || native_emit.is_some()) {
             break 'native;
         }
+        if native_c {
+            // Nothing to run (a library, a file of declarations): what the rustc path says of a
+            // crate with no `main`, and a clean exit.
+            if !loft::c::has_entry(&p.data) && native_emit.is_none() {
+                if check_only || dist_dir.is_some() {
+                    println!("ok");
+                } else {
+                    eprintln!(
+                        "loft: `{abs_file}` defines no `main`, so there is nothing to run — it compiled cleanly."
+                    );
+                }
+                return;
+            }
+            let tier = if native_debug {
+                c_driver::Tier::Debug
+            } else if ship_build {
+                c_driver::Tier::Release
+            } else {
+                c_driver::Tier::Check
+            };
+            let ann =
+                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
+            let expected = |name: &str| ann.expected_failure(name);
+            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+                Ok(c) => c,
+                Err(r) => {
+                    let reason = format!("the C backend does not carry this program yet: {r}");
+                    if native_requested || native_required {
+                        eprintln!("loft: {reason}");
+                        std::process::exit(2);
+                    }
+                    native_fallback_reason = Some(reason);
+                    break 'native;
+                }
+            };
+            if let Some(emit) = native_emit.as_deref() {
+                let path = if emit.is_empty() {
+                    default_artifact_path(&abs_file, "c")
+                } else {
+                    std::path::PathBuf::from(emit)
+                };
+                if let Err(e) = fa::write(&path, &c) {
+                    eprintln!("loft: cannot write {}: {e}", path.display());
+                    std::process::exit(1);
+                }
+                return;
+            }
+            let cache_dir = std::path::Path::new(&abs_file)
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(".loft")
+                .join("cache");
+            let t_compile = std::time::Instant::now();
+            let built = match c_driver::build(
+                &c,
+                tier,
+                &cache_dir,
+                native_cache_bypassed(),
+                dist_dir.is_some(),
+            ) {
+                Ok(b) => b,
+                // @C102 — no C compiler never stops a run: it interprets, saying why where
+                // native was asked for (`--native`) or in a source checkout, and silently from a
+                // release; `LOFT_REQUIRE_NATIVE` turns the fallback into the refusal below.
+                Err(c_driver::BuildError::NoCompiler(why)) => {
+                    if !native_required
+                        && (native_requested || native_utils::loft_source_tree().is_some())
+                    {
+                        eprintln!("loft: {why}; running interpreted instead.");
+                    }
+                    native_fallback_reason = Some(why);
+                    break 'native;
+                }
+                Err(e) => {
+                    eprintln!("loft: {e}");
+                    std::process::exit(1);
+                }
+            };
+            loft::platform::timing_record(
+                "binary",
+                &fa::file_stem(&abs_file).unwrap_or_default(),
+                built.cached,
+                Some(t_compile.elapsed().as_secs_f64()),
+            );
+            let durable = built
+                .binary
+                .parent()
+                .is_some_and(|d| d == cache_dir.as_path());
+            // The next run of this program under the same inputs execs the binary without
+            // parsing, as a rustc build's does (@PLN166 B3).
+            if durable && program_cache_on && !has_auto_native && !any_dev_interpret {
+                loft::startup_cache::save_native_sidecar(
+                    &abs_file,
+                    &cache_key_dirs,
+                    native_fingerprint(),
+                    &built.binary,
+                );
+            }
+            if let Some(dir) = &dist_dir {
+                if p.data.def_nr("n_main") != u32::MAX {
+                    let name = fa::file_stem(std::path::Path::new(&abs_file))
+                        .unwrap_or_else(|| "program".to_string());
+                    if let Err(e) = native_utils::write_dist(
+                        std::path::Path::new(dir),
+                        &built.binary,
+                        &name,
+                        &p.data,
+                    ) {
+                        eprintln!("loft: --out {dir}: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                if !durable {
+                    let _ = fa::remove_file(&built.binary);
+                }
+                println!("ok");
+                return;
+            }
+            if check_only {
+                if std::env::var_os("LOFT_CHECK_ARTIFACT").is_some() {
+                    println!("ok {abs_file} {}", built.binary.display());
+                } else {
+                    println!("ok");
+                }
+                return;
+            }
+            // A binary outside the cache is this run's own, and `exec_native_binary` deletes
+            // whatever is not the cached path.
+            let keep_as = if durable {
+                built.binary.clone()
+            } else {
+                std::path::PathBuf::new()
+            };
+            exec_native_binary(
+                &built.binary,
+                &keep_as,
+                state.database.program_relative,
+                &abs_file,
+                &default_str,
+                &p.lib_dirs,
+                &user_args,
+                Some(&p.data),
+            );
+            return;
+        }
         let end_def = p.data.definitions();
         let emit_path = match native_emit.as_deref() {
             // Default `loft <file>` writes to a per-process tmp file
@@ -11852,6 +12153,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                         "    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
                     );
                     let _ = writeln!(f, "    init(&cell);");
+                    // @PLN201 — a ledger build arms its site table before the tests run.
+                    if !p.data.ledger_sites.is_empty() {
+                        let _ = writeln!(f, "    __loft_ledger();");
+                    }
                     for (d_nr, name) in &test_fns {
                         let def = p.data.def(*d_nr);
                         let mut work_args = Vec::new();

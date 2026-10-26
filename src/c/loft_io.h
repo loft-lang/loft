@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
-#if defined(LOFT_FOREIGN)
+#if defined(LOFT_FOREIGN) && defined(LOFT_POSIX_HOST)
 #include <fcntl.h>
 #include <sys/mman.h>
 #endif
@@ -28,14 +28,23 @@
 #define LOFT_FS_NOT_EMPTY 4
 #define LOFT_FS_OTHER 9
 
-/* The program's own directory, which a relative path resolves against (Stores::resolve_path);
- * the generated main sets it, LOFT_SOURCE_DIR overrides it.  `#cwd` turns the anchoring off. */
+/* The program's own directory, which a relative path resolves against (Stores::resolve_path):
+ * `LOFT_SOURCE_DIR`, which the driver hands every run, else the executable's own directory — a
+ * program written out with `--out` or run on its own anchors where it lies, as the Rust
+ * writer's standalone binary does.  No unit bakes a directory of the machine that built it.
+ * `#cwd` turns the anchoring off. */
 static const char *loft_anchor = "";
 static int loft_program_relative = 1;
 
-static void loft_set_anchor(const char *dir, int program_relative) {
+static loft_text loft_program_directory(loft_str sub);
+static void loft_set_anchor(int program_relative) {
     const char *env = getenv("LOFT_SOURCE_DIR");
-    loft_anchor = env && *env ? env : dir;
+    if (env && *env) loft_anchor = env;
+    else {
+        loft_text dir = loft_program_directory(loft_lit("", 0));
+        loft_anchor = dir.p ? dir.p : "";
+        if (dir.len && (dir.p[dir.len - 1] == '/' || dir.p[dir.len - 1] == '\\') && dir.len > 1) dir.p[dir.len - 1] = 0;
+    }
     loft_program_relative = program_relative;
     env = getenv("LOFT_PATHS");
     if (env) loft_program_relative = (env[0] == 'p' || env[0] == 'P');
@@ -69,8 +78,9 @@ static void loft_char_debug(loft_text *t, uint32_t c) {
     loft_push_char(t, '\'');
 }
 
-/* file_access::name_refusal: why no platform takes the name, or 0 (the reason malloc'd). */
-static char *loft_name_refusal(const char *p, size_t n) {
+/* file_access::name_refusal: why no platform takes the name, or 0 (the reason malloc'd, its
+ * length in `*len` — the name it quotes may hold a NUL). */
+static char *loft_name_refusal(const char *p, size_t n, size_t *len) {
     if (n == 0 || (n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.')) return 0;
     loft_text t = { 0, 0, 0 };
     for (size_t i = 0; i < n; i++) {
@@ -105,12 +115,14 @@ static char *loft_name_refusal(const char *p, size_t n) {
         loft_push(&t, p, n);
         loft_push_cstr(&t, why);
     }
+    *len = t.len;
     loft_push_char(&t, 0);
     return t.p;
 }
 
-/* `log_refusal_once`: one line per refused path per process. */
-static void loft_log_refusal_once(loft_str raw, const char *why) {
+/* `log_refusal_once`: one line per refused path per process, written byte for byte — a path
+ * and the reason quoting it may hold a NUL, which the interpreter writes as it is. */
+static void loft_log_refusal_once(loft_str raw, const char *why, size_t why_len) {
     static loft_text *said = 0;
     static size_t nsaid = 0;
     for (size_t i = 0; i < nsaid; i++)
@@ -118,7 +130,11 @@ static void loft_log_refusal_once(loft_str raw, const char *why) {
     said = (loft_text *) realloc(said, (nsaid + 1) * sizeof *said);
     if (!said) { fputs("loft: out of memory\n", stderr); abort(); }
     said[nsaid++] = loft_text_own(raw);
-    fprintf(stderr, "loft: the path `%.*s` is refused: %s\n", (int) raw.len, raw.p, why);
+    fputs("loft: the path `", stderr);
+    fwrite(raw.p, 1, raw.len, stderr);
+    fputs("` is refused: ", stderr);
+    fwrite(why, 1, why_len, stderr);
+    fputc('\n', stderr);
 }
 
 /* PathText's normal form of `raw`, malloc'd: '.' dropped, '..' folded, '/' between names — under
@@ -146,9 +162,10 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
         size_t n = i - s;
         i++;
         if (n == 0 || (n == 1 && name[0] == '.')) continue;
-        char *why = check ? loft_name_refusal(name, n) : 0;
+        size_t why_len = 0;
+        char *why = check ? loft_name_refusal(name, n, &why_len) : 0;
         if (why) {
-            loft_log_refusal_once(raw, why);
+            loft_log_refusal_once(raw, why, why_len);
             free(why);
             free(parts);
             free(at);
@@ -212,7 +229,9 @@ static char *loft_case_clash(const char *full) {
     struct stat st;
     while (stat(existing, &st) != 0) {
         char *slash = strrchr(existing, '/');
-        if (!slash) { free(existing); free(missing); return 0; }
+        /* The walk ends at the root: where even `/` cannot be stat'ed (WASI reaches only its
+         * pre-opened directories), no prefix exists to compare spellings against. */
+        if (!slash || (slash == existing && existing[1] == 0)) { free(existing); free(missing); return 0; }
         free(missing);
         missing = (char *) malloc(strlen(slash + 1) + 1);
         if (!missing) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -286,7 +305,7 @@ static char *loft_resolve(loft_str raw) {
     if (full && raw.len) {
         char *why = loft_case_clash(full);
         if (why) {
-            loft_log_refusal_once(raw, why);
+            loft_log_refusal_once(raw, why, strlen(why));
             free(why);
             free(full);
             return 0;
@@ -308,27 +327,61 @@ static char *loft_file_path(loft_ref f) {
     return loft_resolve(loft_get_text(f, 24));
 }
 
-/* The open handles a File record's byte 28 indexes (Stores::files), never reused, and which of
- * them were opened for reading only (LoftFile::reader). */
+/* The open handles a File record's byte 28 indexes (Stores::files), never reused, which of
+ * them were opened for reading only (LoftFile::reader), and the resolved path each was opened
+ * on (a delete closes this program's own handles on its path where the OS refuses an open
+ * file's: `loft_fs_delete`). */
 static FILE **loft_files = 0;
 static uint8_t *loft_files_ro = 0;
+/* Where each handle's stream stands after the last READ through it, -1 when anything else
+ * touched it since: a read starting there needs no seek (`loft_read_file`). */
+static int64_t *loft_files_at = 0;
+static char **loft_files_path = 0;
 static int32_t loft_nfiles = 0;
 
-static int32_t loft_file_handle_add(FILE *h, int ro) {
+/* `file open error: {e}` (state/io.rs, codegen_runtime): the error as Rust's `io::Error` shows
+ * a path's — `<path>: <strerror> (os error <n>)` — on stderr. */
+static void loft_file_open_error(const char *path) {
+    int e = errno;
+    if (path) fprintf(stderr, "file open error: %s: %s (os error %d)\n", path, strerror(e), e);
+    else fprintf(stderr, "file open error: %s (os error %d)\n", strerror(e), e);
+}
+
+static int32_t loft_file_handle_add(FILE *h, int ro, const char *path) {
     FILE **n = (FILE **) realloc(loft_files, (size_t) (loft_nfiles + 1) * sizeof *n);
     uint8_t *r = (uint8_t *) realloc(loft_files_ro, (size_t) (loft_nfiles + 1));
-    if (!n || !r) { fputs("loft: out of memory\n", stderr); abort(); }
+    int64_t *a = (int64_t *) realloc(loft_files_at, (size_t) (loft_nfiles + 1) * sizeof *a);
+    char **ps = (char **) realloc(loft_files_path, (size_t) (loft_nfiles + 1) * sizeof *ps);
+    size_t len = strlen(path);
+    char *copy = (char *) malloc(len + 1);
+    if (!n || !r || !a || !ps || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(copy, path, len + 1);
     loft_files = n;
     loft_files_ro = r;
+    loft_files_at = a;
+    loft_files_path = ps;
     loft_files[loft_nfiles] = h;
     loft_files_ro[loft_nfiles] = (uint8_t) ro;
+    loft_files_at[loft_nfiles] = -1;
+    loft_files_path[loft_nfiles] = copy;
     return loft_nfiles++;
 }
 
-static FILE *loft_file_handle(loft_ref f) {
+/* The open handle of `f` and its number (-1 for none), keeping the stream's read position. */
+static FILE *loft_file_reader(loft_ref f, int32_t *nr) {
     int32_t h;
     memcpy(&h, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
-    return h >= 0 && h < loft_nfiles ? loft_files[h] : 0;
+    *nr = h >= 0 && h < loft_nfiles && loft_files[h] ? h : -1;
+    return *nr >= 0 ? loft_files[h] : 0;
+}
+
+/* The open handle of `f`, for any use but a read: the read position it kept is forgotten, so
+ * the next read seeks for real (and C's positioning call between a write and a read is made). */
+static FILE *loft_file_handle(loft_ref f) {
+    int32_t h;
+    FILE *fh = loft_file_reader(f, &h);
+    if (h >= 0) loft_files_at[h] = -1;
+    return fh;
 }
 
 static char *loft_file_path(loft_ref f);
@@ -345,6 +398,7 @@ static FILE *loft_file_writable(loft_ref f, FILE *h) {
     if (!w) return 0;
     fclose(h);
     loft_files[nr] = w;
+    loft_files_at[nr] = -1;
     loft_files_ro[nr] = 0;
     return w;
 }
@@ -465,12 +519,12 @@ static void loft_write_file(loft_ref f, const loft_text *bytes) {
         h = fopen(path, "r+b");
         if (!h) h = fopen(path, "w+b");
         if (!h) {
-            fprintf(stderr, "file open error: %s\n", strerror(errno));
+            loft_file_open_error(path);
             free(path);
             return;
         }
+        int32_t nr = loft_file_handle_add(h, 0, path);
         free(path);
-        int32_t nr = loft_file_handle_add(h, 0);
         memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
         if (format == 5) *loft_at(loft_store_of(f), f.rec, f.pos + 32) = 1;
     } else if (!(h = loft_file_writable(f, h))) {
@@ -496,26 +550,37 @@ static int64_t loft_read_file(loft_ref f, int64_t n, int text, int64_t width, ui
     int64_t next = loft_file_long(f, 16);
     if (next == LOFT_NULL) next = 0;
     loft_file_set_long(f, 8, next);
-    FILE *h = loft_file_handle(f);
+    int32_t nr;
+    FILE *h = loft_file_reader(f, &nr);
     if (!h) {
         char *path = loft_file_path(f);
         h = path ? fopen(path, "rb") : 0;
-        free(path);
         if (!h) {
-            fprintf(stderr, "file open error: %s\n", strerror(errno));
+            loft_file_open_error(path);
+            free(path);
             return -1;
         }
-        int32_t nr = loft_file_handle_add(h, 1);
+        nr = loft_file_handle_add(h, 1, path);
+        free(path);
         memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
     }
-    fseek(h, (long) next, SEEK_SET);
+    /* A seek to where the stream already is would only drop its buffer, and every read here
+     * would be a system call (`f#read(2)` per element): the runtime's own handle answers such a
+     * seek without asking the OS (`database::loft_file`), and so does this one — by the position
+     * the last read left, since `ftell` asks the OS too.  As there, a byte another handle
+     * changes after this one buffered it is seen at the next refill. */
+    if (loft_files_at[nr] != next) fseek(h, (long) next, SEEK_SET);
     size_t want = n < 0 ? 0 : (size_t) n;
     *out = (uint8_t *) malloc(want + 1);
     if (!*out) { fputs("loft: out of memory\n", stderr); abort(); }
     size_t got = 0;
     if (text || n >= width) {
         got = fread(*out, 1, want, h);
+        /* The stream moved by what it read, whatever the read answers. */
+        loft_files_at[nr] = ferror(h) ? -1 : next + (int64_t) got;
         if (!text && got < want) got = 0;
+    } else {
+        loft_files_at[nr] = next;
     }
     loft_file_set_long(f, 16, next + (int64_t) got);
     return (int64_t) got;
@@ -606,7 +671,23 @@ static int loft_is_dir(const char *path) {
     return loft_stat(path, &size) == 4;
 }
 
-/* OpDelete: the file goes; a directory is refused as one. */
+/* Close this program's own handles on `path`; answers whether there was one.  A later read or
+ * write through a closed handle reopens by path, as after a truncate. */
+static int loft_close_handles_on(const char *path) {
+    int closed = 0;
+    for (int32_t i = 0; i < loft_nfiles; i++) {
+        if (loft_files[i] && strcmp(loft_files_path[i], path) == 0) {
+            fclose(loft_files[i]);
+            loft_files[i] = 0;
+            closed = 1;
+        }
+    }
+    return closed;
+}
+
+/* OpDelete: the file goes; a directory is refused as one.  Windows refuses to delete a file a C
+ * stream holds open, where the other backends' handles share deletion: a failed `remove` closes
+ * this program's own handles on the path and tries once more, so `delete` answers alike. */
 static int64_t loft_fs_delete(loft_str raw) {
     char *path = loft_resolve(raw);
     if (!path) return LOFT_FS_OTHER;
@@ -614,7 +695,9 @@ static int64_t loft_fs_delete(loft_str raw) {
 #if defined(LOFT_POSIX)
     if (unlink(path) != 0) code = loft_is_dir(path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(errno);
 #else
-    if (remove(path) != 0) code = loft_fs_code(errno);
+    if (remove(path) != 0 && !(loft_close_handles_on(path) && remove(path) == 0)) {
+        code = loft_fs_code(errno);
+    }
 #endif
     free(path);
     return code;
@@ -806,7 +889,7 @@ static loft_ref loft_read_bytes(loft_str raw) {
 }
 
 #if defined(LOFT_FOREIGN)
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX_HOST)
 static void loft_unmap(void *bytes, size_t n) { munmap(bytes, n); }
 #endif
 
@@ -815,7 +898,7 @@ static void loft_unmap(void *bytes, size_t n) { munmap(bytes, n); }
  * missing or unreadable one.  An empty file, or one that is not a regular file, is read as
  * read_bytes reads it; so is every file where there is no mmap. */
 static loft_ref loft_file_map(loft_str raw) {
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX_HOST)
     char *path = loft_resolve(raw);
     if (!path) return loft_ref_null();
     int fd = open(path, O_RDONLY);
@@ -882,12 +965,13 @@ static uint8_t loft_write_text_raw(loft_ref f, loft_str v) {
         char *path = loft_file_path(f);
         if (!path) return 0;
         h = fopen(path, "w+b");
-        free(path);
         if (!h) {
             fprintf(stderr, "loft: cannot create a file for writing: %s — write skipped\n", strerror(errno));
+            free(path);
             return 0;
         }
-        int32_t nr = loft_file_handle_add(h, 0);
+        int32_t nr = loft_file_handle_add(h, 0, path);
+        free(path);
         memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
     } else if (!(h = loft_file_writable(f, h))) {
         return 0;
@@ -961,6 +1045,19 @@ static uint8_t loft_is_dir_at(loft_str raw) {
     return r;
 }
 
+/* is_symlink (Stores::fs_is_symlink_at): the path itself is a link, not followed; false
+ * without POSIX, where no link is seen. */
+static uint8_t loft_is_symlink_at(loft_str raw) {
+    char *path = loft_resolve(raw);
+    uint8_t r = 0;
+#if defined(LOFT_POSIX)
+    struct stat st;
+    r = (uint8_t) (path && lstat(path, &st) == 0 && S_ISLNK(st.st_mode));
+#endif
+    free(path);
+    return r;
+}
+
 static uint8_t loft_is_file_at(loft_str raw) {
     char *path = loft_resolve(raw);
     int64_t size;
@@ -1025,22 +1122,19 @@ static loft_text loft_program_directory(loft_str sub) {
     uint32_t size = sizeof buf;
     if (_NSGetExecutablePath(buf, &size) != 0) buf[0] = 0;
 #endif
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX_HOST)
     if (!buf[0] && loft_argv && loft_argv[0]) {
         char real[4096];
         if (realpath(loft_argv[0], real)) strcpy(buf, real);
     }
+#else
+    /* No `realpath` (WASI): an absolute `argv[0]` is taken as it stands. */
+    if (!buf[0] && loft_argv && loft_argv[0] && loft_argv[0][0] == '/' && strlen(loft_argv[0]) < sizeof buf)
+        strcpy(buf, loft_argv[0]);
 #endif
     char *slash = strrchr(buf, '/');
     if (slash) *(slash == buf ? slash + 1 : slash) = 0; else buf[0] = 0;
     return loft_dir_with_sub(buf, sub);
-}
-
-/* log_info / log_warn / log_error / log_fatal with no log configuration: nothing is written. */
-static void loft_log_unconfigured(loft_str message, loft_str file, int64_t line) {
-    (void) message;
-    (void) file;
-    (void) line;
 }
 
 /* os_cache_dir (cache::cache_base_dir): $XDG_CACHE_HOME/loft, else $HOME/.cache/loft, else the

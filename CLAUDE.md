@@ -150,7 +150,10 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   adds a library's own bench; ARGS="--lanes
                                          #   native,rust,ship" adds a SHIP column per routine:
                                          #   the program as a game's release build would be
-                                         #   compiled, fault checks dropped (@PLN201).  A
+                                         #   compiled, fault checks dropped (@PLN201);
+                                         #   `,c,cship` adds the C99 backend checked and
+                                         #   probed against the same twin, its hash
+                                         #   VALIDATED (bench/README.md § The C lanes).  A
                                          #   REPORT, never a gate
 make perf-check [ARGS="--only 16,17"]     # ONCE PER ARC, IN THE BACKGROUND, never a foreground
                                          #   wait — a commit needs the matrix, the pins, clippy
@@ -169,6 +172,10 @@ make perf-trend [ARGS="--routine ease"]   # how each routine MOVED over the comm
                                          #   the commits each point sits between (the bisect
                                          #   range).  A report; ratios compare within one
                                          #   machine only
+make perf-local [ARGS="13/split"]        # every measurement THIS checkout took — each stats.py
+                                         #   run, full or partial, per routine, tagged by
+                                         #   --subject; hand prices via `local.py add`.  Local,
+                                         #   never committed — bench/README.md § Local results
 python3 bench/stats.py                   # native vs the Rust reference per bench routine, as
                                          #   STATISTICS: --n calibrated per lane, a warm-up
                                          #   round dropped, 7 interleaved samples pinned to the

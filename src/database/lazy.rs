@@ -878,7 +878,7 @@ fn write_cell(
             let ptr = match cell {
                 Some(Cell::Text(s)) => store.set_str(s),
                 Some(Cell::Int(v)) => store.set_str(&v.to_string()),
-                Some(Cell::Real(v)) => store.set_str(&v.to_string()),
+                Some(Cell::Real(v)) => store.set_str(&crate::ops::shortest_f64(*v)),
                 None => 0,
             };
             store.set_u32_raw(rec, at, ptr);

@@ -58,3 +58,27 @@ const char *lcs_shim_owned(int64_t n) {
   buf[6] = '\0';
   return buf;
 }
+
+/* A vector read through its element pointer and count (@C107), and one WRITTEN through it:
+ * the two crossings the C backend must carry as the interpreter does (`loft_cvec_ptr`). */
+int64_t lcs_shim_sum(const int64_t *p, int64_t n);
+int64_t lcs_shim_sum(const int64_t *p, int64_t n) {
+  int64_t i, s = 0;
+  for (i = 0; i < n; i++) { s += p[i] * (i + 1); }
+  return s;
+}
+void lcs_shim_fill(double *out, int64_t n, int64_t start_milli);
+void lcs_shim_fill(double *out, int64_t n, int64_t start_milli) {
+  int64_t i;
+  for (i = 0; i < n; i++) { out[i] = (double) (start_milli + i) / 1000.0; }
+}
+
+/* A vector of RECORDS as bytes (`void *`): three one-byte fields per element, the stride the
+ * record's layout — summed as 65536 r + 256 g + b over the elements. */
+int64_t lcs_shim_rgb_sum(const void *p, int64_t n);
+int64_t lcs_shim_rgb_sum(const void *p, int64_t n) {
+  const unsigned char *b = (const unsigned char *) p;
+  int64_t i, s = 0;
+  for (i = 0; i < n; i++) { s += 65536 * b[3 * i] + 256 * b[3 * i + 1] + b[3 * i + 2]; }
+  return s;
+}

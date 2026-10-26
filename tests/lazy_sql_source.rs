@@ -36,6 +36,7 @@ fn declare_sqlite() {
         name: SQLITE_LIB.to_string(),
         pkg_dir: String::new(),
         optional: true,
+        shim: Vec::new(),
     }]);
 }
 

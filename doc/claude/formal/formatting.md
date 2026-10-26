@@ -106,7 +106,7 @@ against.
 ```
   (F-Render)  ⟦v⟧ (no spec) renders by the value's type:
                 integer / long      decimal digits            null (i64::MIN)  → "null"
-                float / single      shortest round-trip form  null (NaN)       → "null"
+                float / single      shortest round-trip form (F-Float-Text)  null (NaN) → "null"
                 boolean             "true" / "false"          null (0xFF)      → "null"
                 text                the characters as-is      null (STRING_NULL) → "null"
                 character           the single codepoint      null (0)         → ""  (nothing)
@@ -154,6 +154,41 @@ reads back to the same value.  Inside a record or a vector a null of every type 
 > with a documented document form — recorded as INCONSISTENCIES.md § 28 for the owner rather
 > than settled by the code.
 
+### A float as text, and text as a float
+
+```
+  (F-Float-Text)  every conversion between a float (or single) and decimal text rounds
+                  CORRECTLY to the nearest, an exact tie to the EVEN digit — IEEE 754's
+                  roundTiesToEven — on every backend (@C156):
+                    ⟦v⟧, no spec   the SHORTEST digit string that reads back as v; of the
+                                   strings of that length that read back, the one nearest v;
+                                   an exact tie between two to the even last digit, and when
+                                   only one of the two reads back (just below a power of two
+                                   the gap towards zero is the narrower) that one.  A single
+                                   takes its own shortest form, at most 9 digits.  The digits
+                                   are laid out without an exponent: `1e21` is
+                                   `1000000000000000000000`, `1e-7` is `0.0000001`.
+                    ⟦v⟧ with .P    the EXACT binary value rounded to P decimals, a tie to even:
+                                   `{0.125:.2}` is `0.12`, `{2.5:.0}` is `2`, and `{2.675:.2}`
+                                   is `2.67` — 2.675 is held as 2.67499999… .
+                    t as float?    the float nearest the decimal t, a tie to even.  t is
+                                   `[+-] digits [. digits] [(e|E) [+-] digits]` with at least one
+                                   digit (`.5` and `5.` are numbers), or `inf`, `infinity` or
+                                   `nan` in any case; any other text is null.
+                  A sign is kept: `-0.0` renders `-0`, and a negative value that rounds to
+                  zero keeps its minus (`{-0.0004:.2}` is `-0.00`).  An infinity renders
+                  `inf` / `-inf`; NaN is the float null and renders `null` (F-Render).
+```
+
+**In words.** One rounding rule for the three conversions, the one IEEE 754 makes the default
+because it has no bias: a value exactly halfway rounds to the even digit, so a long run of
+such values rounds up as often as down.  The shortest form is what lets a float be written and
+read back unchanged with the fewest digits; when two strings of that length are equally near,
+the even one is taken, as `.P` and parsing already did.  The tie is rare — it needs the value's
+exact binary expansion to end one digit past its shortest form — and a single is where it
+shows: `1549.40625` as a single is `1549.4062`.  `.P` rounds the value the program HOLDS, not
+the literal it was written as, which is why `2.675` with two decimals is `2.67`.
+
 ### Format spec — width, alignment, padding, precision, radix, sign
 
 ```
@@ -161,7 +196,7 @@ reads back to the same value.  Inside a record or a vector a null of every type 
                width N            minimum field width (numbers right-, text left-aligned by default)
                < > ^              force left / right / centre alignment
                0N                 zero-pad a number to width N
-               .P                 fixed P fractional digits (float/single)
+               .P                 fixed P fractional digits (float/single; F-Float-Text)
                x  X  b  o  d     integer radix: hex / HEX / binary / octal / decimal
                #                  prefix the radix marker (`0x`, `0b`, `0o`)
                +                  always show a sign on a number — integer, float and single

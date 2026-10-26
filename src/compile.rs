@@ -59,6 +59,11 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // first is idempotent, so a close ahead of it carries it in too.
     crate::typedef::sync_capture_ownership(data, database);
     laps.lap("capture_ownership");
+    // The test ledger's sites (@PLN201), named on the bodies before any rewrite below moves
+    // an operator: a body `leaf_inline` copies carries its callee's site numbers.  Nothing
+    // without `LOFT_LEDGER`.
+    crate::opt::ledger_sites::rewrite_program(data);
+    laps.lap("ledger_sites");
     crate::value_record::rewrite_program(data, database);
     laps.lap("value_record");
     // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the

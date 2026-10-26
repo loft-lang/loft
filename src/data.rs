@@ -5645,6 +5645,10 @@ pub struct Data {
     /// and a warm load marks the decoded `Data` closed rather than closing it a second time
     /// from a degraded table (loft#1858).
     pub program_closed: bool,
+    /// The fault sites `LOFT_LEDGER` instrumented when the program was closed, indexed by
+    /// the site number each instrumented call passes (`opt::ledger_sites`, @PLN201).  Empty
+    /// in every other run.
+    pub ledger_sites: Vec<crate::ledger::Site>,
     /// Definitions below this number have had their parse unit finished and their cascades
     /// synthesized, so what their fn FIELDS hold is known ([`Self::fn_field_record`]).  A
     /// field's closure record is learned while the parse meets the lambda written into it, so
@@ -6525,6 +6529,7 @@ impl Data {
             limits: crate::limits::Limits::default(),
             open_world: false,
             program_closed: false,
+            ledger_sites: Vec::new(),
             fn_fields_settled: 0,
             observes_entries: false,
             lazy_drivers: LazyDriverCache::default(),

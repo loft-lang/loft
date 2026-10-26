@@ -20,7 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <setjmp.h>
+#include <errno.h>
 #include <math.h>
+#include <float.h>
 #include <time.h>
 
 #define LOFT_NULL INT64_MIN
@@ -337,8 +339,114 @@ static void loft_format_long(loft_text *s, int64_t val, uint8_t radix, int64_t w
                          dir, token);
 }
 
+/* print (codegen_runtime::host_print): a reader that stopped reading ends the program quietly
+ * with 0 — `prog | head` is the ordinary end of a pipeline, not a fault.  A POSIX host ignores
+ * SIGPIPE (`loft_start`), so the closed pipe arrives here as EPIPE. */
 static void loft_print(loft_str s) {
+#if defined(EPIPE)
+    if (fwrite(s.p, 1, s.len, stdout) < s.len && errno == EPIPE) exit(0);
+#else
     fwrite(s.p, 1, s.len, stdout);
+#endif
+}
+
+/* c_library_available (c_libs::library_available): a library this unit carries — the names
+ * the unit lists after the runtime (`c_libraries` in mod.rs), bound by its `main`. */
+static const char *const *loft_cl = 0;
+static uint32_t loft_ncl = 0;
+/* Each carried library's declared symbols, which a POSIX host asks the running program for
+ * (`dlsym` over its own handle): a library missing one is not available. */
+static const char *const *const *loft_cls = 0;
+#if defined(LOFT_POSIX_HOST)
+#include <dlfcn.h>
+#endif
+/* `[c] optional-libs` (@PLN24 arc G): a library a package works without is never linked; it is
+ * opened when a symbol of its package is first called, or when `c_library_available` asks.  Each
+ * entry: its declared name, its package, where to look (the file the package ships, else the
+ * soname's spellings) and its package's declared symbols.  Bound by a unit's `main`. */
+typedef struct { const char *name, *pkg; const char *const *cands; const char *const *syms; } loft_c_optlib;
+static const loft_c_optlib *loft_col = 0;
+static uint32_t loft_ncol = 0;
+
+#if defined(LOFT_POSIX_HOST)
+/* The handle of optional library `i`, opened once; null when none of its candidates opens. */
+static void *loft_c_optlib_open(uint32_t i) {
+    static void *handles[64];
+    static uint8_t tried[64];
+    if (i >= 64) return 0;
+    if (!tried[i]) {
+        tried[i] = 1;
+        for (const char *const *c = loft_col[i].cands; *c && !handles[i]; c++) handles[i] = dlopen(*c, RTLD_NOW);
+    }
+    return handles[i];
+}
+#endif
+
+/* `c_libs::resolve`: a `#c` symbol of a package with optional libraries — in this program
+ * (its linked libraries, its shims), else in one of the package's optional libraries, opened
+ * now.  Null when nothing exports it. */
+static void *loft_c_lazy_sym(const char *sym, const char *pkg) {
+#if defined(LOFT_POSIX_HOST)
+    void *self = dlopen(0, RTLD_LAZY), *p = self ? dlsym(self, sym) : 0;
+    for (uint32_t i = 0; !p && i < loft_ncol; i++) {
+        if (strcmp(loft_col[i].pkg, pkg) != 0) continue;
+        void *h = loft_c_optlib_open(i);
+        if (h) p = dlsym(h, sym);
+    }
+    return p;
+#else
+    (void) sym;
+    (void) pkg;
+    return 0;
+#endif
+}
+
+static void loft_panic(loft_str message, loft_str file, int64_t line);
+
+/* `c_libs::missing_symbol_message`: a call of a symbol nothing exports halts, saying why. */
+static void loft_c_missing_symbol(const char *sym) {
+    char m[512];
+    snprintf(m, sizeof m,
+             "`#c` symbol '%s' not found — it is not in this process and no loaded library exports it. If it "
+             "comes from an `[c] optional-libs` library, that library is not installed: ask "
+             "`c_library_available(\"<soname>\")` before calling. Otherwise declare the library it comes from, "
+             "or check the spelling",
+             sym);
+    loft_panic(loft_lit(m, strlen(m)), loft_lit("", 0), 0);
+}
+
+static uint8_t loft_c_library_available(loft_str name) {
+    for (uint32_t i = 0; i < loft_ncl; i++) {
+        if (strlen(loft_cl[i]) == name.len && memcmp(loft_cl[i], name.p, name.len) == 0) {
+#if defined(LOFT_POSIX_HOST)
+            if (loft_cls && loft_cls[i]) {
+                void *self = dlopen(0, RTLD_LAZY);
+                for (const char *const *s = loft_cls[i]; *s; s++) {
+                    if (!self || !dlsym(self, *s)) return 0;
+                }
+            }
+#endif
+            return 1;
+        }
+    }
+#if defined(LOFT_POSIX_HOST)
+    /* An optional library: available when it opens and exports every symbol its package
+     * declares (from it or from what the program already has). */
+    for (uint32_t i = 0; i < loft_ncol; i++) {
+        if (strlen(loft_col[i].name) != name.len || memcmp(loft_col[i].name, name.p, name.len) != 0) continue;
+        void *h = loft_c_optlib_open(i), *self = dlopen(0, RTLD_LAZY);
+        if (!h) return 0;
+        for (const char *const *s = loft_col[i].syms; *s; s++)
+            if (!dlsym(h, *s) && !(self && dlsym(self, *s))) return 0;
+        return 1;
+    }
+#endif
+    return 0;
+}
+
+/* eprint (platform::host_eprint): the text to standard error, unbuffered as Rust's is. */
+static void loft_eprint(loft_str s) {
+    fwrite(s.p, 1, s.len, stderr);
 }
 
 /* The integer operators: null in, null out; an overflow or a division by zero is null. */
@@ -385,21 +493,68 @@ LOFT_HOT_INLINE int64_t loft_rem(int64_t a, int64_t b) {
     return a % b;
 }
 
+/* The release-pass probe's forms (`LOFT_RELEASE_PASS_PROBE=1`, @PLN201): the processor's
+ * wrapping arithmetic, as `generation::ops::int_arith::probe_form` emits it for Rust — a
+ * MEASUREMENT of the ship tier's ceiling, never a build anyone ships (@C129).  Each wrap is
+ * DEFINED here: the sum, difference, product and negation are taken in unsigned arithmetic,
+ * and `INT64_MIN / -1` answers what Rust's `wrapping_div` answers; a zero divisor still
+ * answers null, as the probe keeps it. */
+LOFT_HOT_INLINE int64_t loft_wrap_add(int64_t a, int64_t b) { return (int64_t) ((uint64_t) a + (uint64_t) b); }
+LOFT_HOT_INLINE int64_t loft_wrap_sub(int64_t a, int64_t b) { return (int64_t) ((uint64_t) a - (uint64_t) b); }
+LOFT_HOT_INLINE int64_t loft_wrap_mul(int64_t a, int64_t b) { return (int64_t) ((uint64_t) a * (uint64_t) b); }
+LOFT_HOT_INLINE int64_t loft_wrap_neg(int64_t a) { return (int64_t) (0 - (uint64_t) a); }
+LOFT_HOT_INLINE int64_t loft_wrap_div(int64_t a, int64_t b) {
+    if (b == 0) return LOFT_NULL;
+    return b == -1 ? loft_wrap_neg(a) : a / b;
+}
+LOFT_HOT_INLINE int64_t loft_wrap_rem(int64_t a, int64_t b) {
+    if (b == 0) return LOFT_NULL;
+    return b == -1 ? 0 : a % b;
+}
+
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 /* `assert`: a failed one ends the running test (the test main catches it) or, outside a
  * test, the program, with the interpreter's message on stderr and exit status 1. */
-static jmp_buf loft_test_jmp;
-static int loft_in_test = 0;
+static LOFT_TLS jmp_buf loft_test_jmp;
+static LOFT_TLS int loft_in_test = 0;
 
 /* The message of the last failed assert, for a test expected to fail with it. */
-static loft_text loft_fail_msg = { 0, 0, 0 };
+static LOFT_TLS loft_text loft_fail_msg = { 0, 0, 0 };
+
+static void loft_fault_where(loft_str file, int64_t line);
+/* A fault inside a lazy driver is CONTAINED (`call_frames::in_lazy_driver`): it ends the driver,
+ * not the program — `loft_lazy_miss` set the jump and records `<kind>: <message>` as the
+ * collection's failure, as the interpreter's `panic_any(label: message)` does. */
+static LOFT_TLS jmp_buf *loft_lazy_jmp = 0;
+static LOFT_TLS loft_text loft_lazy_fault = { 0, 0, 0 };
+static void loft_lazy_contain(const char *label, loft_str message) {
+    loft_lazy_fault.len = 0;
+    loft_push(&loft_lazy_fault, label, strlen(label));
+    loft_push(&loft_lazy_fault, ": ", 2);
+    loft_push(&loft_lazy_fault, message.p, message.len);
+    longjmp(*loft_lazy_jmp, 1);
+}
+
+/* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
+ * in a runtime built without one, where every fault halts. */
+static int (*loft_fault_logger)(int sev, const char *label, const char *prefix, loft_str message,
+                                loft_str file, int64_t line) = 0;
 
 static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t line) {
-    (void) file;
-    (void) line;
     if (test == 1) return;
+    if (loft_lazy_jmp) loft_lazy_contain("assertion_failed", message);
+    if (!loft_in_test && loft_fault_logger &&
+        loft_fault_logger(2, "assertion_failed", "assertion failed: ", message, file, line))
+        return;
+    fflush(stdout);
     fputs("error: assertion failed: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
     fputc('\n', stderr);
+    if (!loft_in_test) loft_fault_where(file, line);
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "assertion failed: ", 18);
     loft_push(&loft_fail_msg, message.p, message.len);
@@ -423,12 +578,18 @@ static void loft_locked_write(void) {
     exit(1);
 }
 
-#ifdef LOFT_FRAMES
+/* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
+ * other unit keeps them where the build asks for the call chain a fault prints
+ * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
+#if defined(LOFT_FRAMES) && !defined(LOFT_CALL_CHAIN)
+#define LOFT_CALL_CHAIN 1
+#endif
+#ifdef LOFT_CALL_CHAIN
 /* The frames the program is running (call_frames.rs, `cr_call_push`): each function's name and
  * file, and the line it is calling from (`cr_call_site`), outermost first. */
 typedef struct { const char *fn, *file; uint32_t site; } loft_frame;
-static loft_frame *loft_frames = 0;
-static size_t loft_nframes = 0, loft_capframes = 0;
+static LOFT_TLS loft_frame *loft_frames = 0;
+static LOFT_TLS size_t loft_nframes = 0, loft_capframes = 0;
 
 static void loft_frame_push(const char *fn, const char *file) {
     if (loft_nframes == loft_capframes) {
@@ -453,15 +614,73 @@ static void loft_frame_site(uint32_t line) {
 #define LOFT_FRAMES_RESET() (loft_nframes = 0)
 #else
 #define LOFT_FRAMES_RESET() ((void) 0)
+#define loft_frame_push(fn, file) ((void) 0)
+#define loft_frame_pop() ((void) 0)
+#define loft_frame_site(line) ((void) 0)
 #endif
+
+/* The frames a halting fault fired under (`RuntimeError::render_call_chain`): innermost first,
+ * five at most with a count of the rest; nothing for a single frame, whose `-->` line already
+ * says where. */
+static void loft_fault_chain(void) {
+#ifdef LOFT_CALL_CHAIN
+    size_t n = loft_nframes, shown = n < 5 ? n : 5;
+    if (n <= 1) return;
+    fprintf(stderr, "  in fn %s() \xe2\x86\x90 called from\n", loft_frames[n - 1].fn);
+    for (size_t i = 1; i < shown; i++) fprintf(stderr, "        fn %s()\n", loft_frames[n - 1 - i].fn);
+    if (n > 5) fprintf(stderr, "        \xe2\x80\xa6 (%lu more frames)\n", (unsigned long) (n - 5));
+#endif
+}
+
+/* Where a halting fault fired (`render_entry_pretty` for a fault at column 1): the `-->` line,
+ * then the source line and its caret, read from the file now as `FileSourceLoader` reads it
+ * (a tab shown as four spaces), then the call chain. */
+static void loft_fault_where(loft_str file, int64_t line) {
+    if (file.len && line > 0) {
+        char *path = (char *) malloc(file.len + 1);
+        FILE *f;
+        int digits = 1;
+        int64_t at = 1;
+        int c;
+        if (!path) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(path, file.p, file.len);
+        path[file.len] = 0;
+        fprintf(stderr, "  --> %s:%lld:1\n", path, (long long) line);
+        f = fopen(path, "rb");
+        free(path);
+        for (int64_t v = line; v >= 10; v /= 10) digits++;
+        if (f) {
+            loft_text text = { 0, 0, 0 };
+            while (at < line && (c = fgetc(f)) != EOF) if (c == '\n') at++;
+            if (at == line) {
+                while ((c = fgetc(f)) != EOF && c != '\n') {
+                    if (c == '\t') loft_push(&text, "    ", 4);
+                    else { char ch = (char) c; loft_push(&text, &ch, 1); }
+                }
+                if (text.len && text.p[text.len - 1] == '\r') text.len--;
+                if (c != EOF || text.len) {
+                    fprintf(stderr, "%*s |\n%lld | ", digits, "", (long long) line);
+                    fwrite(text.p, 1, text.len, stderr);
+                    fprintf(stderr, "\n%*s | ^\n", digits, "");
+                }
+            }
+            free(text.p);
+            fclose(f);
+        }
+    }
+    loft_fault_chain();
+}
 
 /* panic(message): the program stops as a failed assertion stops it, saying `panic:`. */
 static void loft_panic(loft_str message, loft_str file, int64_t line) {
-    (void) file;
-    (void) line;
+    if (loft_lazy_jmp) loft_lazy_contain("user_panic", message);
+    if (!loft_in_test && loft_fault_logger && loft_fault_logger(3, "user_panic", "panic: ", message, file, line))
+        return;
+    fflush(stdout);
     fputs("error: panic: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
     fputc('\n', stderr);
+    if (!loft_in_test) loft_fault_where(file, line);
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "panic: ", 7);
     loft_push(&loft_fail_msg, message.p, message.len);
@@ -629,14 +848,18 @@ static loft_text loft_replace(loft_str s, loft_str v, loft_str w) {
         loft_push(&out, w.p, w.len);
         return out;
     }
+    /* As str::replace: find the next match by its first byte, push the run before it whole. */
     while (at < s.len) {
-        if (loft_mem_at(s, at, v)) {
-            loft_push(&out, w.p, w.len);
-            at += v.len;
-        } else {
-            loft_push_char(&out, s.p[at]);
-            at++;
+        const char *hit = (const char *) memchr(s.p + at, (unsigned char) v.p[0], s.len - at);
+        while (hit && ((size_t) (hit - s.p) + v.len > s.len || memcmp(hit, v.p, v.len) != 0)) {
+            size_t next = (size_t) (hit - s.p) + 1;
+            hit = next < s.len ? (const char *) memchr(s.p + next, (unsigned char) v.p[0], s.len - next) : 0;
         }
+        size_t to = hit ? (size_t) (hit - s.p) : s.len;
+        loft_push(&out, s.p + at, to - at);
+        if (!hit) break;
+        loft_push(&out, w.p, w.len);
+        at = to + v.len;
     }
     return out;
 }
@@ -767,6 +990,7 @@ static uint32_t loft_store_make(int counted) {
     }
     loft_store_t *s = &loft_stores[nr];
     if (!s->buf) {
+        loft_heap_moved(s, 0, 100);
         s->size = 100;
         s->buf = (uint8_t *) malloc((size_t) s->size * 8);
         if (!s->buf) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -918,8 +1142,8 @@ static loft_fn loft_fn_of(int64_t d) {
  * evacuated to, per holder store, so a second holder in that store shares the one copy; an
  * entry goes with the store its record lived in. */
 typedef struct { loft_ref old; uint16_t holder; loft_ref copy; } loft_evac;
-static loft_evac *loft_evacs = 0;
-static uint32_t loft_nevacs = 0, loft_evac_cap = 0;
+static LOFT_TLS loft_evac *loft_evacs = 0;
+static LOFT_TLS uint32_t loft_nevacs = 0, loft_evac_cap = 0;
 
 /* OpFreeRef: the whole store goes, everything the root owned with it. */
 static void loft_gen_free(loft_ref g);
@@ -969,8 +1193,8 @@ typedef struct { int32_t state; int32_t done; } loft_gen_head;
 /* `holds`: the holders that share the frame (`(G-Hold)`) — a release by one of several gives its
  * hold back, and the last one releases the frame. */
 typedef struct { void *frame; void (*resume)(void *frame, void *out); void (*release)(void *frame); uint32_t holds; } loft_gen_slot;
-static loft_gen_slot *loft_gens = 0;
-static uint32_t loft_ngens = 0;
+static LOFT_TLS loft_gen_slot *loft_gens = 0;
+static LOFT_TLS uint32_t loft_ngens = 0;
 
 static loft_ref loft_gen_new(void *frame, void (*resume)(void *, void *), void (*release)(void *)) {
     uint32_t i = 0;
@@ -1061,6 +1285,7 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
     uint32_t nr = loft_store_make(0);
     loft_store_t *s = &loft_stores[nr];
     if (n > s->size) {
+        loft_heap_moved(s, s->size, n);
         uint8_t *b = (uint8_t *) realloc(s->buf, (size_t) n * 8);
         if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
         s->buf = b;
@@ -1268,6 +1493,15 @@ LOFT_HOT_INLINE int64_t loft_vec_len(loft_ref v) {
     return r == 0 ? 0 : (int64_t) loft_u32(s, r, 4);
 }
 
+/* A vector handed to a `#c` binding: its element bytes, valid for the call only (the store may
+ * move on the next claim), NULL for an absent vector — as `c_call` hands them. */
+LOFT_HOT_INLINE uint8_t *loft_cvec_ptr(loft_ref v) {
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return NULL;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    return r == 0 ? NULL : loft_elem_base(s, r);
+}
+
 static void loft_vec_prealloc(loft_ref v, uint32_t count, uint32_t size) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return;
     loft_store_t *s = loft_store_of(v);
@@ -1295,8 +1529,8 @@ static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
         len = loft_u32(s, r, 4);
         int32_t claimed;
         memcpy(&claimed, loft_at(s, r, 0), 4);
-        uint32_t cap = (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
-        if (len + 1 > cap) {
+        /* `len + 1 > (claimed * 8 - 8) / size`, without the division every append paid. */
+        if ((uint64_t) (len + 1) * size + 8 > (uint64_t) claimed * 8) {
             uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words((len + 1) * 2, size));
             if (nr != r) {
                 loft_set_u32(s, v.rec, v.pos, nr);
@@ -1311,6 +1545,25 @@ static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
     return e;
 }
 
+/* The push of one more element of `size` into a vector that has its record and room for it:
+ * the element's slot, with the length already counted — or 0, and the caller takes the general
+ * path (`loft_vec_append`, which claims the record or grows it).  One reading of the record
+ * instead of append's and finish's two, and no capacity division: every push of a growing
+ * vector asks this first. */
+LOFT_HOT_INLINE uint8_t *loft_vec_push_slot(loft_ref v, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0) return 0;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return 0;
+    uint32_t len = loft_u32(s, r, 4);
+    int32_t claimed;
+    memcpy(&claimed, loft_at(s, r, 0), 4);
+    if ((uint64_t) (len + 1) * size + 8 > (uint64_t) claimed * 8) return 0;
+    LOFT_WRITE_CHECK(s);
+    loft_set_u32(s, r, 4, len + 1);
+    return loft_at(s, r, 8 + len * size);
+}
+
 /* vector_finish: the element `loft_vec_append` made counts. */
 LOFT_HOT_INLINE void loft_vec_finish(loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return;
@@ -1321,6 +1574,12 @@ LOFT_HOT_INLINE void loft_vec_finish(loft_ref v) {
 
 /* OpPushInt4: a 4-byte element, INT32_MIN for null. */
 static void loft_vec_push_int4(loft_ref v, int64_t x) {
+    uint8_t *slot = loft_vec_push_slot(v, 4);
+    if (slot) {
+        uint32_t w = x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x;
+        memcpy(slot, &w, 4);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 4);
     if (e.rec == 0) return;
     loft_set_u32(loft_store_of(e), e.rec, e.pos, x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x);
@@ -1328,6 +1587,11 @@ static void loft_vec_push_int4(loft_ref v, int64_t x) {
 }
 
 static void loft_vec_push_int(loft_ref v, int64_t x) {
+    uint8_t *slot = loft_vec_push_slot(v, 8);
+    if (slot) {
+        memcpy(slot, &x, 8);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 8);
     if (e.rec == 0) return;
     loft_set_int(e, 0, x);
@@ -1530,6 +1794,11 @@ static uint8_t loft_get_enum(loft_ref r, uint32_t fld) {
 }
 
 static void loft_vec_push_byte(loft_ref v, uint8_t x) {
+    uint8_t *slot = loft_vec_push_slot(v, 1);
+    if (slot) {
+        *slot = x;
+        return;
+    }
     loft_ref e = loft_vec_append(v, 1);
     if (e.rec == 0) return;
     *loft_at(loft_store_of(e), e.rec, e.pos) = x;
@@ -1710,6 +1979,9 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         return;
     }
     case LOFT_T_STRUCT: {
+        /* `@FR-R-FlatCopy` (Stores::copy_struct_fields): a record that owns no heap is its bytes,
+         * which came with the block copy — no field has a claim to copy. */
+        if (!d->owns_heap) return;
         /* `copy_struct_fields` (@FR-Col-Group): a view member of a linked group holds the
          * records its owner holds — copied as a collection of its own it would hold copies a
          * write through the owner does not reach — so it starts empty and is indexed over the
@@ -1942,6 +2214,148 @@ static void loft_vec_reserve(loft_ref v, int64_t count, uint32_t size) {
     if (nr != r) loft_set_u32(s, v.rec, v.pos, nr);
 }
 
+/* `@FR-R-PushFill`'s window clause (vector::PushWindow, Stores::push_windowed) — the hot state
+ * of a counted push loop: element 0's address, the length the loop has reached and the room in
+ * elements.  A push that fits is one comparison, one store and a bump; the record's own length
+ * is written when the window grows or closes, since nothing the loop runs reads it in between
+ * (the emitter's proof, `hoist::push_window_ok`).  Passed and answered BY VALUE across the cold
+ * growth arm, so a loop keeps the three in registers.  `rec` stands between `len` and `cap` on
+ * purpose: adjacent, GCC's SLP pass carried the pair in one vector register and shuffled it out
+ * at every push — 1.6 ns a push against 0.3 (bench 16 `f32_build`, -O2 and -O3 alike). */
+typedef struct { uint8_t *base; uint32_t len; uint32_t rec; uint32_t cap; uint16_t store_nr; } loft_win;
+
+/* Open a window over `v`'s vector of `size`-byte elements.  An absent vector, and a locked
+ * store (`@FR-H-WriteLocked`), have no room: every push takes the growth arm, the ordinary
+ * append, which refuses or drops it exactly as before. */
+static loft_win loft_win_of(loft_ref v, uint32_t size) {
+    loft_win w = { 0, 0, 0, 0, 0xFFFF };
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return w;
+    loft_store_t *s = loft_store_of(v);
+    w.store_nr = v.store_nr;
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return w;
+    w.rec = r;
+    w.len = loft_u32(s, r, 4);
+    int32_t claimed;
+    memcpy(&claimed, loft_at(s, r, 0), 4);
+    if (!s->read_only && claimed > 0 && size != 0) w.cap = (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
+    w.base = loft_at(s, r, 8);
+    return w;
+}
+
+/* The record's length is the window's: written at the growth arm and at the close.  A window
+ * with no room never moved its length, and a locked store is not written. */
+static void loft_win_sync(loft_win w) {
+    if (w.rec == 0 || w.cap == 0) return;
+    memcpy(loft_at(&loft_stores[w.store_nr], w.rec, 4), &w.len, 4);
+}
+
+/* vector::reserve_more: room for `extra` MORE elements than the vector holds; nothing when the
+ * block already has it, or for a non-positive or unrepresentable count. */
+static void loft_vec_reserve_more(loft_ref v, int64_t extra, uint32_t size) {
+    if (extra <= 0 || extra == LOFT_NULL || v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    int64_t len = r == 0 ? 0 : (int64_t) loft_u32(s, r, 4);
+    if (extra > (int64_t) UINT32_MAX - len) return;
+    uint32_t count = (uint32_t) (len + extra);
+    if (r != 0 && !s->read_only) {
+        int32_t claimed;
+        memcpy(&claimed, loft_at(s, r, 0), 4);
+        if (claimed >= (int32_t) loft_vec_cap_words(count < 11 ? 11 : count, size)) return;
+    }
+    loft_vec_reserve(v, (int64_t) count, size);
+}
+
+/* The growth arm, out of line: the length synced, the element appended the ordinary way (which
+ * grows, refuses a locked store, drops a push into an absent vector), the window re-derived. */
+LOFT_COLD static loft_win loft_win_grow(loft_win w, loft_ref v, uint32_t size, uint64_t bits) {
+    loft_win_sync(w);
+    loft_ref e = loft_vec_append(v, size);
+    if (e.rec != 0) {
+        uint8_t *at = loft_at(loft_store_of(e), e.rec, e.pos);
+        if (size == 8) memcpy(at, &bits, 8);
+        else if (size == 4) { uint32_t b = (uint32_t) bits; memcpy(at, &b, 4); }
+        else { uint8_t b = (uint8_t) bits; *at = b; }
+        loft_vec_finish(v);
+    }
+    return loft_win_of(v, size);
+}
+
+/* A push through the window: one comparison, one store and a bump while it fits (the element's
+ * bytes as the ordinary push writes them, encoded by the caller), the growth arm otherwise. */
+LOFT_HOT_INLINE void loft_win_put8(loft_win *w, loft_ref v, uint64_t bits) {
+    if (LOFT_LIKELY(w->len < w->cap)) {
+        memcpy(w->base + (size_t) w->len * 8, &bits, 8);
+        w->len++;
+    } else {
+        *w = loft_win_grow(*w, v, 8, bits);
+    }
+}
+
+LOFT_HOT_INLINE void loft_win_put4(loft_win *w, loft_ref v, uint32_t bits) {
+    if (LOFT_LIKELY(w->len < w->cap)) {
+        memcpy(w->base + (size_t) w->len * 4, &bits, 4);
+        w->len++;
+    } else {
+        *w = loft_win_grow(*w, v, 4, bits);
+    }
+}
+
+LOFT_HOT_INLINE void loft_win_put1(loft_win *w, loft_ref v, uint8_t bits) {
+    if (LOFT_LIKELY(w->len < w->cap)) {
+        w->base[w->len] = bits;
+        w->len++;
+    } else {
+        *w = loft_win_grow(*w, v, 1, bits);
+    }
+}
+
+/* `@FR-R-PushFill`'s record clause (Stores::push_record_windowed): the window's next slot for a
+ * record mint, the window grown first when it is full — the length synced and one element's
+ * room reserved the runtime's way.  The element stays invisible until the group's finish bumps
+ * the window (`loft_win_finish`).  A vector the window cannot serve (absent, or in a locked store)
+ * mints the ordinary way, so it drops or refuses exactly as before. */
+LOFT_COLD static loft_win loft_win_room(loft_win w, loft_ref v, uint32_t size) {
+    loft_win_sync(w);
+    loft_vec_reserve_more(v, 1, size);
+    return loft_win_of(v, size);
+}
+
+LOFT_HOT_INLINE loft_ref loft_win_slot(loft_win *w, loft_ref v, uint32_t size) {
+    if (LOFT_UNLIKELY(w->len >= w->cap)) {
+        *w = loft_win_room(*w, v, size);
+        if (w->len >= w->cap) return loft_vec_append(v, size);
+    }
+    loft_ref e;
+    e.store_nr = w->store_nr;
+    e.rec = w->rec;
+    e.pos = 8 + w->len * size;
+    return e;
+}
+
+/* The group's finish: the minted element counts.  One the window could not serve was minted
+ * and is finished the ordinary way, and the window re-derived from the record it changed. */
+LOFT_HOT_INLINE void loft_win_finish(loft_win *w, loft_ref v, uint32_t size) {
+    if (LOFT_LIKELY(w->len < w->cap)) {
+        w->len++;
+    } else {
+        loft_vec_finish(v);
+        *w = loft_win_of(v, size);
+    }
+}
+
+/* `LOFT_VERIFY`'s proof for a windowed push: the window still describes the vector — its
+ * record, element base and room are what a fresh derivation answers. */
+static int loft_win_same(loft_win w, loft_ref v, uint32_t size) {
+    loft_win f = loft_win_of(v, size);
+    return f.rec == w.rec && f.base == w.base && f.cap == w.cap && f.store_nr == w.store_nr;
+}
+
+LOFT_HOT_INLINE uint64_t loft_f64_bits(double x) { uint64_t b; memcpy(&b, &x, 8); return b; }
+LOFT_HOT_INLINE uint32_t loft_f32_bits(float x) { uint32_t b; memcpy(&b, &x, 4); return b; }
+LOFT_HOT_INLINE uint32_t loft_i4_bits(int64_t x) { return x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x; }
+
 #ifdef LOFT_FOREIGN
 static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size);
 #endif
@@ -2072,6 +2486,8 @@ static void loft_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r);
 static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed) {
     if (r.store_nr == 0xFFFF || r.rec == 0) return;
     const loft_tdesc *d = &T[tp];
+    /* `@FR-R-FlatCopy`: a record that owns no heap holds no claim to release. */
+    if (d->kind == LOFT_T_STRUCT && !d->owns_heap) return;
     loft_store_t *s = loft_store_of(r);
     if (d->kind == LOFT_T_TEXT) {
         uint32_t cur = loft_u32(s, r.rec, r.pos);
@@ -2386,7 +2802,7 @@ static int loft_cmp_f64(const void *a, const void *b) {
 }
 
 /* The store a text-vector sort compares in (qsort has no context). */
-static loft_store_t *loft_sort_store = 0;
+static LOFT_TLS loft_store_t *loft_sort_store = 0;
 static int loft_cmp_text_rec(const void *a, const void *b) {
     uint32_t x, y;
     memcpy(&x, a, 4);
@@ -2559,6 +2975,11 @@ static void loft_set_single(loft_ref r, uint32_t fld, float v) {
 }
 
 static void loft_vec_push_float(loft_ref v, double x) {
+    uint8_t *slot = loft_vec_push_slot(v, 8);
+    if (slot) {
+        memcpy(slot, &x, 8);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 8);
     if (e.rec == 0) return;
     loft_set_float(e, 0, x);
@@ -2566,6 +2987,11 @@ static void loft_vec_push_float(loft_ref v, double x) {
 }
 
 static void loft_vec_push_char(loft_ref v, uint32_t c) {
+    uint8_t *slot = loft_vec_push_slot(v, 4);
+    if (slot) {
+        memcpy(slot, &c, 4);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 4);
     if (e.rec == 0) return;
     memcpy(loft_at(loft_store_of(e), e.rec, e.pos), &c, 4);
@@ -2573,6 +2999,11 @@ static void loft_vec_push_char(loft_ref v, uint32_t c) {
 }
 
 static void loft_vec_push_single(loft_ref v, float x) {
+    uint8_t *slot = loft_vec_push_slot(v, 4);
+    if (slot) {
+        memcpy(slot, &x, 4);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 4);
     if (e.rec == 0) return;
     loft_set_single(e, 0, x);
@@ -2582,17 +3013,73 @@ static void loft_vec_push_single(loft_ref v, float x) {
 /* Rust's `{}` for a float: the shortest digits that read back as `v` (as a float when `single`),
  * written out in full with no exponent — 1e21 is "1000000000000000000000", 1.0 is "1", -0.0 is
  * "-0".  The digits are the first `%.*e` precision that round-trips, correctly rounded. */
+/* `@FR-F-Render`'s shortest form (@C156): of the strings of the shortest length that read back as
+ * `v`, the nearest, an exact tie to the even digit — `printf`'s own rounding, so its p-digit
+ * candidate is the answer whenever it reads back.  When it does not, its neighbour on `v`'s
+ * other side may (just below a power of two the half-gap towards zero is the narrower): `buf`
+ * becomes that neighbour and 1 is answered when it reads back. */
+static int loft_shortest_other(char *buf, size_t cap, int p, double v, double near, int single) {
+    const char *q = buf;
+    int neg = *q == '-';
+    if (neg) q++;
+    char d[48];
+    int nd = 0;
+    for (; *q && *q != 'e'; q++) if (*q >= '0' && *q <= '9') d[nd++] = *q;
+    if (nd != p || !*q) return 0;
+    int e = atoi(q + 1);
+    /* Away from `near` towards `v`: up in magnitude when `v` lies beyond it. */
+    int up = (fabs(v) > fabs(near));
+    int i = nd - 1;
+    if (up) {
+        while (i >= 0 && d[i] == '9') d[i--] = '0';
+        if (i >= 0) d[i]++;
+        else { d[0] = '1'; e++; }
+    } else {
+        while (i >= 0 && d[i] == '0') d[i--] = '9';
+        if (i < 0) return 0;
+        d[i]--;
+        if (d[0] == '0') {
+            memmove(d, d + 1, (size_t) nd - 1);
+            d[nd - 1] = '0';
+            e--;
+        }
+    }
+    char txt[64];
+    int t = 0;
+    if (neg) txt[t++] = '-';
+    txt[t++] = d[0];
+    if (nd > 1) txt[t++] = '.';
+    for (int k = 1; k < nd; k++) txt[t++] = d[k];
+    snprintf(txt + t, sizeof txt - (size_t) t, "e%d", e);
+    double back = strtod(txt, 0);
+    if (single ? (float) back != (float) v : back != v) return 0;
+    if (strlen(txt) + 1 > cap) return 0;
+    memcpy(buf, txt, strlen(txt) + 1);
+    return 1;
+}
+
 static void loft_push_shortest(loft_text *s, double v, int single) {
     if (isinf(v)) {
         if (v < 0) loft_push(s, "-inf", 4); else loft_push(s, "inf", 3);
         return;
     }
+    /* The shortest digits that read back as `v`.  Rounding to 15 significant digits (6 for a
+     * single) gives a value whose shortest form has k <= 15 digits exactly those k digits and
+     * zeros — the 15-digit grid is far coarser than the value's own spacing, so that form is the
+     * grid point nearest it — and the zeros are stripped below.  Past 15 the nearest rounding
+     * reads back whenever any of that length does, so 16 and then 17 (9 for a single) finish:
+     * at most three tries, where counting up from one digit took up to seventeen.  A subnormal
+     * has fewer significant bits than the grid argument needs (its spacing can pass the 15-digit
+     * grid's), so it counts up from one digit as before. */
     char buf[48];
     int maxp = single ? 9 : 17;
-    for (int p = 1; p <= maxp; p++) {
+    int subnormal = v != 0 && fabs(v) < (single ? (double) FLT_MIN : DBL_MIN);
+    int p = subnormal ? 1 : (single ? 6 : 15);
+    for (; p <= maxp; p++) {
         snprintf(buf, sizeof buf, "%.*e", p - 1, v);
         double back = strtod(buf, 0);
         if (single ? (float) back == (float) v : back == v) break;
+        if (loft_shortest_other(buf, sizeof buf, p, v, back, single)) break;
     }
     const char *q = buf;
     if (*q == '-') { loft_push_char(s, '-'); q++; }
@@ -2625,12 +3112,85 @@ static void loft_format_signed(loft_text *s, loft_str res, int64_t width, int di
 }
 
 /* ops::format_float and ops::format_single */
+/* `{v:.p}` for p <= 9 in exact integer arithmetic: v = m * 2^e with m < 2^53, so m * 10^p fits
+ * 128 bits, and shifting it right by -e with round-half-even on the remainder gives the correctly
+ * rounded p-digit value both Rust and printf print — without printf's arbitrary-precision path.
+ * Answers 0 for what it does not cover (p > 9, an integer part past 2^63), which printf takes. */
+typedef struct { uint64_t hi, lo; } loft_u128;
+
+static int loft_push_fixed(loft_text *s, double val, int prec) {
+    if (prec < 0 || prec > 9 || !isfinite(val)) return 0;
+    static const uint64_t p10[10] = { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000,
+                                      1000000000 };
+    int ex;
+    double f = frexp(fabs(val), &ex);
+    uint64_t m = (uint64_t) ldexp(f, 53);
+    int e = ex - 53;
+    uint64_t P = p10[prec];
+    /* m * P: m < 2^53, P < 2^30 — the halves of m times P, recombined with their carry. */
+    uint64_t lo_part = (m & 0xFFFFFFFFu) * P, hi_part = (m >> 32) * P;
+    loft_u128 x;
+    x.lo = lo_part + (hi_part << 32);
+    x.hi = (hi_part >> 32) + (x.lo < lo_part);
+    uint64_t q;
+    if (m == 0) {
+        q = 0;
+    } else if (e >= 0) {
+        if (x.hi != 0 || e >= 63 || (x.lo >> (63 - e)) != 0) return 0;
+        q = x.lo << e;
+    } else {
+        int sh = -e;
+        if (sh >= 120) {
+            q = 0; /* below 2^-36 after scaling: under one half, so it rounds to zero */
+        } else {
+            /* q = x >> sh, and the remainder against one half. */
+            loft_u128 qq, rem, half;
+            if (sh >= 64) {
+                qq.hi = 0;
+                qq.lo = sh == 64 ? x.hi : x.hi >> (sh - 64);
+                rem.hi = sh == 64 ? 0 : x.hi & ((UINT64_C(1) << (sh - 64)) - 1);
+                rem.lo = x.lo;
+                half.hi = UINT64_C(1) << (sh - 65 < 0 ? 0 : sh - 65);
+                half.lo = 0;
+                if (sh == 64) { half.hi = 0; half.lo = UINT64_C(1) << 63; }
+            } else {
+                qq.hi = x.hi >> sh;
+                qq.lo = (x.lo >> sh) | (sh == 0 ? 0 : x.hi << (64 - sh));
+                rem.hi = 0;
+                rem.lo = x.lo & ((UINT64_C(1) << sh) - 1);
+                half.hi = 0;
+                half.lo = UINT64_C(1) << (sh - 1);
+            }
+            if (qq.hi != 0 || (qq.lo >> 63) != 0) return 0;
+            q = qq.lo;
+            int cmp = rem.hi != half.hi ? (rem.hi > half.hi ? 1 : -1) : (rem.lo != half.lo ? (rem.lo > half.lo ? 1 : -1) : 0);
+            if (cmp > 0 || (cmp == 0 && (q & 1))) q++;
+        }
+    }
+    char buf[48];
+    int n = 0;
+    uint64_t ip = q / P, fp = q % P;
+    char rev[24];
+    int r = 0;
+    do { rev[r++] = (char) ('0' + ip % 10); ip /= 10; } while (ip);
+    if (signbit(val)) buf[n++] = '-';
+    while (r) buf[n++] = rev[--r];
+    if (prec > 0) {
+        buf[n++] = '.';
+        for (int i = prec - 1; i >= 0; i--) { buf[n + i] = (char) ('0' + fp % 10); fp /= 10; }
+        n += prec;
+    }
+    loft_push(s, buf, (size_t) n);
+    return 1;
+}
+
 static void loft_format_float(loft_text *s, double val, int64_t width, int64_t prec, uint8_t token, int plus,
                               int dir, int single) {
     if (dir == 2) dir = 1;
     size_t start = s->len;
     if (isnan(val)) {
         loft_push(s, "null", 4);
+    } else if (prec >= 0 && loft_push_fixed(s, val, (int) prec)) {
     } else if (prec >= 0) {
         int n = snprintf(0, 0, "%.*f", (int) prec, val);
         char *buf = (char *) malloc((size_t) n + 1);
@@ -3074,9 +3634,106 @@ static int loft_float_text_ok(loft_str t) {
     return i == n;
 }
 
+/* Clinger's fast path for a validated decimal: a significand that fits 2^53 exactly and a power
+ * of ten no larger than 10^22 (exact in a double) give the correctly rounded value as ONE IEEE
+ * operation on two exact doubles — what strtod answers, without its arbitrary-precision path.
+ * Answers 0 for every other text (an exponent outside the range, more digits than fit, inf,
+ * nan), which strtod then reads; and for a platform that evaluates in wider precision, where
+ * the one operation would round twice. */
+static int loft_float_fast(loft_str t, double *out) {
+#if defined(FLT_EVAL_METHOD) && FLT_EVAL_METHOD != 0
+    (void) t;
+    (void) out;
+    return 0;
+#else
+    static const double p10[23] = { 1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+                                    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22 };
+    size_t i = 0, n = t.len;
+    int neg = 0;
+    if (i < n && (t.p[i] == '+' || t.p[i] == '-')) neg = t.p[i++] == '-';
+    uint64_t m = 0;
+    int64_t e10 = 0;
+    int any = 0;
+    for (int frac = 0; i < n; i++) {
+        char c = t.p[i];
+        if (c == '.' && !frac) { frac = 1; continue; }
+        if (c < '0' || c > '9') break;
+        if (m > UINT64_C(100000000000000000)) return 0;
+        m = m * 10 + (uint64_t) (c - '0');
+        if (frac) e10--;
+        any = 1;
+    }
+    if (!any || m > (UINT64_C(1) << 53)) return 0;
+    if (i < n && (t.p[i] == 'e' || t.p[i] == 'E')) {
+        i++;
+        int eneg = 0;
+        if (i < n && (t.p[i] == '+' || t.p[i] == '-')) eneg = t.p[i++] == '-';
+        int64_t e = 0;
+        for (; i < n && t.p[i] >= '0' && t.p[i] <= '9'; i++) {
+            if (e > 1000) return 0;
+            e = e * 10 + (t.p[i] - '0');
+        }
+        e10 += eneg ? -e : e;
+    }
+    if (i != n || e10 < -22 || e10 > 22) return 0;
+    double d = (double) m;
+    d = e10 >= 0 ? d * p10[e10] : d / p10[-e10];
+    *out = neg ? -d : d;
+    return 1;
+#endif
+}
+
+/* `@FR-R-LazySplit` (codegen_runtime::lazy_split): the pieces of `text.split(c)` taken one at a
+ * time from the text, with no vector built — the same pieces in the same order: none for an
+ * empty or null text, and after the last separator the rest, however short. */
+typedef struct { loft_str rest; int live; unsigned char sep[4]; int nsep; } loft_ls;
+
+static loft_ls loft_ls_of(loft_str t, uint32_t sep) {
+    loft_ls ls;
+    ls.rest = t;
+    ls.live = !(t.len == 0 || loft_str_is_null(t));
+    if (sep < 0x80) { ls.sep[0] = (unsigned char) sep; ls.nsep = 1; }
+    else if (sep < 0x800) { ls.sep[0] = (unsigned char) (0xC0 | (sep >> 6)); ls.sep[1] = (unsigned char) (0x80 | (sep & 0x3F)); ls.nsep = 2; }
+    else if (sep < 0x10000) {
+        ls.sep[0] = (unsigned char) (0xE0 | (sep >> 12)); ls.sep[1] = (unsigned char) (0x80 | ((sep >> 6) & 0x3F));
+        ls.sep[2] = (unsigned char) (0x80 | (sep & 0x3F)); ls.nsep = 3;
+    } else {
+        ls.sep[0] = (unsigned char) (0xF0 | (sep >> 18)); ls.sep[1] = (unsigned char) (0x80 | ((sep >> 12) & 0x3F));
+        ls.sep[2] = (unsigned char) (0x80 | ((sep >> 6) & 0x3F)); ls.sep[3] = (unsigned char) (0x80 | (sep & 0x3F)); ls.nsep = 4;
+    }
+    return ls;
+}
+
+/* The next piece, or — out of pieces — the null text with `*done` raised, which the loop's
+ * length test reads. */
+LOFT_HOT_INLINE loft_str loft_ls_next(loft_ls *ls, uint8_t *done) {
+    if (!ls->live) {
+        *done = 1;
+        return loft_null_text();
+    }
+    const char *p = ls->rest.p;
+    size_t n = ls->rest.len, at = 0;
+    for (;;) {
+        const char *hit = n > at ? (const char *) memchr(p + at, ls->sep[0], n - at) : 0;
+        if (!hit) break;
+        size_t off = (size_t) (hit - p);
+        if (off + (size_t) ls->nsep <= n && memcmp(hit, ls->sep, (size_t) ls->nsep) == 0) {
+            loft_str piece = { p, off };
+            ls->rest.p = p + off + ls->nsep;
+            ls->rest.len = n - off - (size_t) ls->nsep;
+            return piece;
+        }
+        at = off + 1;
+    }
+    ls->live = 0;
+    return ls->rest;
+}
+
 /* OpCastFloatFromText: `parse::<f64>().unwrap_or(NAN)`. */
 static double loft_float_of_text(loft_str t) {
     if (!loft_float_text_ok(t)) return (double) NAN;
+    double fast;
+    if (loft_float_fast(t, &fast)) return fast;
     char buf[64];
     char *heap = 0, *p = buf;
     if (t.len >= sizeof buf) {
@@ -3146,7 +3803,26 @@ static loft_text loft_text_case(loft_str s, const loft_umap *m, size_t n, int lo
     if (loft_str_is_null(s)) return loft_text_own(s);
     size_t i = 0;
     uint32_t prev = 0;
+    /* The result is about as long as the input: one reservation, not one per character. */
+    loft_reserve(&out, s.len);
     while (i < s.len) {
+        /* An ASCII run maps by its own rule, A-Z and a-z, with no table search: every ASCII
+         * letter's mapping is its other case and no other ASCII character has one. */
+        if ((uint8_t) s.p[i] < 0x80) {
+            size_t j = i;
+            while (j < s.len && (uint8_t) s.p[j] < 0x80) j++;
+            loft_reserve(&out, j - i);
+            char *d = out.p + out.len;
+            for (size_t k = i; k < j; k++) {
+                char ch = s.p[k];
+                if (lower ? (ch >= 'A' && ch <= 'Z') : (ch >= 'a' && ch <= 'z')) ch ^= 0x20;
+                *d++ = ch;
+            }
+            out.len += j - i;
+            prev = (uint8_t) s.p[j - 1];
+            i = j;
+            continue;
+        }
         size_t w;
         uint32_t c = loft_decode(s, i, &w);
         const char *to = loft_umap_find(m, n, c);
@@ -3169,10 +3845,76 @@ static loft_text loft_text_case(loft_str s, const loft_umap *m, size_t n, int lo
 
 /* Called first by `main`: the arguments, the clock's start, the constants. */
 static void loft_init(void);
+#if defined(_WIN32)
+#include <io.h>
+#include <fcntl.h>
+#endif
+
+/* ── The run's time bound (timeout.rs) ─────────────────────────────────────────────────
+ * `LOFT_TIMEOUT=<seconds>` (0 or unset: none): at the deadline the program stops with 124, the
+ * GNU `timeout` status the interpreter's graceful exit gives, saying so on stderr.  A POSIX host
+ * arms `alarm`, whose handler does only what a signal handler may (`write`, `_exit`); Windows
+ * runs a watchdog thread that sleeps until the deadline.  Elsewhere (WASI has no signals and no
+ * threads here) the bound is the driver's or the wasm host's. */
+static char loft_timeout_msg[96];
+static size_t loft_timeout_len = 0;
+static unsigned long loft_timeout_secs = 0;
+#if defined(LOFT_POSIX_HOST)
+#include <signal.h>
+#include <unistd.h>
+static void loft_timeout_fire(int sig) {
+    (void) sig;
+    if (write(2, loft_timeout_msg, loft_timeout_len) < 0) { /* nothing left to tell */ }
+    _exit(124);
+}
+#elif defined(_WIN32)
+#include <process.h>
+__declspec(dllimport) void __stdcall Sleep(unsigned long ms);
+static unsigned __stdcall loft_timeout_watch(void *arg) {
+    (void) arg;
+    Sleep(loft_timeout_secs * 1000ul);
+    fflush(stdout);
+    fwrite(loft_timeout_msg, 1, loft_timeout_len, stderr);
+    fflush(stderr);
+    _exit(124);
+    return 0;
+}
+#endif
+
+static void loft_arm_timeout(void) {
+    const char *v = getenv("LOFT_TIMEOUT");
+    unsigned long secs = 0;
+    if (!v || !*v) return;
+    for (const char *c = v; *c; c++) {
+        if (*c < '0' || *c > '9' || secs > 100000000ul) return;
+        secs = secs * 10 + (unsigned long) (*c - '0');
+    }
+    if (!secs) return;
+    loft_timeout_secs = secs;
+    sprintf(loft_timeout_msg, "[timeout] deadline reached after %lus (graceful)\n", secs);
+    loft_timeout_len = strlen(loft_timeout_msg);
+#if defined(LOFT_POSIX_HOST)
+    signal(SIGALRM, loft_timeout_fire);
+    alarm((unsigned) secs);
+#elif defined(_WIN32)
+    _beginthreadex(0, 0, loft_timeout_watch, 0, 0, 0);
+#endif
+}
+
 static void loft_start(int argc, char **argv) {
+#if defined(_WIN32)
+    /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
     loft_argc = argc;
     loft_argv = argv;
     loft_start_us = loft_now_us();
+    loft_heap_read_limit();
+    loft_arm_timeout();
+#if defined(LOFT_POSIX_HOST)
+    signal(SIGPIPE, SIG_IGN);
+#endif
     LOFT_TRACE("M\n");
     loft_init();
 }
@@ -3265,8 +4007,8 @@ static int loft_eq_child(loft_ref a, loft_ref b, loft_eq_fn f) {
 }
 
 /* The record pairs under comparison: a pair met again is equal, which is where a cycle ends. */
-static loft_ref *loft_eq_seen = 0;
-static size_t loft_eq_seen_n = 0, loft_eq_seen_cap = 0;
+static LOFT_TLS loft_ref *loft_eq_seen = 0;
+static LOFT_TLS size_t loft_eq_seen_n = 0, loft_eq_seen_cap = 0;
 
 static int loft_eq_reference(loft_ref fa, loft_ref fb, uint16_t target, loft_eq_fn f) {
     loft_ref ra = loft_get_dbref(fa, 0), rb = loft_get_dbref(fb, 0);
@@ -3295,10 +4037,41 @@ static int loft_eq_content(loft_eq_fn f, loft_ref a, loft_ref b) {
 
 /* ── Kernels and conversions the stdlib calls natively ─────────────────────────────────── */
 
-/* vector_sum_int (loop_kernels.rs): `acc` plus every element, with integer addition's rules. */
+/* vector_sum_int (loop_kernels.rs): `acc` plus every element, with integer addition's rules.  The
+ * elements are read off the vector's base, a block of LOFT_SUM_BLOCK at a time (vector::
+ * sum_blocks_i64): a block whose every element lies in [-2^40, 2^40) and whose total starts more
+ * than 2^50 from the int64 edge cannot overflow and holds no null, so its plain sum is what the
+ * checked add answers.  The first block that fails, and every element after it, take the
+ * checked add, which propagates a null and an overflow as before. */
+#define LOFT_SUM_BLOCK 1024
+#define LOFT_SUM_BOUND (INT64_C(1) << 40)
 static int64_t loft_vector_sum_int(loft_ref v, int64_t acc) {
     int64_t n = loft_vec_len(v);
-    for (int64_t i = 0; i < n; i++) acc = loft_add(acc, loft_get_int(loft_vec_get(v, 8, i), 0));
+    if (n <= 0) return acc;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    const uint8_t *base = loft_at(s, r, 8);
+    int64_t at = 0;
+    while (at < n) {
+        int64_t stop = at + LOFT_SUM_BLOCK < n ? at + LOFT_SUM_BLOCK : n;
+        uint64_t room = acc == LOFT_NULL ? 0 : (acc < 0 ? (uint64_t) 0 - (uint64_t) acc : (uint64_t) acc);
+        if (acc == LOFT_NULL || room >= (uint64_t) INT64_MAX - (uint64_t) LOFT_SUM_BLOCK * (uint64_t) LOFT_SUM_BOUND) break;
+        uint64_t high = 0, sum = 0;
+        for (int64_t i = at; i < stop; i++) {
+            int64_t x;
+            memcpy(&x, base + (size_t) i * 8, 8);
+            high |= ((uint64_t) x + (uint64_t) LOFT_SUM_BOUND) >> 41;
+            sum += (uint64_t) x;
+        }
+        if (high != 0) break;
+        acc = (int64_t) ((uint64_t) acc + sum);
+        at = stop;
+    }
+    for (int64_t i = at; i < n; i++) {
+        int64_t x;
+        memcpy(&x, base + (size_t) i * 8, 8);
+        acc = loft_add(acc, x);
+    }
     return acc;
 }
 
@@ -3323,6 +4096,34 @@ static int loft_utf8_valid(const unsigned char *p, size_t n) {
         i += len;
     }
     return 1;
+}
+
+/* A `char *` a `#c` binding returns, as `c_call` reads it: NULL is the null text, the bytes end
+ * at the first NUL, and an invalid UTF-8 byte is U+FFFD (`String::from_utf8_lossy`). */
+static loft_text loft_text_from_cstr(const char *c) {
+    loft_text t = { 0, 0, 0 };
+    if (!c) {
+        loft_push_char(&t, 0);
+        return t;
+    }
+    size_t n = strlen(c);
+    const unsigned char *p = (const unsigned char *) c;
+    if (loft_utf8_valid(p, n)) {
+        loft_push(&t, c, n);
+        return t;
+    }
+    for (size_t i = 0; i < n;) {
+        size_t len = p[i] < 0x80 ? 1 : (p[i] >= 0xC2 && p[i] <= 0xDF) ? 2
+                   : (p[i] >= 0xE0 && p[i] <= 0xEF) ? 3 : (p[i] >= 0xF0 && p[i] <= 0xF4) ? 4 : 0;
+        if (len && i + len <= n && loft_utf8_valid(p + i, len)) {
+            loft_push(&t, c + i, len);
+            i += len;
+        } else {
+            loft_push(&t, "\xEF\xBF\xBD", 3);
+            i++;
+        }
+    }
+    return t;
 }
 
 /* text_from_bytes (Stores::text_from_bytes_native): the bytes of a vector<u8> as a text; bytes

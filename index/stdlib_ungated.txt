@@ -337,8 +337,10 @@ __iface_30#2_OpMin
 __iface_30#2_minus
 __iface_33#2_scale
 __iface_35#1_to_text
-__iface_516#1_children
+__iface_518#1_children
 i_7integer_n_sum
+n___ledger
+n___ledger_div
 n_assert
 n_chr
 n_fs_result

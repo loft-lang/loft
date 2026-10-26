@@ -98,6 +98,12 @@ typedef struct {
     size_t at;
 } loft_jfault;
 
+/* A line's extent, cached across the tokens on it (`loft_jl_eol_at`). */
+typedef struct {
+    size_t from, end;
+    int valid;
+} loft_jline;
+
 typedef struct {
     const uint8_t *b;
     size_t len;
@@ -108,6 +114,10 @@ typedef struct {
     /* `err_path`: the JSON pointer segments of a failing value, innermost first. */
     loft_text *path;
     size_t npath, path_cap;
+    /* The line the cursor is on, [line_from, line_end]: no newline lies between them, so a
+     * token anywhere in it ends its line at line_end.  A one-line document of N tokens then
+     * finds its line end once instead of once per token. */
+    loft_jline line;
 } loft_jp;
 
 static size_t loft_jl_ws(const uint8_t *b, size_t len, size_t i) {
@@ -144,12 +154,21 @@ static int32_t loft_jl_hex4(const uint8_t *b, size_t eol, size_t *i) {
     return v;
 }
 
+/* `loft_jl_eol` for a position on the line `line` last answered: the same end, found once per
+ * line instead of once per token. */
+static size_t loft_jl_eol_at(const uint8_t *b, size_t len, size_t i, loft_jline *line) {
+    if (line->valid && i >= line->from && i <= line->end) return line->end;
+    line->from = i;
+    line->end = loft_jl_eol(b, len, i);
+    line->valid = 1;
+    return line->end;
+}
+
 /* `Lexer::string` in JSON mode (`close` '"') or `Lexer::char` (`close` '\'') from the opening
- * quote `q`: the decoded text and the cursor past the closing quote, or 0 when the lexer cannot
- * close the literal on its line.  A character literal steps past an escape's last character
- * even where a string's over-read does not. */
-static int loft_jl_quoted(const uint8_t *b, size_t len, size_t q, uint8_t close, loft_text *out, size_t *end) {
-    size_t eol = loft_jl_eol(b, len, q);
+ * quote `q`, whose line ends at `eol`: the decoded text and the cursor past the closing quote,
+ * or 0 when the lexer cannot close the literal on its line.  A character literal steps past an
+ * escape's last character even where a string's over-read does not. */
+static int loft_jl_quoted(const uint8_t *b, size_t eol, size_t q, uint8_t close, loft_text *out, size_t *end) {
     size_t i = q + 1;
     out->p = 0;
     out->len = out->cap = 0;
@@ -261,7 +280,7 @@ static int loft_jl_quoted(const uint8_t *b, size_t len, size_t q, uint8_t close,
 }
 
 /* The token at cursor `i` (`Lexer::scan_once` in JSON mode). */
-static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i) {
+static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i, loft_jline *line) {
     loft_jtok t;
     memset(&t, 0, sizeof t);
     i = loft_jl_ws(b, len, i);
@@ -337,7 +356,7 @@ static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i) {
         return t;
     }
     if (c == '"') {
-        if (loft_jl_quoted(b, len, i, '"', &t.text, &t.end)) {
+        if (loft_jl_quoted(b, loft_jl_eol_at(b, len, i, line), i, '"', &t.text, &t.end)) {
             t.kind = LOFT_JT_STR;
             t.at = i + 1;
         } else {
@@ -350,7 +369,8 @@ static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i) {
          * read as a string's, its `token_at` after the quote; none when the line ends first. */
         loft_text lit = { 0, 0, 0 };
         t.at = i + 1;
-        t.kind = loft_jl_quoted(b, len, i, '\'', &lit, &t.end) ? LOFT_JT_OTHER : LOFT_JT_NONE;
+        t.kind = loft_jl_quoted(b, loft_jl_eol_at(b, len, i, line), i, '\'', &lit, &t.end)
+            ? LOFT_JT_OTHER : LOFT_JT_NONE;
         loft_text_free(&lit);
         return t;
     }
@@ -370,7 +390,7 @@ static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i) {
     }
     if (c == '`') {
         t.kind = LOFT_JT_OTHER;
-        t.end = loft_jl_eol(b, len, i);
+        t.end = loft_jl_eol_at(b, len, i, line);
         return t;
     }
     /* An unrecognized character: consumed, and no token. */
@@ -381,7 +401,7 @@ static loft_jtok loft_jl_token(const uint8_t *b, size_t len, size_t i) {
 
 static void loft_jp_peek(loft_jp *p) {
     loft_text_free(&p->pk.text);
-    p->pk = loft_jl_token(p->b, p->len, p->cur);
+    p->pk = loft_jl_token(p->b, p->len, p->cur, &p->line);
 }
 
 /* `Lexer::cont`: past the token at the cursor. */
@@ -819,10 +839,15 @@ static void loft_jp_render_path(const loft_jp *p, loft_text *out) {
     }
 }
 
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 /* `stores.last_json_errors`: the errors of the last parse, in order; `json_errors()` reads them
  * joined by `|`. */
-static loft_text *loft_jerr = 0;
-static size_t loft_jerr_n = 0, loft_jerr_cap = 0;
+static LOFT_TLS loft_text *loft_jerr = 0;
+static LOFT_TLS size_t loft_jerr_n = 0, loft_jerr_cap = 0;
 
 static void loft_jerr_clear(void) {
     for (size_t i = 0; i < loft_jerr_n; i++) loft_text_free(&loft_jerr[i]);
@@ -948,8 +973,8 @@ static loft_ref loft_jv_alloc(void) {
 
 /* `jv_null_sentinel`: the one JNull the readers answer for a miss, in a store nothing frees. */
 static loft_ref loft_jv_null(void) {
-    static loft_ref sentinel;
-    static int made = 0;
+    static LOFT_TLS loft_ref sentinel;
+    static LOFT_TLS int made = 0;
     if (!made) {
         sentinel = loft_jv_alloc();
         loft_set_byte(sentinel, 0, LOFT_JD_NULL);

@@ -1068,7 +1068,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: after-join after-fix perf-portal perf-portal-render perf-check perf-trend perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
+.PHONY: after-join after-fix perf-portal perf-portal-render perf-check perf-trend perf-local c-profile perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -2692,6 +2692,12 @@ perf-check:  ## Did THIS change move a routine? Measures the lanes the census sa
 	python3 scripts/perf_check.py $(ARGS)
 perf-trend:  ## How every measured routine moved over the committed portal history; ARGS=--routine <name> for one series
 	python3 scripts/perf_trend.py $(ARGS)
+
+perf-local:  ## Every measurement THIS checkout took, per routine and subject (uncommitted); ARGS="13/split" or "--subject <s>" or "subjects"
+	python3 bench/portal/local.py $(ARGS)
+
+c-profile:  ## Where a bench routine's time goes in the C backend's build, per routine; ARGS="13 --routine join,split [--lane cship] [--leaf]"
+	python3 bench/portal/c_profile.py $(ARGS)
 
 # The library checkouts the portal measures from: normal clones under $$LOFT_PERF_LIBS
 # (default ../loft-bench-libs), cloned when missing and fast-forwarded when clean.

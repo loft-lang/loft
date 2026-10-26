@@ -278,12 +278,18 @@ static uint64_t loft_ref_digest(loft_ref e, const loft_key *keys, int n, uint64_
     return loft_sip_finish(&h);
 }
 
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
+
 /* keys::fresh_seed: a new table's seed — LOFT_HASH_SEED's value (decimal or 0x hex) when set, so
  * a persisted store is byte-reproducible, else an unpredictable one (the hash-DoS defence).
  * Never 0, which marks an unseeded table. */
 static uint64_t loft_fresh_seed(void) {
-    static int fixed_read = 0, fixed_set = 0;
-    static uint64_t fixed = 0, counter = 0;
+    static LOFT_TLS int fixed_read = 0, fixed_set = 0;
+    static LOFT_TLS uint64_t fixed = 0, counter = 0;
     if (!fixed_read) {
         const char *raw = getenv("LOFT_HASH_SEED");
         fixed_read = 1;

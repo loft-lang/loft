@@ -694,6 +694,12 @@ impl Scopes<'_> {
             result.extend(self.bind_return_temp(tmp, expr, function, data));
             let distinct = data.def_nr("OpDistinctStore");
             let join_arm_dropped = &join_arm_dropped;
+            // The sweep's frees go FIRST: they name the returned local as their WITNESS (its
+            // store may be one a block-bound local also owns), and the releases below may
+            // reset that local's slot on the interpreter even when they decline.  Released
+            // first, the witness read null and a local freed the store being returned
+            // (loft#2194, `@FR-O-Buffer`).
+            result.append(&mut ls);
             for &src in &null_arm_record_sources {
                 // D-heap-7, `(H-Drop)` — the free below releases a source only on the paths that
                 // did not return it, and a record's release is its HOOK as well as its store: this
@@ -740,7 +746,6 @@ impl Scopes<'_> {
                     Value::Null,
                 ));
             }
-            result.append(&mut ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));
             return result;
         }

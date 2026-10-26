@@ -1078,6 +1078,14 @@ pub struct Output<'a> {
     /// different targets, not two names for one — and the only thing that reads
     /// their disjunction is [`Self::no_c_abi`].
     pub wasm_wasi: bool,
+    /// The shim route — the packages whose `[c] shim` the wasm build compiled
+    /// to wasm32 objects and links into the module: their `#c` bindings are declared as
+    /// typed externs at wasm32's widths and called directly, where every other `#c` call on
+    /// a wasm target is refused.  Set by the build before emission; empty on a host target.
+    pub wasm_shim_pkgs: Vec<String>,
+    /// The packages whose `[c] shim` did NOT compile for wasm32, with the compiler's words:
+    /// a reached binding of theirs is refused with that reason.
+    pub wasm_shim_failed: Vec<(String, String)>,
     /// When true, the host-native backend: emit `unsafe extern "C"` declarations
     /// for `#native` package functions (instead of `extern crate <pkg>`) and link
     /// each package's cdylib `.so` by C-ABI, sealing the package's Rust crate graph
@@ -1976,6 +1984,8 @@ impl<'a> Output<'a> {
             call_stack_prefix: None,
             wasm_browser: false,
             wasm_wasi: false,
+            wasm_shim_pkgs: Vec::new(),
+            wasm_shim_failed: Vec::new(),
             native_cabi: false,
             native_bind: false,
             library_unit: false,
@@ -7497,6 +7507,27 @@ macro_rules! loft_ckpt_t {{
         )
     }
 
+    /// The test ledger's site table (@PLN201, [`crate::opt::ledger_sites`]), armed by `main`
+    /// before anything runs: the instrumented calls pass their index into it.  Nothing for a
+    /// program built without `LOFT_LEDGER`.
+    fn emit_ledger_table(&self, w: &mut dyn Write) -> std::io::Result<()> {
+        if self.data.ledger_sites.is_empty() {
+            return Ok(());
+        }
+        writeln!(
+            w,
+            "#[allow(dead_code)]\nfn __loft_ledger() {{\n    loft::ledger::arm_static(&["
+        )?;
+        for s in &self.data.ledger_sites {
+            writeln!(
+                w,
+                "        ({:?}, 0x{:016x}_u64, {}_u32, {}_i64),",
+                s.function, s.body, s.ordinal, s.kind
+            )?;
+        }
+        writeln!(w, "    ]);\n}}")
+    }
+
     /// The checkpoint counter arrays, the site table and the report, emitted AFTER the
     /// function bodies — that is the first moment the number of sites is known.
     ///
@@ -7968,11 +7999,16 @@ fn loft_ckpt_report() {{
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the header is written from the build's whole target description"
+    )]
     fn emit_file_header(
         w: &mut dyn Write,
         data: &Data,
         wasm_browser: bool,
         no_c_abi: bool,
+        wasm_shim_pkgs: &[String],
         package_link: PackageLink,
         reachable: &HashSet<u32>,
         checkpoints: CkptMode,
@@ -8400,6 +8436,52 @@ extern crate loft;"
         // a non-wasm target's generated Rust is unchanged, byte for byte, by
         // arc E.
         let mut lazy = String::new();
+        if no_c_abi && !wasm_shim_pkgs.is_empty() {
+            // The shim route: the package's shim is linked into the module as wasm32 objects,
+            // so its symbols ARE there, at wasm32's widths — one typed extern each, called
+            // directly by `output_c_direct_call`.  A binding of any other package keeps the
+            // refusal at its call.
+            let target = crate::c_signature::CTarget::wasm32();
+            let mut declared_c: HashSet<String> = HashSet::new();
+            let mut block = String::new();
+            for d_nr in 0..data.definitions() {
+                let def = data.def(d_nr);
+                if def.c_sig.is_empty() || *def.code() != Value::Null {
+                    continue;
+                }
+                let owned = data
+                    .c_owner_pkg(def.position().file.as_str())
+                    .is_some_and(|p| wasm_shim_pkgs.iter().any(|w| w == p));
+                if !owned {
+                    continue;
+                }
+                let Some(Ok(sig)) = crate::c_signature::of(data, d_nr, target) else {
+                    continue;
+                };
+                if !declared_c.insert(sig.symbol.clone()) {
+                    continue;
+                }
+                let params = sig
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| format!("a{i}: {}", t.rust_type()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret = match sig.ret {
+                    crate::c_signature::CType::Void => String::new(),
+                    ref t => format!(" -> {}", t.rust_type()),
+                };
+                use std::fmt::Write as _;
+                let _ = writeln!(block, "    #[link_name = \"{}\"]", sig.symbol);
+                let _ = writeln!(block, "    fn __c_{}({params}){ret};", sig.symbol);
+            }
+            if !block.is_empty() {
+                writeln!(w, "unsafe extern \"C\" {{")?;
+                write!(w, "{block}")?;
+                writeln!(w, "}}")?;
+            }
+        }
         if !no_c_abi {
             let target = crate::c_signature::CTarget::host();
             let mut declared_c: HashSet<String> = HashSet::new();
@@ -8688,6 +8770,7 @@ extern crate loft;"
             self.data,
             self.wasm_browser,
             self.no_c_abi(),
+            &self.wasm_shim_pkgs,
             self.package_link(),
             &self.reachable,
             self.checkpoints,
@@ -8711,6 +8794,7 @@ extern crate loft;"
         writeln!(w, "}}\n")?;
         self.output_functions(w, from, till, None)?;
         self.emit_ckpt_table(w)?;
+        self.emit_ledger_table(w)?;
         self.emit_main_bootstrap(w, till)
     }
 
@@ -8831,6 +8915,7 @@ extern crate loft;"
             self.data,
             self.wasm_browser,
             self.no_c_abi(),
+            &self.wasm_shim_pkgs,
             self.package_link(),
             &reachable,
             self.checkpoints,
@@ -8859,7 +8944,8 @@ extern crate loft;"
         }
         // Emit only reachable functions across the full definition range.
         self.output_functions(w, 0, till, Some(&reachable))?;
-        self.emit_ckpt_table(w)
+        self.emit_ckpt_table(w)?;
+        self.emit_ledger_table(w)
     }
 
     /// Emit a Rust `fn main()` bootstrap if the program defines a loft `main` function.
@@ -9170,6 +9256,12 @@ extern crate loft;"
         } else {
             ""
         };
+        // @PLN201 — a ledger build arms its site table first (`emit_ledger_table`).
+        let ledger = if self.data.ledger_sites.is_empty() {
+            ""
+        } else {
+            "    __loft_ledger();\n"
+        };
         // @PLN196 step 9 — the release the program's stores record, from the manifest it is
         // compiled against: a shipped binary need not sit beside its `loft.toml`.  Empty (and
         // so byte-identical) for a program whose project records none.  It REPLACES what the
@@ -9223,7 +9315,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -9264,7 +9356,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n{bind}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n{bind}{ledger}    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE;{release} if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), main_file_or(LOFT_MAIN_FILE)), main_file_or(LOFT_MAIN_FILE)); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
@@ -12576,7 +12668,18 @@ extern crate loft;"
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_c_direct_call(&self, w: &mut dyn Write, d_nr: u32) -> std::io::Result<()> {
         let def = self.data.def(d_nr);
-        let target = crate::c_signature::CTarget::host();
+        // The shim route: a binding of a package whose `[c] shim` the wasm build
+        // linked into the module is called directly, at wasm32's widths.
+        let via_shim = self.no_c_abi()
+            && self
+                .data
+                .c_owner_pkg(def.position().file.as_str())
+                .is_some_and(|p| self.wasm_shim_pkgs.iter().any(|w| w == p));
+        let target = if via_shim {
+            crate::c_signature::CTarget::wasm32()
+        } else {
+            crate::c_signature::CTarget::host()
+        };
         // The declaration already reported a parse failure; emit a body anyway so
         // the wrapper compiles into a coherent error rather than an E0308 cascade.
         let Some(Ok(sig)) = crate::c_signature::of(self.data, d_nr, target) else {
@@ -12586,7 +12689,7 @@ extern crate loft;"
             )?;
             return Ok(());
         };
-        if self.no_c_abi() {
+        if self.no_c_abi() && !via_shim {
             // @PLN24 arc E — the refusal, at the only site that knows a `#c`
             // binding is actually CALLED.  Reachability-scoped for free, which
             // is the property that matters: a library declaring bindings a wasm
@@ -12612,16 +12715,23 @@ extern crate loft;"
             // this symbol's — and one of them is the shim loft built itself,
             // which arc D deliberately made indistinguishable from a declared
             // one.  The package is the thing the author can act on.
-            let from = self
-                .data
-                .c_owner_pkg(def.position().file.as_str())
-                .map_or_else(String::new, |pkg| {
-                    let stem = crate::file_access::name_of(pkg);
-                    format!(" (package `{stem}`)")
+            let owner = self.data.c_owner_pkg(def.position().file.as_str());
+            let from = owner.map_or_else(String::new, |pkg| {
+                let stem = crate::file_access::name_of(pkg);
+                format!(" (package `{stem}`)")
+            });
+            // The shim route was tried and the shim did not compile for wasm32: say why.
+            let shim_why = owner
+                .and_then(|pkg| self.wasm_shim_failed.iter().find(|(p, _)| p == pkg))
+                .map_or_else(String::new, |(_, why)| {
+                    format!(
+                        " Its `[c] shim` does not build for wasm32: {}.",
+                        why.replace('\\', "\\\\").replace('"', "\\\"")
+                    )
                 });
             writeln!(
                 w,
-                "{{ compile_error!(\"loft: `{name}` is bound to the C symbol '{}' with #c{from}, and the {which} target has no C ABI to reach it — a wasm module cannot open a shared library. Give the library a wasm implementation, host it out of process, or drop the {flag} claim\") }}",
+                "{{ compile_error!(\"loft: `{name}` is bound to the C symbol '{}' with #c{from}, and the {which} target has no C ABI to reach it — a wasm module cannot open a shared library.{shim_why} Give the library a wasm implementation, host it out of process, or drop the {flag} claim\") }}",
                 sig.symbol
             )?;
             return Ok(());

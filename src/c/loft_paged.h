@@ -59,7 +59,13 @@ static const uint8_t *loft_pg_page(loft_pg *r, uint64_t p) {
         uint8_t *b = (uint8_t *) calloc(LOFT_PG_PAGE, 1);
         if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
         uint64_t off = p * LOFT_PG_PAGE, want = r->size - off < LOFT_PG_PAGE ? r->size - off : LOFT_PG_PAGE;
-        if (fseek(r->f, (long) off, SEEK_SET) == 0) (void) fread(b, 1, (size_t) want, r->f);
+        /* A short read leaves the page's tail as `calloc` made it: zero, which is what a byte
+         * past the end reads as.  The count is READ (a `(void)` cast does not satisfy glibc's
+         * `warn_unused_result` on `fread`). */
+        if (fseek(r->f, (long) off, SEEK_SET) == 0) {
+            size_t got = fread(b, 1, (size_t) want, r->f);
+            if (got < (size_t) want) memset(b + got, 0, (size_t) want - got);
+        }
         r->pages[p] = b;
     }
     return r->pages[p];

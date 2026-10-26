@@ -1646,6 +1646,125 @@ pub fn c_long_bits() -> u8 {
     if cfg!(windows) { 32 } else { 64 }
 }
 
+/// The `cc` argument that links a C library a package ships, at `file`, into a C backend
+/// program (@PLN203 C5); where the program finds it at run time is [`c_rpath_arg`]'s.
+#[must_use]
+pub fn c_link_args_for_file(file: &std::path::Path) -> Vec<String> {
+    vec![crate::file_access::portable(file)]
+}
+
+/// How a C backend program links a shared library it found at `file` (@PLN203 C5): by NAME on
+/// Linux (`-L<dir> -l:<file>`), because GNU ld records a library without a SONAME by the path it
+/// was given, and the program would then name the build tree; by its path elsewhere, where the
+/// library's own install name (macOS) or the DLL's name (Windows) is what the program records.
+#[must_use]
+pub fn c_link_shared_args(file: &std::path::Path) -> Vec<String> {
+    match (file.parent(), crate::file_access::file_name(file)) {
+        (Some(dir), Some(name)) if cfg!(target_os = "linux") => vec![
+            format!("-L{}", crate::file_access::portable(dir)),
+            format!("-l:{name}"),
+        ],
+        _ => vec![crate::file_access::portable(file)],
+    }
+}
+
+/// The run path a C backend program finds a linked library through (@PLN203 C5): the library's
+/// own directory (`Some`) for a program run from its build, the program's own directory
+/// (`None`: `$ORIGIN`, `@executable_path`) for one written out with its libraries beside it
+/// (`--out`).  Nothing on Windows, where the DLL is staged beside the binary.
+#[must_use]
+pub fn c_rpath_arg(dir: Option<&std::path::Path>) -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    Some(match dir {
+        Some(d) => format!("-Wl,-rpath,{}", crate::file_access::portable(d)),
+        None if cfg!(target_os = "macos") => "-Wl,-rpath,@executable_path".to_string(),
+        None => "-Wl,-rpath,$ORIGIN".to_string(),
+    })
+}
+
+/// The `cc` argument that links a system C library known by its soname (`libpq.so.5`) into a
+/// C backend program (@PLN203 C5): GNU ld's exact-name `-l:` on Linux, `-l<stem>` elsewhere.
+#[must_use]
+pub fn c_link_arg_for_soname(soname: &str) -> String {
+    if cfg!(target_os = "linux") {
+        return format!("-l:{soname}");
+    }
+    let stem = soname.strip_prefix("lib").unwrap_or(soname);
+    let stem = stem.split('.').next().unwrap_or(stem);
+    format!("-l{stem}")
+}
+
+/// The `cc` arguments that link EVERY member of a static archive into a C backend program, used
+/// for a `[c] shim` whose symbols are reached by `dlsym` rather than a direct call (a package with
+/// optional libraries, @PLN203 C5): nothing references them, so a plain link drops them.
+#[must_use]
+pub fn c_whole_archive_args(archive: &str) -> Vec<String> {
+    if cfg!(target_os = "macos") {
+        vec![format!("-Wl,-force_load,{archive}")]
+    } else if cfg!(windows) {
+        vec![archive.to_string()]
+    } else {
+        vec![
+            "-Wl,--whole-archive".to_string(),
+            archive.to_string(),
+            "-Wl,--no-whole-archive".to_string(),
+        ]
+    }
+}
+
+/// The `cc` argument that exports a C backend program's own symbols to the dynamic table, so a
+/// `dlsym` over the program finds a shim linked into it (@PLN203 C5, optional libraries): GNU
+/// ld's `-rdynamic`; macOS exports them already, and Windows resolves no symbol that way.
+#[must_use]
+pub fn c_export_dynamic_arg() -> Option<&'static str> {
+    if cfg!(target_os = "linux") {
+        Some("-rdynamic")
+    } else {
+        None
+    }
+}
+
+/// The system libraries a C backend unit links (@PLN203 C4, C5): POSIX threads for `par`, and
+/// the dynamic loader `c_library_available` asks; Windows' C runtime carries both.
+#[must_use]
+pub fn c_thread_link_args() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &[]
+    } else if cfg!(target_os = "linux") {
+        &["-pthread", "-ldl"]
+    } else {
+        &["-pthread"]
+    }
+}
+
+/// What to install so the C backend can build a host program, said for this host (@PLN203
+/// C10).  Only the Debian/Ubuntu list is measured; the others name the tools, not packages.
+#[must_use]
+pub fn c_host_toolchain_cure() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "install the Xcode command-line tools (`xcode-select --install`)"
+    } else if cfg!(windows) {
+        "install MinGW-w64 gcc, or name a compiler in LOFT_CC"
+    } else {
+        "install one (Debian/Ubuntu: `apt install build-essential`), or name it in LOFT_CC"
+    }
+}
+
+/// What to install so the C backend can build a wasm32 module: clang, `wasm-ld`, the WASI
+/// sysroot and the wasm32 compiler-rt builtins, said for this host (@PLN203 C10).
+#[must_use]
+pub fn c_wasm_toolchain_cure() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "install clang, lld, the WASI libc and the wasm32 compiler-rt (Debian/Ubuntu: \
+         `apt install clang lld wasi-libc libclang-rt-dev-wasm32`), or name a clang in LOFT_WASM_CC"
+    } else {
+        "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
+         a clang in LOFT_WASM_CC"
+    }
+}
+
 /// Extra `cc` arguments for a `#c` shim so it does not depend on its compiler's runtime
 /// DLLs: `-static-libgcc` on Windows (a MinGW `cc` links `libgcc_s_seh-1.dll` by default,
 /// and a consumer's machine has no MinGW `bin` on `PATH`), nothing elsewhere.

@@ -203,3 +203,7 @@ tests/scripts/loft_*_trace.tmp
 
 # A feature example (@F123) writes its file where the doc test runs; the file is never source.
 tests/docs/features/*.bin
+
+# bench/portal/local.py: every bench measurement this checkout took, per routine — the
+# committed history (bench/portal/results) holds full runs only.
+bench/portal/local/

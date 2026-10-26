@@ -50,6 +50,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_parse.h"),
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
+    include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
     include_str!("loft_net.h")
 );
@@ -159,8 +160,6 @@ pub(crate) struct Cx<'a> {
     key_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The root types a `store_persist_copy` writes an image of: one sidecar each.
     sidecars: std::cell::RefCell<std::collections::BTreeSet<u16>>,
-    /// Whether the unit reports its stores (`store_memory()`), which names every type.
-    type_names: std::cell::Cell<bool>,
     /// Every type the unit writes to or reads from a file (`loft_ser{tp}` / `loft_de{tp}`).
     ser_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The Unicode tables the unit reads (`crate::c::unicode`).
@@ -176,6 +175,10 @@ pub(crate) struct Cx<'a> {
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
     /// consults the binding on a miss (`loft_lazy_miss`).
     pub(crate) lazy: std::cell::Cell<bool>,
+    /// The `par` sites written on threads so far, which numbers each one's body and context.
+    pub(crate) par_sites: std::cell::Cell<u32>,
+    /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
+    pub(crate) sql_plans: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The lazy fetch functions written so far (`loft_lazy_fetch{n}`).
     pub(crate) lazy_fetchers: std::cell::Cell<usize>,
     /// The place twins the unit calls (`twin_name`): a function by definition number, with
@@ -218,7 +221,6 @@ impl<'a> Cx<'a> {
             eq_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             key_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             sidecars: std::cell::RefCell::new(std::collections::BTreeSet::new()),
-            type_names: std::cell::Cell::new(false),
             ser_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
@@ -226,6 +228,8 @@ impl<'a> Cx<'a> {
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
+            par_sites: std::cell::Cell::new(0),
+            sql_plans: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
         }
@@ -328,26 +332,23 @@ impl<'a> Cx<'a> {
         format!("&loft_sidecar{tp}")
     }
 
-    /// The type-name table `store_memory()` reads, by type number: the name `Stores::types`
-    /// gives each, so a store's line names its type as the interpreter's does.
-    pub(crate) fn type_names(&self) -> &'static str {
-        self.type_names.set(true);
-        "loft_tnames, loft_ntnames"
-    }
-
+    /// Always written: the heap ceiling's report (`loft_heap_moved`) names a type by it too.
     fn type_name_table(&self) -> String {
-        if !self.type_names.get() {
-            return String::new();
-        }
         let names: Vec<String> = self
             .stores
             .types
             .iter()
             .map(|t| body::c_string(&t.name))
             .collect();
+        // A C99 initializer holds at least one element: a unit with no types (none the
+        // stdlib leaves out) writes a null placeholder its count of 0 never reaches.
         format!(
             "static const char *const loft_tnames[] = {{ {} }};\nstatic const uint32_t loft_ntnames = {};\n",
-            names.join(", "),
+            if names.is_empty() {
+                "0".to_string()
+            } else {
+                names.join(", ")
+            },
             names.len()
         )
     }
@@ -968,7 +969,8 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_store_lazy_faults" => Some("loft_lazy_faults"),
         "n_store_lazy_clear" => Some("loft_lazy_clear"),
         "n_store_lazy_fail" => Some("loft_lazy_fail"),
-        "n_store_lazy_query" | "n_store_lazy_range" => Some("loft_lazy_db_fetch"),
+        "n_store_lazy_query" => Some("loft_lazy_query"),
+        "n_store_lazy_range" => Some("loft_lazy_range"),
         "n_store_load_key"
         | "n_store_load_key_text"
         | "n_store_load_keys"
@@ -990,6 +992,9 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_mtime" => Some("loft_mtime"),
         "n_is_dir" => Some("loft_is_dir_at"),
         "n_is_file" => Some("loft_is_file_at"),
+        "n_is_symlink" => Some("loft_is_symlink_at"),
+        "n_c_library_available" => Some("loft_c_library_available"),
+        "n_eprint" => Some("loft_eprint"),
         "n_os_temp_dir" => Some("loft_os_temp_dir"),
         "n_source_dir" => Some("loft_source_dir"),
         "n_path_sep" => Some("loft_path_sep"),
@@ -1067,9 +1072,10 @@ fn host_native_c(name: &str) -> Option<&'static str> {
         "n_reflect_field" => Some("loft_reflect_field"),
         "n_reflect_field_path" => Some("loft_reflect_field_path"),
         "n_get_store_lock" => Some("loft_get_store_lock"),
-        "n_log_info" | "n_log_warn" | "n_log_error" | "n_log_fatal" => {
-            Some("loft_log_unconfigured")
-        }
+        "n_log_info" => Some("loft_log_info"),
+        "n_log_warn" => Some("loft_log_warn"),
+        "n_log_error" => Some("loft_log_error"),
+        "n_log_fatal" => Some("loft_log_fatal"),
         "n_ymd_days_ago" => Some("loft_ymd_days_ago"),
         "n_env_variables" => Some("loft_env_variables"),
         _ => None,
@@ -1121,6 +1127,57 @@ pub(crate) fn is_operator(data: &Data, d: u32) -> bool {
     data.def(d).name().starts_with("Op")
 }
 
+/// Write the place twins asked for since `written` — a twin's body can ask for more, which this
+/// writes too — as a prototype into `protos` and a definition into `bodies`.
+fn write_twins(
+    cx: &Cx<'_>,
+    written: &mut usize,
+    protos: &mut String,
+    bodies: &mut String,
+) -> Result<(), Refusal> {
+    while *written < cx.twins.borrow().len() {
+        let (d, mask) = cx.twins.borrow()[*written];
+        *written += 1;
+        let (sig, body) = function(cx, d, mask).map_err(|why| Refusal {
+            function: cx.data.def(d).original_name().clone(),
+            why,
+        })?;
+        let _ = writeln!(protos, "{sig};");
+        let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
+    }
+    Ok(())
+}
+
+/// @PLN203 C3 — the stdlib's natives the C runtime has no arm for: a function with no loft
+/// body, no `#c` signature and no library `#native`, which [`native_c`] does not map.  A
+/// program that reaches one is refused by its name (`function`); this is the same question
+/// asked of the whole stdlib at once, so a new native cannot arrive without a C arm unseen.
+#[must_use]
+pub fn unported_natives(data: &Data) -> Vec<String> {
+    // An interface's method declarations and a bound's stubs are resolved to the type's own
+    // method before any code is written, so no unit calls one.
+    let members: std::collections::HashSet<u32> = (0..data.definitions())
+        .filter(|&d| matches!(data.def_type(d), DefType::Interface))
+        .flat_map(|d| data.children_of(d))
+        .collect();
+    let mut out: Vec<String> = (0..data.definitions())
+        .filter(|&d| {
+            let def = data.def(d);
+            matches!(def.def_type(), DefType::Function)
+                && !is_operator(data, d)
+                && !members.contains(&d)
+                && !Data::is_bound_stub_name(def.name())
+                && def.code() == &Value::Null
+                && def.c_sig.is_empty()
+                && def.native().is_empty()
+                && native_c(def.name()).is_none()
+        })
+        .map(|d| data.def(d).name().to_string())
+        .collect();
+    out.sort();
+    out
+}
+
 /// C99 for `roots` and every loft function they reach: the runtime, a prototype per function
 /// and each body.  A function or construct the backend does not carry refuses the whole unit.
 ///
@@ -1130,6 +1187,16 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
+    // Every lazy driver is a root (@PLN133 S9): a miss calls it through the table the unit
+    // writes, and a driver left out would be a pointer to a body never written.
+    let drivers = data.lazy_fetch_drivers();
+    if let Ok(found) = &drivers {
+        for &(_, d) in found {
+            if !all.contains(&d) {
+                all.push(d);
+            }
+        }
+    }
     for d in crate::opt::names::reachable_functions(data, roots) {
         let cascade = data.drop_cascade_nr(data.def(d).closure_record());
         if cascade != u32::MAX && !all.contains(&cascade) {
@@ -1146,27 +1213,6 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
-    // Without a `log.conf` beside the program the log calls do nothing (`Logger`); the C
-    // writes no log, so a program that has one is not carried.
-    if reachable_has(data, &all, |n| n.starts_with("n_log_"))
-        && crate::file_access::exists(format!("{}/log.conf", stores.source_dir).as_str())
-    {
-        return Err(Refusal {
-            function: "main".into(),
-            why: "a program with a log.conf".into(),
-        });
-    }
-    // A program's own lazy driver (`fn lazy_fetch…`, @PLN133 S8) is called by the miss path,
-    // which the C does not route to loft code.
-    if (0..data.definitions()).any(|d| {
-        let def = data.def(d);
-        def.source == crate::data::MAIN_SOURCE && def.name().starts_with("n_lazy_fetch")
-    }) {
-        return Err(Refusal {
-            function: "main".into(),
-            why: "a program with a lazy driver".into(),
-        });
-    }
     let cx = Cx::new(data, stores);
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
@@ -1184,16 +1230,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     }
     // The place twins the functions call, and the ones those call in turn.
     let mut written = 0;
-    while written < cx.twins.borrow().len() {
-        let (d, mask) = cx.twins.borrow()[written];
-        written += 1;
-        let (sig, body) = function(&cx, d, mask).map_err(|why| Refusal {
-            function: data.def(d).original_name().clone(),
-            why,
-        })?;
-        let _ = writeln!(protos, "{sig};");
-        let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
-    }
+    write_twins(&cx, &mut written, &mut protos, &mut bodies)?;
     // The dispatchers call place twins too: those are written, and the dispatchers again,
     // until nothing new is asked.
     let dispatch = loop {
@@ -1204,16 +1241,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         if written == cx.twins.borrow().len() {
             break dispatch;
         }
-        while written < cx.twins.borrow().len() {
-            let (d, mask) = cx.twins.borrow()[written];
-            written += 1;
-            let (sig, body) = function(&cx, d, mask).map_err(|why| Refusal {
-                function: data.def(d).original_name().clone(),
-                why,
-            })?;
-            let _ = writeln!(protos, "{sig};");
-            let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
-        }
+        write_twins(&cx, &mut written, &mut protos, &mut bodies)?;
     };
     // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
     // it compiles `loft_at` without the foreign record's test.
@@ -1223,6 +1251,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push_str(&defines);
     out.push_str(RUNTIME);
     out.push('\n');
+    out.push_str(&c_libraries(data));
     out.push_str(&cx.typedefs());
     if parses {
         out.push_str(&cx.parse_table());
@@ -1238,7 +1267,276 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push_str(&cx.drop_code(&fns));
     out.push_str(&cx.gen_bodies.borrow());
     out.push_str(&bodies);
+    // The unit's tables, for the runtime (`loft_tn`, `loft_cl`, the lazy drivers): a generated
+    // `main` binds them before it starts.  Written last, so it can name every function.
+    let mut bind = String::from(
+        "\nstatic void loft_bind_tables(void) {\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    \
+         loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
+         loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
+         loft_fault_logger = loft_log_production_fault;\n",
+    );
+    if cx.lazy.get() {
+        out.push_str(&lazy_driver_table(&cx, drivers)?);
+        bind.push_str(
+            "    loft_lazy_drivers = loft_lazy_driver_table;\n    \
+             loft_nlazy_drivers = loft_nlazy_driver_table;\n    \
+             loft_lazy_driver_refusal = loft_lazy_driver_refusal_text;\n",
+        );
+    }
+    bind.push_str("}\n");
+    out.push_str(&bind);
     Ok(out)
+}
+
+/// The program's lazy drivers as the runtime calls them (`loft_lazy_miss`): an adapter per
+/// driver with the fixed shape `(coll, source, key_int, key_text) -> integer`, the table of
+/// them by the element type each serves (`Data::lazy_fetch_drivers`, the one answer both
+/// backends read), or — when the drivers were refused — the reason, which every miss reports.
+fn lazy_driver_table(
+    cx: &Cx,
+    drivers: Result<Vec<(String, u32)>, String>,
+) -> Result<String, Refusal> {
+    let mut out = String::new();
+    let (found, refusal) = match drivers {
+        Ok(found) => (found, None),
+        Err(why) => (Vec::new(), Some(why)),
+    };
+    let mut rows = Vec::new();
+    for (i, (element, d)) in found.iter().enumerate() {
+        let def = cx.data.def(*d);
+        if def.attributes().iter().any(|a| a.hidden) {
+            return Err(Refusal {
+                function: def.original_name().clone(),
+                why: "a lazy driver with a hidden parameter".into(),
+            });
+        }
+        let _ = writeln!(
+            out,
+            "static int64_t loft_lazydrv{i}(loft_ref c, loft_str s, int64_t ki, loft_str kt) {{ \
+             return {}(c, s, ki, kt); }}",
+            c_name(cx.data, *d)
+        );
+        rows.push(format!(
+            "{{ {}, loft_lazydrv{i} }}",
+            body::c_string(element)
+        ));
+    }
+    let _ = writeln!(
+        out,
+        "static const loft_lazy_driver loft_lazy_driver_table[] = {{ {} }};\n\
+         static const uint32_t loft_nlazy_driver_table = {};\n\
+         static const char *const loft_lazy_driver_refusal_text = {};",
+        if rows.is_empty() {
+            "{ 0, 0 }".to_string()
+        } else {
+            rows.join(", ")
+        },
+        rows.len(),
+        refusal.map_or_else(|| "0".to_string(), |w| body::c_string(&w))
+    );
+    Ok(out)
+}
+
+/// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim` is
+/// built into its static archive by `cc` + `ar` (`c_shim::cc_archive`; off Windows the same
+/// artefact a `--static` program links) and named in a `/* link: <path> */` line for whoever
+/// compiles the unit, its sources in `/* shim-source: <path> */` lines for a wasm32 build.  A
+/// shim is never a part of the unit's own translation unit: its sources may carry `static`
+/// names of their own (the vendored BearSSL does), and a binding declares its callee by the
+/// signature the package wrote, which need only match the shim's ABI (`void *` against the
+/// shim's `void **`), not its spelling.  A declared library (`libs`, `optional-libs`)
+/// is named the same way, for the linker.  `scripts/c_sweep.py` and `tests/c_emit.rs` read
+/// the `link:` lines.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the declared libraries: the header, the shim's three forms, the link lines"
+)]
+fn c_libraries(data: &Data) -> String {
+    let mut out = String::new();
+    // A required library is linked: the file the package ships, else its soname in the system
+    // linker's spelling.  An optional one (`[c] optional-libs`, @PLN24 arc G) never is — it is
+    // opened when its package's symbol is first called, or when `c_library_available` asks.
+    let os = crate::platform::host_lib_os();
+    let mut links: Vec<String> = Vec::new();
+    let mut carried: Vec<String> = Vec::new();
+    // A library is available only when it exports every symbol its package declares
+    // (`c_libs::library_available`): the symbols each one is asked for at run time.
+    let pkg_syms = |pkg: &str| -> Vec<String> {
+        let mut own: Vec<String> = (0..data.definitions())
+            .filter(|&d| {
+                let def = data.def(d);
+                !def.c_sig.is_empty()
+                    && def.code() == &Value::Null
+                    && data.c_owner_pkg(def.position().file.as_str()) == Some(pkg)
+            })
+            .filter_map(|d| {
+                crate::c_signature::of(data, d, crate::c_signature::CTarget::host())
+                    .and_then(Result::ok)
+                    .map(|s| body::c_string(&s.symbol))
+            })
+            .collect();
+        own.sort();
+        own.dedup();
+        own
+    };
+    let mut syms: Vec<Vec<String>> = Vec::new();
+    let mut optional: Vec<String> = Vec::new();
+    for lib in data.c_libraries.iter().filter(|l| l.shim.is_empty()) {
+        let dir = std::path::Path::new(&lib.pkg_dir);
+        let shipped = crate::platform::existing_lib_beside(dir, &lib.name, os);
+        if lib.optional {
+            // Where `dlopen` looks: the file beside the package, else the name's spellings.
+            let mut cands: Vec<String> = Vec::new();
+            if let Some(file) = &shipped {
+                cands.push(body::c_string(&crate::file_access::portable(
+                    &dir.join(file),
+                )));
+            }
+            for v in crate::platform::lib_variants(&lib.name, os) {
+                let c = body::c_string(&v);
+                if !cands.contains(&c) {
+                    cands.push(c);
+                }
+            }
+            cands.push("0".to_string());
+            let mut own = pkg_syms(&lib.pkg_dir);
+            own.push("0".to_string());
+            let i = optional.len();
+            let _ = writeln!(
+                out,
+                "static const char *const loft_coptc{i}[] = {{ {} }};\n\
+                 static const char *const loft_copts{i}[] = {{ {} }};",
+                cands.join(", "),
+                own.join(", ")
+            );
+            optional.push(format!(
+                "{{ {}, {}, loft_coptc{i}, loft_copts{i} }}",
+                body::c_string(&lib.name),
+                body::c_string(&lib.pkg_dir)
+            ));
+            continue;
+        }
+        if let Some(file) = &shipped {
+            links.extend(crate::platform::c_link_args_for_file(&dir.join(file)));
+        } else {
+            links.push(crate::platform::c_link_arg_for_soname(&lib.name));
+        }
+        carried.push(body::c_string(&lib.name));
+        syms.push(pkg_syms(&lib.pkg_dir));
+    }
+    let _ = writeln!(
+        out,
+        "static const loft_c_optlib loft_coptlibs[] = {{ {} }};\n\
+         static const uint32_t loft_ncoptlibs = {};",
+        if optional.is_empty() {
+            "{ 0, 0, 0, 0 }".to_string()
+        } else {
+            optional.join(", ")
+        },
+        optional.len()
+    );
+    // A shim of a package with optional libraries is reached through the program's own
+    // symbols (`loft_c_lazy_sym`), which the linker exports only when asked.
+    if data.c_libraries.iter().any(|l| {
+        !l.shim.is_empty()
+            && data
+                .c_libraries
+                .iter()
+                .any(|o| o.optional && o.pkg_dir == l.pkg_dir)
+    }) && let Some(arg) = crate::platform::c_export_dynamic_arg()
+    {
+        links.push(arg.to_string());
+    }
+    // A shim is linked into the binary: its symbols are there, and asked for nothing.
+    for lib in data.c_libraries.iter().filter(|l| !l.shim.is_empty()) {
+        carried.push(body::c_string(&lib.name));
+        syms.push(Vec::new());
+    }
+    for (i, own) in syms.iter().enumerate() {
+        let mut list = own.clone();
+        list.push("0".to_string());
+        let _ = writeln!(
+            out,
+            "static const char *const loft_clibsym{i}[] = {{ {} }};",
+            list.join(", ")
+        );
+    }
+    let tables: Vec<String> = (0..syms.len())
+        .map(|i| format!("loft_clibsym{i}"))
+        .collect();
+    let _ = writeln!(
+        out,
+        "static const char *const *const loft_clibsyms[] = {{ {} }};",
+        if tables.is_empty() {
+            "0".to_string()
+        } else {
+            tables.join(", ")
+        }
+    );
+    let _ = writeln!(
+        out,
+        "static const char *const loft_clibs[] = {{ {} }};\nstatic const uint32_t loft_nclibs = {};",
+        if carried.is_empty() {
+            "0".to_string()
+        } else {
+            carried.join(", ")
+        },
+        carried.len()
+    );
+    for lib in &data.c_libraries {
+        if lib.shim.is_empty() {
+            let _ = writeln!(
+                out,
+                "/* `#c` library {} (package {}) */",
+                lib.name, lib.pkg_dir
+            );
+        } else if let Ok(archive) = crate::c_shim::cc_archive(&lib.pkg_dir, &lib.shim) {
+            // Archived by `cc` + `ar` whatever the host's static-link archiver is: `cc` links
+            // this unit, and MinGW's `ld` cannot read an MSVC archive.  The sources are named
+            // too, for a wasm32 build, which compiles them instead of linking the host archive.
+            // A package with optional libraries reaches its shim through `dlsym`, so the
+            // archive is linked whole — nothing references its symbols directly.
+            let _ = writeln!(
+                out,
+                "/* `[c] shim` of package {}, {} sources */",
+                lib.pkg_dir,
+                lib.shim.len()
+            );
+            let path = crate::file_access::portable(&archive);
+            let lazy = data
+                .c_libraries
+                .iter()
+                .any(|o| o.optional && o.pkg_dir == lib.pkg_dir);
+            let args = if lazy {
+                crate::platform::c_whole_archive_args(&path)
+            } else {
+                vec![path]
+            };
+            for a in args {
+                let _ = writeln!(out, "/* link: {a} */");
+            }
+            for src in &lib.shim {
+                let _ = writeln!(
+                    out,
+                    "/* shim-source: {} */",
+                    crate::file_access::portable_str(src)
+                );
+            }
+        } else {
+            let _ = writeln!(
+                out,
+                "/* `[c] shim` of package {}: compile and link these sources with this unit */",
+                lib.pkg_dir
+            );
+            for src in &lib.shim {
+                let _ = writeln!(out, "/* link: {} */", crate::file_access::portable_str(src));
+            }
+        }
+    }
+    for l in links {
+        let _ = writeln!(out, "/* link: {l} */");
+    }
+    out
 }
 
 /// The macros a unit's runtime is compiled under, from what it reaches: a foreign store, the
@@ -1388,7 +1686,7 @@ pub fn emit_program(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    {}\n    loft_start(argc, argv);\n    {}();\n    return 0;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
         anchor(stores),
         c_name(data, main)
     );
@@ -1399,11 +1697,7 @@ pub fn emit_program(
 /// (the program's own, as the interpreter's `Stores::resolve_path` anchors it) and whether
 /// the program anchors there at all (`#cwd` says no).
 fn anchor(stores: &Stores) -> String {
-    format!(
-        "loft_set_anchor({}, {});",
-        body::c_string(&stores.source_dir),
-        i32::from(stores.program_relative)
-    )
+    format!("loft_set_anchor({});", i32::from(stores.program_relative))
 }
 
 /// The signature and the body of function `d`.
@@ -1505,10 +1799,10 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
     let body = body::FnWriter::new(cx, d, shapes, ret)
         .places(places)
         .write()?;
-    if cx.frames.get() {
-        return Ok((sig, framed(cx, d, &name, &params, ret, &body)));
-    }
-    Ok((sig, body))
+    // Every function keeps its frame: the pushes are macros that a build without the call
+    // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
+    // the compiler folds into its caller.
+    Ok((sig, framed(cx, d, &name, &params, ret, &body)))
 }
 
 /// A `#c` binding (`c_signature`, `c_call`): a wrapper declaring the callee by the author's own
@@ -1558,21 +1852,46 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
                 args.push(format!("s{i}"));
                 frees.push(format!("    free(s{i});"));
             }
+            // A vector crosses as its element pointer, and a count where the C signature has
+            // one (@C107), exactly as the interpreter's `c_call` hands them.
             CArg::VectorPtr | CArg::VectorPtrCount => {
-                return Err("a C binding taking a vector".into());
+                args.push(format!("({ct}) loft_cvec_ptr(a{i})"));
+                if *arg == CArg::VectorPtrCount {
+                    let cn = c_params.get(args.len()).copied().unwrap_or("int64_t");
+                    args.push(format!("({cn}) loft_vec_len(a{i})"));
+                }
             }
         }
     }
-    let decl = format!(
-        "    extern {ret_text} {}({});",
-        sig.symbol,
-        if c_params.is_empty() {
-            "void".to_string()
-        } else {
-            c_params.join(", ")
-        }
-    );
-    let call = format!("{}({})", sig.symbol, args.join(", "));
+    let params_text = if c_params.is_empty() {
+        "void".to_string()
+    } else {
+        c_params.join(", ")
+    };
+    // A symbol of a package with `[c] optional-libs` is resolved when first called, through
+    // the program and then the package's optional libraries (`loft_c_lazy_sym`, @PLN24 arc G):
+    // a `#c` declaration does not name its library, so the whole package goes this way.
+    let file = def.position().file.to_string();
+    let (decl, call) = if data.c_symbol_is_lazy(&file) {
+        let pkg = data.c_owner_pkg(&file).unwrap_or_default();
+        (
+            format!(
+                "    static {ret_text} (*loft_cfp)({params_text}) = 0;\n    \
+                 if (!loft_cfp) {{ void *loft_p = loft_c_lazy_sym({}, {}); \
+                 memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
+                 if (!loft_cfp) loft_c_missing_symbol({});",
+                body::c_string(&sig.symbol),
+                body::c_string(pkg),
+                body::c_string(&sig.symbol)
+            ),
+            format!("loft_cfp({})", args.join(", ")),
+        )
+    } else {
+        (
+            format!("    extern {ret_text} {}({params_text});", sig.symbol),
+            format!("{}({})", sig.symbol, args.join(", ")),
+        )
+    };
     let mut out = format!("{decl}\n{body}");
     c_binding_result(cx, &mut out, &sig.ret, ret, &call, &frees);
     let sig_c = format!(
@@ -1614,10 +1933,20 @@ fn c_binding_result(
                 );
             }
         }
+        // A `char *` return is copied up to its NUL, NULL the null text (`c_call`).
+        (cs::CType::Pointer { .. }, CType::Text) => {
+            let _ = writeln!(out, "    loft_text r = loft_text_from_cstr({call});");
+            for f in frees {
+                let _ = writeln!(out, "{f}");
+            }
+            out.push_str("    return r;\n");
+        }
         (r, c) => {
             let widened = match r {
                 cs::CType::Int { signed: false, .. } => format!("(int64_t) (uint64_t) {call}"),
                 cs::CType::Int { .. } => format!("(int64_t) {call}"),
+                // A handle: the pointer's value as an integer.
+                cs::CType::Pointer { .. } => format!("(int64_t) (intptr_t) {call}"),
                 _ => format!("(double) {call}"),
             };
             let value = match c {
@@ -1694,7 +2023,7 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
     Ok((sig, out))
 }
 
-/// A function of a unit that keeps frames: its body becomes `<name>__fr`, and the function
+/// A function as the unit writes it: its body becomes `<name>__fr`, and the function
 /// pushes its frame (`cr_call_push`'s name and file), calls the body and pops the frame, so
 /// every return of the body leaves the frame stack as it found it.
 fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> String {
@@ -1718,9 +2047,16 @@ fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> 
             .collect()
     };
     let call = format!("{name}__fr({})", args.join(", "));
+    // The frame's name as `--native`'s `cr_call_push` and the interpreter spell it: a plain
+    // function by its source name, a method by its definition name (`t_4Tick_go`).
+    let frame_name = if def.name().starts_with("n_") {
+        def.original_name()
+    } else {
+        def.name().to_string()
+    };
     let push = format!(
         "    loft_frame_push({}, {});\n",
-        body::c_string(&def.original_name()),
+        body::c_string(&frame_name),
         body::c_string(&def.position().file)
     );
     if ret == CType::Void {
@@ -1731,6 +2067,13 @@ fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> 
             held(ret)
         )
     }
+}
+
+/// Does the program have anything to run — a `main`, or a test?  A program with neither (a
+/// library, a file of declarations) compiles to nothing a driver could run.
+#[must_use]
+pub fn has_entry(data: &Data) -> bool {
+    data.def_nr("n_main") < data.definitions() || !test_functions(data).is_empty()
 }
 
 /// The program's tests, the way `loft --tests` picks them: its own zero-parameter functions,
@@ -1770,15 +2113,36 @@ fn emit_tests(
             why: "neither a main nor a test".into(),
         });
     }
-    let mut out = emit_unit(data, stores, &tests)?;
+    emit_tests_of(data, stores, &tests, expected)
+}
+
+/// The tests `tests` as one C unit whose `main` runs each in turn, or only the one its first
+/// argument names — the test runner (`loft test --native` on C, @PLN203 C5) runs every test
+/// in a process of its own, so each starts from fresh stores as on the interpreter.  The exit
+/// status is 1 when any test that ran failed.
+///
+/// # Errors
+/// The first [`Refusal`].
+pub fn emit_tests_of(
+    data: &Data,
+    stores: &Stores,
+    tests: &[u32],
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
+    let mut out = emit_unit(data, stores, tests)?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    {}\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
         anchor(stores)
     );
-    for &d in &tests {
+    for &d in tests {
         let name = data.def(d).original_name();
         let subs = expected(&name);
+        let _ = writeln!(
+            out,
+            "    if (!loft_only || !strcmp(loft_only, {})) {{",
+            body::c_string(&name)
+        );
         if subs.is_empty() {
             let _ = writeln!(
                 out,
@@ -1801,7 +2165,8 @@ fn emit_tests(
                 subs.len()
             );
         }
+        out.push_str("    }\n");
     }
-    out.push_str("    return failed ? 1 : 0;\n}\n");
+    out.push_str("    if (!failed) loft_leak_report();\n    return failed ? 1 : 0;\n}\n");
     Ok(out)
 }

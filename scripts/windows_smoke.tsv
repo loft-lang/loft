@@ -83,6 +83,7 @@ scripts/ci_shards.py	--help
 bench/portal/analysis/gap-sweep/mechanisms.py	--help
 bench/portal/analysis/gap-sweep/summary.py	--help
 bench/portal/analysis/gap-sweep/sweep.sh	--help
+bench/portal/local.py	--help
 scripts/gap_report.py	--help
 scripts/lean_build.sh	--help
 scripts/wait_for.sh	--help
@@ -93,3 +94,8 @@ scripts/c_alloc_diff.py	--help
 scripts/install_main_ci.sh	--help
 scripts/runtime_bundle.sh	--help
 scripts/golden_images.sh	--help
+scripts/run_scratch.py	--help
+bench/portal/ab.py	--help
+bench/portal/c_profile.py	--help
+bench/portal/local.py	--help
+bench/portal/hand_price_c.sh	--help

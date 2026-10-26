@@ -21,14 +21,42 @@
 /* The OS beyond C99 — a monotonic clock, a path's kind, directories, truncate — is POSIX where
  * the platform is one (`LOFT_POSIX`); `-DLOFT_NO_POSIX` builds against ISO C99 alone, where the
  * clock is `clock()` and the directory operations answer Other.  The request precedes every
- * system header. */
-#if !defined(LOFT_NO_POSIX) && (defined(__unix__) || defined(__unix) || defined(__APPLE__))
+ * system header.  WASI (wasm32-wasi) is POSIX for files, directories and clocks, and has no
+ * sockets, `mmap` or `realpath`: those stand under `LOFT_POSIX_HOST`, a POSIX host OS. */
+#if !defined(LOFT_NO_POSIX) && (defined(__unix__) || defined(__unix) || defined(__APPLE__) || defined(__wasi__))
 #define LOFT_POSIX 1
 #define _POSIX_C_SOURCE 200809L
+#if !defined(__wasi__)
+#define LOFT_POSIX_HOST 1
+#endif
+/* `realpath` is XSI, not base POSIX: glibc declares it only under _XOPEN_SOURCE (or by accident
+ * through _FORTIFY_SOURCE, which Ubuntu turns on from -O1 — so an -O0 build failed). */
+#if defined(LOFT_POSIX_HOST) && !defined(__APPLE__)
+#define _XOPEN_SOURCE 700
+#endif
 #endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+/* `bool`, which a `#c` binding's signature may name (C99 spells it in this header). */
+#include <stdbool.h>
+
+/* `par` on threads (@PLN203 C4): POSIX threads on a POSIX host, the CRT's on Windows, none under
+ * `-DLOFT_STRICT` (ISO C99 has no thread-local storage), `-DLOFT_NO_POSIX` or WASI, where a
+ * `par` loop runs its rows in order — the same answer (@FR-C-Det).  `LOFT_TLS` marks the
+ * runtime state each thread keeps its own of; empty without threads. */
+#if !defined(LOFT_STRICT) && !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32))
+#define LOFT_THREADS 1
+#if defined(_MSC_VER)
+#define LOFT_TLS __declspec(thread)
+#elif defined(__GNUC__) || defined(__clang__)
+#define LOFT_TLS __thread
+#else
+#define LOFT_TLS _Thread_local
+#endif
+#else
+#define LOFT_TLS
+#endif
 
 /* A file's modification time in nanoseconds from a `struct stat` (a lazy source's pin): Darwin
  * names the fraction `st_mtimensec` under POSIX, the others `st_mtim`. */

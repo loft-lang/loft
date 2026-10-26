@@ -340,6 +340,23 @@ pub fn open_read_write(path: impl HostPath) -> io::Result<std::fs::File> {
     })
 }
 
+/// Open the file for writing, creating it if absent and never truncating it: the handle a
+/// process takes an exclusive `lock()` on to serialise a read-modify-write of a sibling file
+/// (the test ledger's merge, `crate::ledger`).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn open_lock_file(path: impl HostPath) -> io::Result<std::fs::File> {
+    let path = &*path.to_path_text();
+    run(path, |p| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(p)
+    })
+}
+
 /// Set the file's modification time.  The handle is opened for WRITE only on Windows, where
 /// `SetFileTime` needs it; on Unix `futimens` works on a read-only descriptor, and the files
 /// touched are cached executables and loaded cdylibs — a write handle on a Mach-O another

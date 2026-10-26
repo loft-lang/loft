@@ -169,3 +169,28 @@ fn a_record_built_into_a_callers_slot_elides_its_prefills() {
     }
     let _ = fa::remove_file(&out);
 }
+
+/// loft#2193 — a type is complete only when EVERY mint site of it is.  Cell c11 mints `S` by a
+/// covering literal and again in a slice copy whose element mint sits directly in the copy
+/// loop's body, its copy into the element not FRESH: that element must keep its prefill (the
+/// copy releases what the slot's handles hold).  The scan read statement lists of blocks only,
+/// so the loop's site was never seen and the literal's coverage marked the whole type — the
+/// slice's append then minted with no prefill (`::<false, …>`), a crash under
+/// `LOFT_POISON_CLAIM=1` and a release of stale handles without it.
+#[test]
+fn a_mint_site_in_a_loop_body_keeps_its_type_incomplete() {
+    let out = std::env::temp_dir().join("loft_complete_write_c11.rs");
+    let rust = emit(&cells(), &out, &[]);
+    let start = rust.find("fn n_c11(").expect("n_c11 was emitted");
+    let body = &rust[start..];
+    let body = &body[..body.find("\n}\n").map_or(body.len(), |e| e + 3)];
+    assert!(
+        body.contains("vector_record_append::<true,"),
+        "the slice's element mint keeps its prefill:\n{body}"
+    );
+    assert!(
+        !body.contains("vector_record_append::<false,"),
+        "no mint of S in c11 skips its prefill:\n{body}"
+    );
+    let _ = fa::remove_file(&out);
+}

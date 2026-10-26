@@ -605,6 +605,16 @@ impl Scopes<'_> {
             hoisted_from.push(preamble.len());
             self.keep_operand_order(&mut preamble, &hoisted_from, &mut ls, function, data);
         }
+        if outer_call != u32::MAX && ls.len() == args.len() {
+            self.keep_viewed_displaced(
+                outer_call,
+                &ls,
+                &mut preamble,
+                &mut postamble,
+                function,
+                data,
+            );
+        }
         for (i, orig) in amp_foreign.iter().enumerate() {
             preamble.insert(
                 i,
@@ -619,6 +629,103 @@ impl Scopes<'_> {
             ));
         }
         (preamble, ls, postamble)
+    }
+
+    /// `@FR-B-Ref-Alias`, `@FR-B-View` — one owned local handed to a `&` parameter AND to a
+    /// plain (by-value) heap parameter of the same call: `mixed(q, q)`.  A rebind through the
+    /// `&` replaces the caller's record and releases the one it displaced (`@FR-B-Ref-Write`),
+    /// but the by-value parameter keeps the record the call began with, and reads it after the
+    /// rebind — a read of a freed store on both backends (loft#2195).
+    ///
+    /// The callee cannot tell; the call site can.  It snapshots the store the local names,
+    /// marks it protected for the call — `free_displaced` refuses it, exactly as for loft#1287's
+    /// foreign binding — and releases it after the call when the local no longer names it.  The
+    /// local is this frame's own (not a parameter, not a view), so that release is this frame's
+    /// to make; a call that did not rebind leaves the snapshot naming the local's store, and
+    /// nothing is freed.
+    fn keep_viewed_displaced(
+        &mut self,
+        outer_call: u32,
+        ls: &[Value],
+        preamble: &mut Vec<Value>,
+        postamble: &mut Vec<Value>,
+        function: &mut Function,
+        data: &Data,
+    ) {
+        let create_stack_nr = data.def_nr("OpCreateStack");
+        let get_field = data.def_nr("OpGetField");
+        let get_vector = data.def_nr("OpGetVector");
+        let attrs = data.def(outer_call).attributes();
+        let root = |mut v: &Value| loop {
+            match v.unspan() {
+                Value::Var(r) => return Some(*r),
+                Value::Call(d, a) if (*d == get_field || *d == get_vector) && !a.is_empty() => {
+                    v = &a[0];
+                }
+                _ => return None,
+            }
+        };
+        let mut kept: Vec<u16> = Vec::new();
+        for (i, arg) in ls.iter().enumerate() {
+            let Value::Call(cs, cargs) = arg.unspan() else {
+                continue;
+            };
+            let Some(Value::Var(v)) = cargs.first().map(Value::unspan) else {
+                continue;
+            };
+            if *cs != create_stack_nr
+                || kept.contains(v)
+                || !attrs
+                    .get(i)
+                    .is_some_and(|at| at.typedef.is_amp_rebindable_heap())
+                || function.is_argument(*v)
+                || function.rebind_orig(*v).is_some()
+                || self.view_rebind.contains_key(v)
+                // @FR-O-Proxy asks free — a free follows (the snapshot's release after the
+                // call), so the local must own its store: empty deps, and @FR-O-Override's
+                // never-free flag vetoes it.
+                || !function.tp(*v).depend().is_empty()
+                || function.is_skip_free(*v)
+            {
+                continue;
+            }
+            let viewed = ls.iter().enumerate().any(|(j, other)| {
+                j != i
+                    && root(other) == Some(*v)
+                    && attrs.get(j).is_some_and(|at| {
+                        !matches!(at.typedef.base(), Type::RefVar(_))
+                            && Type::RefVar(Box::new(at.typedef.clone())).is_amp_rebindable_heap()
+                    })
+            });
+            if viewed {
+                kept.push(*v);
+            }
+        }
+        for v in kept {
+            let tp = function.tp(v).clone();
+            let snap = self.new_lift_var(function, &tp);
+            function.set_skip_free(snap);
+            // A raw snapshot of the DbRef, as the entry witness takes one: a plain `Set` of a
+            // record is a copy on `--native` (`@FR-B-Copy`), which would protect the copy.
+            preamble.push(v_set(
+                snap,
+                Value::Call(data.def_nr("OpRefAlias"), vec![Value::Var(v)]),
+            ));
+            preamble.push(Value::Call(
+                data.def_nr("n_protect_store_frees"),
+                vec![Value::Var(snap)],
+            ));
+            postamble.push(Value::Call(
+                data.def_nr("n_unprotect_store_frees"),
+                vec![Value::Var(snap)],
+            ));
+            // The identity-guarded free: a plain `OpFreeRef` of a `skip_free` temp is dropped
+            // by the free placement, which is right for every other such temp and wrong here.
+            postamble.push(Value::Call(
+                data.def_nr("OpFreeRefIfDistinct"),
+                vec![Value::Var(snap), Value::Var(v)],
+            ));
+        }
     }
 
     /// `@FR-E-Left`, `@FR-F-Args` — operands are evaluated left to right, and a hoisted

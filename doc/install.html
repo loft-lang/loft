@@ -73,6 +73,7 @@ make install-user</code></pre>
 <tr><td><code>--native</code></td><td>Compile to a native binary via <code>rustc</code> and run it (without Rust on PATH, loft says so and interprets)</td></tr>
 <tr><td><code>--ship</code></td><td>Builds the program as you ship it: fully optimised, with its native libraries linked in (slower to compile, fastest to run). Add <code>--native-wasm</code>, <code>--html</code> or <code>--native-android</code> to ship that target</td></tr>
 <tr><td><code>--native-emit [out.rs]</code></td><td>Write the generated Rust source to a file without compiling it</td></tr>
+<tr><td><code>--native-c</code></td><td>Compile through C and your system's C compiler instead of <code>rustc</code> (see below); combines with <code>--ship</code>, <code>--native-debug</code>, <code>--native-emit [out.c]</code> and <code>--native-wasm</code></td></tr>
 </tbody>
 </table>
 
@@ -83,6 +84,17 @@ make install-user</code></pre>
 <pre><code>loft --native-emit myprogram.rs myprogram.loft
 cat myprogram.rs</code></pre>
 <p>Native runs need <code>rustc</code> on your PATH — the same Rust you built loft with. Without it, <code>--native</code> says so and interprets instead. A downloaded release carries no native runtime, so it always interprets.</p>
+
+<h3 id="native-c">Compiling through C</h3>
+<p><code>--native-c</code> writes your program as C and builds it with the C compiler already on your machine, so it needs no Rust at all: the C runtime is inside the <code>loft</code> binary. It answers what the interpreter answers; it is on its way to becoming what <code>--native</code> means. What each target needs:</p>
+<table>
+<thead><tr><th>target</th><th>needs</th><th>Debian / Ubuntu</th></tr></thead>
+<tbody>
+<tr><td><code>--native-c</code></td><td>a C compiler (<code>cc</code>, or the one <code>LOFT_CC</code> names)</td><td><code>apt install build-essential</code></td></tr>
+<tr><td><code>--native-c --native-wasm</code></td><td>clang, lld, the WASI libc and the wasm32 compiler-rt (or the clang <code>LOFT_WASM_CC</code> names)</td><td><code>apt install clang lld wasi-libc libclang-rt-dev-wasm32</code></td></tr>
+</tbody>
+</table>
+<p>On macOS the Xcode command-line tools (<code>xcode-select --install</code>) give the C compiler; on Windows, MinGW-w64 gcc. When a tool is missing, loft says which and what to install.</p>
 
 <h2 id="standard-library">Standard library</h2>
 <p>The standard library is a set of <code>.loft</code> files bundled alongside the loft binary. They are loaded automatically before your program runs — you do not need any <code>import</code> or <code>use</code> statement to call <code>println</code>, <code>assert</code>, or any other built-in function.</p>

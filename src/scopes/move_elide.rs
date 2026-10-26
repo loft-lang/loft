@@ -561,8 +561,13 @@ fn collect_multi_database(node: &Value, mo: &MoveOps) -> HashSet<u16> {
 /// destination would leave the intermediate read seeing the un-built source (`var_out` not in
 /// scope / wrong value). The `Set(src, …)` view-def / null-init targets `src` (not an arg) and is
 /// fine; the `vdb` backing / `_elm` element temps aren't `src`. Any other appearance → escapes.
+///
+/// A SECOND copy is such an appearance: `a = Img { data: op }; b = Img { data: op }` copies `op`
+/// twice, and only the last is a move (`@FR-R-MoveLast`: the source is dead after it).  The
+/// rewrites build the source into the FIRST copy's field, so the second copied a vector nothing
+/// had built — empty, or garbage read through a null view, on both backends (loft#2192).
 fn source_escapes(node: &Value, src: u16, co: &ConstructOps) -> bool {
-    fn walk(node: &Value, src: u16, co: &ConstructOps, bad: &mut bool) {
+    fn walk(node: &Value, src: u16, co: &ConstructOps, copies: &mut u32, bad: &mut bool) {
         if let Value::Call(d, args) = node.unspan() {
             for (i, a) in args.iter().enumerate() {
                 if matches!(a.unspan(), Value::Var(v) if *v == src) {
@@ -573,17 +578,21 @@ fn source_escapes(node: &Value, src: u16, co: &ConstructOps) -> bool {
                             || *d == co.op_set_int4
                             || co.op_push.contains(d));
                     let copy_arg1 = i == 1 && *d == co.op_append;
+                    if copy_arg1 {
+                        *copies += 1;
+                    }
                     if !(write_arg0 || copy_arg1) {
                         *bad = true;
                     }
                 }
             }
         }
-        node.for_each_child(&mut |c| walk(c, src, co, bad));
+        node.for_each_child(&mut |c| walk(c, src, co, copies, bad));
     }
+    let mut copies = 0;
     let mut bad = false;
-    walk(node, src, co, &mut bad);
-    bad
+    walk(node, src, co, &mut copies, &mut bad);
+    bad || copies > 1
 }
 
 /// First-definition encounter order per var (`Set(v,…)` value-bind or `OpDatabase(v)` alloc). Used

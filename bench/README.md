@@ -37,6 +37,7 @@ python3 bench/stats.py --tsv out.tsv         # keep the run, to diff against the
 python3 bench/stats.py --show-samples        # every sample under its row
 python3 bench/stats.py --routine check_request,cbor/decode   # one routine, or a set
 python3 bench/stats.py --lanes native,rust,ship   # add the SHIPPED-GAME speed per routine
+python3 bench/stats.py --lanes rust,c,cship    # the C99 backend against the Rust twin
 ```
 
 **The ship lane** builds each program once more, its libraries' loft code included, under
@@ -47,6 +48,15 @@ BOTH is slow for a reason the checks do not explain.  A routine slow only CHECKE
 its checks, which a range proof or a fault-flag rewrite can take back.  Its hash is reported, not
 required to agree: a fault wraps there instead of answering null, and a row whose ship hash
 differs is marked `ship (hash differs)` and carries no ship ratio.
+
+**The C lanes** measure the C99 backend (@PLN200, [C_BACKEND.md](../doc/claude/C_BACKEND.md))
+against the same Rust twin: `c` builds each program with `loft --emit-c` and `cc -std=c99 -O3`
+(`--cc`, `--c-flags`), every expression's fault check kept, and `cship` builds it under the
+release-pass probe, the C generator's twin of the ship lane.  The checked `c` lane VALIDATES the
+generator: its hash must be the twin's, a row whose hash differs reads `c HASH DIFFERS` and the
+run exits 1.  `cship` is marked as `ship` is.  Each row gains `c N.NN` and `cship N.NN` over the
+Rust twin, and the run closes with each lane's median.  A program the C backend does not carry
+keeps its other lanes and is listed with the reason (`c lane not built for …`).
 
 `--routine` takes `name` or `bench/name` (the qualified form for a name several programs
 use, such as `hash`).  On its own it builds only the programs `portal/routines.tsv` places
@@ -134,6 +144,61 @@ can sit over its bar repeatably (a cloud Xeon read `sum_loop` at 3.1–3.5 again
 `collatz` at 3.7–4.1 against 2.5, twice, while `sieve` and `mandelbrot` read as on the
 laptop), which is a calibration question to raise, never a reason to re-bless the oracle
 on that box.
+
+## When a gap is a bug
+
+A routine whose SHIP time is over 3.5× its Rust twin is a bug: `ship` ÷ `rust` for the Rust
+writer, `cship` ÷ `rust` for the C99 backend — the same bar for both.  The ship column is the
+one that counts because it drops the checks loft guarantees, so what remains is the compiler
+or the runtime being structurally slow; slowness the checks cause (`native` against `ship`,
+`c` against `cship`) is optimised where it can be but is no bug.  File ONE issue per problem
+class — the shared cause, its routines listed in the body — never one per routine.  For the C
+lane the rule starts once its initial store port has landed (bench/portal/analysis/
+c-store-gaps.md is that work's list); until then its rows are that analysis, not issues.
+
+## Local results: `portal/local.py`
+
+Every `stats.py` run, full or partial, files each routine's row per lane in
+`bench/portal/local/<bench>/<routine>.tsv` — git-ignored, kept by the disk janitor, never
+committed: the committed history (`portal/results/<host>.tsv`) is full runs only.  A row
+carries its commit (`*` when the tree was dirty), the lane, ns/op, spread and the ratio to the
+Rust twin, and a SUBJECT: the arc it was taken for (`--subject c-store-port`, or
+`LOFT_RESULT_SUBJECT`; `-` without one).  `--no-local` files nothing.
+
+```
+make perf-local ARGS="13/split"                 # one routine's every measurement
+make perf-local ARGS="14 --subject c-store-port --lane c --last 3"
+make perf-local ARGS=subjects                   # the subjects, newest first
+python3 bench/portal/local.py add 13_stdlib_text/split --lane c-probe --value 4.69e9 \
+    --unit instructions --subject c-store-port --note "hand-priced: adopted buffer"
+python3 bench/portal/local.py import run.tsv --subject s   # a saved `--tsv` run
+```
+
+## Pricing and profiling one change: `ab.py`, `c_profile.py`
+
+Two builds of one bench program against each other — a hand-edited unit beside the one it
+was made from, or two runtimes' builds — are a STATISTICS question the same as a lane against
+its twin.  `portal/ab.py A B` calibrates `--n` once, alternates the two (A B, B A, …) pinned to
+the fastest core, and answers per routine both medians, B/A with its range and a verdict that
+reads the range (`faster`/`slower` only when all of it is past ±2 %); a routine whose hash
+differs fails the run, since a price whose answer moved is no price.  `--subject` files it
+with the local results.  `portal/hand_price_c.sh` compiles an emitted C unit as the `c` lane
+does — the C counterpart of `hand_price.sh`.
+
+```
+loft --emit-c /tmp/b.c --path $PWD/ bench/13_stdlib_text/bench.loft
+cp /tmp/b.c /tmp/b_v1.c                                    # …edit by script
+bench/portal/hand_price_c.sh /tmp/b.c /tmp/b && bench/portal/hand_price_c.sh /tmp/b_v1.c /tmp/b_v1
+python3 bench/portal/ab.py /tmp/b /tmp/b_v1 --routine replace --subject c-replace
+make c-profile ARGS="13 --routine format,parse"            # where each routine's samples land
+make c-profile ARGS="13 --c /tmp/b_v1.c --leaf"            # the same, for an edited unit
+```
+
+`c_profile.py` profiles the C lane's build (`-g`, frame pointers, once-called helpers kept
+apart) under `perf --call-graph dwarf` and charges each sample to its ROUTINE — the outermost
+loft function below `main`, inlined or not — then to the innermost runtime function
+(`loft_*`, libc's memory calls) or `(generated)`; `--leaf` charges the innermost frame of any
+kind.  Shares, not times: the times are `stats.py`'s.
 
 ## The portal: where we stand, by class
 

@@ -587,6 +587,16 @@ fn parse_args_annotation(s: &str, ann: &mut Annotations) {
 /// Run all zero-parameter functions in `.loft` files under `root_dir` as tests.
 /// Supports `@ARGS`, `@EXPECT_ERROR`, and `@EXPECT_FAIL` file annotations.
 /// Returns 0 if all pass, 1 if any fail.
+/// Which backend a test run compiles its tests for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum TestBackend {
+    Interpreter,
+    /// `--native`: the Rust writer and rustc.
+    NativeRust,
+    /// `--native-c` / `LOFT_NATIVE_BACKEND=c`: the C backend and the host's C compiler.
+    NativeC,
+}
+
 #[allow(clippy::too_many_arguments)]
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn run_tests(
@@ -596,9 +606,11 @@ pub(crate) fn run_tests(
     deny_warnings: bool,
     lib_dirs: &[String],
     project: Option<&str>,
-    native_mode: bool,
+    backend: TestBackend,
     extra_native_libs: &[String],
 ) -> i32 {
+    let native_mode = backend != TestBackend::Interpreter;
+    let native_c = backend == TestBackend::NativeC;
     use crate::data::DefType;
     use std::collections::BTreeMap;
 
@@ -694,6 +706,85 @@ pub(crate) fn run_tests(
             return format!("native run killed by signal {sig}");
         }
         "native run failed".to_string()
+    }
+
+    /// @PLN203 C5 — a file's tests on the C backend: the file written as ONE unit
+    /// (`c::emit_tests_of`, or the program when the run calls the file's `main`), built once,
+    /// and run once per test with that test's name, so each starts from fresh stores as on
+    /// the interpreter.  Each test's verdict, in `fns` order.
+    fn c_file_tests(
+        data: &Data,
+        db: &loft::database::Stores,
+        fns: &[(u32, String)],
+        abs_file: &str,
+        leak_check: bool,
+    ) -> Vec<(String, Result<(), String>)> {
+        let all = |msg: String| -> Vec<(String, Result<(), String>)> {
+            fns.iter()
+                .map(|(_, n)| (n.clone(), Err(msg.clone())))
+                .collect()
+        };
+        let has_main = fns.iter().any(|(_, n)| n == "main");
+        let none = |_: &str| Vec::new();
+        let ids: Vec<u32> = fns.iter().map(|(d, _)| *d).collect();
+        let unit = if has_main {
+            loft::c::emit_program(data, db, &none)
+        } else {
+            loft::c::emit_tests_of(data, db, &ids, &none)
+        };
+        let c = match unit {
+            Ok(c) => c,
+            Err(r) => return all(format!("the C backend does not carry this test yet: {r}")),
+        };
+        let dir = std::path::Path::new(abs_file)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        let cache = dir.join(".loft").join("cache");
+        let built =
+            match crate::c_driver::build(&c, crate::c_driver::Tier::Check, &cache, false, false) {
+                Ok(b) => b,
+                Err(e) => return all(e.to_string()),
+            };
+        let run_one = |only: Option<&str>| -> Result<(), String> {
+            let mut cmd = Spawn::new(Program::os(&built.binary));
+            if let Some(name) = only {
+                cmd.push_arg(name);
+            }
+            if std::env::var("LOFT_SOURCE_DIR").is_err() {
+                cmd.push_env("LOFT_SOURCE_DIR", dir);
+            }
+            cmd = cmd.stdout(std::process::Stdio::inherit());
+            if leak_check {
+                cmd.push_env("LOFT_NATIVE_LEAK_CHECK", "1");
+            }
+            let out = cmd
+                .run(b"")
+                .map_err(|e| format!("native run failed: {e}"))?;
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprint!("{stderr}");
+            if out.status.success() {
+                // A residue is a warning with exit 0; under the gate it is the verdict.
+                match stderr
+                    .lines()
+                    .find(|l| l.contains("stores not freed at program exit"))
+                {
+                    Some(line) => Err(line.trim().to_string()),
+                    None => Ok(()),
+                }
+            } else {
+                Err(native_failure(out.status, &stderr))
+            }
+        };
+        if has_main {
+            let outcome = run_one(None);
+            fns.iter()
+                .map(|(_, n)| (n.clone(), outcome.clone()))
+                .collect()
+        } else {
+            fns.iter()
+                .map(|(_, n)| (n.clone(), run_one(Some(n))))
+                .collect()
+        }
     }
 
     /// Which declared expectations no diagnostic of their OWN answers.
@@ -855,8 +946,8 @@ pub(crate) fn run_tests(
     // `cargo run --bin loft` rebuilds the binary but may skip the library
     // target, leaving native tests linking against stale code.
     // Detect this by comparing source mtimes against the rlib and rebuild
-    // automatically when needed.
-    if native_mode {
+    // automatically when needed.  A C run links no Rust runtime (@PLN203 C5).
+    if native_mode && !native_c {
         native_utils::ensure_rlib_fresh();
         if native_utils::loft_lib_dir().is_none() {
             std::panic::set_hook(prev_hook);
@@ -1629,6 +1720,18 @@ pub(crate) fn run_tests(
                             true,
                             Some("skip-native".to_string()),
                         ));
+                    }
+                } else if native_c {
+                    for (fn_name, outcome) in
+                        c_file_tests(&native_data, &native_db, &native_fns, &abs_file, leak_check)
+                    {
+                        let passed = outcome.is_ok();
+                        file_result.tests.push((fn_name, passed, outcome.err()));
+                        if passed {
+                            dir_pass += 1;
+                        } else {
+                            dir_fail += 1;
+                        }
                     }
                 } else {
                     // Generate Rust source.
@@ -2588,6 +2691,11 @@ pub(crate) fn run_tests(
     // exit: a suite run used to end without the summary, so a leak in a `main`-less guard
     // was invisible to the one instrument built to see it (loft#1357).  No-op unarmed.
     loft::interp::state::text_timeline_summary();
+    // The test ledger's last program is written here, not left to the C `atexit` handler: on
+    // Windows `std::process::exit` ends the process without running that table, so a run of
+    // N files recorded the first N-1.  A no-op when nothing is armed; the handler then finds
+    // nothing to write.
+    loft::ledger::flush();
     if total_fail == 0 {
         println!(
             "test result: ok. {total_pass} passed; {total_files} file{}  {scope}",

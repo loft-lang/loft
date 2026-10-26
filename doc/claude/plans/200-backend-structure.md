@@ -371,9 +371,31 @@ branch; its guard cell is on the language suite's branch of the same name, so th
 `tests/loft-suite.pin`.  How it works and how to
 extend it: [C_BACKEND.md](../C_BACKEND.md).
 
+**Evaluated as the default compiled target (2026-10-26).**  Asked: can the C stand where rustc
+stands today?  Measured on this branch: the corpus sweep (2832 programs, three macro modes)
+2469 match / 0 differ / 0 cc-error, the same under ASan+UBSan and under the store poison
+modes; the 22 `--lib` programs and the pure-loft fixture libraries' own tests match too;
+Windows MinGW gcc 15: 73 of 74 programs match (one `M_PI`, since fixed); Linux x86-64 gcc
+13: two defects (a witnessed local's declaration in a loop, a method's frame name) and two
+portability faults (`M_PI`/`M_E`, glibc's `fread` result) — all fixed on the branch.  What
+the sweep could not see, found by hand: a `#native` library function is emitted as the
+unloaded stub (every Rust-crate library panics at the call); `eprint`, `is_symlink` and the
+`store_upgrade_owed_*` natives are refused; a fault prints its message without the source
+line and the call chain the interpreter and `--native` print; the C binary reads no
+`LOFT_TIMEOUT` / `LOFT_MEMORY_LIMIT`; `par` runs its rows in order.  Not built at all: a
+driver (`--native`'s compile, cache and run), `loft test`'s native leg, the ship tier (no
+`LOFT_SHIP_*` emitted until @PLN201's ledger), wasm / `--html` / android, library cdylibs,
+`engine_host`, ranged HTTP / TLS / SQL.  **Verdict: not the default yet.**  The route taken
+(owner): libraries lose their Rust crates for a `[c] shim` the C compiles into the unit
+(`random` 0.4.0, `imaging` 0.5.0 — the binding layer gained a vector-of-records crossing);
+`regex` and `crypto` follow; `graphics`, `web`, `server` and `ssh` need windowing, audio and
+TLS the C99 library does not hold, so they bind the OS's libraries or stay Rust.
+
+**What the backend still owes before it is the only compiled target is [@PLN203](203-c99-default-backend.md)** (the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts, the wasm targets, the perf lane, platforms, the flip).
+
 **⚠ NEXT — the quality of the C the generator writes: read this before the next feature (owner, 2026-10-24).**
-The C backend validates the generator and gets no benchmark lanes or twins (@PLN201, owner),
-so nothing here is a speed bar.  These are defects in the emitted C, found by taking one
+The C backend gets no twins of the bench routines (owner); `bench/stats.py`'s `c` and `cship`
+lanes measure it against the Rust twins (bench/README.md § The C lanes), a report, never a bar.  These are defects in the emitted C, found by taking one
 program apart by hand: `bench/10_sort`'s `insertion_sort` at `7d370d10`, built `cc -std=c99 -O2`,
 ran 8.8 s where `--native` ran 0.65 s.  Forcing the access helpers inline gave 1.3 s; holding
 the vector header and element base in locals before the loop gave 0.34 s.  Removing the

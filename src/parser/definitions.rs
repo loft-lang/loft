@@ -4457,7 +4457,17 @@ impl Parser {
         if self.lexer.has_token("->")
             && let Some(tp2) = self.parse_type_full(d_nr, false)
         {
-            r_type = tp2;
+            // A function declared `-> (integer, text)` returns the BOXED `__tuple<…>` record
+            // (`boxed_tuple_return`), so the TYPE `fn(…) -> (integer, text)` must name the same
+            // result, or no function of exactly that type converts to it and a call through it
+            // would read a tuple where the callee hands back a record (loft#2190,
+            // `@FR-L-FnRef`: a function name in a fn-typed context is a value of its type).  A result
+            // shaped by a generic type variable is the template's to box at instantiation.
+            r_type = if self.return_shape_depends_on_type_var(&tp2) {
+                tp2
+            } else {
+                self.boxed_tuple_return(tp2)
+            };
         }
         Type::Function(
             args,

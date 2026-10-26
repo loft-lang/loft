@@ -515,7 +515,7 @@
 17_consumer_moros_dryopea	-	R-Base	45
 17_consumer_moros_dryopea	-	R-CharWalk	10
 17_consumer_moros_dryopea	-	R-Compact	2
-17_consumer_moros_dryopea	-	R-CompleteWrite	80
+17_consumer_moros_dryopea	-	R-CompleteWrite	79
 17_consumer_moros_dryopea	-	R-Counter	109
 17_consumer_moros_dryopea	-	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	R-DischargeInto	1
@@ -569,7 +569,7 @@
 18_consumer_crawler	-	R-Base	72
 18_consumer_crawler	-	R-Callee	2
 18_consumer_crawler	-	R-CharWalk	15
-18_consumer_crawler	-	R-CompleteWrite	30
+18_consumer_crawler	-	R-CompleteWrite	28
 18_consumer_crawler	-	R-Counter	215
 18_consumer_crawler	-	R-DischargeInto	7
 18_consumer_crawler	-	R-ExitVector	1
@@ -696,7 +696,7 @@ arguments	bd4932067	R-ZeroCount	28
 assets	b3cb7445f+shapes@0.5.4	R-AliasVersion	2
 assets	b3cb7445f+shapes@0.5.4	R-Base	57
 assets	b3cb7445f+shapes@0.5.4	R-CharWalk	11
-assets	b3cb7445f+shapes@0.5.4	R-CompleteWrite	35
+assets	b3cb7445f+shapes@0.5.4	R-CompleteWrite	34
 assets	b3cb7445f+shapes@0.5.4	R-Const	1
 assets	b3cb7445f+shapes@0.5.4	R-Const/fn	1
 assets	b3cb7445f+shapes@0.5.4	R-Counter	137
@@ -803,7 +803,7 @@ cbor	bd4932067	R-Wrapper	40
 cbor	bd4932067	R-ZeroCount	8
 crypto	bd4932067	R-Base	11
 crypto	bd4932067	R-CharWalk	10
-crypto	bd4932067	R-CompleteWrite	16
+crypto	bd4932067	R-CompleteWrite	15
 crypto	bd4932067	R-Counter	53
 crypto	bd4932067	R-DischargeInto	1
 crypto	bd4932067	R-ExitVector	1
@@ -849,7 +849,7 @@ drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-Base	29
 drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-BoundedNest	8
 drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-Callee	10
 drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-CharWalk	10
-drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-CompleteWrite	275
+drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-CompleteWrite	273
 drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-CopyView	2
 drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-Counter	584
 drawing	873da7f9a+glb@0.1.7+graphics@0.9.12+imaging@0.4.4+mesh3d@0.1.5	R-DischargeInto	1
@@ -1051,7 +1051,7 @@ graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-Base	122
 graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-BoundedNest	4
 graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-Callee	12
 graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-CharWalk	10
-graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-CompleteWrite	101
+graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-CompleteWrite	100
 graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-CopyView	2
 graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-Counter	258
 graphics	873da7f9a+glb@0.1.7+mesh3d@0.1.5	R-DischargeInto	1
@@ -1114,7 +1114,7 @@ gridmesh	873da7f9a	H-SwapRebind	2
 gridmesh	873da7f9a	R-AliasVersion	1
 gridmesh	873da7f9a	R-Base	28
 gridmesh	873da7f9a	R-CharWalk	10
-gridmesh	873da7f9a	R-CompleteWrite	29
+gridmesh	873da7f9a	R-CompleteWrite	28
 gridmesh	873da7f9a	R-Counter	100
 gridmesh	873da7f9a	R-DischargeInto	1
 gridmesh	873da7f9a	R-ExitVector	3
@@ -1168,7 +1168,7 @@ hex_body	3bdb69ef2	H-SwapRebind	11
 hex_body	3bdb69ef2	R-Apart/vector	30
 hex_body	3bdb69ef2	R-Base	131
 hex_body	3bdb69ef2	R-CharWalk	10
-hex_body	3bdb69ef2	R-CompleteWrite	17
+hex_body	3bdb69ef2	R-CompleteWrite	16
 hex_body	3bdb69ef2	R-Counter	107
 hex_body	3bdb69ef2	R-DischargeInto	4
 hex_body	3bdb69ef2	R-ExitVector	1
@@ -1216,7 +1216,7 @@ hex_draw	3bdb69ef2	R-AliasVersion	8
 hex_draw	3bdb69ef2	R-Base	578
 hex_draw	3bdb69ef2	R-Callee	12
 hex_draw	3bdb69ef2	R-CharWalk	10
-hex_draw	3bdb69ef2	R-CompleteWrite	70
+hex_draw	3bdb69ef2	R-CompleteWrite	64
 hex_draw	3bdb69ef2	R-Counter	676
 hex_draw	3bdb69ef2	R-DischargeInto	5
 hex_draw	3bdb69ef2	R-ExitVector	39
@@ -1267,7 +1267,7 @@ hex_edge	3bdb69ef2	H-SwapRebind	4
 hex_edge	3bdb69ef2	R-Base	223
 hex_edge	3bdb69ef2	R-Callee	12
 hex_edge	3bdb69ef2	R-CharWalk	10
-hex_edge	3bdb69ef2	R-CompleteWrite	20
+hex_edge	3bdb69ef2	R-CompleteWrite	16
 hex_edge	3bdb69ef2	R-Counter	330
 hex_edge	3bdb69ef2	R-DischargeInto	2
 hex_edge	3bdb69ef2	R-ExitVector	32
@@ -1315,7 +1315,7 @@ hex_field	3bdb69ef2	H-SwapRebind	6
 hex_field	3bdb69ef2	R-Base	201
 hex_field	3bdb69ef2	R-Callee	8
 hex_field	3bdb69ef2	R-CharWalk	10
-hex_field	3bdb69ef2	R-CompleteWrite	20
+hex_field	3bdb69ef2	R-CompleteWrite	16
 hex_field	3bdb69ef2	R-Counter	490
 hex_field	3bdb69ef2	R-DischargeInto	2
 hex_field	3bdb69ef2	R-ExitVector	10
@@ -1368,7 +1368,7 @@ hex_fit	3bdb69ef2	R-AliasVersion	10
 hex_fit	3bdb69ef2	R-Base	769
 hex_fit	3bdb69ef2	R-Callee	12
 hex_fit	3bdb69ef2	R-CharWalk	10
-hex_fit	3bdb69ef2	R-CompleteWrite	164
+hex_fit	3bdb69ef2	R-CompleteWrite	157
 hex_fit	3bdb69ef2	R-Counter	1181
 hex_fit	3bdb69ef2	R-CtorLiteral	4
 hex_fit	3bdb69ef2	R-DischargeInto	7
@@ -1431,7 +1431,7 @@ hex_form	3bdb69ef2	R-AliasVersion	7
 hex_form	3bdb69ef2	R-Base	251
 hex_form	3bdb69ef2	R-Callee	8
 hex_form	3bdb69ef2	R-CharWalk	10
-hex_form	3bdb69ef2	R-CompleteWrite	57
+hex_form	3bdb69ef2	R-CompleteWrite	51
 hex_form	3bdb69ef2	R-Counter	467
 hex_form	3bdb69ef2	R-DischargeInto	5
 hex_form	3bdb69ef2	R-ExitVector	15
@@ -1516,7 +1516,7 @@ hex_place	3bdb69ef2	R-AliasVersion	6
 hex_place	3bdb69ef2	R-Base	281
 hex_place	3bdb69ef2	R-Callee	8
 hex_place	3bdb69ef2	R-CharWalk	10
-hex_place	3bdb69ef2	R-CompleteWrite	54
+hex_place	3bdb69ef2	R-CompleteWrite	48
 hex_place	3bdb69ef2	R-Counter	428
 hex_place	3bdb69ef2	R-DischargeInto	5
 hex_place	3bdb69ef2	R-ExitVector	15
@@ -1569,7 +1569,7 @@ hex_recover	3bdb69ef2	R-AliasVersion	9
 hex_recover	3bdb69ef2	R-Base	293
 hex_recover	3bdb69ef2	R-Callee	8
 hex_recover	3bdb69ef2	R-CharWalk	10
-hex_recover	3bdb69ef2	R-CompleteWrite	101
+hex_recover	3bdb69ef2	R-CompleteWrite	95
 hex_recover	3bdb69ef2	R-Counter	662
 hex_recover	3bdb69ef2	R-CtorLiteral	3
 hex_recover	3bdb69ef2	R-DischargeInto	5
@@ -1630,7 +1630,7 @@ hex_roof	3bdb69ef2	H-SwapRebind	4
 hex_roof	3bdb69ef2	R-Base	432
 hex_roof	3bdb69ef2	R-Callee	14
 hex_roof	3bdb69ef2	R-CharWalk	10
-hex_roof	3bdb69ef2	R-CompleteWrite	31
+hex_roof	3bdb69ef2	R-CompleteWrite	27
 hex_roof	3bdb69ef2	R-Counter	568
 hex_roof	3bdb69ef2	R-DischargeInto	2
 hex_roof	3bdb69ef2	R-ExitVector	34
@@ -1681,7 +1681,7 @@ hex_shape	3bdb69ef2	R-AliasVersion	6
 hex_shape	3bdb69ef2	R-Base	356
 hex_shape	3bdb69ef2	R-Callee	8
 hex_shape	3bdb69ef2	R-CharWalk	10
-hex_shape	3bdb69ef2	R-CompleteWrite	117
+hex_shape	3bdb69ef2	R-CompleteWrite	109
 hex_shape	3bdb69ef2	R-Counter	573
 hex_shape	3bdb69ef2	R-DischargeInto	5
 hex_shape	3bdb69ef2	R-ExitVector	22
@@ -1733,7 +1733,7 @@ hex_terrain	3bdb69ef2	R-Apart/vector	9
 hex_terrain	3bdb69ef2	R-Base	105
 hex_terrain	3bdb69ef2	R-Callee	1
 hex_terrain	3bdb69ef2	R-CharWalk	10
-hex_terrain	3bdb69ef2	R-CompleteWrite	39
+hex_terrain	3bdb69ef2	R-CompleteWrite	37
 hex_terrain	3bdb69ef2	R-Counter	226
 hex_terrain	3bdb69ef2	R-DischargeInto	1
 hex_terrain	3bdb69ef2	R-ExitVector	10
@@ -1783,7 +1783,7 @@ hex_way	3bdb69ef2	H-SwapRebind	4
 hex_way	3bdb69ef2	R-Base	292
 hex_way	3bdb69ef2	R-Callee	13
 hex_way	3bdb69ef2	R-CharWalk	10
-hex_way	3bdb69ef2	R-CompleteWrite	17
+hex_way	3bdb69ef2	R-CompleteWrite	13
 hex_way	3bdb69ef2	R-Counter	362
 hex_way	3bdb69ef2	R-DischargeInto	2
 hex_way	3bdb69ef2	R-ExitVector	34
@@ -1829,7 +1829,7 @@ hex_way	3bdb69ef2	R-Wrapper	32
 hex_way	3bdb69ef2	R-ZeroCount	8
 hex_world	3bdb69ef2+regex@0.3.2	R-Base	36
 hex_world	3bdb69ef2+regex@0.3.2	R-CharWalk	10
-hex_world	3bdb69ef2+regex@0.3.2	R-CompleteWrite	19
+hex_world	3bdb69ef2+regex@0.3.2	R-CompleteWrite	18
 hex_world	3bdb69ef2+regex@0.3.2	R-Counter	36
 hex_world	3bdb69ef2+regex@0.3.2	R-DischargeInto	1
 hex_world	3bdb69ef2+regex@0.3.2	R-ExitVector	1
@@ -1900,7 +1900,7 @@ html	dd260f04c	R-Wrapper	9
 html	dd260f04c	R-ZeroCount	8
 markdown	dd260f04c	R-Base	5
 markdown	dd260f04c	R-CharWalk	13
-markdown	dd260f04c	R-CompleteWrite	8
+markdown	dd260f04c	R-CompleteWrite	7
 markdown	dd260f04c	R-Counter	67
 markdown	dd260f04c	R-DischargeInto	1
 markdown	dd260f04c	R-ExitVector	5
@@ -1982,7 +1982,7 @@ pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-Base	29
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-BoundAppend	1
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-ByteCopy	4
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-CharWalk	10
-pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-CompleteWrite	110
+pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-CompleteWrite	109
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-Counter	150
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-DecodeView	6
 pluginabi	33aa4cc2c+cbor@0.1.12+crypto@0.3.14	R-DecodeView/structure	2
@@ -2184,7 +2184,7 @@ stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-Base	190
 stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-BoundedNest	4
 stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-Callee	19
 stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-CharWalk	12
-stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-CompleteWrite	167
+stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-CompleteWrite	165
 stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-CopyView	2
 stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-Counter	298
 stage	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5+tween@0.1.2	R-DischargeInto	1
@@ -2248,7 +2248,7 @@ text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-Base	113
 text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-BoundedNest	4
 text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-Callee	6
 text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-CharWalk	20
-text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-CompleteWrite	98
+text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-CompleteWrite	96
 text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-Const	2
 text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-Const/fn	2
 text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-CopyView	2
@@ -2309,7 +2309,7 @@ text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-Wrapper	91
 text2d	873da7f9a+glb@0.1.7+graphics@0.9.12+mesh3d@0.1.5	R-ZeroCount	8
 time	45a026419	R-Base	10
 time	45a026419	R-CharWalk	12
-time	45a026419	R-CompleteWrite	26
+time	45a026419	R-CompleteWrite	25
 time	45a026419	R-Counter	58
 time	45a026419	R-DischargeInto	1
 time	45a026419	R-ExitVector	1
@@ -2389,7 +2389,7 @@ tween	873da7f9a	R-Wrapper	38
 tween	873da7f9a	R-ZeroCount	8
 web	0b6f24637	R-Base	5
 web	0b6f24637	R-CharWalk	10
-web	0b6f24637	R-CompleteWrite	11
+web	0b6f24637	R-CompleteWrite	10
 web	0b6f24637	R-Counter	33
 web	0b6f24637	R-DischargeInto	1
 web	0b6f24637	R-ExitVector	1
@@ -2426,7 +2426,7 @@ zttext	bd4932067	R-AliasVersion	5
 zttext	bd4932067	R-Base	117
 zttext	bd4932067	R-CharWalk	21
 zttext	bd4932067	R-Compact/prepend	1
-zttext	bd4932067	R-CompleteWrite	264
+zttext	bd4932067	R-CompleteWrite	258
 zttext	bd4932067	R-Counter	315
 zttext	bd4932067	R-DischargeInto	1
 zttext	bd4932067	R-ExitVector	24

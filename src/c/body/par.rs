@@ -3,13 +3,15 @@
 // @I68 — Native Rust generator: a second compiled target, C
 
 //! `par` as C: a `for x in v par(r = f(x), n)` loop's queue call runs the worker over the rows
-//! one after another — each row's result is the one a thread would compute — into the buffer
-//! stack of `loft_keyed.h`, which the loop reads by row and pops.  The interpreter's half is
-//! `src/parallel_natives.rs`.
+//! into the buffer stack of `loft_keyed.h`, which the loop reads by row and pops — on threads
+//! (`loft_par_run`, @PLN203 C4) when the worker's result is a scalar, a text or nothing, else
+//! one row after another, each row's result the one a thread would compute.  The interpreter's
+//! half is `src/parallel_natives.rs`.
 
 use super::{CType, E, FnWriter, K, as_int, as_ref, as_shape};
 use crate::c::c_name;
 use crate::data::{Type, Value};
+use std::fmt::Write as _;
 
 impl FnWriter<'_> {
     /// The parallel natives, or `None` for another.
@@ -32,7 +34,9 @@ impl FnWriter<'_> {
                 | "n_parallel_queue_fn"
                 | "n_parallel_discard",
                 [input, esz, _, _, func, rest @ ..],
-            ) => self.par_queue(name, input, esz, func, rest, ind).map(Some),
+            ) => self
+                .par_queue(name, input, esz, &args[3], func, rest, ind)
+                .map(Some),
             ("n_parallel_fold", [input, init, func, threads, rest @ ..]) => self
                 .par_fold(input, init, func, threads, rest, ind)
                 .map(Some),
@@ -76,11 +80,19 @@ impl FnWriter<'_> {
 
     /// `n_parallel_queue…(input, element_size, return_size, threads, worker, n_extra,
     /// extra…)`: the worker over every row, each result in the new buffer; the row count.
+    /// A worker whose result is a scalar, a text or nothing, with scalar or reference extras,
+    /// runs on threads (`loft_par_run`, @PLN203 C4 tier 1); any other runs its rows in order.
+    #[expect(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "the queue native's operands, each its own, and its two routes (threads, in order) side by side"
+    )]
     fn par_queue(
         &mut self,
         name: &str,
         input: &Value,
         esz: &Value,
+        threads: &Value,
         func: &Value,
         rest: &[Value],
         ind: usize,
@@ -136,6 +148,45 @@ impl FnWriter<'_> {
             CType::Void => format!("{call};"),
             CType::Tuple(_) => return Err("a par worker returning a tuple".into()),
         };
+        let threaded = vec_buffers.is_empty()
+            && (name == "n_parallel_discard"
+                || matches!(
+                    result_shape,
+                    CType::Int
+                        | CType::Bool
+                        | CType::Enum
+                        | CType::Char
+                        | CType::Float
+                        | CType::Single
+                        | CType::Text
+                        | CType::Void
+                ))
+            && shapes.iter().take(extra.len()).all(|c| {
+                matches!(
+                    c,
+                    CType::Int
+                        | CType::Bool
+                        | CType::Enum
+                        | CType::Char
+                        | CType::Float
+                        | CType::Single
+                        | CType::Ref
+                )
+            });
+        if threaded {
+            return self.par_threaded(
+                name,
+                &input,
+                esz,
+                threads,
+                d,
+                &shapes,
+                &extra,
+                &buffers,
+                result_shape,
+                ind,
+            );
+        }
         let n = self.temp(CType::Int);
         self.line(ind, &format!("{n} = loft_vec_len({input});"));
         self.line(ind, "{");
@@ -186,6 +237,96 @@ impl FnWriter<'_> {
             },
         ))
     }
+    /// A tier-1 `par` site on threads: its operands in a context struct, its loop over a row
+    /// range in a body function (both written before the unit's functions), and the site a
+    /// `loft_par_run` over them.  The worker is called with the context's extras in place of
+    /// the caller's, and writes only the rows of its range.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the site's parts, computed by par_queue"
+    )]
+    fn par_threaded(
+        &mut self,
+        name: &str,
+        input: &str,
+        esz: i64,
+        threads: &Value,
+        d: u32,
+        shapes: &[CType],
+        extra: &[String],
+        buffers: &[String],
+        result_shape: CType,
+        ind: usize,
+    ) -> Result<E, String> {
+        let cx = self.cx;
+        let id = cx.par_sites.get();
+        cx.par_sites.set(id + 1);
+        let fields: Vec<String> = (0..extra.len()).map(|i| format!("loft_c->x{i}")).collect();
+        let WorkerCall { args, .. } = Self::worker_call(cx, d, esz, &fields)?;
+        let call = format!("{}({})", c_name(cx.data, d), args.join(", "));
+        let store = match result_shape {
+            _ if name == "n_parallel_discard" => format!("(void) {call};"),
+            CType::Int => format!("loft_b[loft_i].i = {call};"),
+            CType::Bool | CType::Enum | CType::Char => {
+                format!("loft_b[loft_i].i = (int64_t) {call};")
+            }
+            CType::Float => format!("loft_b[loft_i].f = {call};"),
+            CType::Single => format!("loft_b[loft_i].g = {call};"),
+            CType::Text => format!("loft_b[loft_i].t = {call};"),
+            _ => format!("{call};"),
+        };
+        let mut decl = String::from("typedef struct {\n    loft_ref in;\n    loft_par_slot *b;\n");
+        for (i, c) in shapes.iter().take(extra.len()).enumerate() {
+            let _ = writeln!(decl, "    {} x{i};", crate::c::held(*c));
+        }
+        let _ = writeln!(
+            decl,
+            "}} loft_parctx{id};\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi);"
+        );
+        cx.gen_decls.borrow_mut().push_str(&decl);
+        let mut body = format!(
+            "\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi) {{\n    \
+             loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    loft_par_slot *loft_b = loft_c->b;\n    \
+             (void) loft_b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        \
+             loft_ref loft_e = loft_vec_get(loft_c->in, {esz}, loft_i);\n        (void) loft_e;\n"
+        );
+        for w in buffers {
+            let _ = writeln!(body, "        loft_text {w} = {{ 0, 0, 0 }};");
+        }
+        let _ = writeln!(body, "        {store}");
+        for w in buffers {
+            let _ = writeln!(body, "        loft_text_free(&{w});");
+        }
+        body.push_str("    }\n}\n");
+        cx.gen_bodies.borrow_mut().push_str(&body);
+        let t = self.expr(threads, ind)?;
+        let t = as_int(t)?;
+        let n = self.temp(CType::Int);
+        self.line(ind, &format!("{n} = loft_vec_len({input});"));
+        self.line(ind, "{");
+        let slots = if name == "n_parallel_discard" {
+            "0".to_string()
+        } else {
+            format!("loft_par_push({n})")
+        };
+        let mut init = format!("loft_parctx{id} loft_c = {{ {input}, {slots}");
+        for x in extra {
+            let _ = write!(init, ", {x}");
+        }
+        init.push_str(" };");
+        self.line(ind + 1, &init);
+        self.line(
+            ind + 1,
+            &format!("loft_par_run({n}, {t}, loft_parbody{id}, &loft_c);"),
+        );
+        self.line(ind, "}");
+        Ok(if name == "n_parallel_discard" {
+            E::new("(void) 0", K::Void)
+        } else {
+            E::new(n, K::Int)
+        })
+    }
+
     /// `parallel_fold(input, init, fold, threads)` (`parallel::run_parallel_fold`): the rows
     /// split into `min(threads, rows)` slices as `par_pool::parallel_workers` splits them, each
     /// folded from `init`, then the partials folded from `init` in slice order — the answer a

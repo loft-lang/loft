@@ -22,6 +22,11 @@ use crate::parser::Parser;
 /// `None` to disable (env var unset/empty, or `default/` unreadable).
 #[cfg(feature = "mmap")]
 fn cache_target(default_dir: &str) -> Option<std::path::PathBuf> {
+    // A ledger run (@PLN201) arms its site table while the program closes, which a replayed
+    // image skips: it is never loaded from, nor saved to, the cache.
+    if crate::ledger::armed_for_build() {
+        return None;
+    }
     if std::env::var_os("LOFT_STDLIB_CACHE").is_none_or(|v| v.is_empty())
         && !crate::cache::program_cache_enabled()
     {
@@ -278,11 +283,15 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
     let mut c_libraries = Vec::new();
     while let Some(rest) = next.and_then(|l| l.strip_prefix("clib ")) {
         let (flag, rest) = rest.split_once(' ')?;
-        let (name, pkg_dir) = rest.split_once('\t')?;
+        let mut fields = rest.split('\t');
+        let name = fields.next()?;
+        let pkg_dir = fields.next()?;
         c_libraries.push(crate::data::CLibrary {
             name: name.to_string(),
             pkg_dir: pkg_dir.to_string(),
             optional: flag == "1",
+            // A shim's sources follow its package dir, one per TAB-separated field.
+            shim: fields.map(str::to_string).collect(),
         });
         next = lines.next();
     }
@@ -437,6 +446,10 @@ pub fn warm_load_program(
     native_ctx: &str,
     store_out: &mut Option<(crate::database::Stores, crate::keys::DbRef)>,
 ) -> Option<u32> {
+    // A ledger run (@PLN201) instruments the program as it closes, which a replay skips.
+    if crate::ledger::armed_for_build() {
+        return None;
+    }
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, &p.lib_dirs);
     // `LOFT_TIMING`: the two halves of a warm start that are not the parse — hashing the
     // stdlib sources for the key, and materialising the bundle (@PLN179 finding 001).
@@ -589,6 +602,43 @@ pub fn warm_load_program(
     Some(state.user_def_start.unwrap_or_else(|| p.data.definitions()))
 }
 
+/// The files a program bundle's manifest hashes: every parsed source and the nearest
+/// `loft.toml` above each, sorted, without the stdlib's own files (the `stdk` line pins them).
+fn hashed_sources(p: &Parser, default_dir: &str) -> Vec<String> {
+    // The manifests decided which sources those were: a `[dependencies]` line removed or
+    // repointed at a path that no longer resolves leaves every parsed source unchanged, and a
+    // warm load would answer for a program that no longer compiles.  Each source's nearest
+    // `loft.toml` is hashed beside it, so editing one is a miss.
+    let manifests: Vec<String> = p
+        .parsed_sources
+        .iter()
+        .filter_map(|src| {
+            std::path::Path::new(src)
+                .ancestors()
+                .skip(1)
+                .map(|d| d.join("loft.toml"))
+                .find(|m| crate::file_access::is_file(m))
+                .map(|m| m.to_string_lossy().into_owned())
+        })
+        .collect();
+    let mut paths: Vec<String> = p.parsed_sources.iter().chain(&manifests).cloned().collect();
+    paths.sort_unstable();
+    paths.dedup();
+    // The stdlib's own files are pinned by the `stdk` line — a hash of exactly
+    // `default_dir/*.loft`, memoised by size and mtime — so they are not listed again:
+    // re-hashing their 240 kB on every warm start was most of its manifest check (@PLN179
+    // finding 001).  An edit to one changes the key, and the load misses there first.
+    let stdlib = crate::file_access::plain_canonical(std::path::Path::new(default_dir));
+    paths.retain(|src| {
+        let src = std::path::Path::new(src.as_str());
+        !crate::file_access::has_extension(src, "loft")
+            || src
+                .parent()
+                .is_none_or(|d| crate::file_access::plain_canonical(d) != stdlib)
+    });
+    paths
+}
+
 /// Cold path: after the full parse, write the whole-program bundle + its drift
 /// manifest for `script_abspath` (every deduped parsed source + its content
 /// hash).  The bundle is published first, then the manifest atomically — so a
@@ -606,6 +656,10 @@ pub fn save_program(
     auto_native: &AutoNative<'_>,
 ) {
     use std::fmt::Write as _;
+    // A ledger run's closed program is instrumented: never the image a later run replays.
+    if crate::ledger::armed_for_build() {
+        return;
+    }
     let Some(stdk) = stdlib_key_hex(default_dir) else {
         return; // no readable stdlib → a bundle that could not be tied to one
     };
@@ -613,37 +667,7 @@ pub fn save_program(
     // registry packages it resolved (`key_dirs`, captured by the caller; loft#1684).
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, key_dirs);
 
-    // The manifests decided which sources those were: a `[dependencies]` line removed or
-    // repointed at a path that no longer resolves leaves every parsed source unchanged, and a
-    // warm load would answer for a program that no longer compiles.  Each source's nearest
-    // `loft.toml` is hashed beside it, so editing one is a miss.
-    let manifests: Vec<String> = p
-        .parsed_sources
-        .iter()
-        .filter_map(|src| {
-            std::path::Path::new(src)
-                .ancestors()
-                .skip(1)
-                .map(|d| d.join("loft.toml"))
-                .find(|m| crate::file_access::is_file(m))
-                .map(|m| m.to_string_lossy().into_owned())
-        })
-        .collect();
-    let mut paths: Vec<&String> = p.parsed_sources.iter().chain(&manifests).collect();
-    paths.sort_unstable();
-    paths.dedup();
-    // The stdlib's own files are pinned by the `stdk` line — a hash of exactly
-    // `default_dir/*.loft`, memoised by size and mtime — so they are not listed again:
-    // re-hashing their 240 kB on every warm start was most of its manifest check (@PLN179
-    // finding 001).  An edit to one changes the key, and the load misses there first.
-    let stdlib = crate::file_access::plain_canonical(std::path::Path::new(default_dir));
-    paths.retain(|src| {
-        let src = std::path::Path::new(src.as_str());
-        !crate::file_access::has_extension(src, "loft")
-            || src
-                .parent()
-                .is_none_or(|d| crate::file_access::plain_canonical(d) != stdlib)
-    });
+    let paths = hashed_sources(p, default_dir);
     let mut lines = String::new();
     // @PLN11 G2/M6 — pin the build signature first so a binary upgrade
     // invalidates this bundle (see `manifest_matches`).
@@ -676,13 +700,17 @@ pub fn save_program(
     }
     // The `[c]` library declarations, read back into `Data::c_libraries` by a warm load.
     for lib in &p.data.c_libraries {
-        let _ = writeln!(
+        let _ = write!(
             lines,
             "clib {} {}\t{}",
             u8::from(lib.optional),
             lib.name,
             lib.pkg_dir
         );
+        for src in &lib.shim {
+            let _ = write!(lines, "\t{src}");
+        }
+        lines.push('\n');
     }
     // loft#1684 — the native-library context, then each auto-native cdylib (see
     // `ManifestState::auto_native_libs`).
@@ -952,11 +980,13 @@ mod ncrate_manifest_tests {
                     name: "libpq.so.5".to_string(),
                     pkg_dir: "/pkgs/my db".to_string(),
                     optional: false,
+                    shim: Vec::new(),
                 },
                 crate::data::CLibrary {
                     name: "lib/own.so".to_string(),
                     pkg_dir: "/pkgs/foo".to_string(),
                     optional: true,
+                    shim: Vec::new(),
                 },
             ],
             "each clib header round-trips, a package dir keeping its space"

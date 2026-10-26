@@ -191,17 +191,40 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
-    let p = parsed(
-        "fn c_sum(v: vector<i32>) -> integer;   #c \"c_sum\" \"int(const int*, size_t)\"\nfn up() -> integer { c_sum([1, 2]) }\n",
-    );
+    // A stdlib native the runtime has not ported is refused by its name, never written as C
+    // that answers differently.
+    // `host_output` is the browser host's channel, which the C runtime has not ported (@PLN203 C6).
+    let p = parsed("fn up() -> integer { host_output(\"up\"); 1 }\n");
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
-        .expect_err("a C binding taking a vector is not carried yet");
-    assert_eq!(refusal.function, "c_sum");
+        .expect_err("a native without a C port is not carried");
+    assert_eq!(refusal.function, "host_output");
     assert!(
-        refusal.why.contains("a C binding taking a vector"),
+        refusal.why.contains("native host_output"),
         "names the construct: {refusal}"
     );
+}
+
+/// @PLN203 C3 — the stdlib census: every native of `default/*.loft` has a C arm, except the
+/// ones named here, each refused by name where a program reaches it.  A new native lands with
+/// its C arm or with a row here saying which phase ports it.
+#[test]
+fn every_stdlib_native_has_a_c_arm_or_a_named_refusal() {
+    let p = parsed("fn main() {}\n");
+    let unported = loft::c::unported_natives(&p.data);
+    let refused: &[&str] = &[
+        // The browser host's channel (`--html`, `--native-wasm`): @PLN203 C6.
+        "n_host_input",
+        "n_host_output",
+        // The test ledger's builtins (@PLN201 step 2): the C records no ledger yet.
+        "n___ledger",
+        "n___ledger_div",
+        // A retired panic stub: the parser lowers a `par` loop to the queue natives.
+        "n_parallel_for",
+    ];
+    let mut want: Vec<String> = refused.iter().map(|s| (*s).to_string()).collect();
+    want.sort();
+    assert_eq!(unported, want, "natives without a C arm");
 }
 
 /// `file_map` is the one producer of a foreign store (@PLN174): a unit that reaches it compiles
@@ -308,8 +331,10 @@ fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
         let out = loft::platform::process::harness_command(&exe)
             .output()
             .expect("run the overflow program");
+        // The program is the macros under a bare `printf` main, not loft's runtime, so a
+        // Windows stdout writes `\r\n`; what is compared is the arithmetic.
         assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
             want,
             "{mode}: the overflow macros disagree with checked arithmetic"
         );
@@ -573,6 +598,661 @@ fn main() {
         .output()
         .expect("run the generator C program");
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
+}
+
+/// `@FR-R-RetAdopt` as C: a vector-returning function whose result local is delivered through
+/// the hidden return buffer builds IN that buffer — the bind is the buffer, the witness store is
+/// never minted, and the exit's clear-and-append copy emits nothing.  Four shapes adopt here:
+/// the stdlib `split` (texts), a typed literal build (`vfill`), a struct build over a parameter
+/// (`twice`, also nested in itself) and a recursion that walks its own call's result (`rec`);
+/// the destinations are a fresh local, a record FIELD (a placed buffer), an inline argument and
+/// a buffer reused by every round of a loop.  Each value is computed by hand, and the census
+/// counts the live records after 10 and after 1010 rounds: an adopted bind that minted or kept
+/// what the caller's buffer held would grow it.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies and
+/// must answer the same — the falsifier of the structural count.
+#[test]
+fn a_returned_vector_builds_in_the_callers_buffer() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct P { x: integer, y: integer }
+struct Holder { name: text, items: vector<text>, pts: vector<P> }
+fn vfill(n: integer) -> vector<text> {
+  result: vector<text> = [];
+  result += ["aa"];
+  result += ["b{n}"];
+  result
+}
+fn twice(v: vector<P>) -> vector<P> {
+  out: vector<P> = [];
+  for e in v {
+    out += [P { x: e.x, y: e.y }];
+    out += [P { x: e.x + 1000, y: e.y }];
+  }
+  out
+}
+fn rec(n: integer) -> vector<integer> {
+  res = [];
+  if n > 0 {
+    for v in rec(n - 1) { res += [v + 100]; }
+    res += [n];
+  }
+  res
+}
+fn census() -> integer {
+  ct = store_memory();
+  ci = ct.find("records ");
+  if !ci { return -1 }
+  cj = ci + 8;
+  cn = 0;
+  while cj < len(ct) && ct[cj] >= '0' && ct[cj] <= '9' {
+    cn = cn * 10 + (ct[cj] as integer - '0' as integer);
+    cj += 1;
+  }
+  cn
+}
+fn rounds(n: integer) -> integer {
+  keep = "";
+  ps: vector<P> = [P { x: 7, y: 8 }];
+  for k in 0..n {
+    v = "a,b,{k}".split(',');
+    keep = v[2];
+    ps = twice([P { x: k, y: 1 }]);
+  }
+  len(keep) + len(ps)
+}
+fn main() {
+  parts = "a,bb,,ccc".split(',');
+  println("{parts} {len("x,".split(','))} {len("".split(','))}");
+  h = Holder { name: "h", items: [], pts: [] };
+  h.items = vfill(3);
+  println("{h.items}");
+  h.items = "p;q".split(';');
+  h.pts = twice([P { x: 1, y: 2 }, P { x: 3, y: 4 }]);
+  println("{h.items} {len(h.pts)} {h.pts[1].x} {h.pts[3].y}");
+  t = 0;
+  s = "x";
+  for k in 0..50 {
+    v = s.split(',');
+    t += len(v);
+    s += ",y{k % 3}";
+  }
+  rounds(10);
+  c10 = census();
+  rounds(1000);
+  println("census {census() - c10}");
+  println("{t} {rec(4)} {twice(twice([P { x: 5, y: 6 }]))[3].x}");
+}
+"#;
+    // "x,".split(',') ends a part at the separator and keeps the empty tail: 2 parts; "" has
+    // none.  Round k of the loop splits k + 1 parts: 1 + 2 + … + 50 = 1275.  rec(n) is
+    // rec(n - 1) each + 100, then n: [1], [101, 2], [201, 102, 3], [301, 202, 103, 4].
+    // twice([5]) = [5, 1005]; twice of that = [5, 1005, 1005, 2005].
+    let want = "[\"a\",\"bb\",\"\",\"ccc\"] 2 0\n[\"aa\",\"b3\"]\n[\"p\",\"q\"] 4 1001 4\n\
+                census 0\n1275 [301,202,103,4] 2005\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("ret-adopt");
+    let file = dir.join("adopt.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    // The adopted bind: a caller that offered no buffer gets one, an offered one is emptied.
+    let bind = "___retbuf.rec == 0) {";
+    for (mode, off, binds) in [("adopted", "0", 4), ("copied", "1", 0)] {
+        let c = dir.join(format!("{mode}.c"));
+        let emit = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_RETBUF_ADOPT", off)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{mode}: the program is carried: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        assert_eq!(
+            text.matches(bind).count(),
+            binds,
+            "{mode}: split, vfill, twice and rec each adopt their buffer"
+        );
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: cc rejected the C:\n{}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the C program");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
+}
+
+/// `@FR-R-PushFill`'s window clause as C: a counted push loop the Rust writer's own admission
+/// passes (`hoist::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record
+/// mints) reserves its pushes once and pushes through a `loft_win` — a compare, a store and a
+/// bump — whose length is written back at the loop's exit.  Every push kind is here (integer,
+/// float, single, i32, u8, character, boolean, enum), a record mint whose literal writes every
+/// field (no default image copied, `@FR-R-CompleteWrite`), a comprehension inside a
+/// comprehension, and a window reopened on every pass of an outer loop.  The C declines where
+/// native declines: the enum vector, and a mint under an `if` arm.  Each value is computed by
+/// hand; `LOFT_NO_PUSH_WINDOW=1` opens none and answers the same; the proofs are checked under
+/// `LOFT_VERIFY`.  A window cannot serve a locked store, so its pushes take the growth arm,
+/// the ordinary append, which refuses as the interpreter does.
+#[test]
+fn a_counted_push_loop_pushes_through_a_window() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+enum Dir { North, East, South }
+struct P { x: float, y: integer, name: text }
+struct Q { x: float, id: integer }
+fn ints(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * 3 + 1]; }
+  sum(v) + len(v)
+}
+fn floats(n: integer) -> float {
+  v: vector<float> = [];
+  for i in 0..n { v += [i as float * 0.5]; }
+  t = 0.0;
+  for x in v { t += x; }
+  t
+}
+fn singles(n: integer) -> integer {
+  v: vector<single> = [];
+  for i in 0..n { v += [i as single, 0.25f]; }
+  round(v[len(v) - 2]? as float * 4.0) as integer + len(v)
+}
+fn narrow(n: integer) -> text {
+  a: vector<i32> = [];
+  b: vector<u8> = [];
+  c: vector<character> = [];
+  d: vector<boolean> = [];
+  e: vector<Dir> = [];
+  for i in 0..n { a += [(i - 2) as i32 ?? 0]; }
+  for i in 0..n { b += [((i * 50) & 255) as u8]; }
+  for i in 0..n { c += ['a']; }
+  for i in 0..n { d += [i % 2 == 0]; }
+  for i in 0..n { e += [Dir.East]; }
+  "{a} {b} {len(c)}{c[0]} {d} {len(e)}"
+}
+fn records(n: integer) -> text {
+  v: vector<P> = [];
+  for i in 0..n {
+    if i % 3 == 0 { v += [P { x: i as float, y: i * 10, name: "p{i}" }]; } else { v += [P { x: 0.5, y: i, name: "q" }]; }
+  }
+  "{len(v)} {v[3]?.name} {v[4]?.y} {v[n - 1]?.x}"
+}
+fn built(n: integer) -> integer {
+  v: vector<Q> = [];
+  for i in 0..n { v += [Q { x: i as float * 0.5, id: i * 7 }]; }
+  t = 0;
+  for q in v { t += q.id + round(q.x * 2.0) as integer; }
+  t + len(v)
+}
+fn grid(side: integer) -> integer {
+  g = [for y in 0..side { [for x in 0..side { x * y }] }];
+  acc = 0;
+  for r in g { acc += len(r) + sum(r); }
+  acc
+}
+fn reopened(rounds: integer) -> integer {
+  v: vector<integer> = [];
+  for r in 0..rounds {
+    for k in 0..4 { v += [r * 10 + k]; }
+  }
+  len(v) + v[len(v) - 1]?
+}
+fn main() {
+  println("{ints(10)} {floats(6)} {singles(5)}");
+  println("{narrow(4)}");
+  println("{records(7)}");
+  println("{grid(4)} {reopened(25)} {built(12)}");
+}
+"#;
+    // ints: 3·45 + 10 + 10 = 155.  floats: 0.5·15.  singles: v[8] = 4.0 → 16, + 10 elements.
+    // records: i = 3 is a `p` literal, i = 4 a `q` one, v[6].x = 6.  grid: each row y sums 6y
+    // over 4 elements, 16 + 36.  reopened: 25·4 elements, the last 24·10 + 3.  built: the ids
+    // 7·66, the halves doubled 66, 12 elements.
+    let want = "155 7.5 26\n[-2,-1,0,1] [0,50,100,150] 4a [true,false,true,false] 4\n\
+                7 p3 4 6\n52 343 540\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("push-window");
+    let file = dir.join("window.loft");
+    fa::write(&file, src).expect("write program");
+    let run_loft = |args: &[&str], f: &std::path::Path| {
+        loft::platform::process::harness_command(loft)
+            .args(args)
+            .arg(f)
+            .output()
+            .expect("run loft")
+    };
+    let interp = run_loft(&["--interpret"], &file);
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let build = |c: &std::path::Path, exe: &std::path::Path, flags: &[&str]| {
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(c)
+            .arg("-o")
+            .arg(exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc rejected {}:\n{}",
+            c.display(),
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        loft::platform::process::harness_command(exe)
+            .output()
+            .expect("run the C program")
+    };
+    for (mode, off, windows, slots) in [("windowed", "0", 10, 1), ("unwindowed", "1", 0, 0)] {
+        let c = dir.join(format!("{mode}.c"));
+        let emit = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_PUSH_WINDOW", off)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let opened = text
+            .lines()
+            .filter(|l| l.trim_start().starts_with("pw") && l.contains(" = loft_win_of(pv"))
+            .count();
+        assert_eq!(opened, windows, "{mode}: the windows opened");
+        assert_eq!(
+            text.matches("loft_win_slot(&pw").count(),
+            slots,
+            "{mode}: the record slots"
+        );
+        for (kind, flags) in [
+            ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+            ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+        ] {
+            let out = build(&c, &dir.join(format!("{mode}-{kind}")), flags);
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                want,
+                "{mode} {kind}: the C program"
+            );
+        }
+    }
+    let locked = dir.join("locked.loft");
+    fa::write(
+        &locked,
+        "fn build(n: integer) -> integer {\n  v: vector<integer> = [7];\n  v#lock = true;\n  \
+         for i in 0..n { v += [i * 2]; }\n  len(v)\n}\nfn main() { println(\"{build(5)}\"); }\n",
+    )
+    .expect("write program");
+    let interp = run_loft(&["--interpret"], &locked);
+    let c = dir.join("locked.c");
+    let emit = run_loft(&["--emit-c", c.to_str().expect("utf-8 path")], &locked);
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    assert!(
+        fa::read_to_string(&c)
+            .expect("read the C")
+            .contains(" = loft_win_of(pv"),
+        "the locked vector's loop is windowed"
+    );
+    let out = build(
+        &c,
+        &dir.join("locked"),
+        &["-DLOFT_STRICT", "-pedantic", "-Werror"],
+    );
+    assert_eq!(
+        out.status.code(),
+        interp.status.code(),
+        "the locked push's exit status"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("write to a locked store"),
+        "the C refuses the locked push: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// `vector_sum_int` as C (loop_kernels.rs, `vector::sum_blocks_i64`): the stdlib `sum` reads
+/// its elements off the vector's base a block of 1024 at a time, and a block whose elements all
+/// lie in [-2^40, 2^40) with the total more than 2^50 from the int64 edge is summed plainly; any
+/// other block, and every element after it, takes the checked add.  Several blocks, an element
+/// past the bound mid-vector, a null element, an overflow and a start near the edge each answer
+/// what integer addition answers.  Dropping the block's bound test sums the null as a number.
+#[test]
+fn the_sum_kernel_sums_in_blocks_with_integer_rules() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+fn main() {
+  v: vector<integer> = [];
+  for i in 0..3000 { v += [i]; }
+  println("a {sum(v)}");
+  w: vector<integer> = [];
+  for i in 0..3000 { if i == 1500 { w += [2199023255552]; } else { w += [i]; } }
+  println("b {sum(w)}");
+  n: integer = null;
+  x: vector<integer> = [1, 2];
+  x += [n];
+  x += [4];
+  println("c {sum(x)}");
+  o: vector<integer> = [9223372036854775807, 1];
+  println("d {sum(o)}");
+  println("e {sum([1, 2, 3], 9223372036854775800)}");
+  m: vector<integer> = [];
+  for i in 0..2050 { m += [0 - i * 1000000]; }
+  println("f {sum(m)}");
+}
+"#;
+    // a: 0 + 1 + … + 2999.  b: the same with 1500 replaced by 2^41.  c: a null element makes
+    // the sum null.  d: i64::MAX + 1 overflows to null.  e: 9223372036854775800 + 6.
+    // f: -10^6 · (0 + … + 2049).
+    let want =
+        "a 4498500\nb 2199027752552\nc null\nd null\ne 9223372036854775806\nf -2100225000000\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("sum-kernel");
+    let file = dir.join("sum.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("sum.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
+}
+
+/// `@C156` (`formal/formatting.md` `(F-Float-Text)`) — every conversion between a float and text
+/// rounds correctly, an exact tie to the even digit, on the interpreter, native and the C alike.
+/// The single 1549.40625 lies exactly between 1549.4062 and 1549.4063 (the even one is taken,
+/// where `core::fmt` alone gave the odd); `.P` rounds the value held, a tie to even (`2.675` is
+/// held as 2.67499…); a negative value that rounds to zero keeps its sign; 2^89 is a power of
+/// two whose nearest 16-digit candidate does not read back and whose neighbour does (the gap
+/// below it is the narrower), so the shortest form is that neighbour and not a longer string;
+/// and the parse forms read as the nearest float, an unreadable text as null.
+#[test]
+fn float_text_rounds_ties_to_even_on_every_path() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+fn main() {
+  s: single = 1549.40625f;
+  println("{s} {-s}");
+  println("{0.125:.2} {2.5:.0} {3.5:.0} {2.675:.2} {-0.0004:.2} {-0.0:.1}");
+  x = 1.0;
+  for i in 0..89 { x = x * 2.0; }
+  println("{x}");
+  println("{("2.5" as float?) ?? 0.0} {(".5" as float?) ?? 0.0} {("5." as float?) ?? 0.0} {("1e23" as float?) ?? 0.0} {("x" as float?) ?? -1.0}");
+}
+"#;
+    let want = "1549.4062 -1549.4062\n0.12 2 4 2.67 -0.00 -0.0\n618970019642690200000000000\n\
+                2.5 0.5 5 100000000000000000000000 -1\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("float-text");
+    let file = dir.join("float.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("float.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
+}
+
+/// The text rewrites as C, each read from the analysis native uses: a `for p in t.split(c)` loop
+/// takes its pieces from the text with no vector built (`@FR-R-LazySplit`, `hoist::lazy_splits`
+/// — none for an empty or null text, the rest after the last separator, a multi-byte separator,
+/// a source the loop body writes walked as a copy, a nested split, a `break`); a walked element
+/// or parameter text is read as a view, not copied (`@FR-R-TextBorrow`); and `for c in t` takes
+/// an ASCII byte without decoding it (`@FR-R-CharWalk`).  Each line is the interpreter's own
+/// answer, and the C must print it in the strict and the verify builds.
+#[test]
+fn the_text_walks_answer_as_the_interpreter_does() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+fn pieces(t: text, label: text) {
+  out = "";
+  n = 0;
+  for p in t.split(',') { out += "[{p}]"; n += 1; }
+  println("{label}: {n} {out}");
+}
+fn multi(t: text) {
+  a = ""; for p in t.split('é') { a += "<{p}>"; }
+  b = ""; for p in t.split('€') { b += "<{p}>"; }
+  c = ""; for p in t.split('😀') { c += "<{p}>"; }
+  println("{a} {b} {c}");
+}
+fn walk(t: text) -> text {
+  r = "";
+  for c in t { if c >= 'a' && c <= 'z' { r += "{c}"; } else { r += "_"; } }
+  r
+}
+fn main() {
+  pieces("", "empty");
+  pieces("a", "one");
+  pieces("a,", "trailing");
+  pieces(",a", "leading");
+  pieces("a,,b", "double");
+  pieces(",,,", "only");
+  n: text = null;
+  pieces(n, "null");
+  multi("xéy€z😀w");
+  multi("é€😀");
+  s = "p,q,r";
+  got = "";
+  for p in s.split(',') { s += ",x"; got += p; }
+  println("written: {got} {s}");
+  nest = "";
+  for row in "a b,c d".split(',') { for w in row.split(' ') { nest += "({w})"; } }
+  println("nested: {nest}");
+  firsts = "";
+  for p in "1,2,3,4".split(',') { if p == "3" { break; } firsts += p; }
+  println("break: {firsts}");
+  println("walk: {walk("héllo wörld ABC xyz")}");
+  words: vector<text> = ["alpha", "βeta", "", "gamma"];
+  total = 0;
+  for w in words { total += len(w) * 10 + size(w); }
+  words += ["late"];
+  println("borrow: {total} {len(words)} {words.join("|")}");
+}
+"#;
+    let want = "empty: 0 \none: 1 [a]\ntrailing: 2 [a][]\nleading: 2 [][a]\ndouble: 3 [a][][b]\nonly: 4 [][][][]\nnull: 0 \n<x><y€z😀w> <xéy><z😀w> <xéy€z><w>\n<><€😀> <é><😀> <é€><>\nwritten: pqr p,q,r,x,x,x\nnested: (a)(b)(c)(d)\nbreak: 12\nwalk: h_llo_w_rld_____xyz\nborrow: 155 5 alpha|βeta||gamma|late\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("text-walks");
+    let file = dir.join("walks.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("walks.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    assert!(
+        text.matches(" = loft_ls_of(").count() >= 8,
+        "every split loop is lazy"
+    );
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
 }
 
 /// `par` as C (`src/c/body/par.rs`): a worker over integer rows, one over record rows that
@@ -2456,4 +3136,657 @@ fn the_c_parses_text_as_the_interpreter_does() {
         bad.iter().take(8).cloned().collect::<Vec<_>>().join("\n")
     );
     assert_eq!(got.len(), want.len(), "the C stopped early");
+}
+
+/// The C is strict C99 where it uses the math constants (`PI`, `E` — `M_PI` and `M_E` are
+/// POSIX and `-std=c99` declares neither), and the release-pass probe
+/// (`LOFT_RELEASE_PASS_PROBE=1`, @PLN201) gives the C generator the ship tier's forms: an
+/// overflowing product the checked C answers as null wraps — DEFINED, through unsigned
+/// arithmetic — while a zero divisor stays null and a value that never faulted is the same.
+/// Values hand-computed: 3037000500² = 9223372037000250000, which is 2⁶⁴ −
+/// 9223372036709301616 past `i64::MAX`.
+#[test]
+fn the_c_is_strict_c99_and_the_probe_wraps_where_the_checked_c_answers_null() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("probe");
+    let file = dir.join("probe.loft");
+    fa::write(
+        &file,
+        "fn big(n: integer) -> integer { n * n }\n\
+         fn d(a: integer, b: integer) -> integer { a / b }\n\
+         fn neg(a: integer) -> integer { -a }\n\
+         fn main() {\n\
+           println(\"{PI > 3.141592653589 and PI < 3.141592653590} {E > 2.718281828459 and E < 2.718281828460}\");\n\
+           println(\"{big(3037000500)} {big(1000)} {d(7, 2)} {d(7, 0)} {neg(5)}\");\n\
+         }\n",
+    )
+    .expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let run = |probe: bool| -> String {
+        let c = dir.join(if probe { "ship.c" } else { "checked.c" });
+        let mut emit = loft::platform::process::harness_command(loft);
+        emit.arg("--emit-c").arg(&c).arg(&file);
+        if probe {
+            emit.env("LOFT_RELEASE_PASS_PROBE", "1");
+        } else {
+            emit.env_remove("LOFT_RELEASE_PASS_PROBE");
+        }
+        let emitted = emit.output().expect("run loft --emit-c");
+        assert!(
+            emitted.status.success(),
+            "the program is carried: {}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+        let exe = dir.join(if probe { "ship" } else { "checked" });
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O2", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "cc rejected the {} C:\n{}",
+            if probe { "probed" } else { "checked" },
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the C program");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(
+        run(false),
+        "true true\nnull 1000000 3 null -5\n",
+        "the checked C"
+    );
+    assert_eq!(
+        run(true),
+        "true true\n-9223372036709301616 1000000 3 null -5\n",
+        "the probed C"
+    );
+}
+
+/// The C case mapping takes an ASCII run by its own rule (A-Z and a-z, no table search) and
+/// every other character through the table, the final-sigma rule included — so a text that
+/// crosses between the two answers what Rust's `str::to_lowercase` / `to_uppercase` answer.
+/// Values hand-computed: in "ΣΑΣ" the first Σ precedes a letter (σ) and the last ends the
+/// word (ς); ß upper-cases to "SS".
+#[test]
+fn the_c_case_mapping_crosses_ascii_and_the_table_as_rust_does() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let dir = scratch("case");
+    let file = dir.join("case.loft");
+    fa::write(
+        &file,
+        "fn main() {\n\
+           println(\"{\\\"HeLLo ΣΑΣ wOrLd\\\".to_lowercase()}\");\n\
+           println(\"{\\\"àbç straße\\\".to_uppercase()}\");\n\
+           println(\"[{\\\"\\\".to_lowercase()}]\");\n\
+         }\n",
+    )
+    .expect("write program");
+    let c = dir.join("case.c");
+    let emitted = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let exe = dir.join("case");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O2"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the C program");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "hello σας world\nÀBÇ STRASSE\n[]\n"
+    );
+}
+
+/// A package's `[c] shim` as C (@PLN200 B5): the shim's sources are compiled into the unit, a
+/// scalar and a text binding answer what the interpreter's `dlopen`ed shim answers, a vector
+/// crosses by element pointer and count, and a vector the C writes through comes back written.
+/// Each value is computed by hand: `lcs_shim_sum` weights element i by i+1; `lcs_shim_fill`
+/// writes (start + i) / 1000.
+#[test]
+fn a_c_shim_compiled_into_the_unit_answers_what_the_interpreter_answers() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let src = "use lcshim::*;\n\
+fn main() {\n\
+  v = [10, 20, 30];\n\
+  out: vector<float> = [0.0, 0.0, 0.0];\n\
+  shim_fill(out, 1500);\n\
+  px = [Px { r: 1, g: 2, b: 3 }, Px { r: 0, g: 0, b: 255 }];\n\
+  println(\"{shim_mod(17, 5)} {wrapped_owned(7)} {shim_sum(v)} {out} {shim_rgb_sum(px)} {shim_half(9)}\");\n\
+}\n";
+    // 17 % 5 = 2; shim-7 bracketed; 10*1 + 20*2 + 30*3 = 140; 1.5, 1.501, 1.502; the records
+    // as bytes: 65536 + 512 + 3 + 255 = 66306; 9 / 2 from the shim's second source.
+    let want = "2 <shim-7> 140 [1.5,1.501,1.502] 66306 4\n";
+    let libdir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = scratch("shim");
+    let file = dir.join("shim.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+    let c = dir.join("shim.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "the shim program is carried: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let unit = fa::read_to_string(&c).expect("read the C");
+    // Two sources: the shim is a static archive the unit names, never two files in one
+    // translation unit (each carries a `static lcs_divmod`).
+    let links: Vec<&str> = unit
+        .lines()
+        .filter_map(|l| {
+            l.strip_prefix("/* link: ")
+                .and_then(|l| l.strip_suffix(" */"))
+        })
+        .collect();
+    assert!(
+        links.iter().any(|l| l.contains("lcshim_shim_")) && !unit.contains("lc_shim.c\""),
+        "the two-source shim is linked as its archive, not included: {links:?}"
+    );
+    let exe = dir.join("shim");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .args(&links)
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected the shim C:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the shim C program");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
+}
+
+/// @PLN203 C1 — `loft --native-c` drives the C: it emits the program, builds it with the host's
+/// C compiler, caches the binary beside the program (`.loft/cache/native-c-<key>`) and runs it
+/// with the program's arguments and its exit status.  The run bounds reach the C binary as they
+/// reach the interpreter: `LOFT_MEMORY_LIMIT` stops a growth that crosses it and says so,
+/// `LOFT_TIMEOUT` stops the run with 124.  Every value is computed by hand.
+#[test]
+fn native_c_builds_caches_and_runs_the_program_under_the_run_bounds() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("driver");
+    let _ = fa::remove_dir_all(dir.join(".loft"));
+    let file = dir.join("drive.loft");
+    // 1² + … + 10² = 385; two arguments; the exit status is the argument count + 4 = 6.
+    fa::write(
+        &file,
+        "fn main() {\n  s = 0;\n  for i in 1..=10 { s += i * i; }\n  a = arguments();\n  \
+         println(\"sum {s} args {len(a)} {a[0]}{a[1]}\");\n  exit(len(a) + 4);\n}\n",
+    )
+    .expect("write program");
+    let run = || {
+        loft::platform::process::harness_command(loft)
+            .arg("--native-c")
+            .arg(&file)
+            .args(["x", "y"])
+            .env_remove("LOFT_NATIVE_NO_CACHE")
+            .output()
+            .expect("run loft --native-c")
+    };
+    for round in ["cold", "cached"] {
+        let out = run();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "sum 385 args 2 xy\n",
+            "{round} run: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(6), "{round} run's exit status");
+    }
+    let cached: Vec<String> = fa::read_dir(dir.join(".loft").join("cache"))
+        .expect("the cache directory")
+        .into_iter()
+        .filter_map(|p| fa::file_name(&p))
+        .filter(|n| n.starts_with("native-c-"))
+        .collect();
+    assert_eq!(
+        cached.len(),
+        1,
+        "one cached binary for one program: {cached:?}"
+    );
+
+    // A vector of 2²⁰ integers needs 8 MiB of store; the limit is 1 MiB.
+    let grow = dir.join("grow.loft");
+    fa::write(
+        &grow,
+        "fn main() {\n  v: vector<integer> = [];\n  for i in 0..1048576 { v += [i]; }\n  \
+         println(\"{len(v)}\");\n}\n",
+    )
+    .expect("write program");
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&grow)
+        .env("LOFT_MEMORY_LIMIT", "1M")
+        .output()
+        .expect("run loft --native-c");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && out.stdout.is_empty(),
+        "the growth past 1 MiB stops the run before it prints: {err}"
+    );
+    assert!(
+        err.contains("store memory limit reached") && err.contains("limit 1.0 MiB"),
+        "the report names the limit: {err}"
+    );
+    // Without the limit the same program runs to its end.
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&grow)
+        .env_remove("LOFT_MEMORY_LIMIT")
+        .output()
+        .expect("run loft --native-c");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1048576\n");
+
+    // A loop no compiler can fold (the generator never reaches -1) stopped after one second.
+    let spin = dir.join("spin.loft");
+    fa::write(
+        &spin,
+        "fn main() {\n  x = 1;\n  n = 0;\n  while x != -1 { x = (x * 1103515245 + 12345) % 2147483648; \
+         n += 1; }\n  println(\"{n}\");\n}\n",
+    )
+    .expect("write program");
+    // Built first, so the timed run spends its second in the program and not in `cc`; the
+    // driver's own deadline names a phase, the C's does not.
+    let check = loft::platform::process::harness_command(loft)
+        .args(["--check", "--native-c"])
+        .arg(&spin)
+        .output()
+        .expect("run loft --check --native-c");
+    assert_eq!(String::from_utf8_lossy(&check.stdout), "ok\n");
+    let started = std::time::Instant::now();
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&spin)
+        .env("LOFT_TIMEOUT", "1")
+        .output()
+        .expect("run loft --native-c");
+    assert_eq!(
+        out.status.code(),
+        Some(124),
+        "the deadline's status: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("[timeout] deadline reached after 1s (graceful)\n"),
+        "the deadline says so: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(60),
+        "the bound held"
+    );
+}
+
+/// @PLN203 C1 — the C logs what the interpreter logs (`src/c/loft_log.h`, a port of
+/// `logger.rs`): a `log.conf` beside the program names the file, the level and a rate limit of
+/// two per site, so of four `log_info` records at one line two are written; `production = true`
+/// makes the failed assert and the panic records the program continues past, and the run exits
+/// 1.  The lines, timestamps aside, are computed by hand and both backends must write them.
+#[test]
+fn the_c_logs_what_the_interpreter_logs() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let want_log = "INFO   p.loft:2  tick 0\nINFO   p.loft:2  tick 1\nWARN   p.loft:3  warned\n\
+                    ERROR  p.loft:4  [assertion_failed] assertion failed: one is two\n\
+                    FATAL  p.loft:5  [user_panic] panic: gone\n";
+    for backend in ["--interpret", "--native-c"] {
+        let dir = scratch(&format!("log{}", backend.trim_start_matches('-')));
+        let _ = fa::remove_file(dir.join("out.log"));
+        fa::write(
+            dir.join("log.conf"),
+            "[log]\nfile = out.log\nlevel = info\nproduction = true\n\n[rate_limit]\nper_site = 2\n",
+        )
+        .expect("write log.conf");
+        let file = dir.join("p.loft");
+        fa::write(
+            &file,
+            "fn main() {\n  for i in 0..4 { log_info(\"tick {i}\"); }\n  log_warn(\"warned\");\n  \
+             assert(1 == 2, \"one is two\");\n  panic(\"gone\");\n  println(\"after\");\n}\n",
+        )
+        .expect("write program");
+        let out = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "after\n",
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{backend}: a production fault counts"
+        );
+        let log = fa::read_to_string(dir.join("out.log")).expect("the log file");
+        // `2026-10-26T14:31:51.962Z ` — the timestamp is 24 characters and a space.
+        let lines: String = log
+            .lines()
+            .map(|l| format!("{}\n", l.get(25..).unwrap_or("")))
+            .collect();
+        assert_eq!(lines, want_log, "{backend}'s log");
+        assert!(
+            log.lines()
+                .all(|l| l.len() > 24 && l.as_bytes()[23] == b'Z'),
+            "{backend}: every record starts with a UTC timestamp: {log}"
+        );
+    }
+}
+
+/// @PLN203 C6 — `--native-c --native-wasm` writes the program as a wasm32-wasi module through
+/// the C and clang, and a WASI host runs it to the interpreter's answer.  The values are
+/// computed by hand: 1² + … + 10² = 385; a text built in a loop; a hash lookup.  Skipped where
+/// clang, `wasm-ld` or `wasmtime` is missing.
+#[test]
+fn native_c_writes_a_wasm_module_a_wasi_host_runs() {
+    let have = |tool: &str| {
+        loft::platform::process::harness_command(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !have("clang") || !have("wasm-ld") || !have("wasmtime") {
+        eprintln!("skipped: needs clang, wasm-ld and wasmtime");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("wasm");
+    let file = dir.join("w.loft");
+    fa::write(
+        &file,
+        "struct P { k: integer, v: text }\nfn main() {\n  s = 0;\n  for i in 1..=10 { s += i * i; }\n  \
+         t = \"\";\n  for i in 0..4 { t += \"{i}-\"; }\n  h: hash<P[k]> = [P { k: 7, v: \"seven\" }];\n  \
+         println(\"{s} {t} {h[7].v}\");\n}\n",
+    )
+    .expect("write program");
+    let wasm = dir.join("w.wasm");
+    let build = loft::platform::process::harness_command(loft)
+        .args(["--native-c", "--native-wasm"])
+        .arg(&wasm)
+        .arg(&file)
+        .output()
+        .expect("run loft --native-wasm");
+    if String::from_utf8_lossy(&build.stderr).contains("toolchain is incomplete") {
+        eprintln!("skipped: no WASI sysroot for clang");
+        return;
+    }
+    assert!(
+        build.status.success(),
+        "the module builds: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let out = loft::platform::process::harness_command("wasmtime")
+        .args(["-W", "exceptions=y"])
+        .arg(&wasm)
+        .output()
+        .expect("run wasmtime");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "385 0-1-2-3- seven\n",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// @PLN203 C5 — `loft --tests --native-c` runs a file's tests on the C: one unit, one process
+/// per test, each test's verdict reported as the interpreter's runner reports it.  `sq_bad`
+/// asserts 3² = 10 and fails with its message; the other two pass; a test's stores do not
+/// reach the next (`counts` sees an empty vector though `fills` ran before it).
+#[test]
+fn native_c_runs_a_files_tests_one_process_each() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("ctests");
+    let file = dir.join("t.loft");
+    fa::write(
+        &file,
+        "fn sq(x: integer) -> integer { x * x }\nfn fills() { v: vector<integer> = [1, 2, 3]; \
+         assert(len(v) == 3, \"three\"); }\nfn sq_bad() { assert(sq(3) == 10, \"ten\"); }\n\
+         fn counts() { w: vector<integer> = []; assert(len(w) == 0, \"empty\"); }\n",
+    )
+    .expect("write tests");
+    for backend in ["--native-c", "--interpret"] {
+        // Under the leak gate, as the language suite runs `loft test`: a store the C leaves
+        // behind would fail a test that passes.
+        let out = loft::platform::process::harness_command(loft)
+            .args(["--tests", backend])
+            .arg(&file)
+            .env("LOFT_LEAK_CHECK", "1")
+            .output()
+            .expect("run loft --tests");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{backend}: one test fails\n{all}"
+        );
+        assert!(
+            all.contains("t.loft::sq_bad  —  assertion failed: ten"),
+            "{backend}: the failure names its test and message\n{all}"
+        );
+        assert!(
+            all.contains("1 failed; 2 passed; 3 total"),
+            "{backend}: the other two pass\n{all}"
+        );
+    }
+}
+
+/// @PLN203 C4 — `par` on threads in the C (`loft_par_run`): a scalar worker, one with a captured
+/// extra, and a text worker over records each run on four threads and answer what the rows give
+/// in order; `LOFT_TRACE_PAR_WORKERS` reports four workers for each and ONE for `par(…, 1)`, so
+/// the instrument can fail.  Hand-computed: Σi² over 0..10000 = 9999·10000·19999/6 =
+/// 333283335000; 3·Σi = 3·49995000 = 149985000; the labels `n0`…`n99` are 10·2 + 90·3 = 290
+/// characters.
+#[test]
+fn par_runs_on_threads_in_the_c_and_answers_as_in_order() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct It { name: text, n: integer }
+fn sq(x: integer) -> integer { x * x }
+fn label(it: const It) -> text { "{it.name}{it.n}" }
+fn scaled(x: integer, k: integer) -> integer { x * k }
+fn main() {
+  v: vector<integer> = [];
+  for i in 0..10000 { v += [i]; }
+  s = 0;
+  for x in v par(r = sq(x), 4) { s += r; }
+  k = 3;
+  u = 0;
+  for x in v par(m = scaled(x, k), 4) { u += m; }
+  items: vector<It> = [];
+  for i in 0..100 { items += [It { name: "n", n: i }]; }
+  t = 0;
+  for it in items par(l = label(it), 4) { t += len(l); }
+  one = 0;
+  for x in v par(r = sq(x), 1) { one += r; }
+  println("{s} {u} {t} {one}");
+}
+"#;
+    let want = "333283335000 149985000 290 333283335000\n";
+    let dir = scratch("parthreads");
+    let file = dir.join("p.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&file)
+        .env("LOFT_TRACE_PAR_WORKERS", "1")
+        .output()
+        .expect("run loft --native-c");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        want,
+        "the C: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let workers: Vec<String> = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter_map(|l| l.split("distinct_workers=").nth(1).map(str::to_string))
+        .collect();
+    assert_eq!(workers, ["4", "4", "4", "1"], "workers per par loop");
+}
+
+/// @PLN203 C6 — `--native-c --html` writes a page that hosts the program's wasm32-wasi module
+/// with a WASI layer of its own: the page's script, run here under Node with a `document` of two
+/// methods, writes what the program prints into the page and records the exit status.
+/// Hand-computed: Σi² over 1..=10 = 385; a text built in a loop; a hash lookup; `exit(3)`.
+/// Skipped where clang, `wasm-ld` or Node is missing.
+#[test]
+fn native_c_html_page_runs_its_program() {
+    let have = |tool: &str| {
+        loft::platform::process::harness_command(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !have("clang") || !have("wasm-ld") || !have("node") {
+        eprintln!("skipped: needs clang, wasm-ld and node");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("html");
+    let file = dir.join("page.loft");
+    fa::write(
+        &file,
+        "struct P { k: integer, v: text }\nfn main() {\n  s = 0;\n  for i in 1..=10 { s += i * i; }\n  \
+         t = \"\";\n  for i in 0..4 { t += \"{i}-\"; }\n  h: hash<P[k]> = [P { k: 7, v: \"seven\" }];\n  \
+         println(\"{s} {t} {h[7].v}\");\n  exit(3);\n}\n",
+    )
+    .expect("write program");
+    let html = dir.join("page.html");
+    let build = loft::platform::process::harness_command(loft)
+        .args(["--native-c", "--html"])
+        .arg(&html)
+        .arg(&file)
+        .output()
+        .expect("run loft --html");
+    if String::from_utf8_lossy(&build.stderr).contains("toolchain is incomplete") {
+        eprintln!("skipped: no WASI sysroot for clang");
+        return;
+    }
+    assert!(
+        build.status.success(),
+        "the page builds: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let runner = dir.join("run.js");
+    fa::write(
+        &runner,
+        "const fs = require('fs');\n\
+         const html = fs.readFileSync(process.argv[2], 'utf8');\n\
+         const js = html.split('<script id=\"loft-run\">')[1].split('</script>')[0];\n\
+         let text = '';\n\
+         globalThis.window = globalThis;\n\
+         globalThis.document = { title: '',\n\
+           getElementById: () => ({ appendChild: (n) => { text += n.data !== undefined ? n.data : n.textContent; } }),\n\
+           createTextNode: (t) => ({ data: t }),\n\
+           createElement: () => ({ className: '', textContent: '' }) };\n\
+         eval(js);\n\
+         const t = setInterval(() => { if (window.loftExit !== undefined) { clearInterval(t);\n\
+           process.stdout.write(text + 'exit=' + window.loftExit + '\\n'); } }, 10);\n",
+    )
+    .expect("write runner");
+    let out = loft::platform::process::harness_command("node")
+        .arg(&runner)
+        .arg(&html)
+        .output()
+        .expect("run node");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "385 0-1-2-3- seven\nexit=3\n",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
