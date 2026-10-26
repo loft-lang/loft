@@ -877,9 +877,9 @@ guarded on the local being unbound — and is the bisect step for a wrong consta
 vector inside a loop on native.  `LOFT_TRACE_LITHOIST=1` names each literal admitted and
 each declined with its reason.
 **`LOFT_NO_RETBUF_ADOPT=1`** (@PLN157 § V-u) makes a vector-returning function keep its
-delivery copies — with it on, a shape-A result local ADOPTS the hidden return buffer
-(built where it must end up; the exits deliver nothing; the buffer's backing reused across
-calls) — and is the bisect step for a wrong vector return, a leak at a vector-returning
+delivery copies — with it on, a shape-A result local ADOPTS the hidden return buffer (built
+where it must end up; the exits deliver nothing; the backing reused across calls), on the C
+backend too — and is the bisect step for a wrong vector return, a leak at a vector-returning
 call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
 **`LOFT_NO_HASH_RESERVE=1`** (`@FR-R-PushFill`'s hash clause) makes a counted loop that inserts
 into a hash grow the table as it fills again, instead of reserving it for the loop's inserts

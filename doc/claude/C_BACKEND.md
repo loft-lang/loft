@@ -173,6 +173,15 @@ writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`
 `LOFT_VERIFY` catches a held vector that changed.  `LOFT_NO_VECTOR_HOIST=1` holds none and
 `LOFT_NO_WRITE_HOIST=1` none in a loop that writes, as for the Rust writer.
 
+**Adopted return buffers.**  A vector-returning function whose result local is delivered
+through the hidden return buffer builds in that buffer (`@FR-R-RetAdopt`): the C reads the Rust
+writer's own analysis, `generation::hoist::ret_adopt`.  The local's bind is the buffer — minted
+as its witness would have been when the caller offered none, emptied when it did — the witness
+store is never minted, and the exit's clear-and-append copy emits nothing.  The held-vector gate
+above stays sound: it holds nothing across a loop that grows a store, so a buffer that shares a
+parameter's store moves no held record.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies, as for the
+Rust writer; `tests/c_emit.rs` counts the adopted binds both ways against hand-computed values.
+
 **Keyed collections.**  A persisted image carries a collection's layout, so the layouts are
 loft's.  A hash is `src/hash.rs` ported (`loft_hash.h`): the seeded table, inline and arena
 entries, a linked type's borrowed records, and its `Stores` routines — the one-probe insert and

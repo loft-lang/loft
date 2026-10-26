@@ -147,6 +147,13 @@ pub(crate) struct FnWriter<'a> {
     cur_line: u32,
     /// `LOFT_C_WHERE` reported this function's refusal already.
     where_told: bool,
+    /// `@FR-R-RetAdopt` — the result local that IS the hidden return buffer
+    /// (`generation::hoist::ret_adopt`, the analysis the Rust generator reads): it builds in
+    /// the caller's buffer, its witness store is never minted, and the delivery copy at the
+    /// exit has nothing to move.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies.
+    adopt: Option<crate::generation::hoist::RetAdopt>,
+    /// Inside an adopted function's `one_buffer_vec_copy` delivery block.
+    in_delivery: u32,
 }
 
 impl<'a> FnWriter<'a> {
@@ -190,6 +197,12 @@ impl<'a> FnWriter<'a> {
             hoist_cache: std::collections::HashMap::new(),
             cur_line: 0,
             where_told: false,
+            adopt: if std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0") {
+                None
+            } else {
+                crate::generation::hoist::ret_adopt(cx.data, d)
+            },
+            in_delivery: 0,
             decls: Vec::new(),
             // A parameter arrives bound: its first `Set` is a rebind.
             bound: {
@@ -1032,6 +1045,14 @@ impl<'a> FnWriter<'a> {
         if self.links[var as usize] && self.shapes[var as usize] == CType::Ref {
             return self.link_rebind(var, x, ind);
         }
+        if let Some(a) = self.adopt
+            && var == a.v
+            && matches!(x.unspan(), Value::Call(d, _) if self.cx.data.def(*d).name() == "OpGetField")
+        {
+            self.bound[var as usize] = true;
+            self.adopted_init(a, ind)?;
+            return Ok(());
+        }
         let first = !std::mem::replace(&mut self.bound[var as usize], true);
         // An owned vector variable bound to null gets a store of its own whose record holds
         // the (empty) vector — the bytecode writer's `gen_set_first_vector_null`: the variable
@@ -1365,7 +1386,48 @@ impl<'a> FnWriter<'a> {
     }
 
     fn block_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
-        self.ops_stmt(&b.operators, ind)
+        let delivery = self.delivery_block(b);
+        self.in_delivery += u32::from(delivery);
+        let r = self.ops_stmt(&b.operators, ind);
+        self.in_delivery -= u32::from(delivery);
+        r
+    }
+
+    /// `@FR-R-RetAdopt` — is `b` the exit delivery of an adopted result local?  Inside it the
+    /// buffer's clear would wipe the result and its append would copy the buffer into itself,
+    /// so both emit nothing; the entry clear (outside any such block) stays, as the buffer's
+    /// reuse contract.
+    fn delivery_block(&self, b: &Block) -> bool {
+        self.adopt.is_some() && b.name == "one_buffer_vec_copy"
+    }
+
+    /// `@FR-R-RetAdopt` — the adopted local's bind: it IS the return buffer.  A caller that
+    /// offered none gets one minted exactly as the witness would have been, so ownership
+    /// travels the same route; an offered one is emptied, as the delivery's clear did.
+    fn adopted_init(
+        &mut self,
+        a: crate::generation::hoist::RetAdopt,
+        ind: usize,
+    ) -> Result<(), String> {
+        let mint =
+            self.store_operator("OpDatabase", &[Value::Var(a.buf), Value::Int(a.db_tp)], ind)?;
+        self.cx.name_types();
+        let buf = self.var(a.buf);
+        self.line(
+            ind,
+            &format!(
+                "if ({buf}.store_nr == 0xFFFF || {buf}.rec == 0) {{ {}; }} else {{ loft_vec_clear_release(loft_types, loft_ntypes, {buf}); }}",
+                mint.code
+            ),
+        );
+        let v = self.var(a.v);
+        self.line(ind, &format!("{v} = {buf};"));
+        Ok(())
+    }
+
+    /// The adopted return buffer's variable when `v` names it.
+    fn adopted_buffer(&self, v: &Value) -> bool {
+        matches!((self.adopt, v.unspan()), (Some(a), Value::Var(b)) if a.buf == *b)
     }
 
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
@@ -1439,7 +1501,13 @@ impl<'a> FnWriter<'a> {
                 self.null_into(target, c, ind);
                 Ok(())
             }
-            Value::Block(b) => self.assign_seq(&b.operators, target, c, ind),
+            Value::Block(b) => {
+                let delivery = self.delivery_block(b);
+                self.in_delivery += u32::from(delivery);
+                let r = self.assign_seq(&b.operators, target, c, ind);
+                self.in_delivery -= u32::from(delivery);
+                r
+            }
             Value::Insert(ops) => self.assign_seq(ops, target, c, ind),
             Value::If(cond, t, e) => {
                 let cond = self.expr(cond, ind)?;
@@ -2925,6 +2993,13 @@ impl<'a> FnWriter<'a> {
             return Ok(e);
         }
         match (name, args) {
+            // `@FR-R-RetAdopt` — the adopted local's witness is never minted, so neither is
+            // its store nor the zero its vector field would have been given.
+            ("OpDatabase" | "OpSetInt4", [Value::Var(w), ..])
+                if self.adopt.is_some_and(|a| a.vdb == *w) =>
+            {
+                Ok(E::new("((void) 0)", K::Void))
+            }
             ("OpDatabase", [Value::Var(v), tp]) => {
                 let tp = Self::literal(tp, "type")?;
                 let tp = u16::try_from(tp).map_err(|_| "a type number out of range".to_string())?;
@@ -3485,6 +3560,9 @@ impl<'a> FnWriter<'a> {
                 }
                 Ok(E::new(format!("loft_vec_finish({v})"), K::Void))
             }
+            ("OpClearVector", [v]) if self.in_delivery > 0 && self.adopted_buffer(v) => {
+                Ok(E::new("((void) 0)", K::Void))
+            }
             ("OpClearVector", [v]) => {
                 self.cx.name_types();
                 let v = self.expr(v, ind)?;
@@ -3684,6 +3762,9 @@ impl<'a> FnWriter<'a> {
     fn collection_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
             ("OpAdoptVector", [v, other, tp]) => self.adopt_vector(v, other, tp, ind),
+            ("OpAppendVector", [v, ..]) if self.in_delivery > 0 && self.adopted_buffer(v) => {
+                Ok(E::new("((void) 0)", K::Void))
+            }
             ("OpPrependVector" | "OpAppendVector", [v, other, tp]) => {
                 self.append_vector_op(name, v, other, tp, ind)
             }

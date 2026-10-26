@@ -578,6 +578,159 @@ fn main() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
 }
 
+/// `@FR-R-RetAdopt` as C: a vector-returning function whose result local is delivered through
+/// the hidden return buffer builds IN that buffer — the bind is the buffer, the witness store is
+/// never minted, and the exit's clear-and-append copy emits nothing.  Four shapes adopt here:
+/// the stdlib `split` (texts), a typed literal build (`vfill`), a struct build over a parameter
+/// (`twice`, also nested in itself) and a recursion that walks its own call's result (`rec`);
+/// the destinations are a fresh local, a record FIELD (a placed buffer), an inline argument and
+/// a buffer reused by every round of a loop.  Each value is computed by hand, and the census
+/// counts the live records after 10 and after 1010 rounds: an adopted bind that minted or kept
+/// what the caller's buffer held would grow it.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies and
+/// must answer the same — the falsifier of the structural count.
+#[test]
+fn a_returned_vector_builds_in_the_callers_buffer() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct P { x: integer, y: integer }
+struct Holder { name: text, items: vector<text>, pts: vector<P> }
+fn vfill(n: integer) -> vector<text> {
+  result: vector<text> = [];
+  result += ["aa"];
+  result += ["b{n}"];
+  result
+}
+fn twice(v: vector<P>) -> vector<P> {
+  out: vector<P> = [];
+  for e in v {
+    out += [P { x: e.x, y: e.y }];
+    out += [P { x: e.x + 1000, y: e.y }];
+  }
+  out
+}
+fn rec(n: integer) -> vector<integer> {
+  res = [];
+  if n > 0 {
+    for v in rec(n - 1) { res += [v + 100]; }
+    res += [n];
+  }
+  res
+}
+fn census() -> integer {
+  ct = store_memory();
+  ci = ct.find("records ");
+  if !ci { return -1 }
+  cj = ci + 8;
+  cn = 0;
+  while cj < len(ct) && ct[cj] >= '0' && ct[cj] <= '9' {
+    cn = cn * 10 + (ct[cj] as integer - '0' as integer);
+    cj += 1;
+  }
+  cn
+}
+fn rounds(n: integer) -> integer {
+  keep = "";
+  ps: vector<P> = [P { x: 7, y: 8 }];
+  for k in 0..n {
+    v = "a,b,{k}".split(',');
+    keep = v[2];
+    ps = twice([P { x: k, y: 1 }]);
+  }
+  len(keep) + len(ps)
+}
+fn main() {
+  parts = "a,bb,,ccc".split(',');
+  println("{parts} {len("x,".split(','))} {len("".split(','))}");
+  h = Holder { name: "h", items: [], pts: [] };
+  h.items = vfill(3);
+  println("{h.items}");
+  h.items = "p;q".split(';');
+  h.pts = twice([P { x: 1, y: 2 }, P { x: 3, y: 4 }]);
+  println("{h.items} {len(h.pts)} {h.pts[1].x} {h.pts[3].y}");
+  t = 0;
+  s = "x";
+  for k in 0..50 {
+    v = s.split(',');
+    t += len(v);
+    s += ",y{k % 3}";
+  }
+  rounds(10);
+  c10 = census();
+  rounds(1000);
+  println("census {census() - c10}");
+  println("{t} {rec(4)} {twice(twice([P { x: 5, y: 6 }]))[3].x}");
+}
+"#;
+    // "x,".split(',') ends a part at the separator and keeps the empty tail: 2 parts; "" has
+    // none.  Round k of the loop splits k + 1 parts: 1 + 2 + … + 50 = 1275.  rec(n) is
+    // rec(n - 1) each + 100, then n: [1], [101, 2], [201, 102, 3], [301, 202, 103, 4].
+    // twice([5]) = [5, 1005]; twice of that = [5, 1005, 1005, 2005].
+    let want = "[\"a\",\"bb\",\"\",\"ccc\"] 2 0\n[\"aa\",\"b3\"]\n[\"p\",\"q\"] 4 1001 4\n\
+                census 0\n1275 [301,202,103,4] 2005\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("ret-adopt");
+    let file = dir.join("adopt.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    // The adopted bind: a caller that offered no buffer gets one, an offered one is emptied.
+    let bind = "___retbuf.rec == 0) {";
+    for (mode, off, binds) in [("adopted", "0", 4), ("copied", "1", 0)] {
+        let c = dir.join(format!("{mode}.c"));
+        let emit = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_RETBUF_ADOPT", off)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{mode}: the program is carried: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        assert_eq!(
+            text.matches(bind).count(),
+            binds,
+            "{mode}: split, vfill, twice and rec each adopt their buffer"
+        );
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: cc rejected the C:\n{}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run the C program");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
+}
+
 /// `par` as C (`src/c/body/par.rs`): a worker over integer rows, one over record rows that
 /// returns a text, and one with an extra argument.  The C runs the rows in order; each result
 /// is the one a thread computes, so the hand-computed values hold on both.
