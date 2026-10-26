@@ -11834,6 +11834,18 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             break 'native;
         }
         if native_c {
+            // Nothing to run (a library, a file of declarations): what the rustc path says of a
+            // crate with no `main`, and a clean exit.
+            if !loft::c::has_entry(&p.data) && native_emit.is_none() {
+                if check_only || dist_dir.is_some() {
+                    println!("ok");
+                } else {
+                    eprintln!(
+                        "loft: `{abs_file}` defines no `main`, so there is nothing to run — it compiled cleanly."
+                    );
+                }
+                return;
+            }
             let tier = if native_debug {
                 c_driver::Tier::Debug
             } else if ship_build {

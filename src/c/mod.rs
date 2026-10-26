@@ -1878,6 +1878,13 @@ fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> 
     }
 }
 
+/// Does the program have anything to run — a `main`, or a test?  A program with neither (a
+/// library, a file of declarations) compiles to nothing a driver could run.
+#[must_use]
+pub fn has_entry(data: &Data) -> bool {
+    data.def_nr("n_main") < data.definitions() || !test_functions(data).is_empty()
+}
+
 /// The program's tests, the way `loft --tests` picks them: its own zero-parameter functions,
 /// only the `test_*` ones when it names any.
 fn test_functions(data: &Data) -> Vec<u32> {
