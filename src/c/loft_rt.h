@@ -2427,9 +2427,7 @@ LOFT_HOT_INLINE uint64_t loft_f64_bits(double x) { uint64_t b; memcpy(&b, &x, 8)
 LOFT_HOT_INLINE uint32_t loft_f32_bits(float x) { uint32_t b; memcpy(&b, &x, 4); return b; }
 LOFT_HOT_INLINE uint32_t loft_i4_bits(int64_t x) { return x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x; }
 
-#ifdef LOFT_FOREIGN
 static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size);
-#endif
 
 /* OpKeepRange (Stores::vector_keep_range): `v = v[lo..hi]` of scalar elements, kept in place —
  * the span moved to the front of its record and the length set.  A foreign view takes the copy
@@ -2521,7 +2519,11 @@ static void loft_vec_replace(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_
 }
 
 /* OpAppendCopy (State::append_copy): `[x; n]` — the template is the vector's last element and
- * `n` counts it, so n - 1 deep copies of it follow; n <= 0 removes the template too. */
+ * `n` counts it, so n - 1 deep copies of it follow; n <= 0 removes the template too.  As
+ * Stores::fill_from_template: one append and one resize to exactly the total (the record the
+ * interpreter's layout has), the template copied in doubling blocks — each copy takes as many
+ * elements as are already there — and the claims copied per element only for a type that
+ * holds any. */
 static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, int64_t count) {
     uint32_t multiply = count <= 0 ? 0 : count > (int64_t) UINT32_MAX ? UINT32_MAX : (uint32_t) count;
     if (v.store_nr == 0xFFFF || v.rec == 0) return;
@@ -2536,12 +2538,25 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
     }
     uint32_t length = (uint32_t) loft_vec_len(v);
     uint32_t size = T[ctp].size;
-    for (uint32_t i = 1; i < multiply; i++) {
-        loft_ref e = loft_vec_append(v, size);
-        loft_ref a = { v.store_nr, loft_collection_rec(loft_store_of(v), v.rec, v.pos), 8 + (length - 1) * size };
-        loft_copy_bytes(e, 0, a, 0, size);
-        if (T[ctp].kind != LOFT_T_SCALAR && T[ctp].kind != LOFT_T_DBREF) loft_copy_claims(T, ctp, a, e);
-        loft_vec_finish(v);
+    uint32_t extra = multiply - 1;
+    if (extra == 0 || length == 0) return;
+    (void) loft_vec_append(v, size);
+    loft_vec_set_size(v, extra, size);
+    s = loft_store_of(v);
+    r = loft_collection_rec(s, v.rec, v.pos);
+    uint32_t from = 8 + (length - 1) * size;
+    uint8_t *base = (uint8_t *) loft_at(s, r, 0);
+    for (uint32_t done = 1; done < multiply;) {
+        uint32_t n = done < multiply - done ? done : multiply - done;
+        memcpy(base + from + (size_t) done * size, base + from, (size_t) n * size);
+        done += n;
+    }
+    if (T[ctp].kind != LOFT_T_SCALAR && T[ctp].kind != LOFT_T_DBREF) {
+        loft_ref a = { v.store_nr, r, from };
+        for (uint32_t i = 1; i <= extra; i++) {
+            loft_ref e = { v.store_nr, r, from + i * size };
+            loft_copy_claims(T, ctp, a, e);
+        }
     }
 }
 
