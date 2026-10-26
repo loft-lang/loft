@@ -681,7 +681,11 @@ impl Scopes<'_> {
                 || function.is_argument(*v)
                 || function.rebind_orig(*v).is_some()
                 || self.view_rebind.contains_key(v)
+                // @FR-O-Proxy asks free — a free follows (the snapshot's release after the
+                // call), so the local must own its store: empty deps, and @FR-O-Override's
+                // never-free flag vetoes it.
                 || !function.tp(*v).depend().is_empty()
+                || function.is_skip_free(*v)
             {
                 continue;
             }
@@ -689,7 +693,7 @@ impl Scopes<'_> {
                 j != i
                     && root(other) == Some(*v)
                     && attrs.get(j).is_some_and(|at| {
-                        !matches!(at.typedef, Type::RefVar(_))
+                        !matches!(at.typedef.base(), Type::RefVar(_))
                             && Type::RefVar(Box::new(at.typedef.clone())).is_amp_rebindable_heap()
                     })
             });
