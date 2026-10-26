@@ -347,8 +347,9 @@ pub fn op_range<F: RangeFacts + ?Sized>(
                     let x = a(0)?;
                     Some((x.0 >> k, x.1 >> k))
                 }
-                // The store layout's facts: a length word is `u32`, a byte is a byte.
-                ("OpSizeText" | "OpLengthVector", 1) => Some((0, U32_MAX)),
+                // The store layout's facts: a length word is `u32`, a byte is a byte, and a
+                // text has no more characters than bytes.
+                ("OpSizeText" | "OpLengthText" | "OpLengthVector", 1) => Some((0, U32_MAX)),
                 ("t_4text_size" | "t_4text_len" | "t_6vector_len", 1) => Some((0, U32_MAX)),
                 ("t_4text_byte_at", 2) => Some((0, 255)),
                 _ => None,

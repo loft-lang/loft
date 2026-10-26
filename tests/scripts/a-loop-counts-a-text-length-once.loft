@@ -1,0 +1,129 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TextLen` — a loop counts a text's length once, until the text is written.
+//
+// `len` counts characters, so `while i < len(t)` walked the whole text on every iteration: a
+// self-tail call over a 100 000-character text took seconds on every backend.  The scope pass
+// now keeps the count in a memo per loop, cleared before each entry and after every statement
+// that may write the text (`text_len`, `LOFT_NO_TEXT_LEN=1` counts at every use).  What can go
+// wrong is a stale count: a write the memo misses (an append, a rebind, a clear, a format, a
+// write through `&text`, a write in an arm or an inner loop), a memo carried from one entry of
+// the loop into the next, a count of bytes for characters.  Values hand-computed.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is a planted
+//   defect (2026-10-26), each cell run alone on --interpret: no memo clear after a write fails
+//   cells 2 (the loop never ends), 3, 4, 5 and 8; cells 1, 7 and 9-12 write nothing in their
+//   loops, cells 6 (an escape) and 13 (a borrowed text) are declined, so the defect cannot reach
+//   them.  On main every cell passes (no memo).
+
+struct Named { name: text }
+
+fn grow(s: &text) { s += "q"; }
+
+fn pass_text(src: text, i: integer) -> integer {
+  if i < len(src) && src[i] == ' ' { pass_text(src, i + 1) } else { i }
+}
+
+fn count_a(p: text) -> integer {
+  n = 0;
+  i = 0;
+  while i < len(p) { if p[i] == 'a' { n += 1; } i += 1; }
+  n
+}
+
+fn total_len(t: text) -> integer {
+  s = 0;
+  for _k in 0..3 { s += len(t); }
+  s
+}
+
+fn main() {
+  // 1. An unchanged text: the cursor stops at the first non-blank.
+  blanks = "";
+  b = 0;
+  while b < 2000 { blanks += " "; b += 1; }
+  blanks += "x";
+  i = 0;
+  while i < len(blanks) && blanks[i] == ' ' { i += 1; }
+  assert(i == 2000, "1 unchanged: {i}");
+
+  // 2. The loop's own test reads the length the body grows: 0, 2, 4, 6, 8, 10.
+  t2 = "";
+  n2 = 0;
+  while len(t2) < 10 { t2 += "ab"; n2 += 1; }
+  assert(n2 == 5 && len(t2) == 10, "2 grown in the test: {n2} {len(t2)}");
+
+  // 3. A write in one arm, a read in the other: 3 + 5 + 7.
+  t3 = "a";
+  s3 = 0;
+  for k in 0..6 { if k % 2 == 0 { t3 += "bc"; } else { s3 += len(t3); } }
+  assert(s3 == 15 && len(t3) == 7, "3 arms: {s3} {len(t3)}");
+
+  // 4. The outer loop writes, the inner one reads: 2+2, 4+4, 6+6.
+  t4 = "";
+  s4 = 0;
+  for _o in 0..3 { t4 += "xy"; for _k in 0..2 { s4 += len(t4); } }
+  assert(s4 == 24, "4 nested: {s4}");
+
+  // 5. Rebound and cleared mid-loop: 5, 5, 3, 0.
+  t5 = "hello";
+  s5 = 0;
+  for k in 0..4 {
+    s5 += len(t5);
+    if k == 1 { t5 = "xyz"; }
+    if k == 2 { t5 = ""; }
+  }
+  assert(s5 == 13, "5 rebound: {s5}");
+
+  // 6. Written through a `&text` parameter: 2, 3, 4.
+  t6 = "ab";
+  s6 = 0;
+  for _k in 0..3 { s6 += len(t6); grow(t6); }
+  assert(s6 == 9 && len(t6) == 5, "6 through a reference: {s6} {len(t6)}");
+
+  // 7. Characters, not bytes: eleven characters in thirteen bytes.
+  t7 = "héllo wörld";
+  c7 = 0;
+  j7 = 0;
+  while j7 < len(t7) { j7 += 1; c7 += 1; }
+  assert(c7 == 11 && size(t7) == 13, "7 characters: {c7} {size(t7)}");
+
+  // 8. A format append (1..10, then 12 and 14) and a rebind to a sum (1..4).
+  t8 = "";
+  s8 = 0;
+  for k in 0..12 { t8 += "{k}"; s8 += len(t8); }
+  u8 = "";
+  w8 = 0;
+  for _k in 0..4 { u8 = u8 + "x"; w8 += len(u8); }
+  assert(s8 == 81 && w8 == 10, "8 formats: {s8} {w8}");
+
+  // 9. A self-tail call is a loop: the count of its parameter.
+  assert(pass_text("{blanks}", 0) == 2000, "9 tail call: {pass_text(blanks, 0)}");
+
+  // 10. A text parameter.
+  assert(count_a("banana") == 3, "10 parameter: {count_a("banana")}");
+
+  // 11. `break` and `continue`: the odd steps up to the length, 1 + 3 + 5.
+  t11 = "abcdef";
+  s11 = 0;
+  i11 = 0;
+  while true {
+    i11 += 1;
+    if i11 > len(t11) { break; }
+    if i11 % 2 == 0 { continue; }
+    s11 += i11;
+  }
+  assert(s11 == 9, "11 break and continue: {s11}");
+
+  // 12. One loop entered twice with different texts: 3 * 2, then 3 * 4.
+  assert(total_len("ab") == 6 && total_len("abcd") == 12, "12 entered twice: {total_len("ab")} {total_len("abcd")}");
+
+  // 13. A text read off a record whose field the loop writes: the rewrite declines a
+  // borrowed text, so the answer is the one the binding rules give with it off (9).
+  rs = Named { name: "abc" };
+  n13 = rs.name;
+  s13 = 0;
+  for _k in 0..3 { s13 += len(n13); rs.name += "z"; }
+  assert(s13 == 9 && len(rs.name) == 6, "13 borrowed: {s13} {len(rs.name)}");
+}
