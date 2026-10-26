@@ -158,6 +158,19 @@ pub(crate) struct FnWriter<'a> {
     /// each path, its `loft_win`, the `loft_ref` the vector operand was read into, and the
     /// element width.
     windows: Vec<(crate::opt::writes::PathKey, String, String, u32)>,
+    /// `@FR-R-TextBorrow` (`opt::text_borrow::borrowed_text_walks`, the analysis native reads): the
+    /// text locals a walk binds to an element it only READS, under a loop that writes no store —
+    /// each a `loft_str` view of the element, as a text parameter is, never a copy.
+    borrowed: Vec<bool>,
+    /// `@FR-R-CharWalk` (`opt::char_walk::char_walks`, which the interpreter and native read):
+    /// this function's `for c in t` walks by loop scope — their step takes an ASCII byte without
+    /// decoding it, and their null test is asked once where the loop never writes `t`.
+    /// `LOFT_NO_CHAR_WALK=1` writes every step as the lowering gives it.
+    char_walks: std::collections::BTreeMap<u16, crate::opt::char_walk::CharWalk>,
+    /// `@FR-R-LazySplit` (`hoist::lazy_splits`, native's analysis): the hidden vectors of
+    /// `for piece in t.split(c)` loops, by variable — each walked as a `loft_ls` over the text,
+    /// the vector never built.  `LOFT_NO_LAZY_SPLIT=1` builds them, as on native.
+    lazy: std::collections::BTreeMap<u16, crate::generation::hoist::LazySplit>,
     /// `@FR-R-CompleteWrite` (`hoist::complete_writes`): the element types every mint of this
     /// function writes completely, so the default image copied into a fresh element writes
     /// nothing that survives; computed on first use.
@@ -175,6 +188,91 @@ struct WindowLoop<'b> {
     inclusive: bool,
     pushes: u32,
     size: u32,
+}
+
+/// `@FR-R-TextBorrow` — the text locals of function `d` the C holds as a `loft_str` view rather
+/// than an owned copy: the walk variables `opt::text_borrow::borrowed_text_walks` admits and the
+/// plain locals of `hoist::borrowed_store_texts` (its run-time-tested and work-text clauses need
+/// emitter support the C does not have, so they keep their copies).  A local is kept only when
+/// EVERY bind of it is a shape the view form writes without a temporary — another borrowed
+/// local or a text parameter, a literal, a text field read, a block ending in one — so
+/// admitting it never turns a carried program into a refused one.
+/// `LOFT_NO_TEXT_BORROW=1` keeps every copy, as on native.
+fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
+    let def = cx.data.def(d);
+    let vars = def.variables();
+    let n = vars.count() as usize;
+    let mut b = vec![false; n];
+    if std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0") {
+        return b;
+    }
+    let walks = crate::opt::text_borrow::borrowed_text_walks(
+        cx.data,
+        d,
+        &std::collections::BTreeSet::new(),
+        &std::collections::BTreeMap::new(),
+    );
+    let store = crate::generation::hoist::borrowed_store_texts(cx.data, d, &walks);
+    let plain = store
+        .locals
+        .iter()
+        .filter(|v| !store.tested.contains_key(v) && !store.work.contains(v))
+        .copied();
+    for v in walks.keys().copied().chain(plain) {
+        let i = v as usize;
+        if i < n
+            && !vars.is_argument(v)
+            && matches!(vars.tp(v).base(), crate::data::Type::Text(_))
+            && !matches!(vars.tp(v), crate::data::Type::RefVar(_))
+        {
+            b[i] = true;
+        }
+    }
+    // Every bind of a candidate, gathered once.
+    let mut binds: Vec<(u16, &Value)> = Vec::new();
+    def.code().any_node(&mut |node| {
+        if let Value::Set(v, x) = node
+            && b.get(*v as usize).copied().unwrap_or(false)
+        {
+            binds.push((*v, x));
+        }
+        false
+    });
+    loop {
+        let mut dropped = false;
+        for (v, x) in &binds {
+            if b[*v as usize] && !view_bind(cx, vars, &b, x) {
+                b[*v as usize] = false;
+                dropped = true;
+            }
+        }
+        if !dropped {
+            return b;
+        }
+    }
+}
+
+/// Is `x` a text the view form of a borrowed bind writes with no temporary (`borrowed_texts`)?
+fn view_bind(cx: &Cx, vars: &Function, borrowed: &[bool], x: &Value) -> bool {
+    match x.unspan() {
+        Value::Block(bl) => bl
+            .operators
+            .iter()
+            .rev()
+            .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            .is_some_and(|last| view_bind(cx, vars, borrowed, last)),
+        Value::Var(w) => {
+            borrowed.get(*w as usize).copied().unwrap_or(false)
+                || (vars.is_argument(*w)
+                    && matches!(vars.tp(*w).base(), crate::data::Type::Text(_))
+                    && !matches!(vars.tp(*w), crate::data::Type::RefVar(_)))
+        }
+        Value::Text(_) => true,
+        // A substring is left out: the C may copy its source into a statement temporary first,
+        // which a view would outlive (three corpus programs did).
+        Value::Call(d, _) => cx.data.def(*d).name() == "OpGetText",
+        _ => false,
+    }
 }
 
 impl<'a> FnWriter<'a> {
@@ -225,6 +323,17 @@ impl<'a> FnWriter<'a> {
             },
             in_delivery: 0,
             windows: Vec::new(),
+            borrowed: borrowed_texts(cx, d),
+            lazy: if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
+                std::collections::BTreeMap::new()
+            } else {
+                crate::generation::hoist::lazy_splits(cx.data, d)
+            },
+            char_walks: if std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0") {
+                std::collections::BTreeMap::new()
+            } else {
+                crate::opt::char_walk::char_walks(cx.data, d)
+            },
             complete_mints: None,
             decls: Vec::new(),
             // A parameter arrives bound: its first `Set` is a rebind.
@@ -321,6 +430,10 @@ impl<'a> FnWriter<'a> {
                 let _ = writeln!(out, "    {} *{name} = 0;", held(c));
                 continue;
             }
+            if self.borrowed[v] && c == CType::Text {
+                let _ = writeln!(out, "    loft_str {} = {{ 0, 0 }};", self.var(v as u16));
+                continue;
+            }
             let _ = writeln!(
                 out,
                 "    {} {} = {};",
@@ -353,6 +466,7 @@ impl<'a> FnWriter<'a> {
     fn text_held(&self, v: u16) -> bool {
         self.shapes[v as usize] == CType::Text
             && (!self.params[v as usize] || self.links[v as usize])
+            && !self.borrowed[v as usize]
     }
 
     fn line(&mut self, ind: usize, s: &str) {
@@ -375,7 +489,12 @@ impl<'a> FnWriter<'a> {
     /// Free every text the function holds: its locals and its temporaries.
     fn epilogue(&mut self, ind: usize) {
         let mut texts: Vec<String> = (0..self.shapes.len())
-            .filter(|&v| !self.params[v] && !self.links[v] && self.shapes[v] == CType::Text)
+            .filter(|&v| {
+                !self.params[v]
+                    && !self.links[v]
+                    && !self.borrowed[v]
+                    && self.shapes[v] == CType::Text
+            })
             .map(|v| self.var(v as u16))
             .collect();
         // The texts a tuple local owns.
@@ -977,8 +1096,12 @@ impl<'a> FnWriter<'a> {
         self.labels += 1;
         let l = self.labels;
         self.loops.push(l);
-        self.line(ind, "for (;;) {");
-        self.block_stmt(b, ind + 1)?;
+        if let Some(walk) = self.char_walks.get(&b.scope).cloned() {
+            self.char_walk_loop(b, &walk, ind)?;
+        } else {
+            self.line(ind, "for (;;) {");
+            self.block_stmt(b, ind + 1)?;
+        }
         self.line(ind, &format!("cont_{l}:;"));
         self.line(ind, "}");
         self.line(ind, &format!("brk_{l}:;"));
@@ -989,6 +1112,56 @@ impl<'a> FnWriter<'a> {
             // continue of its own (`hoist::push_loop`).
             let (_, w, _, _) = self.windows.pop().expect("the window this loop opened");
             self.line(ind, &format!("loft_win_sync({w});"));
+        }
+        Ok(())
+    }
+
+    /// `@FR-R-CharWalk` — a `for c in t` walk: its null test once before the loop where the loop
+    /// never writes `t`, and its step's ASCII arm — a byte below 0x80 at `next` is the character,
+    /// one byte wide — ahead of the step as the lowering writes it, which every other byte takes.
+    /// Opens the loop's `for (;;) {`; the caller closes it.
+    fn char_walk_loop(
+        &mut self,
+        b: &Block,
+        walk: &crate::opt::char_walk::CharWalk,
+        ind: usize,
+    ) -> Result<(), String> {
+        if walk.hoist_null
+            && let Some(test) = b.operators.get(walk.null_test)
+        {
+            self.stmt(test, ind)?;
+        }
+        self.line(ind, "for (;;) {");
+        for (i, op) in b.operators.iter().enumerate() {
+            if walk.hoist_null && i == walk.null_test {
+                continue;
+            }
+            if i == 0 {
+                let src = self.expr(&Value::Var(walk.src), ind + 1)?;
+                let src = as_view(src)?;
+                let (next, index, c) = (
+                    self.var(walk.next),
+                    self.var(walk.index),
+                    self.var(walk.loop_var),
+                );
+                self.line(
+                    ind + 1,
+                    &format!(
+                        "if ({next} >= 0 && {next} < (int64_t) ({src}).len && (unsigned) (unsigned char) ({src}).p[{next}] - 1u < 0x7Fu) {{"
+                    ),
+                );
+                self.line(ind + 2, &format!("{index} = {next};"));
+                self.line(
+                    ind + 2,
+                    &format!("{c} = (uint32_t) (unsigned char) ({src}).p[{next}];"),
+                );
+                self.line(ind + 2, &format!("{next} = {next} + 1;"));
+                self.line(ind + 1, "} else {");
+                self.stmt(op, ind + 2)?;
+                self.line(ind + 1, "}");
+                continue;
+            }
+            self.stmt(op, ind + 1)?;
         }
         Ok(())
     }
@@ -1299,6 +1472,159 @@ impl<'a> FnWriter<'a> {
     }
 
     /// `var = x`: a copy where loft copies a record, else the plain assignment.
+    /// `@FR-R-TextBorrow` — the bind of a borrowed walk variable: the view the element read
+    /// answers.  A view that would point into a temporary of this statement (freed when the
+    /// statement ends) is refused by name rather than left dangling.
+    fn borrowed_bind(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        // A block (the walk's `iter next` step): its statements run, its value is bound.
+        if let Value::Block(b) = x.unspan()
+            && let Some(at) = b
+                .operators
+                .iter()
+                .rposition(|o| !matches!(o.unspan(), Value::Line(_)))
+        {
+            for op in &b.operators[..at] {
+                self.stmt(op, ind)?;
+            }
+            self.flush(ind);
+            return self.borrowed_bind(var, &b.operators[at], ind);
+        }
+        // The element's text field read as the view it is: the analysis proved the loop writes
+        // no store, so the bytes stay where they are for as long as the variable is read.
+        if let Value::Call(d, args) = x.unspan()
+            && self.cx.data.def(*d).name() == "OpGetText"
+            && let [r, fld] = args.as_slice()
+            && self.lazy_vector(r, "OpGetVectorNullable").is_none()
+        {
+            let fld = Self::literal(fld, "field")?;
+            let before = self.pending.len();
+            let r = self.expr(r, ind)?;
+            if self.pending.len() != before {
+                return Err("a borrowed text would view a temporary".into());
+            }
+            let name = self.var(var);
+            self.line(
+                ind,
+                &format!("{name} = loft_get_text({}, {fld});", as_ref(r)?),
+            );
+            return Ok(());
+        }
+        let before = self.pending.len();
+        let e = self.expr(x, ind)?;
+        if self.pending.len() != before {
+            return Err("a borrowed text would view a temporary".into());
+        }
+        let view = as_view(e)?;
+        let name = self.var(var);
+        self.line(ind, &format!("{name} = {view};"));
+        Ok(())
+    }
+
+    /// `@FR-R-LazySplit` — the lazy vector `vec` when `v` is `reader(Var(vec), …)`.
+    fn lazy_vector(&self, v: &Value, reader: &str) -> Option<u16> {
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if self.cx.data.def(*d).name() != reader {
+            return None;
+        }
+        let Value::Var(vec) = args.first()?.unspan() else {
+            return None;
+        };
+        self.lazy.contains_key(vec).then_some(*vec)
+    }
+
+    /// `@FR-R-LazySplit` — the three operators a lazy loop's vector is mentioned by: its element
+    /// read is the iterator's next piece, its length test (`len <= i`, the loop's exit) is the
+    /// iterator having run out, and the mint of the split's own buffer, which only this call
+    /// served, is nothing.  `None` for every other operator.
+    fn lazy_split_op(&self, name: &str, args: &[Value]) -> Option<E> {
+        match (name, args) {
+            ("OpGetText", [elem, _]) => {
+                let vec = self.lazy_vector(elem, "OpGetVectorNullable")?;
+                Some(E::new(
+                    format!("loft_ls_next(&ls{vec}, &lsd{vec})"),
+                    K::View,
+                ))
+            }
+            ("OpLeInt", [len, _]) => {
+                let vec = self.lazy_vector(len, "OpLengthVector")?;
+                Some(E::new(format!("(lsd{vec} != 0)"), K::Cond))
+            }
+            ("OpDatabase", [Value::Var(b), _])
+                if self.lazy.values().any(|ls| ls.dead_buf == Some(*b)) =>
+            {
+                Some(E::new("((void) 0)", K::Void))
+            }
+            _ => None,
+        }
+    }
+
+    /// `@FR-R-LazySplit` — the bind of a lazy loop's vector: an iterator over the source text.
+    /// A text parameter nothing in the function writes is walked in place; any other source is
+    /// copied first, so no write in the loop body can reach what is being walked.
+    fn lazy_split_bind(
+        &mut self,
+        var: u16,
+        ls: &crate::generation::hoist::LazySplit,
+        x: &Value,
+        ind: usize,
+    ) -> Result<(), String> {
+        // The vector's own null initialisation: it is never built, so there is nothing to set.
+        if matches!(x.unspan(), Value::Null) {
+            return Ok(());
+        }
+        let Value::Call(_, args) = x.unspan() else {
+            return Err("a lazy split bound from something other than its call".into());
+        };
+        let src = args.first().ok_or("a split call without its text")?;
+        if !self
+            .decls
+            .iter()
+            .any(|d| d.starts_with(&format!("loft_ls ls{var} ")))
+        {
+            self.decls.push(format!(
+                "loft_ls ls{var} = {{ {{ 0, 0 }}, 0, {{ 0 }}, 0 }};"
+            ));
+            self.decls.push(format!("uint8_t lsd{var} = 0;"));
+        }
+        let sep = u32::from(ls.separator);
+        let in_place = matches!(src.unspan(), Value::Var(p)
+            if self.vars.is_argument(*p)
+                && !self.links[*p as usize]
+                && self.shapes[*p as usize] == CType::Text
+                && !crate::opt::char_walk::text_written(self.code, *p, self.cx.data));
+        let e = self.expr(src, ind)?;
+        let view = as_view(e)?;
+        if in_place {
+            self.line(ind, &format!("ls{var} = loft_ls_of({view}, {sep}u);"));
+        } else {
+            let own = self.temp(CType::Text);
+            self.line(ind, &format!("loft_text_set(&{own}, {view});"));
+            self.line(
+                ind,
+                &format!("ls{var} = loft_ls_of(loft_view(&{own}), {sep}u);"),
+            );
+        }
+        self.line(ind, &format!("lsd{var} = 0;"));
+        self.flush(ind);
+        Ok(())
+    }
+
+    /// The binds a rewrite writes itself: a borrowed text's view (`@FR-R-TextBorrow`) and a
+    /// lazy split's iterator (`@FR-R-LazySplit`).  `None` for every other bind.
+    fn rewritten_bind(&mut self, var: u16, x: &Value, ind: usize) -> Option<Result<(), String>> {
+        if self.shapes[var as usize] == CType::Text && self.borrowed[var as usize] {
+            return Some(self.borrowed_bind(var, x, ind));
+        }
+        let ls = self.lazy.get(&var).cloned()?;
+        Some(self.lazy_split_bind(var, &ls, x, ind))
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of bind; the rewritten binds are already helpers"
+    )]
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
         // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
         // every later read and write of it goes through.
@@ -1346,6 +1672,9 @@ impl<'a> FnWriter<'a> {
             return Ok(());
         }
         let c = self.shapes[var as usize];
+        if let Some(done) = self.rewritten_bind(var, x, ind) {
+            return done;
+        }
         if c == CType::Text && !self.text_held(var) {
             return Err("assigns a text parameter".into());
         }
@@ -2588,6 +2917,11 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(e);
         }
+        if !self.lazy.is_empty()
+            && let Some(e) = self.lazy_split_op(name, args)
+        {
+            return Ok(e);
+        }
         if let Some(e) = self.keyed_operator(name, args, ind)? {
             return Ok(e);
         }
@@ -2683,6 +3017,7 @@ impl<'a> FnWriter<'a> {
     }
 
     /// The boolean and text operators, and printing.
+    #[expect(clippy::too_many_lines, reason = "one arm per operator")]
     fn text_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match name {
             "OpEqBool" | "OpNeBool" => {
@@ -2772,6 +3107,10 @@ impl<'a> FnWriter<'a> {
                         },
                         K::Void,
                     ));
+                }
+                // A borrowed walk variable views the element: its release frees nothing.
+                if matches!(dest.unspan(), Value::Var(v) if self.borrowed[*v as usize]) {
+                    return Ok(E::new("((void) 0)", K::Void));
                 }
                 let dest = self.text_dest(dest)?;
                 Ok(E::new(format!("loft_text_free(&{dest})"), K::Void))

@@ -1050,6 +1050,211 @@ fn main() {
     }
 }
 
+/// `@C156` (`formal/formatting.md` `(F-Float-Text)`) — every conversion between a float and text
+/// rounds correctly, an exact tie to the even digit, on the interpreter, native and the C alike.
+/// The single 1549.40625 lies exactly between 1549.4062 and 1549.4063 (the even one is taken,
+/// where `core::fmt` alone gave the odd); `.P` rounds the value held, a tie to even (`2.675` is
+/// held as 2.67499…); a negative value that rounds to zero keeps its sign; 2^89 is a power of
+/// two whose nearest 16-digit candidate does not read back and whose neighbour does (the gap
+/// below it is the narrower), so the shortest form is that neighbour and not a longer string;
+/// and the parse forms read as the nearest float, an unreadable text as null.
+#[test]
+fn float_text_rounds_ties_to_even_on_every_path() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+fn main() {
+  s: single = 1549.40625f;
+  println("{s} {-s}");
+  println("{0.125:.2} {2.5:.0} {3.5:.0} {2.675:.2} {-0.0004:.2} {-0.0:.1}");
+  x = 1.0;
+  for i in 0..89 { x = x * 2.0; }
+  println("{x}");
+  println("{("2.5" as float?) ?? 0.0} {(".5" as float?) ?? 0.0} {("5." as float?) ?? 0.0} {("1e23" as float?) ?? 0.0} {("x" as float?) ?? -1.0}");
+}
+"#;
+    let want = "1549.4062 -1549.4062\n0.12 2 4 2.67 -0.00 -0.0\n618970019642690200000000000\n\
+                2.5 0.5 5 100000000000000000000000 -1\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("float-text");
+    let file = dir.join("float.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("float.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
+}
+
+/// The text rewrites as C, each read from the analysis native uses: a `for p in t.split(c)` loop
+/// takes its pieces from the text with no vector built (`@FR-R-LazySplit`, `hoist::lazy_splits`
+/// — none for an empty or null text, the rest after the last separator, a multi-byte separator,
+/// a source the loop body writes walked as a copy, a nested split, a `break`); a walked element
+/// or parameter text is read as a view, not copied (`@FR-R-TextBorrow`); and `for c in t` takes
+/// an ASCII byte without decoding it (`@FR-R-CharWalk`).  Each line is the interpreter's own
+/// answer, and the C must print it in the strict and the verify builds.
+#[test]
+fn the_text_walks_answer_as_the_interpreter_does() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+fn pieces(t: text, label: text) {
+  out = "";
+  n = 0;
+  for p in t.split(',') { out += "[{p}]"; n += 1; }
+  println("{label}: {n} {out}");
+}
+fn multi(t: text) {
+  a = ""; for p in t.split('é') { a += "<{p}>"; }
+  b = ""; for p in t.split('€') { b += "<{p}>"; }
+  c = ""; for p in t.split('😀') { c += "<{p}>"; }
+  println("{a} {b} {c}");
+}
+fn walk(t: text) -> text {
+  r = "";
+  for c in t { if c >= 'a' && c <= 'z' { r += "{c}"; } else { r += "_"; } }
+  r
+}
+fn main() {
+  pieces("", "empty");
+  pieces("a", "one");
+  pieces("a,", "trailing");
+  pieces(",a", "leading");
+  pieces("a,,b", "double");
+  pieces(",,,", "only");
+  n: text = null;
+  pieces(n, "null");
+  multi("xéy€z😀w");
+  multi("é€😀");
+  s = "p,q,r";
+  got = "";
+  for p in s.split(',') { s += ",x"; got += p; }
+  println("written: {got} {s}");
+  nest = "";
+  for row in "a b,c d".split(',') { for w in row.split(' ') { nest += "({w})"; } }
+  println("nested: {nest}");
+  firsts = "";
+  for p in "1,2,3,4".split(',') { if p == "3" { break; } firsts += p; }
+  println("break: {firsts}");
+  println("walk: {walk("héllo wörld ABC xyz")}");
+  words: vector<text> = ["alpha", "βeta", "", "gamma"];
+  total = 0;
+  for w in words { total += len(w) * 10 + size(w); }
+  words += ["late"];
+  println("borrow: {total} {len(words)} {words.join("|")}");
+}
+"#;
+    let want = "empty: 0 \none: 1 [a]\ntrailing: 2 [a][]\nleading: 2 [][a]\ndouble: 3 [a][][b]\nonly: 4 [][][][]\nnull: 0 \n<x><y€z😀w> <xéy><z😀w> <xéy€z><w>\n<><€😀> <é><😀> <é€><>\nwritten: pqr p,q,r,x,x,x\nnested: (a)(b)(c)(d)\nbreak: 12\nwalk: h_llo_w_rld_____xyz\nborrow: 155 5 alpha|βeta||gamma|late\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("text-walks");
+    let file = dir.join("walks.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("walks.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    assert!(
+        text.matches(" = loft_ls_of(").count() >= 8,
+        "every split loop is lazy"
+    );
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .output()
+            .expect("run");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{mode}: the C program"
+        );
+    }
+}
+
 /// `par` as C (`src/c/body/par.rs`): a worker over integer rows, one over record rows that
 /// returns a text, and one with an extra argument.  The C runs the rows in order; each result
 /// is the one a thread computes, so the hand-computed values hold on both.
