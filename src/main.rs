@@ -11888,11 +11888,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             let t_compile = std::time::Instant::now();
             let built = match c_driver::build(&c, tier, &cache_dir, native_cache_bypassed()) {
                 Ok(b) => b,
-                // No compiler on a run that did not ask for native: interpret, as the rustc
-                // path does without rustc (the reason reaches `LOFT_REQUIRE_NATIVE`).
-                Err(c_driver::BuildError::NoCompiler(why))
-                    if !native_requested && !native_required =>
-                {
+                // @C102 — no C compiler never stops a run: it interprets, saying why where
+                // native was asked for (`--native`) or in a source checkout, and silently from a
+                // release; `LOFT_REQUIRE_NATIVE` turns the fallback into the refusal below.
+                Err(c_driver::BuildError::NoCompiler(why)) => {
+                    if !native_required
+                        && (native_requested || native_utils::loft_source_tree().is_some())
+                    {
+                        eprintln!("loft: {why}; running interpreted instead.");
+                    }
                     native_fallback_reason = Some(why);
                     break 'native;
                 }
