@@ -129,6 +129,171 @@ pub fn push_fixed(s: &mut String, v: f64, precision: usize) -> bool {
     true
 }
 
+/// `@FR-F-Render`'s tie rule (@C156): append the shortest decimal that reads back as `v` — `{v}` —
+/// with an exact TIE broken to the even last digit.  `core::fmt` gives the shortest length and
+/// the nearest candidate of it, but breaks an exact tie upward in magnitude (flt2dec's shortest
+/// mode rounds a half up); loft rounds every conversion between text and float ties-to-even,
+/// IEEE 754's default, as `{v:.p}` and every parse already do.
+pub fn push_shortest_f64(s: &mut String, v: f64) {
+    use std::fmt::Write as _;
+    let start = s.len();
+    write!(s, "{v}").unwrap();
+    if v.is_finite() && v != 0.0 {
+        let bits = v.to_bits();
+        let biased = ((bits >> 52) & 0x7ff) as i32;
+        let frac = bits & ((1u64 << 52) - 1);
+        let (mant, exp) = if biased == 0 {
+            (frac, -1074)
+        } else {
+            (frac | (1 << 52), biased - 1075)
+        };
+        if let Some(even) =
+            tie_to_even(&s[start..], mant, exp, |t| t.parse::<f64>().ok() == Some(v))
+        {
+            s.truncate(start);
+            s.push_str(&even);
+        }
+    }
+}
+
+/// [`push_shortest_f64`] for a `single`: its own shortest form, read back as an `f32`.
+pub fn push_shortest_f32(s: &mut String, v: f32) {
+    use std::fmt::Write as _;
+    let start = s.len();
+    write!(s, "{v}").unwrap();
+    if v.is_finite() && v != 0.0 {
+        let bits = v.to_bits();
+        let biased = ((bits >> 23) & 0xff) as i32;
+        let frac = u64::from(bits & ((1u32 << 23) - 1));
+        let (mant, exp) = if biased == 0 {
+            (frac, -149)
+        } else {
+            (frac | (1 << 23), biased - 150)
+        };
+        if let Some(even) =
+            tie_to_even(&s[start..], mant, exp, |t| t.parse::<f32>().ok() == Some(v))
+        {
+            s.truncate(start);
+            s.push_str(&even);
+        }
+    }
+}
+
+/// [`push_shortest_f64`] as a value.
+#[must_use]
+pub fn shortest_f64(v: f64) -> String {
+    let mut s = String::new();
+    push_shortest_f64(&mut s, v);
+    s
+}
+
+/// [`push_shortest_f32`] as a value.
+#[must_use]
+pub fn shortest_f32(v: f32) -> String {
+    let mut s = String::new();
+    push_shortest_f32(&mut s, v);
+    s
+}
+
+/// The even candidate where `shown` — `core::fmt`'s shortest text of `mant * 2^exp` — broke an
+/// exact tie upward onto an odd digit, if it reads back; `None` otherwise (nearly always).
+///
+/// A tie needs the exact value to END one digit past the shortest form, in a 5.  With `mant`
+/// made odd the exact value is `mant << exp` (no factor 5, so no trailing zero) or
+/// `mant * 5^-exp / 10^-exp` (odd, so none either): its digits are those of one integer, and a
+/// value whose integer passes 18 digits cannot end one past a form of at most 17.  The two
+/// candidates are that integer's neighbours on the grid one digit up; the upper is what
+/// `core::fmt` chose, and the lower is answered when it is the even one and reads back (just
+/// below a power of two the lower half-gap is the narrower, and only the upper may read back).
+fn tie_to_even(
+    shown: &str,
+    mant: u64,
+    exp: i32,
+    reads_back: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let (neg, body) = shown
+        .strip_prefix('-')
+        .map_or((false, shown), |b| (true, b));
+    if !body.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return None;
+    }
+    let digits: Vec<u8> = body
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .map(|b| b - b'0')
+        .collect();
+    let int_len = i32::try_from(body.find('.').unwrap_or(body.len())).ok()?;
+    let lead = digits.iter().take_while(|&&d| d == 0).count();
+    let last = digits.iter().rposition(|&d| d != 0)?;
+    // An even last digit: whichever candidate this is, it is the even one already.
+    if digits[last].is_multiple_of(2) {
+        return None;
+    }
+    let mut shown_int: u128 = 0;
+    for &d in &digits[lead..=last] {
+        shown_int = shown_int.checked_mul(10)? + u128::from(d);
+    }
+    let shown_unit = int_len - 1 - i32::try_from(last).ok()?;
+    // The exact value as `x * 10^x_unit`.
+    let tz = mant.trailing_zeros();
+    let (m, e) = (mant >> tz, exp + i32::try_from(tz).ok()?);
+    let (x, x_unit): (u128, i32) = if e >= 0 {
+        if e > 64 {
+            return None;
+        }
+        (u128::from(m) << e, 0)
+    } else {
+        let n = e.unsigned_abs();
+        if n > 27 {
+            return None;
+        }
+        (u128::from(m) * 5u128.pow(n), e)
+    };
+    if x >= 1_000_000_000_000_000_000 || x % 10 != 5 {
+        return None;
+    }
+    let cut = x_unit + 1;
+    let (upper, lower) = ((x + 5) / 10, (x - 5) / 10);
+    // `shown` must be the upper candidate, written at the cut's scale.
+    let scale = u32::try_from(shown_unit - cut).ok()?;
+    if shown_int.checked_mul(10u128.checked_pow(scale)?)? != upper || upper % 2 == 0 || lower == 0 {
+        return None;
+    }
+    let text = plain_decimal(neg, lower, cut);
+    reads_back(&text).then_some(text)
+}
+
+/// `q * 10^unit` as `core::fmt` lays a float out: no exponent, no trailing fractional zero.
+fn plain_decimal(neg: bool, q: u128, unit: i32) -> String {
+    let mut out = String::new();
+    if neg {
+        out.push('-');
+    }
+    let digits = q.to_string();
+    if unit >= 0 {
+        out.push_str(&digits);
+        out.extend(std::iter::repeat_n('0', unit.unsigned_abs() as usize));
+        return out;
+    }
+    let frac = unit.unsigned_abs() as usize;
+    let (int_part, frac_part) = if digits.len() > frac {
+        let (a, b) = digits.split_at(digits.len() - frac);
+        (a.to_string(), b.to_string())
+    } else {
+        (
+            "0".to_string(),
+            format!("{}{digits}", "0".repeat(frac - digits.len())),
+        )
+    };
+    out.push_str(&int_part);
+    let frac_part = frac_part.trim_end_matches('0');
+    if !frac_part.is_empty() {
+        out.push('.');
+        out.push_str(frac_part);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +369,49 @@ mod tests {
             push_u64(&mut got, v);
             assert_eq!(got, v.to_string());
         }
+    }
+
+    /// @C156 — the shortest form breaks an exact tie to the even digit, and otherwise answers
+    /// what `core::fmt` answers.
+    #[test]
+    fn shortest_breaks_a_tie_to_even() {
+        // 1549.40625 is exactly halfway between the 8-digit 1549.4062 and 1549.4063 as a single.
+        // 49581 / 32 is 1549.40625 exactly.
+        let tie = 49_581.0_f32 / 32.0;
+        assert_eq!(shortest_f32(tie), "1549.4062");
+        assert_eq!(shortest_f32(-tie), "-1549.4062");
+        // Not ties: the nearest shortest form, as core::fmt writes it.
+        for v in [
+            0.1_f64,
+            0.3,
+            1.0 / 3.0,
+            2.5,
+            1e21,
+            123.456,
+            4.9e-324,
+            1e-310,
+            2f64.powi(53) + 2.0,
+        ] {
+            assert_eq!(shortest_f64(v), format!("{v}"), "{v:e}");
+        }
+        // A tie whose upper candidate is already even keeps it.
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut ties = 0;
+        for _ in 0..200_000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            // Short binary fractions in the single range, where exact ties live.
+            let v = (seed % 1_000_000) as f32 / 2f32.powi((seed >> 40) as i32 % 12);
+            let got = shortest_f32(v);
+            assert_eq!(got.parse::<f32>().unwrap(), v, "{v:e} reads back");
+            let core = format!("{v}");
+            if got != core {
+                ties += 1;
+                let last = got.bytes().rev().find(u8::is_ascii_digit).unwrap();
+                assert_eq!((last - b'0') % 2, 0, "{v:e}: {got} is the even candidate");
+            }
+        }
+        assert!(ties > 0, "the sample holds ties");
     }
 }

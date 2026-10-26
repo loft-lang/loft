@@ -36,6 +36,7 @@ a guard that does not exercise it — is its line in
 - [C129](DESIGN_DECISIONS_VALUES.md#c129--no-opt-in-to-the-processors-arithmetic-no-machine-dependent-scope-or-type) — No opt-in to the processor's arithmetic (no machine-dependent scope or type)
 - [C139](DESIGN_DECISIONS_VALUES.md#c139--a-tuple-is-a-record-foreign-data-is-value-const-and-never-presented-as-writable) — A tuple IS a record; foreign data is value-const and never presented as writable
 - [C143](DESIGN_DECISIONS_VALUES.md#c143--a-rendered-record-shows-its-null-fields) — A rendered record shows its null fields
+- [C156](DESIGN_DECISIONS_VALUES.md#c156--every-float-text-conversion-rounds-correctly-an-exact-tie-to-the-even-digit) — Every float-text conversion rounds correctly, an exact tie to the even digit
 
 ## Binding, ownership and closures — [DESIGN_DECISIONS_OWNERSHIP.md](DESIGN_DECISIONS_OWNERSHIP.md)
 

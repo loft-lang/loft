@@ -22,6 +22,7 @@
 #include <setjmp.h>
 #include <errno.h>
 #include <math.h>
+#include <float.h>
 #include <time.h>
 
 #define LOFT_NULL INT64_MIN
@@ -765,14 +766,18 @@ static loft_text loft_replace(loft_str s, loft_str v, loft_str w) {
         loft_push(&out, w.p, w.len);
         return out;
     }
+    /* As str::replace: find the next match by its first byte, push the run before it whole. */
     while (at < s.len) {
-        if (loft_mem_at(s, at, v)) {
-            loft_push(&out, w.p, w.len);
-            at += v.len;
-        } else {
-            loft_push_char(&out, s.p[at]);
-            at++;
+        const char *hit = (const char *) memchr(s.p + at, (unsigned char) v.p[0], s.len - at);
+        while (hit && ((size_t) (hit - s.p) + v.len > s.len || memcmp(hit, v.p, v.len) != 0)) {
+            size_t next = (size_t) (hit - s.p) + 1;
+            hit = next < s.len ? (const char *) memchr(s.p + next, (unsigned char) v.p[0], s.len - next) : 0;
         }
+        size_t to = hit ? (size_t) (hit - s.p) : s.len;
+        loft_push(&out, s.p + at, to - at);
+        if (!hit) break;
+        loft_push(&out, w.p, w.len);
+        at = to + v.len;
     }
     return out;
 }
@@ -2926,17 +2931,73 @@ static void loft_vec_push_single(loft_ref v, float x) {
 /* Rust's `{}` for a float: the shortest digits that read back as `v` (as a float when `single`),
  * written out in full with no exponent — 1e21 is "1000000000000000000000", 1.0 is "1", -0.0 is
  * "-0".  The digits are the first `%.*e` precision that round-trips, correctly rounded. */
+/* `@FR-F-Render`'s shortest form (@C156): of the strings of the shortest length that read back as
+ * `v`, the nearest, an exact tie to the even digit — `printf`'s own rounding, so its p-digit
+ * candidate is the answer whenever it reads back.  When it does not, its neighbour on `v`'s
+ * other side may (just below a power of two the half-gap towards zero is the narrower): `buf`
+ * becomes that neighbour and 1 is answered when it reads back. */
+static int loft_shortest_other(char *buf, size_t cap, int p, double v, double near, int single) {
+    const char *q = buf;
+    int neg = *q == '-';
+    if (neg) q++;
+    char d[48];
+    int nd = 0;
+    for (; *q && *q != 'e'; q++) if (*q >= '0' && *q <= '9') d[nd++] = *q;
+    if (nd != p || !*q) return 0;
+    int e = atoi(q + 1);
+    /* Away from `near` towards `v`: up in magnitude when `v` lies beyond it. */
+    int up = (fabs(v) > fabs(near));
+    int i = nd - 1;
+    if (up) {
+        while (i >= 0 && d[i] == '9') d[i--] = '0';
+        if (i >= 0) d[i]++;
+        else { d[0] = '1'; e++; }
+    } else {
+        while (i >= 0 && d[i] == '0') d[i--] = '9';
+        if (i < 0) return 0;
+        d[i]--;
+        if (d[0] == '0') {
+            memmove(d, d + 1, (size_t) nd - 1);
+            d[nd - 1] = '0';
+            e--;
+        }
+    }
+    char txt[64];
+    int t = 0;
+    if (neg) txt[t++] = '-';
+    txt[t++] = d[0];
+    if (nd > 1) txt[t++] = '.';
+    for (int k = 1; k < nd; k++) txt[t++] = d[k];
+    snprintf(txt + t, sizeof txt - (size_t) t, "e%d", e);
+    double back = strtod(txt, 0);
+    if (single ? (float) back != (float) v : back != v) return 0;
+    if (strlen(txt) + 1 > cap) return 0;
+    memcpy(buf, txt, strlen(txt) + 1);
+    return 1;
+}
+
 static void loft_push_shortest(loft_text *s, double v, int single) {
     if (isinf(v)) {
         if (v < 0) loft_push(s, "-inf", 4); else loft_push(s, "inf", 3);
         return;
     }
+    /* The shortest digits that read back as `v`.  Rounding to 15 significant digits (6 for a
+     * single) gives a value whose shortest form has k <= 15 digits exactly those k digits and
+     * zeros — the 15-digit grid is far coarser than the value's own spacing, so that form is the
+     * grid point nearest it — and the zeros are stripped below.  Past 15 the nearest rounding
+     * reads back whenever any of that length does, so 16 and then 17 (9 for a single) finish:
+     * at most three tries, where counting up from one digit took up to seventeen.  A subnormal
+     * has fewer significant bits than the grid argument needs (its spacing can pass the 15-digit
+     * grid's), so it counts up from one digit as before. */
     char buf[48];
     int maxp = single ? 9 : 17;
-    for (int p = 1; p <= maxp; p++) {
+    int subnormal = v != 0 && fabs(v) < (single ? (double) FLT_MIN : DBL_MIN);
+    int p = subnormal ? 1 : (single ? 6 : 15);
+    for (; p <= maxp; p++) {
         snprintf(buf, sizeof buf, "%.*e", p - 1, v);
         double back = strtod(buf, 0);
         if (single ? (float) back == (float) v : back == v) break;
+        if (loft_shortest_other(buf, sizeof buf, p, v, back, single)) break;
     }
     const char *q = buf;
     if (*q == '-') { loft_push_char(s, '-'); q++; }
@@ -2969,12 +3030,85 @@ static void loft_format_signed(loft_text *s, loft_str res, int64_t width, int di
 }
 
 /* ops::format_float and ops::format_single */
+/* `{v:.p}` for p <= 9 in exact integer arithmetic: v = m * 2^e with m < 2^53, so m * 10^p fits
+ * 128 bits, and shifting it right by -e with round-half-even on the remainder gives the correctly
+ * rounded p-digit value both Rust and printf print — without printf's arbitrary-precision path.
+ * Answers 0 for what it does not cover (p > 9, an integer part past 2^63), which printf takes. */
+typedef struct { uint64_t hi, lo; } loft_u128;
+
+static int loft_push_fixed(loft_text *s, double val, int prec) {
+    if (prec < 0 || prec > 9 || !isfinite(val)) return 0;
+    static const uint64_t p10[10] = { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000,
+                                      1000000000 };
+    int ex;
+    double f = frexp(fabs(val), &ex);
+    uint64_t m = (uint64_t) ldexp(f, 53);
+    int e = ex - 53;
+    uint64_t P = p10[prec];
+    /* m * P: m < 2^53, P < 2^30 — the halves of m times P, recombined with their carry. */
+    uint64_t lo_part = (m & 0xFFFFFFFFu) * P, hi_part = (m >> 32) * P;
+    loft_u128 x;
+    x.lo = lo_part + (hi_part << 32);
+    x.hi = (hi_part >> 32) + (x.lo < lo_part);
+    uint64_t q;
+    if (m == 0) {
+        q = 0;
+    } else if (e >= 0) {
+        if (x.hi != 0 || e >= 63 || (x.lo >> (63 - e)) != 0) return 0;
+        q = x.lo << e;
+    } else {
+        int sh = -e;
+        if (sh >= 120) {
+            q = 0; /* below 2^-36 after scaling: under one half, so it rounds to zero */
+        } else {
+            /* q = x >> sh, and the remainder against one half. */
+            loft_u128 qq, rem, half;
+            if (sh >= 64) {
+                qq.hi = 0;
+                qq.lo = sh == 64 ? x.hi : x.hi >> (sh - 64);
+                rem.hi = sh == 64 ? 0 : x.hi & ((UINT64_C(1) << (sh - 64)) - 1);
+                rem.lo = x.lo;
+                half.hi = UINT64_C(1) << (sh - 65 < 0 ? 0 : sh - 65);
+                half.lo = 0;
+                if (sh == 64) { half.hi = 0; half.lo = UINT64_C(1) << 63; }
+            } else {
+                qq.hi = x.hi >> sh;
+                qq.lo = (x.lo >> sh) | (sh == 0 ? 0 : x.hi << (64 - sh));
+                rem.hi = 0;
+                rem.lo = x.lo & ((UINT64_C(1) << sh) - 1);
+                half.hi = 0;
+                half.lo = UINT64_C(1) << (sh - 1);
+            }
+            if (qq.hi != 0 || (qq.lo >> 63) != 0) return 0;
+            q = qq.lo;
+            int cmp = rem.hi != half.hi ? (rem.hi > half.hi ? 1 : -1) : (rem.lo != half.lo ? (rem.lo > half.lo ? 1 : -1) : 0);
+            if (cmp > 0 || (cmp == 0 && (q & 1))) q++;
+        }
+    }
+    char buf[48];
+    int n = 0;
+    uint64_t ip = q / P, fp = q % P;
+    char rev[24];
+    int r = 0;
+    do { rev[r++] = (char) ('0' + ip % 10); ip /= 10; } while (ip);
+    if (signbit(val)) buf[n++] = '-';
+    while (r) buf[n++] = rev[--r];
+    if (prec > 0) {
+        buf[n++] = '.';
+        for (int i = prec - 1; i >= 0; i--) { buf[n + i] = (char) ('0' + fp % 10); fp /= 10; }
+        n += prec;
+    }
+    loft_push(s, buf, (size_t) n);
+    return 1;
+}
+
 static void loft_format_float(loft_text *s, double val, int64_t width, int64_t prec, uint8_t token, int plus,
                               int dir, int single) {
     if (dir == 2) dir = 1;
     size_t start = s->len;
     if (isnan(val)) {
         loft_push(s, "null", 4);
+    } else if (prec >= 0 && loft_push_fixed(s, val, (int) prec)) {
     } else if (prec >= 0) {
         int n = snprintf(0, 0, "%.*f", (int) prec, val);
         char *buf = (char *) malloc((size_t) n + 1);
@@ -3418,9 +3552,106 @@ static int loft_float_text_ok(loft_str t) {
     return i == n;
 }
 
+/* Clinger's fast path for a validated decimal: a significand that fits 2^53 exactly and a power
+ * of ten no larger than 10^22 (exact in a double) give the correctly rounded value as ONE IEEE
+ * operation on two exact doubles — what strtod answers, without its arbitrary-precision path.
+ * Answers 0 for every other text (an exponent outside the range, more digits than fit, inf,
+ * nan), which strtod then reads; and for a platform that evaluates in wider precision, where
+ * the one operation would round twice. */
+static int loft_float_fast(loft_str t, double *out) {
+#if defined(FLT_EVAL_METHOD) && FLT_EVAL_METHOD != 0
+    (void) t;
+    (void) out;
+    return 0;
+#else
+    static const double p10[23] = { 1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+                                    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22 };
+    size_t i = 0, n = t.len;
+    int neg = 0;
+    if (i < n && (t.p[i] == '+' || t.p[i] == '-')) neg = t.p[i++] == '-';
+    uint64_t m = 0;
+    int64_t e10 = 0;
+    int any = 0;
+    for (int frac = 0; i < n; i++) {
+        char c = t.p[i];
+        if (c == '.' && !frac) { frac = 1; continue; }
+        if (c < '0' || c > '9') break;
+        if (m > UINT64_C(100000000000000000)) return 0;
+        m = m * 10 + (uint64_t) (c - '0');
+        if (frac) e10--;
+        any = 1;
+    }
+    if (!any || m > (UINT64_C(1) << 53)) return 0;
+    if (i < n && (t.p[i] == 'e' || t.p[i] == 'E')) {
+        i++;
+        int eneg = 0;
+        if (i < n && (t.p[i] == '+' || t.p[i] == '-')) eneg = t.p[i++] == '-';
+        int64_t e = 0;
+        for (; i < n && t.p[i] >= '0' && t.p[i] <= '9'; i++) {
+            if (e > 1000) return 0;
+            e = e * 10 + (t.p[i] - '0');
+        }
+        e10 += eneg ? -e : e;
+    }
+    if (i != n || e10 < -22 || e10 > 22) return 0;
+    double d = (double) m;
+    d = e10 >= 0 ? d * p10[e10] : d / p10[-e10];
+    *out = neg ? -d : d;
+    return 1;
+#endif
+}
+
+/* `@FR-R-LazySplit` (codegen_runtime::lazy_split): the pieces of `text.split(c)` taken one at a
+ * time from the text, with no vector built — the same pieces in the same order: none for an
+ * empty or null text, and after the last separator the rest, however short. */
+typedef struct { loft_str rest; int live; unsigned char sep[4]; int nsep; } loft_ls;
+
+static loft_ls loft_ls_of(loft_str t, uint32_t sep) {
+    loft_ls ls;
+    ls.rest = t;
+    ls.live = !(t.len == 0 || loft_str_is_null(t));
+    if (sep < 0x80) { ls.sep[0] = (unsigned char) sep; ls.nsep = 1; }
+    else if (sep < 0x800) { ls.sep[0] = (unsigned char) (0xC0 | (sep >> 6)); ls.sep[1] = (unsigned char) (0x80 | (sep & 0x3F)); ls.nsep = 2; }
+    else if (sep < 0x10000) {
+        ls.sep[0] = (unsigned char) (0xE0 | (sep >> 12)); ls.sep[1] = (unsigned char) (0x80 | ((sep >> 6) & 0x3F));
+        ls.sep[2] = (unsigned char) (0x80 | (sep & 0x3F)); ls.nsep = 3;
+    } else {
+        ls.sep[0] = (unsigned char) (0xF0 | (sep >> 18)); ls.sep[1] = (unsigned char) (0x80 | ((sep >> 12) & 0x3F));
+        ls.sep[2] = (unsigned char) (0x80 | ((sep >> 6) & 0x3F)); ls.sep[3] = (unsigned char) (0x80 | (sep & 0x3F)); ls.nsep = 4;
+    }
+    return ls;
+}
+
+/* The next piece, or — out of pieces — the null text with `*done` raised, which the loop's
+ * length test reads. */
+LOFT_HOT_INLINE loft_str loft_ls_next(loft_ls *ls, uint8_t *done) {
+    if (!ls->live) {
+        *done = 1;
+        return loft_null_text();
+    }
+    const char *p = ls->rest.p;
+    size_t n = ls->rest.len, at = 0;
+    for (;;) {
+        const char *hit = n > at ? (const char *) memchr(p + at, ls->sep[0], n - at) : 0;
+        if (!hit) break;
+        size_t off = (size_t) (hit - p);
+        if (off + (size_t) ls->nsep <= n && memcmp(hit, ls->sep, (size_t) ls->nsep) == 0) {
+            loft_str piece = { p, off };
+            ls->rest.p = p + off + ls->nsep;
+            ls->rest.len = n - off - (size_t) ls->nsep;
+            return piece;
+        }
+        at = off + 1;
+    }
+    ls->live = 0;
+    return ls->rest;
+}
+
 /* OpCastFloatFromText: `parse::<f64>().unwrap_or(NAN)`. */
 static double loft_float_of_text(loft_str t) {
     if (!loft_float_text_ok(t)) return (double) NAN;
+    double fast;
+    if (loft_float_fast(t, &fast)) return fast;
     char buf[64];
     char *heap = 0, *p = buf;
     if (t.len >= sizeof buf) {

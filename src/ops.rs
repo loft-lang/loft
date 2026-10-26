@@ -19,6 +19,7 @@
 use std::cmp::Ordering;
 
 mod number_text;
+pub use number_text::{shortest_f32, shortest_f64};
 
 // ── the `--dev-soft-halt` overflow report (loft#1265) ────────────────────────────────────
 //
@@ -1110,7 +1111,7 @@ pub fn format_float(
             write!(s, "{val:.p$}").unwrap();
         }
     } else {
-        write!(s, "{val}").unwrap();
+        number_text::push_shortest_f64(s, val);
     }
     sign_a_number(s, start, plus);
     if width > (s.len() - start) as i64 {
@@ -1143,7 +1144,7 @@ pub fn format_single(
             write!(s, "{val:.p$}").unwrap();
         }
     } else {
-        write!(s, "{val}").unwrap();
+        number_text::push_shortest_f32(s, val);
     }
     sign_a_number(s, start, plus);
     if width > (s.len() - start) as i64 {

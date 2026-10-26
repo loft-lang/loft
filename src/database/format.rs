@@ -1388,18 +1388,18 @@ impl ShowDb<'_> {
             if v.is_nan() {
                 s.push_str("null");
             } else if self.loft {
-                s.push_str(&ensure_decimal(&format!("{v}")));
+                s.push_str(&ensure_decimal(&crate::ops::shortest_f32(v)));
             } else {
-                write!(s, "{v}").unwrap();
+                s.push_str(&crate::ops::shortest_f32(v));
             }
         } else if self.known_type == 3 {
             let v = self.store().get_float(self.rec, self.pos);
             if v.is_nan() {
                 s.push_str("null");
             } else if self.loft {
-                s.push_str(&ensure_decimal(&format!("{v}")));
+                s.push_str(&ensure_decimal(&crate::ops::shortest_f64(v)));
             } else {
-                write!(s, "{v}").unwrap();
+                s.push_str(&crate::ops::shortest_f64(v));
             }
         } else if self.known_type == 4 {
             // 255 = @PLN17's three-state-boolean null sentinel (@C73); inert for two-state.
@@ -2354,8 +2354,15 @@ impl ShowDb<'_> {
         match self.known_type {
             0 => write!(s, "{}", self.store().get_int(self.rec, self.pos)).unwrap(), // integer
             1 => write!(s, "{}l", self.store().get_long(self.rec, self.pos)).unwrap(), // long
-            2 => write!(s, "{}f", self.store().get_single(self.rec, self.pos)).unwrap(), // single
-            3 => write!(s, "{}", self.store().get_float(self.rec, self.pos)).unwrap(), // float
+            2 => write!(
+                s,
+                "{}f",
+                crate::ops::shortest_f32(self.store().get_single(self.rec, self.pos))
+            )
+            .unwrap(), // single
+            3 => s.push_str(&crate::ops::shortest_f64(
+                self.store().get_float(self.rec, self.pos),
+            )), // float
             // 255 = @PLN17's three-state-boolean null sentinel (@C73); inert for two-state.
             4 => s.push_str(match self.store().get_byte(self.rec, self.pos, 0) {
                 0 => "false",

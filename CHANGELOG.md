@@ -16,6 +16,12 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**A float exactly halfway between two shortest forms prints the even one.**  `"{v}"` writes the
+shortest digits that read back as the value; when two of that length are equally near, the one
+ending in an even digit is taken — the rounding `{v:.2}` and every parse already used.  It shows
+only on such exact ties, nearly always a `single`: `1549.40625` as a single now prints
+`1549.4062` where it printed `1549.4063`.
+
 **`--ship` builds the program you hand to someone; `--native-release` is gone.**  Write
 `loft --ship prog.loft` where you wrote `--native-release`: the same fully optimised binary,
 now with its native libraries linked into it (add `--dynamic` to keep them beside it).  It

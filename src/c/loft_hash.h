@@ -905,7 +905,121 @@ static void loft_sort_refs(loft_ref *a, loft_ref *tmp, uint32_t n, const loft_ke
  * malloc'd; `*n` the count. */
 static int loft_hent_by_slot(const void *a, const void *b) { return loft_hent_by_seq(a, b); }
 
+/* hash::inline_sorted: an INLINE table whose key is one to four integer parts, in key order —
+ * one sweep of the slots reads each live entry's key parts and position, and the pairs are
+ * sorted by key alone (a hash's keys are unique), where the general path first gathered the
+ * entries, sorted them into insertion order and then sorted them again by key through the
+ * generic key reader.  A descending part sorts by its complement, which reverses the order with
+ * no overflow at the null sentinel.  0 — the general path answers — for an arena table or a
+ * text or float part. */
+typedef struct { int64_t k[4]; uint32_t pos; } loft_hkey;
+
+static int loft_hkey_lt(const loft_hkey *a, const loft_hkey *b, int nk) {
+    for (int i = 0; i < nk; i++)
+        if (a->k[i] != b->k[i]) return a->k[i] < b->k[i];
+    return 0;
+}
+
+static void loft_hkey_sift(loft_hkey *a, size_t root, size_t n, int nk) {
+    for (;;) {
+        size_t c = root * 2 + 1;
+        if (c >= n) return;
+        if (c + 1 < n && loft_hkey_lt(&a[c], &a[c + 1], nk)) c++;
+        if (!loft_hkey_lt(&a[root], &a[c], nk)) return;
+        loft_hkey t = a[root]; a[root] = a[c]; a[c] = t;
+        root = c;
+    }
+}
+
+/* An introsort: quicksort on the median of three, insertion below 16, heapsort past the depth
+ * a balanced split needs — so no input order makes it quadratic. */
+static void loft_hkey_sort(loft_hkey *a, size_t n, int nk, int depth) {
+    while (n > 16) {
+        if (depth-- == 0) {
+            for (size_t i = n / 2; i-- > 0;) loft_hkey_sift(a, i, n, nk);
+            for (size_t e = n - 1; e > 0; e--) {
+                loft_hkey t = a[0]; a[0] = a[e]; a[e] = t;
+                loft_hkey_sift(a, 0, e, nk);
+            }
+            return;
+        }
+        size_t mid = n / 2;
+        if (loft_hkey_lt(&a[mid], &a[0], nk)) { loft_hkey t = a[mid]; a[mid] = a[0]; a[0] = t; }
+        if (loft_hkey_lt(&a[n - 1], &a[0], nk)) { loft_hkey t = a[n - 1]; a[n - 1] = a[0]; a[0] = t; }
+        if (loft_hkey_lt(&a[n - 1], &a[mid], nk)) { loft_hkey t = a[n - 1]; a[n - 1] = a[mid]; a[mid] = t; }
+        loft_hkey pivot = a[mid];
+        size_t i = 0, j = n - 1;
+        for (;;) {
+            while (loft_hkey_lt(&a[i], &pivot, nk)) i++;
+            while (loft_hkey_lt(&pivot, &a[j], nk)) j--;
+            if (i >= j) break;
+            loft_hkey t = a[i]; a[i] = a[j]; a[j] = t;
+            i++;
+            j--;
+        }
+        size_t left = j + 1;
+        /* Recurse on the smaller side, loop on the larger: the stack stays logarithmic. */
+        if (left < n - left) {
+            loft_hkey_sort(a, left, nk, depth);
+            a += left;
+            n -= left;
+        } else {
+            loft_hkey_sort(a + left, n - left, nk, depth);
+            n = left;
+        }
+    }
+    for (size_t i = 1; i < n; i++) {
+        loft_hkey t = a[i];
+        size_t j = i;
+        while (j > 0 && loft_hkey_lt(&t, &a[j - 1], nk)) { a[j] = a[j - 1]; j--; }
+        a[j] = t;
+    }
+}
+
+static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int nk, uint32_t *n) {
+    if (nk < 1 || nk > 4 || c.store_nr == 0xFFFF || c.rec == 0) return 0;
+    for (int i = 0; i < nk; i++) {
+        int t = keys[i].type < 0 ? -keys[i].type : keys[i].type;
+        if (t == 3 || t == 4 || t == 6) return 0;
+    }
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0) return 0;
+    loft_hhdr h = loft_h_hdr(s, claim);
+    if (!h.inl) return 0;
+    loft_hkey *pairs = (loft_hkey *) malloc(((size_t) h.count + 1) * sizeof *pairs);
+    if (!pairs) { fputs("loft: out of memory\n", stderr); abort(); }
+    uint32_t e0 = loft_h_ent0(h.count), live = 0;
+    for (uint32_t at = 0; at < h.count; at++) {
+        uint32_t seq = loft_u32(s, claim, LOFT_H_BUCKET0 + at * 8);
+        if (seq == 0 || seq == LOFT_H_TOMB) continue;
+        loft_hkey *p = &pairs[live++];
+        p->pos = e0 + at * h.stride;
+        for (int i = 0; i < nk; i++) {
+            int64_t v = loft_key_get(s, claim, p->pos, &keys[i]).i;
+            p->k[i] = keys[i].type < 0 ? ~v : v;
+        }
+    }
+    int depth = 2;
+    for (uint32_t m = live; m > 1; m >>= 1) depth += 2;
+    loft_hkey_sort(pairs, live, nk, depth);
+    loft_ref *out = (loft_ref *) malloc(((size_t) live + 1) * 2 * sizeof *out);
+    if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (uint32_t i = 0; i < live; i++) {
+        out[i].store_nr = c.store_nr;
+        out[i].rec = claim;
+        out[i].pos = pairs[i].pos;
+    }
+    free(pairs);
+    *n = live;
+    return out;
+}
+
 static loft_ref *loft_hash_refs(loft_ref c, const loft_key *keys, int nk, int by_slot, uint32_t *n) {
+    if (!by_slot) {
+        loft_ref *fast = loft_hash_sorted_inline(c, keys, nk, n);
+        if (fast) return fast;
+    }
     loft_hent *all = loft_h_entries_of(c, n);
     loft_ref *out = (loft_ref *) malloc(((size_t) *n + 1) * 2 * sizeof *out);
     if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
