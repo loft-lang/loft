@@ -9,6 +9,7 @@
     scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
     scripts/c_sweep.py --all            # every refusal reason, not the top 25
     scripts/c_sweep.py --mode default   # one macro mode (strict, default, verify) instead of all
+    scripts/c_sweep.py --shard K/N      # every N-th program from offset K (CI splits the sweep)
     scripts/c_sweep.py --stderr         # also compare stderr: a fault's message, its `-->` line,
                                         # excerpt and call chain (the oracle runs --no-warnings)
     scripts/c_sweep.py --poison         # the store poison modes instead: the C built with
@@ -198,7 +199,17 @@ def main(argv: list[str]) -> int:
         i = argv.index("--mode")
         modes = (argv[i + 1],)
         del argv[i:i + 2]
+    shard = None
+    if "--shard" in argv:
+        i = argv.index("--shard")
+        k, n = (int(x) for x in argv[i + 1].split("/"))
+        shard = (k, n)
+        del argv[i:i + 2]
     files = [a for a in argv[1:] if not a.startswith("--")] or corpus()
+    if shard:
+        # Every n-th program from offset k of the sorted list: each program in exactly one
+        # shard, so n runners together sweep the whole corpus.
+        files = [f for i, f in enumerate(sorted(files)) if i % shard[1] == shard[0]]
     buckets = Counter()
     reasons = Counter()
     bad = []
