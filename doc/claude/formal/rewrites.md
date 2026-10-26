@@ -5895,6 +5895,33 @@ payload twice; native `request` 6.88 → 4.72 ms (−31 %), the hand-written for
 Trace `LOFT_TRACE_PURE_REUSE=1` (`…, shared`).  Site: `shared_call.rs`.  Guard
 `tests/scripts/a-call-two-wrappers-share-is-made-once.loft`, pin `tests/pure_reuse.rs`.
 
+### A loop counts a text's length once, until the text is written
+
+```
+  (R-TextLen)    In a loop, len(t) of a text VARIABLE t — a local or a by-value parameter
+                 whose type borrows from nothing (no deps) and that does not escape the
+                 function (no address taken, no by-reference or fn-ref argument, no tuple
+                 destination, no iterator variable) — is counted at its first use and
+                 answered from a memo after, until a statement of the loop that may write t
+                 has run (a rebind, an append, a clear or a format into it); the use after
+                 that counts again.  The memo is cleared before every entry to the outermost
+                 loop that reads len(t), so a write between two entries is seen.  A function
+                 that yields or runs arms in parallel memoises nothing.
+```
+
+**In words.** Applies in: the last of the compile phase's IR passes, both backends — after
+`(R-TailSelf)`, since a self-tail call is a loop only from there, after `(R-ZeroCount)`, which
+already reads a count compared with zero as the byte size, and after every pass that reasons
+about `len` itself.  Allowed because `len` of a text is total and effect-free: on an unchanged text
+every count answers what the first did, and the memo is cleared by every statement that may
+change it.  A text that borrows from another variable is left alone, since a write through
+that variable changes it without naming it.  Profitable because `len` counts characters, so a
+`while i < len(t)` loop — or a self-tail call turned into one — walks the whole text on every
+iteration and is quadratic in its length; with the memo it walks it once per write.  The count
+stands before the innermost statement that reads it, so a use in an arm the loop does not take
+is never counted.  Switch `LOFT_NO_TEXT_LEN=1`, trace `LOFT_TRACE_TEXT_LEN=1`.  Site:
+`text_len.rs`.  Guard `tests/scripts/a-loop-counts-a-text-length-once.loft`.
+
 ### Two equal reads in one statement are one read
 
 ```

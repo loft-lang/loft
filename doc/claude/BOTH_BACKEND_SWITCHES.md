@@ -469,6 +469,12 @@ call is (`dst += f(…)`, so native builds the result in `dst` through the appen
 statements between read the two lengths from before the growth.  The first bisect step for a
 wrong length or element of a vector built by appending results that were bound first;
 `LOFT_TRACE_BOUND_APPEND=1` names each append moved.
+**`LOFT_NO_TEXT_LEN=1`** (`@FR-R-TextLen`, default-ON, the last of the compile phase's IR
+passes, BOTH backends) counts `len(t)` at every use — with it on, a loop counts the
+length of a text variable that borrows from nothing and does not escape once, keeps it in a
+memo, and counts again only after a statement that may write the text.  The first bisect step
+for a wrong length inside a loop that writes the text it measures;
+`LOFT_TRACE_TEXT_LEN=1` names each memoised text.
 **`LOFT_NO_WORK_BUFFER=1`** (`@FR-R-WorkBuffer`, default-ON, after pass 2, BOTH backends)
 makes a vector local that never leaves its frame mint its store at the declaration and free
 it at the exit again — with it off, `v: vector<τ> = []` (τ a scalar) whose every mention is
