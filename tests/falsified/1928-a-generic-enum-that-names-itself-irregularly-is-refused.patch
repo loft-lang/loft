@@ -1,19 +1,8 @@
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
-index 3dc2485e8..722f5086f 100644
+index e71022017..e3c743ca2 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -1150,10 +1150,6 @@ impl Parser {
-         if !self.parse_enum_values(d_nr) {
-             return false;
-         }
--        // `@FR-G-Regular` — an enum template names itself only regularly, as a struct does.
--        if !conflict && self.data.def_type(d_nr) == DefType::TypeTemplate {
--            self.template_is_regular(d_nr, &[]);
--        }
-         // Skip type-completion when this enum conflicts with a builtin of the
-         // same name (e.g. `enum hash`): `d_nr` is then the existing builtin, and
-         // `complete_definition` would re-`set_returned` an already-typed def and
-@@ -7172,7 +7168,7 @@ impl Parser {
+@@ -7411,7 +7411,7 @@ impl Parser {
      /// One home for both field-type branches of `parse_field`.  Answers whether a check
      /// was consumed, so the identifier branch can keep using it as the head of its
      /// if-chain while the tuple branch, which ends the field itself, calls it directly.
@@ -22,7 +11,7 @@ index 3dc2485e8..722f5086f 100644
      /// own type variables, unchanged (`kids: vector<Tree<T>>`), for then every instance is a
      /// finite type.  At other arguments (`Bad<vector<T>>` inside `Bad<T>`) it has no finite
      /// set of instances: refused here, on the pass that parses it first, and marked so no
-@@ -7185,26 +7181,15 @@ impl Parser {
+@@ -7424,26 +7424,15 @@ impl Parser {
          field_at: &[(String, crate::lexer::Position)],
      ) -> bool {
          let own: Vec<u32> = self.data.def(d_nr).type_params.clone();
@@ -58,7 +47,7 @@ index 3dc2485e8..722f5086f 100644
              let mut irregular: Option<u32> = None;
              tp.any_node(&mut |t| {
                  if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
-@@ -7234,20 +7219,15 @@ impl Parser {
+@@ -7473,20 +7462,15 @@ impl Parser {
                  .collect();
              let regular = format!("{tname}<{}>", vars.join(", "));
              let shown = Type::Reference(r, crate::data::Deps::none()).source_name(&self.data);
