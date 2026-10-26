@@ -185,6 +185,12 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
                 (c_out[0], unreported(c_out[1])) == (i_out[0], unreported(i_out[1]))
             if same and stderr and not tests:
                 same = scrubbed(c_out[2]) == scrubbed(i_out[2])
+                # A stderr naming what changes per run (a temporary file built from the time
+                # and the pid) cannot match: when the interpreter's own second run says
+                # something else, the stream is not compared.
+                if not same:
+                    again = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env=env)
+                    same = scrubbed(again[2]) != scrubbed(i_out[2])
             if not same:
                 return path, "differ", f"[{mode}]", (i_out, c_out)
         return path, "match", "", None
