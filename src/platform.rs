@@ -1681,6 +1681,24 @@ pub fn c_link_arg_for_soname(soname: &str) -> String {
     format!("-l{stem}")
 }
 
+/// The `cc` arguments that link EVERY member of a static archive into a C backend program, used
+/// for a `[c] shim` whose symbols are reached by `dlsym` rather than a direct call (a package with
+/// optional libraries, @PLN203 C5): nothing references them, so a plain link drops them.
+#[must_use]
+pub fn c_whole_archive_args(archive: &str) -> Vec<String> {
+    if cfg!(target_os = "macos") {
+        vec![format!("-Wl,-force_load,{archive}")]
+    } else if cfg!(windows) {
+        vec![archive.to_string()]
+    } else {
+        vec![
+            "-Wl,--whole-archive".to_string(),
+            archive.to_string(),
+            "-Wl,--no-whole-archive".to_string(),
+        ]
+    }
+}
+
 /// The `cc` argument that exports a C backend program's own symbols to the dynamic table, so a
 /// `dlsym` over the program finds a shim linked into it (@PLN203 C5, optional libraries): GNU
 /// ld's `-rdynamic`; macOS exports them already, and Windows resolves no symbol that way.

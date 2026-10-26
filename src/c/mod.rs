@@ -1490,13 +1490,27 @@ fn c_libraries(data: &Data) -> String {
             // Archived by `cc` + `ar` whatever the host's static-link archiver is: `cc` links
             // this unit, and MinGW's `ld` cannot read an MSVC archive.  The sources are named
             // too, for a wasm32 build, which compiles them instead of linking the host archive.
+            // A package with optional libraries reaches its shim through `dlsym`, so the
+            // archive is linked whole — nothing references its symbols directly.
             let _ = writeln!(
                 out,
-                "/* `[c] shim` of package {}, {} sources */\n/* link: {} */",
+                "/* `[c] shim` of package {}, {} sources */",
                 lib.pkg_dir,
-                lib.shim.len(),
-                crate::file_access::portable(&archive)
+                lib.shim.len()
             );
+            let path = crate::file_access::portable(&archive);
+            let lazy = data
+                .c_libraries
+                .iter()
+                .any(|o| o.optional && o.pkg_dir == lib.pkg_dir);
+            let args = if lazy {
+                crate::platform::c_whole_archive_args(&path)
+            } else {
+                vec![path]
+            };
+            for a in args {
+                let _ = writeln!(out, "/* link: {a} */");
+            }
             for src in &lib.shim {
                 let _ = writeln!(
                     out,
