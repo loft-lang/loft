@@ -391,6 +391,8 @@ driver (`--native`'s compile, cache and run), `loft test`'s native leg, the ship
 `regex` and `crypto` follow; `graphics`, `web`, `server` and `ssh` need windowing, audio and
 TLS the C99 library does not hold, so they bind the OS's libraries or stay Rust.
 
+**What the backend still owes before it is the only compiled target is [@PLN203](203-c99-default-backend.md)** (the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts, the wasm targets, the perf lane, platforms, the flip).
+
 **⚠ NEXT — the quality of the C the generator writes: read this before the next feature (owner, 2026-10-24).**
 The C backend gets no twins of the bench routines (owner); `bench/stats.py`'s `c` and `cship`
 lanes measure it against the Rust twins (bench/README.md § The C lanes), a report, never a bar.  These are defects in the emitted C, found by taking one

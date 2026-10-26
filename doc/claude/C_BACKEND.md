@@ -353,6 +353,11 @@ walk over a hash in a locked store keeps its snapshot in a store of its own
 
 ## Not carried yet
 
+The work that makes this backend the only compiled target — a driver, diagnostics parity, the
+stdlib census, `par` with threads, libraries and hosts, the wasm targets, a perf lane, three
+platforms — is [@PLN203](plans/203-c99-default-backend.md), with the measured position it
+starts from.
+
 No program of the corpus is refused.  What the C runtime does not have, it answers at run time
 the way a build without it answers: a ranged or a TLS transport for a URL, a SQL driver for a
 lazy database source.  Refused at emit time: a program declaring a loft lazy driver, a link re-pointed to a narrow
