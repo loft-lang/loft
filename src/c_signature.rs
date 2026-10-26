@@ -287,6 +287,15 @@ impl CElement {
                 float: false,
             }),
             Type::Float | Type::Single => Some(CElement { bytes, float: true }),
+            // A record element — `vector<Pixel>`, three `u8` fields laid inline — crosses as
+            // BYTES, against `void *` only: its stride is the record's layout, which no C
+            // scalar spells, and `bytes: 0` matches no resolved pointee (`pointee_takes`).
+            // The author asserts the layout, as for every `void *`; a record holding a text or
+            // a collection handle is a store offset C must not follow, and is theirs to avoid.
+            Type::Reference(..) => Some(CElement {
+                bytes: 0,
+                float: false,
+            }),
             _ => None,
         }
     }
@@ -890,7 +899,7 @@ pub fn shape_of(t: &Type) -> LoftCShape {
                 "this vector's elements have no C representation. A vector crosses as a pointer \
                  into loft's own element bytes, so each element must be one C value: an integer \
                  (`integer`, `i32`, `u32`, `u16`, `u8`), `boolean`, `character`, `float` or \
-                 `single`",
+                 `single` — or a record of such fields, against `void*`",
             ),
         },
         // @PLN24 — `#c` is the declared edge of loft's no-runtime-errors rule,

@@ -209,6 +209,7 @@ spellings of one layout, and a declaration where they disagree is refused (@C108
 | `single` | `float` |
 | `i8` / `i16` | **refused** — see below |
 | `vector<text>` | **refused** — the elements are loft's handles, not `char *` |
+| a record (`vector<Pixel>`, scalar fields laid inline) | `void *` **only** — the stride is the record's layout; a record holding a text or a collection is a store offset C must not follow, and the author keeps it out |
 | anything above | `void *` — always accepted, and means "these are bytes" |
 
 Signedness is not checked: it changes how a byte is read, never where the next

@@ -21,3 +21,7 @@ pub fn wrapped_owned(n: integer) -> text { "<{shim_owned(n)}>" }
 // backend carries by `loft_cvec_ptr` (`tests/c_emit.rs`).
 pub fn shim_sum(v: vector<integer>) -> integer;                #c "lcs_shim_sum" "int64_t(const int64_t*, int64_t)"
 pub fn shim_fill(out: vector<float>, start_milli: integer);    #c "lcs_shim_fill" "void(double*, int64_t, int64_t)"
+
+// A vector of records crosses as its element bytes, against `void *` only.
+pub struct Px { pub const r: integer limit(0, 255), pub const g: integer limit(0, 255), pub const b: integer limit(0, 255) }
+pub fn shim_rgb_sum(v: vector<Px>) -> integer;                  #c "lcs_shim_rgb_sum" "int64_t(const void*, int64_t)"

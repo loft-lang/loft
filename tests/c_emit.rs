@@ -2605,10 +2605,12 @@ fn main() {\n\
   v = [10, 20, 30];\n\
   out: vector<float> = [0.0, 0.0, 0.0];\n\
   shim_fill(out, 1500);\n\
-  println(\"{shim_mod(17, 5)} {wrapped_owned(7)} {shim_sum(v)} {out}\");\n\
+  px = [Px { r: 1, g: 2, b: 3 }, Px { r: 0, g: 0, b: 255 }];\n\
+  println(\"{shim_mod(17, 5)} {wrapped_owned(7)} {shim_sum(v)} {out} {shim_rgb_sum(px)}\");\n\
 }\n";
-    // 17 % 5 = 2; shim-7 bracketed; 10*1 + 20*2 + 30*3 = 140; 1.5, 1.501, 1.502.
-    let want = "2 <shim-7> 140 [1.5,1.501,1.502]\n";
+    // 17 % 5 = 2; shim-7 bracketed; 10*1 + 20*2 + 30*3 = 140; 1.5, 1.501, 1.502; the records
+    // as bytes: 65536 + 512 + 3 + 255 = 66306.
+    let want = "2 <shim-7> 140 [1.5,1.501,1.502] 66306\n";
     let libdir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
     let dir = scratch("shim");
     let file = dir.join("shim.loft");
