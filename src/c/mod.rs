@@ -1121,6 +1121,27 @@ pub(crate) fn is_operator(data: &Data, d: u32) -> bool {
     data.def(d).name().starts_with("Op")
 }
 
+/// Write the place twins asked for since `written` — a twin's body can ask for more, which this
+/// writes too — as a prototype into `protos` and a definition into `bodies`.
+fn write_twins(
+    cx: &Cx<'_>,
+    written: &mut usize,
+    protos: &mut String,
+    bodies: &mut String,
+) -> Result<(), Refusal> {
+    while *written < cx.twins.borrow().len() {
+        let (d, mask) = cx.twins.borrow()[*written];
+        *written += 1;
+        let (sig, body) = function(cx, d, mask).map_err(|why| Refusal {
+            function: cx.data.def(d).original_name().clone(),
+            why,
+        })?;
+        let _ = writeln!(protos, "{sig};");
+        let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
+    }
+    Ok(())
+}
+
 /// C99 for `roots` and every loft function they reach: the runtime, a prototype per function
 /// and each body.  A function or construct the backend does not carry refuses the whole unit.
 ///
@@ -1184,16 +1205,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     }
     // The place twins the functions call, and the ones those call in turn.
     let mut written = 0;
-    while written < cx.twins.borrow().len() {
-        let (d, mask) = cx.twins.borrow()[written];
-        written += 1;
-        let (sig, body) = function(&cx, d, mask).map_err(|why| Refusal {
-            function: data.def(d).original_name().clone(),
-            why,
-        })?;
-        let _ = writeln!(protos, "{sig};");
-        let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
-    }
+    write_twins(&cx, &mut written, &mut protos, &mut bodies)?;
     // The dispatchers call place twins too: those are written, and the dispatchers again,
     // until nothing new is asked.
     let dispatch = loop {
@@ -1204,16 +1216,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         if written == cx.twins.borrow().len() {
             break dispatch;
         }
-        while written < cx.twins.borrow().len() {
-            let (d, mask) = cx.twins.borrow()[written];
-            written += 1;
-            let (sig, body) = function(&cx, d, mask).map_err(|why| Refusal {
-                function: data.def(d).original_name().clone(),
-                why,
-            })?;
-            let _ = writeln!(protos, "{sig};");
-            let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
-        }
+        write_twins(&cx, &mut written, &mut protos, &mut bodies)?;
     };
     // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
     // it compiles `loft_at` without the foreign record's test.
@@ -1264,29 +1267,24 @@ fn c_libraries(data: &Data) -> String {
                 out,
                 "/* `[c] shim` of package {} */\n#include \"{}\"",
                 lib.pkg_dir,
-                lib.shim[0].replace('\\', "/")
+                crate::file_access::portable_str(&lib.shim[0])
+            );
+        } else if let Ok(Some(archive)) = crate::c_shim::archive(&lib.pkg_dir, &lib.shim) {
+            let _ = writeln!(
+                out,
+                "/* `[c] shim` of package {}, {} sources */\n/* link: {} */",
+                lib.pkg_dir,
+                lib.shim.len(),
+                crate::file_access::portable(&archive)
             );
         } else {
-            match crate::c_shim::archive(&lib.pkg_dir, &lib.shim) {
-                Ok(Some(archive)) => {
-                    let _ = writeln!(
-                        out,
-                        "/* `[c] shim` of package {}, {} sources */\n/* link: {} */",
-                        lib.pkg_dir,
-                        lib.shim.len(),
-                        archive.display().to_string().replace('\\', "/")
-                    );
-                }
-                Ok(None) | Err(_) => {
-                    let _ = writeln!(
-                        out,
-                        "/* `[c] shim` of package {}: compile and link these sources with this unit */",
-                        lib.pkg_dir
-                    );
-                    for src in &lib.shim {
-                        let _ = writeln!(out, "/* link: {} */", src.replace('\\', "/"));
-                    }
-                }
+            let _ = writeln!(
+                out,
+                "/* `[c] shim` of package {}: compile and link these sources with this unit */",
+                lib.pkg_dir
+            );
+            for src in &lib.shim {
+                let _ = writeln!(out, "/* link: {} */", crate::file_access::portable_str(src));
             }
         }
     }

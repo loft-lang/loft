@@ -602,6 +602,43 @@ pub fn warm_load_program(
     Some(state.user_def_start.unwrap_or_else(|| p.data.definitions()))
 }
 
+/// The files a program bundle's manifest hashes: every parsed source and the nearest
+/// `loft.toml` above each, sorted, without the stdlib's own files (the `stdk` line pins them).
+fn hashed_sources(p: &Parser, default_dir: &str) -> Vec<String> {
+    // The manifests decided which sources those were: a `[dependencies]` line removed or
+    // repointed at a path that no longer resolves leaves every parsed source unchanged, and a
+    // warm load would answer for a program that no longer compiles.  Each source's nearest
+    // `loft.toml` is hashed beside it, so editing one is a miss.
+    let manifests: Vec<String> = p
+        .parsed_sources
+        .iter()
+        .filter_map(|src| {
+            std::path::Path::new(src)
+                .ancestors()
+                .skip(1)
+                .map(|d| d.join("loft.toml"))
+                .find(|m| crate::file_access::is_file(m))
+                .map(|m| m.to_string_lossy().into_owned())
+        })
+        .collect();
+    let mut paths: Vec<String> = p.parsed_sources.iter().chain(&manifests).cloned().collect();
+    paths.sort_unstable();
+    paths.dedup();
+    // The stdlib's own files are pinned by the `stdk` line — a hash of exactly
+    // `default_dir/*.loft`, memoised by size and mtime — so they are not listed again:
+    // re-hashing their 240 kB on every warm start was most of its manifest check (@PLN179
+    // finding 001).  An edit to one changes the key, and the load misses there first.
+    let stdlib = crate::file_access::plain_canonical(std::path::Path::new(default_dir));
+    paths.retain(|src| {
+        let src = std::path::Path::new(src.as_str());
+        !crate::file_access::has_extension(src, "loft")
+            || src
+                .parent()
+                .is_none_or(|d| crate::file_access::plain_canonical(d) != stdlib)
+    });
+    paths
+}
+
 /// Cold path: after the full parse, write the whole-program bundle + its drift
 /// manifest for `script_abspath` (every deduped parsed source + its content
 /// hash).  The bundle is published first, then the manifest atomically — so a
@@ -630,37 +667,7 @@ pub fn save_program(
     // registry packages it resolved (`key_dirs`, captured by the caller; loft#1684).
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, key_dirs);
 
-    // The manifests decided which sources those were: a `[dependencies]` line removed or
-    // repointed at a path that no longer resolves leaves every parsed source unchanged, and a
-    // warm load would answer for a program that no longer compiles.  Each source's nearest
-    // `loft.toml` is hashed beside it, so editing one is a miss.
-    let manifests: Vec<String> = p
-        .parsed_sources
-        .iter()
-        .filter_map(|src| {
-            std::path::Path::new(src)
-                .ancestors()
-                .skip(1)
-                .map(|d| d.join("loft.toml"))
-                .find(|m| crate::file_access::is_file(m))
-                .map(|m| m.to_string_lossy().into_owned())
-        })
-        .collect();
-    let mut paths: Vec<&String> = p.parsed_sources.iter().chain(&manifests).collect();
-    paths.sort_unstable();
-    paths.dedup();
-    // The stdlib's own files are pinned by the `stdk` line — a hash of exactly
-    // `default_dir/*.loft`, memoised by size and mtime — so they are not listed again:
-    // re-hashing their 240 kB on every warm start was most of its manifest check (@PLN179
-    // finding 001).  An edit to one changes the key, and the load misses there first.
-    let stdlib = crate::file_access::plain_canonical(std::path::Path::new(default_dir));
-    paths.retain(|src| {
-        let src = std::path::Path::new(src.as_str());
-        !crate::file_access::has_extension(src, "loft")
-            || src
-                .parent()
-                .is_none_or(|d| crate::file_access::plain_canonical(d) != stdlib)
-    });
+    let paths = hashed_sources(p, default_dir);
     let mut lines = String::new();
     // @PLN11 G2/M6 — pin the build signature first so a binary upgrade
     // invalidates this bundle (see `manifest_matches`).
