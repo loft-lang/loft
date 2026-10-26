@@ -1653,7 +1653,7 @@ fn unit_defines(
     }
     if reached
         .iter()
-        .any(|&d| in_binary_native(data.def(d).native()) == Some("loft_process_run"))
+        .any(|&d| in_binary_native(data.def(d).native()).is_some())
     {
         out.push_str("#define LOFT_PROCESS 1\n");
     }
@@ -2078,6 +2078,7 @@ fn c_binding_result(
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
+        "n_git_query" => Some("loft_git_query"),
         _ => None,
     }
 }

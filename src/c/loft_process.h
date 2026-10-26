@@ -6,7 +6,8 @@
  * names one of the library's other operations, its words encoded the same way.  A child leads a
  * process group of its own, so a stop, a timeout and (Linux, `PR_SET_PDEATHSIG`) this program's
  * end reach everything it started; the terminal's signals and `SIGTERM` are passed on to every
- * group this program holds.  Compiled in for a unit that reaches `process_run` (LOFT_PROCESS). */
+ * group this program holds.  `lib/git`'s native (`git_query`) runs git through the same
+ * spawn.  Compiled in for a unit that reaches either (LOFT_PROCESS). */
 #ifdef LOFT_PROCESS
 #include <ctype.h>
 #if defined(LOFT_POSIX_HOST)
@@ -714,6 +715,127 @@ static void loft_proc_start(loft_words *w, loft_proc_answer *a) {
     loft_started_tab[loft_nstarted].h = loft_next_started;
     loft_started_tab[loft_nstarted++].pid = c.pid;
     a->code = loft_next_started++;
+}
+#endif
+
+#if defined(LOFT_POSIX_HOST)
+/* ── lib/git (src/git_query.rs): a closed vocabulary of questions, each one's argv built here —
+ * what the caller supplies is values (a ref, a path, a count), never options or a subcommand. ── */
+
+/* Run `git [-C dir] <words>` to completion, stdin empty, stdout collected: 1 and its exit code
+ * (-2 for one a signal ended), or 0 and why git could not be run. */
+static int loft_git_run(const char *dir, char **words, size_t nwords, loft_text *out, int64_t *code, loft_text *why) {
+    char *argv[16];
+    size_t lens[16], n = 0;
+    argv[n++] = (char *) "git";
+    if (*dir) {
+        argv[n++] = (char *) "-C";
+        argv[n++] = (char *) dir;
+    }
+    for (size_t i = 0; i < nwords && n < 15; i++) argv[n++] = words[i];
+    argv[n] = 0;
+    for (size_t i = 0; i < n; i++) lens[i] = strlen(argv[i]);
+    loft_child c;
+    loft_text err = { 0, 0, 0 };
+    if (!loft_spawn(argv, lens, n, 0, 1, 1, &c, why)) return 0;
+    size_t fed = 0;
+    while (loft_child_pump(&c, out, &err, "", 0, &fed, -1)) {}
+    free(err.p);
+    loft_proc_track(c.pid, 0);
+    int status = 0;
+    while (waitpid(c.pid, &status, 0) < 0 && errno == EINTR) {}
+    *code = WIFEXITED(status) ? WEXITSTATUS(status) : -2;
+    return 1;
+}
+
+/* `git_query(kind, a, b, n, dir, out) -> integer`: the exit status and the output; -1 when git
+ * could not be asked at all, `out` then saying why (loft#1061: a failed query outside a
+ * repository is not an empty answer). */
+static int64_t loft_git_query(int64_t kind, loft_str a, loft_str b, int64_t n, loft_str dir, loft_text *out) {
+    out->len = 0;
+    char *sa = loft_cstr_own(a), *sb = loft_cstr_own(b), *sd = loft_cstr_own(dir);
+    char count[32], range[8192], pretty[64];
+    snprintf(count, sizeof count, "-%lld", (long long) (n < 1 ? 1 : n > 100000 ? 100000 : n));
+    snprintf(range, sizeof range, "%s...HEAD", sa);
+    char *w[8];
+    size_t nw = 0;
+#define LOFT_W(x) (w[nw++] = (char *) (x))
+    switch (kind) {
+    case 0: LOFT_W("rev-parse"); LOFT_W("--abbrev-ref"); LOFT_W("HEAD"); break;
+    case 1: LOFT_W("rev-parse"); LOFT_W("--short"); LOFT_W("HEAD"); break;
+    case 2: LOFT_W("log"); LOFT_W("-1"); LOFT_W("--pretty=%s"); break;
+    case 3: LOFT_W("rev-parse"); LOFT_W("--verify"); LOFT_W("--quiet"); LOFT_W(sa); break;
+    case 4: LOFT_W("rev-list"); LOFT_W("--left-right"); LOFT_W("--count"); LOFT_W(range); break;
+    case 5: LOFT_W("diff"); LOFT_W("--name-status"); LOFT_W(range); break;
+    case 6:
+        snprintf(pretty, sizeof pretty, "--pretty=%%h%%x1f%%ad%%x1f%%s");
+        LOFT_W("log"); LOFT_W(count); LOFT_W(pretty); LOFT_W("--date=short");
+        break;
+    case 7: LOFT_W("status"); LOFT_W("--short"); break;
+    case 8: LOFT_W("diff"); LOFT_W(range); LOFT_W("--"); LOFT_W(sb); break;
+    case 9: LOFT_W("show"); LOFT_W(sa); break;
+    case 10: LOFT_W("show"); LOFT_W(sa); LOFT_W("--numstat"); LOFT_W("--pretty=format:"); break;
+    case 11: LOFT_W("log"); LOFT_W(count); LOFT_W("--pretty=%h"); break;
+    case 12: LOFT_W("diff"); LOFT_W("--name-only"); LOFT_W(range); break;
+    case 13: LOFT_W("ls-files"); LOFT_W("--cached"); LOFT_W("--others"); LOFT_W("--exclude-standard"); break;
+    default: break;
+    }
+#undef LOFT_W
+    int64_t code = -1;
+    char m[256];
+    if (nw == 0) {
+        snprintf(m, sizeof m, "this loft does not know git query %lld — the library is newer than the binary",
+                 (long long) kind);
+        loft_push_cstr(out, m);
+    } else if (a.len && a.p[0] == '-') {
+        /* A git ref cannot begin with `-`: refusing one closes the option position. */
+        loft_push_cstr(out, "'");
+        loft_push(out, a.p, a.len);
+        loft_push_cstr(out, "' cannot be a git ref — a ref may not begin with '-'");
+    } else {
+        loft_text got = { 0, 0, 0 }, why = { 0, 0, 0 };
+        if (!loft_git_run(sd, w, nw, &got, &code, &why)) {
+            code = -1;
+            loft_push_cstr(out, "cannot run git: ");
+            /* The spawn says `git: <error>`; the query says it after its own words. */
+            size_t skip = why.len >= 5 && memcmp(why.p, "git: ", 5) == 0 ? 5 : 0;
+            loft_push(out, why.p + skip, why.len - skip);
+        } else if (code == 0) {
+            loft_push_lossy(out, got.p, got.len);
+        } else {
+            /* Asked in an exit status (`rev-parse --git-dir`), never read from git's prose. */
+            char *probe[2] = { (char *) "rev-parse", (char *) "--git-dir" };
+            loft_text o = { 0, 0, 0 }, y = { 0, 0, 0 };
+            int64_t pc = -1;
+            if (loft_git_run(sd, probe, 2, &o, &pc, &y) && pc == 0) {
+                loft_push_lossy(out, got.p, got.len);
+            } else {
+                code = -1;
+                loft_push_cstr(out, "not a git repository: ");
+                if (*sd) {
+                    loft_push_cstr(out, sd);
+                } else {
+                    char cwd[4096];
+                    loft_push_cstr(out, getcwd(cwd, sizeof cwd) ? cwd : "the working directory");
+                }
+            }
+            free(o.p);
+            free(y.p);
+        }
+        free(got.p);
+        free(why.p);
+    }
+    free(sa);
+    free(sb);
+    free(sd);
+    return code;
+}
+#else
+static int64_t loft_git_query(int64_t kind, loft_str a, loft_str b, int64_t n, loft_str dir, loft_text *out) {
+    (void) kind; (void) a; (void) b; (void) n; (void) dir;
+    out->len = 0;
+    loft_push_cstr(out, "cannot run git: this build cannot start a program");
+    return -1;
 }
 #endif
 
