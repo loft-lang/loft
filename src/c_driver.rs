@@ -125,6 +125,116 @@ pub(crate) fn cc_identity(cc: &str) -> String {
         .clone()
 }
 
+/// What to install for the host compiler, by OS (@PLN203 C10).
+fn host_cc_cure() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "install the Xcode command-line tools (`xcode-select --install`)"
+    } else if cfg!(windows) {
+        "install MinGW-w64 gcc, or name a compiler in LOFT_CC"
+    } else {
+        "install one (Debian/Ubuntu: `apt install build-essential`), or name it in LOFT_CC"
+    }
+}
+
+/// What to install for the wasm32 route, by OS (@PLN203 C10): clang, `wasm-ld`, the WASI
+/// sysroot and the wasm32 compiler-rt builtins.
+fn wasm_cure() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
+         a clang in LOFT_WASM_CC"
+    } else if cfg!(windows) {
+        "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
+         a clang in LOFT_WASM_CC"
+    } else {
+        "install clang, lld, the WASI libc and the wasm32 compiler-rt (Debian/Ubuntu: \
+         `apt install clang lld wasi-libc libclang-rt-dev-wasm32`), or name a clang in LOFT_WASM_CC"
+    }
+}
+
+/// `--native-wasm` through the C (@PLN203 C6): the unit built for wasm32-wasi by clang into
+/// `out`, as `scripts/c_sweep.py --wasm` builds and validates it.  setjmp is wasm's
+/// exception-handling proposal in its standard encoding (a host runs it with exceptions on —
+/// `wasmtime -W exceptions=y`); `clock` and `signal` are WASI's emulation libraries; the stack
+/// is a native program's 8 MiB, where wasm-ld's default is 64 KiB.  A `[c] shim` of several
+/// sources is compiled from its sources here — its archive is the host's.
+///
+/// # Errors
+/// No clang, or a build that fails, with the compiler's output.
+pub(crate) fn build_wasm(
+    c: &str,
+    out: &std::path::Path,
+    shim_sources: &[String],
+    ship: bool,
+) -> Result<(), String> {
+    let cc = std::env::var("LOFT_WASM_CC").unwrap_or_else(|_| "clang".to_string());
+    let scratch = loft::platform::scratch_dir();
+    let src = scratch.join(format!("loft_wasm_c_{}.c", std::process::id()));
+    fa::write(&src, c).map_err(|e| format!("cannot write {}: {e}", src.display()))?;
+    let mut cmd = Spawn::new(Program::os(&cc));
+    cmd.push_args([
+        "--target=wasm32-wasi",
+        "-std=c99",
+        if ship { "-O3" } else { "-O2" },
+        "-w",
+        "-mllvm",
+        "-wasm-enable-sjlj",
+        "-mllvm",
+        "-wasm-use-legacy-eh=false",
+        "-D_WASI_EMULATED_PROCESS_CLOCKS",
+        "-D_WASI_EMULATED_SIGNAL",
+    ]);
+    if !ship {
+        cmd.push_arg("-DLOFT_CALL_CHAIN");
+    }
+    cmd.push_arg(&src);
+    cmd.push_args(shim_sources);
+    cmd.push_arg("-o").push_arg(out);
+    cmd.push_args([
+        "-Wl,-z,stack-size=8388608",
+        "-lm",
+        "-lsetjmp",
+        "-lwasi-emulated-process-clocks",
+        "-lwasi-emulated-signal",
+    ]);
+    let ran = cmd.run(b"");
+    if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
+        let _ = fa::remove_file(&src);
+    }
+    let ran = ran.map_err(|e| {
+        format!(
+            "--native-wasm needs clang and `{cc}` could not be run ({e}); {}",
+            wasm_cure()
+        )
+    })?;
+    if ran.status.success() {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&ran.stderr);
+    // A missing sysroot, linker or builtins library is a toolchain to install, not a defect.
+    let missing = [
+        "wasm-ld",
+        "sysroot",
+        "libclang_rt",
+        "stdio.h",
+        "cannot find",
+        "unable to find",
+    ]
+    .iter()
+    .any(|m| said.contains(m));
+    if missing {
+        return Err(format!(
+            "--native-wasm: the wasm32 toolchain is incomplete; {}.\n{}",
+            wasm_cure(),
+            said.trim_end()
+        ));
+    }
+    Err(format!(
+        "`{cc}` rejected the C this program was written as for wasm32 — a defect of the C \
+         backend (LOFT_KEEP_NATIVE_C=1 keeps the source).\n{}",
+        said.trim_end()
+    ))
+}
+
 /// The outcome of [`build`]: the binary to run and whether the cache supplied it.
 pub(crate) struct Built {
     pub binary: std::path::PathBuf,
@@ -175,8 +285,8 @@ pub(crate) fn build(
     }
     let out = out.map_err(|e| {
         format!(
-            "the C backend needs a C compiler and `{cc}` could not be run ({e}); install one \
-             (`cc`, `gcc`, `clang`) or name it in LOFT_CC"
+            "the C backend needs a C compiler and `{cc}` could not be run ({e}); {}",
+            host_cc_cure()
         )
     })?;
     if !out.status.success() {

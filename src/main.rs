@@ -9355,6 +9355,7 @@ fn main() {
             &lib_dirs,
             project.as_deref(),
             native_mode,
+            native_c,
             &native_lib_paths,
         );
         // Phase 6t Tier 4 — `loft test --deps` walks the current
@@ -10538,6 +10539,36 @@ fn main() {
             wasm_out.clone()
         };
         let wasm_out = &wasm_out;
+        // @PLN203 C6 — through the C and clang when the C backend drives native builds.
+        if native_c {
+            let ann =
+                test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
+            let expected = |name: &str| ann.expected_failure(name);
+            let c = match loft::c::emit_program(&p.data, &state.database, &expected) {
+                Ok(c) => c,
+                Err(r) => {
+                    eprintln!("loft: the C backend does not carry this program yet: {r}");
+                    std::process::exit(2);
+                }
+            };
+            let shim_sources: Vec<String> = p
+                .data
+                .c_libraries
+                .iter()
+                .filter(|l| l.shim.len() > 1)
+                .flat_map(|l| l.shim.iter().cloned())
+                .collect();
+            if let Err(e) = c_driver::build_wasm(
+                &c,
+                std::path::Path::new(wasm_out),
+                &shim_sources,
+                ship_build,
+            ) {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
         let end_def = p.data.definitions();
         // Per-process scratch so parallel `--native-wasm` runs never share the
         // generated source (a shared path let one rustc read another's program).

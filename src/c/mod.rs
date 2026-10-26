@@ -50,6 +50,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_parse.h"),
     include_str!("loft_reflect.h"),
     include_str!("loft_io.h"),
+    include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
     include_str!("loft_net.h")
 );
@@ -991,6 +992,7 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_is_dir" => Some("loft_is_dir_at"),
         "n_is_file" => Some("loft_is_file_at"),
         "n_is_symlink" => Some("loft_is_symlink_at"),
+        "n_c_library_available" => Some("loft_c_library_available"),
         "n_eprint" => Some("loft_eprint"),
         "n_os_temp_dir" => Some("loft_os_temp_dir"),
         "n_source_dir" => Some("loft_source_dir"),
@@ -1069,9 +1071,10 @@ fn host_native_c(name: &str) -> Option<&'static str> {
         "n_reflect_field" => Some("loft_reflect_field"),
         "n_reflect_field_path" => Some("loft_reflect_field_path"),
         "n_get_store_lock" => Some("loft_get_store_lock"),
-        "n_log_info" | "n_log_warn" | "n_log_error" | "n_log_fatal" => {
-            Some("loft_log_unconfigured")
-        }
+        "n_log_info" => Some("loft_log_info"),
+        "n_log_warn" => Some("loft_log_warn"),
+        "n_log_error" => Some("loft_log_error"),
+        "n_log_fatal" => Some("loft_log_fatal"),
         "n_ymd_days_ago" => Some("loft_ymd_days_ago"),
         "n_env_variables" => Some("loft_env_variables"),
         _ => None,
@@ -1144,6 +1147,28 @@ fn write_twins(
     Ok(())
 }
 
+/// @PLN203 C3 — the stdlib's natives the C runtime has no arm for: a function with no loft
+/// body, no `#c` signature and no library `#native`, which [`native_c`] does not map.  A
+/// program that reaches one is refused by its name (`function`); this is the same question
+/// asked of the whole stdlib at once, so a new native cannot arrive without a C arm unseen.
+#[must_use]
+pub fn unported_natives(data: &Data) -> Vec<String> {
+    let mut out: Vec<String> = (0..data.definitions())
+        .filter(|&d| {
+            let def = data.def(d);
+            matches!(def.def_type(), DefType::Function)
+                && !is_operator(data, d)
+                && def.code() == &Value::Null
+                && def.c_sig.is_empty()
+                && def.native().is_empty()
+                && native_c(def.name()).is_none()
+        })
+        .map(|d| data.def(d).name().to_string())
+        .collect();
+    out.sort();
+    out
+}
+
 /// C99 for `roots` and every loft function they reach: the runtime, a prototype per function
 /// and each body.  A function or construct the backend does not carry refuses the whole unit.
 ///
@@ -1173,16 +1198,6 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         .collect();
     // The roots first, so a refusal names the function asked for before one it reaches.
     fns.sort_unstable_by_key(|d| (!roots.contains(d), *d));
-    // Without a `log.conf` beside the program the log calls do nothing (`Logger`); the C
-    // writes no log, so a program that has one is not carried.
-    if reachable_has(data, &all, |n| n.starts_with("n_log_"))
-        && crate::file_access::exists(format!("{}/log.conf", stores.source_dir).as_str())
-    {
-        return Err(Refusal {
-            function: "main".into(),
-            why: "a program with a log.conf".into(),
-        });
-    }
     // A program's own lazy driver (`fn lazy_fetch…`, @PLN133 S8) is called by the miss path,
     // which the C does not route to loft code.
     if (0..data.definitions()).any(|d| {
@@ -1262,6 +1277,26 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 /// the `link:` lines.
 fn c_libraries(data: &Data) -> String {
     let mut out = String::new();
+    // `c_library_available` (`loft_c_library_available`): the libraries this unit carries — a
+    // shim is compiled in, so its library is there; a declared library is not linked by the
+    // unit itself and no C build opens one at run time, so it answers false as an unloaded
+    // library does on the other backends.
+    let carried: Vec<String> = data
+        .c_libraries
+        .iter()
+        .filter(|l| !l.shim.is_empty())
+        .map(|l| body::c_string(&l.name))
+        .collect();
+    let _ = writeln!(
+        out,
+        "const char *const loft_clibs[] = {{ {} }};\nconst uint32_t loft_nclibs = {};",
+        if carried.is_empty() {
+            "0".to_string()
+        } else {
+            carried.join(", ")
+        },
+        carried.len()
+    );
     for lib in &data.c_libraries {
         if lib.shim.is_empty() {
             let _ = writeln!(
@@ -1447,7 +1482,7 @@ pub fn emit_program(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    {}\n    loft_start(argc, argv);\n    {}();\n    return 0;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    {}\n    loft_start(argc, argv);\n    {}();\n    return loft_had_fatal;\n}}\n",
         anchor(stores),
         c_name(data, main)
     );
@@ -1852,15 +1887,36 @@ fn emit_tests(
             why: "neither a main nor a test".into(),
         });
     }
-    let mut out = emit_unit(data, stores, &tests)?;
+    emit_tests_of(data, stores, &tests, expected)
+}
+
+/// The tests `tests` as one C unit whose `main` runs each in turn, or only the one its first
+/// argument names — the test runner (`loft test --native` on C, @PLN203 C5) runs every test
+/// in a process of its own, so each starts from fresh stores as on the interpreter.  The exit
+/// status is 1 when any test that ran failed.
+///
+/// # Errors
+/// The first [`Refusal`].
+pub fn emit_tests_of(
+    data: &Data,
+    stores: &Stores,
+    tests: &[u32],
+    expected: &dyn Fn(&str) -> Vec<String>,
+) -> Result<String, Refusal> {
+    let mut out = emit_unit(data, stores, tests)?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    {}\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    {}\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
         anchor(stores)
     );
-    for &d in &tests {
+    for &d in tests {
         let name = data.def(d).original_name();
         let subs = expected(&name);
+        let _ = writeln!(
+            out,
+            "    if (!loft_only || !strcmp(loft_only, {})) {{",
+            body::c_string(&name)
+        );
         if subs.is_empty() {
             let _ = writeln!(
                 out,
@@ -1883,6 +1939,7 @@ fn emit_tests(
                 subs.len()
             );
         }
+        out.push_str("    }\n");
     }
     out.push_str("    return failed ? 1 : 0;\n}\n");
     Ok(out)

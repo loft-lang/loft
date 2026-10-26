@@ -33,18 +33,25 @@ LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the state
 python3 bench/stats.py --lanes rust,c,cship    # every bench program as C, against its Rust twin
 ```
 
+The C binary reads the run bounds itself: `LOFT_MEMORY_LIMIT` caps the bytes the stores' buffers
+hold (`loft_heap_moved`, called before every resize of one; a growth past it stops the run with
+101 and the report naming the type and the growth), and `LOFT_TIMEOUT` stops the run with 124
+at the deadline (`alarm` under POSIX; without it the driver's own bound ends the program with
+itself).
+
+The log calls write what the interpreter's `Logger` writes (`loft_log.h`): the same config
+search (`LOFT_LOG_CONF`, `.loft/log.conf`, `log.conf`), records, level overrides, rate limit,
+rotation and reload, and `production = true` turns a failed assert or a panic into a logged
+record the program continues past, the run then exiting 1.  The log file is opened at the first
+record; the interpreter opens it at start, so only a program that never logs differs (no empty
+`.loft/log.txt`).
+
 `bench/stats.py`'s `c` lane builds each bench program as C (`-std=c99 -O3`) and requires its
 result hash to be the Rust twin's — a disagreement fails the run — and reports its time over the
 twin's; `cship` builds it under `LOFT_RELEASE_PASS_PROBE=1`, where the generator writes the
 release-pass probe's forms (`loft_wrap_*` in `loft_rt.h`: the processor's arithmetic with every
 wrap defined, for exactly the operators the Rust probe changes) — the ship tier's ceiling, as the
 Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes).
-
-The C binary reads the run bounds itself: `LOFT_MEMORY_LIMIT` caps the bytes the stores' buffers
-hold (`loft_heap_moved`, called before every resize of one; a growth past it stops the run with
-101 and the report naming the type and the growth), and `LOFT_TIMEOUT` stops the run with 124
-at the deadline (`alarm` under POSIX; without it the driver's own bound ends the program with
-itself).
 
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
 it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It

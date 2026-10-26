@@ -1110,13 +1110,6 @@ static loft_text loft_program_directory(loft_str sub) {
     return loft_dir_with_sub(buf, sub);
 }
 
-/* log_info / log_warn / log_error / log_fatal with no log configuration: nothing is written. */
-static void loft_log_unconfigured(loft_str message, loft_str file, int64_t line) {
-    (void) message;
-    (void) file;
-    (void) line;
-}
-
 /* os_cache_dir (cache::cache_base_dir): $XDG_CACHE_HOME/loft, else $HOME/.cache/loft, else the
  * temporary directory's. */
 static loft_text loft_os_cache_dir(void) {

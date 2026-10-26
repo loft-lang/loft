@@ -341,6 +341,17 @@ static void loft_print(loft_str s) {
     fwrite(s.p, 1, s.len, stdout);
 }
 
+/* c_library_available (c_libs::library_available): a library this unit carries — the names
+ * the unit lists after the runtime (`c_libraries` in mod.rs). */
+extern const char *const loft_clibs[];
+extern const uint32_t loft_nclibs;
+static uint8_t loft_c_library_available(loft_str name) {
+    for (uint32_t i = 0; i < loft_nclibs; i++) {
+        if (strlen(loft_clibs[i]) == name.len && memcmp(loft_clibs[i], name.p, name.len) == 0) return 1;
+    }
+    return 0;
+}
+
 /* eprint (platform::host_eprint): the text to standard error, unbuffered as Rust's is. */
 static void loft_eprint(loft_str s) {
     fwrite(s.p, 1, s.len, stderr);
@@ -418,9 +429,13 @@ static int loft_in_test = 0;
 static loft_text loft_fail_msg = { 0, 0, 0 };
 
 static void loft_fault_where(loft_str file, int64_t line);
+static int loft_log_production_fault(int sev, const char *label, const char *prefix, loft_str message,
+                                     loft_str file, int64_t line);
 
 static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t line) {
     if (test == 1) return;
+    if (!loft_in_test && loft_log_production_fault(2, "assertion_failed", "assertion failed: ", message, file, line))
+        return;
     fflush(stdout);
     fputs("error: assertion failed: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
@@ -544,6 +559,7 @@ static void loft_fault_where(loft_str file, int64_t line) {
 
 /* panic(message): the program stops as a failed assertion stops it, saying `panic:`. */
 static void loft_panic(loft_str message, loft_str file, int64_t line) {
+    if (!loft_in_test && loft_log_production_fault(3, "user_panic", "panic: ", message, file, line)) return;
     fflush(stdout);
     fputs("error: panic: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
@@ -3485,10 +3501,10 @@ static void loft_init(void);
 
 /* ── The run's time bound (timeout.rs) ─────────────────────────────────────────────────
  * `LOFT_TIMEOUT=<seconds>` (0 or unset: none): at the deadline the program stops with 124, the
- * GNU `timeout` status the interpreter's graceful exit gives, saying so on stderr.  POSIX arms
- * `alarm`; the handler does only what a signal handler may (`write`, `_exit`).  Without POSIX
- * the bound is the driver's, which ends the program with itself. */
-#if defined(LOFT_POSIX)
+ * GNU `timeout` status the interpreter's graceful exit gives, saying so on stderr.  A POSIX host
+ * arms `alarm`; the handler does only what a signal handler may (`write`, `_exit`).  Elsewhere
+ * (WASI has no signals) the bound is the driver's or the wasm host's. */
+#if defined(LOFT_POSIX_HOST)
 #include <signal.h>
 #include <unistd.h>
 static char loft_timeout_msg[96];
@@ -3501,7 +3517,7 @@ static void loft_timeout_fire(int sig) {
 #endif
 
 static void loft_arm_timeout(void) {
-#if defined(LOFT_POSIX)
+#if defined(LOFT_POSIX_HOST)
     const char *v = getenv("LOFT_TIMEOUT");
     unsigned long secs = 0;
     if (!v || !*v) return;

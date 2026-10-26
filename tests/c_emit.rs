@@ -205,6 +205,23 @@ fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
     );
 }
 
+/// @PLN203 C3 — the stdlib census: every native of `default/*.loft` has a C arm, except the
+/// ones named here, each refused by name where a program reaches it.  A new native lands with
+/// its C arm or with a row here saying which phase ports it.
+#[test]
+fn every_stdlib_native_has_a_c_arm_or_a_named_refusal() {
+    let p = parsed("fn main() {}\n");
+    let unported = loft::c::unported_natives(&p.data);
+    let refused: &[&str] = &[
+        // The browser host's channel (`--html`, `--native-wasm`): @PLN203 C6.
+        "n_host_input",
+        "n_host_output",
+    ];
+    let mut want: Vec<String> = refused.iter().map(|s| (*s).to_string()).collect();
+    want.sort();
+    assert_eq!(unported, want, "natives without a C arm");
+}
+
 /// `file_map` is the one producer of a foreign store (@PLN174): a unit that reaches it compiles
 /// `loft_at` with the foreign record's test, and no other unit pays that test.  The values are
 /// the corpus's (`tests/scripts/174-foreign-*.loft`, through `scripts/c_sweep.py`).
@@ -3163,4 +3180,163 @@ fn native_c_builds_caches_and_runs_the_program_under_the_run_bounds() {
         started.elapsed() < std::time::Duration::from_secs(60),
         "the bound held"
     );
+}
+
+/// @PLN203 C1 — the C logs what the interpreter logs (`src/c/loft_log.h`, a port of
+/// `logger.rs`): a `log.conf` beside the program names the file, the level and a rate limit of
+/// two per site, so of four `log_info` records at one line two are written; `production = true`
+/// makes the failed assert and the panic records the program continues past, and the run exits
+/// 1.  The lines, timestamps aside, are computed by hand and both backends must write them.
+#[test]
+fn the_c_logs_what_the_interpreter_logs() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let want_log = "INFO   p.loft:2  tick 0\nINFO   p.loft:2  tick 1\nWARN   p.loft:3  warned\n\
+                    ERROR  p.loft:4  [assertion_failed] assertion failed: one is two\n\
+                    FATAL  p.loft:5  [user_panic] panic: gone\n";
+    for backend in ["--interpret", "--native-c"] {
+        let dir = scratch(&format!("log{}", backend.trim_start_matches('-')));
+        let _ = fa::remove_file(dir.join("out.log"));
+        fa::write(
+            dir.join("log.conf"),
+            "[log]\nfile = out.log\nlevel = info\nproduction = true\n\n[rate_limit]\nper_site = 2\n",
+        )
+        .expect("write log.conf");
+        let file = dir.join("p.loft");
+        fa::write(
+            &file,
+            "fn main() {\n  for i in 0..4 { log_info(\"tick {i}\"); }\n  log_warn(\"warned\");\n  \
+             assert(1 == 2, \"one is two\");\n  panic(\"gone\");\n  println(\"after\");\n}\n",
+        )
+        .expect("write program");
+        let out = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "after\n",
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{backend}: a production fault counts"
+        );
+        let log = fa::read_to_string(dir.join("out.log")).expect("the log file");
+        // `2026-10-26T14:31:51.962Z ` — the timestamp is 24 characters and a space.
+        let lines: String = log
+            .lines()
+            .map(|l| format!("{}\n", l.get(25..).unwrap_or("")))
+            .collect();
+        assert_eq!(lines, want_log, "{backend}'s log");
+        assert!(
+            log.lines()
+                .all(|l| l.len() > 24 && l.as_bytes()[23] == b'Z'),
+            "{backend}: every record starts with a UTC timestamp: {log}"
+        );
+    }
+}
+
+/// @PLN203 C6 — `--native-c --native-wasm` writes the program as a wasm32-wasi module through
+/// the C and clang, and a WASI host runs it to the interpreter's answer.  The values are
+/// computed by hand: 1² + … + 10² = 385; a text built in a loop; a hash lookup.  Skipped where
+/// clang, `wasm-ld` or `wasmtime` is missing.
+#[test]
+fn native_c_writes_a_wasm_module_a_wasi_host_runs() {
+    let have = |tool: &str| {
+        loft::platform::process::harness_command(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !have("clang") || !have("wasm-ld") || !have("wasmtime") {
+        eprintln!("skipped: needs clang, wasm-ld and wasmtime");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("wasm");
+    let file = dir.join("w.loft");
+    fa::write(
+        &file,
+        "struct P { k: integer, v: text }\nfn main() {\n  s = 0;\n  for i in 1..=10 { s += i * i; }\n  \
+         t = \"\";\n  for i in 0..4 { t += \"{i}-\"; }\n  h: hash<P[k]> = [P { k: 7, v: \"seven\" }];\n  \
+         println(\"{s} {t} {h[7].v}\");\n}\n",
+    )
+    .expect("write program");
+    let wasm = dir.join("w.wasm");
+    let build = loft::platform::process::harness_command(loft)
+        .args(["--native-c", "--native-wasm"])
+        .arg(&wasm)
+        .arg(&file)
+        .output()
+        .expect("run loft --native-wasm");
+    assert!(
+        build.status.success(),
+        "the module builds: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let out = loft::platform::process::harness_command("wasmtime")
+        .args(["-W", "exceptions=y"])
+        .arg(&wasm)
+        .output()
+        .expect("run wasmtime");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "385 0-1-2-3- seven\n",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// @PLN203 C5 — `loft --tests --native-c` runs a file's tests on the C: one unit, one process
+/// per test, each test's verdict reported as the interpreter's runner reports it.  `sq_bad`
+/// asserts 3² = 10 and fails with its message; the other two pass; a test's stores do not
+/// reach the next (`counts` sees an empty vector though `fills` ran before it).
+#[test]
+fn native_c_runs_a_files_tests_one_process_each() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("ctests");
+    let file = dir.join("t.loft");
+    fa::write(
+        &file,
+        "fn sq(x: integer) -> integer { x * x }\nfn fills() { v: vector<integer> = [1, 2, 3]; \
+         assert(len(v) == 3, \"three\"); }\nfn sq_bad() { assert(sq(3) == 10, \"ten\"); }\n\
+         fn counts() { w: vector<integer> = []; assert(len(w) == 0, \"empty\"); }\n",
+    )
+    .expect("write tests");
+    for backend in ["--native-c", "--interpret"] {
+        let out = loft::platform::process::harness_command(loft)
+            .args(["--tests", backend])
+            .arg(&file)
+            .output()
+            .expect("run loft --tests");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{backend}: one test fails\n{all}"
+        );
+        assert!(
+            all.contains("FAIL  t.loft::sq_bad  —  assertion failed: ten"),
+            "{backend}: the failure names its test and message\n{all}"
+        );
+        assert!(
+            all.contains("1 failed; 2 passed; 3 total"),
+            "{backend}: the other two pass\n{all}"
+        );
+    }
 }

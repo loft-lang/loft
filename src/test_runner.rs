@@ -597,6 +597,7 @@ pub(crate) fn run_tests(
     lib_dirs: &[String],
     project: Option<&str>,
     native_mode: bool,
+    native_c: bool,
     extra_native_libs: &[String],
 ) -> i32 {
     use crate::data::DefType;
@@ -694,6 +695,73 @@ pub(crate) fn run_tests(
             return format!("native run killed by signal {sig}");
         }
         "native run failed".to_string()
+    }
+
+    /// @PLN203 C5 — a file's tests on the C backend: the file written as ONE unit
+    /// (`c::emit_tests_of`, or the program when the run calls the file's `main`), built once,
+    /// and run once per test with that test's name, so each starts from fresh stores as on
+    /// the interpreter.  Each test's verdict, in `fns` order.
+    fn c_file_tests(
+        data: &Data,
+        db: &loft::database::Stores,
+        fns: &[(u32, String)],
+        abs_file: &str,
+    ) -> Vec<(String, Result<(), String>)> {
+        let all = |msg: String| -> Vec<(String, Result<(), String>)> {
+            fns.iter()
+                .map(|(_, n)| (n.clone(), Err(msg.clone())))
+                .collect()
+        };
+        let has_main = fns.iter().any(|(_, n)| n == "main");
+        let none = |_: &str| Vec::new();
+        let ids: Vec<u32> = fns.iter().map(|(d, _)| *d).collect();
+        let unit = if has_main {
+            loft::c::emit_program(data, db, &none)
+        } else {
+            loft::c::emit_tests_of(data, db, &ids, &none)
+        };
+        let c = match unit {
+            Ok(c) => c,
+            Err(r) => return all(format!("the C backend does not carry this test yet: {r}")),
+        };
+        let dir = std::path::Path::new(abs_file)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        let cache = dir.join(".loft").join("cache");
+        let built = match crate::c_driver::build(&c, crate::c_driver::Tier::Check, &cache, false) {
+            Ok(b) => b,
+            Err(e) => return all(e),
+        };
+        let run_one = |only: Option<&str>| -> Result<(), String> {
+            let mut cmd = Spawn::new(Program::os(&built.binary));
+            if let Some(name) = only {
+                cmd.push_arg(name);
+            }
+            if std::env::var("LOFT_SOURCE_DIR").is_err() {
+                cmd.push_env("LOFT_SOURCE_DIR", dir);
+            }
+            cmd = cmd.stdout(std::process::Stdio::inherit());
+            let out = cmd
+                .run(b"")
+                .map_err(|e| format!("native run failed: {e}"))?;
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprint!("{stderr}");
+            if out.status.success() {
+                Ok(())
+            } else {
+                Err(native_failure(out.status, &stderr))
+            }
+        };
+        if has_main {
+            let outcome = run_one(None);
+            fns.iter()
+                .map(|(_, n)| (n.clone(), outcome.clone()))
+                .collect()
+        } else {
+            fns.iter()
+                .map(|(_, n)| (n.clone(), run_one(Some(n))))
+                .collect()
+        }
     }
 
     /// Which declared expectations no diagnostic of their OWN answers.
@@ -855,8 +923,8 @@ pub(crate) fn run_tests(
     // `cargo run --bin loft` rebuilds the binary but may skip the library
     // target, leaving native tests linking against stale code.
     // Detect this by comparing source mtimes against the rlib and rebuild
-    // automatically when needed.
-    if native_mode {
+    // automatically when needed.  A C run links no Rust runtime (@PLN203 C5).
+    if native_mode && !native_c {
         native_utils::ensure_rlib_fresh();
         if native_utils::loft_lib_dir().is_none() {
             std::panic::set_hook(prev_hook);
@@ -1629,6 +1697,18 @@ pub(crate) fn run_tests(
                             true,
                             Some("skip-native".to_string()),
                         ));
+                    }
+                } else if native_c {
+                    for (fn_name, outcome) in
+                        c_file_tests(&native_data, &native_db, &native_fns, &abs_file)
+                    {
+                        let passed = outcome.is_ok();
+                        file_result.tests.push((fn_name, passed, outcome.err()));
+                        if passed {
+                            dir_pass += 1;
+                        } else {
+                            dir_fail += 1;
+                        }
                     }
                 } else {
                     // Generate Rust source.
