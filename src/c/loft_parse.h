@@ -742,6 +742,11 @@ static int loft_pr_into(loft_pw *w, loft_jp *p, loft_werrs *errs, size_t value_a
 
 /* `Store::parse_errors`: what the parse that built a store's root reported, by store. */
 typedef struct { loft_text *e; size_t n; uint16_t tp; } loft_perrs;
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 static LOFT_TLS loft_perrs *loft_store_perrs = 0;
 static LOFT_TLS size_t loft_store_nperrs = 0;
 

@@ -188,6 +188,11 @@ typedef struct {
 #endif
 } loft_store_t;
 
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 static LOFT_TLS loft_store_t *loft_stores = 0;
 static LOFT_TLS uint32_t loft_nstores = 0;
 static LOFT_TLS uint64_t loft_stores_allocated = 0;

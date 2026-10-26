@@ -839,6 +839,11 @@ static void loft_jp_render_path(const loft_jp *p, loft_text *out) {
     }
 }
 
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 /* `stores.last_json_errors`: the errors of the last parse, in order; `json_errors()` reads them
  * joined by `|`. */
 static LOFT_TLS loft_text *loft_jerr = 0;

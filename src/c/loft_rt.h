@@ -428,6 +428,11 @@ LOFT_HOT_INLINE int64_t loft_wrap_rem(int64_t a, int64_t b) {
     return b == -1 ? 0 : a % b;
 }
 
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 /* `assert`: a failed one ends the running test (the test main catches it) or, outside a
  * test, the program, with the interpreter's message on stderr and exit status 1. */
 static LOFT_TLS jmp_buf loft_test_jmp;

@@ -1095,6 +1095,11 @@ static void loft_hash_remove_claims(const loft_tdesc *T, uint16_t tp, loft_ref r
 #define LOFT_SCRATCH_MARK 0x5C4A0000u
 
 typedef struct { loft_ref source, scratch; } loft_live_scratch;
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 static LOFT_TLS loft_live_scratch *loft_scratches = 0;
 static LOFT_TLS int loft_nscratches = 0, loft_scratch_cap = 0;
 

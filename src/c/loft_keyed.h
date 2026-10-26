@@ -987,6 +987,11 @@ static void (*loft_relink_hook)(const loft_tdesc *T, uint16_t tp, loft_ref to) =
  * and pops (`parallel_buf_drop*`). */
 typedef struct { int64_t i; double f; float g; loft_text t; loft_ref r; loft_fn fn; uint8_t adopted; } loft_par_slot;
 typedef struct { loft_par_slot *rows; int64_t n; } loft_par_buf;
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 static LOFT_TLS loft_par_buf *loft_par_bufs = 0;
 static LOFT_TLS int loft_npar = 0, loft_par_cap = 0;
 

@@ -372,6 +372,11 @@ static int loft_version_triple(const char *v, size_t n, unsigned long t[3]) {
 /* The schema gate (`check_beside`, `classify`, `Release::admits`): the sidecar beside `path`
  * against the layout the program reads its store as.  1 when the image may be read as it is: its
  * sidecar names this layout.  `who` names the caller in what a refusal says. */
+/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
+ * state: no threads. */
+#ifndef LOFT_TLS
+#define LOFT_TLS
+#endif
 /* `Stores::paged_refusal`: the last refusal a loader made, which a lazy fetch reads back as the
  * reason its source could not serve it (loft#802). */
 static LOFT_TLS char *loft_pg_refusal = 0;
