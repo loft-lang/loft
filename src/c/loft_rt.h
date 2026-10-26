@@ -436,14 +436,12 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
 
 /* `@FR-H-WriteLocked` (`RuntimeError::locked_store_write`): a development run stops at a write
  * into a store the author locked, as the interpreter does; a test fails. */
-static void loft_fault_chain(void);
 static void loft_locked_write(void) {
     static const char msg[] = "write to a locked store — unlock it with `#lock = false` before writing";
     fflush(stdout);
     fputs("error: ", stderr);
     fputs(msg, stderr);
     fputc('\n', stderr);
-    if (!loft_in_test) loft_fault_chain();
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, msg, sizeof msg - 1);
     if (loft_in_test) longjmp(loft_test_jmp, 1);

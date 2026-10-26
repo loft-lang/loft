@@ -193,13 +193,14 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
     // A stdlib native the runtime has not ported is refused by its name, never written as C
     // that answers differently.
-    let p = parsed("fn up() -> integer { eprintln(\"up\"); 1 }\n");
+    // `host_output` is the browser host's channel, which the C runtime has not ported (@PLN203 C6).
+    let p = parsed("fn up() -> integer { host_output(\"up\"); 1 }\n");
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
         .expect_err("a native without a C port is not carried");
-    assert_eq!(refusal.function, "eprint");
+    assert_eq!(refusal.function, "host_output");
     assert!(
-        refusal.why.contains("native eprint"),
+        refusal.why.contains("native host_output"),
         "names the construct: {refusal}"
     );
 }
@@ -2727,7 +2728,11 @@ fn native_c_builds_caches_and_runs_the_program_under_the_run_bounds() {
         .filter_map(|p| fa::file_name(&p))
         .filter(|n| n.starts_with("native-c-"))
         .collect();
-    assert_eq!(cached.len(), 1, "one cached binary for one program: {cached:?}");
+    assert_eq!(
+        cached.len(),
+        1,
+        "one cached binary for one program: {cached:?}"
+    );
 
     // A vector of 2²⁰ integers needs 8 MiB of store; the limit is 1 MiB.
     let grow = dir.join("grow.loft");
@@ -2792,7 +2797,8 @@ fn native_c_builds_caches_and_runs_the_program_under_the_run_bounds() {
             String::from_utf8_lossy(&out.stderr)
         );
         assert!(
-            String::from_utf8_lossy(&out.stderr).contains("[timeout] deadline reached after 1s (graceful)\n"),
+            String::from_utf8_lossy(&out.stderr)
+                .contains("[timeout] deadline reached after 1s (graceful)\n"),
             "the deadline says so: {}",
             String::from_utf8_lossy(&out.stderr)
         );

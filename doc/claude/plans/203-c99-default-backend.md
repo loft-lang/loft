@@ -83,6 +83,18 @@ the `FnPlan` families of @PLN200 B3.4 move as C's rows ask.
 Windows runner; the C sweep as a job in `ci.yml` beside the native leg, ASan and poison in the
 nightly; `scripts/test_subjects.sh` gains `c`.
 
+**C10 — what a user installs.**  The C stack moves the toolchain a user needs from rustup to the
+system's C tools, and the pages a user reads must say so before C9 ships: `README.md`'s install
+section, `doc/install.html`'s source, and the messages the driver prints when a tool is missing
+(`c_driver::build`'s "needs a C compiler", the wasm route's clang / `wasm-ld` / sysroot refusals)
+each name the package to install on the reader's OS.  The full set on Debian/Ubuntu (owner,
+2026-10-26): `apt install clang lld wasi-libc libclang-rt-dev-wasm32` beside the host `cc`
+(`build-essential`) — clang for wasm32, `lld` for `wasm-ld`, `wasi-libc` the `--native-wasm`
+sysroot, `libclang-rt-dev-wasm32` its compiler-rt builtins.  The macOS (Homebrew `llvm`, `lld`,
+`wasi-libc`) and Windows (MinGW-w64 gcc, or MSVC; LLVM for wasm) lists are measured on those
+runners before they are written down, and what each piece buys is stated per target (host
+binary: `cc` only; `--native-wasm`: all four; `--html`: clang and `lld`).
+
 **C9 — the flip.**  `--native` is the C backend; `--native-rust` the Rust writer for one
 release; then `src/generation/`, `native_adopt.rs`, `compiled_stdlib*.rs`, `native_build.rs`,
 the `#rust` templates and NATIVE.md's rustc content go to history.

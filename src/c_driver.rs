@@ -222,7 +222,10 @@ mod tests {
     fn link_lines_are_read_exactly() {
         let c = "/* `[c] shim` of package p, 2 sources */\n/* link: /a/b.a */\nint x;\n\
                  /* link: /c d.c */\n/* not a link: x */\n";
-        assert_eq!(link_inputs(c), vec!["/a/b.a".to_string(), "/c d.c".to_string()]);
+        assert_eq!(
+            link_inputs(c),
+            vec!["/a/b.a".to_string(), "/c d.c".to_string()]
+        );
     }
 
     #[test]
@@ -231,7 +234,13 @@ mod tests {
         let base = build_key("int x;", "cc", &flags, &[]);
         assert_eq!(base, build_key("int x;", "cc", &flags, &[]));
         assert_ne!(base, build_key("int y;", "cc", &flags, &[]));
-        assert_ne!(base, build_key("int x;", "cc", &cc_flags(Tier::Release), &[]));
-        assert_ne!(base, build_key("int x;", "cc", &flags, &["/nowhere".to_string()]));
+        assert_ne!(
+            base,
+            build_key("int x;", "cc", &cc_flags(Tier::Release), &[])
+        );
+        assert_ne!(
+            base,
+            build_key("int x;", "cc", &flags, &["/nowhere".to_string()])
+        );
     }
 }
