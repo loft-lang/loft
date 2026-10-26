@@ -37,6 +37,21 @@ its place moved bench 14 by −2.3 % of instructions and bench 16 by −0.2 %.
 
 After the window (before the flat copy): median 3.40× → 2.89×, routines over 3.5× 38 → 32.
 
+## Priced, not built
+
+Hand edits of the emitted C, the hash unchanged each time (bench rows on cpu 6, the probe by
+`perf stat`):
+
+| edit | routine | before → after | c/rust |
+|---|---|---|---|
+| a walked vector element read as a view (`@FR-R-TextBorrow`): no `loft_text_own` + `loft_text_set` per element | join | 58.7 → 14.9 µs | 10.2 → 2.6 |
+| `loft_replace` jumps between matches with `memchr` and pushes the runs whole (runtime only) | replace | 27.9 → 3.8–4.1 µs | 9.6 → 1.3–1.4 |
+| the ASCII arm of the char walk, the null test and the length asked once, `self` borrowed instead of copied (`@FR-R-CharWalk`) | split probe (`target/cstore/sp.loft`) | 1.10 G → 0.68 G cycles | ≈ 9.6 → 6 |
+
+After the walk fix, `split` spends ~25 % in the element push and its text claim
+(`loft_set_text`, `loft_vec_append`, `loft_st_claim_inner`, `loft_bits_insert`): the
+uncounted push header and the claim path are its next two steps.
+
 ## What is left, by mechanism
 
 c/rust is the checked C lane after the push window; nat is the committed native ratio.  The
