@@ -81,7 +81,10 @@ bin/loft --interpret examples/hello.loft              # bin\loft.exe on Windows
 **A downloaded bundle runs your program on the interpreter.** loft's default mode compiles
 through `rustc` when it can, and a bundle deliberately carries no native runtime, so it
 interprets instead — that is normal, not a fault to fix. `--interpret` asks for the
-interpreter directly and needs nothing but the bundle. Keep `bin/` and `default/` together:
+interpreter directly and needs nothing but the bundle. `--native-c` compiles through C with
+the C compiler already on your machine and no Rust — the C runtime is inside the binary (on
+Debian/Ubuntu `build-essential`; for `--native-wasm` add `clang lld wasi-libc
+libclang-rt-dev-wasm32`). Keep `bin/` and `default/` together:
 the binary loads the standard library from `<binary-dir>/../default`.
 
 Two things worth knowing about daily builds. **GitHub requires you to be signed in to
