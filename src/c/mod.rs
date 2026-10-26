@@ -1284,6 +1284,10 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 /// shim's `void **`), not its spelling.  A declared library (`libs`, `optional-libs`)
 /// is named the same way, for the linker.  `scripts/c_sweep.py` and `tests/c_emit.rs` read
 /// the `link:` lines.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the declared libraries: the header, the shim's three forms, the link lines"
+)]
 fn c_libraries(data: &Data) -> String {
     let mut out = String::new();
     // `c_library_available` (`loft_c_library_available`): the libraries this unit carries — a

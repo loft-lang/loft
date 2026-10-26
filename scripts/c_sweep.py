@@ -218,7 +218,8 @@ def main(argv: list[str]) -> int:
     shard = None
     if "--shard" in argv:
         i = argv.index("--shard")
-        k, n = (int(x) for x in argv[i + 1].split("/"))
+        k, _, n = argv[i + 1].partition("/")  # `K/N`, not a path
+        k, n = int(k), int(n)
         shard = (k, n)
         del argv[i:i + 2]
     files = [a for a in argv[1:] if not a.startswith("--")] or corpus()

@@ -84,7 +84,8 @@ impl FnWriter<'_> {
     /// runs on threads (`loft_par_run`, @PLN203 C4 tier 1); any other runs its rows in order.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the queue native's operands, each its own"
+        clippy::too_many_lines,
+        reason = "the queue native's operands, each its own, and its two routes (threads, in order) side by side"
     )]
     fn par_queue(
         &mut self,

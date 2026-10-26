@@ -2254,11 +2254,13 @@ fn generated_loft_paths_survive_the_wasm_feature_set() {
     );
 
     // The exemption's enforcement, pinned: `c_call` is safe to skip only while a
-    // reachable `#c` binding is REFUSED on a wasm target.
+    // reachable `#c` binding is REFUSED on a wasm target — except one whose package's
+    // `[c] shim` the wasm build linked into the module, which is called as a direct
+    // extern (`__c_<symbol>`) and never names `loft::c_call`.
     let gen_mod =
         fa::read_to_string(root.join("src/generation/mod.rs")).expect("read generation/mod.rs");
     assert!(
-        gen_mod.contains("if self.no_c_abi() {"),
+        gen_mod.contains("if self.no_c_abi() && !via_shim {"),
         "`c_call` is exempt from the gate above because `no_c_abi()` refuses a reachable \
          `#c` binding before any call can be emitted — that refusal is gone, so the \
          exemption is now unbacked (loft#967, @PLN24 arc E)"
