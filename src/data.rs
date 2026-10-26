@@ -10720,9 +10720,28 @@ impl Data {
     /// an instance its OWN declaration mints (`Tree<T>` in `kids: vector<Tree<T>>`) copied
     /// only the fields parsed before that mention — and re-close a field that was a forward
     /// stub when it was copied (@PLN165 D7).
+    ///
+    /// An ENUM template's fields are its variants' (loft#2171): its open instance, minted by a
+    /// variant's own field (`Node { left: reference<Tree<T>> }`), copied that variant before
+    /// the field, and was caught up only when something named it again — a generic function
+    /// over `Tree<T>` on pass 1, the field itself on pass 2 — so a program with no such function
+    /// laid the variant out with one field on pass 1 and two on pass 2 (the H5 contract).
     pub fn refresh_instances(&mut self, lexer: &mut Lexer, template: u32) {
-        let fields = self.template_fields(template);
         let params = self.definitions[template as usize].type_params.clone();
+        if matches!(
+            self.definitions[template as usize].returned.base(),
+            Type::Enum(..)
+        ) {
+            for d in 0..self.definitions() {
+                if self.definitions[d as usize].instance_of == template {
+                    let args = self.definitions[d as usize].instance_args.clone();
+                    let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+                    self.catch_up_open_instance(lexer, template, d, &bindings);
+                }
+            }
+            return;
+        }
+        let fields = self.template_fields(template);
         for d in 0..self.definitions() {
             if self.definitions[d as usize].instance_of != template {
                 continue;
