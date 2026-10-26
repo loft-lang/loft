@@ -1289,12 +1289,29 @@ fn c_libraries(data: &Data) -> String {
     // shim is compiled in, so its library is there; a declared library is not linked by the
     // unit itself and no C build opens one at run time, so it answers false as an unloaded
     // library does on the other backends.
-    let carried: Vec<String> = data
-        .c_libraries
-        .iter()
-        .filter(|l| !l.shim.is_empty())
-        .map(|l| body::c_string(&l.name))
-        .collect();
+    // A declared library the package ships is linked by its file; a required one known only by
+    // its soname, by the system linker's spelling of it.  An optional one the package does not
+    // ship is left out: the C opens no library at run time, so it answers unavailable.
+    let os = crate::platform::host_lib_os();
+    let mut links: Vec<String> = Vec::new();
+    let mut carried: Vec<String> = Vec::new();
+    for lib in data.c_libraries.iter().filter(|l| l.shim.is_empty()) {
+        let dir = std::path::Path::new(&lib.pkg_dir);
+        if let Some(file) = crate::platform::existing_lib_beside(dir, &lib.name, os) {
+            links.extend(crate::platform::c_link_args_for_file(&dir.join(file)));
+        } else if lib.optional {
+            continue;
+        } else {
+            links.push(crate::platform::c_link_arg_for_soname(&lib.name));
+        }
+        carried.push(body::c_string(&lib.name));
+    }
+    carried.extend(
+        data.c_libraries
+            .iter()
+            .filter(|l| !l.shim.is_empty())
+            .map(|l| body::c_string(&l.name)),
+    );
     let _ = writeln!(
         out,
         "static const char *const loft_clibs[] = {{ {} }};\nstatic const uint32_t loft_nclibs = {};",
@@ -1309,7 +1326,7 @@ fn c_libraries(data: &Data) -> String {
         if lib.shim.is_empty() {
             let _ = writeln!(
                 out,
-                "/* `#c` library {} (package {}): link it when building this unit. */",
+                "/* `#c` library {} (package {}) */",
                 lib.name, lib.pkg_dir
             );
         } else if lib.shim.len() == 1 {
@@ -1339,6 +1356,9 @@ fn c_libraries(data: &Data) -> String {
                 let _ = writeln!(out, "/* link: {} */", crate::file_access::portable_str(src));
             }
         }
+    }
+    for l in links {
+        let _ = writeln!(out, "/* link: {l} */");
     }
     out
 }

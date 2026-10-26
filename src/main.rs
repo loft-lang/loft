@@ -11876,6 +11876,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             let t_compile = std::time::Instant::now();
             let built = match c_driver::build(&c, tier, &cache_dir, native_cache_bypassed()) {
                 Ok(b) => b,
+                // No compiler on a run that did not ask for native: interpret, as the rustc
+                // path does without rustc (the reason reaches `LOFT_REQUIRE_NATIVE`).
+                Err(c_driver::BuildError::NoCompiler(why))
+                    if !native_requested && !native_required =>
+                {
+                    native_fallback_reason = Some(why);
+                    break 'native;
+                }
                 Err(e) => {
                     eprintln!("loft: {e}");
                     std::process::exit(1);

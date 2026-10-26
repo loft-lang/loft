@@ -742,7 +742,7 @@ pub(crate) fn run_tests(
         let cache = dir.join(".loft").join("cache");
         let built = match crate::c_driver::build(&c, crate::c_driver::Tier::Check, &cache, false) {
             Ok(b) => b,
-            Err(e) => return all(e),
+            Err(e) => return all(e.to_string()),
         };
         let run_one = |only: Option<&str>| -> Result<(), String> {
             let mut cmd = Spawn::new(Program::os(&built.binary));

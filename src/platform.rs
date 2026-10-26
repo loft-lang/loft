@@ -1646,6 +1646,32 @@ pub fn c_long_bits() -> u8 {
     if cfg!(windows) { 32 } else { 64 }
 }
 
+/// The `cc` arguments that link a C library a package ships, at `file`, into a C backend
+/// program (@PLN203 C5): the file itself, and where the program finds it when it runs — a run
+/// path on Unix; on Windows the DLL is staged beside the binary (`stage_native_dlls`).
+#[must_use]
+pub fn c_link_args_for_file(file: &std::path::Path) -> Vec<String> {
+    let mut out = vec![crate::file_access::portable(file)];
+    if !cfg!(windows)
+        && let Some(dir) = file.parent()
+    {
+        out.push(format!("-Wl,-rpath,{}", crate::file_access::portable(dir)));
+    }
+    out
+}
+
+/// The `cc` argument that links a system C library known by its soname (`libpq.so.5`) into a
+/// C backend program (@PLN203 C5): GNU ld's exact-name `-l:` on Linux, `-l<stem>` elsewhere.
+#[must_use]
+pub fn c_link_arg_for_soname(soname: &str) -> String {
+    if cfg!(target_os = "linux") {
+        return format!("-l:{soname}");
+    }
+    let stem = soname.strip_prefix("lib").unwrap_or(soname);
+    let stem = stem.split('.').next().unwrap_or(stem);
+    format!("-l{stem}")
+}
+
 /// The `cc` arguments a C backend unit links its `par` threads with (@PLN203 C4): POSIX
 /// threads on a Unix host; the C runtime's own on Windows, which needs none.
 #[must_use]

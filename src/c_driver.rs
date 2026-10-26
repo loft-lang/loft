@@ -215,6 +215,22 @@ pub(crate) fn build_wasm(
     ))
 }
 
+/// Why [`build`] made no binary: no C compiler to run at all — which a run that did not ask for
+/// native answers by interpreting, as the rustc path does without rustc — or a compiler that
+/// rejected the unit, a defect of the backend.
+pub(crate) enum BuildError {
+    NoCompiler(String),
+    Rejected(String),
+}
+
+impl std::fmt::Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuildError::NoCompiler(m) | BuildError::Rejected(m) => f.write_str(m),
+        }
+    }
+}
+
 /// The outcome of [`build`]: the binary to run and whether the cache supplied it.
 pub(crate) struct Built {
     pub binary: std::path::PathBuf,
@@ -234,7 +250,7 @@ pub(crate) fn build(
     tier: Tier,
     cache_dir: &std::path::Path,
     no_cache: bool,
-) -> Result<Built, String> {
+) -> Result<Built, BuildError> {
     let cc = cc_program();
     let flags = cc_flags(tier);
     let links = link_inputs(c);
@@ -252,7 +268,8 @@ pub(crate) fn build(
     let pid = std::process::id();
     let src = scratch.join(format!("loft_native_c_{pid}.c"));
     let binary = scratch.join(format!("loft_native_bin_{pid}{exe}"));
-    fa::write(&src, c).map_err(|e| format!("cannot write {}: {e}", src.display()))?;
+    fa::write(&src, c)
+        .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
     let mut cmd = Spawn::new(Program::os(&cc));
     cmd.push_args(&flags);
     cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
@@ -264,18 +281,18 @@ pub(crate) fn build(
         let _ = fa::remove_file(&src);
     }
     let out = out.map_err(|e| {
-        format!(
+        BuildError::NoCompiler(format!(
             "the C backend needs a C compiler and `{cc}` could not be run ({e}); {}",
             loft::platform::c_host_toolchain_cure()
-        )
+        ))
     })?;
     if !out.status.success() {
         let _ = fa::remove_file(&binary);
-        return Err(format!(
+        return Err(BuildError::Rejected(format!(
             "`{cc}` rejected the C this program was written as — a defect of the C backend \
              (LOFT_KEEP_NATIVE_C=1 keeps the source).\n{}",
             String::from_utf8_lossy(&out.stderr).trim_end()
-        ));
+        )));
     }
     if keep {
         eprintln!("loft: C source preserved at {}", src.display());
