@@ -341,12 +341,16 @@ static void loft_format_long(loft_text *s, int64_t val, uint8_t radix, int64_t w
 
 /* print (codegen_runtime::host_print): a reader that stopped reading ends the program quietly
  * with 0 — `prog | head` is the ordinary end of a pipeline, not a fault.  A POSIX host ignores
- * SIGPIPE (`loft_start`), so the closed pipe arrives here as EPIPE. */
+ * SIGPIPE (`loft_start`), so the closed pipe arrives here as EPIPE.  A text holding a newline is
+ * flushed, as Rust's line-writing stdout flushes it: a reader on a pipe sees each line when it is
+ * printed, not when a block fills or the program ends. */
 static void loft_print(loft_str s) {
 #if defined(EPIPE)
     if (fwrite(s.p, 1, s.len, stdout) < s.len && errno == EPIPE) exit(0);
+    if (memchr(s.p, '\n', s.len) && fflush(stdout) != 0 && errno == EPIPE) exit(0);
 #else
     fwrite(s.p, 1, s.len, stdout);
+    if (memchr(s.p, '\n', s.len)) fflush(stdout);
 #endif
 }
 
