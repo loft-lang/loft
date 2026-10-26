@@ -53,7 +53,8 @@ const RUNTIME: &str = concat!(
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
     include_str!("loft_net.h"),
-    include_str!("loft_process.h")
+    include_str!("loft_process.h"),
+    include_str!("loft_engine.h")
 );
 
 /// Why a function cannot be written as C yet.
@@ -1651,11 +1652,20 @@ fn unit_defines(
     }) {
         out.push_str("#define LOFT_NET 1\n");
     }
-    if reached
+    let runtimes: Vec<&str> = reached
         .iter()
-        .any(|&d| in_binary_native(data.def(d).native()).is_some())
+        .filter_map(|&d| in_binary_native(data.def(d).native()))
+        .collect();
+    if runtimes
+        .iter()
+        .any(|r| matches!(*r, "loft_process_run" | "loft_git_query"))
     {
         out.push_str("#define LOFT_PROCESS 1\n");
+    }
+    if runtimes.iter().any(|r| {
+        r.starts_with("loft_kernel_") || matches!(*r, "loft_live_flip" | "loft_swap_retired")
+    }) {
+        out.push_str("#define LOFT_ENGINE 1\n");
     }
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
@@ -2090,6 +2100,55 @@ fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
         "n_git_query" => Some("loft_git_query"),
+        // `lib/engine_host`'s kernel (`loft_engine.h`).  Its build swap and background rebuild
+        // (`swap_world`, `swap_start`, `rebuild_*`) are not carried: a unit that calls one refuses.
+        "n_kernel_listen" => Some("loft_kernel_listen"),
+        "n_kernel_pump" => Some("loft_kernel_pump"),
+        "n_kernel_next_event" => Some("loft_kernel_next_event"),
+        "n_kernel_event_cid" => Some("loft_kernel_event_cid"),
+        "n_kernel_event_kind" => Some("loft_kernel_event_kind"),
+        "n_kernel_event_payload" => Some("loft_kernel_event_payload"),
+        "n_kernel_event_status" => Some("loft_kernel_event_status"),
+        "n_kernel_tick_due" => Some("loft_kernel_tick_due"),
+        "n_kernel_send" => Some("loft_kernel_send"),
+        "n_kernel_broadcast" => Some("loft_kernel_broadcast"),
+        "n_kernel_http_fetch" => Some("loft_kernel_http_fetch"),
+        "n_live_flip" => Some("loft_live_flip"),
+        "n_kernel_swap_step" => Some("loft_kernel_swap_step"),
+        "n_swap_retired" => Some("loft_swap_retired"),
+        "n_kernel_idle" => Some("loft_kernel_idle"),
+        "n_kernel_clients" => Some("loft_kernel_clients"),
+        "n_kernel_post" => Some("loft_kernel_post"),
+        "n_kernel_alive" => Some("loft_kernel_alive"),
+        "n_kernel_stop" => Some("loft_kernel_stop"),
+        "n_kernel_frame" => Some("loft_kernel_frame"),
+        "n_kernel_udp_bound" => Some("loft_kernel_udp_bound"),
+        "n_kernel_sync_class" => Some("loft_kernel_sync_class"),
+        "n_kernel_sync_class_keyed" => Some("loft_kernel_sync_class_keyed"),
+        "n_kernel_keyframe" => Some("loft_kernel_keyframe"),
+        "n_kernel_sync_next" => Some("loft_kernel_sync_next"),
+        "n_kernel_sync_cid" => Some("loft_kernel_sync_cid"),
+        "n_kernel_sync_seq" => Some("loft_kernel_sync_seq"),
+        "n_kernel_sync_payload" => Some("loft_kernel_sync_payload"),
+        "n_kernel_connect" => Some("loft_kernel_connect"),
+        "n_kernel_client_pump" => Some("loft_kernel_client_pump"),
+        "n_kernel_client_alive" => Some("loft_kernel_client_alive"),
+        "n_kernel_client_next_event" => Some("loft_kernel_client_next_event"),
+        "n_kernel_client_event_kind" => Some("loft_kernel_client_event_kind"),
+        "n_kernel_client_event_cid" => Some("loft_kernel_client_event_cid"),
+        "n_kernel_client_event_payload" => Some("loft_kernel_client_event_payload"),
+        "n_kernel_client_event_status" => Some("loft_kernel_client_event_status"),
+        "n_kernel_client_tick_due" => Some("loft_kernel_client_tick_due"),
+        "n_kernel_client_idle" => Some("loft_kernel_client_idle"),
+        "n_kernel_client_send" => Some("loft_kernel_client_send"),
+        "n_kernel_client_sync_next" => Some("loft_kernel_client_sync_next"),
+        "n_kernel_client_sync_seq" => Some("loft_kernel_client_sync_seq"),
+        "n_kernel_client_sync_payload" => Some("loft_kernel_client_sync_payload"),
+        "n_kernel_client_udp_bound" => Some("loft_kernel_client_udp_bound"),
+        "n_kernel_client_frame" => Some("loft_kernel_client_frame"),
+        "n_kernel_client_stop" => Some("loft_kernel_client_stop"),
+        "n_kernel_default_host" => Some("loft_kernel_default_host"),
+        "n_kernel_local" => Some("loft_kernel_local"),
         _ => None,
     }
 }

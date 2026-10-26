@@ -72,26 +72,6 @@ static int loft_words_decode(const char *p, size_t len, loft_words *w) {
     return 1;
 }
 
-/* `String::from_utf8_lossy` over bytes that may hold a NUL: an invalid byte is U+FFFD. */
-static void loft_push_lossy(loft_text *t, const char *c, size_t n) {
-    const unsigned char *p = (const unsigned char *) c;
-    if (loft_utf8_valid(p, n)) {
-        loft_push(t, c, n);
-        return;
-    }
-    for (size_t i = 0; i < n;) {
-        size_t len = p[i] < 0x80 ? 1 : (p[i] >= 0xC2 && p[i] <= 0xDF) ? 2
-                   : (p[i] >= 0xE0 && p[i] <= 0xEF) ? 3 : (p[i] >= 0xF0 && p[i] <= 0xF4) ? 4 : 0;
-        if (len && i + len <= n && loft_utf8_valid(p + i, len)) {
-            loft_push(t, c + i, len);
-            i += len;
-        } else {
-            loft_push(t, "\xEF\xBF\xBD", 3);
-            i++;
-        }
-    }
-}
-
 /* One answer of the native: the integer the library reads, and its two texts. */
 typedef struct { int64_t code; loft_text out, err; } loft_proc_answer;
 
