@@ -234,7 +234,23 @@ each push against a fresh derivation.  A mint of a type `hoist::complete_writes`
 literal writes completely copies no default image (`@FR-R-CompleteWrite`), unless the function
 copies a record into a fresh element's field, where a null source leaves what the fill wrote.  `LOFT_NO_PUSH_FILL=1`,
 `LOFT_NO_PUSH_WINDOW=1`, `LOFT_NO_RECORD_PUSH=1` and `LOFT_NO_COMPLETE_WRITE=1` turn the pieces
-off, as on native.
+off, as on native.  A loop the counted rule declines whose scalar pushes, at any depth, reach
+ONE path takes a DEEP window where `hoist::deep_window_ok` admits it — the root exclusive,
+nothing else in the body naming it or writing a store, no exit but the loop's own end — with no
+reservation: a push that does not fit takes the growth arm.  Native builds its deep window on
+a held push header, so it opens fewer; the soundness question is the analysis's, and the C
+answers it the same.  `LOFT_NO_DEEP_WINDOW=1` keeps the counted windows only.  `[x; n]` fills
+as the Rust runtime does: one exact resize, the template copied in doubling blocks.
+
+**Held file cursors.**  A loop that reads one `File` through fixed-width integer reads, where
+nothing else in it can see the record (`lower::file_hold::held_file`, `@FR-R-FileHold`), keeps
+the record's cursor in a `loft_fcur`: the format, the handle and the position read once, the
+bytes served from a 4 KB buffer that a miss refills with one `fread`, and the position given
+back on every exit — the loop's end, a `break` or `continue` past it, a `return` (loft has no
+exception, so these are all of them; Rust's guard does the same by its drop).  The stream's
+own position is recorded as it stands, so a read through the record afterwards seeks to its
+`#next`.  An unheld read of up to 15 bytes lands in a stack buffer.  `LOFT_NO_FILE_HOLD=1`
+reads every value through the record, as on native.
 
 **Text walks.**  Three native rewrites, each read from the analysis native uses.  A
 `for p in t.split(c)` loop takes its pieces from the text through a `loft_ls`, with no vector

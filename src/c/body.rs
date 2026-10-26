@@ -175,6 +175,10 @@ pub(crate) struct FnWriter<'a> {
     /// function writes completely, so the default image copied into a fresh element writes
     /// nothing that survives; computed on first use.
     complete_mints: Option<std::collections::HashSet<u16>>,
+    /// `@FR-R-FileHold` (`lower::file_hold::held_file`, native's gate): the files the enclosing
+    /// loops read through a held cursor, each with its `loft_fcur` and the index in `loops` of
+    /// the loop that holds it.
+    file_holds: Vec<(u16, String, usize)>,
 }
 
 /// A counted loop a push window is opened for (`FnWriter::window_loop`): the pushed path,
@@ -323,6 +327,7 @@ impl<'a> FnWriter<'a> {
             },
             in_delivery: 0,
             windows: Vec::new(),
+            file_holds: Vec::new(),
             borrowed: borrowed_texts(cx, d),
             lazy: if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
@@ -490,8 +495,27 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `@FR-R-FileHold` — give back the cursor of every hold of a loop at `loops` index `from`
+    /// or deeper, innermost first: what Rust's guard does by its drop.  Loft has no exception,
+    /// so these are every exit there is: the loop's own end (`loop_stmt`), a `break` or a
+    /// `continue` to an outer loop, a `return`.
+    fn release_holds(&mut self, from: usize, ind: usize) {
+        let gone: Vec<String> = self
+            .file_holds
+            .iter()
+            .rev()
+            .filter(|(_, _, at)| *at >= from)
+            .map(|(_, c, _)| c.clone())
+            .collect();
+        for c in gone {
+            self.line(ind, &format!("loft_fcur_release(&{c});"));
+        }
+    }
+
     /// Free every text the function holds: its locals and its temporaries.
     fn epilogue(&mut self, ind: usize) {
+        // A `return` from inside a held loop: the cursors go back before the frame does.
+        self.release_holds(0, ind);
         for t in self.held_texts() {
             self.line(ind, &format!("loft_text_free(&{t});"));
         }
@@ -582,7 +606,7 @@ impl<'a> FnWriter<'a> {
             return Ok(false);
         }
         let Some(p) = self.window_loop(lp) else {
-            return Ok(false);
+            return self.deep_window(lp, ind);
         };
         let n = self.decls.len() + 1;
         let (w, pv) = (format!("pw{n}"), format!("pv{n}"));
@@ -612,6 +636,64 @@ impl<'a> FnWriter<'a> {
         );
         self.line(ind, &format!("{w} = loft_win_of({pv}, {});", p.size));
         self.windows.push((p.path, w, pv, p.size));
+        Ok(true)
+    }
+
+    /// `@FR-R-PushFill`'s DEEP window clause, as native's `deep_window`: a loop whose scalar
+    /// pushes, at any depth, reach ONE path no enclosing window holds, where
+    /// `hoist::deep_window_ok` admits it — the root exclusive, nothing else in the body naming
+    /// it or writing a store, no exit but the loop's own end — pushes through a window opened
+    /// with no reservation: a push that does not fit takes the window's growth arm.
+    fn deep_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
+        let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
+        if env_on("LOFT_NO_DEEP_WINDOW") {
+            return Ok(false);
+        }
+        let data = self.cx.data;
+        let mut paths: Vec<(crate::opt::writes::PathKey, Value, u32)> = Vec::new();
+        for op in &lp.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && let Some(fp) =
+                        crate::opt::writes::fused_push(data, data.def(*d).name(), args)
+                    && !paths.iter().any(|(p, _, _)| *p == fp.path)
+                {
+                    paths.push((fp.path, fp.vector.clone(), fp.size));
+                }
+                false
+            });
+        }
+        let [(path, vector, size)] = paths.as_slice() else {
+            return Ok(false);
+        };
+        if self.windows.iter().any(|(p, _, _, _)| p == path)
+            || crate::generation::hoist::deep_window_ok(
+                lp,
+                path,
+                data,
+                self.d,
+                Some(self.cx.stores),
+                &mut self.hoist_cache,
+                None,
+            )
+            .is_err()
+        {
+            return Ok(false);
+        }
+        let (path, vector, size) = (path.clone(), vector.clone(), *size);
+        let n = self.decls.len() + 1;
+        let (w, pv) = (format!("pw{n}"), format!("pv{n}"));
+        self.decls
+            .push(format!("loft_win {w} = {{ 0, 0, 0, 0, 0xFFFF }};"));
+        self.decls
+            .push(format!("loft_ref {pv} = {{ 0xFFFF, 0, 0 }};"));
+        let v = self.expr(&vector, ind)?;
+        self.line(ind, &format!("{pv} = {};", as_ref(v)?));
+        self.flush(ind);
+        self.line(ind, &format!("{w} = loft_win_of({pv}, {size});"));
+        crate::rewrite_census::fired("R-PushFill", 1);
+        self.windows.push((path, w, pv, size));
         Ok(true)
     }
 
@@ -1102,6 +1184,7 @@ impl<'a> FnWriter<'a> {
 
     /// A loop: its held vectors and its push window before it, the window closed after.
     fn loop_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        let held_file = self.open_file_hold(b, ind)?;
         self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
         self.labels += 1;
@@ -1123,6 +1206,11 @@ impl<'a> FnWriter<'a> {
             // continue of its own (`hoist::push_loop`).
             let (_, w, _, _) = self.windows.pop().expect("the window this loop opened");
             self.line(ind, &format!("loft_win_sync({w});"));
+        }
+        if held_file {
+            // The loop's own end; its other exits gave the cursor back where they leave.
+            let (_, c, _) = self.file_holds.pop().expect("the cursor this loop holds");
+            self.line(ind, &format!("loft_fcur_release(&{c});"));
         }
         Ok(())
     }
@@ -1225,12 +1313,16 @@ impl<'a> FnWriter<'a> {
             Value::Break(n) => {
                 let l = self.label(*n)?;
                 self.flush(ind);
+                // The holds of the loops it leaves; the target's own goes back after its end.
+                self.release_holds(self.loops.len() - *n as usize, ind);
                 self.line(ind, &format!("goto brk_{l};"));
                 Ok(())
             }
             Value::Continue(n) => {
                 let l = self.label(*n)?;
                 self.flush(ind);
+                // The holds of the loops it leaves; the target's own stays held.
+                self.release_holds(self.loops.len() - *n as usize, ind);
                 self.line(ind, &format!("goto cont_{l};"));
                 Ok(())
             }
