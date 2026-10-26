@@ -1254,7 +1254,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     // binds them before it starts.
     out.push_str(
         "static void loft_bind_tables(void) {\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    \
-         loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    \
+         loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
          loft_fault_logger = loft_log_production_fault;\n}\n",
     );
     if parses {
@@ -1296,6 +1296,9 @@ fn c_libraries(data: &Data) -> String {
     let os = crate::platform::host_lib_os();
     let mut links: Vec<String> = Vec::new();
     let mut carried: Vec<String> = Vec::new();
+    // A linked library is available only when it exports every symbol its package declares
+    // (`c_libs::library_available`): the symbols each one is asked for at run time.
+    let mut syms: Vec<Vec<String>> = Vec::new();
     for lib in data.c_libraries.iter().filter(|l| l.shim.is_empty()) {
         let dir = std::path::Path::new(&lib.pkg_dir);
         if let Some(file) = crate::platform::existing_lib_beside(dir, &lib.name, os) {
@@ -1306,12 +1309,48 @@ fn c_libraries(data: &Data) -> String {
             links.push(crate::platform::c_link_arg_for_soname(&lib.name));
         }
         carried.push(body::c_string(&lib.name));
+        let mut own: Vec<String> = (0..data.definitions())
+            .filter(|&d| {
+                let def = data.def(d);
+                !def.c_sig.is_empty()
+                    && def.code() == &Value::Null
+                    && data.c_owner_pkg(def.position().file.as_str()) == Some(lib.pkg_dir.as_str())
+            })
+            .filter_map(|d| {
+                crate::c_signature::of(data, d, crate::c_signature::CTarget::host())
+                    .and_then(Result::ok)
+                    .map(|s| body::c_string(&s.symbol))
+            })
+            .collect();
+        own.sort();
+        own.dedup();
+        syms.push(own);
     }
-    carried.extend(
-        data.c_libraries
-            .iter()
-            .filter(|l| !l.shim.is_empty())
-            .map(|l| body::c_string(&l.name)),
+    // A shim is linked into the binary: its symbols are there, and asked for nothing.
+    for lib in data.c_libraries.iter().filter(|l| !l.shim.is_empty()) {
+        carried.push(body::c_string(&lib.name));
+        syms.push(Vec::new());
+    }
+    for (i, own) in syms.iter().enumerate() {
+        let mut list = own.clone();
+        list.push("0".to_string());
+        let _ = writeln!(
+            out,
+            "static const char *const loft_clibsym{i}[] = {{ {} }};",
+            list.join(", ")
+        );
+    }
+    let tables: Vec<String> = (0..syms.len())
+        .map(|i| format!("loft_clibsym{i}"))
+        .collect();
+    let _ = writeln!(
+        out,
+        "static const char *const *const loft_clibsyms[] = {{ {} }};",
+        if tables.is_empty() {
+            "0".to_string()
+        } else {
+            tables.join(", ")
+        }
     );
     let _ = writeln!(
         out,

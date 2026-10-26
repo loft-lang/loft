@@ -1681,11 +1681,17 @@ pub fn c_link_arg_for_soname(soname: &str) -> String {
     format!("-l{stem}")
 }
 
-/// The `cc` arguments a C backend unit links its `par` threads with (@PLN203 C4): POSIX
-/// threads on a Unix host; the C runtime's own on Windows, which needs none.
+/// The system libraries a C backend unit links (@PLN203 C4, C5): POSIX threads for `par`, and
+/// the dynamic loader `c_library_available` asks; Windows' C runtime carries both.
 #[must_use]
 pub fn c_thread_link_args() -> &'static [&'static str] {
-    if cfg!(windows) { &[] } else { &["-pthread"] }
+    if cfg!(windows) {
+        &[]
+    } else if cfg!(target_os = "linux") {
+        &["-pthread", "-ldl"]
+    } else {
+        &["-pthread"]
+    }
 }
 
 /// What to install so the C backend can build a host program, said for this host (@PLN203

@@ -47,7 +47,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
-CC = ["cc", "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"]
+CC = ["cc", "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
 MODES = {
     "strict": ["-DLOFT_STRICT", "-pedantic", "-Werror"],
     "default": ["-w"],

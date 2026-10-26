@@ -353,9 +353,25 @@ static void loft_print(loft_str s) {
  * the unit lists after the runtime (`c_libraries` in mod.rs), bound by its `main`. */
 static const char *const *loft_cl = 0;
 static uint32_t loft_ncl = 0;
+/* Each carried library's declared symbols, which a POSIX host asks the running program for
+ * (`dlsym` over its own handle): a library missing one is not available. */
+static const char *const *const *loft_cls = 0;
+#if defined(LOFT_POSIX_HOST)
+#include <dlfcn.h>
+#endif
 static uint8_t loft_c_library_available(loft_str name) {
     for (uint32_t i = 0; i < loft_ncl; i++) {
-        if (strlen(loft_cl[i]) == name.len && memcmp(loft_cl[i], name.p, name.len) == 0) return 1;
+        if (strlen(loft_cl[i]) == name.len && memcmp(loft_cl[i], name.p, name.len) == 0) {
+#if defined(LOFT_POSIX_HOST)
+            if (loft_cls && loft_cls[i]) {
+                void *self = dlopen(0, RTLD_LAZY);
+                for (const char *const *s = loft_cls[i]; *s; s++) {
+                    if (!self || !dlsym(self, *s)) return 0;
+                }
+            }
+#endif
+            return 1;
+        }
     }
     return 0;
 }
