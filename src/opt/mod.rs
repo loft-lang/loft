@@ -11,6 +11,7 @@
 pub mod attrs;
 pub mod body_writes;
 pub mod char_walk;
+pub mod frame_calls;
 pub mod header;
 pub mod iteration;
 pub mod laps;

@@ -635,7 +635,7 @@ impl<'a> FnWriter<'a> {
                 v.unspan(),
                 Value::Block(_) | Value::Insert(_) | Value::Span(_)
             )
-            && crate::generation::calls_a_frame(self.cx.data, v)
+            && crate::opt::frame_calls::calls_a_frame(self.cx.data, v)
         {
             self.line(ind, &format!("loft_frame_site({});", self.cur_line));
         }
