@@ -1668,7 +1668,7 @@ pub fn emit_program(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    {}\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
         anchor(stores),
         c_name(data, main)
     );
@@ -1679,11 +1679,7 @@ pub fn emit_program(
 /// (the program's own, as the interpreter's `Stores::resolve_path` anchors it) and whether
 /// the program anchors there at all (`#cwd` says no).
 fn anchor(stores: &Stores) -> String {
-    format!(
-        "loft_set_anchor({}, {});",
-        body::c_string(&stores.source_dir),
-        i32::from(stores.program_relative)
-    )
+    format!("loft_set_anchor({});", i32::from(stores.program_relative))
 }
 
 /// The signature and the body of function `d`.
@@ -2118,7 +2114,7 @@ pub fn emit_tests_of(
     let mut out = emit_unit(data, stores, tests)?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    {}\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",
         anchor(stores)
     );
     for &d in tests {

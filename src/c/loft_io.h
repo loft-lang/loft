@@ -28,14 +28,23 @@
 #define LOFT_FS_NOT_EMPTY 4
 #define LOFT_FS_OTHER 9
 
-/* The program's own directory, which a relative path resolves against (Stores::resolve_path);
- * the generated main sets it, LOFT_SOURCE_DIR overrides it.  `#cwd` turns the anchoring off. */
+/* The program's own directory, which a relative path resolves against (Stores::resolve_path):
+ * `LOFT_SOURCE_DIR`, which the driver hands every run, else the executable's own directory — a
+ * program written out with `--out` or run on its own anchors where it lies, as the Rust
+ * writer's standalone binary does.  No unit bakes a directory of the machine that built it.
+ * `#cwd` turns the anchoring off. */
 static const char *loft_anchor = "";
 static int loft_program_relative = 1;
 
-static void loft_set_anchor(const char *dir, int program_relative) {
+static loft_text loft_program_directory(loft_str sub);
+static void loft_set_anchor(int program_relative) {
     const char *env = getenv("LOFT_SOURCE_DIR");
-    loft_anchor = env && *env ? env : dir;
+    if (env && *env) loft_anchor = env;
+    else {
+        loft_text dir = loft_program_directory(loft_lit("", 0));
+        loft_anchor = dir.p ? dir.p : "";
+        if (dir.len && (dir.p[dir.len - 1] == '/' || dir.p[dir.len - 1] == '\\') && dir.len > 1) dir.p[dir.len - 1] = 0;
+    }
     loft_program_relative = program_relative;
     env = getenv("LOFT_PATHS");
     if (env) loft_program_relative = (env[0] == 'p' || env[0] == 'P');

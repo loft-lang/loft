@@ -94,9 +94,10 @@ def wasm_run(wasm: str, cwd: Path, tmpdir: str) -> list[str]:
     tmp = os.path.realpath(tempfile.gettempdir())
     cwd = cwd.resolve()
     # The host's environment, every variable inherited as a native run inherits it.
-    env = [a for k in sorted(os.environ) if k != "TMPDIR" for a in ("--env", k)]
+    env = [a for k in sorted(os.environ) if k not in ("TMPDIR", "LOFT_SOURCE_DIR") for a in ("--env", k)]
     return ["wasmtime", "-W", "exceptions=y", "--dir=.", f"--dir={cwd}::{cwd}",
             f"--dir={tmp}::{tmp}", f"--dir={tmpdir}::{tmpdir}", "--env", f"TMPDIR={tmpdir}",
+            "--env", f"LOFT_SOURCE_DIR={cwd}",
             *env, wasm]
 HAS_MAIN = re.compile(r"^\s*(pub\s+)?fn\s+main\s*\(", re.M)
 
@@ -248,8 +249,10 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         if code != 0:
             first = err.decode(errors="replace").strip().split("\n")[0]
             return path, "cc-error", f"[{mode}] {first}", None, times
+        # The program's directory, as the driver hands it to every run (`LOFT_SOURCE_DIR`).
         c_out, times[mode] = timed(wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else [exe],
-                                   limit(path, mode), cwd=src.parent, env=tenv)
+                                   limit(path, mode), cwd=src.parent,
+                                   env={**tenv, "LOFT_SOURCE_DIR": str(src.parent.resolve())})
         why = killed(path, mode, c_out)
         if why:
             return path, "slow", why, None, times
