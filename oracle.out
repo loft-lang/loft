@@ -1,0 +1,45 @@
+fatal: no such file: oracle.loft
+
+error: Undefined type TypeKind
+  --> /Users/Jurjen/workspace/loft/default/07_reflect.loft:296:17
+    |
+296 | #impure(host_io)
+    |                 ^
+
+error: Undefined type FieldInfo
+  --> /Users/Jurjen/workspace/loft/default/07_reflect.loft:296:17
+    |
+296 | #impure(host_io)
+    |                 ^
+
+error: Undefined type CollectionKind
+  --> /Users/Jurjen/workspace/loft/default/07_reflect.loft:296:17
+    |
+296 | #impure(host_io)
+    |                 ^
+
+error: Undefined type KeyInfo
+  --> /Users/Jurjen/workspace/loft/default/07_reflect.loft:296:17
+    |
+296 | #impure(host_io)
+    |                 ^
+
+error: Undefined type VariantInfo
+  --> /Users/Jurjen/workspace/loft/default/07_reflect.loft:296:17
+    |
+296 | #impure(host_io)
+    |                 ^
+
+error: Undefined type TypeInfo
+  --> /Users/Jurjen/workspace/loft/default/07_reflect.loft:296:17
+    |
+296 | #impure(host_io)
+    |                 ^
+
+error: Undefined type ValueInfo
+  --> /Users/Jurjen/workspace/loft/default/07_reflect.loft:296:17
+    |
+296 | #impure(host_io)
+    |                 ^
+
+error: aborting due to 8 previous errors
