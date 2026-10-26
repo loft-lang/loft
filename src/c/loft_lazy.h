@@ -335,7 +335,7 @@ static int loft_sq_query(void *db, const char *target, const char *sql, const lo
                 if (t) {
                     c->kind = 3;
                     loft_push(&c->t, (const char *) t, strlen((const char *) t));
-                    loft_push(&c->t, "", 0);
+                    loft_push(&c->t, "", 1); /* the NUL, counted in len */
                 }
             }
             }
