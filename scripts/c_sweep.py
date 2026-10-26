@@ -108,6 +108,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
             return path, "refused", reason(err), None
         if code != 0:
             return path, "refused", "the program does not compile in loft", None
+        # A `[c] shim` of several sources is a static archive the unit names (`/* link: … */`).
+        links = re.findall(r"^/\* link: (.*) \*/$", Path(c).read_text(errors="replace"), re.M)
         tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
         # A program without `main` is its tests: the C runs them as `loft --tests` does,
         # and the two exit statuses say whether every test passed.
@@ -118,7 +120,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES)):
             i_out = run(interp, ORACLE_TIMEOUT, cwd=src.parent, env=env) if env else i_plain
             if i_out is None:
                 i_out = i_plain = run(interp, ORACLE_TIMEOUT, cwd=src.parent)
-            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"], 120)
+            code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"] + links, 120)
             if code != 0:
                 first = err.decode(errors="replace").strip().split("\n")[0]
                 return path, "cc-error", f"[{mode}] {first}", None

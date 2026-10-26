@@ -25,3 +25,6 @@ pub fn shim_fill(out: vector<float>, start_milli: integer);    #c "lcs_shim_fill
 // A vector of records crosses as its element bytes, against `void *` only.
 pub struct Px { pub const r: integer limit(0, 255), pub const g: integer limit(0, 255), pub const b: integer limit(0, 255) }
 pub fn shim_rgb_sum(v: vector<Px>) -> integer;                  #c "lcs_shim_rgb_sum" "int64_t(const void*, int64_t)"
+
+// From the shim's SECOND source file (`lc_shim_two.c`).
+pub fn shim_half(a: integer) -> integer;                       #c "lcs_shim_half" "int64_t(int64_t)"

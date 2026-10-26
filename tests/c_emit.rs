@@ -2606,11 +2606,11 @@ fn main() {\n\
   out: vector<float> = [0.0, 0.0, 0.0];\n\
   shim_fill(out, 1500);\n\
   px = [Px { r: 1, g: 2, b: 3 }, Px { r: 0, g: 0, b: 255 }];\n\
-  println(\"{shim_mod(17, 5)} {wrapped_owned(7)} {shim_sum(v)} {out} {shim_rgb_sum(px)}\");\n\
+  println(\"{shim_mod(17, 5)} {wrapped_owned(7)} {shim_sum(v)} {out} {shim_rgb_sum(px)} {shim_half(9)}\");\n\
 }\n";
     // 17 % 5 = 2; shim-7 bracketed; 10*1 + 20*2 + 30*3 = 140; 1.5, 1.501, 1.502; the records
-    // as bytes: 65536 + 512 + 3 + 255 = 66306.
-    let want = "2 <shim-7> 140 [1.5,1.501,1.502] 66306\n";
+    // as bytes: 65536 + 512 + 3 + 255 = 66306; 9 / 2 from the shim's second source.
+    let want = "2 <shim-7> 140 [1.5,1.501,1.502] 66306 4\n";
     let libdir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
     let dir = scratch("shim");
     let file = dir.join("shim.loft");
@@ -2644,9 +2644,18 @@ fn main() {\n\
         String::from_utf8_lossy(&emit.stderr)
     );
     let unit = fa::read_to_string(&c).expect("read the C");
+    // Two sources: the shim is a static archive the unit names, never two files in one
+    // translation unit (each carries a `static lcs_divmod`).
+    let links: Vec<&str> = unit
+        .lines()
+        .filter_map(|l| {
+            l.strip_prefix("/* link: ")
+                .and_then(|l| l.strip_suffix(" */"))
+        })
+        .collect();
     assert!(
-        unit.contains("lc_shim.c\""),
-        "the shim's source is included into the unit"
+        links.iter().any(|l| l.contains("lcshim_shim_")) && !unit.contains("lc_shim.c\""),
+        "the two-source shim is linked as its archive, not included: {links:?}"
     );
     let exe = dir.join("shim");
     let cc = loft::platform::process::harness_command("cc")
@@ -2655,6 +2664,7 @@ fn main() {\n\
         .arg("-o")
         .arg(&exe)
         .arg("-lm")
+        .args(&links)
         .output()
         .expect("run cc");
     assert!(

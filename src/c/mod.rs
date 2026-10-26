@@ -1242,11 +1242,14 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     Ok(out)
 }
 
-/// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim`'s
-/// ANSI-C sources are compiled INTO the unit (`#include`d by path, so one `cc` of the unit is
-/// the whole build), where the interpreter and `--native` take the library `c_shim::build`
-/// made of them; a declared library (`libs`, `optional-libs`) is named for whoever links the
-/// unit, its symbols declared where the bindings call them.
+/// The `[c]` libraries the program's packages declare, as the unit carries them: a `[c] shim`
+/// of ONE source is `#include`d by path, so one `cc` of the unit is the whole build; one of
+/// several sources is built into its static archive (`c_shim::archive`, the same artefact a
+/// `--static` program links) and named in a `/* link: <path> */` line for whoever compiles
+/// the unit — several sources cannot share a translation unit, since each may carry its own
+/// `static` names (the vendored BearSSL does).  A declared library (`libs`, `optional-libs`)
+/// is named the same way, for the linker.  `scripts/c_sweep.py` and `tests/c_emit.rs` read
+/// the `link:` lines.
 fn c_libraries(data: &Data) -> String {
     let mut out = String::new();
     for lib in &data.c_libraries {
@@ -1256,14 +1259,34 @@ fn c_libraries(data: &Data) -> String {
                 "/* `#c` library {} (package {}): link it when building this unit. */",
                 lib.name, lib.pkg_dir
             );
+        } else if lib.shim.len() == 1 {
+            let _ = writeln!(
+                out,
+                "/* `[c] shim` of package {} */\n#include \"{}\"",
+                lib.pkg_dir,
+                lib.shim[0].replace('\\', "/")
+            );
         } else {
-            for src in &lib.shim {
-                let _ = writeln!(
-                    out,
-                    "/* `[c] shim` of package {} */\n#include \"{}\"",
-                    lib.pkg_dir,
-                    src.replace('\\', "/")
-                );
+            match crate::c_shim::archive(&lib.pkg_dir, &lib.shim) {
+                Ok(Some(archive)) => {
+                    let _ = writeln!(
+                        out,
+                        "/* `[c] shim` of package {}, {} sources */\n/* link: {} */",
+                        lib.pkg_dir,
+                        lib.shim.len(),
+                        archive.display().to_string().replace('\\', "/")
+                    );
+                }
+                Ok(None) | Err(_) => {
+                    let _ = writeln!(
+                        out,
+                        "/* `[c] shim` of package {}: compile and link these sources with this unit */",
+                        lib.pkg_dir
+                    );
+                    for src in &lib.shim {
+                        let _ = writeln!(out, "/* link: {} */", src.replace('\\', "/"));
+                    }
+                }
             }
         }
     }

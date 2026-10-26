@@ -6,4 +6,4 @@ version = "0.1.0"
 # built library is then registered exactly like a `[c] libs` entry, so nothing
 # downstream can tell a shim from any other C library.
 [c]
-shim = "src/lc_shim.c"
+shim = "src/lc_shim.c, src/lc_shim_two.c"
