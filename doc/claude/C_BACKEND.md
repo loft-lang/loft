@@ -28,6 +28,10 @@ python3 scripts/c_sweep.py --poison  # the store poison modes, against the inter
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
+python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's message, location
+                                               #   and chain), the driver's `advice:` notes aside
+python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: CI splits the sweep
+                                               #   over linux-probe.yml runs (`-f run=…`)
 python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met
 python3 bench/stats.py --lanes rust,c,cship    # every bench program as C, against its Rust twin

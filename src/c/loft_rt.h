@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <setjmp.h>
+#include <errno.h>
 #include <math.h>
 #include <time.h>
 
@@ -337,17 +338,24 @@ static void loft_format_long(loft_text *s, int64_t val, uint8_t radix, int64_t w
                          dir, token);
 }
 
+/* print (codegen_runtime::host_print): a reader that stopped reading ends the program quietly
+ * with 0 — `prog | head` is the ordinary end of a pipeline, not a fault.  A POSIX host ignores
+ * SIGPIPE (`loft_start`), so the closed pipe arrives here as EPIPE. */
 static void loft_print(loft_str s) {
+#if defined(EPIPE)
+    if (fwrite(s.p, 1, s.len, stdout) < s.len && errno == EPIPE) exit(0);
+#else
     fwrite(s.p, 1, s.len, stdout);
+#endif
 }
 
 /* c_library_available (c_libs::library_available): a library this unit carries — the names
- * the unit lists after the runtime (`c_libraries` in mod.rs). */
-extern const char *const loft_clibs[];
-extern const uint32_t loft_nclibs;
+ * the unit lists after the runtime (`c_libraries` in mod.rs), bound by its `main`. */
+static const char *const *loft_cl = 0;
+static uint32_t loft_ncl = 0;
 static uint8_t loft_c_library_available(loft_str name) {
-    for (uint32_t i = 0; i < loft_nclibs; i++) {
-        if (strlen(loft_clibs[i]) == name.len && memcmp(loft_clibs[i], name.p, name.len) == 0) return 1;
+    for (uint32_t i = 0; i < loft_ncl; i++) {
+        if (strlen(loft_cl[i]) == name.len && memcmp(loft_cl[i], name.p, name.len) == 0) return 1;
     }
     return 0;
 }
@@ -429,12 +437,15 @@ static int loft_in_test = 0;
 static loft_text loft_fail_msg = { 0, 0, 0 };
 
 static void loft_fault_where(loft_str file, int64_t line);
-static int loft_log_production_fault(int sev, const char *label, const char *prefix, loft_str message,
-                                     loft_str file, int64_t line);
+/* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
+ * in a runtime built without one, where every fault halts. */
+static int (*loft_fault_logger)(int sev, const char *label, const char *prefix, loft_str message,
+                                loft_str file, int64_t line) = 0;
 
 static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t line) {
     if (test == 1) return;
-    if (!loft_in_test && loft_log_production_fault(2, "assertion_failed", "assertion failed: ", message, file, line))
+    if (!loft_in_test && loft_fault_logger &&
+        loft_fault_logger(2, "assertion_failed", "assertion failed: ", message, file, line))
         return;
     fflush(stdout);
     fputs("error: assertion failed: ", stderr);
@@ -559,7 +570,8 @@ static void loft_fault_where(loft_str file, int64_t line) {
 
 /* panic(message): the program stops as a failed assertion stops it, saying `panic:`. */
 static void loft_panic(loft_str message, loft_str file, int64_t line) {
-    if (!loft_in_test && loft_log_production_fault(3, "user_panic", "panic: ", message, file, line)) return;
+    if (!loft_in_test && loft_fault_logger && loft_fault_logger(3, "user_panic", "panic: ", message, file, line))
+        return;
     fflush(stdout);
     fputs("error: panic: ", stderr);
     fwrite(message.p, 1, message.len, stderr);
@@ -3502,22 +3514,35 @@ static void loft_init(void);
 /* ── The run's time bound (timeout.rs) ─────────────────────────────────────────────────
  * `LOFT_TIMEOUT=<seconds>` (0 or unset: none): at the deadline the program stops with 124, the
  * GNU `timeout` status the interpreter's graceful exit gives, saying so on stderr.  A POSIX host
- * arms `alarm`; the handler does only what a signal handler may (`write`, `_exit`).  Elsewhere
- * (WASI has no signals) the bound is the driver's or the wasm host's. */
+ * arms `alarm`, whose handler does only what a signal handler may (`write`, `_exit`); Windows
+ * runs a watchdog thread that sleeps until the deadline.  Elsewhere (WASI has no signals and no
+ * threads here) the bound is the driver's or the wasm host's. */
+static char loft_timeout_msg[96];
+static size_t loft_timeout_len = 0;
+static unsigned long loft_timeout_secs = 0;
 #if defined(LOFT_POSIX_HOST)
 #include <signal.h>
 #include <unistd.h>
-static char loft_timeout_msg[96];
-static size_t loft_timeout_len = 0;
 static void loft_timeout_fire(int sig) {
     (void) sig;
     if (write(2, loft_timeout_msg, loft_timeout_len) < 0) { /* nothing left to tell */ }
     _exit(124);
 }
+#elif defined(_WIN32)
+#include <process.h>
+__declspec(dllimport) void __stdcall Sleep(unsigned long ms);
+static unsigned __stdcall loft_timeout_watch(void *arg) {
+    (void) arg;
+    Sleep(loft_timeout_secs * 1000ul);
+    fflush(stdout);
+    fwrite(loft_timeout_msg, 1, loft_timeout_len, stderr);
+    fflush(stderr);
+    _exit(124);
+    return 0;
+}
 #endif
 
 static void loft_arm_timeout(void) {
-#if defined(LOFT_POSIX_HOST)
     const char *v = getenv("LOFT_TIMEOUT");
     unsigned long secs = 0;
     if (!v || !*v) return;
@@ -3526,10 +3551,14 @@ static void loft_arm_timeout(void) {
         secs = secs * 10 + (unsigned long) (*c - '0');
     }
     if (!secs) return;
+    loft_timeout_secs = secs;
     sprintf(loft_timeout_msg, "[timeout] deadline reached after %lus (graceful)\n", secs);
     loft_timeout_len = strlen(loft_timeout_msg);
+#if defined(LOFT_POSIX_HOST)
     signal(SIGALRM, loft_timeout_fire);
     alarm((unsigned) secs);
+#elif defined(_WIN32)
+    _beginthreadex(0, 0, loft_timeout_watch, 0, 0, 0);
 #endif
 }
 
@@ -3544,6 +3573,9 @@ static void loft_start(int argc, char **argv) {
     loft_start_us = loft_now_us();
     loft_heap_read_limit();
     loft_arm_timeout();
+#if defined(LOFT_POSIX_HOST)
+    signal(SIGPIPE, SIG_IGN);
+#endif
     LOFT_TRACE("M\n");
     loft_init();
 }

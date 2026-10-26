@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C
 
 //! @PLN203 C1 — `--native` through the C backend: the unit `loft::c::emit_program` writes,
 //! built by the host's C compiler into a binary cached by content beside the program, as the
@@ -125,32 +126,6 @@ pub(crate) fn cc_identity(cc: &str) -> String {
         .clone()
 }
 
-/// What to install for the host compiler, by OS (@PLN203 C10).
-fn host_cc_cure() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "install the Xcode command-line tools (`xcode-select --install`)"
-    } else if cfg!(windows) {
-        "install MinGW-w64 gcc, or name a compiler in LOFT_CC"
-    } else {
-        "install one (Debian/Ubuntu: `apt install build-essential`), or name it in LOFT_CC"
-    }
-}
-
-/// What to install for the wasm32 route, by OS (@PLN203 C10): clang, `wasm-ld`, the WASI
-/// sysroot and the wasm32 compiler-rt builtins.
-fn wasm_cure() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
-         a clang in LOFT_WASM_CC"
-    } else if cfg!(windows) {
-        "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
-         a clang in LOFT_WASM_CC"
-    } else {
-        "install clang, lld, the WASI libc and the wasm32 compiler-rt (Debian/Ubuntu: \
-         `apt install clang lld wasi-libc libclang-rt-dev-wasm32`), or name a clang in LOFT_WASM_CC"
-    }
-}
-
 /// `--native-wasm` through the C (@PLN203 C6): the unit built for wasm32-wasi by clang into
 /// `out`, as `scripts/c_sweep.py --wasm` builds and validates it.  setjmp is wasm's
 /// exception-handling proposal in its standard encoding (a host runs it with exceptions on —
@@ -203,7 +178,7 @@ pub(crate) fn build_wasm(
     let ran = ran.map_err(|e| {
         format!(
             "--native-wasm needs clang and `{cc}` could not be run ({e}); {}",
-            wasm_cure()
+            loft::platform::c_wasm_toolchain_cure()
         )
     })?;
     if ran.status.success() {
@@ -224,7 +199,7 @@ pub(crate) fn build_wasm(
     if missing {
         return Err(format!(
             "--native-wasm: the wasm32 toolchain is incomplete; {}.\n{}",
-            wasm_cure(),
+            loft::platform::c_wasm_toolchain_cure(),
             said.trim_end()
         ));
     }
@@ -286,7 +261,7 @@ pub(crate) fn build(
     let out = out.map_err(|e| {
         format!(
             "the C backend needs a C compiler and `{cc}` could not be run ({e}); {}",
-            host_cc_cure()
+            loft::platform::c_host_toolchain_cure()
         )
     })?;
     if !out.status.success() {

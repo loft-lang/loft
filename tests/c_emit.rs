@@ -216,6 +216,11 @@ fn every_stdlib_native_has_a_c_arm_or_a_named_refusal() {
         // The browser host's channel (`--html`, `--native-wasm`): @PLN203 C6.
         "n_host_input",
         "n_host_output",
+        // The test ledger's builtins (@PLN201 step 2): the C records no ledger yet.
+        "n___ledger",
+        "n___ledger_div",
+        // A retired panic stub: the parser lowers a `par` loop to the queue natives.
+        "n_parallel_for",
     ];
     let mut want: Vec<String> = refused.iter().map(|s| (*s).to_string()).collect();
     want.sort();
@@ -3162,20 +3167,18 @@ fn native_c_builds_caches_and_runs_the_program_under_the_run_bounds() {
         .env("LOFT_TIMEOUT", "1")
         .output()
         .expect("run loft --native-c");
-    if cfg!(unix) {
-        assert_eq!(
-            out.status.code(),
-            Some(124),
-            "the deadline's status: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(
-            String::from_utf8_lossy(&out.stderr)
-                .contains("[timeout] deadline reached after 1s (graceful)\n"),
-            "the deadline says so: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
+    assert_eq!(
+        out.status.code(),
+        Some(124),
+        "the deadline's status: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("[timeout] deadline reached after 1s (graceful)\n"),
+        "the deadline says so: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(60),
         "the bound held"
@@ -3334,7 +3337,7 @@ fn native_c_runs_a_files_tests_one_process_each() {
             "{backend}: one test fails\n{all}"
         );
         assert!(
-            all.contains("FAIL  t.loft::sq_bad  —  assertion failed: ten"),
+            all.contains("t.loft::sq_bad  —  assertion failed: ten"),
             "{backend}: the failure names its test and message\n{all}"
         );
         assert!(

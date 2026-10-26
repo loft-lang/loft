@@ -83,6 +83,7 @@ scripts/ci_shards.py	--help
 bench/portal/analysis/gap-sweep/mechanisms.py	--help
 bench/portal/analysis/gap-sweep/summary.py	--help
 bench/portal/analysis/gap-sweep/sweep.sh	--help
+bench/portal/local.py	--help
 scripts/gap_report.py	--help
 scripts/lean_build.sh	--help
 scripts/wait_for.sh	--help

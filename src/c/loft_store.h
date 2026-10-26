@@ -197,9 +197,10 @@ static uint64_t loft_stores_allocated = 0;
  * `loft_heap_limit` (0: none, the default).  Every site that sizes a store's buffer calls
  * `loft_heap_moved` with the buffer's old and new word counts BEFORE it allocates, so a growth
  * that would cross the ceiling stops the run with the store as it was, and the report names the
- * growth that was refused.  The names are the unit's type table (`loft_tnames`). */
-extern const char *const loft_tnames[];
-extern const uint32_t loft_ntnames;
+ * growth that was refused.  The names are the unit's type table, which a generated `main` binds
+ * (`loft_bind_tables`); a runtime built without a unit names no type. */
+static const char *const *loft_tn = 0;
+static uint32_t loft_ntn = 0;
 static uint64_t loft_heap_total = 0, loft_heap_limit = 0;
 
 static void loft_heap_human(char *out, uint64_t b) {
@@ -261,8 +262,8 @@ static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t 
         loft_heap_human(to, new_b);
         fflush(stdout);
         fprintf(stderr, "loft: store memory limit reached — %s in use, limit %s\n\n  the growth that crossed it\n", used, cap);
-        if (kt != 0xFFFF && kt < loft_ntnames)
-            fprintf(stderr, "    a store of type `%s` (kt=%u) growing %s → %s\n", loft_tnames[kt], (unsigned) kt, from, to);
+        if (kt != 0xFFFF && kt < loft_ntn)
+            fprintf(stderr, "    a store of type `%s` (kt=%u) growing %s → %s\n", loft_tn[kt], (unsigned) kt, from, to);
         else
             fprintf(stderr, "    a store growing %s → %s\n", from, to);
         fputs("\n  Raise or remove the limit with LOFT_MEMORY_LIMIT=<size|0>, e.g. 8G.\n", stderr);

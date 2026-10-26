@@ -130,8 +130,11 @@ def unreported(out: bytes) -> bytes:
 
 
 # The lines only the interpreter's process writes: Rust's panic preamble around a fault it
-# reports through a panic (the store ceiling), and the backtrace hint after it.
-INTERP_ONLY = re.compile(rb"^(thread '.*' \(\d+\) panicked at .*|note: run with `RUST_BACKTRACE.*)\n", re.M)
+# reports through a panic (the store ceiling), the backtrace hint after it, and the compile-time
+# `advice:` notes the driver prints before a program runs (a `--native-c` run prints them too,
+# from the driver, never from the binary the sweep runs).
+INTERP_ONLY = re.compile(
+    rb"^(thread '.*' \(\d+\) panicked at .*|note: run with `RUST_BACKTRACE.*|advice: .*)\n", re.M)
 
 
 def scrubbed(err: bytes) -> bytes:
@@ -149,7 +152,7 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
         if code != 0:
             return path, "refused", "the program does not compile in loft", None
         # A `[c] shim` of several sources is a static archive the unit names (`/* link: … */`).
-        links = re.findall(r"^/\* link: (.*) \*/$", Path(c).read_text(errors="replace"), re.M)
+        links = re.findall(r"^/\* link: (.*) \*/$", Path(c).read_text(encoding="utf-8", errors="replace"), re.M)
         if "wasm" in modes and links:
             return path, "refused", "a `[c] shim` archive is built for the host, not wasm32", None
         tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))

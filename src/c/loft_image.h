@@ -384,9 +384,11 @@ static void loft_pg_record(const char *path, const char *reason) {
     snprintf(loft_pg_refusal, n, "refusing %s — %s", path, reason);
 }
 
-/* A refusal of the gate: said on stderr, and recorded as a loader's is. */
+/* A refusal of the gate: said on stderr, and recorded as a loader's is.  A paged loader (no
+ * `who`) says it as `Stores::refuse_paged` does — a refusal reads as 0, like an absent key. */
 static void loft_gate_refuse(const char *who, const char *path, const char *reason) {
-    fprintf(stderr, "%s: refusing %s — %s.\n", who, path, reason);
+    if (who) fprintf(stderr, "%s: refusing %s — %s.\n", who, path, reason);
+    else fprintf(stderr, "store loader: refusing %s — %s; loaded NOTHING (a refusal, not an absent key)\n", path, reason);
     loft_pg_record(path, reason);
 }
 

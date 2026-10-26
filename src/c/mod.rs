@@ -326,12 +326,6 @@ impl<'a> Cx<'a> {
         format!("&loft_sidecar{tp}")
     }
 
-    /// The type-name table `store_memory()` reads, by type number: the name `Stores::types`
-    /// gives each, so a store's line names its type as the interpreter's does.
-    pub(crate) fn type_names(&self) -> &'static str {
-        "loft_tnames, loft_ntnames"
-    }
-
     /// Always written: the heap ceiling's report (`loft_heap_moved`) names a type by it too.
     fn type_name_table(&self) -> String {
         let names: Vec<String> = self
@@ -343,7 +337,7 @@ impl<'a> Cx<'a> {
         // A C99 initializer holds at least one element: a unit with no types (none the
         // stdlib leaves out) writes a null placeholder its count of 0 never reaches.
         format!(
-            "const char *const loft_tnames[] = {{ {} }};\nconst uint32_t loft_ntnames = {};\n",
+            "static const char *const loft_tnames[] = {{ {} }};\nstatic const uint32_t loft_ntnames = {};\n",
             if names.is_empty() {
                 "0".to_string()
             } else {
@@ -1153,11 +1147,19 @@ fn write_twins(
 /// asked of the whole stdlib at once, so a new native cannot arrive without a C arm unseen.
 #[must_use]
 pub fn unported_natives(data: &Data) -> Vec<String> {
+    // An interface's method declarations and a bound's stubs are resolved to the type's own
+    // method before any code is written, so no unit calls one.
+    let members: std::collections::HashSet<u32> = (0..data.definitions())
+        .filter(|&d| matches!(data.def_type(d), DefType::Interface))
+        .flat_map(|d| data.children_of(d))
+        .collect();
     let mut out: Vec<String> = (0..data.definitions())
         .filter(|&d| {
             let def = data.def(d);
             matches!(def.def_type(), DefType::Function)
                 && !is_operator(data, d)
+                && !members.contains(&d)
+                && !Data::is_bound_stub_name(def.name())
                 && def.code() == &Value::Null
                 && def.c_sig.is_empty()
                 && def.native().is_empty()
@@ -1174,10 +1176,6 @@ pub fn unported_natives(data: &Data) -> Vec<String> {
 ///
 /// # Errors
 /// The first [`Refusal`], the roots' own first.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one unit in order: the reach, the runtime, the shims, the prototypes, the bodies"
-)]
 pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, Refusal> {
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
@@ -1249,6 +1247,13 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
     out.push('\n');
     out.push_str(&c_libraries(data));
     out.push_str(&cx.typedefs());
+    // The unit's tables, for the runtime's reports (`loft_tn`, `loft_cl`): a generated `main`
+    // binds them before it starts.
+    out.push_str(
+        "static void loft_bind_tables(void) {\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    \
+         loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    \
+         loft_fault_logger = loft_log_production_fault;\n}\n",
+    );
     if parses {
         out.push_str(&cx.parse_table());
         out.push_str(&cx.main_vector_test());
@@ -1289,7 +1294,7 @@ fn c_libraries(data: &Data) -> String {
         .collect();
     let _ = writeln!(
         out,
-        "const char *const loft_clibs[] = {{ {} }};\nconst uint32_t loft_nclibs = {};",
+        "static const char *const loft_clibs[] = {{ {} }};\nstatic const uint32_t loft_nclibs = {};",
         if carried.is_empty() {
             "0".to_string()
         } else {
@@ -1482,7 +1487,7 @@ pub fn emit_program(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    {}\n    loft_start(argc, argv);\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    {}\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n",
         anchor(stores),
         c_name(data, main)
     );
@@ -1906,7 +1911,7 @@ pub fn emit_tests_of(
     let mut out = emit_unit(data, stores, tests)?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    {}\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
+        "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    {}\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_in_test = 1;\n",
         anchor(stores)
     );
     for &d in tests {

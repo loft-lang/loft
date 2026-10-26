@@ -505,7 +505,9 @@ impl FnWriter<'_> {
             ("n_store_memory", []) => {
                 let t = self.temp(CType::Text);
                 self.line(ind, &format!("loft_text_free(&{t});"));
-                let names = self.cx.type_names();
+                // The type-name table every unit writes (`Cx::type_name_table`), by type
+                // number: the name `Stores::types` gives each, as the interpreter names them.
+                let names = "loft_tnames, loft_ntnames";
                 self.line(ind, &format!("{t} = loft_store_memory({names});"));
                 Ok(Some(self.held(t, CType::Text)))
             }

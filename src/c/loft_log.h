@@ -545,7 +545,7 @@ static void loft_leak_report(void) {
         if (i) loft_push(&out, ", ", 2);
         sprintf(buf, "kt=%u ", (unsigned) kt[i]);
         loft_push(&out, buf, strlen(buf));
-        if (kt[i] < loft_ntnames) loft_push(&out, loft_tnames[kt[i]], strlen(loft_tnames[kt[i]]));
+        if (kt[i] < loft_ntn) loft_push(&out, loft_tn[kt[i]], strlen(loft_tn[kt[i]]));
         else loft_push(&out, "?", 1);
         sprintf(buf, "\xc3\x97%u", (unsigned) count[i]);
         loft_push(&out, buf, strlen(buf));

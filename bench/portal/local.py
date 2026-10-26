@@ -54,7 +54,7 @@ def append(bench, routine, rows):
     p = path_of(bench, routine)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     new = not os.path.exists(p)
-    with open(p, "a") as f:
+    with open(p, "a", encoding="utf-8") as f:
         if new:
             f.write("\t".join(COLS) + "\n")
         for r in rows:
@@ -112,7 +112,7 @@ def read_all():
         for name in sorted(os.listdir(d)):
             if not name.endswith(".tsv"):
                 continue
-            with open(os.path.join(d, name)) as f:
+            with open(os.path.join(d, name), encoding="utf-8") as f:
                 lines = f.read().splitlines()
             if not lines:
                 continue
@@ -190,7 +190,7 @@ def add(a):
 
 def import_tsv(a):
     meta, head, recs = {}, None, []
-    with open(a.file) as f:
+    with open(a.file, encoding="utf-8") as f:
         for line in f.read().splitlines():
             if line.startswith("# ") and "=" in line:
                 k, _, v = line[2:].partition("=")

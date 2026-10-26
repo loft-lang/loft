@@ -1646,6 +1646,32 @@ pub fn c_long_bits() -> u8 {
     if cfg!(windows) { 32 } else { 64 }
 }
 
+/// What to install so the C backend can build a host program, said for this host (@PLN203
+/// C10).  Only the Debian/Ubuntu list is measured; the others name the tools, not packages.
+#[must_use]
+pub fn c_host_toolchain_cure() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "install the Xcode command-line tools (`xcode-select --install`)"
+    } else if cfg!(windows) {
+        "install MinGW-w64 gcc, or name a compiler in LOFT_CC"
+    } else {
+        "install one (Debian/Ubuntu: `apt install build-essential`), or name it in LOFT_CC"
+    }
+}
+
+/// What to install so the C backend can build a wasm32 module: clang, `wasm-ld`, the WASI
+/// sysroot and the wasm32 compiler-rt builtins, said for this host (@PLN203 C10).
+#[must_use]
+pub fn c_wasm_toolchain_cure() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "install clang, lld, the WASI libc and the wasm32 compiler-rt (Debian/Ubuntu: \
+         `apt install clang lld wasi-libc libclang-rt-dev-wasm32`), or name a clang in LOFT_WASM_CC"
+    } else {
+        "install LLVM's clang and lld with a WASI sysroot and the wasm32 compiler-rt, or name \
+         a clang in LOFT_WASM_CC"
+    }
+}
+
 /// Extra `cc` arguments for a `#c` shim so it does not depend on its compiler's runtime
 /// DLLs: `-static-libgcc` on Windows (a MinGW `cc` links `libgcc_s_seh-1.dll` by default,
 /// and a consumer's machine has no MinGW `bin` on `PATH`), nothing elsewhere.

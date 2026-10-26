@@ -320,6 +320,14 @@ static int64_t *loft_files_at = 0;
 static char **loft_files_path = 0;
 static int32_t loft_nfiles = 0;
 
+/* `file open error: {e}` (state/io.rs, codegen_runtime): the error as Rust's `io::Error` shows
+ * a path's — `<path>: <strerror> (os error <n>)` — on stderr. */
+static void loft_file_open_error(const char *path) {
+    int e = errno;
+    if (path) fprintf(stderr, "file open error: %s: %s (os error %d)\n", path, strerror(e), e);
+    else fprintf(stderr, "file open error: %s (os error %d)\n", strerror(e), e);
+}
+
 static int32_t loft_file_handle_add(FILE *h, int ro, const char *path) {
     FILE **n = (FILE **) realloc(loft_files, (size_t) (loft_nfiles + 1) * sizeof *n);
     uint8_t *r = (uint8_t *) realloc(loft_files_ro, (size_t) (loft_nfiles + 1));
@@ -492,7 +500,7 @@ static void loft_write_file(loft_ref f, const loft_text *bytes) {
         h = fopen(path, "r+b");
         if (!h) h = fopen(path, "w+b");
         if (!h) {
-            fprintf(stderr, "file open error: %s\n", strerror(errno));
+            loft_file_open_error(path);
             free(path);
             return;
         }
@@ -529,7 +537,7 @@ static int64_t loft_read_file(loft_ref f, int64_t n, int text, int64_t width, ui
         char *path = loft_file_path(f);
         h = path ? fopen(path, "rb") : 0;
         if (!h) {
-            fprintf(stderr, "file open error: %s\n", strerror(errno));
+            loft_file_open_error(path);
             free(path);
             return -1;
         }

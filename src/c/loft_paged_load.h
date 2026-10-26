@@ -26,7 +26,7 @@ static int loft_pg_begin(loft_pg *r, loft_ref local, loft_str path, const loft_s
     if (local.store_nr == 0xFFFF || local.store_nr >= loft_nstores) return 0;
     char *p = loft_cpath(path, 0);
     uint16_t known = loft_stores[local.store_nr].known;
-    int ok = known == 0xFFFF || loft_image_gate(p, sc, "store loader");
+    int ok = known == 0xFFFF || loft_image_gate(p, sc, 0);
     if (ok && !loft_pg_open(r, p)) {
         loft_pg_refuse(p, "it cannot be opened as a paged source");
         ok = 0;
