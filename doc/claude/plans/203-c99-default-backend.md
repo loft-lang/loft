@@ -70,11 +70,16 @@ A worker starts from a COPY of its parent's store table — every entry live and
 reads the parent's stores through the same buffers and never frees, grows or reuses one
 (@FR-C-Impure: a worker that writes shared state has no defined behaviour) — and makes its own
 stores past them, freed when it ends.  Tier 1 runs on threads the workers whose result is a
-scalar, a text or nothing, each writing its own rows of the parent's result buffer; a worker
-returning a record or a function value stays sequential until tier 2 adopts the worker's stores
-into the parent and translates its references (`StoreRebase`, as `parallel.rs` does).  The rows
-split into `min(threads, rows)` contiguous slices, as `par_pool::parallel_workers` splits them.  Tier 2
-is the performance stream's (157-native-4x, owner 2026-10-26).
+scalar, a text or nothing, each writing its own rows of the parent's result buffer.  Tier 2
+runs a worker whose result is a struct or struct-enum RECORD on threads the way native's
+`n_parallel_queue_ref_native` does: the caller makes one result store before the workers fork
+(below every worker's `parent_n`), a worker keeps the stores it made, and after it joined the
+caller — with that worker's table current — copies each of its rows into the result store,
+bytes and owned claims (`copy_from_worker`'s `copy_block` + `copy_claims`), before the worker's
+stores go; a reference held in such a record is copied as it stands, as native's.  The caller's
+own slice and a pass-through of the input are not copied.  A vector, keyed or function-value
+result still runs in order.  The rows split into `min(threads, rows)` contiguous slices, as
+`par_pool::parallel_workers` splits them.
 
 **C5 — libraries and hosts.**  The decision: a library compiled whole into each program (the
 C does this today; the cost is compile time per program, bounded by the cache) or a C archive

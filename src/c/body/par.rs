@@ -130,7 +130,7 @@ impl FnWriter<'_> {
             .ok_or("a par worker whose result has no C shape")?;
         let call = format!("{}({})", c_name(cx.data, d), call_args.join(", "));
         let store = match result_shape {
-            _ if name == "n_parallel_discard" => format!("(void) {call};"),
+            _ if name == "n_parallel_discard" => self.par_discard(&call, result_shape),
             CType::Int => format!("loft_b[loft_i].i = {call};"),
             CType::Bool | CType::Enum | CType::Char => {
                 format!("loft_b[loft_i].i = (int64_t) {call};")
@@ -148,8 +148,19 @@ impl FnWriter<'_> {
             CType::Void => format!("{call};"),
             CType::Tuple(_) => return Err("a par worker returning a tuple".into()),
         };
+        // @PLN203 C4 tier 2 — a struct or struct-enum record result: its type, to size the
+        // result store's rows and copy each worker's record with the claims it owns.
+        let record = (result_shape == CType::Ref && name != "n_parallel_discard")
+            .then(|| def.returned().heap_def_nr())
+            .flatten()
+            .map(|r| {
+                let kt = cx.data.def(r).known_type();
+                (kt, u32::from(cx.stores.enum_parent_size(kt)))
+            })
+            .filter(|(kt, size)| *kt != u16::MAX && *size > 0);
         let threaded = vec_buffers.is_empty()
             && (name == "n_parallel_discard"
+                || record.is_some()
                 || matches!(
                     result_shape,
                     CType::Int
@@ -184,6 +195,7 @@ impl FnWriter<'_> {
                 &extra,
                 &buffers,
                 result_shape,
+                record,
                 ind,
             );
         }
@@ -237,13 +249,40 @@ impl FnWriter<'_> {
             },
         ))
     }
+    /// `n_parallel_discard`'s row: the worker's result dropped with what it owns — a text, the
+    /// texts of a tuple, a record whose store the worker made (a pass-through of a store the
+    /// caller had stays) — as a dropped call's temporary is released.  `(void) call` leaked them.
+    fn par_discard(&self, call: &str, shape: CType) -> String {
+        match shape {
+            CType::Text => format!("{{ loft_text loft_t = {call}; loft_text_free(&loft_t); }}"),
+            CType::Tuple(id) => {
+                let mut texts = Vec::new();
+                self.tuple_text_leaves("loft_t", id, &mut texts);
+                let frees = texts.iter().fold(String::new(), |mut f, t| {
+                    let _ = write!(f, " loft_text_free(&{t});");
+                    f
+                });
+                format!(
+                    "{{ {} loft_t = {call};{frees} (void) loft_t; }}",
+                    crate::c::held(shape)
+                )
+            }
+            CType::Ref => format!(
+                "{{ uint64_t loft_s = loft_stores_allocated; loft_ref loft_r = {call}; \
+                 if (loft_fnref_minted(loft_r, loft_s, loft_ref_null())) loft_free_ref(loft_r); }}"
+            ),
+            _ => format!("(void) {call};"),
+        }
+    }
+
     /// A tier-1 `par` site on threads: its operands in a context struct, its loop over a row
     /// range in a body function (both written before the unit's functions), and the site a
     /// `loft_par_run` over them.  The worker is called with the context's extras in place of
     /// the caller's, and writes only the rows of its range.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the site's parts, computed by par_queue"
+        clippy::too_many_lines,
+        reason = "the site's parts, computed by par_queue, written in the order the unit holds them: the context, the body, the adopt step, the call"
     )]
     fn par_threaded(
         &mut self,
@@ -256,6 +295,7 @@ impl FnWriter<'_> {
         extra: &[String],
         buffers: &[String],
         result_shape: CType,
+        record: Option<(u16, u32)>,
         ind: usize,
     ) -> Result<E, String> {
         let cx = self.cx;
@@ -265,7 +305,7 @@ impl FnWriter<'_> {
         let WorkerCall { args, .. } = Self::worker_call(cx, d, esz, &fields)?;
         let call = format!("{}({})", c_name(cx.data, d), args.join(", "));
         let store = match result_shape {
-            _ if name == "n_parallel_discard" => format!("(void) {call};"),
+            _ if name == "n_parallel_discard" => self.par_discard(&call, result_shape),
             CType::Int => format!("loft_b[loft_i].i = {call};"),
             CType::Bool | CType::Enum | CType::Char => {
                 format!("loft_b[loft_i].i = (int64_t) {call};")
@@ -273,9 +313,16 @@ impl FnWriter<'_> {
             CType::Float => format!("loft_b[loft_i].f = {call};"),
             CType::Single => format!("loft_b[loft_i].g = {call};"),
             CType::Text => format!("loft_b[loft_i].t = {call};"),
+            // As the in-order route: the row's own store is ADOPTED when the worker made it.
+            CType::Ref => format!(
+                "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; \
+                 loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(loft_b[loft_i].r, loft_s, loft_ref_null()); }}"
+            ),
             _ => format!("{call};"),
         };
-        let mut decl = String::from("typedef struct {\n    loft_ref in;\n    loft_par_slot *b;\n");
+        let mut decl = String::from(
+            "typedef struct {\n    loft_ref in;\n    loft_par_slot *b;\n    loft_ref res;\n",
+        );
         for (i, c) in shapes.iter().take(extra.len()).enumerate() {
             let _ = writeln!(decl, "    {} x{i};", crate::c::held(*c));
         }
@@ -283,6 +330,12 @@ impl FnWriter<'_> {
             decl,
             "}} loft_parctx{id};\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi);"
         );
+        if record.is_some() {
+            let _ = writeln!(
+                decl,
+                "static void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn);"
+            );
+        }
         cx.gen_decls.borrow_mut().push_str(&decl);
         let mut body = format!(
             "\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi) {{\n    \
@@ -298,6 +351,10 @@ impl FnWriter<'_> {
             let _ = writeln!(body, "        loft_text_free(&{w});");
         }
         body.push_str("    }\n}\n");
+        if let Some((kt, size)) = record {
+            cx.describe_type(kt);
+            body.push_str(&par_adopt_fn(id, kt, size));
+        }
         cx.gen_bodies.borrow_mut().push_str(&body);
         let t = self.expr(threads, ind)?;
         let t = as_int(t)?;
@@ -309,16 +366,38 @@ impl FnWriter<'_> {
         } else {
             format!("loft_par_push({n})")
         };
-        let mut init = format!("loft_parctx{id} loft_c = {{ {input}, {slots}");
+        // A record site's result store, made before the workers fork (loft_par_run), released
+        // with the buffer.
+        let res = if let Some((_, size)) = record {
+            self.line(ind + 1, "loft_ref loft_res = loft_ref_null();");
+            self.line(
+                ind + 1,
+                &format!("loft_database(&loft_res, (uint32_t) ({n} * {size}));"),
+            );
+            "loft_res"
+        } else {
+            "{ 0xFFFF, 0, 0 }"
+        };
+        let mut init = format!("loft_parctx{id} loft_c = {{ {input}, {slots}, {res}");
         for x in extra {
             let _ = write!(init, ", {x}");
         }
         init.push_str(" };");
         self.line(ind + 1, &init);
-        self.line(
-            ind + 1,
-            &format!("loft_par_run({n}, {t}, loft_parbody{id}, &loft_c);"),
-        );
+        if record.is_some() {
+            self.line(ind + 1, "loft_par_hold(loft_res);");
+            self.line(
+                ind + 1,
+                &format!(
+                    "loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id}, loft_res.store_nr);"
+                ),
+            );
+        } else {
+            self.line(
+                ind + 1,
+                &format!("loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, 0, 0);"),
+            );
+        }
         self.line(ind, "}");
         Ok(if name == "n_parallel_discard" {
             E::new("(void) 0", K::Void)
@@ -512,4 +591,22 @@ fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
         }
         _ => return None,
     })
+}
+
+/// `@PLN203 C4` tier 2 — a record site's adopt step (`loft_par_adopt`): a row whose record lies in
+/// a store the worker made is copied into the result store, its bytes and the claims it owns; a
+/// pass-through of a store the caller had, or a null, stays as it is.
+fn par_adopt_fn(id: u32, kt: u16, size: u32) -> String {
+    format!(
+        "\nstatic void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    \
+                 loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    loft_par_slot *loft_b = loft_c->b;\n    \
+                 for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        \
+                 loft_ref loft_r = loft_b[loft_i].r;\n        \
+                 if (loft_r.store_nr == 0xFFFF || loft_r.rec == 0 || loft_r.store_nr < loft_pn) {{ loft_b[loft_i].adopted = 0; continue; }}\n        \
+                 loft_ref loft_d = {{ loft_c->res.store_nr, loft_c->res.rec, loft_c->res.pos + (uint32_t) loft_i * {size}u }};\n        \
+                 loft_copy_bytes(loft_d, 0, loft_r, 0, {size});\n        \
+                 loft_copy_claims(loft_types, {kt}, loft_r, loft_d);\n        \
+                 loft_b[loft_i].r = loft_d;\n        \
+                 loft_b[loft_i].adopted = 0;\n    }}\n}}\n"
+    )
 }

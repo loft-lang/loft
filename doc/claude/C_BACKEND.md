@@ -389,7 +389,12 @@ vector result gets a fresh buffer per row, a record result mints its own; a tupl
 member by member at its `__tuple<…>` record's offsets, a function row is its definition
 number.  `par_fold` is `run_parallel_fold`'s arithmetic: the rows in `min(threads, rows)`
 slices as `parallel_workers` splits them, each folded from `init`, the partials folded from
-`init` in slice order.
+`init` in slice order.  On a POSIX or Windows host (not `-DLOFT_STRICT`, `-DLOFT_NO_POSIX` or
+WASI) a site whose worker answers a scalar, a text, nothing, or a struct or struct-enum record
+runs on threads (`loft_par_run`, plan 203 C4): each worker from a copy of the caller's store
+table, a record row copied after the join into the caller's result store with the claims it
+owns (`loft_par_adopt`), as native's queue copies it.  `LOFT_TRACE_PAR_WORKERS` reports the
+workers each loop ran.
 
 **Linked groups.**  A record type several collections of one struct share (`@FR-Col-Group`)
 enters every member (`loft_group_finish`); an element write through the vector member hands

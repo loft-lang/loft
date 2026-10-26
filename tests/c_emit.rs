@@ -4392,3 +4392,87 @@ fn main() {
         );
     }
 }
+
+/// @PLN203 C4 tier 2 — `par` whose worker answers a RECORD runs on threads in the C: each worker
+/// makes its records in stores of its own table, and after it joined the caller copies each row
+/// it computed into one result store — the record's bytes and the claims it owns, as
+/// `Stores::copy_from_worker` does — before the worker's stores go (`loft_par_adopt`).  The rows:
+/// a struct of scalars, one that owns a text and a vector (the claims), a struct-enum, a
+/// pass-through of the input element (a store the caller had, not copied), and `par(…, 1)`.
+/// Four workers ran each threaded loop, one the last, so the instrument can fail.  Hand-computed:
+/// Σ(a + b) = 3·Σx = 3·499500 = 1498500; the names `q0`…`q999` are 10·2 + 90·3 + 900·4 = 3890
+/// characters; each `xs` sums to 3x + 3, so 1498500 + 3000 = 1501500; Σk = 1498500; the even
+/// rows' Dots sum to 249500, the odd rows' Bars are 500 of width 10.
+#[test]
+fn par_returns_records_from_threads_in_the_c() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"struct P { a: integer, b: integer }
+struct Q { name: text, xs: vector<integer>, k: integer }
+enum Shape { Dot { at: integer }, Bar { lo: integer, hi: integer } }
+struct It { n: integer }
+fn pair(x: integer) -> P { P { a: x, b: x * 2 } }
+fn owned(x: integer) -> Q { Q { name: "q{x}", xs: [x, x + 1, x + 2], k: x * 3 } }
+fn shape(x: integer) -> Shape { if x % 2 == 0 { Dot { at: x } } else { Bar { lo: x, hi: x + 10 } } }
+fn same(it: const It) -> It { it }
+fn main() {
+  v: vector<integer> = [];
+  for i in 0..1000 { v += [i]; }
+  // 1. scalars only: sum of a + b = 3 * sum(0..1000) = 3 * 499500 = 1498500
+  s1 = 0;
+  for x in v par(r = pair(x), 4) { s1 += r.a + r.b; }
+  // 2. owned text and vector: names q0..q999 are 10*2 + 90*3 + 900*4 = 3890 characters;
+  //    each xs sums to 3x + 3 -> 3 * 499500 + 3000 = 1501500; k sums to 1498500.
+  c2 = 0; x2 = 0; k2 = 0;
+  for x in v par(q = owned(x), 4) { c2 += len(q.name); for e in q.xs { x2 += e; } k2 += q.k; }
+  // 3. a struct-enum: even x a Dot at x (sum 249500), odd a Bar of width 10 (500 * 10)
+  d3 = 0; w3 = 0;
+  for x in v par(sh = shape(x), 4) {
+    match sh { Dot { at } => { d3 += at; }, Bar { lo, hi } => { w3 += hi - lo; } }
+  }
+  // 4. a pass-through of the input element: sum of n = 499500
+  items: vector<It> = [];
+  for i in 0..1000 { items += [It { n: i }]; }
+  s4 = 0;
+  for it in items par(r = same(it), 4) { s4 += r.n; }
+  // 5. one thread
+  s5 = 0;
+  for x in v par(r = pair(x), 1) { s5 += r.a + r.b; }
+  println("{s1} {c2} {x2} {k2} {d3} {w3} {s4} {s5}");
+}
+"#;
+    let want = "1498500 3890 1501500 1498500 249500 5000 499500 1498500\n";
+    let dir = scratch("parrecords");
+    let file = dir.join("p.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&file)
+        .env("LOFT_TRACE_PAR_WORKERS", "1")
+        .output()
+        .expect("run loft --native-c");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        want,
+        "the C: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let workers: Vec<String> = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter_map(|l| l.split("distinct_workers=").nth(1).map(str::to_string))
+        .collect();
+    assert_eq!(workers, ["4", "4", "4", "4", "1"], "workers per par loop");
+}
