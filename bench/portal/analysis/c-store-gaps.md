@@ -33,6 +33,7 @@ its place moved bench 14 by −2.3 % of instructions and bench 16 by −0.2 %.
 | push window | counted loops (`hoist::push_loop`, `mint_loop`) reserve once, push through a `loft_win` | push 4.21 → 0.39, record_append 7.46 → 0.97, f32_build 7.90 → 0.64, grid 8.56 → 3.02, comprehension 4.93 → 2.48, mesh_emit 6.05 → 3.58 |
 | complete-write mints | no default image copied where `hoist::complete_writes` proves every literal complete | inside the windows above |
 | flat copy | `@FR-R-FlatCopy`: a record owning no heap gets no claim walk on copy or release | bench 17 −13.4 % instructions, hashes equal |
+| block sum | `vector::sum_blocks_i64` ported into the `sum` kernel | sum 6.8 → 2.0 |
 
 After the window (before the flat copy): median 3.40× → 2.89×, routines over 3.5× 38 → 32.
 
@@ -50,7 +51,6 @@ of these 32, so the lists coincide.
 | **element access across calls** | talus_relax 6.8 · 1.2, build_vis 6.5 · 2.1, hydro_pitfill 4.4 · 1.9 | `loft_at`/`loft_vec_get`/`loft_vec_len` per access: a loop that calls a store-writing function (`shed`) holds no header, and the callee re-derives everything | `@FR-R-Header`'s kept clause (headers handed into `__kh` twins), nested headers (`@FR-R-RecPtr`) | generator · M |
 | **uncounted pushes** | enum_match 9.2 · 2.4, binary_read 16.5 · 2.8, mesh_emit 3.6 · 1.9 | `loft_vec_append` + `loft_copy_bytes` per element in loops the counted window declines (a `while`, a push under `if`); `binary_read` also mallocs and frees a buffer per 2-byte read and reads the file's position through its store record | `@FR-R-Push` push headers (no reservation, a growth arm), the scalar file read | generator S + runtime XS |
 | **keyed walk** | hash_walk 8.6 · 1.6 | `qsort` with a function-pointer compare over the entries, then a recursive merge sort through the generic key interpreter, per walk | the same orders (`@FR-Col-Order`), monomorphised `sort_unstable_by_key` | runtime · S |
-| **kernels** | sum 6.4 · 2.1 | `loft_vector_sum_int` reads each element through `loft_vec_get` | `sum_blocks_i64`: base once, blocks a magnitude bound proves overflow-free | runtime · XS |
 | **par** | par 10.9, par_text 8.8, par_reduce 8.2, par_records 6.5, par_map_float 6.3 | the C runs the rows one after another | threads | @PLN203 C4, not store work |
 | **near native** | hash_update 3.9, composite_hash 3.8, hash_find 3.7, hash_fill 3.5, map_json 3.6 | SipHash and the probe, the JSON tokenizer | the same algorithms; 1.4–1.6× of native | — |
 
@@ -64,7 +64,7 @@ of these 32, so the lists coincide.
 3. **Float text** — self-contained runtime work with no generator change, and it is 40–50 % of
    four more routines under the bar.
 4. **Text walk** — borrowing a walked text is the shared piece of join, split and trim_lower.
-5. **Element access across calls**, the kernel, the keyed walk.
+5. **Element access across calls**, the keyed walk.
 
 Each fix is hand-priced on the emitted C before it is built (`perf stat -e instructions` on a
 fast core: timings of a single short run here swing several-fold).
