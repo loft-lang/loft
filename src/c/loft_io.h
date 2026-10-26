@@ -314,30 +314,47 @@ static char *loft_file_path(loft_ref f) {
  * file's: `loft_fs_delete`). */
 static FILE **loft_files = 0;
 static uint8_t *loft_files_ro = 0;
+/* Where each handle's stream stands after the last READ through it, -1 when anything else
+ * touched it since: a read starting there needs no seek (`loft_read_file`). */
+static int64_t *loft_files_at = 0;
 static char **loft_files_path = 0;
 static int32_t loft_nfiles = 0;
 
 static int32_t loft_file_handle_add(FILE *h, int ro, const char *path) {
     FILE **n = (FILE **) realloc(loft_files, (size_t) (loft_nfiles + 1) * sizeof *n);
     uint8_t *r = (uint8_t *) realloc(loft_files_ro, (size_t) (loft_nfiles + 1));
+    int64_t *a = (int64_t *) realloc(loft_files_at, (size_t) (loft_nfiles + 1) * sizeof *a);
     char **ps = (char **) realloc(loft_files_path, (size_t) (loft_nfiles + 1) * sizeof *ps);
     size_t len = strlen(path);
     char *copy = (char *) malloc(len + 1);
-    if (!n || !r || !ps || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (!n || !r || !a || !ps || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(copy, path, len + 1);
     loft_files = n;
     loft_files_ro = r;
+    loft_files_at = a;
     loft_files_path = ps;
     loft_files[loft_nfiles] = h;
     loft_files_ro[loft_nfiles] = (uint8_t) ro;
+    loft_files_at[loft_nfiles] = -1;
     loft_files_path[loft_nfiles] = copy;
     return loft_nfiles++;
 }
 
-static FILE *loft_file_handle(loft_ref f) {
+/* The open handle of `f` and its number (-1 for none), keeping the stream's read position. */
+static FILE *loft_file_reader(loft_ref f, int32_t *nr) {
     int32_t h;
     memcpy(&h, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
-    return h >= 0 && h < loft_nfiles ? loft_files[h] : 0;
+    *nr = h >= 0 && h < loft_nfiles && loft_files[h] ? h : -1;
+    return *nr >= 0 ? loft_files[h] : 0;
+}
+
+/* The open handle of `f`, for any use but a read: the read position it kept is forgotten, so
+ * the next read seeks for real (and C's positioning call between a write and a read is made). */
+static FILE *loft_file_handle(loft_ref f) {
+    int32_t h;
+    FILE *fh = loft_file_reader(f, &h);
+    if (h >= 0) loft_files_at[h] = -1;
+    return fh;
 }
 
 static char *loft_file_path(loft_ref f);
@@ -354,6 +371,7 @@ static FILE *loft_file_writable(loft_ref f, FILE *h) {
     if (!w) return 0;
     fclose(h);
     loft_files[nr] = w;
+    loft_files_at[nr] = -1;
     loft_files_ro[nr] = 0;
     return w;
 }
@@ -505,7 +523,8 @@ static int64_t loft_read_file(loft_ref f, int64_t n, int text, int64_t width, ui
     int64_t next = loft_file_long(f, 16);
     if (next == LOFT_NULL) next = 0;
     loft_file_set_long(f, 8, next);
-    FILE *h = loft_file_handle(f);
+    int32_t nr;
+    FILE *h = loft_file_reader(f, &nr);
     if (!h) {
         char *path = loft_file_path(f);
         h = path ? fopen(path, "rb") : 0;
@@ -514,18 +533,27 @@ static int64_t loft_read_file(loft_ref f, int64_t n, int text, int64_t width, ui
             free(path);
             return -1;
         }
-        int32_t nr = loft_file_handle_add(h, 1, path);
+        nr = loft_file_handle_add(h, 1, path);
         free(path);
         memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
     }
-    fseek(h, (long) next, SEEK_SET);
+    /* A seek to where the stream already is would only drop its buffer, and every read here
+     * would be a system call (`f#read(2)` per element): the runtime's own handle answers such a
+     * seek without asking the OS (`database::loft_file`), and so does this one — by the position
+     * the last read left, since `ftell` asks the OS too.  As there, a byte another handle
+     * changes after this one buffered it is seen at the next refill. */
+    if (loft_files_at[nr] != next) fseek(h, (long) next, SEEK_SET);
     size_t want = n < 0 ? 0 : (size_t) n;
     *out = (uint8_t *) malloc(want + 1);
     if (!*out) { fputs("loft: out of memory\n", stderr); abort(); }
     size_t got = 0;
     if (text || n >= width) {
         got = fread(*out, 1, want, h);
+        /* The stream moved by what it read, whatever the read answers. */
+        loft_files_at[nr] = ferror(h) ? -1 : next + (int64_t) got;
         if (!text && got < want) got = 0;
+    } else {
+        loft_files_at[nr] = next;
     }
     loft_file_set_long(f, 16, next + (int64_t) got);
     return (int64_t) got;

@@ -1393,8 +1393,8 @@ static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
         len = loft_u32(s, r, 4);
         int32_t claimed;
         memcpy(&claimed, loft_at(s, r, 0), 4);
-        uint32_t cap = (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
-        if (len + 1 > cap) {
+        /* `len + 1 > (claimed * 8 - 8) / size`, without the division every append paid. */
+        if ((uint64_t) (len + 1) * size + 8 > (uint64_t) claimed * 8) {
             uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words((len + 1) * 2, size));
             if (nr != r) {
                 loft_set_u32(s, v.rec, v.pos, nr);
@@ -1409,6 +1409,25 @@ static loft_ref loft_vec_append(loft_ref v, uint32_t size) {
     return e;
 }
 
+/* The push of one more element of `size` into a vector that has its record and room for it:
+ * the element's slot, with the length already counted — or 0, and the caller takes the general
+ * path (`loft_vec_append`, which claims the record or grows it).  One reading of the record
+ * instead of append's and finish's two, and no capacity division: every push of a growing
+ * vector asks this first. */
+LOFT_HOT_INLINE uint8_t *loft_vec_push_slot(loft_ref v, uint32_t size) {
+    if (v.store_nr == 0xFFFF || v.rec == 0) return 0;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return 0;
+    uint32_t len = loft_u32(s, r, 4);
+    int32_t claimed;
+    memcpy(&claimed, loft_at(s, r, 0), 4);
+    if ((uint64_t) (len + 1) * size + 8 > (uint64_t) claimed * 8) return 0;
+    LOFT_WRITE_CHECK(s);
+    loft_set_u32(s, r, 4, len + 1);
+    return loft_at(s, r, 8 + len * size);
+}
+
 /* vector_finish: the element `loft_vec_append` made counts. */
 LOFT_HOT_INLINE void loft_vec_finish(loft_ref v) {
     if (v.store_nr == 0xFFFF || v.rec == 0) return;
@@ -1419,6 +1438,12 @@ LOFT_HOT_INLINE void loft_vec_finish(loft_ref v) {
 
 /* OpPushInt4: a 4-byte element, INT32_MIN for null. */
 static void loft_vec_push_int4(loft_ref v, int64_t x) {
+    uint8_t *slot = loft_vec_push_slot(v, 4);
+    if (slot) {
+        uint32_t w = x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x;
+        memcpy(slot, &w, 4);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 4);
     if (e.rec == 0) return;
     loft_set_u32(loft_store_of(e), e.rec, e.pos, x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x);
@@ -1426,6 +1451,11 @@ static void loft_vec_push_int4(loft_ref v, int64_t x) {
 }
 
 static void loft_vec_push_int(loft_ref v, int64_t x) {
+    uint8_t *slot = loft_vec_push_slot(v, 8);
+    if (slot) {
+        memcpy(slot, &x, 8);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 8);
     if (e.rec == 0) return;
     loft_set_int(e, 0, x);
@@ -1628,6 +1658,11 @@ static uint8_t loft_get_enum(loft_ref r, uint32_t fld) {
 }
 
 static void loft_vec_push_byte(loft_ref v, uint8_t x) {
+    uint8_t *slot = loft_vec_push_slot(v, 1);
+    if (slot) {
+        *slot = x;
+        return;
+    }
     loft_ref e = loft_vec_append(v, 1);
     if (e.rec == 0) return;
     *loft_at(loft_store_of(e), e.rec, e.pos) = x;
@@ -2657,6 +2692,11 @@ static void loft_set_single(loft_ref r, uint32_t fld, float v) {
 }
 
 static void loft_vec_push_float(loft_ref v, double x) {
+    uint8_t *slot = loft_vec_push_slot(v, 8);
+    if (slot) {
+        memcpy(slot, &x, 8);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 8);
     if (e.rec == 0) return;
     loft_set_float(e, 0, x);
@@ -2664,6 +2704,11 @@ static void loft_vec_push_float(loft_ref v, double x) {
 }
 
 static void loft_vec_push_char(loft_ref v, uint32_t c) {
+    uint8_t *slot = loft_vec_push_slot(v, 4);
+    if (slot) {
+        memcpy(slot, &c, 4);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 4);
     if (e.rec == 0) return;
     memcpy(loft_at(loft_store_of(e), e.rec, e.pos), &c, 4);
@@ -2671,6 +2716,11 @@ static void loft_vec_push_char(loft_ref v, uint32_t c) {
 }
 
 static void loft_vec_push_single(loft_ref v, float x) {
+    uint8_t *slot = loft_vec_push_slot(v, 4);
+    if (slot) {
+        memcpy(slot, &x, 4);
+        return;
+    }
     loft_ref e = loft_vec_append(v, 4);
     if (e.rec == 0) return;
     loft_set_single(e, 0, x);
