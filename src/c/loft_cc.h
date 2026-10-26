@@ -30,6 +30,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* A file's modification time in nanoseconds from a `struct stat` (a lazy source's pin): Darwin
+ * names the fraction `st_mtimensec` under POSIX, the others `st_mtim`. */
+#if defined(LOFT_POSIX) && defined(__APPLE__)
+#define LOFT_ST_MTIME_NS(st) ((uint64_t) (st).st_mtime * 1000000000u + (uint64_t) (st).st_mtimensec)
+#elif defined(LOFT_POSIX)
+#define LOFT_ST_MTIME_NS(st) ((uint64_t) (st).st_mtim.tv_sec * 1000000000u + (uint64_t) (st).st_mtim.tv_nsec)
+#endif
+
 #if !defined(LOFT_STRICT) && (defined(__GNUC__) || defined(__clang__))
 #define LOFT_GNU 1
 #endif

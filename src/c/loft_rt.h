@@ -116,6 +116,16 @@ static loft_text loft_text_own(loft_str s) {
     return t;
 }
 
+/* A text as a NUL-terminated C string the caller frees: what a `#c` binding's `const char *`
+ * parameter receives (`c_call`'s `TextPointer`). */
+static char *loft_cstr_own(loft_str s) {
+    char *c = (char *) malloc(s.len + 1);
+    if (!c) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (s.len) memcpy(c, s.p, s.len);
+    c[s.len] = 0;
+    return c;
+}
+
 static void loft_text_free(loft_text *t) {
     free(t->p);
     t->p = 0;
@@ -2770,6 +2780,47 @@ static void loft_show_char(loft_text *s, loft_ref r, int fmt, int ind) {
 static void loft_show_byte(loft_text *s, loft_ref r, int64_t min, int nullable) {
     uint8_t raw = *loft_at(loft_store_of(r), r.rec, r.pos);
     if (nullable && raw == 255) loft_push(s, "null", 4); else loft_push_i64(s, raw + min);
+}
+
+/* ── deliver (`Stores::deliver_loopback`): a value's bytes through its layout, printed as hex ── */
+static void loft_dlv_hex(loft_text *o, const uint8_t *p, size_t n) {
+    static const char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < n; i++) {
+        char h[2] = { digits[p[i] >> 4], digits[p[i] & 15] };
+        loft_push(o, h, 2);
+    }
+}
+
+/* A scalar's bytes as the store holds them, little-endian as `to_le_bytes` writes them. */
+static void loft_dlv_raw(loft_text *o, loft_ref r, uint32_t n) {
+    loft_dlv_hex(o, loft_at(loft_store_of(r), r.rec, r.pos), n);
+}
+
+/* A two-byte narrow integer: `get_short` (`null` reads 0, else the code less one) or, raw, the
+ * code biased by `start` (`get_i16_raw`). */
+static void loft_dlv_short(loft_text *o, loft_ref r, int32_t start, int biased) {
+    uint16_t raw;
+    memcpy(&raw, loft_at(loft_store_of(r), r.rec, r.pos), 2);
+    int16_t v = biased ? (raw ? (int16_t) (raw - 1) : 0) : (int16_t) (raw + start);
+    uint8_t b[2] = { (uint8_t) v, (uint8_t) ((uint16_t) v >> 8) };
+    loft_dlv_hex(o, b, 2);
+}
+
+/* A text's bytes, its length nowhere. */
+static void loft_dlv_text(loft_text *o, loft_ref r) {
+    loft_str s = loft_get_text(r, 0);
+    loft_dlv_hex(o, (const uint8_t *) s.p, s.len);
+}
+
+typedef const char *(*loft_dlv_fn)(loft_text *o, loft_ref r);
+
+/* `deliver(tag, value)` on the loopback host: the bytes, or why the layout cannot carry them. */
+static void loft_deliver(int64_t tag, const char *name, loft_dlv_fn f, loft_ref r) {
+    loft_text o = { 0, 0, 0 };
+    const char *e = f(&o, r);
+    if (e) printf("deliver tag=%lld type=%s error=%s\n", (long long) tag, name, e);
+    else printf("deliver tag=%lld type=%s bytes=%.*s\n", (long long) tag, name, (int) o.len, o.p ? o.p : "");
+    loft_text_free(&o);
 }
 
 /* The bytes of place `r` for a link that addresses them directly, or `absent` when `r` names

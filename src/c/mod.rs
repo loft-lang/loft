@@ -17,6 +17,7 @@
 //! reaches loft's runtime is @PLN91's decision.
 
 mod body;
+mod deliver;
 mod eq;
 mod files;
 mod fnval;
@@ -48,7 +49,9 @@ const RUNTIME: &str = concat!(
     include_str!("loft_json.h"),
     include_str!("loft_parse.h"),
     include_str!("loft_reflect.h"),
-    include_str!("loft_io.h")
+    include_str!("loft_io.h"),
+    include_str!("loft_lazy.h"),
+    include_str!("loft_net.h")
 );
 
 /// Why a function cannot be written as C yet.
@@ -141,6 +144,8 @@ pub(crate) struct Cx<'a> {
     defaults: std::cell::RefCell<std::collections::BTreeMap<u16, Vec<u8>>>,
     /// Every type the unit renders as text (`loft_show{tp}`), by type number.
     show_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
+    /// Every type a `deliver` walks (`loft_dlv{tp}`, `deliver.rs`).
+    deliver_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
     consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The signatures the unit calls function values through: `loft_call{n}`.
@@ -161,13 +166,18 @@ pub(crate) struct Cx<'a> {
     /// The Unicode tables the unit reads (`crate::c::unicode`).
     unicode: std::cell::RefCell<std::collections::BTreeSet<String>>,
     /// The generators' frames and prototypes, written before the unit's functions.
-    gen_decls: std::cell::RefCell<String>,
+    pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
-    gen_bodies: std::cell::RefCell<String>,
+    pub(crate) gen_bodies: std::cell::RefCell<String>,
     /// The types a `T.parse` reaches (`parse.rs`): their rows of `loft_ptypes`.
     parse_types: std::cell::RefCell<std::collections::BTreeSet<u16>>,
     /// The unit reaches `stack_trace()`: every function keeps a frame (`loft_frame_push`).
     pub(crate) frames: std::cell::Cell<bool>,
+    /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
+    /// consults the binding on a miss (`loft_lazy_miss`).
+    pub(crate) lazy: std::cell::Cell<bool>,
+    /// The lazy fetch functions written so far (`loft_lazy_fetch{n}`).
+    pub(crate) lazy_fetchers: std::cell::Cell<usize>,
     /// The place twins the unit calls (`twin_name`): a function by definition number, with
     /// the mask of its `&` parameters that receive a store place rather than a variable.
     twins: std::cell::RefCell<Vec<(u32, u64)>>,
@@ -201,6 +211,7 @@ impl<'a> Cx<'a> {
             scratch: std::cell::RefCell::new(None),
             defaults: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             show_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            deliver_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             consts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             fn_sigs: std::cell::RefCell::new(Vec::new()),
             fn_values: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -214,6 +225,8 @@ impl<'a> Cx<'a> {
             gen_bodies: std::cell::RefCell::new(String::new()),
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
+            lazy: std::cell::Cell::new(false),
+            lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
         }
     }
@@ -363,9 +376,14 @@ impl<'a> Cx<'a> {
             );
             let _ = writeln!(
                 out,
-                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {} }};",
+                "static const loft_sidecar loft_sidecar{tp} = {{ {tp}, loft_scb{tp}, loft_sca{tp}, UINT64_C({}), loft_scd{tp}, {}, {} }};",
                 id.layout_hash,
-                body::c_string(&self.stores.release().oldest)
+                body::c_string(&self.stores.release().oldest),
+                if self.holds_stored_refs(tp) {
+                    "loft_types"
+                } else {
+                    "0"
+                }
             );
         }
         out
@@ -814,6 +832,7 @@ impl<'a> Cx<'a> {
             );
         }
         out.push_str(&self.show_code());
+        out.push_str(&self.deliver_code());
         out.push_str(&self.eq_code());
         out.push_str(&self.ser_code());
         out.push_str(&self.unicode_code());
@@ -940,8 +959,16 @@ pub(crate) fn native_c(name: &str) -> Option<&'static str> {
         "n_file_map" => Some("loft_file_map"),
         "n_store_persist_copy" => Some("loft_image_write"),
         "n_store_load" | "n_store_load_untrusted" => Some("loft_image_load"),
+        "n_store_load_url" => Some("loft_store_load_url"),
+        "n_store_load_url_trusted" => Some("loft_store_load_url_trusted"),
         "n_store_memory" => Some("loft_store_memory"),
         "n_store_verify" => Some("loft_store_verify"),
+        "n_store_bind_lazy" => Some("loft_lazy_bind_coll"),
+        "n_store_lazy_error" => Some("loft_lazy_error"),
+        "n_store_lazy_faults" => Some("loft_lazy_faults"),
+        "n_store_lazy_clear" => Some("loft_lazy_clear"),
+        "n_store_lazy_fail" => Some("loft_lazy_fail"),
+        "n_store_lazy_query" | "n_store_lazy_range" => Some("loft_lazy_db_fetch"),
         "n_store_load_key"
         | "n_store_load_key_text"
         | "n_store_load_keys"
@@ -1004,9 +1031,14 @@ pub(crate) fn plain_native(name: &str) -> Option<&'static str> {
         "t_4hash_len",
         "n_store_load",
         "n_store_load_untrusted",
+        "n_store_load_url",
+        "n_store_load_url_trusted",
         "n_store_persist_copy",
         "n_store_memory",
         "n_store_verify",
+        "n_store_bind_lazy",
+        "n_store_lazy_query",
+        "n_store_lazy_range",
         "n_struct_from_jsonvalue",
         "n_struct_to_json",
         "n_struct_to_json_pretty",
@@ -1124,9 +1156,22 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
             why: "a program with a log.conf".into(),
         });
     }
+    // A program's own lazy driver (`fn lazy_fetch…`, @PLN133 S8) is called by the miss path,
+    // which the C does not route to loft code.
+    if (0..data.definitions()).any(|d| {
+        let def = data.def(d);
+        def.source == crate::data::MAIN_SOURCE && def.name().starts_with("n_lazy_fetch")
+    }) {
+        return Err(Refusal {
+            function: "main".into(),
+            why: "a program with a lazy driver".into(),
+        });
+    }
     let cx = Cx::new(data, stores);
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
+    cx.lazy
+        .set(reachable_has(data, &all, |n| n == "n_store_bind_lazy"));
     let mut protos = String::new();
     let mut bodies = String::new();
     for &d in &fns {
@@ -1237,6 +1282,17 @@ fn unit_defines(
     });
     if reflects {
         out.push_str("#define LOFT_REFLECT 1\n");
+    }
+    if cx.lazy.get() {
+        out.push_str("#define LOFT_LAZY 1\n");
+    }
+    if reached.iter().any(|&d| {
+        matches!(
+            data.def(d).name(),
+            "n_store_load_url" | "n_store_load_url_trusted"
+        )
+    }) {
+        out.push_str("#define LOFT_NET 1\n");
     }
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
@@ -1354,6 +1410,10 @@ fn anchor(stores: &Stores) -> String {
 fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
     let data = cx.data;
     let def = data.def(d);
+    // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
+    if def.code() == &Value::Null && !def.c_sig.is_empty() {
+        return c_binding(cx, d);
+    }
     // A `#native` function of a library the program does not load: the interpreter's stub
     // (`compile.rs`) answers every call with this panic.
     let unloaded = def.code() == &Value::Null && !def.native().is_empty();
@@ -1449,6 +1509,130 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
         return Ok((sig, framed(cx, d, &name, &params, ret, &body)));
     }
     Ok((sig, body))
+}
+
+/// A `#c` binding (`c_signature`, `c_call`): a wrapper declaring the callee by the author's own
+/// signature text — so it agrees with a system header that declares it too — and calling it with
+/// each scalar cast to its declared C type and each text as a NUL-terminated copy; an integer
+/// result widened to 64 bits by its signedness, a floating one as is.  A vector argument is not
+/// carried yet.
+fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
+    use crate::c_signature::{self as cs, CArg};
+    let data = cx.data;
+    let def = data.def(d);
+    let sig = cs::of(data, d, cs::CTarget::host())
+        .ok_or("a C binding without a signature")?
+        .map_err(|e| format!("a C binding whose signature does not parse: {e}"))?;
+    let params: Vec<Type> = def.attributes().iter().map(|a| a.typedef.clone()).collect();
+    let plan = cs::plan(&params, &sig).map_err(|_| "a C binding whose arguments do not fit")?;
+    // The author's spelling: `<ret>(<param>, …)`.
+    let text = def.c_sig.trim();
+    let open = text
+        .find('(')
+        .ok_or("a C signature without its parameters")?;
+    let ret_text = text[..open].trim();
+    let inner = text[open + 1..].trim_end().trim_end_matches(')').trim();
+    let c_params: Vec<&str> = if inner.is_empty() || inner == "void" {
+        Vec::new()
+    } else {
+        inner.split(',').map(str::trim).collect()
+    };
+    let ret = cx
+        .ctype(def.returned())
+        .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
+    let mut decl_params = Vec::new();
+    let mut body = String::new();
+    let mut args = Vec::new();
+    let mut frees = Vec::new();
+    for (i, (arg, tp)) in plan.iter().zip(&params).enumerate() {
+        let c = cx
+            .ctype(tp)
+            .filter(|c| *c != CType::Void)
+            .ok_or_else(|| format!("parameter of type {}", type_word(tp)))?;
+        decl_params.push(format!("{} a{i}", passed(c)));
+        let ct = c_params.get(args.len()).copied().unwrap_or("int");
+        match arg {
+            CArg::Scalar => args.push(format!("({ct}) a{i}")),
+            CArg::TextPointer => {
+                let _ = writeln!(body, "    char *s{i} = loft_cstr_own(a{i});");
+                args.push(format!("s{i}"));
+                frees.push(format!("    free(s{i});"));
+            }
+            CArg::VectorPtr | CArg::VectorPtrCount => {
+                return Err("a C binding taking a vector".into());
+            }
+        }
+    }
+    let decl = format!(
+        "    extern {ret_text} {}({});",
+        sig.symbol,
+        if c_params.is_empty() {
+            "void".to_string()
+        } else {
+            c_params.join(", ")
+        }
+    );
+    let call = format!("{}({})", sig.symbol, args.join(", "));
+    let mut out = format!("{decl}\n{body}");
+    c_binding_result(cx, &mut out, &sig.ret, ret, &call, &frees);
+    let sig_c = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(data, d),
+        if decl_params.is_empty() {
+            "void".to_string()
+        } else {
+            decl_params.join(", ")
+        }
+    );
+    Ok((sig_c, out))
+}
+
+/// The call of a `#c` binding and its result: an integer widened to 64 bits by its signedness, a
+/// floating one as is, each text argument's copy freed after the call.
+fn c_binding_result(
+    cx: &Cx,
+    out: &mut String,
+    c_ret: &crate::c_signature::CType,
+    ret: CType,
+    call: &str,
+    frees: &[String],
+) {
+    use crate::c_signature as cs;
+    match (c_ret, ret) {
+        (cs::CType::Void, _) | (_, CType::Void) => {
+            let _ = writeln!(out, "    {call};");
+            for f in frees {
+                let _ = writeln!(out, "{f}");
+            }
+            if ret != CType::Void {
+                let _ = writeln!(
+                    out,
+                    "    {{ {} r = {}; return r; }}",
+                    held(ret),
+                    cx.initial(ret)
+                );
+            }
+        }
+        (r, c) => {
+            let widened = match r {
+                cs::CType::Int { signed: false, .. } => format!("(int64_t) (uint64_t) {call}"),
+                cs::CType::Int { .. } => format!("(int64_t) {call}"),
+                _ => format!("(double) {call}"),
+            };
+            let value = match c {
+                CType::Float => format!("(double) ({widened})"),
+                CType::Single => format!("(float) ({widened})"),
+                CType::Bool => format!("(uint8_t) (({widened}) != 0)"),
+                _ => format!("(int64_t) ({widened})"),
+            };
+            let _ = writeln!(out, "    {} r = {value};", held(c));
+            for f in frees {
+                let _ = writeln!(out, "{f}");
+            }
+            out.push_str("    return r;\n");
+        }
+    }
 }
 
 /// The body of a `#native` function whose library is not loaded: the panic the interpreter's

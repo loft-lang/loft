@@ -25,6 +25,30 @@ impl FnWriter<'_> {
         }
     }
 
+    /// `deliver(tag, value)` (`OpDeliver`, `Stores::deliver_loopback`): the value's bytes through
+    /// its layout, by the walker the unit writes for its type (`deliver.rs`).
+    fn deliver(&mut self, tag: &Value, val: &Value, tp: &Value, ind: usize) -> Result<E, String> {
+        let tp = u16::try_from(Self::literal(tp, "type")?)
+            .map_err(|_| "a type number out of range".to_string())?;
+        let name = self
+            .cx
+            .stores
+            .types
+            .get(tp as usize)
+            .map_or_else(|| format!("#{tp}"), |t| t.name.clone());
+        let f = self.cx.deliver_type(tp);
+        let (tag, val) = self.two("OpDeliver", &[tag.clone(), val.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_deliver({}, {}, {f}, {})",
+                as_int(tag)?,
+                super::c_string(&name),
+                as_ref(val)?
+            ),
+            K::Void,
+        ))
+    }
+
     /// The file operators, or `None` for another.
     pub(super) fn file_operator(
         &mut self,
@@ -41,6 +65,7 @@ impl FnWriter<'_> {
             Ok(Some(E::new(format!("{f}({})", as_view(a)?), K::Int)))
         };
         match (name, args) {
+            ("OpDeliver", [tag, val, tp]) => self.deliver(tag, val, tp, ind).map(Some),
             // `expose` / `release` off the browser (`Stores::expose_value`): the value's store
             // locked read-only while the host holds it, and unlocked.
             ("OpExpose" | "OpRelease", [tag, val, _]) => {

@@ -13,6 +13,7 @@ use crate::c::{CType, Keyed};
 use crate::data::Value;
 use crate::database::Parts;
 use crate::keys::Key;
+use std::fmt::Write as _;
 
 /// The C description of key parts: a `loft_key` array literal.
 fn key_array(keys: &[Key]) -> String {
@@ -329,6 +330,93 @@ impl FnWriter<'_> {
         }
     }
 
+    /// `store_load_url(r, url, sha)` and `store_load_url_trusted(r, url)` (`loft_net.h`): the
+    /// gate reads the layout of the store's root type, as `store_load`'s does.
+    fn load_url(
+        &mut self,
+        name: &str,
+        r: &Value,
+        url: &Value,
+        rest: &[Value],
+        ind: usize,
+    ) -> Result<E, String> {
+        // The gate reads the layout of the store's root type, as `store_load`'s does.
+        let tp = self
+            .store_value_type(r)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+            .ok_or("a loaded value whose store type is not known here")?;
+        // A store holding references is re-pointed at its slot by a walk of its type.
+        if self.cx.holds_stored_refs(tp) {
+            self.cx.copy_type(tp)?;
+            self.cx.name_types();
+        }
+        let sc = self.cx.sidecar_of(tp);
+        let mut all = vec![r.clone(), url.clone()];
+        all.extend(rest.iter().cloned());
+        let es = self.args(&all, ind)?;
+        let mut es = es.into_iter();
+        let r = as_ref(es.next().ok_or("a URL load without its value")?)?;
+        let url = as_view(es.next().ok_or("a URL load without its URL")?)?;
+        let sha = match es.next() {
+            Some(e) => format!("{}, ", as_view(e)?),
+            None => String::new(),
+        };
+        let f = if name == "n_store_load_url" {
+            "loft_store_load_url"
+        } else {
+            "loft_store_load_url_trusted"
+        };
+        Ok(E::new(format!("{f}({r}, {url}, {sha}{sc})"), K::Bool))
+    }
+
+    /// The natives of a lazily bound collection (`@PLN129`, `loft_lazy.h`), or `None`.
+    fn lazy_native(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        match (name, args) {
+            ("n_store_bind_lazy", [local, source]) => self.bind_lazy(local, source, ind).map(Some),
+            ("n_store_lazy_error", [local]) => {
+                let r = self.expr(local, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_lazy_error({})", as_ref(r)?),
+                    K::View,
+                )))
+            }
+            ("n_store_lazy_faults", [local]) => {
+                let r = self.expr(local, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_lazy_faults({})", as_ref(r)?),
+                    K::Int,
+                )))
+            }
+            ("n_store_lazy_clear", [local]) => {
+                let r = self.expr(local, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_lazy_clear({})", as_ref(r)?),
+                    K::Bool,
+                )))
+            }
+            ("n_store_lazy_fail", [local, why]) => {
+                let (r, why) = self.two(name, &[local.clone(), why.clone()], ind)?;
+                Ok(Some(E::new(
+                    format!("loft_lazy_fail({}, {})", as_ref(r)?, as_view(why)?),
+                    K::Void,
+                )))
+            }
+            // A database's explicit fetches: a C build has no driver to run them.
+            ("n_store_lazy_query" | "n_store_lazy_range", [local, rest @ ..]) => {
+                let mut all = vec![local.clone()];
+                all.extend(rest.iter().cloned());
+                let mut es = self.args(&all, ind)?.into_iter();
+                let r = as_ref(es.next().ok_or("a lazy fetch without its collection")?)?;
+                let rest: Vec<String> = es.map(|e| format!("(void) ({}), ", e.code)).collect();
+                Ok(Some(E::new(
+                    format!("({}loft_lazy_db_fetch({r}))", rest.concat()),
+                    K::Int,
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// The natives over a whole store — its image, its verify, its report — or `None` for
     /// another.
     fn store_native(
@@ -337,6 +425,9 @@ impl FnWriter<'_> {
         args: &[Value],
         ind: usize,
     ) -> Result<Option<E>, String> {
+        if let Some(e) = self.lazy_native(name, args, ind)? {
+            return Ok(Some(e));
+        }
         match (name, args) {
             ("n_store_persist_copy", [r, path]) => {
                 // The image's sidecar is the store's root type's: the value's static type
@@ -366,8 +457,10 @@ impl FnWriter<'_> {
                     .store_value_type(r)
                     .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
                     .ok_or("a loaded value whose store type is not known here")?;
+                // A store holding references is re-pointed at its slot by a walk of its type.
                 if self.cx.holds_stored_refs(tp) {
-                    return Err("a loaded store holding references".into());
+                    self.cx.copy_type(tp)?;
+                    self.cx.name_types();
                 }
                 let sc = self.cx.sidecar_of(tp);
                 let (r, path) = self.two(name, &[r.clone(), path.clone()], ind)?;
@@ -380,6 +473,9 @@ impl FnWriter<'_> {
                     ),
                     K::Bool,
                 )))
+            }
+            ("n_store_load_url" | "n_store_load_url_trusted", [r, url, rest @ ..]) => {
+                self.load_url(name, r, url, rest, ind).map(Some)
             }
             ("n_store_verify", [r]) => {
                 // The walk reads the store's own type, so every type the value reaches is
@@ -415,6 +511,88 @@ impl FnWriter<'_> {
             }
             _ => Ok(None),
         }
+    }
+
+    /// `store_bind_lazy(local, source)` (`Stores::bind_lazy`): a kind an image cannot page — any
+    /// but a hash, a trie or a spatial — is refused at the bind (`unservable_kind`); else the
+    /// binding carries a fetch for one key written here from the collection's paged plan, the
+    /// loader a lookup of that kind takes (`fetch_from_file`).
+    fn bind_lazy(&mut self, local: &Value, source: &Value, ind: usize) -> Result<E, String> {
+        use crate::database::Parts;
+        let root = self
+            .store_value_type(local)
+            .and_then(|t| self.cx.root_type(&t, self.cx.data.def(self.d).source()))
+            .filter(|tp| (*tp as usize) < self.cx.stores.types.len())
+            .ok_or("a lazily bound value whose store type is not known here")?;
+        let stores = self.cx.stores;
+        let coll = stores.collection_type_of_store(root);
+        let parts = stores.types.get(coll as usize).map(|t| &t.parts);
+        // A struct wrapping several keyed collections roots no one collection.
+        let element = super::c_string(if coll == u16::MAX {
+            ""
+        } else {
+            stores.element_type_name(coll)
+        });
+        let (unservable, fetch) = match parts {
+            Some(Parts::Hash(..) | Parts::Trie(..) | Parts::Radix(..)) => {
+                let radix = matches!(parts, Some(Parts::Radix(..)));
+                let name = match parts {
+                    Some(Parts::Radix(..)) => "n_store_load_box",
+                    Some(Parts::Trie(..)) => "n_store_load_key_text",
+                    _ => "n_store_load_key",
+                };
+                let plan = self.paged_plan(name, local)?;
+                let k = self.cx.lazy_fetchers.get();
+                self.cx.lazy_fetchers.set(k + 1);
+                let PagedPlan {
+                    sc,
+                    refusal,
+                    content,
+                    keys,
+                    nk,
+                    kind,
+                    coll_name,
+                } = plan;
+                // A point is the degenerate box, and it loads every record at that point.
+                let load = if radix {
+                    format!(
+                        "n > 0 ? loft_pg_load_box_kv(loft_types, coll, path, {sc}, {refusal}, {content}, {keys}, {nk}, key, n, key, n, -1, {coll_name}) : 0"
+                    )
+                } else {
+                    format!(
+                        "n == 1 ? loft_pg_load_keys(loft_types, coll, path, {sc}, {refusal}, {content}, {keys}, {nk}, {kind}, key, 1) : 0"
+                    )
+                };
+                let f = format!("loft_lazy_fetch{k}");
+                let sig = format!(
+                    "static int64_t {f}(loft_ref coll, loft_str path, const loft_kv *key, int n)"
+                );
+                let _ = writeln!(self.cx.gen_decls.borrow_mut(), "{sig};");
+                let _ = writeln!(
+                    self.cx.gen_bodies.borrow_mut(),
+                    "\n{sig} {{\n    return {load};\n}}"
+                );
+                ("0".to_string(), f)
+            }
+            _ => (
+                super::c_string(&format!(
+                    "a lazily-bound `.store` image is read a page at a time, which only a `hash`, a \
+                     `trie` or a `spatial` supports, and `{}` is none of them — read it whole with \
+                     `store_load` (or `store_load_url_trusted` for a URL), which carries every kind",
+                    stores.type_name(root)
+                )),
+                "0".to_string(),
+            ),
+        };
+        let (r, source) = self.two("n_store_bind_lazy", &[local.clone(), source.clone()], ind)?;
+        Ok(E::new(
+            format!(
+                "loft_lazy_bind_coll({}, {}, {fetch}, {element}, {unservable})",
+                as_ref(r)?,
+                as_view(source)?
+            ),
+            K::Bool,
+        ))
     }
 
     /// What a working-set loader can serve, asked of the Rust store once, when the program is
@@ -936,6 +1114,30 @@ impl FnWriter<'_> {
         let n = values.len();
         let kv = value_array(&values);
         let (keys, nk) = self.cx.keys_of(tp);
+        let find = match kind {
+            Keyed::Hash => format!("loft_h_find({data}, {keys}, {kv}, {n})"),
+            Keyed::Sorted => format!("loft_seq_find({data}, {size}, {keys}, {nk}, {kv}, {n})"),
+            Keyed::Index => format!("loft_ix_find({data}, {keys}, {nk}, {kv}, {n})"),
+            Keyed::Ordered => format!("loft_seq_find({data}, 0, {keys}, {nk}, {kv}, {n})"),
+            Keyed::Spatial | Keyed::Trie => format!(
+                "loft_rx_find({data}, {keys}, {nk}, {}, {kv}, {n})",
+                u8::from(kind == Keyed::Trie)
+            ),
+            Keyed::Array => return Err("a keyed lookup in an array".into()),
+        };
+        // `@PLN129` — a miss on a collection bound to a source fetches the key and looks again
+        // (`State::get_record`); only a unit that binds one asks.
+        if self.cx.lazy.get() {
+            let t = self.temp(CType::Ref);
+            self.line(ind, &format!("{t} = {find};"));
+            self.line(
+                ind,
+                &format!(
+                    "if ({t}.rec == 0 && loft_lazy_bound({data}) && loft_lazy_miss({data}, {kv}, {n})) {t} = {find};"
+                ),
+            );
+            return Ok(E::new(t, K::Ref));
+        }
         Ok(E::new(
             match kind {
                 Keyed::Hash => format!("loft_h_find({data}, {keys}, {kv}, {n})"),

@@ -192,14 +192,14 @@ fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
 #[test]
 fn a_construct_outside_the_scalar_subset_is_refused_by_name() {
     let p = parsed(
-        "struct Rc { n: integer }\nfn up() -> boolean { r = Rc { n: 1 }; store_load_url(r, \"https://example.org/x.store\", \"\") }\n",
+        "fn c_sum(v: vector<i32>) -> integer;   #c \"c_sum\" \"int(const int*, size_t)\"\nfn up() -> integer { c_sum([1, 2]) }\n",
     );
     let d = p.data.def_nr("n_up");
     let refusal = loft::c::emit_unit(&p.data, &p.database, &[d])
-        .expect_err("a load over a URL is not carried");
-    assert_eq!(refusal.function, "store_load_url");
+        .expect_err("a C binding taking a vector is not carried yet");
+    assert_eq!(refusal.function, "c_sum");
     assert!(
-        refusal.why.contains("native store_load_url"),
+        refusal.why.contains("a C binding taking a vector"),
         "names the construct: {refusal}"
     );
 }

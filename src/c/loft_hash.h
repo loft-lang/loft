@@ -1115,6 +1115,15 @@ static void loft_forget_in_scratches(loft_ref c, loft_ref e) {
 /* The snapshot of `n` elements `width` bytes each — (record, offset) pairs, or record numbers. */
 static loft_ref loft_scratch_of(loft_ref c, const loft_ref *e, const uint32_t *recs, uint32_t n, uint32_t width) {
     loft_store_t *s = loft_store_of(c);
+    /* `build_rec_scratch`: a read-only (an exposed) source cannot take a claim, so its snapshot
+     * gets a writable store of its own, freed with it. */
+    uint16_t home = c.store_nr;
+    if (s->read_only) {
+        loft_ref fresh = loft_ref_null();
+        loft_database(&fresh, 1);
+        home = fresh.store_nr;
+        s = &loft_stores[home];
+    }
     uint32_t words = (n * width + 8 + 7) / 8;
     uint32_t vec = loft_st_claim(s, words < 1 ? 1 : words);
     uint32_t header = loft_st_claim(s, 2);
@@ -1130,7 +1139,7 @@ static loft_ref loft_scratch_of(loft_ref c, const loft_ref *e, const uint32_t *r
     loft_set_u32(s, header, 4, vec);
     loft_set_u32(s, header, 8, c.store_nr);
     loft_set_u32(s, header, 12, LOFT_SCRATCH_MARK | width);
-    loft_ref x = { c.store_nr, header, 4 };
+    loft_ref x = { home, header, 4 };
     if (loft_nscratches == loft_scratch_cap) {
         loft_scratch_cap = loft_scratch_cap ? loft_scratch_cap * 2 : 8;
         loft_scratches = (loft_live_scratch *) realloc(loft_scratches, (size_t) loft_scratch_cap * sizeof *loft_scratches);
@@ -1172,6 +1181,12 @@ static void loft_free_scratch(loft_ref x) {
     loft_store_t *s = loft_store_of(x);
     if (!s->live || loft_st_i32(s, x.rec, 0) < 2 || (loft_u32(s, x.rec, 12) & 0xFFFF0000u) != 0x5C4A0000u) return;
     uint32_t vec = loft_u32(s, x.rec, 4);
+    /* A snapshot in a store of its own goes with it. */
+    if (loft_u32(s, x.rec, 8) != x.store_nr) {
+        loft_ref whole = { x.store_nr, 1, 8 };
+        loft_free_ref(whole);
+        return;
+    }
     loft_st_delete(s, x.rec);
     if (vec != x.rec && vec != 0) loft_st_delete(s, vec);
 }

@@ -79,7 +79,10 @@ module and the C header and compare every answer and every byte of the store.
 | `loft_keyed.h` | sorted and ordered (`src/vector.rs`), the walks, renders and keyed writes |
 | `loft_json.h` | `src/json.rs`' `JParser` and the lexer's JSON mode, ported; the JsonValue tree in a store and its natives (`LOFT_JSON`, `LOFT_JV_*`) |
 | `loft_parse.h` | `T.parse(text)` and `T.parse(JsonValue)`: the walks into a type, read from the `loft_ptypes` table `parse.rs` writes, and the per-store `#errors` (`LOFT_PARSE`) |
-| `loft_io.h` | files and the filesystem, pasted last |
+| `loft_io.h` | files and the filesystem |
+| `loft_lazy.h` | lazy stores: the bindings, their pins, the fault channel, the miss path (`LOFT_LAZY`) |
+| `loft_net.h` | whole-image loads over a URL: `file://`, HTTP/1.1, SHA-256 (`LOFT_NET`) |
+| `deliver.rs` | `deliver(tag, value)`'s byte form: one walker per type the value reaches |
 
 ## The macro modes
 
@@ -171,8 +174,10 @@ written from word 0 to past its last live record, padded to the 1024-word floor,
 the sidecar gated (`classify`: the same hash and dump, `Release::admits`), the image adopted
 into the slot as `Store::load` builds one (no parked lists, no lazy frees, the allocator state
 re-derived from the blocks).  A file of another layout is refused, where the interpreter
-converts it; a store holding references is refused at emit time until the reference remap
-(`rebase_stored_refs`) is ported; compaction on load is not done (it declines for an image
+converts it; a store holding references has them re-pointed at its slot from the slot its
+sidecar recorded (`rebase_stored_refs`), read off the image's bytes before it is adopted, so a
+refusal leaves the store as it was; `store_load_untrusted` validates the block structure first
+(`Store::validate_structure`); compaction on load is not done (it declines for an image
 `store_persist_copy` wrote, which is already dense).  `tests/c_emit.rs` crosses a file written
 by each backend with every reader — the interpreter, the C, `--native` — on a store of every
 collection kind, and checks the C's image and sidecar against the interpreter's byte for byte.
@@ -188,7 +193,8 @@ texts and vectors relocated, then filed by the collection's own insert.  Which c
 loader serves and which entry types it can copy is the Rust store's answer
 (`collection_type_of_store`, `is_copyable_entry`), asked when the program is written to C; a
 loader that cannot serve its collection runs and answers 0, saying why on stderr, as the
-interpreter does.  An `http(s)://` source is not carried.  `tests/c_emit.rs` crosses every
+interpreter does.  A paged load from an `http(s)://` source answers that it cannot open it as
+a paged source: the C has no ranged HTTP transport.  `tests/c_emit.rs` crosses every
 loader with every writer and reader, and
 `tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft` mutates every record of
 each image.  The key compare, the range search and the sorted insert are
@@ -299,10 +305,40 @@ only by failing with one of its messages — the annotations are read by the sam
 5. A sweep that turns up a `differ` is a defect to fix before going on — it is usually an
    older rule the new construct now reaches.
 
+**Lazy stores.**  `store_bind_lazy` binds a collection to a `.store` image (`LAZY_STORES.md`):
+a keyed lookup that misses on a bound collection fetches that one key through the paged
+loader the collection's kind takes — a hash's and a trie's key, a spatial's point as the
+degenerate box — and looks again, so the collection stays the only authority on what is
+resident.  The binding pins the source (length, modification time, inode) and a fetch after
+it moved refuses; the fault channel (`store_lazy_error`, `_faults`, `_clear`, `_fail`) keeps
+every failure's count and the first reason.  A kind an image cannot page is refused at the
+bind.  A database (`sqlite:`) or a loft driver's scheme answers unreachable — this runtime has
+no SQL driver — and `store_lazy_query` / `store_lazy_range` refuse the same way; a program that
+declares its own driver (`fn lazy_fetch…`) is refused at emit time.  The miss hook is written
+only into a unit that binds.
+
+**URL loads.**  `store_load_url` and `store_load_url_trusted` fetch the sidecar and the image
+(`file://` from the filesystem, `http://` as one HTTP/1.1 GET over a POSIX socket), gate the
+layout as `store_load` does, pin the bytes by SHA-256 for the first, and adopt them validated.
+An `https://` URL answers as a build without a TLS transport answers (`net::fetch_bytes`).
+
+**`#c` bindings.**  A function bound to a C symbol (`#c "abs" "int(int)"`) is a wrapper that
+declares the callee with the author's own signature text — so it agrees with a system header
+that declares it too — passes each scalar cast to its declared type and each text as a
+NUL-terminated copy, and widens the result as `c_call` does.  A vector argument is refused.  A
+`#native` function whose library is not loaded answers every call with the interpreter stub's
+panic.
+
+**`deliver`.**  `deliver(tag, value)` prints the loopback host's line: the value's bytes as
+`read_via_descriptor` reads them through its layout, as hex, or the refusal of the first
+store-internal kind it reaches.  `expose` and `release` lock and unlock the value's store; a
+walk over a hash in a locked store keeps its snapshot in a store of its own
+(`build_rec_scratch`).
+
 ## Not carried yet
 
-The sweep's ranking is the current list.  The families left: the image loaders over a URL, a
-lazy binding (`store_bind_lazy`), `store_reclaim`, a persisted or verified value whose store
-type is not known at the call, a loaded store holding references, `deliver` (its byte form),
-the native library calls; a fill of a linked group member, a group a keyed member owns, a
-replace or a move of a linked element type; a `par` worker over rows of tuples holding text.
+No program of the corpus is refused.  What the C runtime does not have, it answers at run time
+the way a build without it answers: a ranged or a TLS transport for a URL, a SQL driver for a
+lazy database source.  Refused at emit time: a program declaring a loft lazy driver, a `#c`
+binding taking a vector, a link re-pointed to a narrow or a text store place, a par row of a
+tuple holding a reference.
