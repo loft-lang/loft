@@ -427,10 +427,19 @@ that declares it too — passes each scalar cast to its declared type, each text
 NUL-terminated copy and each vector as its element pointer with a count where the signature has
 one (`loft_cvec_ptr`, @C107; the C may write through it), and reads the result as `c_call`
 does: an integer widened by its signedness, a `char *` copied to its NUL (NULL the null text,
-invalid UTF-8 replaced), a handle as the pointer's value.  A package's **`[c] shim`** sources
-are `#include`d into the unit by path, so one `cc` of the unit builds the shim with it, where
-the interpreter and `--native` take the library `c_shim::build` made of them; a declared
-`[c] libs` entry is named in a comment for whoever links the unit.  This is how a library
+invalid UTF-8 replaced), a handle as the pointer's value.  A package's **`[c] shim`** is its
+own `cc` + `ar` archive (`c_shim::cc_archive`) the unit names in a `/* link: */` line, its
+sources in `/* shim-source: */` lines for a wasm build; a declared `[c] libs` entry is linked,
+the file the package ships by name with a run path to its directory, a system library by its
+soname; an `[c] optional-libs` entry is never linked but opened when its package's first symbol
+is called (`loft_c_lazy_sym`).  A program written out with `--out` (@PLN195) links none of the
+libraries its packages ship: the unit lists each one's package, version and file
+(`loft_cboundlibs`), and at start the runtime opens them through `native_bind`'s search order —
+`LOFT_LIB_PATH`, the executable's directory, `LOFT_HOME/.loft/lib/<package>-<version>/`, the
+system root — or exits 1 with its message, naming the package, the version and every directory
+searched (`loft_c_bind_libraries`, POSIX hosts).  A shim stays inside a `--static` program (the
+`--ship` default), linked whole; a `--dynamic` one opens the shim's own library beside it.  A
+call into an opened library finds its symbol once (`loft_c_bound_sym`).  This is how a library
 ships its native part without a Rust crate: ANSI C beside its loft, one source for all three
 backends.  A `#native` function — a Rust cdylib's — is NOT reached: the C answers every call
 with the interpreter's unloaded-library panic, so a library a C program needs is one whose
