@@ -171,6 +171,17 @@ pub(crate) fn build_wasm(
     if !ship {
         cmd.push_arg("-DLOFT_CALL_CHAIN");
     }
+    // The WASI sysroot: the one `WASI_SYSROOT` names, else the system package's when it is
+    // there (a clang that does not look in it falls back to the host's headers).
+    let sysroot = std::env::var("WASI_SYSROOT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            fa::exists("/usr/share/wasi-sysroot").then(|| "/usr/share/wasi-sysroot".to_string())
+        });
+    if let Some(root) = sysroot {
+        cmd.push_arg(format!("--sysroot={root}"));
+    }
     cmd.push_arg(&src);
     cmd.push_args(shim_sources);
     cmd.push_arg("-o").push_arg(out);
@@ -203,6 +214,8 @@ pub(crate) fn build_wasm(
         "stdio.h",
         "cannot find",
         "unable to find",
+        // A header found on the HOST's path: no WASI sysroot was found at all.
+        "/usr/include/",
     ]
     .iter()
     .any(|m| said.contains(m));
