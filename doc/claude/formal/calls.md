@@ -427,7 +427,9 @@ DESIGN_DECISIONS.md @C123.
               directive counts: a file reading F's internals declares nothing.  Membership is
               where F is, never how it was reached (`use`, `--lib`, the registry).  A file a
               program `use`s may say `#package`, and only that: `#cwd` and `#link` set how
-              the whole program runs and are refused there.
+              the whole program runs and are refused there.  A shared item imports, glob or
+              selective, as a `pub` one does, and never passes on: `pub use` re-exports only
+              what is `pub` (F-Surface), so nothing reaches past the two directories.
 ```
 
 **`(F-Visible)` in words.** The levels are decided by what F's own `pub` items mention, so a

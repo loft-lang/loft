@@ -68,6 +68,19 @@ implementation.  So the usual "work around it and move on" is not allowed here:
 
 ## The working norm (owner, 2026-10-27)
 
+**This strand matters only if it reaches its goals, so a good design beats a quick build.**
+Stopping to ask the owner a design question is welcome here, not a delay to avoid.  Ask it in
+prose, with a recommendation and its reasons, so the answer can be discussed rather than
+picked from a fixed list.  `#package` (S0.3a) is the example: the question about a package
+level grew, over three answers, into a rule none of the first options held.
+
+What does not need asking: a design the formal rules (`doc/claude/formal/`) or a recorded
+decision (`DESIGN_DECISIONS*.md`) already answer is used as it stands.  The exception is where
+following it means STRUGGLING AGAINST LOFT, where the rule or decision makes the code take a
+detour, a workaround or a shape the problem does not have.  That is a finding, and it goes to
+the owner as a design question before the code is bent around it.  X2, C140's per-file privacy
+costing 167 `pub`, was such a case, and its answer was a language change, not the 167 `pub`.
+
 - **Every next step is designed on paper before it is implemented, and only the next
   one.**  The plan grows as it goes: a step's design is a section under § Steps, written
   and read before its code (what it changes, the failure paths, the invariant that must
@@ -470,7 +483,34 @@ has it).
    `#package` is admitted: `#cwd` and `#link` set how the whole program runs, and are refused
    there naming where they belong (they were "unexpected '#'" before; no corpus or registry
    file says either in a used file).
-3. Imports: the importer reaches `exported`/`passes_on`; glob and selective cells; cell 4.
+3. Imports.  One question for all four binding paths (`import_all`, `import_name` and their
+   `_overwrite` twins, `src/data.rs`): `Data::importable(key, lib, into) -> Option<(def,
+   passes_on)>`, which is `exported` widened by `shares_internals` against the importer's file
+   (`source_files[into]`).  `importable_names` serves the glob form.  A shared item binds
+   with `passes_on == false` even under `pub use`, so a mate cannot carry another file's
+   internals out of the two directories.  The diagnostic helpers that ask `exported` to find
+   a cure (which library publishes a name) keep asking the public surface.  Cells:
+   - a glob `use units;` binds a private function and type bare;
+   - a selective `use units::(secret)` binds one, and `use units::(twice)` binds a method;
+   - two mates exporting one name collide as two libraries' names do (cell 4);
+   - **no leak through `pub use`**: a file two levels up that imports a mate which wrote
+     `pub use units::*;` reaches only `units`' `pub` items.
+
+   **Built — what changed from the design.**
+   - **The `passes_on == false` flag was a duplicate.**  Falsifying the no-leak cell by
+     removing it changed nothing.  Whether a binding re-exports is `Data::passes_on`'s, and it
+     is judged on the DEFINITION (`pub_visible`), so a private item never passes on through
+     `pub use` whatever its binding says.  The flag was removed: `importable` answers only
+     whether a name can be imported, and the one rule for re-export stays where it was.  The
+     cell is falsified on the path that can leak instead: with `shared_with` ignoring the
+     importer, the far program reaches `secret` and prints 42.
+   - **A confounded negative.**  The "two levels up" import cell first read a private field
+     too, so `check_visibility` refused it whatever the import did; under the same mutation
+     it still passed.  It now calls a bare private function only, and fails under the
+     mutation.
+   - Tests: `package_items_import_bare_for_a_mate`, `package_names_collide_as_pub_names_do`
+     (the same refusal as two `pub` names, compared line for line),
+     `package_internals_do_not_pass_on_through_pub_use`.
 4. The documentation.
    - `formal/calls.md`: `(F-Visible)` names `(F-Package)`, a new rule holding the sentence
      above.

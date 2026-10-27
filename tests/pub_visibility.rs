@@ -814,3 +814,141 @@ fn a_used_file_may_say_package_but_not_cwd() {
         );
     }
 }
+
+/// `(stdout, stderr, ok)` of `program` at `<dir>/<at>/main.loft` over a tree of `files`
+/// (paths under `<dir>`), with `--lib <dir>/top/lib`.
+fn run_tree(
+    tag: &str,
+    files: &[(&str, String)],
+    at: &str,
+    program: &str,
+) -> (String, String, bool) {
+    let dir = std::env::temp_dir().join(format!("loft_pub_tree_{tag}_{}", std::process::id()));
+    let _ = loft::file_access::remove_dir_all(&dir);
+    for sub in ["top/lib/sub", "top/other"] {
+        loft::file_access::create_dir_all(dir.join(sub)).expect("scratch");
+    }
+    for (path, text) in files {
+        loft::file_access::write(dir.join(path), text).expect("file");
+    }
+    let src = dir.join(at).join("main.loft");
+    loft::file_access::write(&src, program).expect("program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(dir.join("top/lib"))
+        .arg(&src)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "120")
+        .output()
+        .expect("run loft");
+    let _ = loft::file_access::remove_dir_all(Path::new(&dir));
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.success(),
+    )
+}
+
+fn shared_units() -> (&'static str, String) {
+    (
+        "top/lib/units.loft",
+        format!("#package\n{UNITS}{UNITS_PRIVATE_FNS}"),
+    )
+}
+
+/// `@FR-F-Package` — to a mate, a `#package` file's items import as `pub` ones do: a glob binds
+/// them bare, a selective `use` binds one, and a method by its name.  Two levels up they do not.
+#[test]
+fn package_items_import_bare_for_a_mate() {
+    let glob = "use units::*;\nfn main() { s = Seed { v: 4 }; println(\"{secret()} {s.v}\"); }\n";
+    let pick = "use units::(secret, Seed, twice);\nfn main() { s = Seed { v: 5 }; u = units::spawn(\"o\"); println(\"{secret()} {s.v} {u.twice()}\"); }\n";
+    for (form, program, expect) in [("glob", glob, "42 4\n"), ("pick", pick, "42 5 202\n")] {
+        for at in ["top/lib", "top"] {
+            let (out, err, ok) = run_tree(
+                &format!("imp-{form}-{}", at.replace('/', "-")),
+                &[shared_units()],
+                at,
+                program,
+            );
+            assert!(ok && out == expect, "{form} import at {at}: {out}{err}");
+        }
+        // Two levels up the import itself must refuse: a bare private function, read by no
+        // other check (a field read would be refused by `check_visibility` instead).
+        let far = if form == "glob" {
+            "use units::*;\nfn main() { println(\"{secret()}\"); }\n"
+        } else {
+            "use units::(secret);\nfn main() { println(\"{secret()}\"); }\n"
+        };
+        let (out, err, ok) = run_tree(&format!("imp-{form}-far"), &[shared_units()], ".", far);
+        assert!(!ok, "{form} import two levels up was admitted: {out}{err}");
+    }
+}
+
+/// `@FR-F-Package` — two mates sharing the same private name collide exactly as two libraries'
+/// `pub` names do: the same program meets the same refusal either way.
+#[test]
+fn package_names_collide_as_pub_names_do() {
+    let program = "use units::*;\nuse extra::*;\nfn main() { println(\"{secret()}\"); }\n";
+    let shared = [
+        shared_units(),
+        (
+            "top/lib/extra.loft",
+            "#package\nfn secret() -> integer { 7 }\n".to_string(),
+        ),
+    ];
+    let published = [
+        (
+            "top/lib/units.loft",
+            format!("{UNITS}pub fn secret() -> integer {{ 42 }}\n"),
+        ),
+        (
+            "top/lib/extra.loft",
+            "pub fn secret() -> integer { 7 }\n".to_string(),
+        ),
+    ];
+    let (out_s, err_s, ok_s) = run_tree("collide-shared", &shared, "top/lib", program);
+    let (out_p, err_p, ok_p) = run_tree("collide-pub", &published, "top/lib", program);
+    let tail = |e: &str| {
+        e.lines()
+            .filter(|l| l.starts_with("error"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        (ok_s, out_s, tail(&err_s)),
+        (ok_p, out_p, tail(&err_p)),
+        "a shared collision differs from a pub one:\nshared: {err_s}\npub: {err_p}"
+    );
+}
+
+/// `@FR-F-Package` — a shared item never passes on: a mate that writes `pub use units::*;`
+/// re-exports `units`' `pub` items, and nothing `#package` showed it.
+#[test]
+fn package_internals_do_not_pass_on_through_pub_use() {
+    let facade = ("top/lib/facade.loft", "pub use units::*;\n".to_string());
+    let reach_pub = "use facade::*;\nfn main() { println(\"{spawn(\\\"x\\\").name}\"); }\n";
+    let (out, err, ok) = run_tree(
+        "leak-pub",
+        &[shared_units(), facade.clone()],
+        ".",
+        reach_pub,
+    );
+    assert!(ok && out == "x\n", "the facade's pub re-export: {out}{err}");
+    for (tag, program) in [
+        (
+            "leak-bare",
+            "use facade::*;\nfn main() { println(\"{secret()}\"); }\n",
+        ),
+        (
+            "leak-qualified",
+            "use facade;\nfn main() { println(\"{facade::secret()}\"); }\n",
+        ),
+    ] {
+        let (out, err, ok) = run_tree(tag, &[shared_units(), facade.clone()], ".", program);
+        assert!(
+            !ok,
+            "{tag}: a shared item passed on through `pub use`: {out}{err}"
+        );
+    }
+}

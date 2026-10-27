@@ -12705,7 +12705,7 @@ impl Data {
 
     pub fn import_all(&mut self, lib_source: u16, into_source: u16, public: bool) {
         self.remember_import(lib_source, into_source, None, public);
-        for (name, def_nr) in self.exported_names(lib_source) {
+        for (name, def_nr) in self.importable_names(lib_source, into_source) {
             self.note_ambiguity(&name, into_source, def_nr);
             self.bind_import(&name, (into_source, lib_source), def_nr, public, false);
         }
@@ -12747,6 +12747,52 @@ impl Data {
         self.def_names
             .get(key, lib_source)
             .filter(|&d| self.passes_on(d) && !self.is_private_import(lib_source, key, d))
+    }
+
+    /// `@FR-F-Package` — the file `into_source` was parsed from, when one is recorded: the
+    /// importer a `#package` file's sharing is judged against.
+    fn importer_file(&self, into_source: u16) -> Option<&str> {
+        self.source_files.get(&into_source).map(|f| f.as_str())
+    }
+
+    /// `@FR-F-Package` — is `d_nr`, declared in `lib_source`, reached by `into_source` only
+    /// because its file shares its internals with the importer's (not `pub`, a mate)?
+    fn shared_with(&self, lib_source: u16, key: &str, d_nr: u32, into_source: u16) -> bool {
+        !self.package_files.is_empty()
+            && !self.passes_on(d_nr)
+            && !self.is_private_import(lib_source, key, d_nr)
+            && self.importer_file(into_source).is_some_and(|importer| {
+                self.shares_internals(&self.definitions[d_nr as usize].position.file, importer)
+            })
+    }
+
+    /// What `into_source` may import from `lib_source` under `key`: what the library passes
+    /// on, and — to a mate of a `#package` file — that file's own items (`@FR-F-Package`).
+    /// A shared item never passes on further: whether a binding re-exports is
+    /// [`Self::passes_on`]'s, judged on the definition, so a mate's `pub use` carries only
+    /// what is `pub`.
+    fn importable(&self, key: &str, lib_source: u16, into_source: u16) -> Option<u32> {
+        self.exported(key, lib_source).or_else(|| {
+            let d = self.def_names.get(key, lib_source)?;
+            self.shared_with(lib_source, key, d, into_source)
+                .then_some(d)
+        })
+    }
+
+    /// Every name [`Self::importable`] answers for a glob `use` of `lib_source`.
+    fn importable_names(&self, lib_source: u16, into_source: u16) -> Vec<(String, u32)> {
+        let mut names = self.exported_names(lib_source);
+        if !self.package_files.is_empty() {
+            names.extend(
+                self.def_names
+                    .iter()
+                    .filter(|&(name, src, d)| {
+                        src == lib_source && self.shared_with(lib_source, name, d, into_source)
+                    })
+                    .map(|(name, _, d)| (name.to_string(), d)),
+            );
+        }
+        names
     }
 
     /// @FR-F-Surface — a `pub` item, or a forward-reference stub.  A stub is not an item and
@@ -13062,8 +13108,8 @@ impl Data {
         // Functions are stored under the `n_` prefix; try both forms.
         let fn_key = format!("n_{name}");
         let bind_fn_key = format!("n_{bind}");
-        let found_plain = self.exported(name, lib_source);
-        let found_fn = self.exported(&fn_key, lib_source);
+        let found_plain = self.importable(name, lib_source, into_source);
+        let found_fn = self.importable(&fn_key, lib_source, into_source);
         // @C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
         // and has no bare-name definition for an import list to find.  Import every public
         // method of that name the library declares, each under its own key — exactly what a
@@ -13075,9 +13121,10 @@ impl Data {
                 .iter()
                 .filter(|&(key, src, d)| {
                     src == lib_source
-                        && self.definitions[d as usize].pub_visible
                         && !self.is_private_import(lib_source, key, d)
                         && Self::method_name_of_key(key) == Some(name)
+                        && (self.definitions[d as usize].pub_visible
+                            || self.shared_with(lib_source, key, d, into_source))
                 })
                 .map(|(key, _, d)| (key.to_string(), d))
                 .collect()
@@ -13126,7 +13173,7 @@ impl Data {
     /// namespace, this variant is what makes B's later references resolve
     /// to A's real definition.
     pub fn import_all_overwrite(&mut self, lib_source: u16, into_source: u16, public: bool) {
-        for (name, def_nr) in self.exported_names(lib_source) {
+        for (name, def_nr) in self.importable_names(lib_source, into_source) {
             self.bind_import(&name, (into_source, lib_source), def_nr, public, true);
         }
     }
@@ -13144,8 +13191,8 @@ impl Data {
     ) -> bool {
         let fn_key = format!("n_{name}");
         let bind_fn_key = format!("n_{bind}");
-        let found_plain = self.exported(name, lib_source);
-        let found_fn = self.exported(&fn_key, lib_source);
+        let found_plain = self.importable(name, lib_source, into_source);
+        let found_fn = self.importable(&fn_key, lib_source, into_source);
         if found_plain.is_none() && found_fn.is_none() {
             return false;
         }
