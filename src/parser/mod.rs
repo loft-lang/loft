@@ -2323,6 +2323,13 @@ impl Parser {
                     self.database.program_relative = false;
                     let _ = self.lexer.has_token(";");
                 }
+                // `#package` (`@FR-F-Package`): this file shows its internals to the other files
+                // of its own directory.
+                Some("package") => {
+                    let file = self.lexer.pos().file;
+                    self.data.note_package_file(&file);
+                    let _ = self.lexer.has_token(";");
+                }
                 Some("link") => {
                     let mode = self.lexer.has_identifier().unwrap_or_default();
                     if mode != "static" && mode != "dynamic" {
@@ -2339,7 +2346,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "Unknown file directive '#{name}' (expected '#cwd' or '#link')"
+                        "Unknown file directive '#{name}' (expected '#cwd', '#link' or '#package')"
                     );
                     break;
                 }

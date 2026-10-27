@@ -5726,6 +5726,9 @@ pub struct Data {
     /// in a source's own file is never a private import there — adoption can leave a
     /// declaration under the `source` of the file that first NAMED it (@C98).
     source_files: HashMap<u16, crate::lexer::FileName>,
+    /// `@FR-F-Package` — the files whose directives include `#package`, by their canonical
+    /// path.  Filled while each file is parsed; read by [`Data::shares_internals`].
+    package_files: HashSet<String>,
     /// @PLN199 G0b-2 — the name each library source was loaded under (`use_add`): what a
     /// library artifact names that source's types and functions by ([`Data::source_label`]),
     /// because the source NUMBER depends on the order a program's `use`s load it in.
@@ -6545,6 +6548,7 @@ impl Data {
             bare_uses: Vec::new(),
             private_imports: HashMap::new(),
             source_files: HashMap::new(),
+            package_files: HashSet::new(),
             source_labels: HashMap::new(),
             ambiguous: HashMap::new(),
             unknown_key_fields: Vec::new(),
@@ -12849,6 +12853,37 @@ impl Data {
                 .is_none_or(|f| self.definitions[def_nr as usize].position.file != *f)
     }
 
+    /// A file's place as `#package` compares it: canonical, so `./a.loft`, an absolute path
+    /// and a symlinked directory name one file; as written when the file has no place on
+    /// disk (a source held in memory).
+    fn package_path(file: &str) -> crate::file_access::PathText {
+        let path = crate::file_access::PathText::host(file);
+        crate::file_access::canonical(&path).unwrap_or(path)
+    }
+
+    /// `#package` (`@FR-F-Package`): `file` shows its internals to the other files of its own
+    /// directory.
+    pub fn note_package_file(&mut self, file: &str) {
+        self.package_files.insert(Self::package_path(file).native());
+    }
+
+    /// `@FR-F-Package` — does `owner`, the file that declares an item, show its internals to
+    /// `user`, the file that uses it?  Exactly when `owner` says `#package` and the two sit in
+    /// one directory: not a subdirectory, not the parent.  The one home of the question; every
+    /// visibility refusal asks it after its own "same file" test.
+    #[must_use]
+    pub fn shares_internals(&self, owner: &str, user: &str) -> bool {
+        if self.package_files.is_empty() {
+            return false;
+        }
+        let owner = Self::package_path(owner);
+        if !self.package_files.contains(&owner.native()) {
+            return false;
+        }
+        let user = Self::package_path(user);
+        owner != user && owner.parent().is_some_and(|dir| Some(dir) == user.parent())
+    }
+
     /// Record the file `source` is parsed from (see `source_files`).
     pub fn note_source_file(&mut self, source: u16, file: crate::lexer::FileName) {
         self.source_files.entry(source).or_insert(file);
@@ -15069,5 +15104,89 @@ mod children_index_tests {
         let after: Vec<Vec<u32>> = (0..12).map(|p| data.children_of(p).collect()).collect();
         assert_eq!(before, after);
         assert!(data.children_of(u32::MAX).next().is_none());
+    }
+}
+
+#[cfg(test)]
+mod package_tests {
+    use super::Data;
+    use crate::file_access as fa;
+
+    /// `@FR-F-Package` — `#package` reaches exactly the files of its own directory, and only
+    /// from the file that says it; the place is the canonical one, whatever the spelling.
+    #[test]
+    fn package_reaches_exactly_its_own_directory() {
+        let root = std::env::temp_dir().join(format!("loft_package_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&root);
+        for dir in ["dir/sub", "other"] {
+            fa::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in [
+            "dir/a.loft",
+            "dir/b.loft",
+            "dir/sub/c.loft",
+            "other/a.loft",
+            "z.loft",
+        ] {
+            fa::write(root.join(file), b"").unwrap();
+        }
+        let path = |f: &str| root.join(f).to_string_lossy().into_owned();
+        let mut data = Data::new();
+        assert!(
+            !data.shares_internals(&path("dir/a.loft"), &path("dir/b.loft")),
+            "no directive: file-local"
+        );
+        data.note_package_file(&path("dir/a.loft"));
+        assert!(
+            data.shares_internals(&path("dir/a.loft"), &path("dir/b.loft")),
+            "a directory mate sees a #package file's internals"
+        );
+        assert!(
+            !data.shares_internals(&path("dir/b.loft"), &path("dir/a.loft")),
+            "only the declaring file's directive counts"
+        );
+        assert!(
+            !data.shares_internals(&path("dir/a.loft"), &path("dir/sub/c.loft")),
+            "a subdirectory is not the directory"
+        );
+        assert!(
+            !data.shares_internals(&path("dir/a.loft"), &path("z.loft")),
+            "the parent is not the directory"
+        );
+        assert!(
+            !data.shares_internals(&path("dir/a.loft"), &path("other/a.loft")),
+            "a file of the same name elsewhere is not a mate"
+        );
+        assert!(
+            !data.shares_internals(&path("dir/a.loft"), &path("dir/a.loft")),
+            "the file itself is not its own mate (its own rule covers it)"
+        );
+        // Another spelling of the same place.
+        let dotted = root
+            .join("dir/../dir/b.loft")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            data.shares_internals(&path("dir/a.loft"), &dotted),
+            "`..` in a path names the same directory"
+        );
+        #[cfg(unix)]
+        {
+            fa::symlink(root.join("dir"), root.join("link")).unwrap();
+            assert!(
+                data.shares_internals(&path("link/a.loft"), &path("dir/b.loft")),
+                "a symlinked directory is the directory it names"
+            );
+        }
+        let _ = fa::remove_dir_all(&root);
+    }
+
+    /// A source with no place on disk compares as written.
+    #[test]
+    fn package_compares_an_in_memory_source_as_written() {
+        let mut data = Data::new();
+        data.note_package_file("mem/a.loft");
+        assert!(data.shares_internals("mem/a.loft", "mem/b.loft"));
+        assert!(!data.shares_internals("mem/a.loft", "elsewhere/b.loft"));
     }
 }
