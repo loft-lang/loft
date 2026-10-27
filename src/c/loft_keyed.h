@@ -636,6 +636,57 @@ static loft_ref loft_keyed_entry_text(const loft_tdesc *T, uint16_t etp, loft_re
     return e;
 }
 
+/* `@FR-R-HandOver`'s rotate clause (Stores::rotate_into): the append of a copy of `src` to the
+ * full vector `vec` (`k` elements of `size` bytes) followed by the drop of its oldest element,
+ * as one step — `src` copied into element 0 (its bytes, and each of its `count` plain vectors,
+ * `plan` holding (offset, element bytes) pairs, into the block element 0 owns, grown where too
+ * small), then the slots rotated left by one.  The state the append and the keep of [1, k + 1)
+ * leave, with no slot claimed and no record freed.  0, with nothing changed, unless the vector
+ * holds exactly `k >= 1` elements, no block element 0 owns is named by a stored reference
+ * (`@FR-H-Removed`), neither record is foreign, the store is writable, and `src` lies outside
+ * the vector. */
+static int loft_rotate_into(loft_ref vec, loft_ref src, uint32_t size, int64_t k, const uint32_t *plan, int count) {
+    if (k < 1 || size > 64 || count > 8 || vec.store_nr == 0xFFFF || vec.rec == 0 || src.store_nr == 0xFFFF ||
+        src.rec == 0 || src.rec >= loft_store_of(src)->size)
+        return 0;
+    loft_store_t *vs = loft_store_of(vec);
+    if (vs->read_only) return 0;
+    uint32_t vrec = loft_collection_rec(vs, vec.rec, vec.pos);
+    if (vrec == 0 || vrec >= vs->size || (int64_t) loft_u32(vs, vrec, 4) != k) return 0;
+    if (src.store_nr == vec.store_nr && src.rec == vrec) return 0;
+    uint32_t held[8] = { 0 };
+    for (int i = 0; i < count; i++) {
+        uint32_t cur = loft_u32(vs, vrec, 8 + plan[2 * i]);
+        if (cur == 0 || cur == 0xFFFFFFFFu) continue;
+        if (cur >= vs->size || loft_bits_contains(&vs->referenced, cur)) return 0;
+        held[i] = cur;
+    }
+    memmove(loft_at(vs, vrec, 8), loft_at(loft_store_of(src), src.rec, src.pos), size);
+    for (int i = 0; i < count; i++) {
+        uint32_t off = plan[2 * i], esize = plan[2 * i + 1];
+        loft_store_t *ss = loft_store_of(src);
+        uint32_t from = loft_u32(ss, src.rec, src.pos + off), b = held[i];
+        if (from == 0 || from == 0xFFFFFFFFu) {
+            if (b != 0) loft_st_delete(vs, b);
+            loft_set_u32(vs, vrec, 8 + off, from);
+            continue;
+        }
+        uint32_t length = loft_u32(ss, from, 4);
+        uint32_t words = 1 + (uint32_t) (((uint64_t) esize * length + 7) / 8);
+        if (b == 0) b = loft_st_claim(vs, words);
+        else if (loft_rec_words(vs, b) < words) b = loft_st_resize(vs, b, words);
+        loft_set_u32(vs, vrec, 8 + off, b);
+        ss = loft_store_of(src);
+        memmove(loft_at(vs, b, 4), loft_at(ss, from, 4), (size_t) length * esize + 4);
+    }
+    /* A claim or a resize above may have moved the store: the base is read after them. */
+    uint8_t *base = loft_at(vs, vrec, 8), tmp[64];
+    memcpy(tmp, base, size);
+    memmove(base, base + size, (size_t) (k - 1) * size);
+    memcpy(base + (size_t) (k - 1) * size, tmp, size);
+    return 1;
+}
+
 /* OpFillKeyed (Stores::fill_keyed_from_vector): each element of the vector `src` filed into the
  * keyed collection `c` as a deep copy under its own key (`insert_keyed_copy`, the latest of one
  * key winning); a null linked element has no key and stays out.  Every element is resolved

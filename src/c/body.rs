@@ -152,6 +152,10 @@ pub(crate) struct FnWriter<'a> {
     /// generic `OpGetText` answers the field's bytes where the store holds them instead of a
     /// copy (`text_reads`).  Taken by the first `OpGetText` that sees it.
     field_view: bool,
+    /// `@FR-R-HandOver`'s rotate clause: in a `__nk` twin, the keep statement the body skips
+    /// (by node address); at a rotate site, the callee whose next call goes to that twin.
+    nk_skip: Option<usize>,
+    nk_call: Option<u32>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -385,6 +389,8 @@ impl<'a> FnWriter<'a> {
             widening: None,
             raw: std::collections::HashMap::new(),
             field_view: false,
+            nk_skip: None,
+            nk_call: None,
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
@@ -486,6 +492,17 @@ impl<'a> FnWriter<'a> {
 
     /// This is an `__inv` twin (`@FR-R-Inputs`): `frame` is the headers its caller hands it,
     /// valid for the call, since an admitted callee grows no store.
+    /// A `__nk` twin (`super::NK_BIT`): the body without its keep statement.
+    pub(crate) fn nokeep(mut self, on: bool) -> Result<Self, String> {
+        if on {
+            self.nk_skip = Some(
+                crate::lower::hand_over::keep_statement(self.cx.data, self.d)
+                    .ok_or("a __nk twin of a function with no keep statement")?,
+            );
+        }
+        Ok(self)
+    }
+
     pub(crate) fn inputs(
         mut self,
         frame: Vec<(crate::opt::writes::PathKey, String, bool)>,
@@ -1589,6 +1606,10 @@ impl<'a> FnWriter<'a> {
     fn stmts(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let mut i = 0;
         while i < ops.len() {
+            if let Some(last) = self.rotate_site(ops, i, ind)? {
+                i = last + 1;
+                continue;
+            }
             if let Some(last) = self.keyed_entry_site(ops, i, ind)? {
                 i = last + 1;
                 continue;
@@ -1597,6 +1618,70 @@ impl<'a> FnWriter<'a> {
             i += 1;
         }
         Ok(())
+    }
+
+    /// `@FR-R-HandOver`'s rotate clause (native's `Output::output_rotate_site`): when the vector
+    /// is full (`loft_rotate_into` admits it) the copy goes into the oldest element and the
+    /// slots rotate, S runs, and the suffix-keep callee's `__nk` twin runs the rest of its body;
+    /// otherwise every statement of the range as written.  The index of the range's last
+    /// statement, or `None` where `ops[at]` opens no site.  `LOFT_NO_HAND_OVER=1` keeps the
+    /// statements as written.
+    fn rotate_site(
+        &mut self,
+        ops: &[Value],
+        at: usize,
+        ind: usize,
+    ) -> Result<Option<usize>, String> {
+        if self.gen_elem.is_some() || self.nk_skip.is_some() {
+            return Ok(None);
+        }
+        let Some(site) = crate::lower::hand_over::site(ops, at, self.cx.data, self.cx.stores)
+        else {
+            return Ok(None);
+        };
+        let Some((plan, count)) = self.cx.stores.plain_vectors_of(site.elem_tp) else {
+            return Ok(None);
+        };
+        if crate::lower::hand_over::keep_statement(self.cx.data, site.g).is_none() {
+            return Ok(None);
+        }
+        let size = u32::from(self.cx.stores.size(site.elem_tp));
+        let pairs: Vec<String> = plan[..count]
+            .iter()
+            .flat_map(|(o, s)| [format!("{o}u"), format!("{s}u")])
+            .collect();
+        let plan_c = if pairs.is_empty() {
+            "(const uint32_t *) 0".to_string()
+        } else {
+            format!("(const uint32_t[]){{ {} }}", pairs.join(", "))
+        };
+        let vec = self.expr(&site.vector, ind)?;
+        let vec = as_ref(vec)?;
+        let src = self.expr(site.src, ind)?;
+        let src = as_ref(src)?;
+        self.line(
+            ind,
+            &format!(
+                "if (loft_rotate_into({vec}, {src}, {size}u, INT64_C({}), {plan_c}, {count})) {{",
+                site.k
+            ),
+        );
+        for s in &site.between {
+            self.stmt(s, ind + 1)?;
+        }
+        let call = Value::Call(site.g, vec![site.owner.clone(), Value::Int(1)]);
+        self.nk_call = Some(site.g);
+        self.stmt(&call, ind + 1)?;
+        if self.nk_call.take().is_some() {
+            return Err("the rotate's call of its suffix keep took no __nk twin".into());
+        }
+        self.line(ind, "} else {");
+        for s in &site.range {
+            self.stmt(s, ind + 1)?;
+        }
+        self.line(ind, "}");
+        crate::rewrite_census::fired("R-HandOver/rotate", 1);
+        Ok(Some(site.last))
     }
 
     fn null_into(&mut self, target: &str, c: CType, ind: usize) {
@@ -1640,6 +1725,9 @@ impl<'a> FnWriter<'a> {
 
     /// Emit `v` for its effect.
     fn stmt(&mut self, v: &Value, ind: usize) -> Result<(), String> {
+        if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
+            return Ok(());
+        }
         let r = self.stmt_kind(v, ind);
         // `LOFT_C_WHERE=1`: a refusal names the innermost statement it came from, on stderr.
         if let Err(why) = &r
@@ -3543,6 +3631,10 @@ impl<'a> FnWriter<'a> {
             mask |= super::INV_BIT;
         }
         crate::rewrite_census::fired("R-Inputs", usize::from(mask & super::INV_BIT != 0));
+        if self.nk_call == Some(d) {
+            self.nk_call = None;
+            mask |= super::NK_BIT;
+        }
         let name = if mask == 0 {
             name
         } else if super::native_c(def.name()).is_some() || args.len() > 63 {

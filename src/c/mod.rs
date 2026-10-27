@@ -241,6 +241,11 @@ pub(crate) struct HoistMemo {
 /// below it are the place mask, one per `&` parameter.
 pub(crate) const INV_BIT: u64 = 1 << 63;
 
+/// The mask bit of a `__nk` twin (`@FR-R-HandOver`'s rotate clause): a suffix-keep callee
+/// written again without its keep statement, which the rotate has done
+/// (`lower::hand_over::keep_statement`).
+pub(crate) const NK_BIT: u64 = 1 << 62;
+
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
 /// their element type is shared (`@FR-Col-Group`, a stored reference).  A `spatial` and a
@@ -1059,12 +1064,13 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places = mask & !INV_BIT;
+    let places = mask & !INV_BIT & !NK_BIT;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
+    let nk = if mask & NK_BIT == 0 { "" } else { "__nk" };
     if places == 0 {
-        format!("{}{inv}", c_name(data, d))
+        format!("{}{inv}{nk}", c_name(data, d))
     } else {
-        format!("{}_pl{places}{inv}", c_name(data, d))
+        format!("{}_pl{places}{inv}{nk}", c_name(data, d))
     }
 }
 
@@ -2044,7 +2050,7 @@ fn variable_shapes(
 /// The signature and the body of function `d`.
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places = mask & !INV_BIT;
+    let places = mask & !INV_BIT & !NK_BIT;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2143,6 +2149,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let body = body::FnWriter::new(cx, d, shapes, ret)
         .places(places)
         .inputs(inputs)
+        .nokeep(mask & NK_BIT != 0)?
         .write()?;
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call

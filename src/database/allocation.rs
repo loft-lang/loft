@@ -195,7 +195,7 @@ struct FieldAt {
 
 /// How many plain vectors a record's plan holds ([`Stores::plain_vectors_of`]); a record
 /// with more takes the walk.
-const PLAIN_MAX: usize = 8;
+pub(crate) const PLAIN_MAX: usize = 8;
 
 /// `LOFT_NO_PLAIN_VECTOR_RECORDS=1` — a record that owns plain vectors and nothing else is
 /// copied and released through the walk of its type again, as every other record is.
@@ -5677,7 +5677,7 @@ impl Stores {
     /// bytes)` of each ([`super::types::PlainVectors`]), by value, and how many.  `None`
     /// for every other type — asked through one bit of the type's facts, so a type without
     /// a plan pays a load and a test.
-    fn plain_vectors_of(&self, tp: u16) -> Option<([(u32, u32); PLAIN_MAX], usize)> {
+    pub(crate) fn plain_vectors_of(&self, tp: u16) -> Option<([(u32, u32); PLAIN_MAX], usize)> {
         if !self.owns_plain_vectors(tp) {
             return None;
         }
