@@ -1429,7 +1429,8 @@ fn prune_orphan_sidecars(entries: &[crate::file_access::PathText], is_ours: impl
             continue;
         }
         let sidecar = entry.os_spelling();
-        if !crate::file_access::exists(sidecar.with_file_name(store_name)) {
+        // `<stem>.store.dschema` without its last extension is `<stem>.store`.
+        if !crate::file_access::exists(crate::file_access::with_extension(&sidecar, "")) {
             let _ = crate::file_access::remove_file(&sidecar);
         }
     }
@@ -2121,9 +2122,9 @@ mod tests {
         fa::create_dir_all(&dir).unwrap();
         let hex = |i: u8| format!("{i:02x}").repeat(32);
         let files = [
-            format!("program-kept.store"),
-            format!("program-kept.store.dschema"),
-            format!("program-gone.store.dschema"),
+            "program-kept.store".to_string(),
+            "program-kept.store.dschema".to_string(),
+            "program-gone.store.dschema".to_string(),
             format!("stdlib-{}.store", hex(1)),
             format!("stdlib-{}.store.dschema", hex(1)),
             format!("stdlib-{}.store.dschema", hex(2)),
