@@ -1566,9 +1566,9 @@ impl<'a> FnWriter<'a> {
     /// `ops` for their effect, returning the value a `tail_capture` names.
     fn ops_stmt(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let Some((at, ret)) = self.tail_capture(ops) else {
-            return ops.iter().try_for_each(|o| self.stmt(o, ind));
+            return self.stmts(ops, ind);
         };
-        ops[..at].iter().try_for_each(|o| self.stmt(o, ind))?;
+        self.stmts(&ops[..at], ind)?;
         let r = self.temp(self.ret);
         self.assign(&ops[at], &r, self.ret, ind)?;
         self.flush(ind);
@@ -1579,6 +1579,21 @@ impl<'a> FnWriter<'a> {
             self.stmt(x, ind)?;
         }
         self.ret_held(&r, ind);
+        Ok(())
+    }
+
+    /// A block's statements in order; a run of them a rewrite emits whole (`keyed_entry_site`)
+    /// is taken together.
+    fn stmts(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
+        let mut i = 0;
+        while i < ops.len() {
+            if let Some(last) = self.keyed_entry_site(ops, i, ind)? {
+                i = last + 1;
+                continue;
+            }
+            self.stmt(&ops[i], ind)?;
+            i += 1;
+        }
         Ok(())
     }
 

@@ -610,6 +610,32 @@ static loft_ref loft_keyed_entry_ints(const loft_tdesc *T, uint16_t etp, loft_re
     return loft_h_find_ints(c, keys, nk, ks);
 }
 
+/* `@FR-R-KeyedEntry`'s text clause (Stores::keyed_entry_text): `loft_keyed_entry_ints` for a hash
+ * keyed by one text — the entry under `key`, found or filed with the key written, in one probe
+ * where the table allows (`loft_h_entry_text`), else claimed, keyed and filed first. */
+static loft_ref loft_keyed_entry_text(const loft_tdesc *T, uint16_t etp, loft_ref c, const loft_key *keys, int nk,
+                                      loft_str key) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    int live = 0;
+    for (int i = 0; i < loft_nscratches && !live; i++)
+        live = loft_scratches[i].source.store_nr == c.store_nr && loft_scratches[i].source.rec == c.rec &&
+               loft_scratches[i].source.pos == c.pos;
+    if (!live) {
+        loft_ref e = loft_h_entry_text(c, keys, key);
+        if (e.rec != 0) return e;
+    }
+    loft_text own = loft_text_own(key);
+    loft_kv kv = loft_kv_text(loft_view(&own));
+    loft_ref e = loft_keyed_place_begin(T, etp, c, LOFT_KEYED_HASH, keys, nk, &kv, 1);
+    if (e.rec != 0) {
+        memset(loft_at(loft_store_of(e), e.rec, e.pos), 0, T[etp].size);
+        loft_keyed_place_finish(T, etp, c, e, LOFT_KEYED_HASH, keys, nk, &kv, 1);
+        e = loft_h_find_text(c, keys, loft_view(&own));
+    }
+    loft_text_free(&own);
+    return e;
+}
+
 /* OpFillKeyed (Stores::fill_keyed_from_vector): each element of the vector `src` filed into the
  * keyed collection `c` as a deep copy under its own key (`insert_keyed_copy`, the latest of one
  * key winning); a null linked element has no key and stays out.  Every element is resolved

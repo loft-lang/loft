@@ -836,8 +836,11 @@ static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const
     if (bucket == 0 || s->read_only) return loft_ref_null();
     loft_ref e;
     if (ents.inl) {
-        uint32_t iat;
-        claim = loft_h_inline_slot_for(c, claim, tag, &iat);
+        /* The probe ended on the bucket the inline walk would choose from the same home, unless
+         * the table must grow first. */
+        uint32_t iat = (bucket - LOFT_H_BUCKET0) / 8;
+        uint32_t used = loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(s, claim, LOFT_AR_FREE_FLD);
+        if (loft_h_is_full(used, count)) claim = loft_h_inline_slot_for(c, claim, tag, &iat);
         e = loft_h_inline_file(s, c.store_nr, claim, iat, tag, 1);
         for (int k = 0; k < n; k++) memcpy(loft_at(s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
         return e;
@@ -846,6 +849,62 @@ static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const
     uint32_t index = loft_ar_alloc_at(s, claim, ents.stride, c.rec, &e.rec, &e.pos);
     for (int k = 0; k < n; k++) memcpy(loft_at(s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
     loft_h_add_at(c, e, bucket, index, tag, keys, n);
+    return e;
+}
+
+/* `@FR-R-KeyedEntry`'s text clause (hash::entry_str): `loft_h_entry_ints` for a hash whose ONE
+ * key is a text — the entry already under `key`, or a fresh one with its key text written and
+ * filed where the walk ended.  The digest and the compare are `loft_h_find_text`'s.  A key that
+ * views this store is copied first: filing claims, and a claim may move the store's bytes. */
+static loft_ref loft_h_entry_text(loft_ref c, const loft_key *keys, loft_str key) {
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED) return loft_ref_null();
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    if (ents.stride == 0) return loft_ref_null();
+    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim), kpos = keys[0].pos;
+    loft_kv kv = loft_kv_text(key);
+    uint64_t hv = loft_kv_digest(&kv, 1, loft_h_read_seed(s, claim));
+    uint32_t tag = (uint32_t) hv, at = loft_h_home(hv, count), bucket = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + at * sb);
+        if (slot == 0) {
+            bucket = LOFT_H_BUCKET0 + at * sb;
+            break;
+        }
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, at, tag)) {
+            loft_ref e;
+            e.store_nr = c.store_nr;
+            loft_h_at_bucket(&ents, s, slot, at, &e.rec, &e.pos);
+            if (e.rec != 0) {
+                loft_str have = loft_store_str(s, loft_u32(s, e.rec, e.pos + kpos));
+                if (have.len == key.len && (key.len == 0 || memcmp(have.p, key.p, key.len) == 0)) return e;
+            }
+        }
+        if (++at >= count) at = 0;
+    }
+    if (bucket == 0 || s->read_only) return loft_ref_null();
+    loft_text own = { 0, 0, 0 };
+    if (key.len && key.p >= (const char *) s->buf && key.p < (const char *) s->buf + (size_t) s->size * 8) {
+        own = loft_text_own(key);
+        key = loft_view(&own);
+    }
+    loft_ref e;
+    if (ents.inl) {
+        /* The probe ended on the bucket the inline walk would choose from the same home, unless
+         * the table must grow first. */
+        uint32_t iat = (bucket - LOFT_H_BUCKET0) / 8;
+        uint32_t used = loft_u32(s, claim, LOFT_H_INLINE_LEN_FLD) + loft_u32(s, claim, LOFT_AR_FREE_FLD);
+        if (loft_h_is_full(used, count)) claim = loft_h_inline_slot_for(c, claim, tag, &iat);
+        e = loft_h_inline_file(s, c.store_nr, claim, iat, tag, 1);
+        loft_set_text(e, kpos, key);
+    } else {
+        e.store_nr = c.store_nr;
+        uint32_t index = loft_ar_alloc_at(s, claim, ents.stride, c.rec, &e.rec, &e.pos);
+        loft_set_text(e, kpos, key);
+        loft_h_add_at(c, e, bucket, index, tag, keys, 1);
+    }
+    loft_text_free(&own);
     return e;
 }
 
