@@ -363,6 +363,65 @@ belongs to S0.3, whose loader reads an image the test harness emits.
   so the byte comparison is not vacuous.
 - `CHANGELOG.md`: the flag under New, the read-only cache under Bug fixes.
 
+### S0.3 — the bundle opens in loft — DESIGNED, two owner decisions open
+
+**What.**  The first loft code of the strand: a `selfhost` package whose module `load` opens
+an image (S0.2) as the IR's own records and answers questions about it.  It is the first
+step that measures loft.  The design below is written the way the problem reads; the
+design→code note after the build records where loft made it read otherwise.
+
+```loft
+// selfhost/src/load.loft — as the reasoning goes
+use ir;
+
+// The image at `path`, or null when it is missing, written under another layout, or not
+// an image at all (store_load refuses each, naming why).
+pub fn load(path: text) -> ir::Bundle? {
+  b = ir::Bundle {};
+  if !store_load(b, path) { return null; }
+  b
+}
+
+// The definition the compiler named `name` (`n_main` for `fn main`), or null.
+pub fn definition(b: ir::Bundle, name: text) -> ir::Definition? {
+  for d in b.data.definitions { if d.name == name { return d; } }
+  null
+}
+```
+
+**Code points.**
+- `selfhost/loft.toml`, `selfhost/src/load.loft`: new.
+- `selfhost/src/ir.loft`: the IR vocabulary, moved from `tools/ir_schema/ir.loft` (decision 1),
+  with `pub` on its 25 types and 142 fields (decision 2).  Its `fn main` (which exists so
+  `loft --show-rust` lays the schema out) moves to `tools/ir_schema/gen.loft`, a two-line
+  driver that `use`s it.
+- `tools/ir_schema/README.md`, `extract.py` and the header of `src/ir_schema_gen.rs`: the
+  new path.  The generated schema must not change by a byte: `pub` is not layout.
+- `src/ir_read.rs: a_saved_bundle_carries_the_layout_ir_loft_declares`: the new path.
+- `tests/selfhost.rs` (new binary; the selfhost suite will grow into it): run
+  `loft --emit-image` on a program, then `loft test selfhost` with the image's path.
+
+**Failure paths.**
+1. `store_load` into a `Bundle {}` literal places the root elsewhere than S0.1's probe
+   (which declared the types in the same file): definitions read empty.  The test asserts
+   the count and two names.
+2. An image of another layout (an older build): `load` answers null, and the refusal
+   names the type.  Test: an image whose sidecar's `Bundle` row is edited.
+3. Not an image (any other file): null.
+4. `pub` changes a layout after all: the S0.1 test fails (it compares the sidecar with
+   `ir.loft` compiled by loft).
+
+**Owner decisions.**
+1. **`ir.loft`'s home.**  Recommended: move it into `selfhost/src/` as its one home, and
+   point the generator at it.  The alternative is a `path` dependency on
+   `tools/ir_schema/`, which leaves the vocabulary in a tools directory while it becomes
+   the core.
+2. **X2, `pub` on 167 items** (C140: privacy is per FILE; there is no package scope).
+   Recommended for S0.3: pay it, mechanically, and keep X2 open with the measured count.
+   Every further module of the interpreter pays the same for each record it shares, and
+   that cost is the evidence if C140 is ever revisited (a package scope, or a type-level
+   "every field `pub`").  It is C140's stated trade-off, and the owner's to reopen.
+
 ## The language for this job
 
 ### What loft already offers (measured or established in @PLN202 / OCAML_BAR.md)
@@ -387,7 +446,7 @@ belongs to S0.3, whose loader reads an image the test harness emits.
 | id | what | kind | proposal |
 |---|---|---|---|
 | **X1** | `store_load` refuses the program bundle: *"it has no layout sidecar (`.dschema`) beside it"*. The bundle carries its own schema (`Bundle.types`), but `ir_store::save_bundle` writes no sidecar, so loft cannot read the compiler's own output | **bug — fixed in S0.1** | `save_bundle` writes the sidecar (§ Steps, S0.1) |
-| **X2** | `ir.loft` used as a library: every type and every field is private to its file (@C140), so `use ir; ir::Bundle` is refused | friction | a vocabulary module wants every field public: a way to say that once per type or per file, instead of `pub` on ~200 fields |
+| **X2** | `ir.loft` used as a library: every type and every field is private to its FILE (@C140; no package scope), so `use ir; ir::Bundle` is refused | by design (C140) — costed | measured: 167 `pub` (25 types, 142 fields) before another file of the same package reads one field; every interpreter module pays the same per shared record.  Revisit candidates: a package scope, or a type-level "every field `pub`" (S0.3 decision 2) |
 | **X3** | a generic type alias does not parse: `type Env<T> = hash<B<T>[name]>;` → *"Expect token ;"* | friction | generic aliases, OCaml's `type 'a env = …` |
 | **X4** | `hash<(integer, text)>` → *"tuple element types only allowed on vector / iterator"* | friction | tuple elements, and tuple keys, in keyed collections (OCaml `(int * string, v) Hashtbl.t`); memo tables keyed by (definition, type) want it (bar B2) |
 | **X5** | a phantom tag needs a dummy field: `struct NodeTag { }` → *"Expect attribute"* | friction | an empty struct, or a declared abstract type with no body (OCaml `type node_tag`) |
