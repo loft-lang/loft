@@ -1014,6 +1014,9 @@ impl FnWriter<'_> {
                 self.fill_keyed(parent, src, tp, ptp, fld, ind).map(Some)
             }
             ("OpSetKeyed", [coll, value, tp, _, vals @ ..]) => {
+                if let Some(e) = self.keyed_in_place(args, ind)? {
+                    return Ok(Some(e));
+                }
                 self.set_keyed(coll, value, tp, vals, ind).map(Some)
             }
             ("OpRemove", [Value::Var(state), data, on, tp]) => {
@@ -1203,6 +1206,111 @@ impl FnWriter<'_> {
             ),
             K::Void,
         ))
+    }
+
+    /// `@FR-R-InPlaceLiteral`'s keyed clause, native's site (`lower::keyed_place::site`):
+    /// `c[k…] = R { … }` with a full subscript of pure keys is written into the element the
+    /// collection claims for it — the literal's values and the statements computing them run
+    /// first, in program order, then the element under the key is removed and a fresh one
+    /// claimed (`loft_keyed_place_begin`), the literal's default image and staged values are
+    /// written into it, and the key is written and the element filed (`loft_keyed_place_finish`).
+    /// No store is minted for the literal and nothing is copied.  A text key keeps the plain
+    /// form (a staged view could name memory the claim moves).  `LOFT_NO_KEYED_IN_PLACE=1`
+    /// keeps it everywhere, as on native.
+    fn keyed_in_place(&mut self, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        if !crate::lower::keyed_place::enabled() {
+            return Ok(None);
+        }
+        let data = self.cx.data;
+        let call = Value::Call(data.def_nr("OpSetKeyed"), args.to_vec());
+        let Some(site) = crate::lower::keyed_place::site(&call, data, self.d) else {
+            return Ok(None);
+        };
+        let (kind, elem, _) = self.keyed_of(site.tp)?;
+        let types: Vec<i8> = self.cx.stores.types[site.tp as usize]
+            .keys
+            .iter()
+            .map(|k| k.type_nr)
+            .collect();
+        if kind == Keyed::Array
+            || site.keys.len() != types.len()
+            || types.len() > 8
+            || types.iter().any(|t| t.unsigned_abs() == 6)
+        {
+            return Ok(None);
+        }
+        self.cx.copy_type(elem)?;
+        // The staged part: each field write's operands, in program order, into temporaries;
+        // a statement computing one runs where it stood.
+        let mut writes: Vec<(String, Vec<Value>)> = Vec::new();
+        for op in &site.body {
+            match op.unspan() {
+                Value::Call(d, a)
+                    if data.def(*d).name().starts_with("OpSet")
+                        && matches!(a.first().map(Value::unspan), Some(Value::Var(b)) if *b == site.buf) =>
+                {
+                    let mut staged = vec![Value::Null];
+                    for x in &a[1..] {
+                        if crate::lower::keyed_place::constant(x) {
+                            staged.push(x.clone());
+                            continue;
+                        }
+                        let e = self.expr(x, ind)?;
+                        let Some(c) = super::shape_of_kind(e.kind) else {
+                            return Err(
+                                "a keyed literal's field value of no stageable shape".into()
+                            );
+                        };
+                        let t = self.temp(c);
+                        self.line(ind, &format!("{t} = {};", super::as_shape(e, c)?));
+                        self.raw.insert(t.clone(), super::kind_of(c));
+                        staged.push(Value::RawExpr(t));
+                    }
+                    writes.push((data.def(*d).name().to_string(), staged));
+                }
+                _ => self.stmt(op, ind)?,
+            }
+        }
+        self.flush(ind);
+        let coll = self.expr(site.coll, ind)?;
+        let ct = self.temp(CType::Ref);
+        self.line(ind, &format!("{ct} = {};", as_ref(coll)?));
+        let mut values = Vec::new();
+        for (k, t) in site.keys.iter().zip(&types) {
+            let e = self.expr(k, ind)?;
+            values.push(key_value(e, *t)?);
+        }
+        let n = values.len();
+        let kv = value_array(&values);
+        let (keys, nk) = self.cx.keys_of(site.tp);
+        let kind_c = match kind {
+            Keyed::Hash => "LOFT_KEYED_HASH",
+            Keyed::Sorted => "LOFT_KEYED_SORTED",
+            Keyed::Index => "LOFT_KEYED_INDEX",
+            Keyed::Ordered => "LOFT_KEYED_ORDERED",
+            Keyed::Spatial => "LOFT_KEYED_SPATIAL",
+            Keyed::Trie => "LOFT_KEYED_TRIE",
+            Keyed::Array => return Ok(None),
+        };
+        let e = self.temp(CType::Ref);
+        self.line(
+            ind,
+            &format!("{e} = loft_keyed_place_begin(loft_types, {elem}, {ct}, {kind_c}, {keys}, {nk}, {kv}, {n});"),
+        );
+        let (image, len) = self.cx.default_image(elem);
+        self.line(ind, &format!("loft_fill({e}, {image}, {len});"));
+        self.raw.insert(e.clone(), K::Ref);
+        for (name, mut staged) in writes {
+            staged[0] = Value::RawExpr(e.clone());
+            let w = self.operator(&name, &staged, ind)?;
+            self.line(ind, &format!("{};", w.code));
+        }
+        self.line(
+            ind,
+            &format!("loft_keyed_place_finish(loft_types, {elem}, {ct}, {e}, {kind_c}, {keys}, {nk}, {kv}, {n});"),
+        );
+        crate::rewrite_census::fired("R-InPlaceLiteral", 1);
+        Ok(Some(E::new("((void) 0)", K::Void)))
     }
 
     /// `OpGetRecord(data, tp, n, keys…)`: the element under the key, or null.

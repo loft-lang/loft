@@ -145,6 +145,9 @@ pub(crate) struct FnWriter<'a> {
     vr: Option<Box<value::VrFn>>,
     /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
     widening: Option<usize>,
+    /// A value staged into a C temporary, by the temporary's name, with its kind: what a
+    /// `Value::RawExpr` the writer built for a rewrite reads (`keyed::keyed_in_place`).
+    raw: std::collections::HashMap<String, K>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -374,6 +377,7 @@ impl<'a> FnWriter<'a> {
             push_heads: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
             widening: None,
+            raw: std::collections::HashMap::new(),
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
@@ -3121,6 +3125,9 @@ impl<'a> FnWriter<'a> {
     /// A C expression for `v`'s value; the statements it needs are emitted first.
     fn expr(&mut self, v: &Value, ind: usize) -> Result<E, String> {
         match v.unspan() {
+            Value::RawExpr(code) if self.raw.contains_key(code) => {
+                Ok(E::new(code.clone(), self.raw[code]))
+            }
             Value::Int(i) => Ok(E::new(format!("INT64_C({i})"), K::Int)),
             Value::Long(l) if *l == i64::MIN => Ok(E::new("LOFT_NULL", K::Int)),
             Value::Long(l) => Ok(E::new(c_long(*l), K::Int)),
@@ -6151,4 +6158,21 @@ fn param_root(vars: &crate::variables::Function, v: u16, params: &[u16]) -> Opti
         cur = d;
     }
     None
+}
+
+/// The C shape that holds a value of kind `k`, for a value staged into a temporary; `None` for
+/// a view or a condition-less kind no temporary can hold whole.
+fn shape_of_kind(k: K) -> Option<CType> {
+    Some(match k {
+        K::Int => CType::Int,
+        K::Cond | K::Bool => CType::Bool,
+        K::Ref => CType::Ref,
+        K::Enum => CType::Enum,
+        K::Float => CType::Float,
+        K::Single => CType::Single,
+        K::Char => CType::Char,
+        K::Fn => CType::Fn,
+        K::Tup(id) => CType::Tuple(id),
+        K::View | K::Void => return None,
+    })
 }
