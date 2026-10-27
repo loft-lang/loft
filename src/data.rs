@@ -4462,7 +4462,7 @@ pub struct Definition {
     ///
     /// Persisted through the IR store (`DEF_CAP`) so a `#cap`-tagged stdlib loaded
     /// from the `LOFT_STDLIB_CACHE` bundle still gates correctly; mirrored in
-    /// `tools/ir_schema/ir.loft` (`Definition.cap`).
+    /// `selfhost/src/ir.loft` (`Definition.cap`).
     pub cap: String,
     /// Interpreter operator code
     pub op_code: u16,
@@ -4481,7 +4481,7 @@ pub struct Definition {
     /// is suppressed for a fault-prone expression passed DIRECTLY as an argument.
     /// Persisted through the IR store (`DEF_NULL_SAFE`) so a `#null_safe`-annotated
     /// stdlib helper loaded from the `LOFT_STDLIB_CACHE` bundle still suppresses;
-    /// mirrored in `tools/ir_schema/ir.loft` (`Definition.null_safe`).
+    /// mirrored in `selfhost/src/ir.loft` (`Definition.null_safe`).
     pub null_safe: bool,
     /// A standard-library operator's dispatch priority, from `#hot` / `#cold`: [`OP_HOT`] runs
     /// inline in the lean loop on its registers and takes a one-byte opcode, [`OP_COLD`] is
@@ -4497,7 +4497,7 @@ pub struct Definition {
     /// `make ci` lint checks `Y` resolves and this body is a shim over it.
     /// Persisted through the IR store (`DEF_SUPERSEDED`) so a `#superseded`
     /// stdlib symbol loaded from the `LOFT_STDLIB_CACHE` bundle keeps its mark;
-    /// mirrored in `tools/ir_schema/ir.loft` (`Definition.superseded`).
+    /// mirrored in `selfhost/src/ir.loft` (`Definition.superseded`).
     pub superseded: String,
     /// @PLN24 arc A — the C symbol a `#c` binding names, e.g. `"PQstatus"`.
     /// Empty = not a C binding.  Deliberately NOT stored in `native`: that
@@ -4507,7 +4507,7 @@ pub struct Definition {
     ///
     /// Persisted through the IR store (`DEF_C_SYMBOL`) so a cached program does
     /// not come back with the binding silently unbound; mirrored in
-    /// `tools/ir_schema/ir.loft` (`Definition.c_symbol`).
+    /// `selfhost/src/ir.loft` (`Definition.c_symbol`).
     pub c_symbol: String,
     /// @PLN24 arc A — the C signature exactly as declared, e.g. `"int(void*)"`.
     /// Empty = not a C binding.
@@ -4566,18 +4566,18 @@ pub struct Definition {
     /// place in the name's overload set, its method spelling, what hover and the API listing
     /// read — and a call that selects it lowers through the compiler's special form of its
     /// name, as the bare call always has.  A marker on the declaration, never a name test.
-    /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `tools/ir_schema/ir.loft`.
+    /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `selfhost/src/ir.loft`.
     pub builtin: bool,
     /// @PLN182 — written `operator` in place of `fn`: a call of this method is what an
     /// operator form on its `self` type reaches (`a < b` → `compare`).  A plain `fn` of the
     /// same name is an ordinary method.  Persisted through the IR store (`DEF_OPERATOR_FORM`), so
-    /// a cached stdlib keeps the mark; mirrored in `tools/ir_schema/ir.loft`.
+    /// a cached stdlib keeps the mark; mirrored in `selfhost/src/ir.loft`.
     pub operator_form: bool,
     /// `@FR-Const-Foreign` — the declared return type is `-> const T`: the producer hands out
     /// data loft does not own (a mapped file, a library's adopted buffer), so the value is
     /// value-const and a binding of the call's result takes `(Const-Value)` (@C139).
     /// Persisted through the IR store (`DEF_RETURNED_CONST`), so a cached stdlib keeps it;
-    /// mirrored in `tools/ir_schema/ir.loft`.
+    /// mirrored in `selfhost/src/ir.loft`.
     pub returned_const: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
@@ -12940,7 +12940,25 @@ impl Data {
         let (Some(here), Some(place)) = (owner.parent(), user.parent()) else {
             return false;
         };
-        owner != user && (place == here || here.parent().is_some_and(|up| up == place))
+        let reaches = |place: &crate::file_access::PathText| {
+            *place == here || here.parent().is_some_and(|up| up == *place)
+        };
+        owner != user && (reaches(&place) || Self::as_tested(&place).is_some_and(|p| reaches(&p)))
+    }
+
+    /// `@FR-F-Package` — where a file inside a package's `tests/` (that directory or below
+    /// it) reads `#package` sharing from: the `src/` beside that `tests/`.  Tests are part of
+    /// the package and not a layer, so depth inside `tests/` walls nothing off.  `None` for a
+    /// place outside any `tests/`.
+    fn as_tested(place: &crate::file_access::PathText) -> Option<crate::file_access::PathText> {
+        let mut dir = Some(place.clone());
+        while let Some(d) = dir {
+            if d.parts().last().is_some_and(|name| name == "tests") {
+                return d.parent().map(|root| root.join("src"));
+            }
+            dir = d.parent();
+        }
+        None
     }
 
     /// Record the file `source` is parsed from (see `source_files`).
@@ -15252,6 +15270,95 @@ mod package_tests {
                 "a symlinked directory is the directory it names"
             );
         }
+        let _ = fa::remove_dir_all(&root);
+    }
+
+    /// `@FR-F-Package` (S0.3c) — a file anywhere inside a package's `tests/` reads `#package`
+    /// sharing as if it sat in the `src/` beside it; a helper in `tests/` still shares with
+    /// the tests beside it, and nothing outside the package gains.
+    #[test]
+    fn package_tests_read_as_their_src() {
+        let root = std::env::temp_dir().join(format!("loft_package_tests_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&root);
+        for dir in [
+            "pkg/src/interp",
+            "pkg/src/tests",
+            "pkg/tests/sub",
+            "other/tests",
+        ] {
+            fa::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in [
+            "pkg/src/a.loft",
+            "pkg/src/interp/x.loft",
+            "pkg/src/tests/t.loft",
+            "pkg/tests/t.loft",
+            "pkg/tests/helper.loft",
+            "pkg/tests/sub/t.loft",
+            "other/tests/t.loft",
+        ] {
+            fa::write(root.join(file), b"").unwrap();
+        }
+        let path = |f: &str| root.join(f).to_string_lossy().into_owned();
+        let mut data = Data::new();
+        for shared in [
+            "pkg/src/a.loft",
+            "pkg/src/interp/x.loft",
+            "pkg/tests/helper.loft",
+        ] {
+            data.note_package_file(&path(shared));
+        }
+        let cells = [
+            (
+                "pkg/src/a.loft",
+                "pkg/tests/t.loft",
+                true,
+                "a test reads its src",
+            ),
+            (
+                "pkg/src/a.loft",
+                "pkg/tests/sub/t.loft",
+                true,
+                "and so does the tests subtree",
+            ),
+            (
+                "pkg/src/interp/x.loft",
+                "pkg/tests/t.loft",
+                true,
+                "one up from src/interp is src",
+            ),
+            (
+                "pkg/src/a.loft",
+                "pkg/src/tests/t.loft",
+                false,
+                "a tests INSIDE src is below src",
+            ),
+            (
+                "pkg/src/a.loft",
+                "other/tests/t.loft",
+                false,
+                "another package's tests",
+            ),
+            (
+                "pkg/tests/helper.loft",
+                "pkg/tests/t.loft",
+                true,
+                "a test helper shares with tests",
+            ),
+        ];
+        for (owner, user, shared, what) in cells {
+            assert_eq!(
+                data.shares_internals(&path(owner), &path(user)),
+                shared,
+                "{what}"
+            );
+        }
+        let mut plain = Data::new();
+        plain.note_package_file(&path("pkg/src/interp/x.loft"));
+        assert!(
+            !plain.shares_internals(&path("pkg/src/a.loft"), &path("pkg/tests/t.loft")),
+            "without #package a test reads only pub"
+        );
         let _ = fa::remove_dir_all(&root);
     }
 

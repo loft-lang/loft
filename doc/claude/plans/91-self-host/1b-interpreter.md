@@ -567,7 +567,7 @@ test then runs as S0.3 designed it.
 reaches the same `use` code).  Falsified: without the "never the current file" filter M1
 fails again.  The module-clash suite (21) is green.
 
-### S0.3c — a package's tests see what `#package` shares — DESIGNED, not built
+### S0.3c — a package's tests see what `#package` shares — BUILT 2026-10-27
 
 **Owner's ruling (2026-10-27): tests are part of the package.**  Under S0.3a a package's
 `tests/` sits beside `src/`, so it was neither the shared directory nor the one above, and a
@@ -605,6 +605,15 @@ imports (`shared_with`) and the four refusal sites follow, because they ask it.
 
 **Docs.**  `(F-Package)` gains the clause, plus C140's ruling, `LOFT_DECLARATIONS.md`, the
 `loft-write` skill and the CHANGELOG entry.
+
+**Built — what changed from the design.**  The mapping is applied IN ADDITION to the plain
+comparison, never instead of it: a `#package` helper inside `tests/` must still share with
+the tests beside it (cell `a test helper shares with tests`), and replacing the user's place
+outright would have hidden it.  Tests: `data::package_tests::package_tests_read_as_their_src`
+(the subtree, one up from `src/interp`, `src/tests` refused, another package's tests refused,
+the helper) and `pub_visibility::package_tests_see_what_src_shares` (end to end from
+`pkg/tests/lowering/`, a consumer refused).  Falsified: without the mapping the end-to-end cell
+fails.
 
 ### S0.3 — the bundle opens in loft — DESIGNED, next
 

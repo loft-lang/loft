@@ -952,3 +952,75 @@ fn package_internals_do_not_pass_on_through_pub_use() {
         );
     }
 }
+
+/// `@FR-F-Package` (S0.3c) — tests are part of the package: a test anywhere in `tests/`
+/// reads a `#package` file of the `src/` beside it as `pub`, end to end, while the same
+/// program as a consumer's file outside the package is refused.
+#[test]
+fn package_tests_see_what_src_shares() {
+    let program = "use units;\nfn main() { u = units::spawn(\"orc\"); println(\"{u.hp} {units::secret()}\"); }\n";
+    let files = |at_lib: &str| {
+        vec![(
+            at_lib.to_string(),
+            format!("#package\n{UNITS}{UNITS_PRIVATE_FNS}"),
+        )]
+    };
+    for (cell, lib, at, admitted) in [
+        ("tests", "pkg/src/units.loft", "pkg/tests", true),
+        (
+            "tests-sub",
+            "pkg/src/units.loft",
+            "pkg/tests/lowering",
+            true,
+        ),
+        ("consumer", "pkg/src/units.loft", "app", false),
+    ] {
+        let owned: Vec<(String, String)> = files(lib);
+        let tree: Vec<(&str, String)> =
+            owned.iter().map(|(p, t)| (p.as_str(), t.clone())).collect();
+        let (out, err, ok) = run_pkg(cell, &tree, "pkg/src", at, program);
+        if admitted {
+            assert!(ok && out == "101 42\n", "{cell}: {out}{err}");
+        } else {
+            assert!(
+                !ok && err.contains("is not `pub` in `units`"),
+                "{cell}: {out}{err}"
+            );
+        }
+    }
+}
+
+/// `run_tree` with the library directory and program place chosen by the cell.
+fn run_pkg(
+    tag: &str,
+    files: &[(&str, String)],
+    lib: &str,
+    at: &str,
+    program: &str,
+) -> (String, String, bool) {
+    let dir = std::env::temp_dir().join(format!("loft_pub_pkgtests_{tag}_{}", std::process::id()));
+    let _ = loft::file_access::remove_dir_all(&dir);
+    for (path, text) in files {
+        let full = dir.join(path);
+        loft::file_access::create_dir_all(full.parent().unwrap()).expect("mkdir");
+        loft::file_access::write(&full, text).expect("file");
+    }
+    loft::file_access::create_dir_all(dir.join(at)).expect("mkdir at");
+    let src = dir.join(at).join("main.loft");
+    loft::file_access::write(&src, program).expect("program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(dir.join(lib))
+        .arg(&src)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "120")
+        .output()
+        .expect("run loft");
+    let _ = loft::file_access::remove_dir_all(Path::new(&dir));
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.success(),
+    )
+}

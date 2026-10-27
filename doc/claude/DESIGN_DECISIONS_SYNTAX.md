@@ -306,7 +306,9 @@ it, a `#package` file reads as if everything it declares were `pub` (`formal/cal
 `(F-Package)`).  Position supplies the group and the file supplies the consent; no manifest is
 involved.  The directory above is included because deeper directories hold the details and the
 level above composes them; privacy is there to enforce the right abstractions, not to hide
-information, so a vendored file showing its internals to its consumer's tree costs nothing.  The word `package` was chosen over `shared` because it hints that only the
+information, so a vendored file showing its internals to its consumer's tree costs nothing.
+Tests are part of the package and not a layer: a file anywhere inside a `tests/` directory
+reads that sharing as if it sat in the `src/` beside it.  The word `package` was chosen over `shared` because it hints that only the
 current directory sees it.
 
 **Revisit when.** A read-only field outside its file is asked for — declined (a function covers

@@ -53,8 +53,10 @@ fn function_name(param: type, other: type = default_value) -> return_type {
   ```
 
   `interp/lower.loft` and a file in the directory above `interp/` may then build a
-  `run::Frame`, read `f.pc` and call `run::step`; a file in `interp/tests/` or two levels up may
-  not.  A file a program `use`s may say `#package`, but
+  `run::Frame`, read `f.pc` and call `run::step`; a file two levels up may not.  A package's
+  tests are part of it: a file anywhere inside its `tests/` directory sees what the files of the
+  `src/` beside it share, so `pkg/tests/lowering/if.loft` may test a private step of
+  `pkg/src/lower.loft`.  A file a program `use`s may say `#package`, but
   not `#cwd` or `#link`, which set how the whole program runs.
 - Some names are **reserved** and cannot name a program's function: the words `assert`, `panic`,
   `sizeof` and `debug_assert`, which the language keeps for meanings of its own, and the name of a

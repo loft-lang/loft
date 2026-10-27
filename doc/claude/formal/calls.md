@@ -423,7 +423,9 @@ DESIGN_DECISIONS.md @C123.
               declares and every field of those items were `pub`; to any other file it reads
               as (F-Visible) says.  The directories are the canonical ones (any spelling of a
               path, a symlinked directory); two levels up, a subdirectory and a sibling
-              directory are outside.  Only F's own
+              directory are outside.  A package's TESTS are part of it: a file anywhere
+              inside a directory named `tests` (that directory or below) also reads it as
+              if it sat in the `src` directory beside that `tests`.  Only F's own
               directive counts: a file reading F's internals declares nothing.  Membership is
               where F is, never how it was reached (`use`, `--lib`, the registry).  A file a
               program `use`s may say `#package`, and only that: `#cwd` and `#link` set how
