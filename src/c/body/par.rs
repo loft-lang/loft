@@ -13,6 +13,21 @@ use crate::c::c_name;
 use crate::data::{Type, Value};
 use std::fmt::Write as _;
 
+/// The dense row array a `par` site's scalar results are written into — its C element type and
+/// the push that makes it (`loft_par_push_i64` / `_f64` / `_f32`, eight or four bytes a row
+/// instead of a `loft_par_slot`) — or `None` for a result kind the slot holds (a text, a
+/// record, a function value).
+fn dense_rows(shape: CType) -> Option<(&'static str, &'static str)> {
+    match shape {
+        CType::Int | CType::Bool | CType::Enum | CType::Char => {
+            Some(("int64_t", "loft_par_push_i64"))
+        }
+        CType::Float => Some(("double", "loft_par_push_f64")),
+        CType::Single => Some(("float", "loft_par_push_f32")),
+        _ => None,
+    }
+}
+
 impl FnWriter<'_> {
     /// The parallel natives, or `None` for another.
     pub(super) fn par_native(
@@ -129,15 +144,13 @@ impl FnWriter<'_> {
             .ctype(def.returned())
             .ok_or("a par worker whose result has no C shape")?;
         let call = format!("{}({})", c_name(cx.data, d), call_args.join(", "));
+        let dense = (name != "n_parallel_discard")
+            .then(|| dense_rows(result_shape))
+            .flatten();
         let store = match result_shape {
             _ if name == "n_parallel_discard" => self.par_discard(&call, result_shape),
-            CType::Int => format!("loft_b[loft_i].i = {call};"),
+            _ if let Some((c, _)) = dense => format!("loft_b[loft_i] = ({c}) {call};"),
             CType::Int32 => format!("loft_b[loft_i].i = loft_w64({call});"),
-            CType::Bool | CType::Enum | CType::Char => {
-                format!("loft_b[loft_i].i = (int64_t) {call};")
-            }
-            CType::Float => format!("loft_b[loft_i].f = {call};"),
-            CType::Single => format!("loft_b[loft_i].g = {call};"),
             CType::Text => format!("loft_b[loft_i].t = {call};"),
             // A result is ADOPTED when the worker made its store (`n_parallel_buf_drop_ref`
             // frees only those); a pass-through of the element names the source's.
@@ -148,6 +161,10 @@ impl FnWriter<'_> {
             CType::Fn => format!("loft_b[loft_i].fn = {call};"),
             CType::Void => format!("{call};"),
             CType::Tuple(_) => return Err("a par worker returning a tuple".into()),
+            // Every scalar kind has its dense row (`dense_rows`).
+            CType::Int | CType::Bool | CType::Enum | CType::Char | CType::Float | CType::Single => {
+                return Err("a scalar par result without its dense rows".into());
+            }
         };
         // @PLN203 C4 tier 2 — a struct or struct-enum record result: its type, to size the
         // result store's rows and copy each worker's record with the claims it owns.
@@ -203,14 +220,15 @@ impl FnWriter<'_> {
         let n = self.temp(CType::Int);
         self.line(ind, &format!("{n} = loft_vec_len({input});"));
         self.line(ind, "{");
+        let (row_c, push) = dense.unwrap_or(("loft_par_slot", "loft_par_push"));
         self.line(
             ind + 1,
             &format!(
-                "loft_par_slot *loft_b = {};",
+                "{row_c} *loft_b = {};",
                 if name == "n_parallel_discard" {
                     "0".to_string()
                 } else {
-                    format!("loft_par_push({n})")
+                    format!("{push}({n})")
                 }
             ),
         );
@@ -305,15 +323,13 @@ impl FnWriter<'_> {
         let fields: Vec<String> = (0..extra.len()).map(|i| format!("loft_c->x{i}")).collect();
         let WorkerCall { args, .. } = Self::worker_call(cx, d, esz, &fields)?;
         let call = format!("{}({})", c_name(cx.data, d), args.join(", "));
+        let dense = (name != "n_parallel_discard")
+            .then(|| dense_rows(result_shape))
+            .flatten();
         let store = match result_shape {
             _ if name == "n_parallel_discard" => self.par_discard(&call, result_shape),
-            CType::Int => format!("loft_b[loft_i].i = {call};"),
+            _ if let Some((c, _)) = dense => format!("loft_b[loft_i] = ({c}) {call};"),
             CType::Int32 => format!("loft_b[loft_i].i = loft_w64({call});"),
-            CType::Bool | CType::Enum | CType::Char => {
-                format!("loft_b[loft_i].i = (int64_t) {call};")
-            }
-            CType::Float => format!("loft_b[loft_i].f = {call};"),
-            CType::Single => format!("loft_b[loft_i].g = {call};"),
             CType::Text => format!("loft_b[loft_i].t = {call};"),
             // As the in-order route: the row's own store is ADOPTED when the worker made it.
             CType::Ref => format!(
@@ -322,9 +338,9 @@ impl FnWriter<'_> {
             ),
             _ => format!("{call};"),
         };
-        let mut decl = String::from(
-            "typedef struct {\n    loft_ref in;\n    loft_par_slot *b;\n    loft_ref res;\n",
-        );
+        let (row_c, push) = dense.unwrap_or(("loft_par_slot", "loft_par_push"));
+        let mut decl =
+            format!("typedef struct {{\n    loft_ref in;\n    {row_c} *b;\n    loft_ref res;\n");
         for (i, c) in shapes.iter().take(extra.len()).enumerate() {
             let _ = writeln!(decl, "    {} x{i};", crate::c::held(*c));
         }
@@ -341,7 +357,7 @@ impl FnWriter<'_> {
         cx.gen_decls.borrow_mut().push_str(&decl);
         let mut body = format!(
             "\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi) {{\n    \
-             loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    loft_par_slot *loft_b = loft_c->b;\n    \
+             loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    {row_c} *loft_b = loft_c->b;\n    \
              (void) loft_b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        \
              loft_ref loft_e = loft_vec_get(loft_c->in, {esz}, loft_i);\n        (void) loft_e;\n"
         );
@@ -366,7 +382,7 @@ impl FnWriter<'_> {
         let slots = if name == "n_parallel_discard" {
             "0".to_string()
         } else {
-            format!("loft_par_push({n})")
+            format!("{push}({n})")
         };
         // A record site's result store, made before the workers fork (loft_par_run), released
         // with the buffer.

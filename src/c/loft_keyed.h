@@ -1127,7 +1127,7 @@ static void (*loft_relink_hook)(const loft_tdesc *T, uint16_t tp, loft_ref to) =
 typedef struct { int64_t i; double f; float g; loft_text t; loft_ref r; loft_fn fn; uint8_t adopted; } loft_par_slot;
 /* `res` is the store a threaded site's record results were copied into (@PLN203 C4 tier 2),
  * released with the buffer; null for every other site. */
-typedef struct { loft_par_slot *rows; int64_t n; loft_ref res; } loft_par_buf;
+typedef struct { loft_par_slot *rows; int64_t n; loft_ref res; int64_t *ints; double *flts; float *sgls; } loft_par_buf;
 /* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
  * state: no threads. */
 #ifndef LOFT_TLS
@@ -1152,8 +1152,59 @@ static loft_par_slot *loft_par_push(int64_t n) {
     loft_par_bufs[loft_npar].rows = rows;
     loft_par_bufs[loft_npar].n = n;
     loft_par_bufs[loft_npar].res = loft_ref_null();
+    loft_par_bufs[loft_npar].ints = 0;
+    loft_par_bufs[loft_npar].flts = 0;
+    loft_par_bufs[loft_npar].sgls = 0;
     loft_npar++;
     return rows;
+}
+
+/* A buffer of scalar results, one dense row each — an integer kind's, a float's or a single's —
+ * every row its null until a worker writes it (`loft_par_push` holds every kind in a slot). */
+static loft_par_buf *loft_par_push_dense(int64_t n) {
+    if (loft_npar == loft_par_cap) {
+        loft_par_cap = loft_par_cap ? loft_par_cap * 2 : 8;
+        loft_par_bufs = (loft_par_buf *) realloc(loft_par_bufs, (size_t) loft_par_cap * sizeof *loft_par_bufs);
+        if (!loft_par_bufs) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_par_buf *b = &loft_par_bufs[loft_npar++];
+    b->rows = 0;
+    b->n = n;
+    b->res = loft_ref_null();
+    b->ints = 0;
+    b->flts = 0;
+    b->sgls = 0;
+    return b;
+}
+
+static int64_t *loft_par_push_i64(int64_t n) {
+    loft_par_buf *b = loft_par_push_dense(n);
+    b->ints = (int64_t *) malloc((size_t) (n > 0 ? n : 1) * sizeof *b->ints);
+    if (!b->ints) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (int64_t i = 0; i < n; i++) b->ints[i] = LOFT_NULL;
+    return b->ints;
+}
+
+static double *loft_par_push_f64(int64_t n) {
+    loft_par_buf *b = loft_par_push_dense(n);
+    b->flts = (double *) malloc((size_t) (n > 0 ? n : 1) * sizeof *b->flts);
+    if (!b->flts) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (int64_t i = 0; i < n; i++) b->flts[i] = (double) NAN;
+    return b->flts;
+}
+
+static float *loft_par_push_f32(int64_t n) {
+    loft_par_buf *b = loft_par_push_dense(n);
+    b->sgls = (float *) malloc((size_t) (n > 0 ? n : 1) * sizeof *b->sgls);
+    if (!b->sgls) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (int64_t i = 0; i < n; i++) b->sgls[i] = (float) NAN;
+    return b->sgls;
+}
+
+/* The top buffer when row `i` is one of its rows, else 0. */
+static loft_par_buf *loft_par_top(int64_t i) {
+    if (loft_npar == 0 || i < 0 || i >= loft_par_bufs[loft_npar - 1].n) return 0;
+    return &loft_par_bufs[loft_npar - 1];
 }
 
 /* The top buffer's result store: freed when the buffer is dropped. */
@@ -1162,13 +1213,28 @@ static void loft_par_hold(loft_ref res) {
 }
 
 static loft_par_slot *loft_par_row(int64_t i) {
-    if (loft_npar == 0 || i < 0 || i >= loft_par_bufs[loft_npar - 1].n) return 0;
-    return &loft_par_bufs[loft_npar - 1].rows[i];
+    loft_par_buf *b = loft_par_top(i);
+    return b && b->rows ? &b->rows[i] : 0;
 }
 
-static int64_t loft_par_get(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->i : LOFT_NULL; }
-static double loft_par_get_float(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->f : (double) NAN; }
-static float loft_par_get_single(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->g : (float) NAN; }
+static int64_t loft_par_get(int64_t i) {
+    loft_par_buf *b = loft_par_top(i);
+    if (b && b->ints) return b->ints[i];
+    loft_par_slot *s = loft_par_row(i);
+    return s ? s->i : LOFT_NULL;
+}
+static double loft_par_get_float(int64_t i) {
+    loft_par_buf *b = loft_par_top(i);
+    if (b && b->flts) return b->flts[i];
+    loft_par_slot *s = loft_par_row(i);
+    return s ? s->f : (double) NAN;
+}
+static float loft_par_get_single(int64_t i) {
+    loft_par_buf *b = loft_par_top(i);
+    if (b && b->sgls) return b->sgls[i];
+    loft_par_slot *s = loft_par_row(i);
+    return s ? s->g : (float) NAN;
+}
 static loft_ref loft_par_get_ref(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->r : loft_ref_null(); }
 static loft_fn loft_par_get_fn(int64_t i) { loft_par_slot *s = loft_par_row(i); return s ? s->fn : loft_fn_of(LOFT_NULL); }
 static loft_text loft_par_get_text(int64_t i) {
@@ -1180,7 +1246,10 @@ static loft_text loft_par_get_text(int64_t i) {
 static void loft_par_drop(int refs) {
     if (loft_npar == 0) return;
     loft_par_buf *b = &loft_par_bufs[--loft_npar];
-    for (int64_t i = 0; i < b->n; i++) {
+    free(b->ints);
+    free(b->flts);
+    free(b->sgls);
+    for (int64_t i = 0; b->rows && i < b->n; i++) {
         loft_text_free(&b->rows[i].t);
         /* n_parallel_buf_drop_ref frees the ADOPTED stores — the ones a worker made — never a
          * result that names a store which was there before (a pass-through of its element). */
@@ -1377,11 +1446,12 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
 
 /* parallel_buf_get_narrow: a 1-, 2- or 4-byte result, its low bytes extended as `signed` says. */
 static int64_t loft_par_get_narrow(int64_t i, int64_t size, int64_t is_signed) {
-    loft_par_slot *s = loft_par_row(i);
-    if (!s) return LOFT_NULL;
-    uint64_t u = (uint64_t) s->i;
+    loft_par_buf *b = loft_par_top(i);
+    if (!b) return LOFT_NULL;
+    int64_t v = b->ints ? b->ints[i] : b->rows ? b->rows[i].i : LOFT_NULL;
+    uint64_t u = (uint64_t) v;
     int bits = (int) (size * 8);
-    if (bits <= 0 || bits >= 64) return s->i;
+    if (bits <= 0 || bits >= 64) return v;
     u &= (UINT64_C(1) << bits) - 1;
     if (is_signed && (u >> (bits - 1))) return (int64_t) (u | ~((UINT64_C(1) << bits) - 1)) ;
     return (int64_t) u;
