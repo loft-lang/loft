@@ -4878,3 +4878,45 @@ fn main() {
         .collect();
     assert_eq!(workers, ["4", "4", "4", "4", "1"], "workers per par loop");
 }
+
+/// The C a program's constants are written into is the same on every run, and the same when
+/// the backend reads the program image instead of the program in memory (@PLN205 L0b).  A
+/// constant's store is copied into the unit word for word, so a stale byte from a reused store
+/// made two runs differ (heap addresses move between runs), and the image carried no built
+/// constants at all until they were rebuilt from its IR.
+#[test]
+fn a_programs_constants_are_written_the_same_every_run_and_from_the_image() {
+    let dir = scratch("consts");
+    let file = dir.join("consts.loft");
+    fa::write(
+        &file,
+        "struct Row { id: integer, name: text, on: boolean }\n\
+         const ROWS: vector<Row> = [Row { id: 1, name: \"one\", on: true }, Row { id: 2, name: \"two\", on: false }];\n\
+         const PRIMES: vector<integer> = [2, 3, 5, 7, 11];\n\
+         fn main() {\n  println(\"{ROWS[1].name} {PRIMES[4]} {ROWS.len()}\");\n}\n",
+    )
+    .expect("write program");
+    let emit = |out: &str, image: bool| -> Vec<u8> {
+        let target = dir.join(out);
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--emit-c").arg(&target).arg(&file);
+        if image {
+            cmd.env("LOFT_EMIT_FROM_IMAGE", "1");
+        } else {
+            cmd.env_remove("LOFT_EMIT_FROM_IMAGE");
+        }
+        let o = cmd.output().expect("run loft");
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        fa::read(&target).expect("the unit")
+    };
+    let first = emit("a.c", false);
+    assert!(
+        String::from_utf8_lossy(&first).contains("loft_cwords"),
+        "the unit carries the constants' words"
+    );
+    assert!(first == emit("b.c", false), "two runs write the same C");
+    assert!(
+        first == emit("c.c", true),
+        "the image writes the same C as memory"
+    );
+}

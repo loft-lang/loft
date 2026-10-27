@@ -4,12 +4,10 @@
 
 #![allow(dead_code)]
 //! Fast interpreter for binary code.
-use crate::const_literal::extract_literal_values;
 pub use crate::const_literal::{
     ConstElement, ConstField, const_vector_blocker, extract_literal_values_public,
 };
 use crate::data::{Data, DefType, Type};
-use crate::ir_node::IrNode;
 use crate::keys::DbRef;
 use crate::log_config::LogConfig;
 use crate::native;
@@ -222,122 +220,15 @@ pub fn byte_code_from(
     crate::copy_manifest::report(data);
 }
 
-/// Extract literal values from vector constant Block IR and build
-/// the vectors in CONST_STORE. Populates `state.const_refs` and
-/// `data.definitions[d_nr].const_ref`.
+/// Build the program's constant vectors (`const_literal::build_const_vectors`) and mirror
+/// their refs into the interpreter's `state.const_refs`.
 fn build_const_vectors(
     state: &mut State,
     data: &mut Data,
     program_store: Option<&(crate::database::Stores, DbRef)>,
 ) {
-    // Ensure const_refs is large enough for all definitions.
-    let null_ref = DbRef::NULL;
-    state
-        .const_refs
-        .resize(data.definitions() as usize, null_ref);
-    // Mirror const_refs on Stores so native codegen (which has
-    // `&mut Stores` but no `&mut State`) can resolve
-    // `OpConstRef` via `stores.const_ref_at_runtime(d_nr)`.
-    state
-        .database
-        .const_refs
-        .resize(data.definitions() as usize, null_ref);
-
-    for d_nr in 0..data.definitions() {
-        if data.def(d_nr).def_type() != DefType::Constant {
-            continue;
-        }
-        let Type::Vector(elem_tp, _) = data.def(d_nr).returned() else {
-            continue;
-        };
-        let elem_tp = (**elem_tp).clone();
-        // @PLN11 G2/M6 — read the const body from the persistent store when
-        // present (store-backed), else the native graph.
-        let body = match program_store {
-            Some((stores, root)) => {
-                IrNode::Store(stores, crate::ir_read::def_body_node(stores, *root, d_nr))
-            }
-            None => IrNode::Native(data.def(d_nr).code()),
-        };
-        // An `Err` is refused at the declaration (`parse_constant` asks
-        // `const_vector_blocker` the same question), so there is nothing to say here —
-        // and nothing to build.
-        let Ok(values) = extract_literal_values(body, data) else {
-            continue;
-        };
-        // Build the vector in its own store using the normal Stores API.
-        // This mirrors what OpDatabase + OpNewRecord + OpFinishRecord do at runtime.
-        // Look up the main_vector<T> struct that wraps the vector field.
-        let vec_struct_name = format!("main_vector<{}>", elem_tp.name(data));
-        let vec_struct_dnr = data.def_nr(&vec_struct_name);
-        if vec_struct_dnr == u32::MAX {
-            continue;
-        }
-        let vec_tp = data.def(vec_struct_dnr).known_type();
-        let size = u32::from(state.database.size(vec_tp));
-        let db = state.database.database(size);
-        state
-            .database
-            .store_mut(&db)
-            .set_u32_raw(db.rec, 4, u32::from(vec_tp));
-        state.database.set_default_value(vec_tp, &db);
-        let vec_ref = DbRef {
-            store_nr: db.store_nr,
-            rec: 1,
-            pos: 8,
-        };
-        for element in &values {
-            let rec = state.database.record_new(&vec_ref, vec_tp, 0);
-            for (offset, val) in element {
-                // Each field at ITS OWN offset within the element — a scalar element has
-                // one write at 0, a struct element one per field (loft#702).  Each arm
-                // mirrors the runtime operator in `src/fill.rs`, so a pre-built element
-                // holds the same bytes the initialiser would have written.
-                let at = rec.pos + offset;
-                match val {
-                    ConstField::Int(v) => {
-                        state.database.store_mut(&rec).set_int(rec.rec, at, *v);
-                    }
-                    ConstField::Long(v) => {
-                        state.database.store_mut(&rec).set_long(rec.rec, at, *v);
-                    }
-                    ConstField::Float(v) => {
-                        state.database.store_mut(&rec).set_float(rec.rec, at, *v);
-                    }
-                    ConstField::Single(v) => {
-                        state.database.store_mut(&rec).set_single(rec.rec, at, *v);
-                    }
-                    ConstField::Bool(v) => {
-                        state
-                            .database
-                            .store_mut(&rec)
-                            .set_byte(rec.rec, at, 0, i32::from(*v));
-                    }
-                    ConstField::Char(v) => {
-                        state.database.store_mut(&rec).set_u32_raw(rec.rec, at, *v);
-                    }
-                    ConstField::Text(v) => {
-                        // Mirror the runtime OpSetText path (src/fill.rs::set_text):
-                        // store the string in the same store as the vector record
-                        // via set_str(), then write the returned record number
-                        // into the text field as an int pointer.
-                        let store = state.database.store_mut(&rec);
-                        let s_pos = store.set_str(v);
-                        store.set_u32_raw(rec.rec, at, s_pos);
-                    }
-                }
-            }
-            state.database.record_finish(&vec_ref, &rec, vec_tp, 0);
-        }
-        state.database.allocations[db.store_nr as usize].lock_constant();
-        // Plan-57 Phase C: pin the const store so `free_named` never frees it
-        // (it lives for the whole program).  Replaces the `ref_count = u32::MAX/2`
-        // sentinel as the ref-count is removed.
-        state.database.allocations[db.store_nr as usize].pinned = true;
-        data.definitions[d_nr as usize].const_ref = Some(vec_ref);
-        state.const_refs[d_nr as usize] = vec_ref;
-        state.database.const_refs[d_nr as usize] = vec_ref;
-    }
+    crate::const_literal::build_const_vectors(&mut state.database, data, program_store);
+    state.const_refs.clone_from(&state.database.const_refs);
 }
 
 /// Which `#native` symbol each panicking stub stands for, by library index.
