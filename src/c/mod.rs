@@ -2489,13 +2489,17 @@ fn prebuilt_library(data: &Data, native: &str) -> Option<String> {
     crate::native_build::prebuilt_native_lib(pkg_dir, &stem)
 }
 
-/// A `#native` function of a package whose native part is a prebuilt library (@PLN205): a body
-/// that resolves the library's typed symbol on the first call and calls it with the loft-ffi
-/// signature (`loft-ffi/include/loft_ffi.h`): a store first when an argument or the answer is
-/// a heap value, a text as its bytes and length, a vector as its data record.
-fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, String), String> {
-    let def = cx.data.def(d);
-    let params = declared_params(cx, d)?;
+/// The loft-ffi side of a library native's parameters (`library_native`): each one's C
+/// parameter types and the argument expressions that pass it, the lines that build a heap
+/// argument's `loft_ffi_ref`, and the first heap argument, whose store the call is handed.
+struct FfiArgs {
+    params: Vec<String>,
+    args: Vec<String>,
+    prep: String,
+    store_arg: Option<usize>,
+}
+
+fn library_ffi_args(def: &crate::data::Definition) -> Result<FfiArgs, String> {
     let mut ffi_params: Vec<String> = Vec::new();
     let mut ffi_args: Vec<String> = Vec::new();
     let mut prep = String::new();
@@ -2555,6 +2559,27 @@ fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, Str
             }
         }
     }
+    Ok(FfiArgs {
+        params: ffi_params,
+        args: ffi_args,
+        prep,
+        store_arg,
+    })
+}
+
+/// A `#native` function of a package whose native part is a prebuilt library (@PLN205): a body
+/// that resolves the library's typed symbol on the first call and calls it with the loft-ffi
+/// signature (`loft-ffi/include/loft_ffi.h`): a store first when an argument or the answer is
+/// a heap value, a text as its bytes and length, a vector as its data record.
+fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, String), String> {
+    let def = cx.data.def(d);
+    let params = declared_params(cx, d)?;
+    let FfiArgs {
+        params: mut ffi_params,
+        args: mut ffi_args,
+        prep,
+        store_arg,
+    } = library_ffi_args(def)?;
     let ffi_ret = match def.returned().base() {
         Type::Void => "void",
         Type::Integer(s) if s.forced_size.is_none() => "int64_t",

@@ -3966,7 +3966,10 @@ impl<'a> FnWriter<'a> {
         }
         let e = self.expr(x, ind)?;
         if super::no_c_int32() {
-            return Ok(E::new(format!("loft_w64(loft_n32({}))", as_int(e)?), K::Int));
+            return Ok(E::new(
+                format!("loft_w64(loft_n32({}))", as_int(e)?),
+                K::Int,
+            ));
         }
         Ok(E::new(as_int32(e)?, K::Int32))
     }
@@ -6227,6 +6230,7 @@ fn param_root(vars: &crate::variables::Function, v: u16, params: &[u16]) -> Opti
 fn shape_of_kind(k: K) -> Option<CType> {
     Some(match k {
         K::Int => CType::Int,
+        K::Int32 => CType::Int32,
         K::Cond | K::Bool => CType::Bool,
         K::Ref => CType::Ref,
         K::Enum => CType::Enum,
