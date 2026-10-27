@@ -85,7 +85,11 @@ An artefact that is a pure function of the tree carries `"ci": true` in
 bundle, the gallery's sprite pack, the feature shadow, the ignored-tests baseline and the
 reference pages.
 `.github/workflows/derive.yml` regenerates exactly those (`scripts/derive_ci.py`) and commits
-the result back to the branch, so a checkout does not have to:
+the result back to the branch, so a checkout does not have to.  It runs one runner per `job`
+the registry names (each `ci` entry carries its `job` and what it `needs` installed), in
+parallel, and one commit job applies what each moved; so a new entry joins a job, and no
+entry may read what another job writes.  A check runs only when its regen moved a file.  To
+run it:
 
 ```bash
 scripts/derive-ci.sh             # this branch: dispatch, wait, fast-forward onto the bot's commit
