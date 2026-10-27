@@ -821,6 +821,62 @@ the `"assert"` block holding `if test { pass } else { fail }` for a built messag
   - Falsified: with the hook off, all three fail.
   - Parser subject 994/994; `make fences` 0 unsourced.
 
+### S1 — the speed check (@PLN91 P-perf), through the C backend — DESIGNED, not built
+
+**The question S1 answers.**  Is a loft-written interpreter, compiled to native code, fast
+enough to be loft's interpreter?  @PLN91 states the gate: within ~1.5× of the Rust interpreter
+is viable, ~3× stops strand 1b (and leaves 1a, the compiler, untouched).  The answer is
+measured on the smallest interpreter that runs real kernels, before any more of it is built.
+
+**Built through the best compiler on this machine (owner, 2026-10-28).**
+- **The base.**  The other agent's C-backend performance branch, `origin/laptop-c-perf` at
+  `45bb2708b` (19 commits on the same `origin/main`), is joined into this branch: a merge,
+  clean, 20 files, almost all `src/c/`.  Its author: a sound base with no known-bad C output.
+  The full default-mode sweep over all 2,883 programs was clean at `891bbeed6`, and the
+  targeted sweeps cover its WIP commit; the full four-mode sweep of the tip was not finished.
+  **Consequence (CLAUDE.md branch rule 5):** this branch now merges after `laptop-c-perf`.
+- **The build.**  The interpreter is compiled `loft --native-c --ship`: C, gcc, `-O3`.  gcc
+  because its checked lane is the better one today (median 1.57× of the Rust twins, against
+  clang's 1.74×).  Never `LOFT_RELEASE_PASS_PROBE`, which is a measurement probe and not a
+  shipped build.
+- **The baseline.**  `loft --interpret` of the SAME joined tree, built release
+  (`target/release/loft`), on the same kernel programs.
+
+**The kernels.**  The cores of three bench programs, without their harness (the harness
+needs text, arguments and the clock, which S1's subset does not carry):
+- `fib(30)` from `bench/01_fibonacci` (calls and recursion);
+- `mix(…)` from `bench/02_sum_loop` (a counted loop, bit operators);
+- `collatz_len` over a range from `bench/04_collatz` (`for`, `break`, `%`, `/`).
+
+Each kernel file has a `main` printing the result, for the Rust interpreter.  The loft
+interpreter runs the same image's entry function with integer arguments and prints the
+integer it returns.  Both must print the same number, or the times do not compare.
+
+**The interpreter's shape** (direction for S1's steps, settled step by step):
+- `selfhost/src/lower.loft`: a function's `Node` tree becomes a flat `vector<Op>` once, with
+  `Op { code, a, b }`, jumps resolved to indices, and the IR's variable numbers as frame
+  slots.  Flat, not a recursive walk: the 10,000-frame limit (`src/limits.rs`) and S1's
+  speed both ask for it.
+- `selfhost/src/run.loft`: one `while` loop that dispatches with `match op.code`, a value
+  stack `vector<integer>`, and frames as `(function, pc, base)`.
+- **An operator is loft's own operator.**  `OpAddInt` executes as loft's `a + b`, so overflow
+  and null (`(N-Prop)`, operational.md) are the Rust interpreter's by definition, with
+  nothing re-implemented.  The `def_nr` of each `NdCall` is resolved once, at load, by the
+  definition's name.
+
+**Steps** (each designed when the one before it lands):
+- **S1.1 — the operator table and the first lowering.**  The `fib` kernel's node set
+  (`NdInt`, `NdVar`, `NdIf`, `NdBlock`, `NdCall` of `OpLeInt`/`OpAddInt`/`OpMinInt` and of a
+  user function, `NdReturn`, `NdLine`) lowers to ops, and a test compares the ops against a
+  hand-written list.  Code points: `selfhost/src/lower.loft` (new),
+  `selfhost/tests/lower.loft` (new; under S0.3c it may read `Op`).  First, the join of
+  `45bb2708b`.
+- **S1.2 — the run loop**: `fib(25)` answers what `--interpret` answers.
+- **S1.3 — loops**: `NdLoop`, `NdBreak`, `NdSet` and the iterator form a `for` lowers to,
+  for `mix` and `collatz_len`.
+- **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
+  this section, and the gate read against them.
+
 ## The language for this job
 
 ### What loft already offers (measured or established in @PLN202 / OCAML_BAR.md)
