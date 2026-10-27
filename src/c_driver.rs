@@ -413,6 +413,58 @@ impl std::fmt::Display for BuildError {
     }
 }
 
+/// How the unit's `link:` inputs reach the linker, placed as [`Placement`] says: the run paths
+/// to add to the flags, and the link arguments.  `binds`: the program opens the libraries its
+/// packages ship at start, so a `bound` library is not linked and a shim is linked whole into a
+/// static program (and exported) or opened beside a dynamic one.
+fn link_plan(
+    links: &[String],
+    bound: &std::collections::HashSet<String>,
+    shims: &std::collections::HashSet<String>,
+    placement: Placement,
+    binds: bool,
+) -> (Vec<String>, Vec<String>) {
+    let relocatable = placement != Placement::Local;
+    let dynamic = placement == (Placement::Shipped { dynamic: true });
+    let mut export = false;
+    // Where a linked shared library is found at run time: its own directory, or the binary's
+    // when the program is written out with its libraries beside it (`--out`).
+    let ext = format!(".{}", loft::platform::dll_extension());
+    let mut rpaths: Vec<String> = Vec::new();
+    let mut link_args: Vec<String> = Vec::new();
+    for l in links {
+        if binds && bound.contains(l) {
+            continue;
+        }
+        // A shim stays inside a static shipped program, linked whole and exported, so a symbol
+        // found by name (`loft_c_bound_sym`) is there; a dynamic one opens its library instead.
+        if binds && shims.contains(l) {
+            if !dynamic {
+                link_args.extend(loft::platform::c_whole_archive_args(l));
+                export = true;
+            }
+            continue;
+        }
+        let p = std::path::Path::new(l);
+        let shared = l.ends_with(&ext) || l.contains(".so.");
+        if !shared {
+            link_args.push(l.clone());
+            continue;
+        }
+        link_args.extend(loft::platform::c_link_shared_args(p));
+        let dir = if relocatable { None } else { p.parent() };
+        if let Some(arg) = loft::platform::c_rpath_arg(dir)
+            && !rpaths.contains(&arg)
+        {
+            rpaths.push(arg);
+        }
+    }
+    if export && let Some(arg) = loft::platform::c_export_dynamic_arg() {
+        link_args.push(arg.to_string());
+    }
+    (rpaths, link_args)
+}
+
 /// The outcome of [`build`]: the binary to run and whether the cache supplied it.
 pub(crate) struct Built {
     pub binary: std::path::PathBuf,
@@ -450,43 +502,8 @@ pub(crate) fn build(
             flags.push("-DLOFT_BIND_SHIMS".to_string());
         }
     }
-    let mut export = false;
-    // Where a linked shared library is found at run time: its own directory, or the binary's
-    // when the program is written out with its libraries beside it (`--out`).
-    let ext = format!(".{}", loft::platform::dll_extension());
-    let mut rpaths: Vec<String> = Vec::new();
-    let mut link_args: Vec<String> = Vec::new();
-    for l in &links {
-        if binds && bound.contains(l) {
-            continue;
-        }
-        // A shim stays inside a static shipped program, linked whole and exported, so a symbol
-        // found by name (`loft_c_bound_sym`) is there; a dynamic one opens its library instead.
-        if binds && shims.contains(l) {
-            if !dynamic {
-                link_args.extend(loft::platform::c_whole_archive_args(l));
-                export = true;
-            }
-            continue;
-        }
-        let p = std::path::Path::new(l);
-        let shared = l.ends_with(&ext) || l.contains(".so.");
-        if !shared {
-            link_args.push(l.clone());
-            continue;
-        }
-        link_args.extend(loft::platform::c_link_shared_args(p));
-        let dir = if relocatable { None } else { p.parent() };
-        if let Some(arg) = loft::platform::c_rpath_arg(dir)
-            && !rpaths.contains(&arg)
-        {
-            rpaths.push(arg);
-        }
-    }
+    let (rpaths, link_args) = link_plan(&links, &bound, &shims, placement, binds);
     flags.extend(rpaths);
-    if export && let Some(arg) = loft::platform::c_export_dynamic_arg() {
-        link_args.push(arg.to_string());
-    }
     let key = build_key(c, &cc, &flags, &links);
     let exe = std::env::consts::EXE_SUFFIX;
     let cached = cache_dir.join(format!("native-c-{key}{exe}"));
