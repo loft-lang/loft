@@ -3537,9 +3537,12 @@ impl Stores {
     /// `LOFT_WATCH_STORE` is watching.
     #[inline(never)]
     fn copy_plain_vectors(&mut self, rec: &DbRef, to: &DbRef, tp: u16) -> bool {
+        // A DEFINED destination is an image's (`Store::defined`): its vectors go through
+        // `copy_claims_seq_vector`, which knows the element type and so its padding.
         if !self.owns_plain_vectors(tp)
             || crate::keys::watch_store() == Some(to.store_nr)
             || !heap_free_vector_copy_enabled()
+            || self.store(to).defined
         {
             return false;
         }
@@ -3884,6 +3887,33 @@ impl Stores {
         true
     }
 
+    /// `Store::defined` — a defined store is what an image is written from, so every byte in
+    /// it is one a copy wrote.  A struct element's tail past its last field (padding is only
+    /// ever at the end, `layout.md`) came over with the bulk copy as whatever the SOURCE held
+    /// there — a growth tail's leftover heap — and is zeroed, so the image is the same bytes
+    /// on every backend and carries none of the process's memory.
+    fn zero_element_tails(&mut self, to: &DbRef, block: u32, length: u32, content_tp: u16) {
+        if !self.store(to).defined {
+            return;
+        }
+        let Parts::Struct(fields) = &self.types[content_tp as usize].parts else {
+            return;
+        };
+        let size = u32::from(self.size(content_tp));
+        let used = fields
+            .iter()
+            .map(|f| u32::from(f.position) + u32::from(self.size(f.content)))
+            .max()
+            .unwrap_or(0);
+        if used >= size {
+            return;
+        }
+        let dst = self.store_mut(to);
+        for i in 0..length {
+            dst.zero_range(block, 8 + i * size + used, size - used);
+        }
+    }
+
     pub(super) fn copy_claims_seq_vector(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         let content_tp = match &self.types[tp as usize].parts {
             Parts::Vector(v) | Parts::Sorted(v, _) => *v,
@@ -3925,6 +3955,7 @@ impl Stores {
             },
             length * size + 4,
         );
+        self.zero_element_tails(to, into, length, content_tp);
         // SOURCE enumeration reads the keystone walk — the single home of the
         // per-`Parts` source layout.  Its `Vector`/`Sorted` arm yields one child per
         // element at `pos = 8 + size*i` with `owning_elem: None` (inline, no separate

@@ -2101,6 +2101,19 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         loft_ref src_v = { from.store_nr, cur, 0 };
         loft_ref dst_v = { to.store_nr, into, 0 };
         loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);
+        /* Stores::zero_element_tails: into a DEFINED store (an image's), a struct element's
+         * tail past its last field is zeroed — the bulk copy brought the source's leftover
+         * bytes there, which differ between allocators and are not the program's. */
+        if (loft_store_of(to)->defined && T[d->elem].kind == LOFT_T_STRUCT) {
+            const loft_tdesc *e = &T[d->elem];
+            uint32_t used = 0;
+            for (uint16_t k = 0; k < e->n; k++) {
+                uint32_t end = (uint32_t) e->fields[k].pos + T[e->fields[k].type].size;
+                if (end > used) used = end;
+            }
+            for (uint32_t i = 0; used < size && i < len; i++)
+                memset(loft_at(loft_store_of(to), into, 8 + i * size + used), 0, size - used);
+        }
         if (T[d->elem].kind == LOFT_T_SCALAR || T[d->elem].kind == LOFT_T_DBREF) return;
         for (uint32_t i = 0; i < len; i++) {
             loft_ref a = { from.store_nr, cur, 8 + i * size };

@@ -1250,10 +1250,20 @@ static uint8_t loft_is_file_at(loft_str raw) {
     return r;
 }
 
-/* os_temp_dir (std::env::temp_dir): TMPDIR, else /tmp. */
+/* os_temp_dir (std::env::temp_dir): TMPDIR, else /tmp — on Windows (GetTempPath2's order)
+ * TMP, else TEMP, else USERPROFILE, else the Windows directory. */
 static loft_text loft_os_temp_dir(void) {
+#if defined(_WIN32)
+    static const char *const vars[] = { "TMP", "TEMP", "USERPROFILE", "SystemRoot" };
+    for (size_t i = 0; i < sizeof vars / sizeof *vars; i++) {
+        const char *t = getenv(vars[i]);
+        if (t && *t) return loft_given(t);
+    }
+    return loft_given("C:\\Windows");
+#else
     const char *t = getenv("TMPDIR");
     return loft_given(t && *t ? t : "/tmp");
+#endif
 }
 
 /* `dir_with_sub`: `base` in the portable form, `sub` joined to it as `Path::join` does. */
