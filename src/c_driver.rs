@@ -39,7 +39,16 @@ pub(crate) fn cc_program() -> String {
 /// poison modes when the environment asks for them as the interpreter's switches do.  Every flag is part of
 /// the cache key, since each one changes the binary.
 fn cc_flags(tier: Tier) -> Vec<String> {
-    let mut flags: Vec<String> = vec!["-std=c99".into(), "-w".into()];
+    let mut flags: Vec<String> = vec!["-std=c99".into()];
+    match lint() {
+        Lint::Off => flags.push("-w".into()),
+        on => {
+            flags.extend(LINT_WARNINGS.iter().map(|w| (*w).to_string()));
+            if on == Lint::Strict {
+                flags.push("-Werror".into());
+            }
+        }
+    }
     flags.extend(
         loft::platform::c_thread_link_args()
             .iter()
@@ -61,6 +70,41 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     flags
 }
 
+/// `LOFT_C_LINT`: the C a program is written as compiled with the warnings below instead of
+/// `-w`, on request — `1` reports them, `strict` makes each one an error.  Never on by default:
+/// a user does not read warnings about C they did not write, and a lint of every build is time
+/// spent for no reader.  It is the instrument for a larger C99 program the moment there is a
+/// reason to look (a new compiler, a new platform, a crash that smells of UB).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lint {
+    Off,
+    Report,
+    Strict,
+}
+
+fn lint() -> Lint {
+    match std::env::var("LOFT_C_LINT").as_deref() {
+        Ok("strict") => Lint::Strict,
+        Ok("1" | "true" | "report") => Lint::Report,
+        _ => Lint::Off,
+    }
+}
+
+/// The lint's warnings: everything `-Wall -Wextra` reports that can mean a wrong program (a
+/// conversion, an uninitialised read, a missing declaration, a format), without the `unused`
+/// family, which generated code trips by design (a parameter the body ignores, a helper the
+/// unit does not call).
+const LINT_WARNINGS: &[&str] = &[
+    "-Wall",
+    "-Wextra",
+    "-Wno-unused-parameter",
+    "-Wno-unused-function",
+    "-Wno-unused-variable",
+    "-Wno-unused-but-set-variable",
+    "-Wno-unused-label",
+    "-Wno-unused-value",
+];
+
 fn env_on(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
@@ -73,6 +117,26 @@ pub(crate) fn link_inputs(c: &str) -> Vec<String> {
         .filter_map(|l| l.strip_prefix("/* link: ")?.strip_suffix(" */"))
         .map(str::to_string)
         .collect()
+}
+
+/// The link inputs the unit marks `/* <kind>: <input> */` — `bound` for a library its package
+/// ships, `shim-archive` for a `[c] shim`'s archive — each also named on its own link line.
+fn marked(c: &str, kind: &str) -> std::collections::HashSet<String> {
+    let open = format!("/* {kind}: ");
+    c.lines()
+        .filter_map(|l| l.strip_prefix(open.as_str())?.strip_suffix(" */"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Where a built program runs.  `Local`: from the cache, here, linking each library a package
+/// ships where it was built.  `Shipped` (`--out`): anywhere it is copied, opening those
+/// libraries at start through loft's search order (@PLN195) — a `[c] shim` inside the binary,
+/// or beside it under `--dynamic`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Placement {
+    Local,
+    Shipped { dynamic: bool },
 }
 
 /// The content key of one build: the C text, the compiler's identity, the flags, and each
@@ -320,8 +384,7 @@ pub(crate) fn html_page(title: &str, wasm: &[u8]) -> String {
   memory = inst.exports.memory;
   let code = 0;
   try {{ inst.exports._start(); }}
-  catch (e) {{ if (e instanceof Exit) code = e.code; else {{ write(2, String(e) + "
-"); code = 1; }} }}
+  catch (e) {{ if (e instanceof Exit) code = e.code; else {{ write(2, String(e) + "\n"); code = 1; }} }}
   for (const fd of [1, 2]) write(fd, decs[fd].decode());
   if (code) document.title += " (exit " + code + ")";
   window.loftExit = code;
@@ -349,38 +412,47 @@ impl std::fmt::Display for BuildError {
     }
 }
 
-/// The outcome of [`build`]: the binary to run and whether the cache supplied it.
-pub(crate) struct Built {
-    pub binary: std::path::PathBuf,
-    pub cached: bool,
+/// `cc` run to completion.  A deadline that falls in the compile names it (`blocked=`), as the
+/// rustc path does, rather than reading as `phase=parse`.
+fn run_cc(cmd: &mut Spawn) -> std::io::Result<loft::platform::process::Ran> {
+    loft::timeout::blocked_on("cc compiling the program");
+    let out = cmd.run(b"");
+    loft::timeout::unblocked();
+    out
 }
 
-/// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path;
-/// `relocatable` finds the linked libraries beside the binary (`--out`) rather than where they
-/// were built.
-/// The binary is compiled under the scratch directory and published by an atomic rename, so
-/// a concurrent run of the same program reads either no binary or a complete one.  With
-/// `no_cache` the binary stays a per-process scratch file the caller deletes after the run.
-///
-/// # Errors
-/// No C compiler, or a compile that fails — the message carries the compiler's own output,
-/// since a C the backend wrote that does not compile is a defect of the backend.
-pub(crate) fn build(
-    c: &str,
-    tier: Tier,
-    cache_dir: &std::path::Path,
-    no_cache: bool,
-    relocatable: bool,
-) -> Result<Built, BuildError> {
-    let cc = cc_program();
-    let mut flags = cc_flags(tier);
-    let links = link_inputs(c);
+/// How the unit's `link:` inputs reach the linker, placed as [`Placement`] says: the run paths
+/// to add to the flags, and the link arguments.  `binds`: the program opens the libraries its
+/// packages ship at start, so a `bound` library is not linked and a shim is linked whole into a
+/// static program (and exported) or opened beside a dynamic one.
+fn link_plan(
+    links: &[String],
+    bound: &std::collections::HashSet<String>,
+    shims: &std::collections::HashSet<String>,
+    placement: Placement,
+    binds: bool,
+) -> (Vec<String>, Vec<String>) {
+    let relocatable = placement != Placement::Local;
+    let dynamic = placement == (Placement::Shipped { dynamic: true });
+    let mut export = false;
     // Where a linked shared library is found at run time: its own directory, or the binary's
     // when the program is written out with its libraries beside it (`--out`).
     let ext = format!(".{}", loft::platform::dll_extension());
     let mut rpaths: Vec<String> = Vec::new();
     let mut link_args: Vec<String> = Vec::new();
-    for l in &links {
+    for l in links {
+        if binds && bound.contains(l) {
+            continue;
+        }
+        // A shim stays inside a static shipped program, linked whole and exported, so a symbol
+        // found by name (`loft_c_bound_sym`) is there; a dynamic one opens its library instead.
+        if binds && shims.contains(l) {
+            if !dynamic {
+                link_args.extend(loft::platform::c_whole_archive_args(l));
+                export = true;
+            }
+            continue;
+        }
         let p = std::path::Path::new(l);
         let shared = l.ends_with(&ext) || l.contains(".so.");
         if !shared {
@@ -395,11 +467,61 @@ pub(crate) fn build(
             rpaths.push(arg);
         }
     }
+    if export && let Some(arg) = loft::platform::c_export_dynamic_arg() {
+        link_args.push(arg.to_string());
+    }
+    (rpaths, link_args)
+}
+
+/// The outcome of [`build`]: the binary to run and whether the cache supplied it.
+pub(crate) struct Built {
+    pub binary: std::path::PathBuf,
+    pub cached: bool,
+}
+
+/// Build the unit `c` into `cache_dir/native-c-<key>` (or reuse it), returning its path,
+/// placed as [`Placement`] says.
+/// The binary is compiled under the scratch directory and published by an atomic rename, so
+/// a concurrent run of the same program reads either no binary or a complete one.  With
+/// `no_cache` the binary stays a per-process scratch file the caller deletes after the run.
+///
+/// # Errors
+/// No C compiler, or a compile that fails — the message carries the compiler's own output,
+/// since a C the backend wrote that does not compile is a defect of the backend.
+pub(crate) fn build(
+    c: &str,
+    tier: Tier,
+    cache_dir: &std::path::Path,
+    no_cache: bool,
+    placement: Placement,
+) -> Result<Built, BuildError> {
+    let cc = cc_program();
+    let mut flags = cc_flags(tier);
+    let links = link_inputs(c);
+    let relocatable = placement != Placement::Local;
+    // A shipped program opens the libraries its packages ship at start, where the host can
+    // (`loft_c_bind_libraries`); elsewhere it links them, found beside it.
+    let binds = relocatable && loft::platform::c_binds_libraries_at_start();
+    let dynamic = placement == (Placement::Shipped { dynamic: true });
+    let (bound, shims) = (marked(c, "bound"), marked(c, "shim-archive"));
+    if binds {
+        flags.push("-DLOFT_BIND_LIBS".to_string());
+        if dynamic {
+            flags.push("-DLOFT_BIND_SHIMS".to_string());
+        }
+    }
+    let (rpaths, link_args) = link_plan(&links, &bound, &shims, placement, binds);
     flags.extend(rpaths);
     let key = build_key(c, &cc, &flags, &links);
     let exe = std::env::consts::EXE_SUFFIX;
     let cached = cache_dir.join(format!("native-c-{key}{exe}"));
-    if !no_cache && fa::exists(&cached) && crate::native_utils::cache_safe_to_execute(&cached) {
+    // A lint compiles afresh, so its warnings are seen every time it is asked for.
+    let linting = lint() != Lint::Off;
+    if !no_cache
+        && !linting
+        && fa::exists(&cached)
+        && crate::native_utils::cache_safe_to_execute(&cached)
+    {
         crate::native_utils::touch_cached_binary(&cached);
         return Ok(Built {
             binary: cached,
@@ -417,7 +539,7 @@ pub(crate) fn build(
     cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
     cmd.push_args(&link_args);
     cmd.push_arg("-lm");
-    let out = cmd.run(b"");
+    let out = run_cc(&mut cmd);
     let keep = std::env::var_os("LOFT_KEEP_NATIVE_C").is_some();
     if !keep {
         let _ = fa::remove_file(&src);
@@ -435,6 +557,9 @@ pub(crate) fn build(
              (LOFT_KEEP_NATIVE_C=1 keeps the source).\n{}",
             String::from_utf8_lossy(&out.stderr).trim_end()
         )));
+    }
+    if linting && !out.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
     }
     if keep {
         eprintln!("loft: C source preserved at {}", src.display());

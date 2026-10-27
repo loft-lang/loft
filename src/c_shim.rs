@@ -261,19 +261,48 @@ fn archive_with(
         .to_string()
     };
     let cc = cc_program();
-    let mut objects = Vec::with_capacity(paths.len());
-    for (i, p) in paths.iter().enumerate() {
-        let obj = stage.join(format!("{i}.o"));
-        match tools.compile(&cc, p, &obj).run(b"") {
-            Ok(o) if o.status.success() => objects.push(obj),
-            Ok(o) => return fail(format!("did not compile.\n{}", said(&o))),
-            Err(e) => {
-                return fail(format!(
-                    "`[c] shim` needs a C compiler and `{}` could not be run ({e})",
-                    tools.compiler(&cc)
-                ));
-            }
+    let objects: Vec<std::path::PathBuf> = (0..paths.len())
+        .map(|i| stage.join(format!("{i}.o")))
+        .collect();
+    // The sources compile side by side, as many at once as the host has cores: the runtime's
+    // TLS client is a hundred files (`c::tls`), a minute and more one after another.
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZero::get)
+        .min(paths.len().max(1));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let first_failure: std::sync::Mutex<Option<(usize, String)>> = std::sync::Mutex::new(None);
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if i >= paths.len() {
+                        break;
+                    }
+                    let why = match tools.compile(&cc, &paths[i], &objects[i]).run(b"") {
+                        Ok(o) if o.status.success() => continue,
+                        Ok(o) => format!("did not compile.\n{}", said(&o)),
+                        Err(e) => format!(
+                            "`[c] shim` needs a C compiler and `{}` could not be run ({e})",
+                            tools.compiler(&cc)
+                        ),
+                    };
+                    // The lowest-numbered failure is the one reported, as a serial build would.
+                    let mut f = first_failure
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if f.as_ref().is_none_or(|(j, _)| i < *j) {
+                        *f = Some((i, why));
+                    }
+                }
+            });
         }
+    });
+    if let Some((_, why)) = first_failure
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    {
+        return fail(why);
     }
     let tmp = stage.join(&name);
     match tools.archive(&tmp, &objects).run(b"") {

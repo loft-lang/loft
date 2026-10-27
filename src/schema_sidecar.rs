@@ -360,7 +360,7 @@ pub enum SchemaVerdict {
     /// No recorded identity yet where none is owed: a project's first layout baseline.
     /// Never the answer for a store image — see [`SchemaVerdict::Bare`].
     Fresh,
-    /// No `.dschema` beside a store image, or none that could be fetched: the image
+    /// No `.dschema` beside a store image (a host's 403, 404 or 410 for a remote one): the image
     /// records no layout, so it is never read raw (`@FR-S-Gate`, `@FR-L-Sound`).
     Bare,
     /// The stored layout matches the running program's — safe RAW handoff.
@@ -372,7 +372,8 @@ pub enum SchemaVerdict {
     /// the store's layout is UNKNOWN, so it must not be read raw. Reject.
     Unreadable,
     /// @PLN196 step 9 — the store was written by a release older than the oldest this
-    /// program reads (`Release::admits`); carries the sentence the refusal prints.
+    /// program reads (`Release::admits`), or a remote sidecar could not be fetched; carries
+    /// the sentence the refusal prints.
     Refused(String),
 }
 

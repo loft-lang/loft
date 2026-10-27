@@ -1,18 +1,17 @@
-/* ── Whole-image loads over a URL (`store_load_url`, `store_load_url_trusted`) ──────────────────
- * `net::fetch_bytes` for a C build: a `file://` URL is read from the filesystem, an `http://` one
- * is one HTTP/1.1 GET over a POSIX socket (`Connection: close`, a `Content-Length` or chunked
- * body), and an `https://` one is answered as a build without a TLS transport answers — this
- * runtime has none.  `integrity::verify_sha256` pins an image's bytes.  Pasted only into a unit
- * that loads over a URL (`LOFT_NET`). */
+/* ── Loads over a URL (`store_load_url`, `store_load_url_trusted`, a paged load of an `http(s)://`
+ * image) ───────────────────────────────────────────────────────────────────────────────────────
+ * `net::fetch_bytes`, `fetch_range` and `fetch_size` for a C build: a `file://` URL is read from
+ * the filesystem, an `http://` or `https://` one goes through the runtime's HTTP client
+ * (`loft_https.h`: a POSIX socket, TLS over it for https).  `integrity::verify_sha256` pins an
+ * image's bytes.  Pasted only into a unit that loads over a URL or pages an image (`LOFT_NET`). */
 #ifdef LOFT_NET
-#ifdef LOFT_POSIX_HOST
-#include <netdb.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#endif
 
 /* A fetched body, malloc'd; on failure `err` says why. */
 typedef struct { uint8_t *p; size_t n; } loft_bytes;
+
+/* Set by `loft_fetch` when the host answered that it has no such file (403, 404, 410, a
+ * `file://` path that cannot be read) — `net::Miss::Absent` — rather than the request failing. */
+static LOFT_TLS int loft_fetch_absent = 0;
 
 static void loft_bytes_push(loft_bytes *b, size_t *cap, const uint8_t *p, size_t n) {
     if (b->n + n > *cap) {
@@ -30,6 +29,7 @@ static int loft_fetch_file(const char *path, loft_bytes *out, char *err, size_t 
     FILE *f = fopen(path, "rb");
     if (!f) {
         int e = errno;
+        loft_fetch_absent = 1;
         snprintf(err, cap, "file:// read error for %s: %s (os error %d)", path, strerror(e), e);
         return 0;
     }
@@ -41,108 +41,126 @@ static int loft_fetch_file(const char *path, loft_bytes *out, char *err, size_t 
 }
 
 #ifdef LOFT_POSIX_HOST
-/* One GET of `http://host[:port]/path`: the 2xx body, a chunked one decoded. */
+/* One GET of `http[s]://host[:port]/path`: the 2xx body, a chunked one decoded. */
 static int loft_fetch_http(const char *url, loft_bytes *out, char *err, size_t cap) {
-    const char *rest = url + 7, *slash = strchr(rest, '/');
-    size_t hlen = slash ? (size_t) (slash - rest) : strlen(rest);
-    char host[256], port[16] = "80";
-    if (hlen == 0 || hlen >= sizeof host) {
-        snprintf(err, cap, "HTTP error: %s is not a URL this client reads", url);
+    loft_http h;
+    char why[1024];
+    if (!loft_http_open(&h, "GET", url, "", "", 5, why, sizeof why)) {
+        snprintf(err, cap, "HTTP error: %s", why);
         return 0;
     }
-    memcpy(host, rest, hlen);
-    host[hlen] = 0;
-    char *colon = strrchr(host, ':');
-    if (colon) {
-        snprintf(port, sizeof port, "%s", colon + 1);
-        *colon = 0;
-    }
-    const char *path = slash ? slash : "/";
-    struct addrinfo hints, *res = 0;
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host, port, &hints, &res) != 0 || !res) {
-        snprintf(err, cap, "HTTP error: %s: the host cannot be resolved", url);
+    if (h.status < 200 || h.status >= 300) {
+        snprintf(err, cap, "HTTP error: %s: status code %d", url, (int) h.status);
+        loft_fetch_absent = h.status == 403 || h.status == 404 || h.status == 410;
+        loft_http_close(&h);
         return 0;
     }
-    int fd = -1;
-    for (struct addrinfo *a = res; a; a = a->ai_next) {
-        fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-        if (fd < 0) continue;
-        if (connect(fd, a->ai_addr, a->ai_addrlen) == 0) break;
-        close(fd);
-        fd = -1;
-    }
-    freeaddrinfo(res);
-    if (fd < 0) {
-        int e = errno;
-        snprintf(err, cap, "HTTP error: %s: Connection Failed: %s (os error %d)", url, strerror(e), e);
-        return 0;
-    }
-    char req[1024];
-    int rn = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
-    for (int sent = 0; sent < rn;) {
-        ssize_t w = write(fd, req + sent, (size_t) (rn - sent));
-        if (w <= 0) break;
-        sent += (int) w;
-    }
-    loft_bytes all = { 0, 0 };
-    size_t ac = 0;
-    uint8_t buf[65536];
-    ssize_t got;
-    while ((got = read(fd, buf, sizeof buf)) > 0) loft_bytes_push(&all, &ac, buf, (size_t) got);
-    close(fd);
-    size_t head = 0;
-    while (head + 3 < all.n && memcmp(all.p + head, "\r\n\r\n", 4) != 0) head++;
-    int status = 0;
-    if (all.n >= 12 && memcmp(all.p, "HTTP/", 5) == 0) {
-        const uint8_t *sp = memchr(all.p, ' ', all.n);
-        if (sp) status = atoi((const char *) sp + 1);
-    }
-    if (head + 3 >= all.n || status == 0) {
-        snprintf(err, cap, "HTTP error: %s: the answer is not HTTP", url);
-        free(all.p);
-        return 0;
-    }
-    if (status < 200 || status >= 300) {
-        snprintf(err, cap, "HTTP error: %s: status code %d", url, status);
-        free(all.p);
-        return 0;
-    }
-    int chunked = 0;
-    for (size_t i = 0; i + 26 <= head; i++) {
-        if ((all.p[i] == 'T' || all.p[i] == 't') && strncmp((const char *) all.p + i + 1, "ransfer-Encoding: chunked", 25) == 0) chunked = 1;
-    }
-    const uint8_t *body = all.p + head + 4, *end = all.p + all.n;
     size_t oc = 0;
-    if (!chunked) {
-        loft_bytes_push(out, &oc, body, (size_t) (end - body));
-    } else {
-        while (body < end) {
-            unsigned long len = strtoul((const char *) body, 0, 16);
-            const uint8_t *nl = memchr(body, '\n', (size_t) (end - body));
-            if (!nl || len == 0) break;
-            body = nl + 1;
-            if ((size_t) (end - body) < len) len = (unsigned long) (end - body);
-            loft_bytes_push(out, &oc, body, len);
-            body += len;
-            if (body < end && *body == '\r') body++;
-            if (body < end && *body == '\n') body++;
-        }
+    uint8_t buf[65536];
+    long got;
+    while ((got = loft_http_read(&h, buf, sizeof buf)) > 0) loft_bytes_push(out, &oc, buf, (size_t) got);
+    loft_http_close(&h);
+    if (got < 0) {
+        free(out->p);
+        out->p = 0;
+        out->n = 0;
+        snprintf(err, cap, "HTTP error: %s: the connection ended inside the body", url);
+        return 0;
     }
-    free(all.p);
     return 1;
 }
 #endif
+
+/* `net::fetch_range`: up to `len` bytes of `url` from byte `off`, by a `Range` GET; a server that
+ * ignores the range answers the whole file, which is read through to `off` — right, only slow.
+ * The count (short at the end of the file), else -1 with `err` saying why. */
+static long loft_net_range(const char *url, uint64_t off, uint8_t *buf, size_t len, char *err, size_t cap) {
+    if (len == 0) return 0;
+#ifdef LOFT_POSIX_HOST
+    char range[96], why[1024];
+    snprintf(range, sizeof range, "Range: bytes=%llu-%llu\r\n", (unsigned long long) off,
+             (unsigned long long) (off + len - 1));
+    loft_http h;
+    if (!loft_http_open(&h, "GET", url, range, "", 5, why, sizeof why)) {
+        snprintf(err, cap, "HTTP error: %s", why);
+        return -1;
+    }
+    if (h.status < 200 || h.status >= 400) {
+        snprintf(err, cap, "HTTP error: %s: status code %d", url, (int) h.status);
+        loft_http_close(&h);
+        return -1;
+    }
+    long r = 1;
+    for (uint64_t skip = h.status == 206 ? 0 : off; skip > 0 && r > 0; skip -= (uint64_t) r) {
+        uint8_t sink[65536];
+        r = loft_http_read(&h, sink, skip < sizeof sink ? (size_t) skip : sizeof sink);
+    }
+    size_t got = 0;
+    while (r > 0 && got < len && (r = loft_http_read(&h, buf + got, len - got)) > 0) got += (size_t) r;
+    loft_http_close(&h);
+    if (r < 0) {
+        snprintf(err, cap, "HTTP error: %s: the connection ended inside the body", url);
+        return -1;
+    }
+    return (long) got;
+#else
+    (void) off;
+    (void) buf;
+    snprintf(err, cap, "this build has no HTTP transport, so it cannot range-read %s — a store it carries pages "
+             "through the host filesystem instead", url);
+    return -1;
+#endif
+}
+
+/* `net::fetch_size`: the byte length of `url` by a `Range: bytes=0-0` probe — the total of its
+ * `Content-Range`, else its `Content-Length`; 1, else 0 with `err` saying why.  The body is not
+ * read, so a server that ignores the range does not send the file for nothing. */
+static int loft_net_size(const char *url, uint64_t *size, char *err, size_t cap) {
+#ifdef LOFT_POSIX_HOST
+    char why[1024];
+    loft_http h;
+    if (!loft_http_open(&h, "GET", url, "Range: bytes=0-0\r\n", "", 5, why, sizeof why)) {
+        snprintf(err, cap, "HTTP error: %s", why);
+        return 0;
+    }
+    if (h.status < 200 || h.status >= 400) {
+        snprintf(err, cap, "HTTP error: %s: status code %d", url, (int) h.status);
+        loft_http_close(&h);
+        return 0;
+    }
+    const char *v;
+    size_t vn;
+    int64_t n = -1;
+    if (loft_http_header(&h.head, "content-range", &v, &vn)) {
+        const char *slash = v + vn;
+        while (slash > v && slash[-1] != '/') slash--;
+        const char *t = slash, *e = v + vn;
+        while (t < e && isspace((unsigned char) *t)) t++;
+        if (slash == v || !loft_http_number(t, (size_t) (e - t), &n)) n = -1;
+    }
+    if (n < 0 && loft_http_header(&h.head, "content-length", &v, &vn) && !loft_http_number(v, vn, &n)) n = -1;
+    loft_http_close(&h);
+    if (n < 0) {
+        snprintf(err, cap, "remote store: could not determine size of %s", url);
+        return 0;
+    }
+    *size = (uint64_t) n;
+    return 1;
+#else
+    (void) size;
+    snprintf(err, cap, "this build has no HTTP transport, so it cannot size %s", url);
+    return 0;
+#endif
+}
 
 /* `net::fetch_bytes`: the bytes at `url`, 1; else 0 with `err` saying why. */
 static int loft_fetch(const char *url, loft_bytes *out, char *err, size_t cap) {
     out->p = 0;
     out->n = 0;
+    loft_fetch_absent = 0;
     if (strncmp(url, "file://", 7) == 0) return loft_fetch_file(url + 7, out, err, cap);
 #ifdef LOFT_POSIX_HOST
-    if (strncmp(url, "http://", 7) == 0) return loft_fetch_http(url, out, err, cap);
+    if (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0) return loft_fetch_http(url, out, err, cap);
 #endif
     snprintf(err, cap, "this build has no HTTP transport, so it cannot fetch %s — a store it carries reads with "
              "`store_load`, which needs no network", url);
@@ -199,6 +217,37 @@ static void loft_sha256_hex(const uint8_t *p, size_t n, char hex[65]) {
     for (int i = 0; i < 8; i++) snprintf(hex + 8 * i, 9, "%08x", (unsigned) h[i]);
 }
 
+/* The layout gate of an image at `u` (`check_sidecar` over HTTP): `<u>.dschema` fetched and
+ * classified.  A host's own "not there" (`loft_fetch_absent`) refuses it as a bare image, a request
+ * that failed refuses naming why; `recorded` gets the sidecar's slot.  1 when it may be read. */
+static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who, long *recorded) {
+    char err[1024];
+    loft_bytes b;
+    size_t ulen = strlen(u);
+    char *side = (char *) malloc(ulen + 9);
+    if (!side) { fputs("loft: out of memory\n", stderr); abort(); }
+    snprintf(side, ulen + 9, "%s.dschema", u);
+    int got = loft_fetch(side, &b, err, sizeof err);
+    free(side);
+    if (!got && !loft_fetch_absent) {
+        /* The request failed: nothing is known about the sidecar. */
+        char why[1200];
+        snprintf(why, sizeof why, "its layout sidecar (`.dschema`) could not be fetched: %s", err);
+        loft_gate_refuse(who, u, why);
+        return 0;
+    }
+    if (!got) {
+        loft_gate_refuse(who, u, "it has no layout sidecar (`.dschema`) beside it, so nothing records the layout "
+                         "its records were written with; write it with store_persist_copy, which writes both");
+        return 0;
+    }
+    char *text = (char *) realloc(b.p, b.n + 1);
+    if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
+    text[b.n] = 0;
+    if (recorded) *recorded = loft_sidecar_slot(text);
+    return loft_image_gate_text(u, text, sc, who);
+}
+
 /* `load_url_verified` (with `sha`) and `load_url`: the image's layout gated by `<url>.dschema`
  * — a typed store refuses an image whose sidecar cannot be fetched, as a bare file — then the
  * bytes fetched, pinned by their SHA-256 when one is given, and adopted structurally validated
@@ -210,27 +259,9 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     char err[1024];
     loft_bytes b;
     long recorded = -1;
-    if (sc && loft_stores[r.store_nr].known == sc->tp) {
-        size_t ulen = strlen(u);
-        char *side = (char *) malloc(ulen + 9);
-        if (!side) { fputs("loft: out of memory\n", stderr); abort(); }
-        snprintf(side, ulen + 9, "%s.dschema", u);
-        int got = loft_fetch(side, &b, err, sizeof err);
-        free(side);
-        if (!got) {
-            loft_gate_refuse(who, u, "it has no layout sidecar (`.dschema`) beside it, so nothing records the layout "
-                             "its records were written with; write it with store_persist_copy, which writes both");
-            free(u);
-            return 0;
-        }
-        char *text = (char *) realloc(b.p, b.n + 1);
-        if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
-        text[b.n] = 0;
-        recorded = loft_sidecar_slot(text);
-        if (!loft_image_gate_text(u, text, sc, who)) {
-            free(u);
-            return 0;
-        }
+    if (sc && loft_stores[r.store_nr].known == sc->tp && !loft_net_gate(u, sc, who, &recorded)) {
+        free(u);
+        return 0;
     }
     if (!loft_fetch(u, &b, err, sizeof err)) {
         fprintf(stderr, sha ? "store loader: refusing %s — fetch failed: %s\n" : "store loader: %s — fetch failed: %s\n", u, err);

@@ -1450,6 +1450,20 @@ pub fn bound_append_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_BOUND_APPEND"))
 }
 
+/// `LOFT_NO_TEXT_LEN=1` — `@FR-R-TextLen` off: a loop counts a text's length at every use.
+#[must_use]
+pub fn text_len_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TEXT_LEN"))
+}
+
+/// `LOFT_TRACE_TEXT_LEN=1` — name each text whose length `text_len` counts once per write.
+#[must_use]
+pub fn trace_text_len() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_TEXT_LEN"))
+}
+
 /// `LOFT_TRACE_BOUND_APPEND=1` — name each append `bound_append` moves to its call.
 #[must_use]
 pub fn trace_bound_append() -> bool {

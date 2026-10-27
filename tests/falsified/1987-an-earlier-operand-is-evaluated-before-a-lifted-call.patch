@@ -1,8 +1,7 @@
-diff --git b/src/scopes/args.rs a/src/scopes/args.rs
-index 6ec6cd30e..89700a678 100644
---- b/src/scopes/args.rs
-+++ a/src/scopes/args.rs
-@@ -217,15 +217,7 @@ impl Scopes<'_> {
+diff --git a/src/scopes/args.rs b/src/scopes/args.rs
+--- a/src/scopes/args.rs
++++ b/src/scopes/args.rs
+@@ -217,15 +217,7 @@
                  if *d == create_stack_nr
                      && matches!(cargs.first().map(Value::unspan), Some(Value::Var(_))))
          });
@@ -18,7 +17,7 @@ index 6ec6cd30e..89700a678 100644
              // loft#1320 — a branch VALUE consumed by this call (`total(if c { g(a) } else { g(n) })`)
              // never reaches `scan_set`, so its arms get their owners here, homed in this statement's
              // scope: the call reads the temp and the scope's exit frees it by identity.
-@@ -585,11 +577,6 @@ impl Scopes<'_> {
+@@ -600,11 +592,6 @@
                  ls.push(scanned);
              }
          }
@@ -27,11 +26,11 @@ index 6ec6cd30e..89700a678 100644
 -            hoisted_from.push(preamble.len());
 -            self.keep_operand_order(&mut preamble, &hoisted_from, &mut ls, function, data);
 -        }
-         for (i, orig) in amp_foreign.iter().enumerate() {
-             preamble.insert(
-                 i,
-@@ -606,143 +593,6 @@ impl Scopes<'_> {
-         (preamble, ls, postamble)
+         if outer_call != u32::MAX && ls.len() == args.len() {
+             self.keep_viewed_displaced(
+                 outer_call,
+@@ -728,143 +715,6 @@
+         }
      }
  
 -    /// `@FR-E-Left`, `@FR-F-Args` — operands are evaluated left to right, and a hoisted

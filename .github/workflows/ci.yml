@@ -1439,6 +1439,48 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # @PLN203 C8 — the C backend against the interpreter over the whole corpus, in its three
+  # macro modes (`-DLOFT_STRICT -pedantic -Werror`, the default, `-DLOFT_VERIFY`): a program
+  # that differs, or whose C does not compile, fails its shard (`scripts/c_sweep.py`, exit 1).
+  # Four shards because one eighth of the corpus measured 301 s on this runner (2026-10-27),
+  # so a quarter is ten minutes of sweep beside the release build.  ADVISORY until the owner
+  # makes it required; the poison and sanitizer sweeps (`--poison`, `--asan`) are nightly.
+  c-sweep:
+    # @windows-exempt: the Linux leg of C8; MinGW and MSVC sweeps are C8's Windows half
+    name: C backend sweep (${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold + sqlite
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libsqlite3-0
+      # Read-only, from the `test` job's cache: the path list must stay IDENTICAL to that job's.
+      - name: Restore cargo registry and build (the test job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+      - name: Build the release loft binary
+        run: cargo build --release --bin loft
+      - name: Sweep this shard of the corpus through the C backend
+        run: python3 scripts/c_sweep.py --shard ${{ matrix.shard }}/4
+
   # The ownership oracle's leak scan over `tests/scripts` (`LOFT_OWN_ORACLE=check-leak`): a
   # STATIC check that every store a function owns is freed or handed on, on every path — the
   # paths the runtime leak check only sees when a test executes them.  Held at 0 findings by
@@ -1965,6 +2007,18 @@ jobs:
           restore-keys: |
             ubuntu-cargo-gallery-${{ hashFiles('**/Cargo.lock') }}-
             ubuntu-cargo-gallery-
+      # The libraries' native crate builds (`~/.loft/build-cache`), apart from the build
+      # above so its path list stays as saved: `make game` packs the sprites through
+      # `use graphics`, whose hand-written crate is keyed on loft-ffi and the loft version,
+      # not on this build, so main's copy serves every branch — and the derive restores it.
+      - name: Cache the libraries' native builds
+        id: loft-build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.loft/build-cache
+          key: ubuntu-loft-build-cache-gallery-${{ hashFiles('tools/brick-buster/loft.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ubuntu-loft-build-cache-gallery-${{ hashFiles('tools/brick-buster/loft.lock') }}-
 
       # Instantiate the committed doc/pkg/{loft.js, loft_bg.wasm} pair
       # exactly as the browser would.  A drifted pair fails here with
@@ -2011,6 +2065,15 @@ jobs:
       # `make gallery` protects the demo grid.
       - name: make game
         run: make game
+      # index/target_surface.json asks rustc which runtime methods the `--html` rlib has;
+      # `make game` has just built that rlib (`target/loft/html`, the same flags), so this
+      # costs the probe compile alone.  The derive runs its own wasm build for the surface
+      # only when `default/` moved, where builtins and ops are declared — this is the check
+      # on every other change.
+      - name: Target surface is current
+        run: >
+          python3 scripts/gen_target_surface.py --check
+          || { echo "::error::index/target_surface.json is stale — run \`make surface-gen\` (or \`scripts/derive-ci.sh\` with default/ changed) and commit it"; exit 1; }
 
       # The browser RENDER gate, here rather than in the `test` job: it asserts against
       # `doc/brick-buster.html`, and `tests/html_render.rs` deliberately refuses to build
@@ -2054,6 +2117,12 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save the libraries' native builds (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.loft/build-cache
+          key: ${{ steps.loft-build-cache.outputs.cache-primary-key }}
 
   # Doc hygiene — blocking CI gate (promoted 2026-05-18).
   #

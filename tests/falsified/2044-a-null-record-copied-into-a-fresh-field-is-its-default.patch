@@ -1,8 +1,7 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index b743d2b7c..0c5f719bc 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -10186,7 +10186,7 @@ fn collect_fresh_fields(
+diff --git a/src/opt/ret_adopt.rs b/src/opt/ret_adopt.rs
+--- a/src/opt/ret_adopt.rs
++++ b/src/opt/ret_adopt.rs
+@@ -321,7 +321,7 @@
  ) {
      for stmt in ops.iter().skip(at) {
          if let Some((addr, sub)) = fresh_field_copy(stmt, target, data) {

@@ -75,6 +75,18 @@ fn have_cc() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+/// The inputs a unit names on its `/* link: … */` lines (an archive it is built with — a
+/// `[c] shim`, the TLS client of a unit that fetches over a URL or pages an image), as
+/// `c_driver::link_inputs` reads them.
+fn unit_links(c_src: &std::path::Path) -> Vec<String> {
+    fa::read_to_string(c_src)
+        .expect("read the C")
+        .lines()
+        .filter_map(|l| l.strip_prefix("/* link: ")?.strip_suffix(" */"))
+        .map(str::to_string)
+        .collect()
+}
+
 fn scratch(name: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("loft-c-emit-{}-{name}", std::process::id()));
     fa::create_dir_all(&d).expect("scratch dir");
@@ -753,14 +765,404 @@ fn main() {
     }
 }
 
+/// `@FR-R-SplitTable`: a `parts = text.split(c)` read only by its length, its element reads
+/// and a walk keeps its pieces as slices of a copy of the text (`loft_stab`) and never builds
+/// the vector or mints its buffer.  The cells: separators at both ends and doubled, an empty
+/// text and one with no separator, an index from the end and one past it, a two-byte
+/// separator, a walk, a rebind in a loop (the table refilled), and the source rebound after
+/// the split — the pieces are the old text's, which a borrowed table would have read after it
+/// was freed (AddressSanitizer).  Each value is computed by hand; `LOFT_NO_SPLIT_TABLE=1`
+/// builds the vectors and answers the same.
+#[test]
+fn a_split_read_by_index_keeps_its_pieces_as_a_table() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"fn edges(src: text) -> text {
+  parts = src.split(',');
+  "{len(parts)}:{parts[0] ?? "N"}|{parts[1] ?? "N"}|{parts[len(parts) - 1] ?? "N"}|{parts[-1] ?? "N"}|{parts[99] ?? "N"}"
+}
+fn sizes(src: text) -> integer {
+  parts = src.split('é');
+  n = len(parts) * 1000;
+  for i in 0..len(parts) { n += size(parts[i]?); }
+  n
+}
+fn walked(src: text) -> text {
+  parts = src.split(' ');
+  out = "";
+  for p in parts { out += "<{p}>"; }
+  out
+}
+fn rebound(n: integer) -> integer {
+  acc = 0;
+  for k in 0..n {
+    parts = "{k},{k * 2},x{k}".split(',');
+    acc += len(parts) + size(parts[2]?) + size(parts[k % 3]?);
+  }
+  acc
+}
+fn changed() -> text {
+  src = "a-bb-ccc";
+  parts = src.split('-');
+  src = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+  "{len(parts)} {parts[1]?} {parts[2]?} {len(src)}"
+}
+fn main() {
+  println(edges(",a,,b,"));
+  println(edges(""));
+  println(edges("solo"));
+  println("{sizes("aébcéédé")}");
+  println(walked("one two  three"));
+  println("{rebound(12)}");
+  println(changed());
+}
+"#;
+    // edges: ",a,,b," is five pieces, "" none, "solo" one; [-1] the last, [99] none.
+    // sizes: five pieces of "aébcéédé" split on 'é', 1 + 2 + 0 + 1 + 0 bytes.
+    // rebound: per k, 3 pieces + size of "x{k}" + size of piece k % 3: 6 6 7 6 6 7 6 7 7 6 8 9.
+    let want = "5:|a|||N\n0:N|N|N|N|N\n1:solo|N|solo|solo|N\n5004\n<one><two><><three>\n81\n\
+                3 bb ccc 50\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("split-table");
+    let file = dir.join("table.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let asan = {
+        let probe = dir.join("probe.c");
+        fa::write(&probe, "int main(void) { return 0; }\n").expect("write probe");
+        loft::platform::process::harness_command("cc")
+            .args(["-fsanitize=address", "-o"])
+            .arg(dir.join("probe"))
+            .arg(&probe)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    for (mode, off, tables) in [("tables", "0", 5), ("vectors", "1", 0)] {
+        let c = dir.join(format!("{mode}.c"));
+        let emit = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_SPLIT_TABLE", off)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        assert_eq!(
+            text.lines()
+                .filter(|l| l.contains("loft_stab_fill(&st"))
+                .count(),
+            tables,
+            "{mode}: the tables filled"
+        );
+        let mut kinds: Vec<(&str, Vec<&str>)> = vec![
+            ("strict", vec!["-DLOFT_STRICT", "-pedantic", "-Werror"]),
+            ("verify", vec!["-DLOFT_VERIFY", "-w"]),
+        ];
+        if asan {
+            kinds.push((
+                "asan",
+                vec![
+                    "-g",
+                    "-fsanitize=address,undefined",
+                    "-fno-sanitize-recover=all",
+                    "-w",
+                ],
+            ));
+        }
+        for (kind, flags) in kinds {
+            let exe = dir.join(format!("{mode}-{kind}"));
+            let cc = loft::platform::process::harness_command("cc")
+                .args(["-std=c99", "-O1"])
+                .args(&flags)
+                .arg(&c)
+                .arg("-o")
+                .arg(&exe)
+                .arg("-lm")
+                .output()
+                .expect("run cc");
+            assert!(
+                cc.status.success(),
+                "{mode} {kind}: {}",
+                String::from_utf8_lossy(&cc.stderr)
+            );
+            let out = loft::platform::process::harness_command(&exe)
+                .output()
+                .expect("run the C program");
+            assert!(
+                out.status.success(),
+                "{mode} {kind}: exit {:?}\n{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{mode} {kind}");
+        }
+    }
+}
+
+/// `@FR-R-Header` under the loop verdict native asks (`hoist::hoistable`): a loop holds the
+/// headers of the vectors its admitted callees index and calls their `__inv` twin with them
+/// (`@FR-R-Inputs`); a loop that grows a store keeps another vector's record and length and
+/// derives its base again at each access (`loft_vh_fresh`, `@FR-R-Base`); and a loop that
+/// pushes into the return buffer while a callee reads a parameter's vector is written twice,
+/// the copy holding the parameter's headers running when their store numbers differ
+/// (`@FR-R-Alias`'s versioned clause).  `grow` pushes 3000 elements into the store the held
+/// `t.a` lives in, so its buffer moves under the held record: a base kept there reads freed
+/// memory (AddressSanitizer) and fails the header proof (`LOFT_VERIFY`).  Each value is
+/// computed by hand; each switch writes the plain form and answers the same.
+#[test]
+fn a_loop_holds_its_callees_headers_and_rederives_a_base_under_growth() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct Two { a: vector<integer>, b: vector<integer> }
+struct Sim { w: integer, v: vector<integer>, out: vector<integer> }
+fn bump(src: vector<integer>, dst: &vector<integer>, i: integer) {
+  if i < dst.len() { dst[i] = (dst[i] ?? 0) + (src[i] ?? 0) * 2; }
+}
+fn rounds(src: vector<integer>, dst: &vector<integer>) -> integer {
+  acc = 0;
+  for _r in 0..3 {
+    for i in 0..len(src) { bump(src, dst, i); acc += dst[i] ?? 0; }
+  }
+  acc
+}
+fn grow(n: integer) -> integer {
+  t = Two { a: [], b: [] };
+  for k in 0..10 { t.a += [k + 1]; }
+  for i in 0..n { t.b += [(t.a[i % len(t.a)] ?? 0) * 2 + len(t.a)]; }
+  s = 0;
+  for x in t.b { s += x; }
+  s + len(t.b)
+}
+fn look(s: Sim, i: integer) -> integer {
+  v = s.v;
+  (v[i % s.w] ?? 0) * 3
+}
+fn build(s: Sim, n: integer) -> vector<integer> {
+  pix: vector<integer> = [];
+  for i in 0..n { pix += [look(s, i) + 1]; }
+  pix
+}
+struct Pt { x: float, k: integer }
+struct Pair { a: vector<Pt>, b: vector<Pt> }
+fn mints(n: integer) -> text {
+  m = Pair { a: [], b: [] };
+  for i in 0..n {
+    base = len(m.a);
+    m.a += [Pt { x: i as float, k: base }];
+    m.b += [Pt { x: 0.5, k: i * 2 }];
+  }
+  sa = 0;
+  sx = 0.0;
+  for p in m.a { sa += p.k; sx += p.x; }
+  sb = 0;
+  for p in m.b { sb += p.k; }
+  "{len(m.a)} {len(m.b)} {sa} {sb} {sx}"
+}
+struct Cfg { k: integer, m: integer }
+fn scal(c: Cfg, n: integer) -> integer {
+  acc = 0;
+  for i in 0..n {
+    acc += c.k;
+    if i % 3 == 0 { c.m += 1; }
+    acc += c.m;
+  }
+  acc
+}
+fn main() {
+  println("{scal(Cfg { k: 5, m: 0 }, 9)}");
+  println(mints(1000));
+  src: vector<integer> = [];
+  dst: vector<integer> = [];
+  for i in 0..8 { src += [i + 1]; dst += [1]; }
+  println("{rounds(src, dst)} {dst}");
+  println("{grow(3000)}");
+  s = Sim { w: 5, v: [2, 4, 6, 8, 10], out: [] };
+  p = build(s, 20);
+  s.out = build(s, 7);
+  println("{len(p)} {p[19]} {s.out}");
+}
+"#;
+    // scal: c.k is read nine times (45) and held; c.m is written in the loop and read after
+    // each write, 1 1 1 2 2 2 3 3 3 (18), so it is not held.
+    // mints: two record vectors of one store minted in turn, each outgrowing its room many
+    // times; a.k is the length read before each mint, 0..999 summing 499500 as a.x does, b.k
+    // the doubled index, 999000.
+    // rounds: after round r, dst[i] = 1 + 2r(i + 1); the reads sum 3·8 + 2·(1+2+3)·36 = 456.
+    // grow: each pass of ten adds 2·55 + 10·10 = 210, 300 passes, plus 3000 elements.
+    // build: v[i % 5]·3 + 1 cycles 7 13 19 25 31; p[19] is the fifth.
+    let want = "63\n1000 1000 499500 999000 499500\n456 [7,13,19,25,31,37,43,49]\n66000\n\
+                20 31 [7,13,19,25,31,7,13]\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("loop-verdict");
+    let file = dir.join("verdict.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let asan = {
+        let probe = dir.join("probe.c");
+        fa::write(&probe, "int main(void) { return 0; }\n").expect("write probe");
+        loft::platform::process::harness_command("cc")
+            .args(["-fsanitize=address", "-o"])
+            .arg(dir.join("probe"))
+            .arg(&probe)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops, push headers,
+    // `scal`'s held scalars)
+    for (mode, switch, twins, fresh, versioned, pushed, scalars) in [
+        ("held", "", 2, 3, 1, 2, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 2, 3, 1, 2, 0),
+        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0),
+    ] {
+        let c = dir.join(format!("{mode}.c"));
+        let mut emit = loft::platform::process::harness_command(loft);
+        if !switch.is_empty() {
+            emit.env(switch, "1");
+        }
+        let emit = emit
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let body = &text[text.find("static void loft_drop_closure").unwrap_or(0)..];
+        let calls = body
+            .lines()
+            .filter(|l| l.contains("__inv(") && !l.trim_start().starts_with("static"))
+            .count();
+        assert_eq!(calls, twins, "{mode}: the calls handed held headers");
+        assert_eq!(
+            body.lines()
+                .filter(|l| l.contains("loft_vh_fresh(h"))
+                .count(),
+            fresh,
+            "{mode}: the reads that derive their base again"
+        );
+        assert_eq!(
+            body.matches("_pix.store_nr != ").count(),
+            versioned,
+            "{mode}: the loops written twice"
+        );
+        assert_eq!(
+            body.lines()
+                .filter(|l| l.contains(" = loft_ph_of("))
+                .count(),
+            pushed,
+            "{mode}: the record push headers"
+        );
+        let scal = body
+            .find("n_scal__fr(")
+            .and_then(|at| body[at..].find("{\n").map(|o| at + o))
+            .map_or("", |at| {
+                &body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
+            });
+        assert_eq!(
+            scal.lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    t.starts_with('s')
+                        && t[1..]
+                            .split(" = ")
+                            .next()
+                            .is_some_and(|n| n.parse::<u32>().is_ok())
+                })
+                .count(),
+            scalars,
+            "{mode}: scal's held scalars"
+        );
+        let mut kinds: Vec<(&str, Vec<&str>)> = vec![
+            ("strict", vec!["-DLOFT_STRICT", "-pedantic", "-Werror"]),
+            ("verify", vec!["-DLOFT_VERIFY", "-w"]),
+        ];
+        if asan && mode == "held" {
+            kinds.push((
+                "asan",
+                vec![
+                    "-g",
+                    "-fsanitize=address,undefined",
+                    "-fno-sanitize-recover=all",
+                    "-w",
+                ],
+            ));
+        }
+        for (kind, flags) in kinds {
+            let exe = dir.join(format!("{mode}-{kind}"));
+            let cc = loft::platform::process::harness_command("cc")
+                .args(["-std=c99", "-O1"])
+                .args(&flags)
+                .arg(&c)
+                .arg("-o")
+                .arg(&exe)
+                .arg("-lm")
+                .output()
+                .expect("run cc");
+            assert!(
+                cc.status.success(),
+                "{mode} {kind}: {}",
+                String::from_utf8_lossy(&cc.stderr)
+            );
+            let out = loft::platform::process::harness_command(&exe)
+                .env("ASAN_OPTIONS", "detect_leaks=0")
+                .output()
+                .expect("run the C program");
+            assert!(
+                out.status.success(),
+                "{mode} {kind}: exit {:?}\n{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{mode} {kind}");
+        }
+    }
+}
+
 /// `@FR-R-PushFill`'s window clause as C: a counted push loop the Rust writer's own admission
 /// passes (`hoist::push_loop` + `push_window_ok`, or `mint_loop` + `mint_window_ok` for record
 /// mints) reserves its pushes once and pushes through a `loft_win` — a compare, a store and a
 /// bump — whose length is written back at the loop's exit.  Every push kind is here (integer,
 /// float, single, i32, u8, character, boolean, enum), a record mint whose literal writes every
 /// field (no default image copied, `@FR-R-CompleteWrite`), a comprehension inside a
-/// comprehension, and a window reopened on every pass of an outer loop.  The C declines where
-/// native declines: the enum vector, and a mint under an `if` arm.  Each value is computed by
+/// comprehension, and a window reopened on every pass of an outer loop (with the deep window
+/// off, `LOFT_NO_DEEP_WINDOW=1`; by default that outer loop holds one deep window instead).
+/// The counted rule declines where native's does: the enum vector (native's repeat fill), and
+/// a mint under an `if` arm; the deep window (`hoist::deep_window_ok`) takes the enum loop.  Each value is computed by
 /// hand; `LOFT_NO_PUSH_WINDOW=1` opens none and answers the same; the proofs are checked under
 /// `LOFT_VERIFY`.  A window cannot serve a locked store, so its pushes take the growth arm,
 /// the ordinary append, which refuses as the interpreter does.
@@ -881,10 +1283,18 @@ fn main() {
             .output()
             .expect("run the C program")
     };
-    for (mode, off, windows, slots) in [("windowed", "0", 10, 1), ("unwindowed", "1", 0, 0)] {
+    // `counted` keeps the deep window off, so the inner loop of `reopened` reopens its counted
+    // window on every outer pass; by default the outer loop holds one deep window instead, and
+    // `narrow`'s enum loop — native's repeat fill, which the C does not have — takes one too.
+    for (mode, off, deep_off, windows, slots) in [
+        ("windowed", "0", "0", 11, 1),
+        ("counted", "0", "1", 10, 1),
+        ("unwindowed", "1", "0", 0, 0),
+    ] {
         let c = dir.join(format!("{mode}.c"));
         let emit = loft::platform::process::harness_command(loft)
             .env("LOFT_NO_PUSH_WINDOW", off)
+            .env("LOFT_NO_DEEP_WINDOW", deep_off)
             .arg("--emit-c")
             .arg(&c)
             .arg(&file)
@@ -2497,6 +2907,7 @@ impl Crossed {
             .arg("-o")
             .arg(&exe)
             .arg("-lm")
+            .args(unit_links(&c_src))
             .output()
             .expect("run cc");
         assert!(
@@ -3789,4 +4200,681 @@ fn native_c_html_page_runs_its_program() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// Does `cc` build and run an AddressSanitizer program with its leak check on?  Probed under
+/// the options the test runs with, so a host whose sanitizer has no leak check (macOS's) or a
+/// box without the runtime skips rather than fails.
+fn have_asan(dir: &std::path::Path) -> bool {
+    if !have_cc() {
+        return false;
+    }
+    let src = dir.join("asan_probe.c");
+    let exe = dir.join("asan_probe");
+    fa::write(&src, "int main(void) { return 0; }\n").expect("write probe");
+    loft::platform::process::harness_command("cc")
+        .args(["-fsanitize=address"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .is_ok_and(|o| o.status.success())
+        && loft::platform::process::harness_command(&exe)
+            .env("ASAN_OPTIONS", "detect_leaks=1")
+            .output()
+            .is_ok_and(|o| o.status.success())
+}
+
+/// `prog` written as C by the `loft` binary, built under AddressSanitizer and UBSan, run from
+/// `cwd` with the leak check on: its exit status, stdout and stderr.
+fn run_asan(
+    dir: &std::path::Path,
+    prog: &std::path::Path,
+    cwd: &std::path::Path,
+) -> (i32, String, String) {
+    let stem = fa::file_stem(prog).unwrap_or_else(|| "p".into());
+    let c = dir.join(format!("{stem}.c"));
+    let exe = dir.join(&stem);
+    let emit = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(prog)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{stem}: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let inc = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-g", "-DLOFT_CALL_CHAIN", "-pthread"])
+        .args(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
+        .arg(format!("-I{}", inc.display()))
+        .arg(&c)
+        .args(unit_links(&c))
+        .arg("-o")
+        .arg(&exe)
+        .args(["-lm", "-ldl"])
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{stem}: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .current_dir(cwd)
+        .env("ASAN_OPTIONS", "detect_leaks=1")
+        .env_remove("LOFT_SOURCE_DIR")
+        .output()
+        .expect("run the program");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Faults that end a test inside frames holding texts, for the leak check below: a 10 000-deep
+/// recursion (the hold stack grows), a tuple's texts, and a lazy driver's CONTAINED fault, twenty
+/// times, under a caller whose own text must survive each one.  Beside them a passing test whose
+/// generic loop moves a callback's `(integer, text)` into one local per pass: on the build before
+/// the fix every pass but the last left the old tuple's text allocated.
+const HALTS: &str = r#"
+fn down(n: integer) -> text {
+  own = "level {n}";
+  if n == 0 {
+    assert(false, "bottom {own}");
+  }
+  r = down(n - 1);
+  "{own}/{r}"
+}
+
+// @EXPECT_FAIL: bottom level 0
+fn test_a_deep_recursion_halts() {
+  x = down(10000);
+  assert(len(x) > 0, "never");
+}
+
+fn pair(k: integer) -> (text, text) {
+  ("left {k}", "right {k}")
+}
+
+// @EXPECT_FAIL: tuple left 7 right 7
+fn test_a_tuple_of_texts_at_a_halt() {
+  p = pair(7);
+  (a, b) = p;
+  assert(len(a) < 0, "tuple {a} {b}");
+}
+
+struct LuPerson { id: integer, nm: text }
+struct LuWorld { people: hash<LuPerson[id]> = [] }
+
+fn lazy_fetch(coll: hash<LuPerson[id]>, source: text, key_int: integer, key_text: text) -> integer {
+  mine = "driver {key_int} {source}";
+  assert(key_int != 1, "driver faults holding {mine}");
+  coll += [LuPerson { id: key_int, nm: "ok-{key_int}" }];
+  1
+}
+
+fn test_a_contained_fault_keeps_the_callers_texts() {
+  outer = "caller {6 * 7}";
+  w = LuWorld { };
+  _ = store_bind_lazy(w.people, "duckdb:unwind");
+  for _i in 0..20 {
+    r = w.people[1];
+    assert(r == null, "a faulted fetch answers null");
+  }
+  after = "{outer} still {len(outer)}";
+  assert(after == "caller 42 still 9", "got {after}");
+  two = w.people[2];
+  assert(two != null && two.nm == "ok-2", "the next fetch inserts");
+}
+
+fn test_after_them() {
+  s = "after {10 + 1}";
+  assert(s == "after 11", "got {s}");
+}
+
+fn app<U>(v: vector<integer>, f: fn(integer) -> U) -> vector<U> {
+  out: vector<U> = [];
+  for c in v { out += [f(c)]; }
+  out
+}
+
+fn test_a_generic_callback_answers_tuples_of_texts() {
+  t = app([1, 2, 3], |x| { (x, "w{x}") });
+  assert(len(t) == 3 && t[0].1 == "w1" && t[2].1 == "w3" && t[1].0 == 2, "{t[1].1}");
+}
+"#;
+
+/// loft#2198: a failed assert or a panic ends a C test by `longjmp`, past every scope-exit free,
+/// so each text its frames held stayed allocated; a lazy driver's contained fault did the same
+/// once per failed fetch.  Each function now names the texts its epilogue frees and the halt
+/// releases them before it jumps — a contained one only above the driver.  Scored by
+/// LeakSanitizer: on the build before the fix, 2121's six functions leaked 35 allocations, the
+/// recursion and the tuple 58 leak records, and the driver one text per contained fault.  A
+/// release that reached a live caller's text would show here as a use-after-free, or as
+/// `caller 42` read wrong.
+///
+/// loft#2199: the program-directory anchor was a `loft_text` used as a C string with no
+/// terminator, so `chdir` failed on the bytes after it (and the fault log read past it): run
+/// from `/`, `directory()` answered `/` instead of the program's own directory.
+#[test]
+fn a_halted_c_test_releases_the_texts_its_frames_hold() {
+    let dir = scratch("halt-release");
+    if !have_asan(&dir) {
+        eprintln!("skipped: no AddressSanitizer runtime for cc here");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let halts = dir.join("halts.loft");
+    fa::write(&halts, HALTS).expect("write halts.loft");
+    let guard = root.join("tests/scripts/2121-a-halted-frame-releases-the-texts-it-holds.loft");
+    for prog in [guard.as_path(), halts.as_path()] {
+        let (code, _, err) = run_asan(&dir, prog, &dir);
+        assert!(
+            code == 0 && !err.contains("Sanitizer") && !err.contains("runtime error:"),
+            "{}: exit {code}\n{err}",
+            prog.display()
+        );
+    }
+    let anchor = dir.join("anchor.loft");
+    fa::write(
+        &anchor,
+        "fn main() {\n  println(\"dir {directory()}\");\n}\n",
+    )
+    .expect("write");
+    let (code, out, err) = run_asan(&dir, &anchor, std::path::Path::new("/"));
+    let want = fa::canonical(&dir).expect("canonical scratch").native();
+    assert_eq!(
+        (code, out.trim_end()),
+        (0, format!("dir {want}").as_str()),
+        "{err}"
+    );
+}
+
+/// @PLN203 — the natives of an `in_binary` library (`[native] in_binary = true`: implemented in
+/// loft's own binary) run on the C when its runtime carries them, and refuse by name when it
+/// does not.  `lib/process`'s `process_run` is carried (`loft_process.h`): the values below are
+/// computed by hand — a run's code and both streams, a signal as 128 + n, a program that cannot
+/// start, a timeout's -2, a cursor's lines — and the interpreter must give the same lines.
+/// `engine_host`'s `rebuild_status` is not carried: the C must refuse the unit naming it, never
+/// emit the "not loaded" stub, which the interpreter cannot give for a native of its own binary.
+#[test]
+fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
+    if !have_cc() || !loft::platform::c_runtime_posix_host() {
+        eprintln!("skipped: no cc on PATH, or not a POSIX host");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    let dir = scratch("inbinary");
+    let file = dir.join("p.loft");
+    fa::write(
+        &file,
+        "use process::*;\nfn main() {\n  \
+         both: Command = \"sh -c 'echo out; echo err >&2; exit 3'\";\n  b = both.run();\n  \
+         println(\"run {b.ok} {b.code} [{b.stdout.trim()}] [{b.stderr.trim()}]\");\n  \
+         killed: Command = \"sh -c 'kill -TERM $$'\";\n  println(\"signal {killed.run().code}\");\n  \
+         missing: Command = \"no-such-program-for-loft\";\n  m = missing.run();\n  \
+         println(\"missing {m.code} {m.stderr.starts_with(\\\"no-such-program-for-loft: \\\")}\");\n  \
+         slow: Command = \"sleep 5\";\n  t = slow.run(\"\", 100);\n  \
+         println(\"timeout {t.code} {t.timed_out}\");\n  \
+         three: Command = \"sh -c 'echo a; echo b >&2; echo c'\";\n  n = 0;\n  \
+         for l in three.lines() { n += 1; println(\"line {n} {l}\"); }\n}\n",
+    )
+    .expect("write program");
+    let want = "run false 3 [out] [err]\nsignal 143\nmissing -1 true\ntimeout -2 true\n\
+                line 1 a\nline 2 c\n";
+    for backend in ["--native-c", "--interpret"] {
+        let out = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&file)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{backend}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let host = dir.join("h.loft");
+    fa::write(
+        &host,
+        "use engine_host;\nfn main() { println(\"{engine_host::rebuild_status()}\"); }\n",
+    )
+    .expect("write program");
+    let out = loft::platform::process::harness_command(loft)
+        .args(["--emit-c"])
+        .arg(dir.join("h.c"))
+        .arg("--lib")
+        .arg(&lib)
+        .arg(&host)
+        .output()
+        .expect("run loft --emit-c");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "a refusal: {err}");
+    assert!(
+        err.contains("rebuild_status") && err.contains("the C runtime does not carry it"),
+        "the refusal names the native: {err}"
+    );
+}
+
+/// @PLN203 C5 — `lib/engine_host`'s kernel on the C (`loft_engine.h`) and on the interpreter,
+/// driven from outside by a WebSocket and a UDP peer, every message written out by hand: the
+/// 101 response carries the UDP cookie (`X-Loft-UDP`); the connect handler's greeting arrives
+/// (`hello 0`, the first slot's cid); a text frame is echoed; `H:<cookie>` is acked `A:0`; a
+/// seq-stamped datagram of a declared sync kind reaches `on_event` at the next tick and is
+/// echoed over the WebSocket; `quit` stops the run and the program exits 0.
+#[test]
+fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    if !have_cc() || !loft::platform::c_runtime_posix_host() {
+        eprintln!("skipped: no cc on PATH, or not a POSIX host");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    for backend in ["--native-c", "--interpret"] {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .map(|a| a.port())
+            .expect("a free port");
+        let dir = scratch(&format!("kernel{}", &backend[2..]));
+        let file = dir.join("k.loft");
+        fa::write(
+            &file,
+            format!(
+                "use engine_host;\nstruct W {{ n: integer not null }}\nfn main() {{\n  \
+                 w = W {{ n: 0 }};\n  engine_host::sync_class(7);\n  \
+                 engine_host::run({port}, 5000,\n    fn(ev: engine_host::Event) {{\n      \
+                 if ev.kind == 0 {{ engine_host::send(ev.cid, \"hello {{ev.cid}}\"); }}\n      \
+                 if ev.kind == 1 {{\n        \
+                 if ev.payload == \"quit\" {{ engine_host::stop(); return; }}\n        \
+                 engine_host::broadcast(\"echo:{{ev.payload}}\");\n      }}\n    }},\n    \
+                 fn() {{ w.n += 1; }});\n}}\n"
+            ),
+        )
+        .expect("write program");
+        let mut child = loft::platform::process::harness_command(loft)
+            .arg(backend)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&file)
+            .env("LOFT_TIMEOUT", "120")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("start the kernel");
+        // The C build compiles first: wait for the listener.
+        let deadline = Instant::now() + Duration::from_secs(90);
+        let ws = loop {
+            if let Ok(s) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+                break s;
+            }
+            if Instant::now() > deadline || child.try_wait().ok().flatten().is_some() {
+                let _ = child.kill();
+                let out = child.wait_with_output().expect("kernel output");
+                panic!(
+                    "{backend}: the kernel never listened\n{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        ws.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        (&ws)
+            .write_all(
+                b"GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+                  Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+            )
+            .unwrap();
+        let mut head = Vec::new();
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            (&ws).read_exact(&mut b).unwrap();
+            head.push(b[0]);
+        }
+        let head = String::from_utf8_lossy(&head).to_string();
+        assert!(head.starts_with("HTTP/1.1 101 "), "{backend}: {head}");
+        assert!(
+            head.contains("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"),
+            "{backend}: the RFC 6455 sample key's accept value: {head}"
+        );
+        let cookie = head
+            .lines()
+            .find_map(|l| l.strip_prefix("X-Loft-UDP: "))
+            .unwrap_or_else(|| panic!("{backend}: no cookie: {head}"))
+            .trim()
+            .to_string();
+        assert_eq!(cookie.len(), 16, "{backend}: a 16-hex cookie: {cookie}");
+        let recv = || -> String {
+            let mut h = [0u8; 2];
+            (&ws).read_exact(&mut h).unwrap();
+            assert_eq!(h[0], 0x81, "{backend}: an unmasked final text frame");
+            let mut payload = vec![0u8; usize::from(h[1] & 0x7F)];
+            (&ws).read_exact(&mut payload).unwrap();
+            String::from_utf8(payload).unwrap()
+        };
+        let send = |text: &str| {
+            let mask = [0x21u8, 0x43, 0x65, 0x87];
+            let mut frame = vec![0x81u8, 0x80 | u8::try_from(text.len()).unwrap()];
+            frame.extend_from_slice(&mask);
+            frame.extend(text.bytes().enumerate().map(|(i, c)| c ^ mask[i % 4]));
+            (&ws).write_all(&frame).unwrap();
+        };
+        assert_eq!(recv(), "hello 0", "{backend}: the connect greeting");
+        send("ping");
+        assert_eq!(recv(), "echo:ping", "{backend}: the echo");
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        udp.set_read_timeout(Some(Duration::from_millis(300)))
+            .unwrap();
+        let mut ack = String::new();
+        for _ in 0..20 {
+            udp.send_to(format!("H:{cookie}").as_bytes(), ("127.0.0.1", port))
+                .unwrap();
+            let mut buf = [0u8; 64];
+            if let Ok((n, _)) = udp.recv_from(&mut buf) {
+                ack = String::from_utf8_lossy(&buf[..n]).to_string();
+                break;
+            }
+        }
+        assert_eq!(ack, "A:0", "{backend}: the hello's ack");
+        udp.send_to(b"S:5:7:pose", ("127.0.0.1", port)).unwrap();
+        assert_eq!(
+            recv(),
+            "echo:7:pose",
+            "{backend}: the sync datagram, at the next tick"
+        );
+        send("quit");
+        let out = child.wait_with_output().expect("kernel output");
+        assert!(
+            out.status.success(),
+            "{backend}: exit {:?}\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(&format!(
+                "engine_host: listening on ws://0.0.0.0:{port}/ (tick every 5000 us)"
+            )),
+            "{backend}: the listen line"
+        );
+    }
+}
+
+/// `@FR-R-FileHold` as C (`lower::file_hold::held_file`, native's gate): a loop that reads one
+/// `File` through fixed-width integer reads keeps the record's cursor in a `loft_fcur` — read
+/// once, served from a 4 KB buffer, given back on EVERY exit: the loop's end, a `break` of an
+/// outer loop from inside it, a `return` from inside it.  Loft has no exception, so those are
+/// all the exits.  Beside it the deep push window (`hoist::deep_window_ok`), which the reading
+/// loop of cell 1 pushes through.  The program checks its own hand-computed values — the k-th
+/// little-endian i16 of the bytes 0, 1, 2, ... is 514k + 256, the big-endian one 514k + 1 —
+/// and the record's position after each exit; the C must print its `ok` in the strict and the
+/// verify builds.
+#[test]
+fn a_held_file_cursor_gives_its_position_back_on_every_exit() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"// The k-th little-endian i16 of bytes 0, 1, 2, ... is 514k + 256; big-endian 514k + 1.
+fn one(f: File) -> integer { f#read(2) as i16 as integer }
+
+fn first_over(f: File, limit: integer) -> integer {
+  k = 0;
+  while k < 100 {
+    v = f#read(2) as i16 as integer;
+    if v > limit { return k; }
+    k += 1;
+  }
+  -1
+}
+
+fn main() {
+  dir = "{temp_dir() ?? "/tmp"}/loft_fh_{ticks()}";
+  assert(mkdir(dir) == FileResult.Ok, "mkdir");
+  p = "{dir}/b.bin";
+  bytes: vector<u8> = [];
+  for i in 0..40 { bytes += [(i & 255) as u8]; }
+  assert(write_bytes(p, bytes), "write");
+
+  // 1. A whole loop, then a read through the record: positions 0..4, then 5.
+  f1 = file(p);
+  f1#format = LittleEndian;
+  s1 = 0;
+  for _k in 0..5 { s1 += f1#read(2) as i16 as integer; }
+  assert(s1 == 514 * 10 + 256 * 5, "1 loop: {s1}");
+  assert(one(f1) == 514 * 5 + 256, "1 after: {one(f1)}");
+
+  // 2. A break after three: the record goes on at the fourth.
+  f2 = file(p);
+  f2#format = LittleEndian;
+  n2 = 0;
+  for _k in 0..10 { _x = f2#read(2) as i16 as integer; n2 += 1; if n2 == 3 { break; } }
+  assert(one(f2) == 514 * 3 + 256, "2 after a break");
+
+  // 3. A return from inside the loop: values 256, 770, 1284, ... the first over 1500 is k = 3
+  //    (1798), and the caller reads on at the fifth.
+  f3 = file(p);
+  f3#format = LittleEndian;
+  assert(first_over(f3, 1500) == 3, "3 return");
+  assert(one(f3) == 514 * 4 + 256, "3 after a return");
+
+  // 4. A break of the OUTER loop from the inner one, which alone holds the file (the outer
+  //    loop names the file outside a read): two rounds of two reads, the third round's first
+  //    read breaks out — five reads, and the record goes on at the sixth.
+  f4 = file(p);
+  f4#format = LittleEndian;
+  rounds = 0;
+  for r in 0..5 {
+    rounds += 1;
+    if f4#format != LittleEndian { break; }
+    for k in 0..2 {
+      _y = f4#read(2) as i16 as integer;
+      if r == 2 && k == 0 { r#break; }
+    }
+  }
+  assert(rounds == 3, "4 rounds: {rounds}");
+  assert(one(f4) == 514 * 5 + 256, "4 after an outer break");
+
+  // 5. Past the end: 20 values, the 21st read answers null and the cursor stays.
+  f5 = file(p);
+  f5#format = LittleEndian;
+  got = 0;
+  nulls = 0;
+  for _k in 0..22 { v = f5#read(2) as i16; if v == null { nulls += 1; } else { got += 1; } }
+  assert(got == 20 && nulls == 2, "5 end: {got} {nulls}");
+
+  // 6. Big-endian, the file's default.
+  f6 = file(p);
+  s6 = 0;
+  for _k in 0..4 { s6 += f6#read(2) as i16 as integer; }
+  assert(s6 == 514 * 6 + 4, "6 big-endian: {s6}");
+
+  // 7. Across the cursor's 4096-byte block: one byte, then 2499 i16s at odd offsets, one of
+  //    them straddling byte 4096; the expected sum is taken from the byte vector itself.
+  p7 = "{dir}/c.bin";
+  big: vector<u8> = [];
+  for i in 0..5000 { big += [((i * 7) & 255) as u8]; }
+  assert(write_bytes(p7, big), "write 7");
+  want = 0;
+  for k in 0..2499 {
+    lo = (big[1 + 2 * k] ?? 0) as integer;
+    hi = (big[2 + 2 * k] ?? 0) as integer;
+    v = lo + hi * 256;
+    if v >= 32768 { v = v - 65536; }
+    want += v;
+  }
+  f7 = file(p7);
+  f7#format = LittleEndian;
+  first = f7#read(1) as u8 as integer;
+  s7 = 0;
+  for _k in 0..2499 { s7 += f7#read(2) as i16 as integer; }
+  assert(first == 0 && s7 == want, "7 across the block: {first} {s7} {want}");
+  assert(delete(p7) == FileResult.Ok, "cleanup 7");
+
+  assert(delete(p) == FileResult.Ok && rmdir(dir) == FileResult.Ok, "cleanup");
+  println("ok");
+}
+"#;
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("file-hold");
+    let tmp = dir.join("tmp");
+    fa::create_dir_all(&tmp).expect("make the temporary directory");
+    let file = dir.join("hold.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .env("TMPDIR", &tmp)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        "ok\n",
+        "the interpreter"
+    );
+    let c = dir.join("hold.c");
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let holds = text.matches("loft_fcur_hold(").count();
+    let releases = text.matches("loft_fcur_release(").count();
+    assert!(holds >= 6, "the reading loops hold their file: {holds}");
+    assert!(
+        releases > holds,
+        "the return and the outer break give the cursor back too: {releases} for {holds}"
+    );
+    for (mode, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(mode);
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let run = loft::platform::process::harness_command(&exe)
+            .env("TMPDIR", &tmp)
+            .output()
+            .expect("run the C");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "ok\n",
+            "{mode}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
+/// @PLN203 C4 tier 2 — `par` whose worker answers a RECORD runs on threads in the C: each worker
+/// makes its records in stores of its own table, and after it joined the caller copies each row
+/// it computed into one result store — the record's bytes and the claims it owns, as
+/// `Stores::copy_from_worker` does — before the worker's stores go (`loft_par_adopt`).  The rows:
+/// a struct of scalars, one that owns a text and a vector (the claims), a struct-enum, a
+/// pass-through of the input element (a store the caller had, not copied), and `par(…, 1)`.
+/// Four workers ran each threaded loop, one the last, so the instrument can fail.  Hand-computed:
+/// Σ(a + b) = 3·Σx = 3·499500 = 1498500; the names `q0`…`q999` are 10·2 + 90·3 + 900·4 = 3890
+/// characters; each `xs` sums to 3x + 3, so 1498500 + 3000 = 1501500; Σk = 1498500; the even
+/// rows' Dots sum to 249500, the odd rows' Bars are 500 of width 10.
+#[test]
+fn par_returns_records_from_threads_in_the_c() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"struct P { a: integer, b: integer }
+struct Q { name: text, xs: vector<integer>, k: integer }
+enum Shape { Dot { at: integer }, Bar { lo: integer, hi: integer } }
+struct It { n: integer }
+fn pair(x: integer) -> P { P { a: x, b: x * 2 } }
+fn owned(x: integer) -> Q { Q { name: "q{x}", xs: [x, x + 1, x + 2], k: x * 3 } }
+fn shape(x: integer) -> Shape { if x % 2 == 0 { Dot { at: x } } else { Bar { lo: x, hi: x + 10 } } }
+fn same(it: const It) -> It { it }
+fn main() {
+  v: vector<integer> = [];
+  for i in 0..1000 { v += [i]; }
+  // 1. scalars only: sum of a + b = 3 * sum(0..1000) = 3 * 499500 = 1498500
+  s1 = 0;
+  for x in v par(r = pair(x), 4) { s1 += r.a + r.b; }
+  // 2. owned text and vector: names q0..q999 are 10*2 + 90*3 + 900*4 = 3890 characters;
+  //    each xs sums to 3x + 3 -> 3 * 499500 + 3000 = 1501500; k sums to 1498500.
+  c2 = 0; x2 = 0; k2 = 0;
+  for x in v par(q = owned(x), 4) { c2 += len(q.name); for e in q.xs { x2 += e; } k2 += q.k; }
+  // 3. a struct-enum: even x a Dot at x (sum 249500), odd a Bar of width 10 (500 * 10)
+  d3 = 0; w3 = 0;
+  for x in v par(sh = shape(x), 4) {
+    match sh { Dot { at } => { d3 += at; }, Bar { lo, hi } => { w3 += hi - lo; } }
+  }
+  // 4. a pass-through of the input element: sum of n = 499500
+  items: vector<It> = [];
+  for i in 0..1000 { items += [It { n: i }]; }
+  s4 = 0;
+  for it in items par(r = same(it), 4) { s4 += r.n; }
+  // 5. one thread
+  s5 = 0;
+  for x in v par(r = pair(x), 1) { s5 += r.a + r.b; }
+  println("{s1} {c2} {x2} {k2} {d3} {w3} {s4} {s5}");
+}
+"#;
+    let want = "1498500 3890 1501500 1498500 249500 5000 499500 1498500\n";
+    let dir = scratch("parrecords");
+    let file = dir.join("p.loft");
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let out = loft::platform::process::harness_command(loft)
+        .arg("--native-c")
+        .arg(&file)
+        .env("LOFT_TRACE_PAR_WORKERS", "1")
+        .output()
+        .expect("run loft --native-c");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        want,
+        "the C: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let workers: Vec<String> = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter_map(|l| l.split("distinct_workers=").nth(1).map(str::to_string))
+        .collect();
+    assert_eq!(workers, ["4", "4", "4", "4", "1"], "workers per par loop");
 }

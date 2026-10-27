@@ -287,6 +287,50 @@ struct NativeJob {
     key_file: PathBuf,
     /// The program's `// @STORE_LIMIT:` — handed to the binary as `LOFT_STORE_LIMIT`.
     store_limit: Option<u16>,
+    /// The program's `// @ARMED:` switches, set on its run ([`armed_switches`]).
+    armed: Vec<(String, String)>,
+}
+
+/// Every `LOFT_X=v` on a `// @ARMED:` line: the run-time instruments a guard's defect is only
+/// visible under.  A stale address reads the old bytes until the allocator reuses the freed
+/// block, so a plain run of a use-after-free guard passes on the broken build too, while
+/// `LOFT_POISON=1` overwrites that block.  The language suite's runner reads the same line.
+/// Set on the RUN only: a switch the generator reads at compile time is not armed here, and
+/// the interpreter corpus runs in one process, where a per-program switch cannot be set.
+fn armed_switches(src: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in src.lines() {
+        let Some(rest) = line.trim().strip_prefix("// @ARMED:") else {
+            continue;
+        };
+        for tok in rest.split_whitespace() {
+            if let Some((k, v)) = tok.split_once('=')
+                && k.starts_with("LOFT_")
+                && k.bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+                && !v.is_empty()
+            {
+                out.push((k.to_owned(), v.to_owned()));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn armed_switches_reads_the_header_line_only() {
+    let src = "// @ARMED: LOFT_POISON=1 LOFT_STRICT_STORES=1\n\
+               //   ARMED: LOFT_HOIST_VERIFY=1 — a receipt's label, not an arm\n\
+               // @ARMED: lower=1 LOFT_X= LOFT_TEXT_TIMELINE=1\n";
+    assert_eq!(
+        armed_switches(src),
+        [
+            ("LOFT_POISON", "1"),
+            ("LOFT_STRICT_STORES", "1"),
+            ("LOFT_TEXT_TIMELINE", "1")
+        ]
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+    );
 }
 
 /// FNV-1a 64-bit hash — deterministic, no external deps.
@@ -358,9 +402,11 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // 88-imports.loft).  Only `--lib <dir>` is recognised; other
     // CLI-side flags are ignored at this layer.
     let mut store_limit = None;
+    let mut armed = Vec::new();
     if let Ok(src) = fa::read_to_string(entry) {
         p.data.limits = loft::limits::Limits::from_annotations(&src);
         store_limit = loft::limits::Limits::store_limit_annotation(&src);
+        armed = armed_switches(&src);
         for line in src.lines().take(20) {
             if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
                 let mut tokens = args.split_whitespace();
@@ -561,6 +607,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
         binary,
         key_file,
         store_limit,
+        armed,
     })
 }
 
@@ -769,6 +816,9 @@ fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
     cmd.current_dir(&cwd);
     if let Some(n) = job.store_limit {
         cmd.env("LOFT_STORE_LIMIT", n.to_string());
+    }
+    for (k, v) in &job.armed {
+        cmd.env(k, v);
     }
     let (run_status, leaked) = if leak_check {
         let out = cmd.output()?;

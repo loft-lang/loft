@@ -41,6 +41,12 @@ required-features = ["registry"]
 
 # @PLN63 — the loft Language Server (LSP over JSON-RPC/stdio).  Links the loft
 # rlib for parser/typecheck; no extra features (wire JSON is loft's own json mod).
+# `make compiled-stdlib`: regenerates src/compiled_stdlib_gen.rs, linking the release library
+# the `loft` binary already built (a maintenance tool, never installed).
+[[bin]]
+name = "loft-stdlib-gen"
+path = "src/bin/loft-stdlib-gen.rs"
+
 [[bin]]
 name = "loft-lsp"
 path = "src/bin/loft-lsp.rs"

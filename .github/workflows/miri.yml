@@ -745,6 +745,34 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
+  c-sweep-unsound:
+    # @windows-exempt: a platform-independent invariant sweep of the C backend; its Windows reading is C8's MinGW/MSVC half
+    # @nightly-class: unsound — a store use-after-free, an unclaimed read or UB the C backend alone makes
+    name: C backend ${{ matrix.sweep }} sweep (${{ matrix.shard }}/4)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sweep: [poison, asan]
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold + sqlite
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libsqlite3-0
+      - name: Build the release loft binary
+        run: cargo build --release --bin loft
+      # @PLN203 C8 — `ci.yml`'s `c-sweep` compares answers; these read the C under the store's
+      # own falsifiers (`--poison`: a freed or unclaimed record reads as poison, against the
+      # interpreter under the same switch) and under AddressSanitizer + UBSan (`--asan`: any
+      # report is a defect), the two the PR leg does not run.
+      - name: Sweep this shard
+        run: python3 scripts/c_sweep.py --${{ matrix.sweep }} --shard ${{ matrix.shard }}/4
+
   poison-claim:
     # @windows-exempt: a platform-independent invariant sweep (unwritten claims); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a read of memory nothing wrote, hidden by zero-filled claims
@@ -1601,7 +1629,7 @@ jobs:
     # list_that_reads_them` fails when they disagree, and when a job carries no
     # class at all, so a new gate cannot be added without answering the question.
     # Reclassifying is a one-word edit to the marker, and it is meant to be one.
-    needs: [miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts]
+    needs: [miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound]
     # Never from a PR: a pull request must not be able to open an issue on the repo.
     # Never from the release gate either: its run is evidence for a candidate, and a
     # green candidate must not auto-CLOSE an issue main's nightly opened.
@@ -1691,7 +1719,7 @@ jobs:
     # @windows-exempt: platform-free — writes an issue
     name: → tracked issue (red-steps digest)
     needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
+            native-asan, valgrind, c-sweep-unsound, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
@@ -1708,7 +1736,7 @@ jobs:
     # @windows-exempt: platform-free — writes the daily status
     name: Daily status (the one place to look)
     needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
-            native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
+            native-asan, valgrind, c-sweep-unsound, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
@@ -1760,7 +1788,7 @@ jobs:
             done
             echo
             echo "_Gates that FILE an issue when red — the \`@nightly-class: unsound\` set:"
-            echo "miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts."
+            echo "miri, asan, poison, native-poison, poison-claim, stack-shadow, tsan, native-asan, valgrind, debug-asserts, c-sweep-unsound."
             echo "Everything else reports here only._"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "digest written to the job summary"

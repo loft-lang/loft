@@ -355,7 +355,7 @@ gate.
 
 ### Subjects
 
-`parser scopes codegen runtime store wasm packages lsp sql docs host`, defined in
+`parser scopes codegen runtime store wasm packages lsp sql docs host winrules c`, defined in
 `scripts/test_subjects.sh` as binary-name **patterns**, not lists: a list is incomplete the day
 it is written, while a pattern picks up new binaries whose names match.  Patterns are expanded
 against the real binary list before nextest sees them, because nextest treats a pattern
@@ -519,6 +519,13 @@ If a run hangs, stop YOUR process by its PID — `find_problems.sh --stop` for i
 `kill <pid>` of the test binary you started — never `pkill -f <name>`, which also reaches a
 sibling checkout's run.  Then re-run with a narrower filter to find the looping test.  **Do
 not** add `--test-threads=1` to serialise the mess; that hides which test loops.
+
+A cargo build killed while it links — a gate stopped by its process group, a `timeout N cargo
+build` that expires — can leave `target/debug/deps/libloft.rlib` half written.  The next build
+then fails at link time with undefined `anon.<hash>.llvm.<hash>` or `drop_glue` symbols sourced
+from `libloft.rlib`, which read like a source defect and are not one.  Cure: `cargo clean -p
+loft`, then rebuild.  Run a long build in the background and wait on its output instead of
+bounding it with `timeout`.
 
 ### Diagnosing a hang vs a failure
 

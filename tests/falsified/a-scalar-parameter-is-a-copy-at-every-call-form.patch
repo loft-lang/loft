@@ -1,8 +1,7 @@
 diff --git a/src/lexer.rs b/src/lexer.rs
-index 44ae6ff88..c5301cc6c 100644
 --- a/src/lexer.rs
 +++ b/src/lexer.rs
-@@ -274,12 +274,8 @@ struct Recorded {
+@@ -274,12 +274,8 @@
      /// Where the consumed source ended when the token became the one held.
      prev_end: (u32, u32),
      /// The string-interpolation state the read left: a literal that opens a hole leaves
@@ -17,7 +16,7 @@ index 44ae6ff88..c5301cc6c 100644
  }
  
  /// The scan cursor over the current source line: the line's own text and a byte offset into
-@@ -1458,7 +1454,7 @@ impl Lexer {
+@@ -1458,7 +1454,7 @@
              res: res.clone(),
              cursor: (self.position.line, self.position.pos),
              prev_end: (self.prev_end.line, self.prev_end.pos),
@@ -26,7 +25,7 @@ index 44ae6ff88..c5301cc6c 100644
          }
      }
  
-@@ -1466,11 +1462,12 @@ impl Lexer {
+@@ -1466,11 +1462,12 @@
      /// as it would be read, with the cursor and consumed end the scan leaves.
      fn queue(&mut self, res: LexResult) {
          let at = (self.position.line, self.position.pos);
@@ -40,7 +39,7 @@ index 44ae6ff88..c5301cc6c 100644
          });
      }
  
-@@ -1490,9 +1487,7 @@ impl Lexer {
+@@ -1490,9 +1487,7 @@
          self.position.pos = n.cursor.1;
          self.prev_end.line = n.prev_end.0;
          self.prev_end.pos = n.prev_end.1;
@@ -51,7 +50,7 @@ index 44ae6ff88..c5301cc6c 100644
          n.res
      }
  
-@@ -2388,15 +2383,7 @@ impl Lexer {
+@@ -2388,15 +2383,7 @@
                      self.ret_number(0, pos, false)
                  };
              }
@@ -69,10 +68,9 @@ index 44ae6ff88..c5301cc6c 100644
                  // (field access), the current number is a tuple/struct
                  // field index — NEVER a float fragment.  This covers two
 diff --git a/src/opt/value_records/mod.rs b/src/opt/value_records/mod.rs
-index 8a15de0e8..603775307 100644
 --- a/src/opt/value_records/mod.rs
 +++ b/src/opt/value_records/mod.rs
-@@ -878,13 +878,8 @@ pub(crate) fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+@@ -969,13 +969,8 @@
              // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
              // was freed by nobody, one record per call on `--native` alone, in a concrete
              // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
@@ -89,10 +87,9 @@ index 8a15de0e8..603775307 100644
              }
              // `@FR-N-Road` — the view carries the layout its own TYPE names: a view of `S` the
 diff --git a/src/parser/generics.rs b/src/parser/generics.rs
-index 348b7ee9a..0b63c7219 100644
 --- a/src/parser/generics.rs
 +++ b/src/parser/generics.rs
-@@ -1252,91 +1252,6 @@ impl Parser {
+@@ -1256,91 +1256,6 @@
          code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
      }
  
@@ -184,7 +181,7 @@ index 348b7ee9a..0b63c7219 100644
      pub(super) fn fill_monomorph_body(
          &mut self,
          d_nr: u32,
-@@ -1452,8 +1367,6 @@ impl Parser {
+@@ -1464,8 +1379,6 @@
                  }
              }
          }
@@ -194,10 +191,9 @@ index 348b7ee9a..0b63c7219 100644
          self.context = outer_context;
          self.data.definitions[d_nr as usize].code = code;
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index 596451f43..3b6f39faa 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
-@@ -586,19 +586,6 @@ impl Scopes<'_> {
+@@ -586,19 +586,6 @@
          } else {
              HashSet::default()
          };
@@ -217,7 +213,7 @@ index 596451f43..3b6f39faa 100644
          // Kept for the null-arm join leg below, which releases its sources after this sweep.
          let join_arm_dropped = arm_dropped.clone();
          let mut ls = self.get_free_vars(
-@@ -669,10 +656,7 @@ impl Scopes<'_> {
+@@ -669,10 +656,7 @@
          // otherwise emit `Return(expr)` with the sources leaking on the null
          // path (frees suppressed above), and the legacy path would re-open the
          // eval-stack UAF.
@@ -229,7 +225,7 @@ index 596451f43..3b6f39faa 100644
              self.ret_temp_counter += 1;
              let name = format!("__ret_{}", self.ret_temp_counter);
              let tmp = function.add_temp_var(&name, tp);
-@@ -728,18 +712,6 @@ impl Scopes<'_> {
+@@ -734,18 +718,6 @@
                      _ => free,
                  });
              }
@@ -245,14 +241,13 @@ index 596451f43..3b6f39faa 100644
 -                    Value::Null,
 -                ));
 -            }
-             result.append(&mut ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
+         }
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
-index 4bc24e5b5..bc8a8ca09 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
-@@ -1120,15 +1120,6 @@ impl Scopes<'_> {
+@@ -1120,15 +1120,6 @@
          if to_scope == 1 {
              let free_distinct = data.def_nr("OpFreeRefIfDistinct");
              for (param, orig) in function.rebind_params() {
@@ -269,10 +264,9 @@ index 4bc24e5b5..bc8a8ca09 100644
                      free_distinct,
                      vec![Value::Var(param), Value::Var(orig)],
 diff --git a/src/use_analysis.rs b/src/use_analysis.rs
-index 437ad622c..e9090934a 100644
 --- a/src/use_analysis.rs
 +++ b/src/use_analysis.rs
-@@ -7952,77 +7952,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
+@@ -8107,77 +8107,10 @@
          func.is_argument(v)
              && !matches!(func.tp(v), Type::RefVar(_))
              && !func.name(v).starts_with("__")
@@ -351,10 +345,9 @@ index 437ad622c..e9090934a 100644
  ///
  /// This is the difference between a write that LOSES data and one that merely writes into
 diff --git a/src/variables/mod.rs b/src/variables/mod.rs
-index 853eb514e..40f09a6c4 100644
 --- a/src/variables/mod.rs
 +++ b/src/variables/mod.rs
-@@ -4459,12 +4459,6 @@ impl Function {
+@@ -4479,12 +4479,6 @@
      /// @PLN87 P2.1 — record that visible heap parameter `param` is
      /// whole-binding-reassigned in the body and `orig` is its caller-store
      /// witness (see [`Function::rebind_orig`]).  Idempotent — keyed on `param`.

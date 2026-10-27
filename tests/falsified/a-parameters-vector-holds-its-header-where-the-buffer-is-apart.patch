@@ -1,7 +1,7 @@
-diff --git b/src/generation/apart.rs a/src/generation/apart.rs
+diff --git b/src/opt/apart.rs a/src/opt/apart.rs
 index 5971c134e..4f837c18d 100644
---- b/src/generation/apart.rs
-+++ a/src/generation/apart.rs
+--- b/src/opt/apart.rs
++++ a/src/opt/apart.rs
 @@ -376,7 +376,7 @@ pub fn apart_headers(
              && !facts.owns_alone(t)
              && !writers.iter().all(|&w| {

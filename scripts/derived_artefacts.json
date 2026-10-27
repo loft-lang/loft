@@ -1,5 +1,5 @@
 {
-  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `check_first` runs the check before re-deriving and stops the join when it fails; `check_exact` says that check compares every line, so its passing leaves nothing to re-derive. `regen_checks` marks a regen that refuses (exits non-zero, writing nothing) exactly when the check would fail, so the check is not asked again. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry). `row_files` are hand-written docs holding measured `| **N** |` rows: a commit that changes only such rows there is not missing for that file. `ci: true` marks an artefact that is a pure function of the tree — no pin, no judgement — which `.github/workflows/derive.yml` regenerates on a runner and commits back (`scripts/derive_ci.py` runs exactly those, in this order); a ratchet never carries it. A `paths` entry may be a glob (`doc/lib-*.html`).",
+  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `check_first` runs the check before re-deriving and stops the join when it fails; `check_exact` says that check compares every line, so its passing leaves nothing to re-derive. `regen_checks` marks a regen that refuses (exits non-zero, writing nothing) exactly when the check would fail, so the check is not asked again. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry). `row_files` are hand-written docs holding measured `| **N** |` rows: a commit that changes only such rows there is not missing for that file. `ci: true` marks an artefact that is a pure function of the tree — no pin, no judgement — which `.github/workflows/derive.yml` regenerates on a runner and commits back (`scripts/derive_ci.py` runs exactly those, in this order); a ratchet never carries it. Each `ci` entry names its runner `job` — the entries of one job run there in this order, the jobs in parallel, so no entry may read what another job writes — and what that job `needs` installed (`host`: the release loft; `wasm`: the wasm32 target; `wasm-pack`). A `paths` entry may be a glob (`doc/lib-*.html`).",
   "artefacts": [
     {
       "name": "compiled-stdlib",
@@ -15,7 +15,9 @@
         "make -s compiled-stdlib"
       ],
       "note": "the stdlib's compiled loft bodies (@PLN181): stale after any default/*.loft change AND after a compiler change in src/ that alters what the stdlib compiles to (compiled_stdlib_fresh.py hashes only the sources, so the regen is unconditional; the test compiled_stdlib_up_to_date is the real check), and a stale one is interpreted 5-23x slower — first, because the census and the allocation pins measure the build it produces",
-      "ci": true
+      "ci": true,
+      "job": "stdlib",
+      "needs": []
     },
     {
       "name": "optional-ratchet",
@@ -94,11 +96,14 @@
         "src/",
         "default/"
       ],
-      "check": "make -s surface-check",
+      "check": "git fetch -q --depth=1 origin main && git diff --quiet FETCH_HEAD -- default/ || make -s surface-check",
       "regen": [
-        "make -s surface-gen"
+        "git fetch -q --depth=1 origin main && git diff --quiet FETCH_HEAD -- default/ || make -s surface-gen"
       ],
-      "ci": true
+      "ci": true,
+      "job": "surface",
+      "needs": ["wasm"],
+      "note": "a wasm32 build of the whole crate, so it runs only when default/ (where builtins and ops are declared) differs from main; the PR's gallery job checks it on every change, after `make game` has built the same rlib"
     },
     {
       "name": "browser-bundle",
@@ -117,6 +122,8 @@
         "[ \"$(./scripts/wasm_bundle_stamp.sh)\" = \"$(cat doc/pkg-src.stamp)\" ] || make -s wasm"
       ],
       "ci": true,
+      "job": "bundle",
+      "needs": ["wasm", "wasm-pack"],
       "note": "rebuilt only when its source stamp moved (scripts/wasm_bundle_stamp.sh): its bytes depend on the toolchain, so an unconditional rebuild re-commits ~9 MB of wasm on every runner pass with no source change"
     },
     {
@@ -133,12 +140,14 @@
         "tools/brick-buster/pack_atlas.loft",
         "tests/fixtures/libs/assets/"
       ],
-      "check": "cd tools/brick-buster && ../../target/release/loft --interpret check_pack.loft",
+      "check": "cd tools/brick-buster && LOFT_NO_NATIVE_LIBS=1 ../../target/release/loft --interpret check_pack.loft",
       "regen": [
-        "cd tools/brick-buster && ../../target/release/loft --interpret check_pack.loft >/dev/null 2>&1 || { ../../target/release/loft --interpret pack_atlas.loft >/dev/null && cp assets/bb.meta.store assets/bb.blobs.store assets/bb.meta.store.dschema assets/bb.blobs.store.dschema ../../doc/assets/; }"
+        "cd tools/brick-buster && LOFT_NO_NATIVE_LIBS=1 ../../target/release/loft --interpret check_pack.loft >/dev/null 2>&1 || { ../../target/release/loft --interpret pack_atlas.loft >/dev/null && cp assets/bb.meta.store assets/bb.blobs.store assets/bb.meta.store.dschema assets/bb.blobs.store.dschema ../../doc/assets/; }"
       ],
       "ci": true,
-      "note": "the gallery's Brick Buster sprite pack: stored records, so a layout rule that moves a field leaves it unreadable and the page draws nothing (loft#1956). Rebuilt only when check_pack.loft refuses it: the packer does not write byte-identical output twice"
+      "job": "small",
+      "needs": ["host"],
+      "note": "the gallery's Brick Buster sprite pack: stored records, so a layout rule that moves a field leaves it unreadable and the page draws nothing (loft#1956). Rebuilt only when check_pack.loft refuses it: the packer does not write byte-identical output twice; the check interprets its libraries (`LOFT_NO_NATIVE_LIBS=1`) — it needs their types, not their speed, and their auto-native build cost half a minute a run"
     },
     {
       "name": "features-shadow",
@@ -154,7 +163,9 @@
         "make -s features-gen"
       ],
       "note": "no `check` here on purpose: `make features-check` is `features-gen` plus `git status --porcelain` over the shadow, so run right after a regeneration that changed anything it fails on the bot's own output (derive.yml run 38922400633).  The regeneration is deterministic; ci.yml's doc-index job runs that check on the COMMITTED shadow, which is the drift gate.",
-      "ci": true
+      "ci": true,
+      "job": "small",
+      "needs": ["host"]
     },
     {
       "name": "docs-lint-baseline",
@@ -183,7 +194,9 @@
       "regen": [
         "python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline"
       ],
-      "ci": true
+      "ci": true,
+      "job": "small",
+      "needs": ["host"]
     },
     {
       "name": "ownership-drop-gate",
@@ -228,9 +241,11 @@
       ],
       "check": null,
       "regen": [
-        "make -s doc"
+        "make -s doc GENDOC_PROFILE=--release"
       ],
       "ci": true,
+      "job": "docs",
+      "needs": ["host"],
       "note": "the reference pages gendoc writes, with the library pages rendered from the published packages `make doc` fetches — a box without them keeps the committed pages, so the runner (a clean cache, the registry reachable) is the reliable writer"
     }
   ],

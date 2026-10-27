@@ -1,7 +1,7 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+diff --git a/src/opt/hoist.rs b/src/opt/hoist.rs
 index 49efb512c..b6d104a09 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
+--- a/src/opt/hoist.rs
++++ b/src/opt/hoist.rs
 @@ -9578,12 +9578,12 @@ pub fn refill_text_callee(data: &Data, stores: &Stores, callee: u32) -> Result<u
      let Some(tp) = result_tp else {
          return Err("no literal into the buffer");

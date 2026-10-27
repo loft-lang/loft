@@ -584,6 +584,140 @@ fn store_load_rejects_garbage_file() {
     );
 }
 
+/// The writer and the reader of [`a_store_image_cut_short_is_refused_on_every_backend`]: three
+/// hundred records and three hundred texts, so the image is many blocks long.
+const CUT_TYPES: &str = "struct Cell { ce_key: text, ce_x: integer, ce_y: integer }
+struct Box { cells: hash<Cell[ce_key]>, names: vector<text> }
+";
+const CUT_WRITE: &str = "fn main() {
+  b = Box { cells: [], names: [] };
+  for i in 0..300 {
+    b.cells += [Cell { ce_key: \"cell-{i}\", ce_x: i * 3, ce_y: i * 7 }];
+    b.names += [\"name number {i}\"];
+  }
+  assert(store_persist_copy(b, \"whole.store\"), \"write\");
+}
+";
+const CUT_READ: &str = "fn read(name: text) {
+  b = Box { cells: [], names: [] };
+  ok = store_load(b, \"{name}.store\");
+  if !ok { println(\"{name} load=false\"); return; }
+  c = b.cells[\"cell-299\"];
+  println(\"{name} load=true tail=[{b.names[len(b.names) - 1]}] last={c.ce_x},{c.ce_y}\");
+}
+
+fn main() {
+  read(\"whole\");
+  for k in 0..6 { read(\"cut{k}\"); }
+}
+";
+
+/// loft#2200 — a whole-image load adopted a file cut short: the signature and a 16-byte floor
+/// were all it checked, so a cut inside the last word read zero bytes as text (`load=true`,
+/// `name numb` for `name number 299`), one inside a block read a byte the file never held
+/// (`name num5`), and a deeper cut panicked on the first read.  `(S-Frame)` defines an image as
+/// a chain that tiles the file, so each is now refused with its reason, on every backend.
+///
+/// The cuts are chosen off the image's own chain, so a layout change cannot move one: two
+/// inside the last word, one a word into the last block, one a word into a block past the
+/// middle, and two exactly ON a block boundary — the start of the last block and of that middle
+/// one — where the shorter chain still tiles the file and only the length the image records
+/// (bytes 4..8, `(S-Frame)`) tells it is not whole.
+#[test]
+fn a_store_image_cut_short_is_refused_on_every_backend() {
+    let dir = scratch("store_load_cut_short");
+    let write = dir.join("write.loft");
+    fa::write(&write, format!("{CUT_TYPES}{CUT_WRITE}")).expect("write the writer");
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--interpret")
+        .arg(&write)
+        .output()
+        .expect("run the writer");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let whole = fa::read(dir.join("whole.store")).expect("the image");
+    assert_eq!(whole.len() % 8, 0, "an image is whole words");
+    // The block chain: each block opens with its i32 size in words (S-Frame).
+    let mut starts = Vec::new();
+    let mut pos = 1usize;
+    while pos * 8 < whole.len() {
+        starts.push(pos);
+        let w = &whole[pos * 8..pos * 8 + 4];
+        pos += i32::from_ne_bytes([w[0], w[1], w[2], w[3]]).unsigned_abs() as usize;
+    }
+    let mid = starts
+        .windows(2)
+        .find(|w| w[0] * 8 >= whole.len() / 2 && w[1] - w[0] >= 2)
+        .map(|w| w[0])
+        .expect("a block of two words or more past the middle");
+    let last = *starts.last().expect("a chain");
+    assert!(
+        whole.len() / 8 - last >= 2,
+        "the last block is longer than a word"
+    );
+    assert_eq!(
+        loft::store::image_recorded_words(&whole),
+        Some(u32::try_from(whole.len() / 8).expect("a store's words fit u32")),
+        "a written image records its own length"
+    );
+    let cuts = [
+        whole.len() - 1,
+        whole.len() - 7,
+        whole.len() - 8,
+        mid * 8 + 8,
+        last * 8,
+        mid * 8,
+    ];
+    let side = fa::read(dir.join("whole.store.dschema")).expect("the sidecar");
+    for (k, &n) in cuts.iter().enumerate() {
+        fa::write(dir.join(format!("cut{k}.store")), &whole[..n]).expect("write a cut");
+        fa::write(dir.join(format!("cut{k}.store.dschema")), &side).expect("its sidecar");
+    }
+    let read = dir.join("read.loft");
+    fa::write(&read, format!("{CUT_TYPES}{CUT_READ}")).expect("write the reader");
+    let c_ok = loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    let backends: &[&str] = if c_ok {
+        &["--interpret", "--native", "--native-c"]
+    } else {
+        &["--interpret", "--native"]
+    };
+    for backend in backends {
+        let out = loft::platform::process::harness_command(loft_bin())
+            .arg(backend)
+            .arg(&read)
+            .output()
+            .expect("run the reader");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{backend}: {stdout}\n{stderr}");
+        assert_eq!(
+            stdout.lines().collect::<Vec<_>>(),
+            [
+                "whole load=true tail=[name number 299] last=897,2093",
+                "cut0 load=false",
+                "cut1 load=false",
+                "cut2 load=false",
+                "cut3 load=false",
+                "cut4 load=false",
+                "cut5 load=false",
+            ],
+            "{backend}: {stderr}"
+        );
+        // Every cut changes the file's length, which the image records, so each says so.
+        assert_eq!(
+            stderr.matches("the image was cut short").count(),
+            6,
+            "{backend}: each cut says why: {stderr}"
+        );
+    }
+}
+
 /// @PLN97 arc G Phase 3a — `store_load_key` fetches ONLY the requested integer
 /// key (the working set) from a persisted hash image, not the whole file. On
 /// both backends: the loaded key is present with the right value, un-requested

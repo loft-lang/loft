@@ -131,7 +131,7 @@ against that triple instead of re-deriving all three per element. Worth ~2× on 
 indexed-read kernel; the measurement, the design and the reason `rustc` cannot do it for us
 are in [PERFORMANCE-history.md § Design: P2](PERFORMANCE-history.md) → *Shipped: the NATIVE half*.
 
-Where it lives: `src/generation/hoist.rs` (the gate), `src/generation/ops/vector_ops.rs`
+Where it lives: `src/opt/hoist.rs` (the gate), `src/generation/ops/vector_ops.rs`
 (the two emitters, both falling through to the `#rust` template when the gate declined),
 `Output::begin_vector_hoist` (the prelude), and `vector::vec_header` /
 `vector::get_vector_hoisted` / `Stores::vec_get_hoisted_or_raise_runtime` (the runtime).

@@ -18,14 +18,20 @@
 //   CHANNEL: the VALUE channel, native only — the patch drops the store condition, so d1,
 //   d3 and d4 borrow a parameter's text across a growth of that parameter's store; d1 and
 //   d4 then read a moved buffer, and the first assertion to see it is d1's.
-//   WITNESS: under the patch native prints `d world:2 onetwo leftright ??down …` (d1's
-//   `hello` gone, d4's `up` two stale bytes) where this file says `d helloworld:2 onetwo
-//   leftright updown …`, and exits 1 at `assert(e1 == "helloworld:2", "d1")`.  d3 reads
-//   right under the patch too — its sibling growth happens not to move `names`'s buffer —
-//   so d3 guards the admission (the pins), not the value.
-//   HOLDS: the interpreter is exact on both trees (it copies as the IR spells it), every
-//   admitted cell (a1–a7) is exact on both, and leak, panic and free-refusal are clean on
-//   both — only native's d-line values move.
+//   ARMED: LOFT_POISON=1 — the moved buffer is a FREED block, and a plain run reads its old
+//   bytes until the allocator reuses it: plain, the patched build answers right as soon as
+//   an unrelated change moves the allocation order, so the poison that overwrites the freed
+//   block is what makes the stale read visible.  The header line below arms it on every run.
+//   WITNESS: under the patch and the poison native exits 1 at `assert(e1 ==
+//   "helloworld:2", "d1")`, where this file says `d helloworld:2 onetwo leftright updown …`;
+//   `LOFT_TRACE_TEXT_BORROW=1` names d1, d3 and d4 `borrows a parameter's text` under the
+//   patch and `declined — a writer to a store the frame did not mint` (d1, d3) or `— a
+//   callee that writes a store` (d4) without it.  d3 reads right under the patch too — its
+//   sibling growth does not move `names`'s buffer — so d3 guards the admission, not the value.
+//   HOLDS: the interpreter is exact on both trees, poisoned or not (it copies as the IR
+//   spells it), every admitted cell (a1–a7) is exact on both, and leak, panic and
+//   free-refusal are clean on both — only native's d-line values move.
+// @ARMED: LOFT_POISON=1
 struct W { word: text, count: integer }
 struct ByWord { rows: hash<W[word]> }
 struct Bag { names: vector<text>, other: vector<text> }

@@ -59,6 +59,28 @@ pub(crate) fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
     http_get_bytes(url)
 }
 
+/// A file fetched BESIDE another (a store image's `.dschema` sidecar): its bytes, `Err(None)`
+/// when the host answered that it has no such file (403, 404, 410, a `file://` path that is not
+/// there), `Err(Some(why))` when the request itself failed — a refused handshake, no connection,
+/// another status.  A loader that reads the first as "there is no sidecar" must not read the
+/// second so, or a TLS refusal is reported as a missing file.  The browser cannot tell them
+/// apart and answers `Err(None)`.
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+pub(crate) fn fetch_beside(url: &str) -> Result<Vec<u8>, Option<String>> {
+    fetch_bytes(url).map_err(|_| None)
+}
+
+#[cfg(all(
+    feature = "registry",
+    not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
+))]
+pub(crate) fn fetch_beside(url: &str) -> Result<Vec<u8>, Option<String>> {
+    http_get_within(url, CONNECT_BOUND, DOWNLOAD_BOUND).map_err(|m| match m {
+        Miss::Absent(_) => None,
+        Miss::Failed(why) => Some(why),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // loft#678 — the RANGE half, behind the working-set store loaders.
 //
@@ -105,14 +127,17 @@ pub(crate) fn fetch_size(url: &str) -> Result<u64, String> {
     Ok(total as u64)
 }
 
-/// A small text resource in full (the `.dschema` sidecar beside a store).
-/// `None` on a non-2xx status — notably 404, which means "no sidecar", a normal
-/// answer the layout gate treats as `Fresh` rather than an error.
+/// A small text resource in full (the `.dschema` sidecar beside a store), told apart
+/// as [`fetch_beside`] tells it: `Err(None)` when the host has no such file — "no
+/// sidecar", a normal answer the layout gate reads as a bare image — and
+/// `Err(Some(why))` when the request failed, so nothing is known.  The browser host
+/// import reports every failure alike, so here each one reads as `None`.
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
-pub(crate) fn fetch_text(url: &str) -> Option<String> {
+pub(crate) fn fetch_text(url: &str) -> Result<String, Option<String>> {
     fetch_bytes(url)
         .ok()
         .and_then(|b| String::from_utf8(b).ok())
+        .ok_or(None)
 }
 
 /// Native range GET over the same `ureq` client the whole-image path uses.
@@ -194,8 +219,14 @@ pub(crate) fn fetch_size(url: &str) -> Result<u64, String> {
     any(feature = "remote-store", feature = "registry"),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
-pub(crate) fn fetch_text(url: &str) -> Option<String> {
-    agent().get(url).call().ok()?.into_string().ok()
+pub(crate) fn fetch_text(url: &str) -> Result<String, Option<String>> {
+    match agent().get(url).call() {
+        Ok(resp) => resp
+            .into_string()
+            .map_err(|e| Some(format!("HTTP error: {url}: {e}"))),
+        Err(ureq::Error::Status(403 | 404 | 410, _)) => Err(None),
+        Err(e) => Err(Some(format!("HTTP error: {e}"))),
+    }
 }
 
 /// The shared client for the native range/size/text calls, and so carrying their
@@ -270,15 +301,17 @@ pub(crate) fn fetch_size(url: &str) -> Result<u64, String> {
     ))
 }
 
-/// No transport, so no remote sidecar — `None`, which the layout gate already
-/// treats as "no sidecar" rather than as a failure.
+/// No transport, so no remote sidecar: a fetch that cannot be made, which the layout
+/// gate refuses naming why rather than reading as "no sidecar".
 #[cfg(all(
     paged_store,
     not(any(feature = "remote-store", feature = "registry")),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
-pub(crate) fn fetch_text(_url: &str) -> Option<String> {
-    None
+pub(crate) fn fetch_text(url: &str) -> Result<String, Option<String>> {
+    Err(Some(format!(
+        "this build has no HTTP transport, so it cannot fetch {url}"
+    )))
 }
 
 /// Default ceiling on a single HTTP response — the registry index, or a package

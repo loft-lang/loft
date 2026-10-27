@@ -24,7 +24,7 @@ use std::io;
 
 /// The `&(vector)` operand plus the header local, or `None` when this read is not covered.
 fn header_for<'a>(ctx: &'a EmitCtx<'_, '_>, arg: &Value) -> Option<&'a str> {
-    let path = crate::generation::hoist::vector_path(ctx.output.data, arg)?;
+    let path = crate::opt::hoist::vector_path(ctx.output.data, arg)?;
     ctx.output.active_vec_header(&path)
 }
 
@@ -363,7 +363,7 @@ fn emit_join_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
     Ok(true)
 }
 
-/// A record scalar read (`lay.x0`, any getter in [`crate::generation::hoist::SCALAR_GETTERS`])
+/// A record scalar read (`lay.x0`, any getter in [`crate::opt::hoist::SCALAR_GETTERS`])
 /// inside a loop that hoisted it (@PLN157 P4c): the local the prelude bound stands for the
 /// whole getter — its store resolution, its `rec == 0` test and its load.  Under
 /// `LOFT_HOIST_VERIFY=1` the getter is ALSO emitted and the two are compared, so a scalar
@@ -379,17 +379,17 @@ fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> 
     else {
         // `@FR-R-RecPtr` — a field read off a record VIEW whose address the block holds is
         // one load through it; `unsafe` at the call, where the block's proof lives.
-        if let Some((v, fld)) = crate::generation::hoist::scalar_read(ctx.def_fn.name(), args)
+        if let Some((v, fld)) = crate::opt::hoist::scalar_read(ctx.def_fn.name(), args)
             && let Some(expr) = ctx.output.rec_ptr_read(v, fld, ctx.def_fn.name())
         {
             return write!(ctx.w, "{expr}");
         }
         // …and so is a field reached through INLINE sub-records (`v.pos.x`): the same
         // address, at the summed offset (`hoist::view_field`, the path clause).
-        if crate::generation::hoist::nested_field_enabled()
+        if crate::opt::hoist::nested_field_enabled()
             && let [base, fld, ..] = args
             && !matches!(base.unspan(), Value::Var(_))
-            && let Some((v, off)) = crate::generation::hoist::view_field(ctx.output.data, base, fld)
+            && let Some((v, off)) = crate::opt::hoist::view_field(ctx.output.data, base, fld)
             && let Some(expr) = ctx.output.rec_ptr_read(v, off, ctx.def_fn.name())
         {
             // The checking form walks the path the unrewritten way and compares: `rec_get`
@@ -575,10 +575,9 @@ impl OpEmitter for FusedElementWriteEmitter {
         // (`v.pos.x = …`) at the summed offset (`hoist::view_field`, the path clause); the
         // `DbRef` handed to the checking form is the VIEW's, which the offset counts from.
         if let [base, fld, val] = args
-            && (matches!(base.unspan(), Value::Var(_))
-                || crate::generation::hoist::nested_field_enabled())
-            && let Some((v, off)) = crate::generation::hoist::view_field(ctx.output.data, base, fld)
-            && let Some(ty) = crate::generation::hoist::setter_kind(ctx.def_fn.name())
+            && (matches!(base.unspan(), Value::Var(_)) || crate::opt::hoist::nested_field_enabled())
+            && let Some((v, off)) = crate::opt::hoist::view_field(ctx.output.data, base, fld)
+            && let Some(ty) = crate::opt::hoist::setter_kind(ctx.def_fn.name())
             && let Some(ptr) = ctx.output.active_rec_ptr(v).map(str::to_owned)
         {
             let verify = ctx.output.hoist_verify;
@@ -767,11 +766,7 @@ impl OpEmitter for HoistedPushEmitter {
         } else {
             write!(ctx.w, "(")?;
             ctx.emit(fused.val)?;
-            write!(
-                ctx.w,
-                "){}",
-                crate::generation::hoist::push_value_cast(ty, false)
-            )?;
+            write!(ctx.w, "){}", crate::opt::hoist::push_value_cast(ty, false))?;
         }
         if let Some(win) = window {
             write!(
@@ -805,13 +800,7 @@ impl OpEmitter for NewRecordEmitter {
         let vars = out.data.def(out.def_nr).variables();
         let Some((target, header)) = (!out.switches.record_push_disabled)
             .then(|| {
-                crate::generation::hoist::mint_target(
-                    out.data,
-                    out.stores,
-                    "OpNewRecord",
-                    args,
-                    vars,
-                )
+                crate::opt::hoist::mint_target(out.data, out.stores, "OpNewRecord", args, vars)
             })
             .flatten()
             .and_then(|t| {
@@ -966,13 +955,7 @@ impl OpEmitter for FinishRecordEmitter {
         let vars = out.data.def(out.def_nr).variables();
         let Some((target, header)) = (!out.switches.record_push_disabled)
             .then(|| {
-                crate::generation::hoist::mint_target(
-                    out.data,
-                    out.stores,
-                    "OpFinishRecord",
-                    args,
-                    vars,
-                )
+                crate::opt::hoist::mint_target(out.data, out.stores, "OpFinishRecord", args, vars)
             })
             .flatten()
             .and_then(|t| {
@@ -1032,7 +1015,7 @@ impl OpEmitter for KeepRangeEmitter {
         let held = if ctx.output.switches.push_hoist_disabled {
             None
         } else {
-            crate::generation::hoist::keep_range_path(ctx.output.data, ctx.def_fn.name(), args)
+            crate::opt::hoist::keep_range_path(ctx.output.data, ctx.def_fn.name(), args)
                 .and_then(|path| ctx.output.active_push_header(&path).map(str::to_owned))
         };
         let (Some(hdr), Some(Value::Int(tp))) = (held, args.get(3).map(Value::unspan)) else {
@@ -1070,7 +1053,7 @@ pub struct PreAllocEmitter;
 
 impl OpEmitter for PreAllocEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        let held = crate::generation::hoist::pre_alloc_path(
+        let held = crate::opt::hoist::pre_alloc_path(
             ctx.output.data,
             ctx.def_fn.name(),
             args,

@@ -51,10 +51,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ```
   (S-Frame)   an image is a store's bytes: word 0 holds the SIGNATURE 0x53746f31 at bytes 0..4
-              (a reader refuses any file without it); bytes 4..8 are written 1 and read by no
-              reader.  From word 1 the file is a CHAIN of blocks, each opening with an i32 size
-              in words — positive for a claimed record, negative for a free block — that tiles
-              the file exactly: the last block ends at the file's last word.  Word 1 is the
+              (a reader refuses any file without it); bytes 4..8 hold the image's LENGTH in
+              words, as a u32, written by every image writer — a reader refuses a file of any
+              other length, so a cut on a block boundary is told from a whole image.  0 or 1
+              there records no length (what a writer before it wrote, and what a store in
+              memory or bound to a file holds, since those grow).  From word 1 the file is a
+              CHAIN of blocks, each opening with an i32 size in words — positive for a claimed
+              record, negative for a free block — that tiles the file exactly: the last block
+              ends at the file's last word, so a reader refuses a file that is not whole words
+              or whose chain does not tile it.  Word 1 is the
               ROOT record (PRIMARY); the stored value is the root's payload, at (1, 8), laid out
               as its type (layout.md), and every collection, text and child record it owns is a
               claimed block of the same file, named by record number.
@@ -293,7 +298,9 @@ computes differently from the resident store becomes a lookup that silently answ
 
 - **`S-Frame` / `S-Image` / `S-Derived`** — `tests/store_persist_loft.rs`:
   `a_written_image_reports_a_trustworthy_mark` (the chain tiles the file), the slack and
-  compaction cells, `store_load_rejects_garbage_file`; `tests/lazy_source_not_an_image.rs` (the
+  compaction cells, `store_load_rejects_garbage_file`, `a_store_image_cut_short_is_refused_on_every_backend`
+  (cuts inside a word, inside a block and on a block boundary, three backends);
+  `tests/lazy_source_not_an_image.rs` (the
   signature, a truncated file); `src/store.rs` `from_bytes` cases.
 - **`S-Sidecar` / `S-Gate`** — `src/schema_sidecar.rs` unit tests (identical, changed, an endian
   flip, a garbage sidecar refused, the v2 round trip); `tests/layout_golden.rs`

@@ -1,7 +1,7 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
-@@ -6039,9 +6039,6 @@
+diff --git a/src/opt/push_window.rs b/src/opt/push_window.rs
+--- a/src/opt/push_window.rs
++++ b/src/opt/push_window.rs
+@@ -941,9 +941,6 @@
              _ => parts.push(n),
          }
      }

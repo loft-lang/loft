@@ -22,7 +22,7 @@ moved out of this doc are [NATIVE_SWITCHES-history.md](NATIVE_SWITCHES-history.m
 **Vector-header hoist (loft#885, `--native` only, both switches read at GENERATION time):**
 a loop the emitter proves writes NO store derives each vector's `(store_nr, record, length)`
 once before the loop, so an element read is a bounds test plus address arithmetic (~2×).
-The gate (`src/generation/hoist.rs`) is an ALLOW-list on purpose — an op missing from it
+The gate (`src/opt/hoist.rs`) is an ALLOW-list on purpose — an op missing from it
 costs the optimisation, never correctness, which is the opposite of the five drifted
 mutation deny-lists in PERFORMANCE-history.md § Design: P8. **`LOFT_HOIST_VERIFY=1`** emits the
 checking form of every hoisted read (re-derives the header, panics on a stale one) — run the

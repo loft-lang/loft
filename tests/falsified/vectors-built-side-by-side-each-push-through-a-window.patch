@@ -1,7 +1,7 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+diff --git a/src/opt/hoist.rs b/src/opt/hoist.rs
 index 0e97f7187..5ff5dedec 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
+--- a/src/opt/hoist.rs
++++ b/src/opt/hoist.rs
 @@ -5798,6 +5798,9 @@ pub fn push_windows_ok(
      stores: Option<&Stores>,
      cache: &mut HashMap<u32, bool>,

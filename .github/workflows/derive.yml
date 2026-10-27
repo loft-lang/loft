@@ -16,6 +16,12 @@ name: Derived artefacts (regenerate and commit back)
 # where the branch stops moving — before opening a PR, after a join:
 #   scripts/derive-ci.sh            # dispatch for the current branch, wait, fast-forward
 #   gh workflow run derive.yml --ref <branch>
+#
+# In parallel: `plan` reads the jobs from the registry (`derive_ci.py --matrix` — each `ci`
+# entry names its `job` and what it `needs`), one runner per job regenerates its entries and
+# uploads what moved as a patch, and `commit` applies every patch and pushes ONE commit.  The
+# jobs share nothing: no entry reads what another job writes (the registry's `about` says so),
+# so the wall time is the slowest job's, not the sum.
 # JOINING.md § Derived artefacts on a runner.
 
 on:
@@ -39,35 +45,82 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  derive:
-    # @windows-exempt: platform-free — regenerates platform-neutral derived text
-    name: Regenerate the pure derived artefacts
+  plan:
+    # @windows-exempt: platform-free — reads the job list out of the registry
+    name: Plan the parallel jobs
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
     steps:
       - name: Refuse the default branch
         if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
           echo "::error::main takes changes only through a PR — dispatch this on a feature branch"
           exit 1
+      - uses: actions/checkout@v5
+      - id: m
+        run: echo "matrix=$(python3 scripts/derive_ci.py --matrix)" >> "$GITHUB_OUTPUT"
 
+  regen:
+    # @windows-exempt: platform-free — regenerates platform-neutral derived text
+    name: Regenerate (${{ matrix.job }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Read-only: only `commit` pushes.
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust stable (+ wasm32)
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: ${{ matrix.wasm && 'wasm32-unknown-unknown' || '' }}
 
-      - name: Install mold + binaryen
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen
+      # No mold: `.cargo/config.toml` links through `scripts/cc-mold`, plain `cc` where mold
+      # is absent, and the apt index update that installed it took 30 s to almost 2 min a job.
+      - name: Install binaryen
+        if: matrix.wasm_pack
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y binaryen
 
       - name: Install wasm-pack
+        if: matrix.wasm_pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
 
-      # Read-only, from ci.yml's `test` job cache (saved on main — CI_BUDGET.md § F); this
-      # workflow never runs on main, so it never saves.  The path list must stay IDENTICAL to
-      # that job's, or the restore never matches.
-      - name: Restore cargo registry and build (ci.yml's test job's, read-only)
+      # Two read-only restores, each matching ONE ci.yml job's save exactly (a restore
+      # matches only a save with the IDENTICAL path list — the derive's own list matched
+      # nothing, and every run built from scratch).  This workflow never runs on main, so it
+      # never saves.  The gallery job's carries `target/` — the host release build and the
+      # wasm32 builds `make game` and `make gallery` leave.
+      - name: Restore the build (ci.yml's gallery job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-cargo-gallery-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ubuntu-cargo-gallery-${{ hashFiles('**/Cargo.lock') }}-
+            ubuntu-cargo-gallery-
+      # The gallery job's native-library cache: graphics' crate, which the sprite-pack
+      # check's `use graphics` would otherwise compile from source (about a minute).
+      - name: Restore the libraries' native builds (ci.yml's gallery job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.loft/build-cache
+          key: ubuntu-loft-build-cache-gallery-${{ hashFiles('tools/brick-buster/loft.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ubuntu-loft-build-cache-gallery-${{ hashFiles('tools/brick-buster/loft.lock') }}-
+      # The test job's carries the registry and its own `~/.loft/build-cache`.
+      - name: Restore the registry (ci.yml's test job's, read-only)
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -75,34 +128,70 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            target
-            !target/loft-native-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
 
       - name: Build loft (release)
+        if: matrix.host
         run: cargo build --release --bin loft
 
-      - name: Regenerate
-        run: python3 scripts/derive_ci.py
+      - name: Regenerate ${{ matrix.only }}
+        run: python3 scripts/derive_ci.py --only "${{ matrix.only }}"
 
-      - name: Commit back
+      # What moved, as one binary-safe patch — EMPTY when nothing did, so every job uploads
+      # one and `commit` can tell a job that changed nothing from one whose patch was lost.
+      - name: Collect the change
+        run: |
+          git add -A
+          git diff --cached --stat
+          git diff --cached --binary > "$RUNNER_TEMP/derive-${{ matrix.job }}.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: derive-${{ matrix.job }}
+          path: ${{ runner.temp }}/derive-${{ matrix.job }}.patch
+          if-no-files-found: error
+          retention-days: 3
+
+  commit:
+    # @windows-exempt: platform-free — applies the jobs' patches and pushes one commit
+    name: Commit back
+    needs: regen
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: derive-*
+          path: ${{ runner.temp }}/derive
+      - name: Apply and push
+        env:
+          PATCHES: ${{ runner.temp }}/derive
         run: |
           set -euo pipefail
-          if [ -z "$(git status --porcelain)" ]; then
+          shopt -s nullglob
+          want=$(python3 scripts/derive_ci.py --matrix | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["include"]))')
+          got=$(ls "$PATCHES"/*/*.patch | wc -l)
+          [ "$got" -eq "$want" ] || { echo "::error::$got of $want jobs' patches arrived"; exit 1; }
+          moved=()
+          for p in "$PATCHES"/*/*.patch; do
+            [ -s "$p" ] || continue
+            git apply --index "$p"
+            moved+=("$(basename "$p" .patch | sed 's/^derive-//')")
+          done
+          if [ ${#moved[@]} -eq 0 ]; then
             echo "Every pure derived artefact already matches the tree." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           git status --short | tee -a "$GITHUB_STEP_SUMMARY"
           git config user.name "loft-derive-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
           git commit -q -F - <<EOF
           Derived artefacts regenerated on a runner
 
-          $(python3 scripts/derive_ci.py --list | sed 's/^/- /')
+          $(printf -- '- job %s\n' "${moved[@]}")
 
           By .github/workflows/derive.yml at ${GITHUB_SHA::9} (run ${GITHUB_RUN_ID}).
           EOF

@@ -33,10 +33,10 @@ index df8897341..42c60ac0f 100644
  // Sum of all integer elements. Returns 0 for an empty vector.
  // Superseded by the general `sum(v, init)`; kept as a shim over it
  // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the
-diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+diff --git b/src/opt/hoist.rs a/src/opt/hoist.rs
 index 04d0eaa41..8748c9501 100644
---- b/src/generation/hoist.rs
-+++ a/src/generation/hoist.rs
+--- b/src/opt/hoist.rs
++++ a/src/opt/hoist.rs
 @@ -5691,13 +5691,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
      let every: HashSet<u32> = HashSet::new();
      for d_nr in 0..data.definitions.len() as u32 {

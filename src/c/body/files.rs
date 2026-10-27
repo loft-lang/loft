@@ -156,6 +156,68 @@ impl FnWriter<'_> {
         }
     }
 
+    /// `@FR-R-FileHold`'s typed read, as native's (`generation::ops::file_ops::int_read_shape`):
+    /// `(width, signed)` when `OpReadFile(f, OpCreateStack(v), n, tp)` lands a fixed-width
+    /// integer whole in an integer local — `n` a literal equal to the width, `integer` and
+    /// `long` eight bytes signed, a byte or short type signed by its range, a four-byte type
+    /// signed; anything else reads through the record.
+    pub(super) fn held_read_shape(&self, args: &[Value]) -> Option<(u8, bool)> {
+        let [_, v, n, tp] = args else { return None };
+        let var = self.stack_var(v)?;
+        if self.shapes.get(var as usize) != Some(&CType::Int) {
+            return None;
+        }
+        let n = match n.unspan() {
+            Value::Int(n) => i64::from(*n),
+            Value::Long(n) => *n,
+            _ => return None,
+        };
+        let Value::Int(tp) = tp.unspan() else {
+            return None;
+        };
+        let (width, signed) = match *tp {
+            0 | 1 => (8, true),
+            4 | 6 => return None,
+            t => match &self.cx.stores.types.get(usize::try_from(t).ok()?)?.parts {
+                Parts::Byte(from, _) => (1, *from < 0),
+                Parts::Short(from, _) | Parts::ShortRaw(from, _) => (2, *from < 0),
+                Parts::Int(_, _) => (4, true),
+                _ => return None,
+            },
+        };
+        (n == i64::from(width)).then_some((width, signed))
+    }
+
+    /// `@FR-R-FileHold` — before loop `b`: when it reads one `File` that nothing else in it can
+    /// see (`lower::file_hold::held_file`) and no enclosing loop holds it, a `loft_fcur` takes
+    /// the record's cursor here and gives it back on every exit (`release_holds`): the loop's
+    /// end, a `break` or `continue` past it, a `return`.  `LOFT_NO_FILE_HOLD=1` holds nothing,
+    /// as on native.
+    pub(super) fn open_file_hold(
+        &mut self,
+        b: &crate::data::Block,
+        ind: usize,
+    ) -> Result<bool, String> {
+        if !crate::keys::file_hold_enabled() || self.gen_elem.is_some() {
+            return Ok(false);
+        }
+        let typed = |args: &[Value]| self.held_read_shape(args).is_some();
+        let Some(f) = crate::lower::file_hold::held_file(b, self.cx.data, self.d, &typed) else {
+            return Ok(false);
+        };
+        if self.file_holds.iter().any(|(held, _, _)| *held == f) {
+            return Ok(false);
+        }
+        let c = format!("fc{}", self.decls.len() + 1);
+        self.decls.push(format!("loft_fcur {c};"));
+        let file = self.expr(&Value::Var(f), ind)?;
+        self.line(ind, &format!("loft_fcur_hold(&{c}, {});", as_ref(file)?));
+        crate::rewrite_census::fired("R-FileHold", 1);
+        // The loop takes the next index in `loops` once `loop_stmt` pushes it.
+        self.file_holds.push((f, c, self.loops.len()));
+        Ok(true)
+    }
+
     /// Is type `tp` a plain enum, written and read as its one byte?
     fn plain_enum(&self, tp: u16) -> bool {
         matches!(
@@ -223,6 +285,22 @@ impl FnWriter<'_> {
             .ok_or("a file read into a value that is not a variable")?;
         let tp = u16::try_from(Self::literal(tp, "type")?)
             .map_err(|_| "a type number out of range".to_string())?;
+        if let Value::Var(fv) = f.unspan()
+            && let Some((_, c, _)) = self
+                .file_holds
+                .iter()
+                .find(|(held, _, _)| held == fv)
+                .cloned()
+            && let Some((w, signed)) =
+                self.held_read_shape(&[f.clone(), v.clone(), n.clone(), Value::Int(i32::from(tp))])
+        {
+            let name = self.var(var);
+            self.line(
+                ind,
+                &format!("loft_fcur_read(&{c}, {w}, {}, &{name});", i32::from(signed)),
+            );
+            return Ok(E::new("(void) 0", K::Void));
+        }
         let (file, count) = self.two("OpReadFile", &[f.clone(), n.clone()], ind)?;
         let (fr, nr) = (self.temp(CType::Ref), self.temp(CType::Int));
         self.line(ind, &format!("{fr} = {};", as_ref(file)?));
@@ -262,11 +340,13 @@ impl FnWriter<'_> {
             }
         };
         self.line(ind, "{");
+        // A read of up to 15 bytes lands in a stack buffer: no allocation per value.
+        self.line(ind + 1, "uint8_t loft_b[16];");
         self.line(ind + 1, "uint8_t *loft_d;");
         self.line(
             ind + 1,
             &format!(
-                "int64_t loft_n = loft_read_file({fr}, {nr}, {}, {width}, &loft_d);",
+                "int64_t loft_n = loft_read_file_in({fr}, {nr}, {}, {width}, loft_b, sizeof loft_b, &loft_d);",
                 i32::from(text)
             ),
         );
@@ -278,7 +358,7 @@ impl FnWriter<'_> {
         };
         self.line(ind + 1, &format!("if ({ok}) {set}"));
         self.line(ind + 1, "(void) loft_le;");
-        self.line(ind + 1, "free(loft_d);");
+        self.line(ind + 1, "if (loft_d != loft_b) free(loft_d);");
         self.line(ind, "}");
         Ok(E::new("(void) 0", K::Void))
     }

@@ -41,7 +41,10 @@ RUNTIME_CALLS = {"memcpy", "memmove", "memset", "memchr", "memcmp", "malloc", "f
 
 
 def clean(sym):
-    return re.sub(r"\.(constprop|isra|part|cold)(\.\d+)?", "", sym)
+    """A symbol as its function: no GCC clone suffix, and a `__fr` twin (the body a function's
+    call-chain frame wraps, `LOFT_CALL_CHAIN`) as the loft function it is."""
+    sym = re.sub(r"\.(constprop|isra|part|cold)(\.\d+)?", "", sym)
+    return sym[:-4] if sym.endswith("__fr") else sym
 
 
 def fold(script_lines, leaf_mode):
@@ -137,15 +140,24 @@ def main():
     if r.returncode != 0:
         stats.fail(f"perf record: {r.stderr[-2000:]}")
     rows = {}
+    run_us = 0
     for line in r.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) == 7 and parts[0] != "routine":
             rows[parts[0]] = int(parts[3])
+            run_us += int(parts[2])
     s = subprocess.run(["perf", "script", "-i", data, "-F", "ip,sym"], capture_output=True, text=True)
     per = fold(s.stdout.splitlines(), a.leaf)
     total = sum(sum(c.values()) for c in per.values()) or 1
     print(f"# {os.path.relpath(d, ROOT)} [{a.lane}] --n {n}, {total} samples; unit, binary and "
           f"perf.data in {work}" + ("" if a.keep else " until the next run"))
+    # perf drops whole buffers when its writer falls behind — a loaded box, or DWARF stack
+    # copies outrunning the mlock-limited ring — and says so only without `-q`.  The loss is
+    # not uniform: the routines that ran first keep their samples, so the shares lie.
+    expected = run_us / 1e6 * a.freq
+    if expected and total < 0.7 * expected:
+        print(f"# warning: perf kept {total} of the ~{expected:.0f} samples the routines' own times "
+              f"predict; the shares favour the routines that ran first — profile on an idle box")
     for routine, c in sorted(per.items(), key=lambda kv: -sum(kv[1].values())):
         # `n_` is the C backend's prefix; a bench names its routine functions with one more
         # word (`t_join`, `c_enum_match`), so the name is the row the program prints.

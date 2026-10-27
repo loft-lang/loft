@@ -606,7 +606,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: c-sweep gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -666,6 +666,9 @@ worst:  ## The worst routines of the last complete runs (interp-gap, perf-portal
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py --bless
+c-sweep:  ## The C backend against the interpreter over the corpus, three macro modes (@PLN203; ARGS="--shard 0/4", "--poison", "--asan", FILE…)
+	cargo build --release --bin loft -q
+	python3 scripts/c_sweep.py $(ARGS)
 decline-census:  ## Per rewrite rule: sites admitted vs refused, the refusals by reason (a report; ARGS="--record")
 	cargo build --release --bin loft -q
 	python3 scripts/decline_census.py $(ARGS)
@@ -2730,8 +2733,12 @@ native-ratio-gate:  ## Fail a native/Rust ratio over its bar in bench/ratio_orac
 # not carry.  On a box whose cache is empty every page still generates, and 42 of them
 # say "not on this build box" instead of showing the source.  Filling the cache first is
 # what makes a local build and the published site the same artefact.
+# The profile gendoc is built in: the dev one by default (what an edit loop has built), and
+# `--release` on a runner, where the release lib is already built and a dev build of the
+# whole crate would be a second one (scripts/derived_artefacts.json, reference-pages).
+GENDOC_PROFILE ?=
 doc: doc-packages  ## Build doc/*.html the way the release does (cache first, then gendoc)
-	cargo run --bin gendoc
+	cargo run $(GENDOC_PROFILE) --bin gendoc
 
 doc-packages:  ## Fetch every published package the doc build renders (no-op once cached)
 	@cargo build --release --bin loft
@@ -2957,9 +2964,8 @@ script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (A
 
 .PHONY: compiled-stdlib
 compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdlib's compiled loft bodies (run after changing default/*.loft)
-	@cargo test --release --test compiled_stdlib regen_compiled_stdlib -- --ignored --nocapture > /dev/null 2>&1
-	@cargo build --release --bin loft -q
-	@echo "src/compiled_stdlib_gen.rs regenerated and built"
+	@out=$$(cargo run --release -q --bin loft-stdlib-gen) || exit 1; echo "$$out"; \
+	case "$$out" in *regenerated*) cargo build --release --bin loft -q ;; esac
 
 .PHONY: kernel-ratio
 kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)

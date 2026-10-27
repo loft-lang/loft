@@ -85,7 +85,11 @@ An artefact that is a pure function of the tree carries `"ci": true` in
 bundle, the gallery's sprite pack, the feature shadow, the ignored-tests baseline and the
 reference pages.
 `.github/workflows/derive.yml` regenerates exactly those (`scripts/derive_ci.py`) and commits
-the result back to the branch, so a checkout does not have to:
+the result back to the branch, so a checkout does not have to.  It runs one runner per `job`
+the registry names (each `ci` entry carries its `job` and what it `needs` installed), in
+parallel, and one commit job applies what each moved; so a new entry joins a job, and no
+entry may read what another job writes.  A check runs only when its regen moved a file.  To
+run it:
 
 ```bash
 scripts/derive-ci.sh             # this branch: dispatch, wait, fast-forward onto the bot's commit
@@ -95,7 +99,12 @@ git push origin HEAD:derive-probe   # before derive.yml is on main, or to try a 
 
 The runner is the better writer for these.  It builds the wasm rlib fresh, which a local
 `surface-gen` does not guarantee, and `make doc` there fetches every published package into a
-clean cache.  Dispatch it where the branch stops moving: after a join, and before opening a
+clean cache.  Two steps cost a wasm build of the whole crate, and neither runs every time: the
+browser bundle rebuilds only when its source stamp moved, and the target surface only when
+`default/` (where builtins and ops are declared) differs from `main`.  The PR's `gallery` job
+checks the surface on every change, after `make game` has built the same rlib, so a surface
+that moved for another reason fails there.  Each step's seconds are in the run's log and its
+job summary.  Dispatch it where the branch stops moving: after a join, and before opening a
 PR.  It refuses `main`, and it never force-pushes; when the branch moved during the run, it
 fails and asks for a new dispatch.  A ratchet (a `pin`, the census, the drop gate) never
 carries `ci`: a moved count is a decision, so it stays with `join.py rederive`.

@@ -70,10 +70,16 @@ A worker starts from a COPY of its parent's store table — every entry live and
 reads the parent's stores through the same buffers and never frees, grows or reuses one
 (@FR-C-Impure: a worker that writes shared state has no defined behaviour) — and makes its own
 stores past them, freed when it ends.  Tier 1 runs on threads the workers whose result is a
-scalar, a text or nothing, each writing its own rows of the parent's result buffer; a worker
-returning a record or a function value stays sequential until tier 2 adopts the worker's stores
-into the parent and translates its references (`StoreRebase`, as `parallel.rs` does).  The rows
-split into `min(threads, rows)` contiguous slices, as `par_pool::parallel_workers` splits them.
+scalar, a text or nothing, each writing its own rows of the parent's result buffer.  Tier 2
+runs a worker whose result is a struct or struct-enum RECORD on threads the way native's
+`n_parallel_queue_ref_native` does: the caller makes one result store before the workers fork
+(below every worker's `parent_n`), a worker keeps the stores it made, and after it joined the
+caller — with that worker's table current — copies each of its rows into the result store,
+bytes and owned claims (`copy_from_worker`'s `copy_block` + `copy_claims`), before the worker's
+stores go; a reference held in such a record is copied as it stands, as native's.  The caller's
+own slice and a pass-through of the input are not copied.  A vector, keyed or function-value
+result still runs in order.  The rows split into `min(threads, rows)` contiguous slices, as
+`par_pool::parallel_workers` splits them.
 
 **C5 — libraries and hosts.**  The decision: a library compiled whole into each program (the
 C does this today; the cost is compile time per program, bounded by the cache) or a C archive
@@ -83,10 +89,23 @@ largest consumer before choosing.  `engine_host` and placement (PLACEMENT.md) be
 processes over the same protocol.  The remaining Rust-crate libraries: `graphics` over the
 OS's windowing, GL and audio through `[c] libs`; `web` and `server` over BearSSL's TLS engine
 (vendored like its primitives, with a minimal trust store) or the OS's; `ssh` parked.  The link
-modes of @PLN195 owe a C form too: `--dynamic` keeps a library beside the binary and `--static`
-links its archive in, and a binary missing a library it binds stops at start naming the package
-and where it searched — the C links every shim in and a declared library by name today, so
-`native::a_shipped_c_library_travels_with_the_program`'s controls do not hold on it yet.
+modes of @PLN195 have their C form on POSIX hosts (`c_driver::Placement`): a program written
+out opens its packages' libraries at start through loft's search order, `--static` keeps a shim
+inside and `--dynamic` beside, and a missing library stops the program naming the package and
+where it searched (`native::a_shipped_c_library_travels_with_the_program`); Windows still links
+them beside the binary, which C8 takes.  The two link-mode tests over `native_scalar_pkg` are
+`[native] crate` tests and move to `--native-rust` with C9.  The `in_binary` libraries (natives inside
+loft's own binary): the C runtime carries `lib/process`'s and `lib/git`'s
+(`loft_process.h`, POSIX hosts); an in-binary native it does not carry refuses the unit by
+name.  `engine_host`'s kernel is carried (`loft_engine.h`: listener, connector, UDP sync, debug
+channel, `http_fetch`); its build swap and background rebuild are not — the swap needs the
+world written and read through the store converter (@PLN196) for a type known only at run time.
+HTTPS is BearSSL's engine vendored as crypto's primitives are (owner, 2026-10-27), built once
+into a cached archive (C_BACKEND.md § HTTPS), and every fetch — whole-image, paged by range,
+`http_fetch` — goes through the one HTTP client over it; C8 adds the Windows certificate store, which the
+system-bundle probe does not read.  The live tier (flips, live edits, a breakpoint's eval) embeds the interpreter in a
+compiled program, which the C does not: after C9 the edit loop runs interpreted, and the
+`engine_host_*` scenarios that drive a live edit keep an interpreted leg.
 
 **C6 — the wasm and browser targets.**  The runtime under `-DLOFT_NO_POSIX` is the start: the
 WASI libc gives files for `--native-wasm`; the browser needs the host imports the Rust writer

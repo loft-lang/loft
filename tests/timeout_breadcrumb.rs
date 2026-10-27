@@ -201,3 +201,60 @@ fn a_hang_inside_a_native_is_hard_killed_and_named() {
         "and names the function\n{text}"
     );
 }
+
+/// A compiled program that runs past the deadline stops as an interpreted one does: the
+/// driver hands it what is left of the bound, so the program's own watchdog stops it
+/// gracefully.  Without that, the program's clock started after the compile, the driver's
+/// deadline came first, and the driver — waiting on the program, at no checkpoint — ended
+/// the run with its hard kill: a SIGABRT and a crash report naming `phase=parse`.  A grace of
+/// one second makes the old order certain (a C compile takes longer than that) and leaves the
+/// new one a second of margin; thirty seconds leaves the compile room on a loaded runner.  The program text is unique to the run so it is compiled
+/// afresh, never served from the cache.
+#[test]
+fn a_compiled_program_past_its_deadline_stops_gracefully() {
+    let has_cc = loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !has_cc {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let tag = format!(
+        "{}{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() % 1_000_000)
+    );
+    let path = std::env::temp_dir().join(format!("loft_timeout_compiled_{tag}.loft"));
+    fa::write(
+        &path,
+        format!(
+            "fn main() {{\n  n = {tag};\n  for i in 0..2000000000000 {{ n += i % 7; }}\n  println(\"never {{n}}\");\n}}\n"
+        ),
+    )
+    .expect("write probe");
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--native-c")
+        .arg(&path)
+        .env("LOFT_TIMEOUT", "30")
+        .env("LOFT_TIMEOUT_GRACE", "1")
+        .output()
+        .expect("spawn loft");
+    let _ = fa::remove_file(&path);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("deadline reached") && !text.contains("hard-kill") && !text.contains("crash"),
+        "a compiled program past its deadline stops gracefully, not by the driver's hard kill\n{text}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(124),
+        "the graceful stop's exit code\n{text}"
+    );
+}

@@ -19,15 +19,31 @@ static void loft_pg_refuse(const char *path, const char *reason) {
     loft_pg_record(path, reason);
 }
 
+#ifdef LOFT_NET
+static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who, long *recorded);
+#endif
+
 /* What every loader does before it reads (layout_gate_ok, PageSource::open, the store's
- * recorded type, then the refusal the emitter found): 1 with the reader open, else 0. */
+ * recorded type, then the refusal the emitter found): 1 with the reader open, else 0.  A URL is
+ * gated by its fetched sidecar (`check_sidecar`) and read by range. */
 static int loft_pg_begin(loft_pg *r, loft_ref local, loft_str path, const loft_sidecar *sc, const char *refusal) {
     memset(r, 0, sizeof *r);
-    if (local.store_nr == 0xFFFF || local.store_nr >= loft_nstores || loft_path_refused(path)) return 0;
+    if (local.store_nr == 0xFFFF || local.store_nr >= loft_nstores) return 0;
     char *p = loft_cpath(path, 0);
+    int url = loft_pg_is_url(p);
+    if (!url && loft_path_refused(path)) {
+        free(p);
+        return 0;
+    }
     uint16_t known = loft_stores[local.store_nr].known;
-    int ok = known == 0xFFFF || loft_image_gate(p, sc, 0);
-    if (ok && !loft_pg_open(r, p)) {
+    char err[1100];
+#ifdef LOFT_NET
+    int ok = known == 0xFFFF || (url ? loft_net_gate(p, sc, 0, 0) : loft_image_gate(p, sc, 0));
+#else
+    int ok = known == 0xFFFF || (!url && loft_image_gate(p, sc, 0));
+    if (url && !ok) loft_pg_refuse(p, "this build has no HTTP transport, so it cannot range-read it");
+#endif
+    if (ok && !loft_pg_open(r, p, err, sizeof err)) {
         loft_pg_refuse(p, "it cannot be opened as a paged source");
         ok = 0;
     } else if (ok && known == 0xFFFF) {

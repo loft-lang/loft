@@ -24,6 +24,7 @@ mod fnval;
 mod parse;
 mod reflect;
 mod show;
+pub(crate) mod tls;
 mod unicode;
 
 use crate::data::{Data, DefType, Type, Value};
@@ -52,7 +53,10 @@ const RUNTIME: &str = concat!(
     include_str!("loft_io.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
-    include_str!("loft_net.h")
+    include_str!("loft_https.h"),
+    include_str!("loft_net.h"),
+    include_str!("loft_process.h"),
+    include_str!("loft_engine.h")
 );
 
 /// Why a function cannot be written as C yet.
@@ -184,7 +188,25 @@ pub(crate) struct Cx<'a> {
     /// The place twins the unit calls (`twin_name`): a function by definition number, with
     /// the mask of its `&` parameters that receive a store place rather than a variable.
     twins: std::cell::RefCell<Vec<(u32, u64)>>,
+    /// The compiled-target rewrite switches (`LOFT_NO_*`), read once, as native reads them.
+    pub(crate) switches: crate::lower::switches::Switches,
+    /// The loop verdict's memos shared across the unit (`hoist::hoistable`,
+    /// `hoist::callee_inputs`): which callees write a store, their write sets, their inputs.
+    pub(crate) hoist_memo: std::cell::RefCell<HoistMemo>,
 }
+
+/// The memos [`Cx::hoist_memo`] keeps.
+#[derive(Default)]
+pub(crate) struct HoistMemo {
+    pub(crate) writes: crate::opt::body_writes::WriteCache,
+    pub(crate) inputs: crate::opt::hoist::InputCache,
+    pub(crate) stores_written: std::collections::HashMap<u32, bool>,
+}
+
+/// The mask bit of an `__inv` twin (`@FR-R-Inputs`): the function written again taking the
+/// headers its caller holds for the vectors it indexes (`hoist::callee_inputs`).  The bits
+/// below it are the place mask, one per `&` parameter.
+pub(crate) const INV_BIT: u64 = 1 << 63;
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
@@ -232,6 +254,8 @@ impl<'a> Cx<'a> {
             sql_plans: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
+            switches: crate::lower::switches::Switches::from_env(),
+            hoist_memo: std::cell::RefCell::new(HoistMemo::default()),
         }
     }
 
@@ -898,15 +922,41 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// instances, `parser/store_text.rs`): the function written again with each `&`
 /// parameter whose bit is set receiving a store place (a field, an element) as a `loft_ref`
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
+/// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    if mask == 0 {
-        c_name(data, d)
+    let places = mask & !INV_BIT;
+    let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
+    if places == 0 {
+        format!("{}{inv}", c_name(data, d))
     } else {
-        format!("{}_pl{mask}", c_name(data, d))
+        format!("{}_pl{places}{inv}", c_name(data, d))
     }
 }
 
 impl Cx<'_> {
+    /// `d`'s invariant inputs (`@FR-R-Inputs`, `hoist::callee_inputs`): the vectors it indexes
+    /// that a caller holding their headers may hand it.  `None` when it has none, under
+    /// `LOFT_NO_CALLEE_INPUTS=1` / `LOFT_NO_VECTOR_HOIST=1`, or when it is not a loft body.
+    pub(crate) fn callee_inputs(
+        &self,
+        d: u32,
+    ) -> Option<std::rc::Rc<crate::opt::hoist::CalleeInputs>> {
+        if self.switches.callee_inputs_disabled
+            || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
+        {
+            return None;
+        }
+        let memo = &mut *self.hoist_memo.borrow_mut();
+        crate::opt::hoist::callee_inputs(
+            d,
+            self.data,
+            self.stores,
+            &mut memo.stores_written,
+            &mut memo.writes,
+            &mut memo.inputs,
+        )
+    }
+
     /// The place twin `(d, mask)` is called: it is written with the unit.
     pub(crate) fn request_twin(&self, d: u32, mask: u64) {
         let mut t = self.twins.borrow_mut();
@@ -1273,6 +1323,7 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
         "\nstatic void loft_bind_tables(void) {\n    loft_tn = loft_tnames;\n    loft_ntn = loft_ntnames;\n    \
          loft_cl = loft_clibs;\n    loft_ncl = loft_nclibs;\n    loft_cls = loft_clibsyms;\n    \
          loft_col = loft_coptlibs;\n    loft_ncol = loft_ncoptlibs;\n    \
+         loft_cbl = loft_cboundlibs;\n    loft_ncbl = loft_ncboundlibs;\n    \
          loft_fault_logger = loft_log_production_fault;\n",
     );
     if cx.lazy.get() {
@@ -1354,7 +1405,7 @@ fn lazy_driver_table(
 fn c_libraries(data: &Data) -> String {
     let mut out = String::new();
     // A required library is linked: the file the package ships, else its soname in the system
-    // linker's spelling.  An optional one (`[c] optional-libs`, @PLN24 arc G) never is — it is
+    // linker's spelling.  An optional one (`[c] optional-libs`) never is — it is
     // opened when its package's symbol is first called, or when `c_library_available` asks.
     let os = crate::platform::host_lib_os();
     let mut links: Vec<String> = Vec::new();
@@ -1381,6 +1432,9 @@ fn c_libraries(data: &Data) -> String {
     };
     let mut syms: Vec<Vec<String>> = Vec::new();
     let mut optional: Vec<String> = Vec::new();
+    // The link inputs that are a library the package ships: a shipped program opens these at
+    // start instead (`/* bound: */`, read by `c_driver::build`).
+    let mut bound: Vec<String> = Vec::new();
     for lib in data.c_libraries.iter().filter(|l| l.shim.is_empty()) {
         let dir = std::path::Path::new(&lib.pkg_dir);
         let shipped = crate::platform::existing_lib_beside(dir, &lib.name, os);
@@ -1417,7 +1471,9 @@ fn c_libraries(data: &Data) -> String {
             continue;
         }
         if let Some(file) = &shipped {
-            links.extend(crate::platform::c_link_args_for_file(&dir.join(file)));
+            let args = crate::platform::c_link_args_for_file(&dir.join(file));
+            bound.extend(args.iter().cloned());
+            links.extend(args);
         } else {
             links.push(crate::platform::c_link_arg_for_soname(&lib.name));
         }
@@ -1434,6 +1490,33 @@ fn c_libraries(data: &Data) -> String {
             optional.join(", ")
         },
         optional.len()
+    );
+    // @PLN195 — the libraries a shipped program opens at start (`loft_c_bind_libraries`): each
+    // one's package, version and file, never its directory.
+    let rows: Vec<String> = data
+        .shipped_c_libraries()
+        .into_iter()
+        .map(|(lib, path)| {
+            let (package, version) = package_identity(&lib.pkg_dir);
+            format!(
+                "{{ {}, {}, {}, {} }}",
+                body::c_string(&package),
+                body::c_string(&version),
+                body::c_string(&crate::file_access::file_name(path.as_path()).unwrap_or_default()),
+                u8::from(!lib.shim.is_empty())
+            )
+        })
+        .collect();
+    let _ = writeln!(
+        out,
+        "static const loft_c_boundlib loft_cboundlibs[] = {{ {} }};\n\
+         static const uint32_t loft_ncboundlibs = {};",
+        if rows.is_empty() {
+            "{ 0, 0, 0, 0 }".to_string()
+        } else {
+            rows.join(", ")
+        },
+        rows.len()
     );
     // A shim of a package with optional libraries is reached through the program's own
     // symbols (`loft_c_lazy_sym`), which the linker exports only when asked.
@@ -1510,6 +1593,9 @@ fn c_libraries(data: &Data) -> String {
             let args = if lazy {
                 crate::platform::c_whole_archive_args(&path)
             } else {
+                // A shipped program links it whole, or not at all when its library goes beside
+                // the program (`c_driver::build`).
+                let _ = writeln!(out, "/* shim-archive: {path} */");
                 vec![path]
             };
             for a in args {
@@ -1533,10 +1619,28 @@ fn c_libraries(data: &Data) -> String {
             }
         }
     }
+    for l in bound {
+        let _ = writeln!(out, "/* bound: {l} */");
+    }
     for l in links {
         let _ = writeln!(out, "/* link: {l} */");
     }
     out
+}
+
+/// A package's name and version as its manifest states them — the directory's name and `0`
+/// where it states none, as the Rust writer's bind table spells them.
+fn package_identity(pkg_dir: &str) -> (String, String) {
+    let manifest = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"));
+    let package = manifest
+        .as_ref()
+        .and_then(|m| m.name.clone())
+        .or_else(|| crate::file_access::file_name(pkg_dir))
+        .unwrap_or_default();
+    let version = manifest
+        .and_then(|m| m.version)
+        .unwrap_or_else(|| "0".to_string());
+    (package, version)
 }
 
 /// The macros a unit's runtime is compiled under, from what it reaches: a foreign store, the
@@ -1582,16 +1686,28 @@ fn unit_defines(
         out.push_str("#define LOFT_REFLECT 1\n");
     }
     if cx.lazy.get() {
-        out.push_str("#define LOFT_LAZY 1\n");
+        // A driver's fault is contained and the program goes on, so its frames' texts are
+        // released at the jump (`LOFT_HOLD`, loft#2198) — or every failed fetch leaks them.
+        out.push_str(
+            "#define LOFT_LAZY 1\n#ifndef LOFT_HALT_RELEASE\n#define LOFT_HALT_RELEASE 1\n#endif\n",
+        );
     }
-    if reached.iter().any(|&d| {
-        matches!(
-            data.def(d).name(),
-            "n_store_load_url" | "n_store_load_url_trusted"
-        )
+    let runtimes: Vec<&str> = reached
+        .iter()
+        .filter_map(|&d| in_binary_native(data.def(d).native()))
+        .collect();
+    if runtimes
+        .iter()
+        .any(|r| matches!(*r, "loft_process_run" | "loft_git_query"))
+    {
+        out.push_str("#define LOFT_PROCESS 1\n");
+    }
+    if runtimes.iter().any(|r| {
+        r.starts_with("loft_kernel_") || matches!(*r, "loft_live_flip" | "loft_swap_retired")
     }) {
-        out.push_str("#define LOFT_NET 1\n");
+        out.push_str("#define LOFT_ENGINE 1\n");
     }
+    out.push_str(&fetch_defines(data, reached, &runtimes, cx.lazy.get()));
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
         let at = |f: &str| stores.position(sf, f);
@@ -1609,6 +1725,31 @@ fn unit_defines(
         );
     }
     (out, parses, reflects)
+}
+
+/// A unit that fetches over a URL: `LOFT_NET` for the whole-image loads and for the paged loaders
+/// and lazy bindings, whose image may be an `http(s)://` one read by range (`loft_net.h`), and for
+/// any of them or `http_fetch` the TLS client its `https://` requests run over (`tls::unit_lines`).
+fn fetch_defines(
+    data: &Data,
+    reached: &std::collections::HashSet<u32>,
+    runtimes: &[&str],
+    lazy: bool,
+) -> String {
+    let loads = lazy
+        || reached.iter().any(|&d| {
+            let name = data.def(d).name();
+            matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
+                || native_c(name) == Some("loft_pg_load_keys")
+        });
+    let mut out = String::new();
+    if loads {
+        out.push_str("#define LOFT_NET 1\n");
+    }
+    if loads || runtimes.contains(&"loft_kernel_http_fetch") {
+        out.push_str(&tls::unit_lines());
+    }
+    out
 }
 
 /// `reflect_type` and `type_named` over the emitted table (`reflect.rs`, `loft_reflect.h`).
@@ -1700,33 +1841,13 @@ fn anchor(stores: &Stores) -> String {
     format!("loft_set_anchor({});", i32::from(stores.program_relative))
 }
 
-/// The signature and the body of function `d`.
-fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
-    let data = cx.data;
-    let def = data.def(d);
-    // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
-    if def.code() == &Value::Null && !def.c_sig.is_empty() {
-        return c_binding(cx, d);
-    }
-    // A `#native` function of a library the program does not load: the interpreter's stub
-    // (`compile.rs`) answers every call with this panic.
-    let unloaded = def.code() == &Value::Null && !def.native().is_empty();
-    if def.code() == &Value::Null && !unloaded {
-        return Err(format!("native {}", def.original_name()));
-    }
-    let ret = cx
-        .ctype(def.returned())
-        .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
-    if unloaded {
-        return unloaded_native(cx, d, ret);
-    }
-    let vars = def.variables();
-    // The parameters are the argument variables, in number order: `ref_return` can promote a
-    // local into the return buffer's place, so parameter i is not always variable i.
-    let args = vars.arguments();
-    if args.len() != def.attributes().len() {
-        return Err("parameters that do not match their arguments".into());
-    }
+/// The C shape of each of a function's variables, in number order: a `&` parameter its target's,
+/// a local nothing binds or one only ever bound to `null` the integer null's.
+fn variable_shapes(
+    cx: &Cx,
+    vars: &crate::variables::Function,
+    args: &[u16],
+) -> Result<Vec<CType>, String> {
     let mut shapes = Vec::with_capacity(vars.count() as usize);
     for v in 0..vars.count() {
         // A `&` parameter has its target's shape, passed as a pointer to it.
@@ -1757,6 +1878,52 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
         })?;
         shapes.push(c);
     }
+    Ok(shapes)
+}
+
+/// The signature and the body of function `d`.
+fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
+    let data = cx.data;
+    let places = mask & !INV_BIT;
+    let def = data.def(d);
+    // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
+    if def.code() == &Value::Null && !def.c_sig.is_empty() {
+        return c_binding(cx, d);
+    }
+    // A `#native` function of a library the program does not load: the interpreter's stub
+    // (`compile.rs`) answers every call with this panic.
+    let unloaded = def.code() == &Value::Null && !def.native().is_empty();
+    if def.code() == &Value::Null && !unloaded {
+        return Err(format!("native {}", def.original_name()));
+    }
+    let ret = cx
+        .ctype(def.returned())
+        .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
+    if unloaded {
+        if let Some(runtime) = in_binary_native(def.native()) {
+            return forwarded_native(cx, d, ret, runtime);
+        }
+        // A native loft's own binary implements is never unloaded there: the stub would answer
+        // what the interpreter never does, so a native the runtime does not carry refuses.
+        if crate::native::FUNCTIONS
+            .iter()
+            .any(|(name, _)| *name == def.native())
+        {
+            return Err(format!(
+                "native {} (in loft's binary; the C runtime does not carry it)",
+                def.original_name()
+            ));
+        }
+        return unloaded_native(cx, d, ret);
+    }
+    let vars = def.variables();
+    // The parameters are the argument variables, in number order: `ref_return` can promote a
+    // local into the return buffer's place, so parameter i is not always variable i.
+    let args = vars.arguments();
+    if args.len() != def.attributes().len() {
+        return Err("parameters that do not match their arguments".into());
+    }
+    let shapes = variable_shapes(cx, vars, &args)?;
     let params: Vec<String> = args
         .iter()
         .enumerate()
@@ -1772,15 +1939,29 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
             }
         })
         .collect();
+    // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
+    // them; its body serves those vectors' accesses from them as a loop's held headers.
+    let mut params = params;
+    let mut inputs: Vec<(crate::opt::writes::PathKey, String, bool)> = Vec::new();
+    if mask & INV_BIT != 0 {
+        let fi = cx
+            .callee_inputs(d)
+            .filter(|fi| !fi.headers.is_empty())
+            .ok_or("an __inv twin of a function with no header inputs")?;
+        for (k, (p, offs, _)) in fi.headers.iter().enumerate() {
+            params.push(format!("loft_vh hi{k}"));
+            inputs.push(((*p, offs.clone()), format!("hi{k}"), true));
+        }
+    }
     let params = if params.is_empty() {
         "void".to_string()
     } else {
         params.join(", ")
     };
-    let name = twin_name(data, d, places);
+    let name = twin_name(data, d, mask);
     let sig = format!("static {} {name}({params})", held(ret));
     if let Type::Iterator(elem, _) = def.returned().base() {
-        if places != 0 {
+        if mask != 0 {
             return Err("a generator handed a store place for a & parameter".into());
         }
         // A tuple rides the frame as a struct copy, a move; a yield copies its texts into the
@@ -1798,6 +1979,7 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
     }
     let body = body::FnWriter::new(cx, d, shapes, ret)
         .places(places)
+        .inputs(inputs)
         .write()?;
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
@@ -1810,6 +1992,10 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
 /// each scalar cast to its declared C type and each text as a NUL-terminated copy; an integer
 /// result widened to 64 bits by its signedness, a floating one as is.  A vector argument is not
 /// carried yet.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one wrapper: the callee's declaration in both link forms, each argument's cast, the result's read"
+)]
 fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
     use crate::c_signature::{self as cs, CArg};
     let data = cx.data;
@@ -1869,7 +2055,7 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         c_params.join(", ")
     };
     // A symbol of a package with `[c] optional-libs` is resolved when first called, through
-    // the program and then the package's optional libraries (`loft_c_lazy_sym`, @PLN24 arc G):
+    // the program and then the package's optional libraries (`loft_c_lazy_sym`):
     // a `#c` declaration does not name its library, so the whole package goes this way.
     let file = def.position().file.to_string();
     let (decl, call) = if data.c_symbol_is_lazy(&file) {
@@ -1883,6 +2069,26 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
                 body::c_string(&sig.symbol),
                 body::c_string(pkg),
                 body::c_string(&sig.symbol)
+            ),
+            format!("loft_cfp({})", args.join(", ")),
+        )
+    } else if let Some(when) = bound_by(data, &file) {
+        // @PLN195 — a library a shipped program opens at start is not linked, so its symbol is
+        // found once, in the program and then in that library; an ordinary build calls it.
+        (
+            format!(
+                "#if defined({when})\n    \
+                 static {ret_text} (*loft_cfp)({params_text}) = 0;\n    \
+                 if (!loft_cfp) {{ void *loft_p = loft_c_bound_sym({sym}); \
+                 memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
+                 if (!loft_cfp) loft_c_missing_symbol({sym});\n\
+                 #else\n    \
+                 extern {ret_text} {}({params_text});\n    \
+                 {ret_text} (*const loft_cfp)({params_text}) = {};\n\
+                 #endif",
+                sig.symbol,
+                sig.symbol,
+                sym = body::c_string(&sig.symbol),
             ),
             format!("loft_cfp({})", args.join(", ")),
         )
@@ -1905,6 +2111,24 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         }
     );
     Ok((sig_c, out))
+}
+
+/// The macro under which a `#c` symbol declared in `file` is found at run time rather than
+/// linked: `LOFT_BIND_LIBS` when its package ships a library of its own (a shipped program opens
+/// that at start), `LOFT_BIND_SHIMS` when it has only a `[c] shim` (opened at start only by a
+/// `--dynamic` build).  None for a package with neither — its symbols are the system's.
+fn bound_by(data: &Data, file: &str) -> Option<&'static str> {
+    let pkg = data.c_owner_pkg(file)?;
+    let shipped = data.shipped_c_libraries();
+    let own = shipped.iter().filter(|(l, _)| l.pkg_dir == pkg);
+    let mut shim = false;
+    for (l, _) in own {
+        if l.shim.is_empty() {
+            return Some("LOFT_BIND_LIBS");
+        }
+        shim = true;
+    }
+    shim.then_some("LOFT_BIND_SHIMS")
 }
 
 /// The call of a `#c` binding and its result: an integer widened to 64 bits by its signedness, a
@@ -1966,9 +2190,70 @@ fn c_binding_result(
 
 /// The body of a `#native` function whose library is not loaded: the panic the interpreter's
 /// stub raises (`compile.rs`), then the result's null for a caller that is past it.
-fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), String> {
+/// The runtime function behind a native of an `in_binary` library — one whose natives live in
+/// loft's own binary (`[native] in_binary = true`, `native.rs`' table): the C runtime carries
+/// each one the C programs reach.
+fn in_binary_native(native: &str) -> Option<&'static str> {
+    match native {
+        "n_process_run" => Some("loft_process_run"),
+        "n_git_query" => Some("loft_git_query"),
+        // `lib/engine_host`'s kernel (`loft_engine.h`).  Its build swap and background rebuild
+        // (`swap_world`, `swap_start`, `rebuild_*`) are not carried: a unit that calls one refuses.
+        "n_kernel_listen" => Some("loft_kernel_listen"),
+        "n_kernel_pump" => Some("loft_kernel_pump"),
+        "n_kernel_next_event" => Some("loft_kernel_next_event"),
+        "n_kernel_event_cid" => Some("loft_kernel_event_cid"),
+        "n_kernel_event_kind" => Some("loft_kernel_event_kind"),
+        "n_kernel_event_payload" => Some("loft_kernel_event_payload"),
+        "n_kernel_event_status" => Some("loft_kernel_event_status"),
+        "n_kernel_tick_due" => Some("loft_kernel_tick_due"),
+        "n_kernel_send" => Some("loft_kernel_send"),
+        "n_kernel_broadcast" => Some("loft_kernel_broadcast"),
+        "n_kernel_http_fetch" => Some("loft_kernel_http_fetch"),
+        "n_live_flip" => Some("loft_live_flip"),
+        "n_kernel_swap_step" => Some("loft_kernel_swap_step"),
+        "n_swap_retired" => Some("loft_swap_retired"),
+        "n_kernel_idle" => Some("loft_kernel_idle"),
+        "n_kernel_clients" => Some("loft_kernel_clients"),
+        "n_kernel_post" => Some("loft_kernel_post"),
+        "n_kernel_alive" => Some("loft_kernel_alive"),
+        "n_kernel_stop" => Some("loft_kernel_stop"),
+        "n_kernel_frame" => Some("loft_kernel_frame"),
+        "n_kernel_udp_bound" => Some("loft_kernel_udp_bound"),
+        "n_kernel_sync_class" => Some("loft_kernel_sync_class"),
+        "n_kernel_sync_class_keyed" => Some("loft_kernel_sync_class_keyed"),
+        "n_kernel_keyframe" => Some("loft_kernel_keyframe"),
+        "n_kernel_sync_next" => Some("loft_kernel_sync_next"),
+        "n_kernel_sync_cid" => Some("loft_kernel_sync_cid"),
+        "n_kernel_sync_seq" => Some("loft_kernel_sync_seq"),
+        "n_kernel_sync_payload" => Some("loft_kernel_sync_payload"),
+        "n_kernel_connect" => Some("loft_kernel_connect"),
+        "n_kernel_client_pump" => Some("loft_kernel_client_pump"),
+        "n_kernel_client_alive" => Some("loft_kernel_client_alive"),
+        "n_kernel_client_next_event" => Some("loft_kernel_client_next_event"),
+        "n_kernel_client_event_kind" => Some("loft_kernel_client_event_kind"),
+        "n_kernel_client_event_cid" => Some("loft_kernel_client_event_cid"),
+        "n_kernel_client_event_payload" => Some("loft_kernel_client_event_payload"),
+        "n_kernel_client_event_status" => Some("loft_kernel_client_event_status"),
+        "n_kernel_client_tick_due" => Some("loft_kernel_client_tick_due"),
+        "n_kernel_client_idle" => Some("loft_kernel_client_idle"),
+        "n_kernel_client_send" => Some("loft_kernel_client_send"),
+        "n_kernel_client_sync_next" => Some("loft_kernel_client_sync_next"),
+        "n_kernel_client_sync_seq" => Some("loft_kernel_client_sync_seq"),
+        "n_kernel_client_sync_payload" => Some("loft_kernel_client_sync_payload"),
+        "n_kernel_client_udp_bound" => Some("loft_kernel_client_udp_bound"),
+        "n_kernel_client_frame" => Some("loft_kernel_client_frame"),
+        "n_kernel_client_stop" => Some("loft_kernel_client_stop"),
+        "n_kernel_default_host" => Some("loft_kernel_default_host"),
+        "n_kernel_local" => Some("loft_kernel_local"),
+        _ => None,
+    }
+}
+
+/// The parameters of a body-less declaration — its attributes, a `&` one as a pointer — each
+/// declared as `a<i>`.
+fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
     let def = cx.data.def(d);
-    // A body-less declaration has no variables: its parameters are its attributes.
     let mut params = Vec::new();
     for (i, a) in def.attributes().iter().enumerate() {
         let c = cx
@@ -1981,6 +2266,41 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
             format!("{} a{i}", passed(c))
         });
     }
+    Ok(params)
+}
+
+/// An `in_binary` native the runtime carries: a body that hands its arguments on.
+fn forwarded_native(
+    cx: &Cx,
+    d: u32,
+    ret: CType,
+    runtime: &str,
+) -> Result<(String, String), String> {
+    let params = declared_params(cx, d)?;
+    let sig = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(cx.data, d),
+        if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        }
+    );
+    let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
+    let call = format!("{runtime}({})", args.join(", "));
+    let body = if ret == CType::Void {
+        format!("    {call};\n")
+    } else {
+        format!("    return {call};\n")
+    };
+    Ok((sig, body))
+}
+
+fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), String> {
+    let def = cx.data.def(d);
+    // A body-less declaration has no variables: its parameters are its attributes.
+    let params = declared_params(cx, d)?;
     let sig = format!(
         "static {} {}({})",
         held(ret),
@@ -2059,11 +2379,13 @@ fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> 
         body::c_string(&frame_name),
         body::c_string(&def.position().file)
     );
+    // The body names the texts it holds (`LOFT_HOLD`); the frame drops them on its return.
+    let push = format!("{push}    LOFT_HOLD_MARK(hm);\n");
     if ret == CType::Void {
-        format!("{push}    {call};\n    loft_frame_pop();\n")
+        format!("{push}    {call};\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n")
     } else {
         format!(
-            "{push}    {} r = {call};\n    loft_frame_pop();\n    return r;\n",
+            "{push}    {} r = {call};\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n",
             held(ret)
         )
     }
@@ -2129,7 +2451,12 @@ pub fn emit_tests_of(
     tests: &[u32],
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
-    let mut out = emit_unit(data, stores, tests)?;
+    // A failed test `longjmp`s past its frames' frees: the unit keeps the texts they hold
+    // (`LOFT_HOLD`) so the halt releases them (loft#2198).
+    let mut out = format!(
+        "#define LOFT_HALT_RELEASE 1\n{}",
+        emit_unit(data, stores, tests)?
+    );
     let _ = write!(
         out,
         "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",

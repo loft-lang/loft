@@ -36,7 +36,7 @@ program) or from the **environment / data** (not reproducible by reading it)?
 | # | Mechanic | Where | Note |
 |---|---|---|---|
 | 1 | **A fault erases its own cause.** null is contagious and silent by design; the value tells you where it *surfaced*, never where it *arose*. | `formal/operational.md` `(E-Uncomp-NN)`, @C80, @C85 | The largest single control loss, and it is now smaller by exactly one half. The SECOND half of this row — *"a non-nullable width takes the type's default instead, so the fault becomes indistinguishable from an answer"* — is closed: `@FR-E-Uncomp-Seen` makes that store testable at the site, `x += 10; if !x { … }`, with the value unchanged ([@PLN152](plans/152-validity-flag-null-model/README.md)). What survives is PROVENANCE — a null still says where it surfaced and never where it arose, which is **P1** below. loft#1296, loft#1297 |
-| 2 | **Native optimisations gated only by env vars** — vector-header hoist, element fuse, sibling-block store confinement. Worth ~2–3× on a loop and 4× on the store watermark; the hoist gate is an allow-list, so an op missing from it silently costs the optimisation. | `src/generation/hoist.rs`, `recover_backer` | `LOFT_NO_VECTOR_HOIST` / `LOFT_NO_ELEM_FUSE` / `LOFT_NO_CONF_RECOVER` are process-wide, not program properties. Nothing at the loop says whether it applied. |
+| 2 | **Native optimisations gated only by env vars** — vector-header hoist, element fuse, sibling-block store confinement. Worth ~2–3× on a loop and 4× on the store watermark; the hoist gate is an allow-list, so an op missing from it silently costs the optimisation. | `src/opt/hoist.rs`, `recover_backer` | `LOFT_NO_VECTOR_HOIST` / `LOFT_NO_ELEM_FUSE` / `LOFT_NO_CONF_RECOVER` are process-wide, not program properties. Nothing at the loop says whether it applied. |
 | 3 | **A copy can never fail a build.** `avoidable-copy` is `advice`, and advice has no deny switch by design — so *"this hot loop must not copy"* is unwritable and un-gateable in CI. | [DIAGNOSTICS.md](DIAGNOSTICS.md), [COPY_DIAGNOSTICS.md](COPY_DIAGNOSTICS.md) | |
 | 4 | **Bucket 5 hides most copies.** Copies whose source is a compiler temp route to `Internal` and leave the user report — 139 of 173 on the first 371-script survey. The promised attribution back to the user value behind the temp is not built. | `src/use_analysis.rs` | |
 | 5 | **No capacity control for four of six collection kinds.** `reserve` takes `vector` and `hash`; `sorted` / `index` / `spatial` / `trie` are refused *"has no capacity to set"* — but they sit on an arena that grows by 7/3 and never shrinks. | [STDLIB.md](STDLIB.md) § `reserve` | Measured: a `sorted` of 20 000 records reads 57 % used, **43 % inner slack**. The refusal's wording is also wrong about the backing store. |
@@ -146,7 +146,7 @@ loft --interpret <probe>.loft
 loft --help | head -12
 ```
 
-Items 1 and 2 are read off the formal rules and `src/generation/hoist.rs` respectively;
+Items 1 and 2 are read off the formal rules and `src/opt/hoist.rs` respectively;
 neither has an instrument yet, which is what puts them in the first table.
 
 ## See also

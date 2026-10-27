@@ -1,5 +1,5 @@
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index 596451f43..ffc0fd978 100644
+index 5737fabe..5b9ced75 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
 @@ -15,7 +15,7 @@ use super::insert_free::{
@@ -19,8 +19,8 @@ index 596451f43..ffc0fd978 100644
 +            result.extend(bind_return_temp(tmp, expr));
              let distinct = data.def_nr("OpDistinctStore");
              let join_arm_dropped = &join_arm_dropped;
-             for &src in &null_arm_record_sources {
-@@ -853,7 +853,7 @@ impl Scopes<'_> {
+             // The sweep's frees go FIRST: they name the returned local as their WITNESS (its
+@@ -858,7 +858,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -29,7 +29,7 @@ index 596451f43..ffc0fd978 100644
              free_copied_text_sources(&mut result, expr, &ls, function, data);
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
-@@ -899,7 +899,7 @@ impl Scopes<'_> {
+@@ -904,7 +904,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -38,7 +38,7 @@ index 596451f43..ffc0fd978 100644
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -954,7 +954,7 @@ impl Scopes<'_> {
+@@ -959,7 +959,7 @@ impl Scopes<'_> {
                  }
              }
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -47,7 +47,7 @@ index 596451f43..ffc0fd978 100644
              result.append(&mut ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -1251,7 +1251,7 @@ impl Scopes<'_> {
+@@ -1256,7 +1256,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -56,7 +56,7 @@ index 596451f43..ffc0fd978 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else if ret_var != u16::MAX {
                      ls.push(Value::Return(Box::new(Value::Var(ret_var))));
-@@ -1313,7 +1313,7 @@ impl Scopes<'_> {
+@@ -1318,7 +1318,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -65,7 +65,7 @@ index 596451f43..ffc0fd978 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else {
                      ls.push(Value::Return(Box::new(Value::Null)));
-@@ -1394,163 +1394,31 @@ pub(super) struct Delivered {
+@@ -1399,163 +1399,31 @@ pub(super) struct Delivered {
      pub(super) moved_out: Option<(u16, Vec<u16>)>,
  }
  
@@ -255,10 +255,10 @@ index 596451f43..ffc0fd978 100644
 +    vec![v_set(tmp, expr.clone())]
  }
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 1dfef7df4..bccb80df7 100644
+index c89a605e..310810f2 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -2647,12 +2647,7 @@ impl State {
+@@ -2705,12 +2705,7 @@ impl State {
              // (@FR-O-NoDiverge).  Excluding it outright left the store a frame minted for a
              // null-handed buffer to nobody when a call that took the buffer answered another
              // store: `none = rec(k - 1, none)` leaked one record per top-level call.
@@ -272,7 +272,7 @@ index 1dfef7df4..bccb80df7 100644
                  && (!is_hidden_buf_arg || entry_w.is_some());
              // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
              // container's backing store (a vector element / nested field), so
-@@ -2894,16 +2889,7 @@ impl State {
+@@ -2952,16 +2947,7 @@ impl State {
                  }
                  if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
                      stack.function.tp(v).base().clone()
@@ -290,7 +290,7 @@ index 1dfef7df4..bccb80df7 100644
                      && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
                      && let Some(fn_nr) =
                          crate::use_analysis::callee_of(stack.data, stack.def_nr, value)
-@@ -7177,43 +7163,3 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
+@@ -7284,43 +7270,3 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
          seed: Some((ix, *nxt)),
      })
  }

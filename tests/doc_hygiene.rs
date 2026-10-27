@@ -3149,7 +3149,7 @@ fn every_subject_claims_the_paths_it_names() {
     let cells: &[(&str, &str)] = &[
         ("src/parser/mod.rs", "parser"),
         ("src/scopes.rs", "scopes"),
-        ("src/generation/hoist.rs", "codegen"),
+        ("src/opt/hoist.rs", "codegen"),
         ("src/state/mod.rs", "runtime"),
         ("src/store.rs", "store"),
         ("src/lsp.rs", "lsp"),
@@ -3157,6 +3157,7 @@ fn every_subject_claims_the_paths_it_names() {
         ("src/engine_host.rs", "host"),
         ("src/file_access/emulated.rs", "winrules"),
         ("doc/claude/TESTING.md", "docs"),
+        ("src/c/body.rs", "c"),
     ];
     for (path, want) in cells {
         assert!(

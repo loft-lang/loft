@@ -3,20 +3,9 @@
 //! @PLN181 — the compiled standard library: `src/compiled_stdlib_gen.rs` is the standard
 //! library's compiled loft bodies, generated with loft itself (`src/stdlib_codegen.rs`).
 use loft::file_access as fa;
-use loft::parser::Parser;
-use loft::scopes;
 
 fn generated() -> String {
-    let mut p = Parser::new();
-    // Unchecked, as `regen_fill_rs` is: the check compares `default/` against tables this
-    // regeneration exists to repair.
-    p.parse_dir_unchecked("default", true, false).unwrap();
-    scopes::check(&mut p.data, &mut p.database);
-    loft::stdlib_codegen::generate(
-        &p.data,
-        &p.database,
-        &loft::cache::collect_stdlib_sources("default"),
-    )
+    loft::stdlib_codegen::generate_from_dir("default").expect("read default/")
 }
 
 /// The generated file is what the standard library generates today.
@@ -30,12 +19,18 @@ fn compiled_stdlib_up_to_date() {
     );
 }
 
-/// Regenerate `src/compiled_stdlib_gen.rs`.  Run with `make compiled-stdlib`.
+/// Regenerate `src/compiled_stdlib_gen.rs` from a test binary: `scripts/falsify.sh` does, for a
+/// control whose patch reverts the runtime, which may not build the `loft-stdlib-gen` binary
+/// `make compiled-stdlib` runs.
 #[test]
-#[ignore = "maintenance: regenerates src/compiled_stdlib_gen.rs — run with `--ignored` via `make compiled-stdlib`"]
+#[ignore = "maintenance: regenerates src/compiled_stdlib_gen.rs; runs with `--ignored` (falsify.sh does), and `make compiled-stdlib` is the usual route"]
 fn regen_compiled_stdlib() {
-    fa::write("src/compiled_stdlib_gen.rs", generated()).expect("write the generated file");
-    println!("src/compiled_stdlib_gen.rs regenerated");
+    let wrote = loft::stdlib_codegen::regenerate("default", "src/compiled_stdlib_gen.rs")
+        .expect("regenerate src/compiled_stdlib_gen.rs");
+    println!(
+        "src/compiled_stdlib_gen.rs {}",
+        if wrote { "regenerated" } else { "unchanged" }
+    );
 }
 
 /// What a module declares for the rest of the crate: each `pub(crate)` item, up to its value.

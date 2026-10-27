@@ -63,7 +63,7 @@ Four mechanisms carry the five rows; each lever below is an instance of one.
 Per lookup ≈ 7.6 header lines are scanned and one hit.  Shares from `sample`: the walked
 line `h` copied out of the store per iteration and freed (23 %) — `(R-TextBorrow)` declines
 with "the body may write a store" because `borrowed_text_walks`
-(`src/generation/hoist.rs:3961`) judges the raw body, where `parts = h.split(':')` is a
+(`src/opt/hoist.rs:3961`) judges the raw body, where `parts = h.split(':')` is a
 vector bind, although `(R-SplitTable)` has already lowered that split and only the WALKED
 vector's table reaches the check (`src/generation/mod.rs:2778`); `h.to_lowercase()` built as
 a `String` per line and copied again, to answer one `starts_with` (40 %); the per-call

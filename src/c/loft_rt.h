@@ -65,7 +65,7 @@ static void loft_reserve(loft_text *t, size_t extra) {
     t->cap = cap;
 }
 
-static void loft_push(loft_text *t, const char *p, size_t n) {
+static void loft_push_slow(loft_text *t, const char *p, size_t n) {
     if (n == 0) return;
     if (t->p && p >= t->p && p < t->p + t->cap) {
         /* Appending a part of itself: the buffer may move, so copy the part first. */
@@ -80,6 +80,18 @@ static void loft_push(loft_text *t, const char *p, size_t n) {
         memcpy(t->p + t->len, p, n);
     }
     t->len += n;
+}
+
+/* The append every text build runs per piece: in place while the buffer has room and the piece
+ * is not a part of the buffer itself, the growth and the self-append out of line. */
+LOFT_HOT_INLINE void loft_push(loft_text *t, const char *p, size_t n) {
+    if (n == 0) return;
+    if (LOFT_LIKELY(t->len + n <= t->cap) && (p < t->p || p >= t->p + t->cap)) {
+        memcpy(t->p + t->len, p, n);
+        t->len += n;
+        return;
+    }
+    loft_push_slow(t, p, n);
 }
 
 static void loft_push_char(loft_text *t, char c) {
@@ -341,12 +353,16 @@ static void loft_format_long(loft_text *s, int64_t val, uint8_t radix, int64_t w
 
 /* print (codegen_runtime::host_print): a reader that stopped reading ends the program quietly
  * with 0 — `prog | head` is the ordinary end of a pipeline, not a fault.  A POSIX host ignores
- * SIGPIPE (`loft_start`), so the closed pipe arrives here as EPIPE. */
+ * SIGPIPE (`loft_start`), so the closed pipe arrives here as EPIPE.  A text holding a newline is
+ * flushed, as Rust's line-writing stdout flushes it: a reader on a pipe sees each line when it is
+ * printed, not when a block fills or the program ends. */
 static void loft_print(loft_str s) {
 #if defined(EPIPE)
     if (fwrite(s.p, 1, s.len, stdout) < s.len && errno == EPIPE) exit(0);
+    if (memchr(s.p, '\n', s.len) && fflush(stdout) != 0 && errno == EPIPE) exit(0);
 #else
     fwrite(s.p, 1, s.len, stdout);
+    if (memchr(s.p, '\n', s.len)) fflush(stdout);
 #endif
 }
 
@@ -382,12 +398,37 @@ static void *loft_c_optlib_open(uint32_t i) {
 }
 #endif
 
+/* @PLN195 — a library a shipped program (`--out`) opens at start through loft's search order,
+ * as `native_bind::bind` does: its package, version and file, never a directory of the machine
+ * that built it.  `shim` marks a `[c] shim`'s own library, which only a `--dynamic` build opens
+ * (LOFT_BIND_SHIMS): a static one carries the shim inside.  Bound by a unit's `main`. */
+typedef struct { const char *pkg, *version, *file; uint8_t shim; } loft_c_boundlib;
+static const loft_c_boundlib *loft_cbl = 0;
+static uint32_t loft_ncbl = 0;
+#if defined(LOFT_POSIX_HOST)
+static void *loft_cbl_handles[64];
+static uint32_t loft_ncbl_handles = 0;
+#endif
+
+/* A `#c` symbol in this program (its linked libraries, its shims), else in a library
+ * `loft_c_bind_libraries` opened.  Null when nothing exports it. */
+static void *loft_c_bound_sym(const char *sym) {
+#if defined(LOFT_POSIX_HOST)
+    void *self = dlopen(0, RTLD_LAZY), *p = self ? dlsym(self, sym) : 0;
+    for (uint32_t i = 0; !p && i < loft_ncbl_handles; i++) p = dlsym(loft_cbl_handles[i], sym);
+    return p;
+#else
+    (void) sym;
+    return 0;
+#endif
+}
+
 /* `c_libs::resolve`: a `#c` symbol of a package with optional libraries — in this program
  * (its linked libraries, its shims), else in one of the package's optional libraries, opened
  * now.  Null when nothing exports it. */
 static void *loft_c_lazy_sym(const char *sym, const char *pkg) {
 #if defined(LOFT_POSIX_HOST)
-    void *self = dlopen(0, RTLD_LAZY), *p = self ? dlsym(self, sym) : 0;
+    void *p = loft_c_bound_sym(sym);
     for (uint32_t i = 0; !p && i < loft_ncol; i++) {
         if (strcmp(loft_col[i].pkg, pkg) != 0) continue;
         void *h = loft_c_optlib_open(i);
@@ -420,9 +461,8 @@ static uint8_t loft_c_library_available(loft_str name) {
         if (strlen(loft_cl[i]) == name.len && memcmp(loft_cl[i], name.p, name.len) == 0) {
 #if defined(LOFT_POSIX_HOST)
             if (loft_cls && loft_cls[i]) {
-                void *self = dlopen(0, RTLD_LAZY);
                 for (const char *const *s = loft_cls[i]; *s; s++) {
-                    if (!self || !dlsym(self, *s)) return 0;
+                    if (!loft_c_bound_sym(*s)) return 0;
                 }
             }
 #endif
@@ -434,10 +474,10 @@ static uint8_t loft_c_library_available(loft_str name) {
      * declares (from it or from what the program already has). */
     for (uint32_t i = 0; i < loft_ncol; i++) {
         if (strlen(loft_col[i].name) != name.len || memcmp(loft_col[i].name, name.p, name.len) != 0) continue;
-        void *h = loft_c_optlib_open(i), *self = dlopen(0, RTLD_LAZY);
+        void *h = loft_c_optlib_open(i);
         if (!h) return 0;
         for (const char *const *s = loft_col[i].syms; *s; s++)
-            if (!dlsym(h, *s) && !(self && dlsym(self, *s))) return 0;
+            if (!dlsym(h, *s) && !loft_c_bound_sym(*s)) return 0;
         return 1;
     }
 #endif
@@ -525,6 +565,47 @@ static LOFT_TLS int loft_in_test = 0;
 /* The message of the last failed assert, for a test expected to fail with it. */
 static LOFT_TLS loft_text loft_fail_msg = { 0, 0, 0 };
 
+/* The texts the running frames hold (loft#2198), in a unit that runs tests: a fault that ends a
+ * test `longjmp`s past every scope-exit free, so each function names the slots its epilogue
+ * frees (`LOFT_HOLD`), its wrapper drops them again on return (`LOFT_HOLD_MARK`/`_BACK`), and a
+ * halt releases what the abandoned frames still hold before it jumps — while those frames are
+ * still on the stack.  A unit that binds a lazy collection keeps them too, since a driver's fault
+ * is contained and the program goes on (`loft_lazy_held_floor`).  Every other unit compiles this
+ * to nothing: there a halt ends the process. */
+#ifdef LOFT_HALT_RELEASE
+typedef struct { loft_text *const *slot; size_t n; } loft_held_frame;
+static LOFT_TLS loft_held_frame *loft_held = 0;
+static LOFT_TLS size_t loft_nheld = 0, loft_capheld = 0;
+static void loft_hold(loft_text *const *slot, size_t n) {
+    if (loft_nheld == loft_capheld) {
+        loft_capheld = loft_capheld ? loft_capheld * 2 : 64;
+        loft_held = (loft_held_frame *) realloc(loft_held, loft_capheld * sizeof *loft_held);
+        if (!loft_held) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_held[loft_nheld].slot = slot;
+    loft_held[loft_nheld].n = n;
+    loft_nheld++;
+}
+/* Free the texts of every frame above `floor`, innermost first; a slot already freed is empty. */
+static void loft_release_held(size_t floor) {
+    while (loft_nheld > floor) {
+        loft_held_frame *f = &loft_held[--loft_nheld];
+        for (size_t i = 0; i < f->n; i++) loft_text_free(f->slot[i]);
+    }
+}
+#define LOFT_HOLD(n, ...) loft_text *const loft_hd[] = { __VA_ARGS__ }; loft_hold(loft_hd, n)
+#define LOFT_HOLD_MARK(m) size_t m = loft_nheld
+#define LOFT_HOLD_BACK(m) (loft_nheld = (m))
+#define LOFT_RELEASE_HELD(floor) loft_release_held(floor)
+/* The depth a contained fault releases down to: the frames under the lazy driver keep theirs. */
+static LOFT_TLS size_t loft_lazy_held_floor = 0;
+#else
+#define LOFT_HOLD(n, ...) ((void) 0)
+#define LOFT_HOLD_MARK(m) ((void) 0)
+#define LOFT_HOLD_BACK(m) ((void) 0)
+#define LOFT_RELEASE_HELD(floor) ((void) 0)
+#endif
+
 static void loft_fault_where(loft_str file, int64_t line);
 /* A fault inside a lazy driver is CONTAINED (`call_frames::in_lazy_driver`): it ends the driver,
  * not the program — `loft_lazy_miss` set the jump and records `<kind>: <message>` as the
@@ -536,6 +617,7 @@ static void loft_lazy_contain(const char *label, loft_str message) {
     loft_push(&loft_lazy_fault, label, strlen(label));
     loft_push(&loft_lazy_fault, ": ", 2);
     loft_push(&loft_lazy_fault, message.p, message.len);
+    LOFT_RELEASE_HELD(loft_lazy_held_floor);
     longjmp(*loft_lazy_jmp, 1);
 }
 
@@ -558,7 +640,7 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "assertion failed: ", 18);
     loft_push(&loft_fail_msg, message.p, message.len);
-    if (loft_in_test) longjmp(loft_test_jmp, 1);
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
     fflush(stdout);
     exit(1);
 }
@@ -573,7 +655,7 @@ static void loft_locked_write(void) {
     fputc('\n', stderr);
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, msg, sizeof msg - 1);
-    if (loft_in_test) longjmp(loft_test_jmp, 1);
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
     fflush(stdout);
     exit(1);
 }
@@ -684,7 +766,7 @@ static void loft_panic(loft_str message, loft_str file, int64_t line) {
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "panic: ", 7);
     loft_push(&loft_fail_msg, message.p, message.len);
-    if (loft_in_test) longjmp(loft_test_jmp, 1);
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
     fflush(stdout);
     exit(1);
 }
@@ -697,6 +779,7 @@ static void loft_exit(int64_t code) {
         sprintf(m, "exit %lld", (long long) code);
         loft_fail_msg.len = 0;
         loft_push(&loft_fail_msg, m, strlen(m));
+        LOFT_RELEASE_HELD(0);
         longjmp(loft_test_jmp, 1);
     }
     fflush(stdout);
@@ -1641,6 +1724,14 @@ LOFT_HOT_INLINE loft_vh loft_vh_of(loft_ref v) {
     return h;
 }
 
+/* A header held by a loop that grows a store: the record and the length stand (no growth moves
+ * another vector's record or changes its length, `@FR-R-Base`), the store's memory may have
+ * moved, so the base is derived again from the held record — one load, no record walk. */
+LOFT_HOT_INLINE loft_vh loft_vh_fresh(loft_vh h) {
+    if (h.rec != 0) h.base = loft_elem_base(&loft_stores[h.store_nr], h.rec);
+    return h;
+}
+
 /* (R-Header)'s proof, checked under LOFT_VERIFY at every held access: the vector still has the
  * record, length and base it was held with. */
 static int loft_vh_same(loft_vh h, loft_ref v) {
@@ -2345,6 +2436,64 @@ LOFT_HOT_INLINE void loft_win_finish(loft_win *w, loft_ref v, uint32_t size) {
     }
 }
 
+/* `@FR-R-PushRec` (native's record push header): a minted path's record, length and room, with
+ * no pointer — a growth of a sibling vector in the same store moves the store's memory, never
+ * this record — so several paths of one store each keep their own across a loop.  A mint takes
+ * the slot past the length while it fits; one that does not grows the record the runtime's way
+ * (`loft_vec_append`: claimed, doubled, refused when locked, dropped when absent) and the header
+ * is derived again.  The finish writes the length back, so the store answers every other read
+ * and no exit has anything to sync.  A locked store has no room, so its mints refuse as before. */
+typedef struct { loft_ref v; uint32_t rec; uint32_t len; uint32_t cap; } loft_ph;
+
+LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
+    loft_ph h;
+    h.v = v;
+    h.rec = 0;
+    h.len = 0;
+    h.cap = 0;
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return h;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return h;
+    h.rec = r;
+    h.len = loft_u32(s, r, 4);
+    if (s->read_only) return h;
+    int32_t claimed;
+    memcpy(&claimed, loft_at(s, r, 0), 4);
+    h.cap = claimed < 1 ? 0 : (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
+    return h;
+}
+
+LOFT_COLD static loft_ref loft_ph_grow(loft_ph *h, uint32_t size) {
+    loft_ref e = loft_vec_append(h->v, size);
+    *h = loft_ph_of(h->v, size);
+    return e;
+}
+
+LOFT_HOT_INLINE loft_ref loft_ph_new(loft_ph *h, uint32_t size) {
+    if (LOFT_UNLIKELY(h->len >= h->cap)) return loft_ph_grow(h, size);
+    loft_ref e;
+    e.store_nr = h->v.store_nr;
+    e.rec = h->rec;
+    e.pos = 8 + h->len * size;
+    return e;
+}
+
+LOFT_HOT_INLINE void loft_ph_finish(loft_ph *h) {
+    if (LOFT_UNLIKELY(h->rec == 0)) {
+        loft_vec_finish(h->v);
+        return;
+    }
+    h->len++;
+    memcpy(loft_at(&loft_stores[h->v.store_nr], h->rec, 4), &h->len, 4);
+}
+
+/* `LOFT_VERIFY`'s proof for a push header: a fresh derivation answers its record, length and room. */
+static int loft_ph_same(loft_ph h, uint32_t size) {
+    loft_ph f = loft_ph_of(h.v, size);
+    return f.rec == h.rec && f.len == h.len && f.cap == h.cap;
+}
+
 /* `LOFT_VERIFY`'s proof for a windowed push: the window still describes the vector — its
  * record, element base and room are what a fresh derivation answers. */
 static int loft_win_same(loft_win w, loft_ref v, uint32_t size) {
@@ -2356,9 +2505,7 @@ LOFT_HOT_INLINE uint64_t loft_f64_bits(double x) { uint64_t b; memcpy(&b, &x, 8)
 LOFT_HOT_INLINE uint32_t loft_f32_bits(float x) { uint32_t b; memcpy(&b, &x, 4); return b; }
 LOFT_HOT_INLINE uint32_t loft_i4_bits(int64_t x) { return x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x; }
 
-#ifdef LOFT_FOREIGN
 static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size);
-#endif
 
 /* OpKeepRange (Stores::vector_keep_range): `v = v[lo..hi]` of scalar elements, kept in place —
  * the span moved to the front of its record and the length set.  A foreign view takes the copy
@@ -2450,7 +2597,11 @@ static void loft_vec_replace(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_
 }
 
 /* OpAppendCopy (State::append_copy): `[x; n]` — the template is the vector's last element and
- * `n` counts it, so n - 1 deep copies of it follow; n <= 0 removes the template too. */
+ * `n` counts it, so n - 1 deep copies of it follow; n <= 0 removes the template too.  As
+ * Stores::fill_from_template: one append and one resize to exactly the total (the record the
+ * interpreter's layout has), the template copied in doubling blocks — each copy takes as many
+ * elements as are already there — and the claims copied per element only for a type that
+ * holds any. */
 static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, int64_t count) {
     uint32_t multiply = count <= 0 ? 0 : count > (int64_t) UINT32_MAX ? UINT32_MAX : (uint32_t) count;
     if (v.store_nr == 0xFFFF || v.rec == 0) return;
@@ -2465,12 +2616,25 @@ static void loft_vec_append_copy(const loft_tdesc *T, uint16_t ctp, loft_ref v, 
     }
     uint32_t length = (uint32_t) loft_vec_len(v);
     uint32_t size = T[ctp].size;
-    for (uint32_t i = 1; i < multiply; i++) {
-        loft_ref e = loft_vec_append(v, size);
-        loft_ref a = { v.store_nr, loft_collection_rec(loft_store_of(v), v.rec, v.pos), 8 + (length - 1) * size };
-        loft_copy_bytes(e, 0, a, 0, size);
-        if (T[ctp].kind != LOFT_T_SCALAR && T[ctp].kind != LOFT_T_DBREF) loft_copy_claims(T, ctp, a, e);
-        loft_vec_finish(v);
+    uint32_t extra = multiply - 1;
+    if (extra == 0 || length == 0) return;
+    (void) loft_vec_append(v, size);
+    loft_vec_set_size(v, extra, size);
+    s = loft_store_of(v);
+    r = loft_collection_rec(s, v.rec, v.pos);
+    uint32_t from = 8 + (length - 1) * size;
+    uint8_t *base = (uint8_t *) loft_at(s, r, 0);
+    for (uint32_t done = 1; done < multiply;) {
+        uint32_t n = done < multiply - done ? done : multiply - done;
+        memcpy(base + from + (size_t) done * size, base + from, (size_t) n * size);
+        done += n;
+    }
+    if (T[ctp].kind != LOFT_T_SCALAR && T[ctp].kind != LOFT_T_DBREF) {
+        loft_ref a = { v.store_nr, r, from };
+        for (uint32_t i = 1; i <= extra; i++) {
+            loft_ref e = { v.store_nr, r, from + i * size };
+            loft_copy_claims(T, ctp, a, e);
+        }
     }
 }
 
@@ -3729,6 +3893,48 @@ LOFT_HOT_INLINE loft_str loft_ls_next(loft_ls *ls, uint8_t *done) {
     return ls->rest;
 }
 
+/* `@FR-R-SplitTable` (codegen_runtime's split table): `parts = text.split(c)` read only by its
+ * length and its element reads, as the pieces `loft_ls` takes — none for an empty or null text —
+ * held as slices of a copy of the text the table owns, so no later write of the source reaches
+ * them.  The vector is never built; a rebind refills the same buffers. */
+typedef struct { loft_text src; loft_str *at; size_t n; size_t cap; } loft_stab;
+
+static void loft_stab_fill(loft_stab *t, loft_str s, uint32_t sep) {
+    t->n = 0;
+    if (s.len == 0 || loft_str_is_null(s)) return;
+    t->src.len = 0;
+    loft_push(&t->src, s.p, s.len);
+    loft_ls ls = loft_ls_of(loft_view(&t->src), sep);
+    uint8_t done = 0;
+    for (;;) {
+        loft_str piece = loft_ls_next(&ls, &done);
+        if (done) break;
+        if (t->n == t->cap) {
+            size_t cap = t->cap ? t->cap * 2 : 16;
+            loft_str *at = (loft_str *) realloc(t->at, cap * sizeof *at);
+            if (!at) { fputs("loft: out of memory\n", stderr); abort(); }
+            t->at = at;
+            t->cap = cap;
+        }
+        t->at[t->n++] = piece;
+    }
+}
+
+/* Element `from` as the vector read answers it: negative counts from the end, outside is null. */
+LOFT_HOT_INLINE loft_str loft_stab_get(const loft_stab *t, int64_t from) {
+    int64_t n = (int64_t) t->n;
+    int64_t f = from < 0 ? from + n : from;
+    return f < 0 || f >= n ? loft_null_text() : t->at[f];
+}
+
+static void loft_stab_free(loft_stab *t) {
+    loft_text_free(&t->src);
+    free(t->at);
+    t->at = 0;
+    t->n = 0;
+    t->cap = 0;
+}
+
 /* OpCastFloatFromText: `parse::<f64>().unwrap_or(NAN)`. */
 static double loft_float_of_text(loft_str t) {
     if (!loft_float_text_ok(t)) return (double) NAN;
@@ -3901,6 +4107,129 @@ static void loft_arm_timeout(void) {
 #endif
 }
 
+#if defined(LOFT_BIND_LIBS) && defined(LOFT_POSIX_HOST)
+#include <dirent.h>
+#if defined(__APPLE__)
+extern int _NSGetExecutablePath(char *buf, uint32_t *size);
+#endif
+/* `native_bind::search_dirs`: LOFT_LIB_PATH's directories, the executable's, the user's
+ * `.loft/lib` (LOFT_HOME, else HOME) and the system root.  The first two may hold a library
+ * flat; every one may hold it in a `<package>-<version>/` directory. */
+typedef struct { char path[4096]; uint8_t flat; } loft_c_libdir;
+static uint32_t loft_c_lib_dirs(loft_c_libdir *d, uint32_t max) {
+    uint32_t n = 0;
+    const char *list = getenv("LOFT_LIB_PATH");
+    while (list && *list && n < max) {
+        const char *end = strchr(list, ':');
+        size_t len = end ? (size_t) (end - list) : strlen(list);
+        if (len > 0 && len < sizeof d[n].path) {
+            memcpy(d[n].path, list, len);
+            d[n].path[len] = 0;
+            d[n].flat = 1;
+            n++;
+        }
+        list = end ? end + 1 : 0;
+    }
+    char exe[4096], real[4096];
+    exe[0] = 0;
+#if defined(__linux__)
+    ssize_t k = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    exe[k > 0 ? k : 0] = 0;
+#elif defined(__APPLE__)
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0) exe[0] = 0;
+#endif
+    if (!exe[0] && loft_argv && loft_argv[0]) snprintf(exe, sizeof exe, "%s", loft_argv[0]);
+    if (exe[0] && realpath(exe, real)) snprintf(exe, sizeof exe, "%s", real);
+    char *slash = strrchr(exe, '/');
+    if (slash && n < max) {
+        *slash = 0;
+        snprintf(d[n].path, sizeof d[n].path, "%s", exe[0] ? exe : "/");
+        d[n].flat = 1;
+        n++;
+    }
+    const char *home = getenv("LOFT_HOME");
+    if (!home) home = getenv("HOME");
+    if (home && n < max) {
+        snprintf(d[n].path, sizeof d[n].path, "%s/.loft/lib", home);
+        d[n].flat = 0;
+        n++;
+    }
+    if (n < max) {
+        snprintf(d[n].path, sizeof d[n].path, "/usr/local/lib/loft");
+        d[n].flat = 0;
+        n++;
+    }
+    return n;
+}
+
+/* `native_bind::missing_library`: the package, the version wanted, every directory searched,
+ * any other version of the package those directories hold, why a file there would not load,
+ * and the cure.  Exit 1, before the program runs a line. */
+static void loft_c_missing_library(const loft_c_boundlib *l, const loft_c_libdir *d, uint32_t n,
+                                   const char *refused) {
+    fprintf(stderr, "loft: cannot find the native library of package `%s` %s (%s)\n  searched:", l->pkg,
+            l->version, l->file);
+    for (uint32_t i = 0; i < n; i++) fprintf(stderr, "\n    %s", d[i].path);
+    size_t plen = strlen(l->pkg);
+    int header = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        DIR *dir = opendir(d[i].path);
+        if (!dir) continue;
+        struct dirent *e;
+        while ((e = readdir(dir)) != 0) {
+            const char *nm = e->d_name;
+            if (strncmp(nm, l->pkg, plen) != 0 || nm[plen] != '-' || nm[plen + 1] < '0' || nm[plen + 1] > '9' ||
+                strcmp(nm + plen + 1, l->version) == 0)
+                continue;
+            if (!header) fprintf(stderr, "\n  other versions found (not used):");
+            header = 1;
+            fprintf(stderr, "\n    %s/%s", d[i].path, nm);
+        }
+        closedir(dir);
+    }
+    if (refused[0]) fprintf(stderr, "\n  %s", refused);
+    fprintf(stderr,
+            "\n  fix: put `%s` beside the program, in `%s-%s/` under one of these directories, or name its "
+            "directory with LOFT_LIB_PATH\n",
+            l->file, l->pkg, l->version);
+    exit(1);
+}
+
+/* `native_bind::bind`: open every library the program was shipped with, first found in search
+ * order; a library found nowhere ends the program naming it. */
+static void loft_c_bind_libraries(void) {
+    static loft_c_libdir dirs[32];
+    uint32_t nd = loft_c_lib_dirs(dirs, 32);
+    for (uint32_t i = 0; i < loft_ncbl; i++) {
+        const loft_c_boundlib *l = &loft_cbl[i];
+#if !defined(LOFT_BIND_SHIMS)
+        if (l->shim) continue;
+#endif
+        char refused[1024], p[8400];
+        refused[0] = 0;
+        void *h = 0;
+        for (uint32_t k = 0; k < nd && !h; k++) {
+            for (int flat = 0; flat < 2 && !h; flat++) {
+                if (flat && !dirs[k].flat) break;
+                if (flat) snprintf(p, sizeof p, "%s/%s", dirs[k].path, l->file);
+                else snprintf(p, sizeof p, "%s/%s-%s/%s", dirs[k].path, l->pkg, l->version, l->file);
+                if (access(p, F_OK) != 0) continue;
+                h = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
+                if (!h) {
+                    const char *why = dlerror();
+                    size_t used = strlen(refused);
+                    snprintf(refused + used, sizeof refused - used, "%s`%s` would not load: %s", used ? "\n  " : "", p,
+                             why ? why : "unknown error");
+                }
+            }
+        }
+        if (!h) loft_c_missing_library(l, dirs, nd, refused);
+        if (loft_ncbl_handles < 64) loft_cbl_handles[loft_ncbl_handles++] = h;
+    }
+}
+#endif
+
 static void loft_start(int argc, char **argv) {
 #if defined(_WIN32)
     /* The bytes a program writes are the bytes the other backends write: no `\r\n` for `\n`. */
@@ -3914,6 +4243,9 @@ static void loft_start(int argc, char **argv) {
     loft_arm_timeout();
 #if defined(LOFT_POSIX_HOST)
     signal(SIGPIPE, SIG_IGN);
+#endif
+#if defined(LOFT_BIND_LIBS) && defined(LOFT_POSIX_HOST)
+    loft_c_bind_libraries();
 #endif
     LOFT_TRACE("M\n");
     loft_init();
@@ -4096,6 +4428,26 @@ static int loft_utf8_valid(const unsigned char *p, size_t n) {
         i += len;
     }
     return 1;
+}
+
+/* `String::from_utf8_lossy` over bytes that may hold a NUL: an invalid byte is U+FFFD. */
+static void loft_push_lossy(loft_text *t, const char *c, size_t n) {
+    const unsigned char *p = (const unsigned char *) c;
+    if (loft_utf8_valid(p, n)) {
+        loft_push(t, c, n);
+        return;
+    }
+    for (size_t i = 0; i < n;) {
+        size_t len = p[i] < 0x80 ? 1 : (p[i] >= 0xC2 && p[i] <= 0xDF) ? 2
+                   : (p[i] >= 0xE0 && p[i] <= 0xEF) ? 3 : (p[i] >= 0xF0 && p[i] <= 0xF4) ? 4 : 0;
+        if (len && i + len <= n && loft_utf8_valid(p + i, len)) {
+            loft_push(t, c + i, len);
+            i += len;
+        } else {
+            loft_push(t, "\xEF\xBF\xBD", 3);
+            i++;
+        }
+    }
 }
 
 /* A `char *` a `#c` binding returns, as `c_call` reads it: NULL is the null text, the bytes end

@@ -1,6 +1,6 @@
-diff --git a/src/generation/apart.rs b/src/generation/apart.rs
---- a/src/generation/apart.rs
-+++ b/src/generation/apart.rs
+diff --git a/src/opt/apart.rs b/src/opt/apart.rs
+--- a/src/opt/apart.rs
++++ b/src/opt/apart.rs
 @@ -240,9 +240,7 @@
              })
              .flat_map(|x| probe.owners_of(x))

@@ -113,3 +113,36 @@ pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> S
     );
     out
 }
+
+/// [`generate`] for the standard library in `dir` as it is now: parsed UNCHECKED (the check
+/// compares `default/` against tables this regeneration exists to repair), then the scope
+/// pass.  The one home of that recipe, for the `loft-stdlib-gen` binary behind
+/// `make compiled-stdlib` and for `tests/compiled_stdlib.rs`, which pins the committed file.
+///
+/// # Errors
+/// When the library in `dir` cannot be read.
+pub fn generate_from_dir(dir: &str) -> std::io::Result<String> {
+    let mut p = crate::parser::Parser::new();
+    p.parse_dir_unchecked(dir, true, false)?;
+    crate::scopes::check(&mut p.data, &mut p.database);
+    Ok(generate(
+        &p.data,
+        &p.database,
+        &crate::cache::collect_stdlib_sources(dir),
+    ))
+}
+
+/// Regenerate `out` from the standard library in `dir`, writing it only when its text
+/// changed: cargo fingerprints the file by its time stamp, so an identical rewrite rebuilds
+/// the whole release crate after it.  Answers whether it wrote.
+///
+/// # Errors
+/// When the library cannot be read or `out` cannot be written.
+pub fn regenerate(dir: &str, out: &str) -> std::io::Result<bool> {
+    let text = generate_from_dir(dir)?;
+    if crate::file_access::read_to_string(out).is_ok_and(|old| old == text) {
+        return Ok(false);
+    }
+    crate::file_access::write(out, text)?;
+    Ok(true)
+}

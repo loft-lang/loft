@@ -1714,6 +1714,14 @@ pub fn c_whole_archive_args(archive: &str) -> Vec<String> {
     }
 }
 
+/// @PLN195 — does a shipped C program open the libraries its packages ship at start, through
+/// loft's search order (`loft_c_bind_libraries`, POSIX `dlopen`)?  Elsewhere it links them and
+/// finds them beside itself.
+#[must_use]
+pub fn c_binds_libraries_at_start() -> bool {
+    cfg!(unix)
+}
+
 /// The `cc` argument that exports a C backend program's own symbols to the dynamic table, so a
 /// `dlsym` over the program finds a shim linked into it (@PLN203 C5, optional libraries): GNU
 /// ld's `-rdynamic`; macOS exports them already, and Windows resolves no symbol that way.
@@ -1737,6 +1745,14 @@ pub fn c_thread_link_args() -> &'static [&'static str] {
     } else {
         &["-pthread"]
     }
+}
+
+/// Does the C runtime have its POSIX host layer here — the sockets, processes, `mmap` and
+/// `realpath` `src/c/loft_cc.h` puts under `LOFT_POSIX_HOST` (@PLN203)?  Not on Windows, until
+/// C8 gives those parts their Windows form.
+#[must_use]
+pub fn c_runtime_posix_host() -> bool {
+    cfg!(unix)
 }
 
 /// What to install so the C backend can build a host program, said for this host (@PLN203

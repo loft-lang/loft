@@ -1,8 +1,7 @@
-diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
-index d7c41aeb3..cb5f50ce1 100644
---- b/src/generation/hoist.rs
-+++ a/src/generation/hoist.rs
-@@ -4778,7 +4778,7 @@ pub fn borrowed_store_texts(
+diff --git a/src/opt/store_text_borrow.rs b/src/opt/store_text_borrow.rs
+--- a/src/opt/store_text_borrow.rs
++++ b/src/opt/store_text_borrow.rs
+@@ -273,7 +273,7 @@
                      &mut cache,
                      &mut active,
                      Some(vars),

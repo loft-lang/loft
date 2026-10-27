@@ -130,12 +130,37 @@ pub(crate) struct FnWriter<'a> {
     /// The label number of each enclosing loop, innermost last.
     loops: Vec<u32>,
     labels: u32,
-    /// The vectors each enclosing loop holds (`loft_vh`), innermost last (@FR-R-Header).
-    headers: Vec<Vec<(crate::opt::writes::PathKey, String)>>,
+    /// The vectors each enclosing loop holds (`loft_vh`), innermost last (@FR-R-Header), each
+    /// with whether its element base stays valid for the loop's extent (`@FR-R-Base`: the
+    /// loop grows no store).  An `__inv` twin starts with its inputs as one frame.
+    headers: Vec<Vec<(crate::opt::writes::PathKey, String, bool)>>,
+    /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
+    /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
+    scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
+    /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
+    /// path, the header and the element size, innermost last.
+    push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
     /// The header gate's memo of which callees write a store.
     hoist_cache: std::collections::HashMap<u32, bool>,
+    /// The locals `(R-Place)` put in another record's store (`hoist::placed_locals`), for
+    /// the store facts the loop verdict proves bases apart with.
+    placed: std::collections::HashSet<u16>,
+    /// `@FR-R-Alias`'s versioned clause: the variable pairs the loop copy being written may
+    /// take as holding apart stores, tested at its entry.  Empty outside such a copy.
+    assumed: Vec<(u16, u16)>,
+    /// `@FR-R-Range` (`opt::range`, native's proof): this function's non-null and range facts,
+    /// computed on first use.
+    range_facts: Option<
+        std::rc::Rc<(
+            std::collections::HashMap<u16, bool>,
+            crate::opt::range::Ranges,
+        )>,
+    >,
     /// Declarations beside the temporaries: the held vectors.
     decls: Vec<String>,
+    /// `set_stmt` is assigning a tuple local this function owns: a call's tuple moving into it
+    /// frees the old value's texts first (`assign`).
+    frees_old_tuple: bool,
     /// Which variables a statement written so far has bound: a later `Set` is a rebind.
     bound: Vec<bool>,
     /// A generator's element shape (`body::generator`): its `yield`s and its `return` differ.
@@ -171,10 +196,18 @@ pub(crate) struct FnWriter<'a> {
     /// `for piece in t.split(c)` loops, by variable — each walked as a `loft_ls` over the text,
     /// the vector never built.  `LOFT_NO_LAZY_SPLIT=1` builds them, as on native.
     lazy: std::collections::BTreeMap<u16, crate::opt::lazy_split::LazySplit>,
+    /// `@FR-R-SplitTable` (`hoist::split_tables`): each bound split's local, as a `loft_stab`
+    /// `st<var>` declared up front; the walks' hidden vectors map to their table.
+    split_tabs: std::collections::BTreeMap<u16, crate::opt::text_borrow::SplitTable>,
+    tab_alias: std::collections::BTreeMap<u16, u16>,
     /// `@FR-R-CompleteWrite` (`hoist::complete_writes`): the element types every mint of this
     /// function writes completely, so the default image copied into a fresh element writes
     /// nothing that survives; computed on first use.
     complete_mints: Option<std::collections::HashSet<u16>>,
+    /// `@FR-R-FileHold` (`lower::file_hold::held_file`, native's gate): the files the enclosing
+    /// loops read through a held cursor, each with its `loft_fcur` and the index in `loops` of
+    /// the loop that holds it.
+    file_holds: Vec<(u16, String, usize)>,
 }
 
 /// A counted loop a push window is opened for (`FnWriter::window_loop`): the pushed path,
@@ -206,12 +239,28 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
     if std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0") {
         return b;
     }
-    let walks = crate::opt::text_borrow::borrowed_text_walks(
-        cx.data,
-        d,
-        &std::collections::BTreeSet::new(),
-        &std::collections::BTreeMap::new(),
-    );
+    // As native's setup: the lazy splits' and the split tables' walks need no store
+    // condition — their pieces are slices of a text — and a `?` discharge of a table's
+    // element borrows the piece too.
+    let tables = if cx.switches.split_table_disabled {
+        std::collections::BTreeMap::new()
+    } else {
+        crate::opt::hoist::split_tables(cx.data, d)
+    };
+    let lazy = if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
+        std::collections::BTreeMap::new()
+    } else {
+        crate::opt::lazy_split::lazy_splits(cx.data, d)
+    };
+    let sliced: std::collections::BTreeSet<u16> = lazy
+        .keys()
+        .copied()
+        .chain(tables.values().flat_map(|t| t.aliases.iter().copied()))
+        .collect();
+    let mut walks = crate::opt::text_borrow::borrowed_text_walks(cx.data, d, &sliced, &tables);
+    walks.extend(crate::opt::hoist::borrowed_discharge_temps(
+        cx.data, d, &tables,
+    ));
     let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
     let plain = store
         .locals
@@ -313,7 +362,12 @@ impl<'a> FnWriter<'a> {
             loops: Vec::new(),
             labels: 0,
             headers: Vec::new(),
+            push_heads: Vec::new(),
+            scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
+            placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
+            assumed: Vec::new(),
+            range_facts: None,
             cur_line: 0,
             where_told: false,
             adopt: if std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0") {
@@ -323,12 +377,19 @@ impl<'a> FnWriter<'a> {
             },
             in_delivery: 0,
             windows: Vec::new(),
+            file_holds: Vec::new(),
             borrowed: borrowed_texts(cx, d),
             lazy: if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
             } else {
                 crate::opt::lazy_split::lazy_splits(cx.data, d)
             },
+            split_tabs: if cx.switches.split_table_disabled {
+                std::collections::BTreeMap::new()
+            } else {
+                crate::opt::hoist::split_tables(cx.data, d)
+            },
+            tab_alias: std::collections::BTreeMap::new(),
             char_walks: if std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
             } else {
@@ -336,6 +397,7 @@ impl<'a> FnWriter<'a> {
             },
             complete_mints: None,
             decls: Vec::new(),
+            frees_old_tuple: false,
             // A parameter arrives bound: its first `Set` is a rebind.
             bound: {
                 let vars = def.variables();
@@ -400,6 +462,18 @@ impl<'a> FnWriter<'a> {
         self
     }
 
+    /// This is an `__inv` twin (`@FR-R-Inputs`): `frame` is the headers its caller hands it,
+    /// valid for the call, since an admitted callee grows no store.
+    pub(crate) fn inputs(
+        mut self,
+        frame: Vec<(crate::opt::writes::PathKey, String, bool)>,
+    ) -> Self {
+        if !frame.is_empty() {
+            self.headers.push(frame);
+        }
+        self
+    }
+
     /// This function is a generator of `elem`s: written by `write_gen`.
     pub(crate) fn yielding(mut self, elem: CType) -> Self {
         self.gen_elem = Some(elem);
@@ -409,6 +483,13 @@ impl<'a> FnWriter<'a> {
     /// The body: the locals, the temporaries and the statements.
     pub(crate) fn write(mut self) -> Result<String, String> {
         let code = self.code;
+        for (v, tab) in &self.split_tabs {
+            self.decls
+                .push(format!("loft_stab st{v} = {{ {{ 0, 0, 0 }}, 0, 0, 0 }};"));
+            for a in &tab.aliases {
+                self.tab_alias.insert(*a, *v);
+            }
+        }
         if self.ret == CType::Void {
             self.stmt(code, 1)?;
             self.epilogue(1);
@@ -448,6 +529,10 @@ impl<'a> FnWriter<'a> {
         for d in &self.decls {
             let _ = writeln!(out, "    {d}");
         }
+        let slots: Vec<String> = self.held_texts().iter().map(|t| format!("&{t}")).collect();
+        if !slots.is_empty() {
+            let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
+        }
         out.push_str(&self.body);
         Ok(out)
     }
@@ -486,8 +571,40 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `@FR-R-FileHold` — give back the cursor of every hold of a loop at `loops` index `from`
+    /// or deeper, innermost first: what Rust's guard does by its drop.  Loft has no exception,
+    /// so these are every exit there is: the loop's own end (`loop_stmt`), a `break` or a
+    /// `continue` to an outer loop, a `return`.
+    fn release_holds(&mut self, from: usize, ind: usize) {
+        let gone: Vec<String> = self
+            .file_holds
+            .iter()
+            .rev()
+            .filter(|(_, _, at)| *at >= from)
+            .map(|(_, c, _)| c.clone())
+            .collect();
+        for c in gone {
+            self.line(ind, &format!("loft_fcur_release(&{c});"));
+        }
+    }
+
     /// Free every text the function holds: its locals and its temporaries.
     fn epilogue(&mut self, ind: usize) {
+        // A `return` from inside a held loop: the cursors go back before the frame does.
+        self.release_holds(0, ind);
+        let tabs: Vec<u16> = self.split_tabs.keys().copied().collect();
+        for v in tabs {
+            self.line(ind, &format!("loft_stab_free(&st{v});"));
+        }
+        for t in self.held_texts() {
+            self.line(ind, &format!("loft_text_free(&{t});"));
+        }
+    }
+
+    /// The texts the function holds, each freed by its epilogue — and released by a halt in a
+    /// unit that runs tests (`LOFT_HOLD`, loft#2198): its text locals, the texts its tuple
+    /// locals own, its text temporaries and the texts its tuple temporaries hold.
+    fn held_texts(&self) -> Vec<String> {
         let mut texts: Vec<String> = (0..self.shapes.len())
             .filter(|&v| {
                 !self.params[v]
@@ -521,40 +638,374 @@ impl<'a> FnWriter<'a> {
         for (t, id) in tuple_temps {
             self.tuple_text_leaves(&t, id, &mut texts);
         }
-        for t in texts {
-            self.line(ind, &format!("loft_text_free(&{t});"));
-        }
+        texts
     }
 
-    /// Before loop `b`: each vector the header gate admits (`opt::header::hoistable_vectors`)
-    /// held in a `loft_vh` — the frame the loop's element accesses read.
-    /// `LOFT_NO_VECTOR_HOIST=1` holds none, `LOFT_NO_WRITE_HOIST=1` none in a loop that writes.
-    fn hold_vectors(&mut self, b: &Block, ind: usize) -> Result<(), String> {
-        // A generator's locals live in its frame between resumes; a held header is not one.
-        if self.gen_elem.is_some() {
-            return Ok(());
-        }
-        let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
+    /// Before loop `b`: each vector the loop verdict holds (`hoist::hoistable`, native's own —
+    /// the vectors the body indexes and the ones its admitted callees index, `@FR-R-Inputs`)
+    /// in a `loft_vh`, the frame the loop's element accesses read.  A loop that grows a store
+    /// (a push, a mint, a text set) keeps the record and the length, which no growth moves; it
+    /// keeps the base only of a vector whose store is proven apart from every store it grows
+    /// (`@FR-R-Base`'s growth clause, `StoreFacts`), and derives the others' base again at
+    /// each access (`loft_vh_fresh`).  `LOFT_NO_VECTOR_HOIST=1` holds none; the tier switches
+    /// are native's (`lower::switches`).
+    /// Answers the minted paths the verdict gives a record push header (`mint_pushes`), for
+    /// [`Self::hold_pushes`] once the loop's window is chosen.
+    fn hold_vectors(
+        &mut self,
+        b: &Block,
+        ind: usize,
+    ) -> Result<Vec<(crate::opt::writes::PathKey, Value)>, String> {
         let mut frame = Vec::new();
-        if !env_on("LOFT_NO_VECTOR_HOIST") {
-            let paths = crate::opt::header::hoistable_vectors(
-                b,
-                self.cx.data,
-                self.d,
-                &mut self.hoist_cache,
-                !env_on("LOFT_NO_WRITE_HOIST"),
-            );
-            for (path, expr) in paths {
+        let mut mints = Vec::new();
+        let mut held_scalars = Vec::new();
+        if let Some(verdict) = self.verdict(b) {
+            mints.clone_from(&verdict.mint_pushes);
+            for (key, getter) in &verdict.scalars {
+                // A direct read the loop spells `getter(Var(v), fld)` is what this serves; a
+                // path scalar of a callee's input shares its key and its bytes.
+                if self.held_scalar(key).is_some() {
+                    continue;
+                }
+                let c = self.shape_of(getter)?;
+                if !matches!(
+                    c,
+                    CType::Int
+                        | CType::Float
+                        | CType::Single
+                        | CType::Bool
+                        | CType::Enum
+                        | CType::Char
+                ) {
+                    continue;
+                }
+                let e = self.nested(|w| w.expr(getter, ind))?;
+                let name = format!("s{}", self.decls.len() + 1);
+                self.decls
+                    .push(format!("{} {name} = {};", held(c), self.cx.initial(c)));
+                self.line(ind, &format!("{name} = {};", as_shape(e, c)?));
+                held_scalars.push((*key, name, c));
+            }
+            let bases = self.kept_bases(&verdict);
+            for ((path, expr), base) in verdict.vectors.into_iter().zip(bases) {
+                // A split table's local, or a walk's alias of one, is never built.
+                if self.split_tabs.contains_key(&path.0) || self.tab_alias.contains_key(&path.0) {
+                    continue;
+                }
+                // A path an enclosing frame holds as well — with a base, or without one where
+                // this loop would keep none either — is served by that frame.
+                let outer = self
+                    .headers
+                    .iter()
+                    .rev()
+                    .flat_map(|f| f.iter())
+                    .find(|(p, _, _)| *p == path)
+                    .map(|(_, _, b)| *b);
+                if outer.is_some_and(|b| b || !base) {
+                    continue;
+                }
                 let e = self.nested(|w| w.expr(&expr, ind))?;
                 let h = format!("h{}", self.decls.len() + 1);
                 self.decls
                     .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
                 self.line(ind, &format!("{h} = loft_vh_of({});", as_ref(e)?));
-                frame.push((path, h));
+                frame.push((path, h, base));
             }
         }
         self.headers.push(frame);
+        self.scalars.push(held_scalars);
+        Ok(mints)
+    }
+
+    /// The local an enclosing loop holds record scalar `key` in, with its shape.
+    fn held_scalar(&self, key: &crate::opt::hoist::ScalarKey) -> Option<(String, CType)> {
+        self.scalars
+            .iter()
+            .rev()
+            .flat_map(|f| f.iter())
+            .find(|(k, _, _)| k == key)
+            .map(|(_, n, c)| (n.clone(), *c))
+    }
+
+    /// `@FR-R-PushRec`, as native's record push header: before loop `b`, a `loft_ph` for each
+    /// minted path of `mints` that no window and no enclosing loop serves; the path's mints and
+    /// finishes go through it (`Self::pushed_mint`).  `LOFT_NO_RECORD_PUSH=1` admits none, in
+    /// the verdict, as on native.
+    fn hold_pushes(
+        &mut self,
+        b: &Block,
+        mints: Vec<(crate::opt::writes::PathKey, Value)>,
+        ind: usize,
+    ) -> Result<(), String> {
+        let mut frame = Vec::new();
+        for (path, expr) in mints {
+            if self.windows.iter().any(|(p, _, _, _)| *p == path) || self.push_head(&path).is_some()
+            {
+                continue;
+            }
+            let Some(size) = self.mint_size(b, &path) else {
+                continue;
+            };
+            let e = self.nested(|w| w.expr(&expr, ind))?;
+            let h = format!("ph{}", self.decls.len() + 1);
+            self.decls
+                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0 }};"));
+            self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
+            crate::rewrite_census::fired("R-PushRec", 1);
+            frame.push((path, h, size));
+        }
+        self.push_heads.push(frame);
         Ok(())
+    }
+
+    /// The element size of the records loop `b` mints into `path`, read off its first mint.
+    fn mint_size(&self, b: &Block, path: &crate::opt::writes::PathKey) -> Option<u32> {
+        let data = self.cx.data;
+        let mut size = None;
+        for op in &b.operators {
+            op.any_node(&mut |n| {
+                if size.is_none()
+                    && let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpNewRecord"
+                    && let Some(t) = crate::opt::writes::mint_target(
+                        data,
+                        self.cx.stores,
+                        "OpNewRecord",
+                        args,
+                        self.vars,
+                    )
+                    && t.path == *path
+                {
+                    size = Some(u32::from(
+                        self.cx.stores.size(self.cx.stores.content(t.vector_tp)),
+                    ));
+                }
+                false
+            });
+        }
+        size
+    }
+
+    /// The record push header an enclosing loop binds for `path`, with its element size.
+    fn push_head(&self, path: &crate::opt::writes::PathKey) -> Option<(String, u32)> {
+        self.push_heads
+            .iter()
+            .rev()
+            .flat_map(|f| f.iter())
+            .find(|(p, _, _)| p == path)
+            .map(|(_, h, size)| (h.clone(), *size))
+    }
+
+    /// A mint, a finish or a length of a path a record push header serves.
+    fn pushed_mint(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        let data = self.cx.data;
+        if name == "OpLengthVector" {
+            return Ok(args
+                .first()
+                .and_then(|v| crate::opt::writes::vector_path(data, v))
+                .and_then(|p| self.push_head(&p))
+                .map(|(h, _)| E::new(format!("((int64_t) {h}.len)"), K::Int)));
+        }
+        // A group's reservation is capacity, observably nothing; the header's mint grows the
+        // record itself, and a reservation made beside it would claim a record it does not hold.
+        if name == "OpPreAllocVector" {
+            return Ok(args
+                .first()
+                .and_then(|v| crate::opt::writes::vector_path(data, v))
+                .and_then(|p| self.push_head(&p))
+                .map(|_| E::new("((void) 0)", K::Void)));
+        }
+        if !matches!(name, "OpNewRecord" | "OpFinishRecord") {
+            return Ok(None);
+        }
+        let Some(t) = crate::opt::writes::mint_target(data, self.cx.stores, name, args, self.vars)
+        else {
+            return Ok(None);
+        };
+        let Some((h, size)) = self.push_head(&t.path) else {
+            return Ok(None);
+        };
+        if name == "OpFinishRecord" {
+            return Ok(Some(E::new(format!("loft_ph_finish(&{h})"), K::Void)));
+        }
+        let elem = self.cx.stores.content(t.vector_tp);
+        let ptp = u16::try_from(Self::literal(&args[1], "type")?)
+            .map_err(|_| "a type number out of range")?;
+        let proof_at = format!("{}:{h}", data.def(self.d).original_name());
+        let e = self.temp(CType::Ref);
+        self.line(
+            ind,
+            &format!(
+                "{e} = (LOFT_PROVED(loft_ph_same({h}, {size}), {}), loft_ph_new(&{h}, {size}));",
+                c_string(&proof_at)
+            ),
+        );
+        if !self.mint_complete(ptp) {
+            let (image, n) = self.cx.default_image(elem);
+            self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
+        }
+        Ok(Some(E::new(e, K::Ref)))
+    }
+
+    /// The store facts the verdict proves stores apart with (`hoist::StoreFacts`), under
+    /// the versioned copy's `assumed` pairs; `None` under `LOFT_NO_DISTINCT_GROWTH=1`.
+    fn store_facts(&self) -> Option<crate::opt::hoist::StoreFacts<'_>> {
+        (!self.cx.switches.distinct_growth_disabled).then(|| crate::opt::hoist::StoreFacts {
+            vars: self.vars,
+            placed: &self.placed,
+            adopted: self.adopt.as_ref().map(|a| (a.v, a.vdb)),
+            owned: None,
+            assumed: &self.assumed,
+        })
+    }
+
+    /// Loop `b`'s header verdict (`hoist::hoistable`), or `None` where none is asked: in a
+    /// generator, whose locals live in its frame between resumes, or under
+    /// `LOFT_NO_VECTOR_HOIST=1`.
+    fn verdict(&mut self, b: &Block) -> Option<crate::opt::hoist::LoopHoist> {
+        if self.gen_elem.is_some() || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
+        {
+            return None;
+        }
+        let sw = self.cx.switches;
+        let tiers = crate::opt::writes::HoistTiers {
+            in_place: !sw.write_hoist_disabled,
+            scalars: !sw.scalar_hoist_disabled,
+            push: !sw.push_hoist_disabled,
+            mint: !sw.mint_hoist_disabled,
+            record_push: !sw.record_push_disabled,
+            heap_push: !sw.heap_record_push_disabled,
+            rebound_movers: !sw.rebound_mover_disabled,
+            text_set: false,
+        };
+        let mut cache = std::mem::take(&mut self.hoist_cache);
+        let facts = self.store_facts();
+        let memo = &mut *self.cx.hoist_memo.borrow_mut();
+        let v = crate::opt::hoist::hoistable(
+            b,
+            self.cx.data,
+            self.cx.stores,
+            self.d,
+            &mut cache,
+            &mut memo.writes,
+            tiers,
+            (!sw.callee_inputs_disabled).then_some(&mut memo.inputs),
+            None,
+            facts.as_ref(),
+        );
+        self.hoist_cache = cache;
+        Some(v)
+    }
+
+    /// Per held vector of `v`, whether its base stays valid for the loop's extent: every one
+    /// in a loop that grows no store, else each whose store is proven apart from every store
+    /// the loop grows (`StoreFacts::distinct`), as native's `begin_vector_hoist` decides.
+    fn kept_bases(&self, v: &crate::opt::hoist::LoopHoist) -> Vec<bool> {
+        if v.growth_free {
+            return vec![true; v.vectors.len()];
+        }
+        let facts = self.store_facts();
+        v.vectors
+            .iter()
+            .map(|(p, _)| {
+                !v.movers.is_empty()
+                    && facts
+                        .as_ref()
+                        .is_some_and(|f| v.movers.iter().all(|m| f.distinct(p.0, *m)))
+            })
+            .collect()
+    }
+
+    /// `@FR-R-Alias`'s versioned clause, as native's `distinct_version`: when loop `lp` grows
+    /// this function's return buffer and would hold more headers if each parameter's store were
+    /// apart from the buffer's, answer the pairs to test at run time and the pairs the tested
+    /// copy may assume apart.  `None` for a loop that gains nothing, cannot be copied (a
+    /// `yield`, a `par`, a function-value call), or under `LOFT_NO_DISTINCT_VERSION=1`.
+    #[expect(clippy::type_complexity, reason = "two pair lists, named in the doc")]
+    fn distinct_version(&mut self, lp: &Block) -> Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> {
+        let sw = self.cx.switches;
+        if sw.distinct_version_disabled
+            || sw.distinct_growth_disabled
+            || !self.assumed.is_empty()
+            || lp.operators.iter().any(|op| {
+                op.any_node(&mut |n| {
+                    matches!(
+                        n,
+                        Value::Yield(_) | Value::Parallel(_) | Value::CallRef(_, _)
+                    )
+                })
+            })
+        {
+            return None;
+        }
+        let data = self.cx.data;
+        let rb = crate::opt::attrs::retbuf_var(data, self.d)?;
+        let adopted = self
+            .adopt
+            .as_ref()
+            .filter(|a| a.buf == rb)
+            .map(|a| (a.v, a.vdb));
+        let bufs: Vec<u16> = std::iter::once(rb)
+            .chain(adopted.into_iter().flat_map(|(v, vdb)| [v, vdb]))
+            .collect();
+        let tested = adopted.map_or(rb, |(v, _)| v);
+        let vars = self.vars;
+        let params: Vec<u16> = (0..vars.count())
+            .filter(|&v| vars.is_argument(v) && v != rb && crate::data::is_dbref(vars.tp(v).base()))
+            .collect();
+        if params.is_empty() {
+            return None;
+        }
+        let plain = self.verdict(lp)?;
+        let grows = crate::opt::hoist::mover_roots(&lp.operators, data, self.cx.stores, vars)
+            .iter()
+            .any(|&m| chain_reaches(vars, m, &bufs));
+        if plain
+            .pushes
+            .iter()
+            .chain(plain.mint_pushes.iter())
+            .all(|(p, _)| !bufs.contains(&p.0))
+            && !plain.movers.iter().any(|m| bufs.contains(m))
+            && !grows
+        {
+            return None;
+        }
+        let assumed: Vec<(u16, u16)> = params
+            .iter()
+            .flat_map(|&p| bufs.iter().map(move |&b| (p, b)))
+            .collect();
+        self.assumed.clone_from(&assumed);
+        let versioned = self.verdict(lp);
+        self.assumed.clear();
+        let versioned = versioned?;
+        // A path counts only when no enclosing frame holds it already.
+        let mut gained: Vec<u16> = Vec::new();
+        for (p, _) in &versioned.vectors {
+            if !plain.vectors.iter().any(|(q, _)| q == p)
+                && self.held_path(p).is_none()
+                && let Some(r) = param_root(vars, p.0, &params)
+                && !gained.contains(&r)
+            {
+                gained.push(r);
+            }
+        }
+        if gained.is_empty() {
+            return None;
+        }
+        let mut tests: Vec<(u16, u16)> = Vec::new();
+        let mut pairs: Vec<(u16, u16)> = Vec::new();
+        for r in gained {
+            if !tests.contains(&(r, tested)) {
+                tests.push((r, tested));
+            }
+            for &b in &bufs {
+                if !pairs.contains(&(r, b)) {
+                    pairs.push((r, b));
+                }
+            }
+        }
+        Some((tests, pairs))
     }
 
     /// `@FR-R-PushFill`'s window clause, as the Rust writer's `push_reserve`: before a COUNTED
@@ -571,7 +1022,7 @@ impl<'a> FnWriter<'a> {
             return Ok(false);
         }
         let Some(p) = self.window_loop(lp) else {
-            return Ok(false);
+            return self.deep_window(lp, ind);
         };
         let n = self.decls.len() + 1;
         let (w, pv) = (format!("pw{n}"), format!("pv{n}"));
@@ -601,6 +1052,68 @@ impl<'a> FnWriter<'a> {
         );
         self.line(ind, &format!("{w} = loft_win_of({pv}, {});", p.size));
         self.windows.push((p.path, w, pv, p.size));
+        Ok(true)
+    }
+
+    /// `@FR-R-PushFill`'s DEEP window clause, as native's `deep_window`: a loop whose scalar
+    /// pushes, at any depth, reach ONE path no enclosing window holds, where
+    /// `hoist::deep_window_ok` admits it — the root exclusive, nothing else in the body naming
+    /// it or writing a store, no exit but the loop's own end — pushes through a window opened
+    /// with no reservation: a push that does not fit takes the window's growth arm.
+    fn deep_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
+        let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
+        if env_on("LOFT_NO_DEEP_WINDOW") {
+            return Ok(false);
+        }
+        let data = self.cx.data;
+        let mut paths: Vec<(crate::opt::writes::PathKey, Value, u32)> = Vec::new();
+        for op in &lp.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && let Some(fp) =
+                        crate::opt::writes::fused_push(data, data.def(*d).name(), args)
+                    && !paths.iter().any(|(p, _, _)| *p == fp.path)
+                {
+                    paths.push((fp.path, fp.vector.clone(), fp.size));
+                }
+                false
+            });
+        }
+        let [(path, vector, size)] = paths.as_slice() else {
+            return Ok(false);
+        };
+        if self.windows.iter().any(|(p, _, _, _)| p == path) {
+            return Ok(false);
+        }
+        let mut cache = std::mem::take(&mut self.hoist_cache);
+        let facts = self.store_facts();
+        let ok = crate::opt::hoist::deep_window_ok(
+            lp,
+            path,
+            data,
+            self.d,
+            Some(self.cx.stores),
+            &mut cache,
+            facts.as_ref(),
+        );
+        self.hoist_cache = cache;
+        if ok.is_err() {
+            return Ok(false);
+        }
+        let (path, vector, size) = (path.clone(), vector.clone(), *size);
+        let n = self.decls.len() + 1;
+        let (w, pv) = (format!("pw{n}"), format!("pv{n}"));
+        self.decls
+            .push(format!("loft_win {w} = {{ 0, 0, 0, 0, 0xFFFF }};"));
+        self.decls
+            .push(format!("loft_ref {pv} = {{ 0xFFFF, 0, 0 }};"));
+        let v = self.expr(&vector, ind)?;
+        self.line(ind, &format!("{pv} = {};", as_ref(v)?));
+        self.flush(ind);
+        self.line(ind, &format!("{w} = loft_win_of({pv}, {size});"));
+        crate::rewrite_census::fired("R-PushFill", 1);
+        self.windows.push((path, w, pv, size));
         Ok(true)
     }
 
@@ -819,15 +1332,27 @@ impl<'a> FnWriter<'a> {
         }
     }
 
-    /// The `loft_vh` an enclosing loop holds for vector expression `v`, if any.
+    /// The `loft_vh` an enclosing loop holds for vector expression `v`, if any, as the
+    /// expression an access reads: the header itself, or under growth the header with its
+    /// base derived again (`loft_vh_fresh`).
     fn held_vector(&self, v: &Value) -> Option<String> {
         let path = crate::opt::writes::vector_path(self.cx.data, v)?;
+        self.held_path(&path)
+    }
+
+    fn held_path(&self, path: &crate::opt::writes::PathKey) -> Option<String> {
         self.headers
             .iter()
             .rev()
             .flat_map(|f| f.iter())
-            .find(|(p, _)| *p == path)
-            .map(|(_, h)| h.clone())
+            .find(|(p, _, _)| p == path)
+            .map(|(_, h, base)| {
+                if *base {
+                    h.clone()
+                } else {
+                    format!("loft_vh_fresh({h})")
+                }
+            })
     }
 
     /// An element access of a held vector: `OpGetVector(v, size, i)` itself, or a scalar read
@@ -1089,10 +1614,37 @@ impl<'a> FnWriter<'a> {
         r
     }
 
-    /// A loop: its held vectors and its push window before it, the window closed after.
+    /// A loop: its held vectors and its push window before it, the window closed after —
+    /// written twice under `@FR-R-Alias`'s versioned clause (`distinct_version`): the copy
+    /// that assumes the parameters apart from the return buffer runs when a test of their
+    /// store numbers says so at its entry, the plain one otherwise.
     fn loop_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
-        self.hold_vectors(b, ind)?;
+        if let Some((tests, pairs)) = self.distinct_version(b) {
+            let test = tests
+                .iter()
+                .map(|&(p, rb)| format!("{}.store_nr != {}.store_nr", self.var(rb), self.var(p)))
+                .collect::<Vec<_>>()
+                .join(" && ");
+            self.flush(ind);
+            self.line(ind, &format!("if ({test}) {{"));
+            self.assumed = pairs;
+            let r = self.loop_copy(b, ind + 1);
+            self.assumed.clear();
+            r?;
+            self.line(ind, "} else {");
+            self.loop_copy(b, ind + 1)?;
+            self.line(ind, "}");
+            crate::rewrite_census::fired("R-AliasVersion", 1);
+            return Ok(());
+        }
+        self.loop_copy(b, ind)
+    }
+
+    fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        let held_file = self.open_file_hold(b, ind)?;
+        let mints = self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
+        self.hold_pushes(b, mints, ind)?;
         self.labels += 1;
         let l = self.labels;
         self.loops.push(l);
@@ -1107,11 +1659,18 @@ impl<'a> FnWriter<'a> {
         self.line(ind, &format!("brk_{l}:;"));
         self.loops.pop();
         self.headers.pop();
+        self.push_heads.pop();
+        self.scalars.pop();
         if window {
             // The loop's one exit: the counted push loop has no break, return or
             // continue of its own (`hoist::push_loop`).
             let (_, w, _, _) = self.windows.pop().expect("the window this loop opened");
             self.line(ind, &format!("loft_win_sync({w});"));
+        }
+        if held_file {
+            // The loop's own end; its other exits gave the cursor back where they leave.
+            let (_, c, _) = self.file_holds.pop().expect("the cursor this loop holds");
+            self.line(ind, &format!("loft_fcur_release(&{c});"));
         }
         Ok(())
     }
@@ -1198,12 +1757,16 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
             Value::If(c, t, e) => {
+                let null_test = self.null_test(c);
                 let c = self.expr(c, ind)?;
                 let c = as_cond(c)?;
                 self.line(ind, &format!("if ({}) {{", bare(&c)));
                 self.stmt(t, ind + 1)?;
                 if !matches!(e.unspan(), Value::Null) {
                     self.line(ind, "} else {");
+                    if null_test {
+                        self.line(ind + 1, "LOFT_COLD_PATH();");
+                    }
                     self.stmt(e, ind + 1)?;
                 }
                 self.line(ind, "}");
@@ -1214,12 +1777,16 @@ impl<'a> FnWriter<'a> {
             Value::Break(n) => {
                 let l = self.label(*n)?;
                 self.flush(ind);
+                // The holds of the loops it leaves; the target's own goes back after its end.
+                self.release_holds(self.loops.len() - *n as usize, ind);
                 self.line(ind, &format!("goto brk_{l};"));
                 Ok(())
             }
             Value::Continue(n) => {
                 let l = self.label(*n)?;
                 self.flush(ind);
+                // The holds of the loops it leaves; the target's own stays held.
+                self.release_holds(self.loops.len() - *n as usize, ind);
                 self.line(ind, &format!("goto cont_{l};"));
                 Ok(())
             }
@@ -1495,6 +2062,7 @@ impl<'a> FnWriter<'a> {
             && self.cx.data.def(*d).name() == "OpGetText"
             && let [r, fld] = args.as_slice()
             && self.lazy_vector(r, "OpGetVectorNullable").is_none()
+            && !matches!(r.unspan(), Value::Call(_, ra) if ra.first().is_some_and(|v| self.split_tab_of(v).is_some()))
         {
             let fld = Self::literal(fld, "field")?;
             let before = self.pending.len();
@@ -1560,6 +2128,89 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `@FR-R-SplitTable` — the bind of a table's local: the pieces recorded in `st<var>`.  The
+    /// vector's own null initialisation binds nothing.
+    fn split_tab_bind(
+        &mut self,
+        var: u16,
+        tab: &crate::opt::text_borrow::SplitTable,
+        x: &Value,
+        ind: usize,
+    ) -> Result<(), String> {
+        if matches!(x.unspan(), Value::Null) {
+            return Ok(());
+        }
+        let Value::Call(_, args) = x.unspan() else {
+            return Err("a split table bound from something other than its call".into());
+        };
+        let src = args.first().ok_or("a split call without its text")?;
+        let e = self.expr(src, ind)?;
+        let view = as_view(e)?;
+        self.line(
+            ind,
+            &format!(
+                "loft_stab_fill(&st{var}, {view}, {}u);",
+                u32::from(tab.separator)
+            ),
+        );
+        crate::rewrite_census::fired("R-SplitTable", 1);
+        self.flush(ind);
+        Ok(())
+    }
+
+    /// The table a vector expression `v` names: a table's local or a walk's alias of one.
+    fn split_tab_of(&self, v: &Value) -> Option<u16> {
+        let Value::Var(x) = v.unspan() else {
+            return None;
+        };
+        if self.split_tabs.contains_key(x) {
+            Some(*x)
+        } else {
+            self.tab_alias.get(x).copied()
+        }
+    }
+
+    /// `@FR-R-SplitTable`'s readers: the length, the element's text, and the mint of a buffer
+    /// only the split call served.  `None` for every other operator.
+    fn split_tab_op(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let data = self.cx.data;
+        match (name, args) {
+            ("OpLengthVector", [v]) => Ok(self
+                .split_tab_of(v)
+                .map(|t| E::new(format!("((int64_t) st{t}.n)"), K::Int))),
+            ("OpGetText", [elem, _]) => {
+                let Value::Call(d, inner) = elem.unspan() else {
+                    return Ok(None);
+                };
+                if !matches!(data.def(*d).name(), "OpGetVectorNullable" | "OpGetVector") {
+                    return Ok(None);
+                }
+                let (Some(v), Some(idx)) = (inner.first(), inner.get(2)) else {
+                    return Ok(None);
+                };
+                let Some(t) = self.split_tab_of(v) else {
+                    return Ok(None);
+                };
+                let i = self.expr(idx, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_stab_get(&st{t}, {})", as_int(i)?),
+                    K::View,
+                )))
+            }
+            ("OpDatabase", [Value::Var(b), _])
+                if self.split_tabs.values().any(|t| t.dead_buf == Some(*b)) =>
+            {
+                Ok(Some(E::new("((void) 0)", K::Void)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// `@FR-R-LazySplit` — the bind of a lazy loop's vector: an iterator over the source text.
     /// A text parameter nothing in the function writes is walked in place; any other source is
     /// copied first, so no write in the loop body can reach what is being walked.
@@ -1614,6 +2265,16 @@ impl<'a> FnWriter<'a> {
     /// The binds a rewrite writes itself: a borrowed text's view (`@FR-R-TextBorrow`) and a
     /// lazy split's iterator (`@FR-R-LazySplit`).  `None` for every other bind.
     fn rewritten_bind(&mut self, var: u16, x: &Value, ind: usize) -> Option<Result<(), String>> {
+        // A walk's alias names the table; a buffer only the table's split would have filled is
+        // never minted.
+        if self.tab_alias.contains_key(&var)
+            || self.split_tabs.values().any(|t| t.dead_buf == Some(var))
+        {
+            return Some(Ok(()));
+        }
+        if let Some(tab) = self.split_tabs.get(&var).cloned() {
+            return Some(self.split_tab_bind(var, &tab, x, ind));
+        }
         if self.shapes[var as usize] == CType::Text && self.borrowed[var as usize] {
             return Some(self.borrowed_bind(var, x, ind));
         }
@@ -1667,6 +2328,7 @@ impl<'a> FnWriter<'a> {
             } else {
                 !(self.vars.is_skip_free(var) || self.vars.is_inline_ref(var))
             })
+            && !self.split_tabs.values().any(|t| t.dead_buf == Some(var))
         {
             self.owned_vector_null(var, ind);
             return Ok(());
@@ -1736,7 +2398,13 @@ impl<'a> FnWriter<'a> {
         if !first && c == CType::Ref && self.displacing_rebind(var, x, &name, ind)? {
             return Ok(());
         }
-        self.assign(x, &name, c, ind)?;
+        // A tuple local this function owns gives up the texts of its old value when a call's
+        // tuple moves in (`assign`); a parameter's or a link's texts are the caller's.
+        let owner = !self.params[var as usize] && !self.links[var as usize];
+        let outer = std::mem::replace(&mut self.frees_old_tuple, owner);
+        let done = self.assign(x, &name, c, ind);
+        self.frees_old_tuple = outer;
+        done?;
         self.flush(ind);
         Ok(())
     }
@@ -2104,16 +2772,7 @@ impl<'a> FnWriter<'a> {
                 r
             }
             Value::Insert(ops) => self.assign_seq(ops, target, c, ind),
-            Value::If(cond, t, e) => {
-                let cond = self.expr(cond, ind)?;
-                let cond = as_cond(cond)?;
-                self.line(ind, &format!("if ({}) {{", bare(&cond)));
-                self.assign(t, target, c, ind + 1)?;
-                self.line(ind, "} else {");
-                self.assign(e, target, c, ind + 1)?;
-                self.line(ind, "}");
-                Ok(())
-            }
+            Value::If(cond, t, e) => self.assign_if(cond, t, e, target, c, ind),
             Value::Tuple(vals) => self.assign_tuple(vals, target, c, ind),
             v @ (Value::Return(_) | Value::Break(_) | Value::Continue(_)) => self.stmt(v, ind),
             // A self tail call's loop (`opt::tail_self`) leaves only by a `return`: it has no
@@ -2130,6 +2789,12 @@ impl<'a> FnWriter<'a> {
                     self.copy_member(&e.code, target, c, ind);
                     return Ok(());
                 }
+                if let CType::Tuple(id) = c
+                    && self.cx.tuple_has_text(id)
+                    && self.frees_old_tuple
+                {
+                    return self.move_tuple_in(e, target, id, ind);
+                }
                 let s = match c {
                     CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
                     CType::Void => format!("{};", e.code),
@@ -2139,6 +2804,25 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
         }
+    }
+
+    /// A call's tuple `e` moved into the owned tuple local `target`, which may still hold the
+    /// texts of the value it had (a loop body's local, every pass after the first): those are
+    /// freed once the call has run — it may read them — and before the move (loft#2201).
+    fn move_tuple_in(&mut self, e: E, target: &str, id: u32, ind: usize) -> Result<(), String> {
+        let c = CType::Tuple(id);
+        let mut old = Vec::new();
+        self.tuple_text_leaves(target, id, &mut old);
+        let mut frees = String::new();
+        for t in &old {
+            let _ = write!(frees, " loft_text_free(&{t});");
+        }
+        let value = as_shape(e, c)?;
+        self.line(
+            ind,
+            &format!("{{ {} mv = {value};{frees} {target} = mv; }}", held(c)),
+        );
+        Ok(())
     }
 
     /// A tuple literal into `target`, of shape `c`.
@@ -2450,6 +3134,9 @@ impl<'a> FnWriter<'a> {
                 }
             }
             compound @ (Value::Block(_) | Value::Insert(_) | Value::If(..) | Value::Tuple(_)) => {
+                if let Some(e) = self.view_choice(compound, ind)? {
+                    return Ok(e);
+                }
                 let c = self.shape_of(compound)?;
                 self.nested(|w| {
                     if c == CType::Void {
@@ -2465,6 +3152,49 @@ impl<'a> FnWriter<'a> {
             Value::Null => Err("a null without a type".into()),
             other => Err(unsupported(other)),
         }
+    }
+
+    /// A text choice between views — `if c { a } else { b }`, as a `?` discharge writes it,
+    /// where each arm is a borrowed text variable or a literal — as the view it picks: the
+    /// bytes are the arm's own, valid as long as that variable is, so nothing is copied.
+    /// `None` for any other compound.
+    fn view_choice(&mut self, compound: &Value, ind: usize) -> Result<Option<E>, String> {
+        let (pre, last): (&[Value], &Value) = match compound.unspan() {
+            Value::Block(block) => match block.operators.split_last() {
+                Some((value, stmts)) => (stmts, value),
+                None => return Ok(None),
+            },
+            other => (&[], other),
+        };
+        let Value::If(cond, then, other) = last.unspan() else {
+            return Ok(None);
+        };
+        let viewable = |w: &Self, arm: &Value| match arm.unspan() {
+            Value::Text(_) => true,
+            Value::Var(var) => w.shapes[*var as usize] == CType::Text && w.borrowed[*var as usize],
+            _ => false,
+        };
+        if !viewable(self, then) || !viewable(self, other) {
+            return Ok(None);
+        }
+        // The block's own statements first — the discharge's bind of the variable it tests.
+        for op in pre {
+            self.stmt(op, ind)?;
+        }
+        let test = self.expr(cond, ind)?;
+        let test = as_cond(test)?;
+        let (then, other) = (self.expr(then, ind)?, self.expr(other, ind)?);
+        let view = format!("tv{}", self.decls.len() + 1);
+        self.decls.push(format!("loft_str {view} = {{ 0, 0 }};"));
+        self.line(
+            ind,
+            &format!(
+                "{view} = ({test}) ? {} : {};",
+                as_view(then)?,
+                as_view(other)?
+            ),
+        );
+        Ok(Some(E::new(view, K::View)))
     }
 
     /// Statements written inside an expression: they free only the temporaries they make, as
@@ -2640,19 +3370,43 @@ impl<'a> FnWriter<'a> {
         if shapes.len() != args.len() {
             return Err("a call whose arguments do not match its parameters".into());
         }
+        // `v.len()` of a vector an enclosing loop holds: the header's length.
+        if def.name() == "t_6vector_len"
+            && let [v] = args
+        {
+            if let Some(t) = self.split_tab_of(v) {
+                return Ok(E::new(format!("((int64_t) st{t}.n)"), K::Int));
+            }
+            if let Some(h) = self.held_vector(v) {
+                return Ok(E::new(format!("{h}.len"), K::Int));
+            }
+            if let Some(e) = self.pushed_mint("OpLengthVector", args, ind)? {
+                return Ok(e);
+            }
+        }
         let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
         self.value_args(args, &shapes, &values, &mut xs, ind)?;
-        let name = if places == 0 {
+        // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
+        let mut mask = places;
+        if super::native_c(def.name()).is_none()
+            && args.len() < 64
+            && let Some(headers) = self.twin_headers(d, args)
+        {
+            xs.extend(headers);
+            mask |= super::INV_BIT;
+        }
+        crate::rewrite_census::fired("R-Inputs", usize::from(mask & super::INV_BIT != 0));
+        let name = if mask == 0 {
             name
-        } else if super::native_c(def.name()).is_some() || args.len() > 64 {
+        } else if super::native_c(def.name()).is_some() || args.len() > 63 {
             return Err(format!("a store place handed to a & parameter of {callee}"));
         } else {
-            cx.request_twin(d, places);
-            super::twin_name(cx.data, d, places)
+            cx.request_twin(d, mask);
+            super::twin_name(cx.data, d, mask)
         };
         let call = format!("{name}({})", xs.join(", "));
         Ok(match ret {
@@ -2664,6 +3418,28 @@ impl<'a> FnWriter<'a> {
             }
             c => E::new(call, kind_of(c)),
         })
+    }
+
+    /// The headers `d`'s `__inv` twin takes for a call with `args`, as native's
+    /// `twin_call_inputs` keys them: each header input's path re-spelled over the argument —
+    /// every one held by an enclosing frame, or `None`.  A header passed under growth carries
+    /// a base derived at the call, valid while the callee runs, which grows no store.
+    fn twin_headers(&self, d: u32, args: &[Value]) -> Option<Vec<String>> {
+        if self.gen_elem.is_some() || self.headers.iter().all(Vec::is_empty) {
+            return None;
+        }
+        let fi = self.cx.callee_inputs(d)?;
+        if fi.headers.is_empty() {
+            return None;
+        }
+        let mut out = Vec::with_capacity(fi.headers.len());
+        for (p, offs, _) in &fi.headers {
+            let (c, mut key) =
+                crate::opt::writes::vector_path(self.cx.data, args.get(*p as usize)?)?;
+            key.extend_from_slice(offs);
+            out.push(self.held_path(&(c, key))?);
+        }
+        Some(out)
     }
 
     /// Evaluate the arguments at `values` into `xs`, in order; a function named where a
@@ -2917,8 +3693,24 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(e);
         }
+        if self.push_heads.iter().any(|f| !f.is_empty())
+            && let Some(e) = self.pushed_mint(name, args, ind)?
+        {
+            return Ok(e);
+        }
+        if self.scalars.iter().any(|f| !f.is_empty())
+            && let Some(key) = crate::opt::hoist::scalar_read(name, args)
+            && let Some((local, c)) = self.held_scalar(&key)
+        {
+            return Ok(E::new(local, kind_of(c)));
+        }
         if !self.lazy.is_empty()
             && let Some(e) = self.lazy_split_op(name, args)
+        {
+            return Ok(e);
+        }
+        if !self.split_tabs.is_empty()
+            && let Some(e) = self.split_tab_op(name, args, ind)?
         {
             return Ok(e);
         }
@@ -2929,6 +3721,9 @@ impl<'a> FnWriter<'a> {
             return Ok(e);
         }
         if let Some(e) = self.gen_operator(name, args, ind)? {
+            return Ok(e);
+        }
+        if let Some(e) = self.range_operator(name, args, ind)? {
             return Ok(e);
         }
         if let Some(e) = self.probe_operator(name, args, ind)? {
@@ -2967,6 +3762,102 @@ impl<'a> FnWriter<'a> {
             return Ok(compare(&as_int(a)?, op, &as_int(b)?));
         }
         self.text_operator(name, args, ind)
+    }
+
+    /// `target = if cond { t } else { e }`, each arm assigning it; a not-null test's else opens
+    /// with `LOFT_COLD_PATH()` (see [`Self::null_test`]).
+    fn assign_if(
+        &mut self,
+        cond: &Value,
+        t: &Value,
+        e: &Value,
+        target: &str,
+        c: CType,
+        ind: usize,
+    ) -> Result<(), String> {
+        let null_test = self.null_test(cond);
+        let cond = self.expr(cond, ind)?;
+        let cond = as_cond(cond)?;
+        self.line(ind, &format!("if ({}) {{", bare(&cond)));
+        self.assign(t, target, c, ind + 1)?;
+        self.line(ind, "} else {");
+        if null_test {
+            self.line(ind + 1, "LOFT_COLD_PATH();");
+        }
+        self.assign(e, target, c, ind + 1)?;
+        self.line(ind, "}");
+        Ok(())
+    }
+
+    /// Is `c` a not-null test (`x != null` of a number)?  Its else is the null's path, which
+    /// `LOFT_COLD_PATH()` keeps a branch: a discharge is then a predicted jump, not a select in
+    /// the dependency chain of the code around it.
+    fn null_test(&self, c: &Value) -> bool {
+        matches!(c.unspan(), Value::Call(d, a) if a.len() == 1
+            && matches!(self.cx.data.def(*d).name(),
+                "OpConvBoolFromFloat" | "OpConvBoolFromSingle"
+                | "OpConvBoolFromInt" | "OpConvBoolFromLong"))
+    }
+
+    /// `@FR-R-Range`, as native writes it: an integer operator whose result the range proof
+    /// (`opt::range::op_range`, over this function's facts) shows fits the type cannot fault,
+    /// so it is the plain C operator — the exact value, the processor's instruction, and a
+    /// signed operation the compiler may reason about (a counted loop's step is one: its
+    /// wrapping or checked forms keep GCC from counting the loop).  Both lanes; a division
+    /// only where the range excludes a zero divisor.  `LOFT_NO_RANGE_ARITH=1` keeps every
+    /// operator checked, as on native.
+    fn range_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let Some(form) = crate::opt::range::plain_form(name, args.len()) else {
+            return Ok(None);
+        };
+        if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
+            return Ok(None);
+        }
+        let facts = if let Some(f) = &self.range_facts {
+            f.clone()
+        } else {
+            {
+                let data = self.cx.data;
+                let def = data.def(self.d);
+                let nn =
+                    crate::opt::non_sentinel::non_sentinel_vars(data, def.variables(), def.code());
+                let rv = crate::opt::range::range_vars(
+                    data,
+                    def.variables(),
+                    def.code(),
+                    &nn,
+                    &self.char_walks,
+                    &crate::opt::range::Ranges::default(),
+                );
+                let f = std::rc::Rc::new((nn, rv));
+                self.range_facts = Some(f.clone());
+                f
+            }
+        };
+        if crate::opt::range::op_range(self.cx.data, &facts.0, &facts.1, name, args, 0).is_none() {
+            return Ok(None);
+        }
+        crate::rewrite_census::fired("R-Range", 1);
+        if form == "wrapping_neg" {
+            let a = self.one(name, args, ind)?;
+            return Ok(Some(E::new(format!("(-({}))", as_int(a)?), K::Int)));
+        }
+        let op = match form {
+            "wrapping_add" => "+",
+            "wrapping_sub" => "-",
+            "wrapping_mul" => "*",
+            other => other,
+        };
+        let (a, b) = self.two(name, args, ind)?;
+        Ok(Some(E::new(
+            format!("(({}) {op} ({}))", as_int(a)?, as_int(b)?),
+            K::Int,
+        )))
     }
 
     /// `LOFT_RELEASE_PASS_PROBE=1` (generation time): the release-pass probe's form of an
@@ -3056,6 +3947,24 @@ impl<'a> FnWriter<'a> {
                     return Err("OpAppendText without two operands".into());
                 };
                 let dest = self.text_dest(dest)?;
+                // A formatted value — `{ __work = ""; …; __work }` — is appended from its work
+                // buffer itself, as native's `append_text(&mut big, &__work)` borrows it: the
+                // append reads it at once and nothing writes the buffer in between, where the
+                // block as an expression would copy it into a temporary first.
+                if let Value::Block(b) = val.unspan()
+                    && let Some((last, rest)) = b.operators.split_last()
+                    && let Value::Var(w) = last.unspan()
+                    && self.shapes[*w as usize] == CType::Text
+                    && self.var(*w) != dest
+                {
+                    let w = *w;
+                    self.nested(|wr| rest.iter().try_for_each(|o| wr.stmt(o, ind)))?;
+                    let val = self.expr(&Value::Var(w), ind)?;
+                    return Ok(E::new(
+                        format!("loft_text_concat(&{dest}, {})", as_view(val)?),
+                        K::Void,
+                    ));
+                }
                 let val = self.expr(val, ind)?;
                 Ok(E::new(
                     format!("loft_text_concat(&{dest}, {})", as_view(val)?),
@@ -5035,4 +5944,36 @@ fn store_links(cx: &Cx, def: &crate::data::Definition, seed: &[u16]) -> Vec<bool
             return store;
         }
     }
+}
+
+/// Does `v`'s single-dep chain reach one of `bufs`?  As native's `grows_buffer` follows a
+/// mover's root.
+fn chain_reaches(vars: &crate::variables::Function, v: u16, bufs: &[u16]) -> bool {
+    let mut cur = v;
+    for _ in 0..vars.var_count() {
+        if bufs.contains(&cur) {
+            return true;
+        }
+        match vars.tp(cur).depend().as_slice() {
+            [d] if *d != cur => cur = *d,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// The member of `params` that `v`'s dep chain ends at, through single-dep views (sixteen
+/// steps at most), as native's `param_root`.
+fn param_root(vars: &crate::variables::Function, v: u16, params: &[u16]) -> Option<u16> {
+    let mut cur = v;
+    for _ in 0..16 {
+        if params.contains(&cur) {
+            return Some(cur);
+        }
+        let [d] = vars.tp(cur).depend()[..] else {
+            return None;
+        };
+        cur = d;
+    }
+    None
 }

@@ -5343,8 +5343,9 @@ impl Stores {
     /// Load a persisted store image at `path` into `slot`, HEAP-backed.  There is
     /// no mmap, so it works on **every** backend.  The slot's empty store is replaced by a heap
     /// store copied from the file, keeping the slot bookkeeping.  Returns
-    /// `false` on a missing / truncated / wrong-format file (via the
-    /// `Store::load` signature check under `catch_unwind`), never a misread.
+    /// `false` on a missing file, and `false` with the reason on stderr on one that
+    /// is not a whole image (`Store::load`: cut short, another format, a chain that
+    /// does not tile it) — never a misread.
     /// @PLN97 arc G Phase 1 (#522).
     pub fn load_path(&mut self, slot: u16, path: &std::path::Path) -> bool {
         // A relative path is the program's, re-homed against its anchor (`resolve_path`).
@@ -5382,14 +5383,14 @@ impl Stores {
             (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned)
         };
 
-        // Store::load panics on a bad signature / unreadable file — surface
-        // that as a clean `false` instead of crashing the interpreter.
-        let new_store = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::store::Store::load(path_str)
-        }));
-        let mut new_store = match new_store {
+        // A file that is not a whole image — cut short, or another format — is refused
+        // with the reason, never adopted (`(S-Frame)`, loft#2200).
+        let mut new_store = match crate::store::Store::load(path_str) {
             Ok(s) => s,
-            Err(_) => return false,
+            Err(why) => {
+                crate::loft_eprintln!("store_load: refusing {} — {why}.", path.display());
+                return false;
+            }
         };
 
         new_store.set_known_type(preserved.0);
@@ -6778,8 +6779,12 @@ impl Stores {
         }
         let s = &self.allocations[slot as usize];
         let preserved = (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned);
-        let Some(mut new_store) = crate::store::Store::from_bytes(bytes) else {
-            return false;
+        let mut new_store = match crate::store::Store::from_bytes_checked(bytes) {
+            Ok(s) => s,
+            Err(why) => {
+                crate::loft_eprintln!("{builtin}: refusing {what} — {why}.");
+                return false;
+            }
         };
         new_store.set_known_type(preserved.0);
         new_store.free = preserved.1;
@@ -7055,7 +7060,7 @@ impl Stores {
         let Some(current) = self.slot_layout_identity(slot) else {
             return Ok(None); // untyped store — no identity to compare against
         };
-        let (verdict, text) = match crate::net::fetch_bytes(&format!("{url}.dschema")) {
+        let (verdict, text) = match crate::net::fetch_beside(&format!("{url}.dschema")) {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => (
                     crate::schema_sidecar::verdict_for_sidecar_text(
@@ -7067,7 +7072,16 @@ impl Stores {
                 ),
                 Err(_) => (crate::schema_sidecar::SchemaVerdict::Unreadable, None),
             },
-            Err(_) => (crate::schema_sidecar::SchemaVerdict::Bare, None),
+            Err(None) => (crate::schema_sidecar::SchemaVerdict::Bare, None),
+            // The request failed: nothing is known about the sidecar, and the image's own
+            // fetch would fail the same way.
+            Err(Some(why)) => {
+                crate::loft_eprintln!(
+                    "{builtin}: refusing {url} — its layout sidecar (`.dschema`) could not be \
+                     fetched: {why}."
+                );
+                return Err(());
+            }
         };
         if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
             return Ok(text);
@@ -7161,13 +7175,15 @@ impl Stores {
         // `refuse_paged` rather than its own `eprintln`, so the program can read
         // it back too: a refusal reachable by one route and not another is the
         // same silence in a different place (loft#802).
-        let reason = if verdict == crate::schema_sidecar::SchemaVerdict::Bare {
-            Self::BARE_IMAGE.to_string()
-        } else {
-            format!(
+        let reason = match verdict {
+            crate::schema_sidecar::SchemaVerdict::Bare => Self::BARE_IMAGE.to_string(),
+            // A refusal carries its own sentence: a store too old for this release, or a
+            // sidecar that could not be fetched.
+            crate::schema_sidecar::SchemaVerdict::Refused(why) => why,
+            verdict => format!(
                 "its recorded layout differs from this program's (verdict: \
                  {verdict:?}); not range-reading foreign bytes"
-            )
+            ),
         };
         self.refuse_paged(path, &reason);
         false
@@ -8929,6 +8945,9 @@ pub(super) fn build_padded_store_image(
         let off = (live_end as usize) * 8;
         out[off..off + 4].copy_from_slice(&size.to_le_bytes());
     }
+    // `(S-Frame)`: the image records its own length, so a reader can tell a file cut on a
+    // block boundary from a whole one (loft#2200).
+    out[4..8].copy_from_slice(&target_words.to_le_bytes());
     Some(out)
 }
 
