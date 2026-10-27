@@ -475,16 +475,7 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
 
 ## Deviations
 
-**OPEN: 1.**  The closed record is in [calls-history.md](calls-history.md).
-
-- **D-call-31 (OPEN, loft#2203)** — violates
-  (F-ParamText): a field passed straight to a `text` parameter is a view of the store on the
-  interpreter and on native, with no condition on the callee.  A callee that GROWS that store
-  moves the bytes under it: the interpreter reads garbage, native reads freed memory.  An
-  overwrite of the field alone does not reproduce (the old text stays where it was,
-  heap.md H-Drop-Not).  The C copies unless the callee keeps every store in place, which is
-  the fix's shape.  Workaround: bind the field to a local first.  Cell owed with the fix: the
-  issue's three-callee table (grows / overwrites / reads).
+**OPEN: 0.**  The closed record is in [calls-history.md](calls-history.md).
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads
