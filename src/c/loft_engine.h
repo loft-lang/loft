@@ -1545,24 +1545,34 @@ static uint8_t loft_live_flip(loft_str name, uint8_t on) {
 #if defined(LOFT_POSIX_HOST)
 typedef struct { int64_t id; char *method, *url, *body, *headers; } loft_eh_req;
 
-/* One HTTP/1.1 exchange on `url` (http only): the status and the body, or -1 and why.  `hops`
- * redirects are followed, as the Rust kernel's client follows them. */
+/* Read an HTTP head from `s` to its blank line, a byte at a time (no over-read past it); 0 on a
+ * closed or silent connection, or a head past 16 KiB. */
+static int loft_eh_stream_head(loft_stream *s, loft_text *head) {
+    while (head->len < 4 || memcmp(head->p + head->len - 4, "\r\n\r\n", 4) != 0) {
+        char b;
+        if (loft_stream_read(s, &b, 1) != 1) return 0;
+        loft_push(head, &b, 1);
+        if (head->len > 16 * 1024) return 0;
+    }
+    return 1;
+}
+
+/* One HTTP/1.1 exchange on `url` (http, or https over the runtime's TLS client): the status and
+ * the body, or -1 and why.  `hops` redirects are followed, as the Rust kernel's client follows
+ * them. */
 static int64_t loft_eh_http(const char *method, const char *url, const char *body, const char *headers,
                             loft_text *out, int hops) {
-    if (strncmp(url, "https://", 8) == 0) {
-        loft_push_cstr(out, url);
-        loft_push_cstr(out, ": this build has no TLS transport, so an https:// request cannot be made");
-        return -1;
-    }
-    if (strncmp(url, "http://", 7) != 0) {
+    int tls = strncmp(url, "https://", 8) == 0;
+    if (!tls && strncmp(url, "http://", 7) != 0) {
         loft_push_cstr(out, url);
         loft_push_cstr(out, ": Bad URL: unknown scheme");
         return -1;
     }
-    const char *auth = url + 7, *slash = strchr(auth, '/');
+    const char *auth = url + (tls ? 8 : 7), *slash = strchr(auth, '/');
     size_t alen = slash ? (size_t) (slash - auth) : strlen(auth);
     const char *path = slash ? slash : "/";
-    char host[512], port[16] = "80";
+    char host[512], port[16];
+    snprintf(port, sizeof port, "%s", tls ? "443" : "80");
     const char *hp = auth, *colon = 0;
     size_t hl = alen;
     if (alen && auth[0] == '[') {
@@ -1620,6 +1630,17 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
     loft_eh_timeout(fd, 30000);
     struct timeval tv = { 30, 0 };
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    loft_stream st = { fd, 0 };
+    if (tls) {
+        char why[768];
+        if (!loft_stream_tls(&st, host, why, sizeof why)) {
+            loft_stream_close(&st);
+            loft_push_cstr(out, url);
+            loft_push_cstr(out, ": Connection Failed: ");
+            loft_push_cstr(out, why);
+            return -1;
+        }
+    }
     loft_text req = { 0, 0, 0 };
     loft_push_cstr(&req, method);
     loft_push_cstr(&req, " ");
@@ -1651,11 +1672,11 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
     loft_push_cstr(&req, "Connection: close\r\n\r\n");
     loft_push_cstr(&req, body);
     loft_text head = { 0, 0, 0 };
-    int ok = loft_eh_write_all(fd, req.p, req.len) && loft_eh_read_head(fd, &head);
+    int ok = loft_stream_write_all(&st, req.p, req.len) && loft_eh_stream_head(&st, &head);
     free(req.p);
     if (!ok) {
         free(head.p);
-        close(fd);
+        loft_stream_close(&st);
         loft_push_cstr(out, url);
         loft_push_cstr(out, ": Connection Failed: the server closed the connection or timed out");
         return -1;
@@ -1670,13 +1691,13 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
     if (status >= 300 && status < 400 && status != 304 && hops > 0 && loft_eh_header(&head, "location", &v, &vn)) {
         loft_text next = { 0, 0, 0 };
         if (vn && v[0] == '/') {
-            loft_push_cstr(&next, "http://");
+            loft_push_cstr(&next, tls ? "https://" : "http://");
             loft_push(&next, auth, alen);
         }
         loft_push(&next, v, vn);
         loft_push(&next, "", 1);
         free(head.p);
-        close(fd);
+        loft_stream_close(&st);
         int get = status == 303 || ((status == 301 || status == 302) && strcmp(method, "POST") == 0);
         int64_t r = loft_eh_http(get ? "GET" : method, next.p, get ? "" : body, headers, out, hops - 1);
         free(next.p);
@@ -1695,7 +1716,7 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
                 loft_text line = { 0, 0, 0 };
                 while (line.len < 2 || memcmp(line.p + line.len - 2, "\r\n", 2) != 0) {
                     char b;
-                    if (recv(fd, &b, 1, 0) != 1) { line.len = 0; break; }
+                    if (loft_stream_read(&st, &b, 1) != 1) { line.len = 0; break; }
                     loft_push(&line, &b, 1);
                 }
                 unsigned long n = line.len ? strtoul(line.p, 0, 16) : 0;
@@ -1703,7 +1724,7 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
                 if (n == 0) break;
                 char *chunk = (char *) malloc(n + 2);
                 if (!chunk) { fputs("loft: out of memory\n", stderr); abort(); }
-                int got = loft_eh_read_exact(fd, chunk, n + 2);
+                int got = loft_stream_read_exact(&st, chunk, n + 2);
                 if (got) loft_push(&raw, chunk, n);
                 free(chunk);
                 if (!got) break;
@@ -1711,16 +1732,16 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
         } else if (clen >= 0) {
             while ((int64_t) raw.len < clen) {
                 size_t want = (size_t) (clen - (int64_t) raw.len) < sizeof buf ? (size_t) (clen - (int64_t) raw.len) : sizeof buf;
-                ssize_t r = recv(fd, buf, want, 0);
+                long r = loft_stream_read(&st, buf, want);
                 if (r <= 0) break;
                 loft_push(&raw, buf, (size_t) r);
             }
         } else {
-            ssize_t r;
-            while ((r = recv(fd, buf, sizeof buf, 0)) > 0) loft_push(&raw, buf, (size_t) r);
+            long r;
+            while ((r = loft_stream_read(&st, buf, sizeof buf)) > 0) loft_push(&raw, buf, (size_t) r);
         }
     }
-    close(fd);
+    loft_stream_close(&st);
     /* A body that is not UTF-8 reads as empty, as the Rust client's `into_string` gives up. */
     if (loft_utf8_valid((const unsigned char *) raw.p, raw.len)) loft_push(out, raw.p, raw.len);
     free(raw.p);

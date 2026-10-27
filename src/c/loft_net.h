@@ -1,9 +1,9 @@
 /* ── Whole-image loads over a URL (`store_load_url`, `store_load_url_trusted`) ──────────────────
- * `net::fetch_bytes` for a C build: a `file://` URL is read from the filesystem, an `http://` one
- * is one HTTP/1.1 GET over a POSIX socket (`Connection: close`, a `Content-Length` or chunked
- * body), and an `https://` one is answered as a build without a TLS transport answers — this
- * runtime has none.  `integrity::verify_sha256` pins an image's bytes.  Pasted only into a unit
- * that loads over a URL (`LOFT_NET`). */
+ * `net::fetch_bytes` for a C build: a `file://` URL is read from the filesystem, an `http://` or
+ * `https://` one is one HTTP/1.1 GET (`Connection: close`, a `Content-Length` or chunked body)
+ * over the runtime's client connection (`loft_https.h`: a POSIX socket, TLS over it for https).
+ * `integrity::verify_sha256` pins an image's bytes.  Pasted only into a unit that loads over a
+ * URL (`LOFT_NET`). */
 #ifdef LOFT_NET
 #ifdef LOFT_POSIX_HOST
 #include <netdb.h>
@@ -41,11 +41,13 @@ static int loft_fetch_file(const char *path, loft_bytes *out, char *err, size_t 
 }
 
 #ifdef LOFT_POSIX_HOST
-/* One GET of `http://host[:port]/path`: the 2xx body, a chunked one decoded. */
+/* One GET of `http[s]://host[:port]/path`: the 2xx body, a chunked one decoded. */
 static int loft_fetch_http(const char *url, loft_bytes *out, char *err, size_t cap) {
-    const char *rest = url + 7, *slash = strchr(rest, '/');
+    int tls = strncmp(url, "https://", 8) == 0;
+    const char *rest = url + (tls ? 8 : 7), *slash = strchr(rest, '/');
     size_t hlen = slash ? (size_t) (slash - rest) : strlen(rest);
-    char host[256], port[16] = "80";
+    char host[256], port[16];
+    snprintf(port, sizeof port, "%s", tls ? "443" : "80");
     if (hlen == 0 || hlen >= sizeof host) {
         snprintf(err, cap, "HTTP error: %s is not a URL this client reads", url);
         return 0;
@@ -80,19 +82,22 @@ static int loft_fetch_http(const char *url, loft_bytes *out, char *err, size_t c
         snprintf(err, cap, "HTTP error: %s: Connection Failed: %s (os error %d)", url, strerror(e), e);
         return 0;
     }
-    char req[1024];
-    int rn = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
-    for (int sent = 0; sent < rn;) {
-        ssize_t w = write(fd, req + sent, (size_t) (rn - sent));
-        if (w <= 0) break;
-        sent += (int) w;
+    loft_stream st = { fd, 0 };
+    char why[768];
+    if (tls && !loft_stream_tls(&st, host, why, sizeof why)) {
+        snprintf(err, cap, "HTTP error: %s: Connection Failed: %s", url, why);
+        loft_stream_close(&st);
+        return 0;
     }
+    char req[1024];
+    int rn = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %.*s\r\nConnection: close\r\n\r\n", path, (int) hlen, rest);
+    loft_stream_write_all(&st, req, rn > 0 && (size_t) rn < sizeof req ? (size_t) rn : 0);
     loft_bytes all = { 0, 0 };
     size_t ac = 0;
     uint8_t buf[65536];
-    ssize_t got;
-    while ((got = read(fd, buf, sizeof buf)) > 0) loft_bytes_push(&all, &ac, buf, (size_t) got);
-    close(fd);
+    long got;
+    while ((got = loft_stream_read(&st, buf, sizeof buf)) > 0) loft_bytes_push(&all, &ac, buf, (size_t) got);
+    loft_stream_close(&st);
     size_t head = 0;
     while (head + 3 < all.n && memcmp(all.p + head, "\r\n\r\n", 4) != 0) head++;
     int status = 0;
@@ -142,7 +147,7 @@ static int loft_fetch(const char *url, loft_bytes *out, char *err, size_t cap) {
     out->n = 0;
     if (strncmp(url, "file://", 7) == 0) return loft_fetch_file(url + 7, out, err, cap);
 #ifdef LOFT_POSIX_HOST
-    if (strncmp(url, "http://", 7) == 0) return loft_fetch_http(url, out, err, cap);
+    if (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0) return loft_fetch_http(url, out, err, cap);
 #endif
     snprintf(err, cap, "this build has no HTTP transport, so it cannot fetch %s — a store it carries reads with "
              "`store_load`, which needs no network", url);

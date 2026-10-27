@@ -24,6 +24,7 @@ mod fnval;
 mod parse;
 mod reflect;
 mod show;
+pub(crate) mod tls;
 mod unicode;
 
 use crate::data::{Data, DefType, Type, Value};
@@ -52,6 +53,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_io.h"),
     include_str!("loft_log.h"),
     include_str!("loft_lazy.h"),
+    include_str!("loft_https.h"),
     include_str!("loft_net.h"),
     include_str!("loft_process.h"),
     include_str!("loft_engine.h")
@@ -1666,6 +1668,17 @@ fn unit_defines(
         r.starts_with("loft_kernel_") || matches!(*r, "loft_live_flip" | "loft_swap_retired")
     }) {
         out.push_str("#define LOFT_ENGINE 1\n");
+    }
+    // A unit that fetches over a URL links the TLS client for its `https://` requests.
+    let fetches = runtimes.contains(&"loft_kernel_http_fetch")
+        || reached.iter().any(|&d| {
+            matches!(
+                data.def(d).name(),
+                "n_store_load_url" | "n_store_load_url_trusted"
+            )
+        });
+    if fetches {
+        out.push_str(&tls::unit_lines());
     }
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
