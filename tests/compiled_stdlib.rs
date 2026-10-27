@@ -23,7 +23,7 @@ fn compiled_stdlib_up_to_date() {
 /// control whose patch reverts the runtime, which may not build the `loft-stdlib-gen` binary
 /// `make compiled-stdlib` runs.
 #[test]
-#[ignore = "maintenance: regenerates src/compiled_stdlib_gen.rs — `make compiled-stdlib` is the usual route"]
+#[ignore = "maintenance: regenerates src/compiled_stdlib_gen.rs; runs with `--ignored` (falsify.sh does), and `make compiled-stdlib` is the usual route"]
 fn regen_compiled_stdlib() {
     let wrote = loft::stdlib_codegen::regenerate("default", "src/compiled_stdlib_gen.rs")
         .expect("regenerate src/compiled_stdlib_gen.rs");
