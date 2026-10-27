@@ -2496,9 +2496,9 @@ fn prebuilt_library(data: &Data, native: &str) -> Option<String> {
     crate::native_build::prebuilt_native_lib(pkg_dir, &stem)
 }
 
-/// The loft-ffi side of a library native's parameters (`library_native`): each one's C
-/// parameter types and the argument expressions that pass it, the lines that build a heap
-/// argument's `loft_ffi_ref`, and the first heap argument, whose store the call is handed.
+/// A library native's arguments as the loft-ffi ABI takes them: the typed parameters, the
+/// expression for each, the statements that compute a vector's data record first, and the
+/// argument whose store is handed over.
 struct FfiArgs {
     params: Vec<String>,
     args: Vec<String>,
@@ -2506,7 +2506,8 @@ struct FfiArgs {
     store_arg: Option<usize>,
 }
 
-fn library_ffi_args(def: &crate::data::Definition) -> Result<FfiArgs, String> {
+fn ffi_args(cx: &Cx, d: u32) -> Result<FfiArgs, String> {
+    let def = cx.data.def(d);
     let mut ffi_params: Vec<String> = Vec::new();
     let mut ffi_args: Vec<String> = Vec::new();
     let mut prep = String::new();
@@ -2586,7 +2587,7 @@ fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, Str
         args: mut ffi_args,
         prep,
         store_arg,
-    } = library_ffi_args(def)?;
+    } = ffi_args(cx, d)?;
     let ffi_ret = match def.returned().base() {
         Type::Void => "void",
         Type::Integer(s) if s.forced_size.is_none() => "int64_t",
