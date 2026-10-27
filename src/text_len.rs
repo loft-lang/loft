@@ -268,7 +268,7 @@ pub fn rewrite_program(data: &mut Data) {
         // borrows from a store-held variable (a record, a vector) is not: a write through that
         // variable would change it without naming it.
         let vars = &def.variables;
-        let is_text = |v: u16| matches!(vars.tp(v), Type::Text(_));
+        let is_text = |v: u16| matches!(vars.tp(v).base(), Type::Text(_));
         let mut deps = BTreeMap::new();
         let cands: HashSet<u16> = (0..vars.count())
             .filter(|v| {
