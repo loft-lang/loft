@@ -59,6 +59,28 @@ pub(crate) fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
     http_get_bytes(url)
 }
 
+/// A file fetched BESIDE another (a store image's `.dschema` sidecar): its bytes, `Err(None)`
+/// when the host answered that it has no such file (403, 404, 410, a `file://` path that is not
+/// there), `Err(Some(why))` when the request itself failed — a refused handshake, no connection,
+/// another status.  A loader that reads the first as "there is no sidecar" must not read the
+/// second so, or a TLS refusal is reported as a missing file.  The browser cannot tell them
+/// apart and answers `Err(None)`.
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+pub(crate) fn fetch_beside(url: &str) -> Result<Vec<u8>, Option<String>> {
+    fetch_bytes(url).map_err(|_| None)
+}
+
+#[cfg(all(
+    feature = "registry",
+    not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
+))]
+pub(crate) fn fetch_beside(url: &str) -> Result<Vec<u8>, Option<String>> {
+    http_get_within(url, CONNECT_BOUND, DOWNLOAD_BOUND).map_err(|m| match m {
+        Miss::Absent(_) => None,
+        Miss::Failed(why) => Some(why),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // loft#678 — the RANGE half, behind the working-set store loaders.
 //

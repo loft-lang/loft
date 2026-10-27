@@ -247,9 +247,16 @@ fn https_through_an_untrusted_ca_is_refused_on_both_backends() {
             out.contains("LOAD ok=false") && out.contains("FETCH status=-1"),
             "{backend}: both clients refuse\nstdout: {out}\nstderr: {err}"
         );
+        // The load says its sidecar could not be FETCHED — never that there is none, which
+        // would send the reader looking for a missing file instead of at the certificate.
         assert!(
-            err.contains("UnknownIssuer") || err.contains("certificate"),
-            "{backend}: the refusal names the certificate: {err}"
+            err.contains("could not be fetched") && !err.contains("no layout sidecar"),
+            "{backend}: the load names the failed fetch, not a missing sidecar: {err}"
+        );
+        let fetch = out.lines().find(|l| l.starts_with("FETCH")).unwrap_or_default();
+        assert!(
+            fetch.contains("UnknownIssuer") || fetch.contains("certificate"),
+            "{backend}: the refusal names the certificate: {fetch}\nstderr: {err}"
         );
         let _ = fa::remove_dir_all(&dir);
     }

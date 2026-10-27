@@ -7060,7 +7060,7 @@ impl Stores {
         let Some(current) = self.slot_layout_identity(slot) else {
             return Ok(None); // untyped store — no identity to compare against
         };
-        let (verdict, text) = match crate::net::fetch_bytes(&format!("{url}.dschema")) {
+        let (verdict, text) = match crate::net::fetch_beside(&format!("{url}.dschema")) {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => (
                     crate::schema_sidecar::verdict_for_sidecar_text(
@@ -7072,7 +7072,16 @@ impl Stores {
                 ),
                 Err(_) => (crate::schema_sidecar::SchemaVerdict::Unreadable, None),
             },
-            Err(_) => (crate::schema_sidecar::SchemaVerdict::Bare, None),
+            Err(None) => (crate::schema_sidecar::SchemaVerdict::Bare, None),
+            // The request failed: nothing is known about the sidecar, and the image's own
+            // fetch would fail the same way.
+            Err(Some(why)) => {
+                crate::loft_eprintln!(
+                    "{builtin}: refusing {url} — its layout sidecar (`.dschema`) could not be \
+                     fetched: {why}."
+                );
+                return Err(());
+            }
         };
         if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
             return Ok(text);

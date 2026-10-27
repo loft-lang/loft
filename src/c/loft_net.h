@@ -14,6 +14,10 @@
 /* A fetched body, malloc'd; on failure `err` says why. */
 typedef struct { uint8_t *p; size_t n; } loft_bytes;
 
+/* Set by `loft_fetch` when the host answered that it has no such file (403, 404, 410, a
+ * `file://` path that cannot be read) — `net::Miss::Absent` — rather than the request failing. */
+static LOFT_TLS int loft_fetch_absent = 0;
+
 static void loft_bytes_push(loft_bytes *b, size_t *cap, const uint8_t *p, size_t n) {
     if (b->n + n > *cap) {
         size_t c = *cap ? *cap : 4096;
@@ -30,6 +34,7 @@ static int loft_fetch_file(const char *path, loft_bytes *out, char *err, size_t 
     FILE *f = fopen(path, "rb");
     if (!f) {
         int e = errno;
+        loft_fetch_absent = 1;
         snprintf(err, cap, "file:// read error for %s: %s (os error %d)", path, strerror(e), e);
         return 0;
     }
@@ -112,6 +117,7 @@ static int loft_fetch_http(const char *url, loft_bytes *out, char *err, size_t c
     }
     if (status < 200 || status >= 300) {
         snprintf(err, cap, "HTTP error: %s: status code %d", url, status);
+        loft_fetch_absent = status == 403 || status == 404 || status == 410;
         free(all.p);
         return 0;
     }
@@ -145,6 +151,7 @@ static int loft_fetch_http(const char *url, loft_bytes *out, char *err, size_t c
 static int loft_fetch(const char *url, loft_bytes *out, char *err, size_t cap) {
     out->p = 0;
     out->n = 0;
+    loft_fetch_absent = 0;
     if (strncmp(url, "file://", 7) == 0) return loft_fetch_file(url + 7, out, err, cap);
 #ifdef LOFT_POSIX_HOST
     if (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0) return loft_fetch_http(url, out, err, cap);
@@ -222,6 +229,14 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
         snprintf(side, ulen + 9, "%s.dschema", u);
         int got = loft_fetch(side, &b, err, sizeof err);
         free(side);
+        if (!got && !loft_fetch_absent) {
+            /* The request failed: nothing is known about the sidecar. */
+            char why[1200];
+            snprintf(why, sizeof why, "its layout sidecar (`.dschema`) could not be fetched: %s", err);
+            loft_gate_refuse(who, u, why);
+            free(u);
+            return 0;
+        }
         if (!got) {
             loft_gate_refuse(who, u, "it has no layout sidecar (`.dschema`) beside it, so nothing records the layout "
                              "its records were written with; write it with store_persist_copy, which writes both");

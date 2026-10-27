@@ -520,6 +520,13 @@ If a run hangs, stop YOUR process by its PID — `find_problems.sh --stop` for i
 sibling checkout's run.  Then re-run with a narrower filter to find the looping test.  **Do
 not** add `--test-threads=1` to serialise the mess; that hides which test loops.
 
+A cargo build killed while it links — a gate stopped by its process group, a `timeout N cargo
+build` that expires — can leave `target/debug/deps/libloft.rlib` half written.  The next build
+then fails at link time with undefined `anon.<hash>.llvm.<hash>` or `drop_glue` symbols sourced
+from `libloft.rlib`, which read like a source defect and are not one.  Cure: `cargo clean -p
+loft`, then rebuild.  Run a long build in the background and wait on its output instead of
+bounding it with `timeout`.
+
 ### Diagnosing a hang vs a failure
 
 - **Hang** — the test binary stays live at high CPU past its expected runtime.  Likely causes:

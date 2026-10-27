@@ -284,10 +284,17 @@ fn build() -> Result<std::path::PathBuf, String> {
     }
     let compiled: Vec<String> = SOURCES
         .iter()
-        .filter(|(name, _)| name.ends_with(".c"))
+        .filter(|(name, _)| extension_is(name, "c"))
         .map(|(name, _)| (*name).to_string())
         .collect();
     crate::c_shim::cc_archive(&dir.to_string_lossy(), &compiled)
+}
+
+/// Does the file `name` end in `.<ext>`?
+fn extension_is(name: &str, ext: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }
 
 #[cfg(test)]
@@ -302,7 +309,7 @@ mod tests {
         let mut on_disk: Vec<String> = std::fs::read_dir(dir)
             .expect("the vendored BearSSL directory")
             .filter_map(|e| e.ok()?.file_name().into_string().ok())
-            .filter(|n| n.ends_with(".c") || n.ends_with(".h"))
+            .filter(|n| super::extension_is(n, "c") || super::extension_is(n, "h"))
             .collect();
         on_disk.sort();
         let mut listed: Vec<String> = SOURCES
