@@ -528,7 +528,7 @@ has it).
 **Not in this step:** sharing downward, beyond one level up, or across sibling directories.
 Each can be widened later if a real program asks for it; a widening is a relaxation.
 
-### S0.3b — a file never `use`s itself (fixes X12) — DESIGNED, not built
+### S0.3b — a file never `use`s itself (fixes X12) — BUILT 2026-10-27
 
 **Found by S0.3.**  `selfhost/tests/load.loft` says `use load;` and every `load::…` read
 *"Unknown function"*: the import bound the TEST FILE itself.  It is on `main` (2026.10.0), and
@@ -561,6 +561,11 @@ exactly as it is.
 **Tests.**  `tests/module_name_clash.rs`, beside loft#976's cells: M1 and M2 as `loft test`
 runs of a package; M3 and M5 stay covered by the cells there.  The selfhost package's own
 test then runs as S0.3 designed it.
+
+**Built.**  As designed; one cell, `a_test_named_after_its_module_binds_the_module_not_itself`
+(M1 and M2, parsed in process like loft#976's cells rather than through `loft test`, which
+reaches the same `use` code).  Falsified: without the "never the current file" filter M1
+fails again.  The module-clash suite (21) is green.
 
 ### S0.3 — the bundle opens in loft — DESIGNED, next
 
@@ -681,7 +686,7 @@ fn test_an_image_opens_as_the_ir() {
 | **X9** | no `in` operator and no set of scalars (@PLN179 015); `{4 in ks}` fails as *"Formatter error"* | friction; the message is a wrong-error finding of its own | `contains` serves; the message should say there is no `in` |
 | **X10** | capturing closures cannot sit in a collection (@C116); no local recursive `fn` (@C63) | by design — costed | not expected to bite: the dispatch table holds plain fn-refs |
 | **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss (§ Steps, S0.2) |
-| **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` (§ Steps, S0.3b) |
+| **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` (§ Steps, S0.3b) |
 
 ### New constructs taken from OCaml's type expressions
 
