@@ -3723,6 +3723,24 @@ impl<'a> FnWriter<'a> {
                     return Err("OpAppendText without two operands".into());
                 };
                 let dest = self.text_dest(dest)?;
+                // A formatted value — `{ __work = ""; …; __work }` — is appended from its work
+                // buffer itself, as native's `append_text(&mut big, &__work)` borrows it: the
+                // append reads it at once and nothing writes the buffer in between, where the
+                // block as an expression would copy it into a temporary first.
+                if let Value::Block(b) = val.unspan()
+                    && let Some((last, rest)) = b.operators.split_last()
+                    && let Value::Var(w) = last.unspan()
+                    && self.shapes[*w as usize] == CType::Text
+                    && self.var(*w) != dest
+                {
+                    let w = *w;
+                    self.nested(|wr| rest.iter().try_for_each(|o| wr.stmt(o, ind)))?;
+                    let val = self.expr(&Value::Var(w), ind)?;
+                    return Ok(E::new(
+                        format!("loft_text_concat(&{dest}, {})", as_view(val)?),
+                        K::Void,
+                    ));
+                }
                 let val = self.expr(val, ind)?;
                 Ok(E::new(
                     format!("loft_text_concat(&{dest}, {})", as_view(val)?),
