@@ -7907,6 +7907,18 @@ pub type u32 = integer limit(0, 4294967294) size(4)
 4-byte unsigned: 0 – 4\_294\_967\_294.  The top code is reserved to buy the same refusal `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32` above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2) reads back as the same positive integer.  `u32` is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property; plain `integer` holds the whole 0..2^32-1 range and more.
 
 ```rust
+pub type i64 = integer size(8)
+```
+
+8-byte signed: the full `integer`, spelled so that it stays 64-bit in a file under the 32-bit regime (`\#width 32`), where a plain `integer` is an `i32`.  Elsewhere it is `integer` by another name.
+
+```rust
+pub type f64 = float
+```
+
+The 64-bit `float`, spelled so that it stays a double in a file under the 32-bit regime (`\#width 32`), where a plain `float` is a `single`.  Elsewhere it is `float`.
+
+```rust
 pub enum Ordering {
   Less,
   Equal,
@@ -9059,7 +9071,7 @@ pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update
 Writes `bytes` to file `path`, truncating any existing content.  Returns true on success.  The inverse of read\_bytes; the pair round-trips a non-UTF-8 blob byte-for-byte.
 
 ```rust
-pub fn mtime(path: text) -> integer fs#read
+pub fn mtime(path: text) -> i64 fs#read
 ```
 
 Modification time of `path` as Unix epoch SECONDS (integer — same i64 representation as file.size).  Returns 0 on missing file / IO error / pre-epoch dates — treat 0 as "unknown". Use for date-window filters: convert the returned seconds to YYYY-MM-DD and compare lexicographically against `ymd\_days\_ago(N)`.
@@ -9079,7 +9091,7 @@ Equivalent to `self\#next = pos`, the operator form.
 Returns false — a no-op — when there is nothing to seek in: a directory, an absent file, or a negative `pos`.  A seek before the first read or write is remembered and applies to it.  Seeking PAST the end is allowed: the position is remembered and a following write extends the file, which is how a free-list or an update-in-place walk lands.
 
 ```rust
-pub fn position(self: const File) -> integer
+pub fn position(self: const File) -> i64
 ```
 
 The current read/write position in bytes, i.e. where the next read or write will land.  The read side of \[seek\]; `self\#next` is the operator form.
@@ -9373,13 +9385,13 @@ Sends one STRUCTURED message to the host shell — the outbound mirror of host\_
 == Time
 
 ```rust
-pub fn now() -> integer time#read
+pub fn now() -> i64 time#read
 ```
 
 Returns the current wall-clock time as milliseconds since the Unix epoch (00:00 UTC on 1 Jan 1970). Use for timestamps and logging.
 
 ```rust
-pub fn ticks() -> integer time#read
+pub fn ticks() -> i64 time#read
 ```
 
 Returns microseconds elapsed since program start (monotonic clock). Unaffected by system clock adjustments. Use for benchmarks and frame timing.
@@ -9705,7 +9717,7 @@ pub fn as_number(self: const JsonValue) -> float
 Typed extractor — returns `null` on kind mismatch.
 
 ```rust
-pub fn as_long(self: const JsonValue) -> integer
+pub fn as_long(self: const JsonValue) -> i64
 ```
 
 Typed extractor — returns `null` on kind mismatch.  A `JInteger` answers its exact value; a `JNumber` is truncated toward zero.

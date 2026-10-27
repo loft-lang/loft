@@ -43,6 +43,8 @@ const SEARCH_INDEX=[
 {name:"i16",kind:"type",url:"stdlib-types.html"},
 {name:"i32",kind:"type",url:"stdlib-types.html"},
 {name:"u32",kind:"type",url:"stdlib-types.html"},
+{name:"i64",kind:"type",url:"stdlib-types.html"},
+{name:"f64",kind:"type",url:"stdlib-types.html"},
 {name:"Ordering",kind:"enum",url:"stdlib-types.html"},
 {name:"Ordered",kind:"interface",url:"stdlib-interfaces.html"},
 {name:"Equatable",kind:"interface",url:"stdlib-interfaces.html"},
