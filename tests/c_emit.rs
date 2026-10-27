@@ -753,6 +753,156 @@ fn main() {
     }
 }
 
+/// `@FR-R-SplitTable`: a `parts = text.split(c)` read only by its length, its element reads
+/// and a walk keeps its pieces as slices of a copy of the text (`loft_stab`) and never builds
+/// the vector or mints its buffer.  The cells: separators at both ends and doubled, an empty
+/// text and one with no separator, an index from the end and one past it, a two-byte
+/// separator, a walk, a rebind in a loop (the table refilled), and the source rebound after
+/// the split — the pieces are the old text's, which a borrowed table would have read after it
+/// was freed (AddressSanitizer).  Each value is computed by hand; `LOFT_NO_SPLIT_TABLE=1`
+/// builds the vectors and answers the same.
+#[test]
+fn a_split_read_by_index_keeps_its_pieces_as_a_table() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"fn edges(src: text) -> text {
+  parts = src.split(',');
+  "{len(parts)}:{parts[0] ?? "N"}|{parts[1] ?? "N"}|{parts[len(parts) - 1] ?? "N"}|{parts[-1] ?? "N"}|{parts[99] ?? "N"}"
+}
+fn sizes(src: text) -> integer {
+  parts = src.split('é');
+  n = len(parts) * 1000;
+  for i in 0..len(parts) { n += size(parts[i]?); }
+  n
+}
+fn walked(src: text) -> text {
+  parts = src.split(' ');
+  out = "";
+  for p in parts { out += "<{p}>"; }
+  out
+}
+fn rebound(n: integer) -> integer {
+  acc = 0;
+  for k in 0..n {
+    parts = "{k},{k * 2},x{k}".split(',');
+    acc += len(parts) + size(parts[2]?) + size(parts[k % 3]?);
+  }
+  acc
+}
+fn changed() -> text {
+  src = "a-bb-ccc";
+  parts = src.split('-');
+  src = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+  "{len(parts)} {parts[1]?} {parts[2]?} {len(src)}"
+}
+fn main() {
+  println(edges(",a,,b,"));
+  println(edges(""));
+  println(edges("solo"));
+  println("{sizes("aébcéédé")}");
+  println(walked("one two  three"));
+  println("{rebound(12)}");
+  println(changed());
+}
+"#;
+    // edges: ",a,,b," is five pieces, "" none, "solo" one; [-1] the last, [99] none.
+    // sizes: five pieces of "aébcéédé" split on 'é', 1 + 2 + 0 + 1 + 0 bytes.
+    // rebound: per k, 3 pieces + size of "x{k}" + size of piece k % 3: 6 6 7 6 6 7 6 7 7 6 8 9.
+    let want = "5:|a|||N\n0:N|N|N|N|N\n1:solo|N|solo|solo|N\n5004\n<one><two><><three>\n81\n\
+                3 bb ccc 50\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("split-table");
+    let file = dir.join("table.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let asan = {
+        let probe = dir.join("probe.c");
+        fa::write(&probe, "int main(void) { return 0; }\n").expect("write probe");
+        loft::platform::process::harness_command("cc")
+            .args(["-fsanitize=address", "-o"])
+            .arg(dir.join("probe"))
+            .arg(&probe)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    for (mode, off, tables) in [("tables", "0", 5), ("vectors", "1", 0)] {
+        let c = dir.join(format!("{mode}.c"));
+        let emit = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_SPLIT_TABLE", off)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        assert_eq!(
+            text.lines()
+                .filter(|l| l.contains("loft_stab_fill(&st"))
+                .count(),
+            tables,
+            "{mode}: the tables filled"
+        );
+        let mut kinds: Vec<(&str, Vec<&str>)> = vec![
+            ("strict", vec!["-DLOFT_STRICT", "-pedantic", "-Werror"]),
+            ("verify", vec!["-DLOFT_VERIFY", "-w"]),
+        ];
+        if asan {
+            kinds.push((
+                "asan",
+                vec![
+                    "-g",
+                    "-fsanitize=address,undefined",
+                    "-fno-sanitize-recover=all",
+                    "-w",
+                ],
+            ));
+        }
+        for (kind, flags) in kinds {
+            let exe = dir.join(format!("{mode}-{kind}"));
+            let cc = loft::platform::process::harness_command("cc")
+                .args(["-std=c99", "-O1"])
+                .args(&flags)
+                .arg(&c)
+                .arg("-o")
+                .arg(&exe)
+                .arg("-lm")
+                .output()
+                .expect("run cc");
+            assert!(
+                cc.status.success(),
+                "{mode} {kind}: {}",
+                String::from_utf8_lossy(&cc.stderr)
+            );
+            let out = loft::platform::process::harness_command(&exe)
+                .output()
+                .expect("run the C program");
+            assert!(
+                out.status.success(),
+                "{mode} {kind}: exit {:?}\n{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{mode} {kind}");
+        }
+    }
+}
+
 /// `@FR-R-Header` under the loop verdict native asks (`hoist::hoistable`): a loop holds the
 /// headers of the vectors its admitted callees index and calls their `__inv` twin with them
 /// (`@FR-R-Inputs`); a loop that grows a store keeps another vector's record and length and

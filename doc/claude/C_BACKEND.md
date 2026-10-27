@@ -267,17 +267,23 @@ own position is recorded as it stands, so a read through the record afterwards s
 `#next`.  An unheld read of up to 15 bytes lands in a stack buffer.  `LOFT_NO_FILE_HOLD=1`
 reads every value through the record, as on native.
 
-**Text walks.**  Three native rewrites, each read from the analysis native uses.  A
+**Text walks.**  Four native rewrites, each read from the analysis native uses.  A
 `for p in t.split(c)` loop takes its pieces from the text through a `loft_ls`, with no vector
 built (`@FR-R-LazySplit`, `hoist::lazy_splits`); a source the function writes is walked as a
-copy.  A walked element, or a text local every bind of which is a view shape (another
+copy.  A `parts = t.split(c)` read only by its length, its element reads and a walk keeps
+the same pieces as slices of a copy of the text in a `loft_stab` (`@FR-R-SplitTable`,
+`hoist::split_tables`): the vector is never built and its buffer never minted.  A walked
+element, a `?` discharge of a table's element (`hoist::borrowed_discharge_temps`), or a text local every bind of which is a view shape (another
 borrowed text or a text parameter, a literal, a field read, a block ending in one), is held as
 a `loft_str` view instead of an owned copy (`@FR-R-TextBorrow`,
 `opt::text_borrow::borrowed_text_walks` and the plain clause of `hoist::borrowed_store_texts`);
-a bind that would view a temporary is refused by name, never left dangling.  A `for c in t`
+a bind that would view a temporary is refused by name, never left dangling.  A choice
+between such views or literals, as a discharge writes it, is the view it picks, and a
+formatted value is appended from its work buffer, as native borrows it.  A `for c in t`
 walk takes an ASCII byte without decoding it and asks its null test once
 (`@FR-R-CharWalk`, `opt::char_walk::char_walks`).  `LOFT_NO_LAZY_SPLIT=1`,
-`LOFT_NO_TEXT_BORROW=1` and `LOFT_NO_CHAR_WALK=1` turn them off, as on native.
+`LOFT_NO_SPLIT_TABLE=1`, `LOFT_NO_TEXT_BORROW=1` and `LOFT_NO_CHAR_WALK=1` turn them off,
+as on native.
 
 **Float text.**  `(F-Float-Text)` (@C156): the shortest form takes `printf`'s nearest p-digit
 candidate from 15 digits up (6 for a single; from one digit for a subnormal), else its
