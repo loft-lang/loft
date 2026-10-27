@@ -552,20 +552,47 @@ pub fn definition(b: ir::Bundle, name: text) -> ir::Definition? {
   for d in b.data.definitions { if d.name == name { return d; } }
   null
 }
+
+// How many definitions the image holds: the stdlib's and the program's.
+pub fn definitions(b: ir::Bundle) -> integer { len(b.data.definitions) }
 ```
 
-**Code points.**
-- `selfhost/loft.toml`, `selfhost/src/load.loft`: new.
+```loft
+// selfhost/tests/load.loft — the loader seen from outside, through its pub surface
+use load;
+
+fn test_an_image_opens_as_the_ir() {
+  b = load::load(env_variable("LOFT_SELFHOST_IMAGE"));
+  assert(b != null, "the image opens");
+  assert(load::definitions(b) > 800, "the stdlib and the program: {load::definitions(b)}");
+  assert(load::definition(b, "n_twice") != null, "the program's own function is there");
+  assert(load::definition(b, "n_nowhere") == null, "a name the program lacks is not");
+}
+```
+
+**Code points** (revised 2026-10-27, after S0.3a and two probes).
+- `selfhost/loft.toml`, `selfhost/src/load.loft`, `selfhost/tests/load.loft`: new.
 - `selfhost/src/ir.loft`: the IR vocabulary, moved from `tools/ir_schema/ir.loft` (decision 1),
-  with `#package` as its first line (S0.3a), instead of `pub` on its 25 types and 142
-  fields.  Its `fn main` (which exists so
-  `loft --show-rust` lays the schema out) moves to `tools/ir_schema/gen.loft`, a two-line
-  driver that `use`s it.
-- `tools/ir_schema/README.md`, `extract.py` and the header of `src/ir_schema_gen.rs`: the
-  new path.  The generated schema must not change by a byte: `pub` is not layout.
-- `src/ir_read.rs: a_saved_bundle_carries_the_layout_ir_loft_declares`: the new path.
-- `tests/selfhost.rs` (new binary; the selfhost suite will grow into it): run
-  `loft --emit-image` on a program, then `loft test selfhost` with the image's path.
+  with `#package` as its first line (S0.3a), so `load.loft` beside it reads every type and
+  field.  Its `fn main` goes: measured, the generator emits the committed schema byte for
+  byte without it, and with `#package` too.  So no driver file is needed.  The `@FTR-078`
+  worked-example tag above that `main` moves to the file's head (it describes the whole
+  vocabulary), and `make examples-index` re-points `examples-index.tsv`.
+- The generator follows the file: `scripts/ir_schema_check.sh` (`SRC`), the Makefile's
+  `ir-schema-check`/`ir-schema-regen` help text, `tools/ir_schema/README.md`, the header
+  `extract.py` writes into `src/ir_schema_gen.rs` (regenerated with `--fix`; only the
+  header line may change), the doc comments that name the old path (`src/data.rs`,
+  `src/ir_store.rs`, `tests/doc_hygiene.rs`), and the S0.1 test's path
+  (`src/ir_read.rs: a_saved_bundle_carries_the_layout_ir_loft_declares`).
+- **Tests go through `load`'s `pub` surface.**  `selfhost/tests/` is a sibling of `src/`, so
+  it is not a mate of `ir.loft` (S0.3a).  That is the right abstraction for a test of the
+  loader: `pub fn load(path) -> Bundle?`, `pub fn definition(b, name) -> Definition?` and
+  `pub fn definitions(b) -> integer` are what it offers, and `Bundle` and `Definition`
+  are name-only outside the package.
+- `tests/selfhost.rs` (new binary; the selfhost suite will grow into it): emits an image of
+  a two-function program with `loft --emit-image`, then runs `loft test` in `selfhost/` with
+  the image's path in `LOFT_SELFHOST_IMAGE`, which the loft test reads with
+  `env_variable`.
 
 **Failure paths.**
 1. `store_load` into a `Bundle {}` literal places the root elsewhere than S0.1's probe
