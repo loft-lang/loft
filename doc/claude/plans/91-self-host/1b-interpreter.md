@@ -1,0 +1,328 @@
+<!--
+Copyright (c) 2026 Jurjen Stellingwerff
+SPDX-License-Identifier: LGPL-3.0-or-later
+-->
+
+# @PLN91 strand 1b — the interpreter in loft, first
+
+## Status
+
+**Open — design, no implementation (owner, 2026-10-27).**  A child document of
+[@PLN91](README.md).  It changes the strand order the README records (1a, the front end,
+first): the owner starts with the INTERPRETER, written in loft, reading the IR the Rust
+front end already writes.  The README's strand table and phase ordering are to be updated
+to match.  Every "measured" line below was run on 2026-10-27 with the installed `loft`
+2026.10.0 (`origin/main`), on `--interpret`, from a scratch directory.
+
+## Goal
+
+An interpreter written in loft that runs any loft program with the same result as
+`loft --interpret`, and that is the **ultimate dogfood project**: every place where loft is
+not handy to write it in is recorded, and every bug it meets is fixed in the language before
+the interpreter moves on.
+
+It holds four constraints:
+
+1. **The same IR.**  The input is the program image the Rust front end writes today: the
+   whole-program bundle `~/.cache/loft/program-<hash>.store`, written after
+   `scopes::check` (`src/main.rs`, `startup_cache::save_program`).  So the ownership
+   decisions (every free, every copy) are already in the IR. The interpreter carries them
+   out and never derives them again.
+2. **The same types.**  The interpreter reads the bundle as the records
+   `tools/ir_schema/ir.loft` declares (`Bundle`, `Data`, `Definition`, `Node`, `TypeT`,
+   `DbType`, …): the compiler's own IR vocabulary, used verbatim.  There is no second IR,
+   so the `lib/code.loft` sketch is not a starting point.
+3. **The same syntax.**  The language it runs is loft as it is.  When the loft-written
+   front end (strand 1a) lands, it must emit the same `ir.loft` records, byte for byte,
+   and this interpreter runs them unchanged.  1a's gate is the IR diff; 1b's gate is the
+   program's output.
+4. **The formal rules are the specification.**  Each module implements the rules of one
+   `doc/claude/formal/` chapter and cites them by tag.  It is measured by the language
+   suite's cells, which are filed under those same rules (§ Reusing the formal rules).
+
+## The dogfood rule (governs every step)
+
+This project exists to find out what loft is like for its hardest consumer, a language
+implementation.  So the usual "work around it and move on" is not allowed here:
+
+- **A bug is fixed first.**  When the interpreter meets a defect in loft (a wrong answer,
+  a backend disagreement, a crash, a refusal a formal rule says should not happen), work on
+  the interpreter step stops.  The defect gets a both-backend repro and is fixed on the spot
+  under the CLAUDE.md matrix-first protocol; the probe graduates to `tests/scripts/`, and
+  then the interpreter step resumes using the plain spelling.  **No workaround is written
+  for a bug**, not even a temporary one: a workaround in the interpreter would hide exactly
+  what this project exists to find.
+- **Friction is recorded, then judged.**  Anything that works but is not handy (a missing
+  construct, a long spelling, an error message that names no cure) gets a row in the
+  friction register below.  It records the spelling it forced and what a better one would
+  be.  A row becomes a language feature when it recurs or when the cost is clear. The
+  owner decides; the register is the evidence.
+- **A refusal by design is costed, not reopened silently.**  Where loft declines something
+  on purpose (@C89 positional variants, @C116 closures in collections, @C63 local recursive
+  functions), the register records what the interpreter paid for it.  That cost is the
+  input if the owner ever revisits the decision.
+- **Findings are filed as loft's own** (`hit-by:loft`, `Found-via: @PLN91 1b` in the body),
+  and are fixed before the step that met them continues.
+
+## The working norm (owner, 2026-10-27)
+
+- **Every next step is designed on paper before it is implemented, and only the next
+  one.**  The plan grows as it goes: a step's design is a section under § Steps, written
+  and read before its code (what it changes, the failure paths, the invariant that must
+  hold, how it is tested), and the design of later work stays an outline until the step
+  before it lands.
+- **The design is the measure of loft.**  A step's design is written the way one would
+  reason about the problem: its types, its functions and their contracts, its cases,
+  sketched in the shape the reasoning takes rather than bent to what loft is known to
+  accept.  Implementing it should then be a straightforward transcription in the same
+  shape.  Where it is not (the code needs a detour, an extra type, a split function, a
+  different shape), the gap is a finding: a register row, or a bug fixed first.  So every
+  built step ends with a short **design → code** note: what transcribed directly, and each
+  place it did not.  The sum of those notes answers whether loft is good enough to write
+  itself.
+- **Small safe steps.**  A step is just enough code to be tested well: its tests are
+  written with it, green on both backends, and the step is committed and pushed before the
+  next one starts.  A phase in the table below is several such steps, never one.
+- **Every step names its code points**: the files and functions it touches, in this tree
+  (`selfhost/src/interp/run.loft: run_frame`) and in the Rust tree where it fixes a finding
+  (`src/ir_store.rs: save_bundle`).  So a reviewer can check the step against the code
+  before and after.
+
+## Location
+
+In this repository, as a top-level package:
+
+```
+selfhost/
+  loft.toml              the package (name `selfhost`), tested by `loft test`
+  src/ir.loft            MOVED from tools/ir_schema/ir.loft — the one home of the IR
+                         vocabulary; tools/ir_schema/ generates the Rust schema from here
+  src/interp/
+    load.loft            bundle → ir.loft records (S0)
+    lower.loft           a function's Node tree → a flat op list with jump targets (S1)
+    run.loft             the dispatch loop, frames, the value stack (S1)
+    store.loft           the heap: stores, records, claim/free, layouts from DbType (S3)
+    ops_*.loft           the operator bodies, one file per formal chapter (S1–S5)
+    natives.loft         the stdlib natives, each calling loft's own function of that name (S6)
+  src/front/             strand 1a, later: lexer and parser emitting the same records
+  tests/                 unit tests per module
+```
+
+Why here and not elsewhere:
+
+- **Not a separate repository.**  `ir.loft` has to change in the same commit as
+  `src/data.rs` (`cargo test --test ir_schema_roundtrip` holds them together). The oracle
+  is this repository's corpus, and the end state of @PLN91 is that this code IS loft's
+  core. A consumer repository would always be a step behind on all three.
+- **Not `lib/`.**  `lib/` holds libraries a program `use`s.  The older `lib/lexer.loft`,
+  `lib/parser.loft` and `lib/code.loft` are a self-hosting sketch with its own IR
+  (`code.loft`). They stay where they are until 1a decides whether to retarget or
+  retire them.
+- **Not `../loft2`.**  It is a second checkout of this repository, not a separate tree.
+
+## Reusing the formal rules
+
+`doc/claude/formal/` defines loft as rules (361 tagged `@FR-…`) plus a list of the places the
+Rust implementation deviates from them.  The interpreter reuses them in three ways.
+
+**1. A module per chapter, citing its rules.**  The runtime chapters map onto the
+interpreter's modules:
+
+| chapter | rules | the interpreter's part |
+|---|---|---|
+| `operational.md` (E-*) | 22 | the dispatch loop: evaluation order, `??`, `&&`/`||`, assignment, truthiness, null propagation |
+| `calls.md` (F-*) | 15 | frames, argument passing by kind (scalar, heap, `&`), return |
+| `heap.md` (H-*) | 36 | `store.loft`: claim, free, copy, move, view, null reads and writes, out-of-bounds |
+| `layout.md` (L-*) | 14 | field offsets, enum tags, narrow types, null encodings, read from the bundle's `DbType` |
+| `binding.md` (B-*, Const-*) | 26 | copy versus view versus `&`, const |
+| `ownership.md` (O-*) | 18 | already decided in the IR; the interpreter executes the frees, and from S3 checks them ([ownership.md](ownership.md) in this directory) |
+| `collections.md` (Col-*, Slice-*) | 26 | vector, sorted, index, hash, spatial, trie |
+| `iteration.md` (I-*) | 12 | `for`, ranges, text iteration, comprehensions |
+| `matching.md` (M-*, P-*) | 23 | match dispatch, PEG patterns |
+| `tuples.md` (T-*) | 10 | tuples |
+| `formatting.md` (F-Spec…) | 14 | format strings |
+| `closures.md`, `coroutines.md`, `concurrency.md` | 22 | lambdas, `yield`, `par` |
+
+`types.md`, `grammar.md` and `interfaces.md` belong to the front end (1a).  `rewrites.md`
+holds optimisations, mostly native-only. The interpreter must give the same values
+whether a rewrite ran or not, which is exactly what those rules promise.
+
+Each operator body and each store routine cites the rule it carries out
+(`// @FR-H-FreeTwice`).  `scripts/rule_tags.py` reads citations from `src/*.rs` only
+(`CITE_DIRS`, `CITE_EXTS`).  Extending it to `selfhost/**/*.loft` makes `sites <tag>`
+answer for both interpreters, and `coverage` report how much of the rule set the loft
+interpreter covers.
+
+**2. The suite is the test.**  `../loft-suite` (pinned by `tests/loft-suite.pin`) holds
+2700 cells filed by chapter and rule, run with `--mode interpret|native|both`.  Add a
+`--mode selfhost` that runs each cell through the loft interpreter.  Progress is then a
+number per rule: how many of the rule's cells hold on the loft interpreter.  That is a
+better measure than "how many scripts pass", because it says WHICH promises hold.  The
+`tests/scripts` corpus, compared against `loft --interpret` (stdout, exit code, leak
+check), is the second instrument.
+
+**3. A disagreement is settled by the rule, not by the Rust interpreter.**  When the two
+interpreters disagree, the formal rule decides which one is wrong (formal/README.md: "the
+code changes to match the rules").  If the Rust interpreter is the one breaking the rule,
+that is a deviation found, and it is fixed in Rust under the dogfood rule.  So the loft
+interpreter becomes a second, independent oracle for the formal definition, and that is
+worth having on its own.
+
+## Direction (not a design)
+
+Constraints already known, which each step's design must respect.  They are not decided
+designs; each is settled in the step that first needs it.
+
+- **No recursive tree-walk at run time.**  loft stops a program at 10 000 call frames
+  (`src/limits.rs`), so an interpreter recursing once per IR node would fail on a program
+  recursing ~2 000 deep.  The likely shape is a flat op list per function and a `while` +
+  `match` loop with explicit frames, as the Rust interpreter has.  Decided in S1.
+- **Operators are resolved once per `def_nr`** (an `NdCall` names a definition) into a
+  table of plain fn-refs, which loft supports.  Decided in S1.
+- **The program's heap is the interpreter's own data**, an arena with layouts from the
+  bundle's `types: vector<DbType>`, specified by `(H-*)` and `(L-*)`.  Decided in S3.
+- **Natives call loft's own function of the same name**, never a reimplementation.
+  Decided in S6.
+
+## Outline
+
+Each phase is several small steps, and only the NEXT step is designed (§ Steps).  A
+phase is designed when the one before it closes.  Its gate is fixed now so a phase
+cannot quietly shrink.
+
+| phase | scope | gate |
+|---|---|---|
+| **S0** | the IR bundle opens in loft as `ir.loft` records | a guard script reads a bundle's definitions |
+| **S1** | scalars, locals, control flow, calls — @PLN91's **P-perf** | benchmark output identical; speed against `loft --interpret` decides the strand |
+| **S2** | text, floats, format strings | suite chapters `operational`, `calls`, `formatting` |
+| **S3** | the store, records, vectors, tuples, the IR's frees | `heap`, `layout`, `binding`, `tuples`, `matching`; leak check agrees |
+| **S4** | keyed collections, iteration | `collections`, `iteration` |
+| **S5** | closures, coroutines, `par` | `closures`, `coroutines`, `concurrency` |
+| **S6** | natives, the corpus | `tests/scripts` against `--interpret` |
+| **S7** | the interpreter runs itself | S1's benchmarks through the self-run |
+| **O** (beside S1–S6) | ownership as its own track, from S0 on: a checker over the bundle's IR, then the authority in 1a | silent on the ownership corpus and in agreement with `ownership_cfg` ([ownership.md](ownership.md)) |
+
+## Steps
+
+### S0.1 — the bundle carries its layout sidecar (fixes X1) — DESIGNED, not built
+
+**What.**  `save_bundle` writes a `.dschema` sidecar beside the bundle, as every other
+store writer does, so `store_load` can check the file against the type it is read through
+(`@FR-L-Sound`) instead of refusing it as a bare image.
+
+**Code points.**
+- `src/ir_store.rs:809` `save_bundle`: after `materialize_bundle`, compute the root's
+  layout identity and stage the sidecar beside `tmp`; rename the sidecar together with the
+  bundle (the store first, the sidecar after, as the program cache's manifest is written
+  last, `src/startup_cache.rs:463`).
+- `src/schema_sidecar.rs:103` `LayoutIdentity::of_store(stores, slot, tp)` and `:336`
+  `stage_beside`: existing, reused unchanged.
+- `src/data_store.rs:400` (`IR_ROOT_REC`), `:487–489` (`BUNDLE_DATA`, `BUNDLE_TYPES`): the
+  root the identity is computed for, the `Bundle` type of the IR schema.  To find while
+  building: the type number of `Bundle` in the schema `data_store` registers.
+- The refusal it removes: `src/database/allocation.rs:7105` (`BARE_IMAGE`), reached from
+  `load_path` `:5350` through `schema_gate_ok`.
+
+**Failure paths to cover.**
+1. The sidecar is written but the identity is computed from the wrong root type: then
+   `store_load` refuses with a layout mismatch instead of "bare". The test reads through
+   `Bundle`.
+2. The Rust IR schema and `ir.loft` compiled by loft lay `Bundle` out differently: the
+   identities differ, and the load is refused naming the type. **This is the falsification
+   the step exists for**: "the same types" is then a claim that does not hold, and the
+   drift is fixed in the generator, not worked around.
+3. A crash between the two renames leaves a bundle without a sidecar: it is refused as
+   bare (the state before this step), never read unchecked.
+4. The startup cache's warm load (`ir_read::open_bundle`) must ignore the sidecar: it is
+   unchanged and must stay byte-identical. Covered by `ir_schema_roundtrip`.
+
+**Tests.**  A Rust test beside `ir_read`'s bundle round-trip (`src/ir_read.rs:2134`):
+`save_bundle` to a temp path, assert the sidecar exists and its verdict against a fresh
+`Stores` holding the IR schema is raw-safe.  `cargo test --release --test
+ir_schema_roundtrip` stays green.  The loft-side guard waits for S0.2, which gives a test
+a stable bundle path.
+
+**Not in this step:** a CLI flag to write a bundle at a chosen path (S0.2, designed after
+this lands); the loft loader `selfhost/src/interp/load.loft` (S0.3).
+
+## The language for this job
+
+### What loft already offers (measured or established in @PLN202 / OCAML_BAR.md)
+
+| construct | use in the interpreter | status |
+|---|---|---|
+| `match` with nested patterns, guards, or-patterns, as-bindings | dispatch over `Node`, `TypeT`, `DbParts` | PASS (C1–C5, H7) |
+| exhaustive `match` over enums | adding a `Node` variant breaks every pass that forgot it | PASS (`c9`); nested holes are named by the outer variant only (C6) |
+| record update `S { f: v, ..base }`, also for a variant narrowed by `is` | rewriting IR nodes during lowering | PASS; an unnarrowed enum base is refused naming the cure (measured) |
+| head/tail slice arms `[]` / `[x, ..rest]` | walking argument and op lists | PASS (C8) |
+| PEG patterns over a token vector, cursor match, sub-rules, `#lexeme` | 1a's parser; peephole matching over op lists | shipped (@PLN35, `tests/scripts/35*`) |
+| plain fn-refs in a `vector` or `hash` | the operator dispatch table | PASS |
+| phantom type parameters `Idx<NodeTag>` | typed indices: a definition number cannot be passed as a variable number | PASS: *"expected Idx<NodeTag>, got Idx<TypeTag>"* (measured; see X5, X6) |
+| `T?`, `x?`, `??`, `h = f(x)?;` | absent values, early exit on null | PASS (H8) |
+| generics, interfaces, abstract types (`pub` boundary) | the store's API kept apart from its internals | PASS (A1–A7, H3) |
+| tail self-call as a jump `(R-TailSelf)` | loop-shaped helpers over scalars | PASS (H6) |
+| mutually recursive types | `Dir`/`Entry`-like IR tables | PASS (H9) |
+| `v.contains(x)` | keyword and op-class sets | PASS (measured) |
+
+### Friction register (measured 2026-10-27)
+
+| id | what | kind | proposal |
+|---|---|---|---|
+| **X1** | `store_load` refuses the program bundle: *"it has no layout sidecar (`.dschema`) beside it"*. The bundle carries its own schema (`Bundle.types`), but `ir_store::save_bundle` writes no sidecar, so loft cannot read the compiler's own output | **bug — step S0.1** | `save_bundle` writes the sidecar (§ Steps, S0.1) |
+| **X2** | `ir.loft` used as a library: every type and every field is private to its file (@C140), so `use ir; ir::Bundle` is refused | friction | a vocabulary module wants every field public: a way to say that once per type or per file, instead of `pub` on ~200 fields |
+| **X3** | a generic type alias does not parse: `type Env<T> = hash<B<T>[name]>;` → *"Expect token ;"* | friction | generic aliases, OCaml's `type 'a env = …` |
+| **X4** | `hash<(integer, text)>` → *"tuple element types only allowed on vector / iterator"* | friction | tuple elements, and tuple keys, in keyed collections (OCaml `(int * string, v) Hashtbl.t`); memo tables keyed by (definition, type) want it (bar B2) |
+| **X5** | a phantom tag needs a dummy field: `struct NodeTag { }` → *"Expect attribute"* | friction | an empty struct, or a declared abstract type with no body (OCaml `type node_tag`) |
+| **X6** | a generic literal in a typed field does not take `T` from the field: `Holder { a: Idx { n: 1 } }` with `a: Idx<NodeTag>` → *"cannot tell what T is"* | friction, possibly a bug: the field's type names T | infer `T` from the destination field, as a typed local already does |
+| **X7** | a by-value recursive variant is refused (*"Enum 'E' contains itself … use reference<E>"*), so `ir.loft` holds every child as a box-of-one `vector<Node>` and every read is `n.cond[0]` | refused by design (bar A5) — costed | a recursive field written by value (`cond: Node`) and LAID OUT as today's box-of-one vector: the stored IR stays byte-identical, and the reads drop `[0]`. Owner decision: it revisits A5's refusal |
+| **X8** | no conversion between `float` and its bits (none in `default/*.loft`) | friction (to confirm in S1) | `to_bits`/`from_bits` for `float` and `single`; needed by an arena that stores floats in integer words |
+| **X9** | no `in` operator and no set of scalars (@PLN179 015); `{4 in ks}` fails as *"Formatter error"* | friction; the message is a wrong-error finding of its own | `contains` serves; the message should say there is no `in` |
+| **X10** | capturing closures cannot sit in a collection (@C116); no local recursive `fn` (@C63) | by design — costed | not expected to bite: the dispatch table holds plain fn-refs |
+
+### New constructs taken from OCaml's type expressions
+
+OCaml's type language is the model, within two fixed bounds.  **@C89** keeps enum payloads
+NAMED (no `Num(integer)`), so nothing here is positional.  And a construct lands with its
+formal rule written first, in the chapter that owns it.  Candidates, in the order the
+register supports them:
+
+1. **Recursive fields by value** (X7). OCaml `type expr = Add of expr * expr`, with named
+   fields: `enum Node { NdIf { cond: Node, t: Node, f: Node }, … }`, stored as today's
+   box-of-one.  This is the single biggest readability gain for an IR, and it keeps the
+   bundle layout, so "identical IR" holds.  Rule home: `layout.md` + `types.md`.
+2. **Generic type aliases** (X3). OCaml `type 'a env = (string, 'a) Hashtbl.t`: a
+   compile-time substitution with parameters, as aliases already are without them (C55).
+3. **Abstract tag types** (X5). OCaml `type node_tag`: a declared type with no
+   representation, usable only as a type argument.  It makes typed indices free (`Idx<Def>`,
+   `Idx<Var>`, `Idx<Ty>`), which the IR's dozens of raw integer numbers need.
+4. **Tuples in keyed collections** (X4). OCaml's tuple types `int * string` as keys and
+   elements.
+5. **Exhaustiveness named through nesting** (bar C6). The diagnostic names `X { i: B }`
+   rather than `X`, so a lowering pass over nested IR shapes learns which inner case it
+   missed.
+
+X1 is a bug and is fixed in S0, not proposed.  X6 is inference, not syntax.  Each of
+these is built only when its register row says the interpreter keeps paying for its
+absence.
+
+## Open questions for the owner
+
+1. **The directory's name**: `selfhost/` as proposed, or another.
+2. **Moving `ir.loft`** from `tools/ir_schema/` into `selfhost/src/` as its one home (the
+   schema generator then reads it there).  Recommended: yes; a copy would drift.
+3. **X7 against the A5 refusal**: by-value recursive fields laid out as a box are the
+   proposal; A5's refusal was about the by-value LAYOUT, which this keeps out.
+4. **The P-perf bar**: ~1.5× of the Rust interpreter as @PLN91 states, measured on the
+   loft interpreter compiled `--native-release` (the shipped tier).
+5. **A label for the findings**: `hit-by:loft` with `Found-via: @PLN91 1b`, or a label of
+   its own so the dogfood yield can be counted.
+6. **`--mode selfhost` in loft-suite** is a change to that repository (a suite PR beside
+   the loft PR that adds the interpreter).
+
+## Documentation this plan owes
+
+- [ ] `91-self-host/README.md`: strand table and phase ordering (1b first, S0–S7), link here.
+- [ ] `tools/ir_schema/README.md`: the new home of `ir.loft`.
+- [ ] `scripts/rule_tags.py`: citations from `selfhost/**/*.loft`; `formal/README.md` § Rule tags.
+- [ ] `doc/claude/bars/OCAML_BAR.md`: the register's rows that are bar entries (X3, X4, X5, X7).
+- [ ] TESTING.md: the selfhost suite mode and the corpus diff.
