@@ -5697,6 +5697,10 @@ pub struct Data {
     /// for every source but the stdlib): there a plain `integer` is an `i32`, a plain `float`
     /// a `single`, and arithmetic on 32-bit operands stays 32-bit ([`Self::width32`]).
     width32_sources: std::collections::BTreeSet<u16>,
+    /// @PLN204 — the generic instances whose TEMPLATE is in a 64-bit source: registered under
+    /// the caller's source, their body is the template's, computed in 64 bits
+    /// ([`Self::body_width32`]).
+    wide_instances: std::collections::BTreeSet<u32>,
     /// Every import that has been applied, so [`rebuild_indices`](Self::rebuild_indices)
     /// can replay it.
     ///
@@ -6550,6 +6554,7 @@ impl Data {
             use_names: HashMap::new(),
             preloaded_uses: HashMap::new(),
             width32_sources: std::collections::BTreeSet::new(),
+            wide_instances: std::collections::BTreeSet::new(),
             applied: Vec::new(),
             bare_uses: Vec::new(),
             private_imports: HashMap::new(),
@@ -6621,6 +6626,18 @@ impl Data {
     #[must_use]
     pub fn width32(&self) -> bool {
         self.width32_source(self.source)
+    }
+
+    /// @PLN204 — was function `d`'s body written under the 32-bit regime?  A generic
+    /// instance answers for its template, whose source it does not share.
+    #[must_use]
+    pub fn body_width32(&self, d: u32) -> bool {
+        !self.wide_instances.contains(&d) && self.width32_source(self.def(d).source)
+    }
+
+    /// @PLN204 — instance `d` was minted from a template in a 64-bit source.
+    pub fn mark_wide_instance(&mut self, d: u32) {
+        self.wide_instances.insert(d);
     }
 
     /// @PLN204 — record whether source `src` is parsed under the 32-bit regime.

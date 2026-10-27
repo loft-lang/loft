@@ -27,8 +27,8 @@ impl Parser {
         let Value::Call(d, _) = code.unspan() else {
             return tp;
         };
-        let def = self.data.def(*d);
-        if def.name.starts_with("Op") || self.data.width32_source(def.source) {
+        let d = *d;
+        if self.data.def(d).name.starts_with("Op") || self.data.body_width32(d) {
             return tp;
         }
         let optional = matches!(tp, Type::Optional(_));

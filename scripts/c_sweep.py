@@ -18,6 +18,9 @@
                                         # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
+    scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
+    scripts/c_sweep.py --riscv32        # the C built for 32-bit RISC-V Linux by zig cc and run
+                                        # under qemu-riscv32 (LOFT_RISCV32_CC names another cc)
     LOFT_BIN=<loft> scripts/c_sweep.py  # another build (default target/release/loft)
 
 Every run also files each program's times (bench/portal/local/c_sweep/<modes>.tsv) and lists
@@ -86,6 +89,16 @@ WASM_CC = [os.environ.get("LOFT_WASM_CC") or "clang", "--target=wasm32-wasi", "-
 # end of linear memory).
 WASM_LIBS = ["-Wl,-z,stack-size=8388608", "-lm", "-lsetjmp", "-lwasi-emulated-process-clocks",
              "-lwasi-emulated-signal"]
+# @PLN204 — the two 32-bit legs.  `--m32`: the unit as ILP32 x86 (`gcc -m32`, Ubuntu's
+# gcc-multilib), run natively.  `--riscv32`: as 32-bit RISC-V Linux, the Tanmatsu's ISA, by
+# `zig cc -target riscv32-linux-musl` (LOFT_RISCV32_CC names another compiler) and run under
+# `qemu-riscv32` (Ubuntu's qemu-user).  Both build the unit with its shims' sources, as wasm does.
+M32_CC = ["cc", "-m32", "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread", "-w"] + \
+    (["-ldl"] if sys.platform.startswith("linux") else [])
+RV32_CC = (os.environ.get("LOFT_RISCV32_CC") or
+           f"{shutil.which('zig') or '/snap/bin/zig'} cc -target riscv32-linux-musl").split() + \
+    ["-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-w"]
+CROSS = {"m32": M32_CC, "riscv32": RV32_CC}
 
 
 def wasm_run(wasm: str, cwd: Path, tmpdir: str) -> list[str]:
@@ -224,6 +237,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
     shim_sources = re.findall(r"^/\* shim-source: (.*) \*/$", unit, re.M)
     if "wasm" in modes and any(not l.endswith(".a") and not l.startswith("-Wl,") for l in links):
         return path, "refused", "a declared C library has no wasm32 build", None, {}
+    if any(m in CROSS for m in modes) and any(not l.startswith("-Wl,") for l in links if not l.endswith(".a")):
+        return path, "refused", "a declared C library has no 32-bit build", None, {}
     tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
     # A program without `main` is its tests: the C runs them as `loft --tests` does,
     # and the two exit statuses say whether every test passed.
@@ -246,13 +261,17 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             return path, "slow", why, None, times
         if mode == "wasm":
             code, _, err = run(WASM_CC + [c] + shim_sources + ["-o", exe + ".wasm"] + WASM_LIBS, 120)
+        elif mode in CROSS:
+            code, _, err = run(CROSS[mode] + [c] + shim_sources + ["-o", exe, "-lm"], 300)
         else:
             code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"] + links, 120)
         if code != 0:
             first = err.decode(errors="replace").strip().split("\n")[0]
             return path, "cc-error", f"[{mode}] {first}", None, times
         # The program's directory, as the driver hands it to every run (`LOFT_SOURCE_DIR`).
-        c_out, times[mode] = timed(wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else [exe],
+        run_cmd = wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else \
+            ["qemu-riscv32", exe] if mode == "riscv32" else [exe]
+        c_out, times[mode] = timed(run_cmd,
                                    limit(path, mode), cwd=src.parent,
                                    env={**tenv, "LOFT_SOURCE_DIR": str(src.parent.resolve())})
         why = killed(path, mode, c_out)
@@ -338,6 +357,10 @@ def main(argv: list[str]) -> int:
     modes = tuple(POISON_MODES) if "--poison" in argv else tuple(MODES)
     if "--wasm" in argv:
         modes = ("wasm",)
+    if "--m32" in argv:
+        modes = ("m32",)
+    if "--riscv32" in argv:
+        modes = ("riscv32",)
     if "--mode" in argv:
         i = argv.index("--mode")
         modes = (argv[i + 1],)
