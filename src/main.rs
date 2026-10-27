@@ -233,6 +233,9 @@ fn print_help() {
     println!("                                compiler (LOFT_CC, CC, else cc); combines with");
     println!("                                --ship, --native-debug, --native-emit");
     println!("                                [out.c]; LOFT_NATIVE_BACKEND=c selects it too");
+    println!("  --native-rust                 like --native but through the Rust writer and");
+    println!("                                rustc whatever LOFT_NATIVE_BACKEND says; with");
+    println!("                                --native-emit it writes the Rust");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
     println!(
         "  --native-android [out.apk]    cross-compile to a signed Android APK (needs \
@@ -7573,6 +7576,11 @@ fn main() {
     // @PLN203 C1 — `--native-c` (or `LOFT_NATIVE_BACKEND=c`): `--native` compiles through
     // the C backend and the host's C compiler instead of rustc.
     let mut native_c = c_driver::c_backend_selected();
+    // @PLN203 C9 — `--native-rust`: the Rust writer and rustc for this run, whatever
+    // `LOFT_NATIVE_BACKEND` selects.  Kept one release past the flip; until then it is how a
+    // test of the Rust writer itself (its emission, its rewrites, the `[native] crate` layer)
+    // says so while the gate's `--native` runs through the C.
+    let mut native_rust = false;
     // @PLN98 P2 — `--lean`: strip the live/debug tier from the generated Rust
     // (no `live_flipped` entry checks, no `LOFT_LIVE_FNS`/`boot_stores`).  The
     // default keeps the live tier (non-breaking); this is opt-OUT.
@@ -7864,6 +7872,9 @@ fn main() {
             native_mode = true;
             native_requested = true;
             native_c = true;
+            native_rust = false;
+        } else if a == "--native-rust" {
+            native_rust = true;
         } else if a == "--native-debug" {
             // NDB.0 — emit DWARF; combine with --ship if
             // optimised + debug-info is wanted.
@@ -9240,6 +9251,15 @@ fn main() {
             .to_str()
             .unwrap_or("out.wasm")
             .to_string();
+    }
+    // `--native-rust` chooses the writer; alone it is `--native` through it, beside
+    // `--native-emit` it only chooses what is written.
+    if native_rust {
+        native_c = false;
+        if native_emit.is_none() {
+            native_mode = true;
+            native_requested = true;
+        }
     }
     if let Some(ref mut p) = native_emit
         && p.is_empty()
