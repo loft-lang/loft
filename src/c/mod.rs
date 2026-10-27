@@ -1917,6 +1917,10 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
 /// each scalar cast to its declared C type and each text as a NUL-terminated copy; an integer
 /// result widened to 64 bits by its signedness, a floating one as is.  A vector argument is not
 /// carried yet.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one wrapper: the callee's declaration in both link forms, each argument's cast, the result's read"
+)]
 fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
     use crate::c_signature::{self as cs, CArg};
     let data = cx.data;
