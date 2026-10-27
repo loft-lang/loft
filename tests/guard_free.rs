@@ -20,7 +20,8 @@ fn emit(tag: &str, lean: bool, env: &[(&str, &str)]) -> String {
     if lean {
         cmd.arg("--ship");
     }
-    cmd.arg("--native-emit")
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
         .arg(&out)
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

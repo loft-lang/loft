@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: counts the Rust writer's mints — its `--native` runs as `--native-rust` until then.
 //! `@FR-O-Move` at a LIFT — a `__lift_N` temp bound from a callee that returns its promoted
 //! local adopts the minted store as a named bind does (`Scopes::lift_set`).  The guard
 //! `tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft` says the values hold on
@@ -77,7 +78,7 @@ const OFF: &[(&str, &str)] = &[("LOFT_NO_ADOPT_FIRST_BIND", "1")];
 /// switch puts the copy's store at the lift back.
 #[test]
 fn the_lifted_cell_mints_as_the_named_control_does() {
-    for mode in ["--interpret", "--native"] {
+    for mode in ["--interpret", "--native-rust"] {
         let named = store_mints(mode, "c1", &[]);
         let lifted = store_mints(mode, "c2", &[]);
         assert_eq!(named, 2000, "{mode}: the named control's mints");

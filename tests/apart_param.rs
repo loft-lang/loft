@@ -37,7 +37,8 @@ fn cells() -> PathBuf {
 fn kept(env: &[(&str, &str)], tag: &str) -> Vec<(String, Vec<String>)> {
     let out = std::env::temp_dir().join(format!("loft_apart_param_{tag}.rs"));
     let mut cmd = loft();
-    cmd.arg("--native-emit")
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
         .arg(&out)
         .arg(cells())
         .env("LOFT_TRACE_HOIST_DECLINE", "1");

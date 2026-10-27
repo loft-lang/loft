@@ -65,6 +65,7 @@ fn the_interpreter_copies_without_a_witness() {
 fn native_copies_without_a_witness() {
     let out = std::env::temp_dir().join("loft_one_of_several_args.rs");
     let status = loft()
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out)
         .arg(cells())

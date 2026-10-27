@@ -50,7 +50,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     // One file per TEST: the tests run on threads of one process.
     let out = std::env::temp_dir().join(format!("loft_rotate_{}_{tag}.rs", std::process::id()));
     let out_s = out.to_str().unwrap().to_string();
-    let status = loft(&["--native-emit", &out_s, &cells()], env);
+    let status = loft(&["--native-rust", "--native-emit", &out_s, &cells()], env);
     assert!(
         fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",

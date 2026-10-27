@@ -121,7 +121,7 @@ fn build_html(_root: &Path) -> Option<PathBuf> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let out = loft::platform::process::harness_command(&loft_bin)
-        .args(["--html", html.to_str().unwrap()])
+        .args(["--native-rust", "--html", html.to_str().unwrap()])
         .arg(src.to_str().unwrap())
         .output()
         .expect("invoke loft --html");

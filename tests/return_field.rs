@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: counts the Rust writer's return-field censuses — its `--native` runs as `--native-rust` until then.
 //! `(R-ReturnField)` (`@FR-R-ReturnField`) — the returned field of an owned local is the
 //! local's store handed over at the field's position.  The guard
 //! `tests/scripts/a-returned-field-of-an-owned-local-hands-its-store-over.loft` says the
@@ -177,7 +178,7 @@ fn the_exits_hand_the_root_store_over() {
 /// switch puts one copy per call back.
 #[test]
 fn the_censuses_drop() {
-    for mode in ["--interpret", "--native"] {
+    for mode in ["--interpret", "--native-rust"] {
         let on = store_mints(mode, "r9", &[]);
         let off = store_mints(mode, "r9", OFF);
         assert_eq!((on, off), (2000, 4000), "{mode}: r9 mints (on, off)");

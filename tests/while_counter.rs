@@ -17,7 +17,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let out = std::env::temp_dir().join(format!("loft_whilectr_{}_{tag}.rs", std::process::id()));
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-emit")
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS))
         .env("LOFT_TIMEOUT", "300")

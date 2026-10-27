@@ -48,6 +48,7 @@ fn default_emission_carries_no_checkpoint() {
     let src = write_src(&dir);
     let out = dir.join("off.rs");
     let o = loft()
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out)
         .arg(&src)

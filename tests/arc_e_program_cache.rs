@@ -932,7 +932,8 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
     let emit = |cache: &std::path::Path, tag: &str, env: &[(&str, &str)]| -> (String, bool) {
         let out_rs = root.join(format!("{tag}.rs"));
         let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--native-emit")
+        cmd.arg("--native-rust")
+            .arg("--native-emit")
             .arg(&out_rs)
             .arg(&script)
             .current_dir(workspace_root())

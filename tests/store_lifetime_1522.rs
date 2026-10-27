@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: LOFT_NO_BUFFER_VETO is a switch of the Rust writer — its `--native` runs as `--native-rust` until then.
 
 //! loft#1522 — a rebind released the store its construction work-ref still named.
 //!
@@ -74,7 +75,7 @@ fn rebind_keeps_the_buffers_store_interpret() {
 
 #[test]
 fn rebind_keeps_the_buffers_store_native() {
-    assert_no_violation("--native", &[], "value");
+    assert_no_violation("--native-rust", &[], "value");
 }
 
 #[test]
@@ -84,7 +85,7 @@ fn rebind_keeps_the_buffers_store_strict_interpret() {
 
 #[test]
 fn rebind_keeps_the_buffers_store_strict_native() {
-    assert_no_violation("--native", &[("LOFT_STRICT_STORES", "1")], "strict");
+    assert_no_violation("--native-rust", &[("LOFT_STRICT_STORES", "1")], "strict");
 }
 
 /// The control: with the pairing off the guard must FAIL, on both backends.
@@ -95,7 +96,7 @@ fn rebind_keeps_the_buffers_store_strict_native() {
 /// receipt, which is why it is re-runnable rather than a recorded sha.
 #[test]
 fn the_pairing_is_load_bearing() {
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (ok, stdout, stderr) = run(
             backend,
             &[("LOFT_NO_BUFFER_VETO", "1"), ("LOFT_STRICT_STORES", "1")],

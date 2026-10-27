@@ -41,7 +41,7 @@ fn emit(out: &Path, tier: &[&str], env: &[(&str, &str)]) -> String {
     let src = cells();
     let out_s = out.to_string_lossy();
     let mut args: Vec<&str> = tier.to_vec();
-    args.extend(["--native-emit", &out_s, &src]);
+    args.extend(["--native-rust", "--native-emit", &out_s, &src]);
     let res = loft(&args, env);
     assert!(
         fa::exists(out),

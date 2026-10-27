@@ -40,7 +40,10 @@ fn with_env(cmd: &mut Command, env: &[(&str, &str)]) {
 
 fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd = loft();
-    cmd.arg("--native-emit").arg(out).arg(cells());
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
+        .arg(out)
+        .arg(cells());
     with_env(&mut cmd, env);
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
@@ -261,7 +264,10 @@ fn a_chain_of_chains_adopts_its_callees_answer() {
     let guard = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/164-a-chain-of-chains-adopts-its-callees-answer.loft");
     let mut cmd = loft();
-    cmd.arg("--native-emit").arg(&out).arg(&guard);
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
+        .arg(&out)
+        .arg(&guard);
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
         fa::exists(&out),

@@ -52,7 +52,11 @@ fn cells() -> PathBuf {
 fn emitted(src: &Path, env: &[(&str, &str)], tag: &str) -> (Vec<String>, Vec<String>) {
     let out = std::env::temp_dir().join(format!("loft_apart_value_{tag}.rs"));
     let mut cmd = loft();
-    cmd.arg("--ship").arg("--native-emit").arg(&out).arg(src);
+    cmd.arg("--ship")
+        .arg("--native-rust")
+        .arg("--native-emit")
+        .arg(&out)
+        .arg(src);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -204,6 +208,7 @@ fn inline_bodies(tier: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
     let mut cmd = loft();
     cmd.env_remove("LOFT_NO_APART_VECTOR")
         .arg(tier)
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(VECTOR_CELLS));

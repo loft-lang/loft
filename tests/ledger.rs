@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: the ledger counts the Rust runtime records — its `--native` runs as `--native-rust` until then.
 
 //! The test ledger (@PLN201 step 2, `src/ledger.rs`, `src/opt/ledger_sites.rs`): a run with
 //! `LOFT_LEDGER=<file>` is the ordinary checked run, on either backend, and records per fault
@@ -92,7 +93,7 @@ fn both_backends_record_the_same_counts_and_answer_as_a_checked_run() {
         "share 0 div 2 1",
     ];
     let mut files = Vec::new();
-    for (mode, tag) in [("--interpret", "i"), ("--native", "n")] {
+    for (mode, tag) in [("--interpret", "i"), ("--native-rust", "n")] {
         let ledger = dir.join(format!("{tag}.ledger"));
         let (out, _) = run(&[mode], &prog, Some(&ledger));
         assert_eq!(
@@ -130,7 +131,7 @@ fn a_second_run_adds_its_counts() {
     fa::write(&prog, PROGRAM).expect("write program");
     let ledger = dir.join("l.ledger");
     run(&["--interpret"], &prog, Some(&ledger));
-    run(&["--native"], &prog, Some(&ledger));
+    run(&["--native-rust"], &prog, Some(&ledger));
     assert_eq!(
         lines_of(&ledger, &["mix", "big", "share"]),
         vec![

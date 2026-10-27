@@ -34,6 +34,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         std::env::temp_dir().join(format!("loft_loop_record_{}_{tag}.rs", std::process::id()));
     let status = loft(
         &[
+            "--native-rust",
             "--native-emit",
             out.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -153,6 +154,7 @@ fn the_declines_are_the_designed_ones() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out = loft(
         &[
+            "--native-rust",
             "--native-emit",
             loft::platform::null_sink(),
             src.to_str().unwrap(),
@@ -185,6 +187,7 @@ fn nest_n1(tag: &str, env: &[(&str, &str)]) -> String {
     env.push(("LOFT_NATIVE_NO_CACHE", "1"));
     let status = loft(
         &[
+            "--native-rust",
             "--native-emit",
             out.to_str().unwrap(),
             src.to_str().unwrap(),

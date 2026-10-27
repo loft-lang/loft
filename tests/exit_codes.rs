@@ -410,6 +410,7 @@ fn w1_1_html_export_produces_file() {
     let out = dir.join("loft_w1_1_test.html");
     fa::write(&src, "fn main() { println(\"html-ok\"); }\n").unwrap();
     let result = loft::platform::process::harness_command(loft_bin())
+        .arg("--native-rust")
         .arg("--html")
         .arg(&out)
         .arg(&src)

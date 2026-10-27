@@ -52,7 +52,11 @@ fn emit(tag: &str) -> String {
     let out_rs = std::env::temp_dir().join(format!("loft_993_{tag}_{}.rs", std::process::id()));
     fa::write(&src, PROBE).expect("write probe");
     let st = loft::platform::process::harness_command(loft_bin())
-        .args(["--native-emit", out_rs.to_str().expect("path")])
+        .args([
+            "--native-rust",
+            "--native-emit",
+            out_rs.to_str().expect("path"),
+        ])
         .arg(&src)
         .env("LOFT_TIMEOUT", "300")
         .status()

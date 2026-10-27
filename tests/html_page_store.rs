@@ -158,7 +158,11 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
 
     let html = dir.join("page_store.html");
     let built = loft::platform::process::harness_command(&loft)
-        .args(["--html", html.to_str().expect("utf-8 path")])
+        .args([
+            "--native-rust",
+            "--html",
+            html.to_str().expect("utf-8 path"),
+        ])
         .arg(&src)
         .current_dir(&dir)
         .output()

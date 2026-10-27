@@ -21,6 +21,7 @@ fn main() { v: vector<integer> = [3, 5, 7]; println(\"{sum_hoisted(v)} {len(copy
 fn emit(src: &std::path::Path, out: &std::path::Path) -> String {
     let status =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--native-rust")
             .arg("--native-emit")
             .arg(out)
             .arg("--lean")

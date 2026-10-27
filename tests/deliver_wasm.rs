@@ -93,6 +93,7 @@ fn run_harness(
 
     let status = loft::platform::process::harness_command(&loft_bin)
         .args([
+            "--native-rust",
             "--html",
             html.to_str().unwrap(),
             "--path",

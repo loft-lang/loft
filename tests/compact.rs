@@ -34,7 +34,8 @@ fn emit(env: &[(&str, &str)]) -> String {
     let out = std::env::temp_dir().join(format!("compact_{}_{}.rs", std::process::id(), env.len()));
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-emit")
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
         .arg(&out)
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

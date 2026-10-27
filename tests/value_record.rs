@@ -110,7 +110,8 @@ const CHAIN_EXPECTED: &[(&str, bool)] = &[
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
-    cmd.arg("--native-emit")
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
         .arg(out)
         .arg(src)
         .env("LOFT_TIMEOUT", "120")

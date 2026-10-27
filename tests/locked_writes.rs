@@ -319,6 +319,7 @@ fn hoisted_loops_reach_the_writers_under_test() {
     fa::write(&script, HOISTED).expect("write script");
     let out = dir.join("hoisted.rs");
     let status = loft::platform::process::harness_command(loft_bin())
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out)
         .arg("--lean")

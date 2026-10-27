@@ -1,5 +1,6 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: the cached binaries and their strip decisions are rustc's — its `--native` runs as `--native-rust` until then.
 
 //! P254 — `loft --native` cache-poisoning defenses.  Each test
 //! drives the real `loft --native` binary against a fresh temp
@@ -52,7 +53,7 @@ fn first_run_creates_cache_with_safe_permissions() {
     let script = write_marker_script(&dir, marker);
 
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&script)
         .output()
         .expect("run loft --native");
@@ -101,7 +102,7 @@ fn second_run_reuses_safe_cache() {
 
     // Prime the cache.
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&script)
         .output()
         .expect("first run");
@@ -119,7 +120,7 @@ fn second_run_reuses_safe_cache() {
     // keeps its most recently used binaries), so the mtime is no longer the witness; the
     // run's own verdict is.
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&script)
         .env("LOFT_TIMING", "1")
         .output()
@@ -156,7 +157,9 @@ fn a_symbolised_build_is_not_served_the_stripped_one() {
     let script = write_marker_script(&dir, marker);
     let run = |keep: bool| {
         let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--native").arg(&script).env("LOFT_TIMING", "1");
+        cmd.arg("--native-rust")
+            .arg(&script)
+            .env("LOFT_TIMING", "1");
         if keep {
             cmd.env("LOFT_NATIVE_KEEP_SYMBOLS", "1");
         } else {
@@ -201,7 +204,7 @@ fn group_writable_cache_is_recompiled() {
 
     // Prime the cache.
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&script)
         .output()
         .expect("first run");
@@ -229,7 +232,7 @@ fn group_writable_cache_is_recompiled() {
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&script)
         .output()
         .expect("second run");
@@ -280,7 +283,7 @@ fn poisoned_cache_binary_is_not_executed() {
 
     // Prime the cache so we know the cache filename loft will look for.
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&script)
         .output()
         .expect("first run");
@@ -309,7 +312,7 @@ fn poisoned_cache_binary_is_not_executed() {
         .expect("loosen poison mode");
 
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&script)
         .output()
         .expect("second run");
@@ -342,7 +345,7 @@ fn no_cache_env_var_skips_cache() {
     let script = write_marker_script(&dir, marker);
 
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&script)
         .env("LOFT_NATIVE_NO_CACHE", "1")
         .output()

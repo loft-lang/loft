@@ -9253,10 +9253,15 @@ fn main() {
             .to_string();
     }
     // `--native-rust` chooses the writer; alone it is `--native` through it, beside
-    // `--native-emit` it only chooses what is written.
+    // `--native-emit`, `--html`, `--native-wasm` or `--native-android` it only chooses which
+    // writer builds that.
     if native_rust {
         native_c = false;
-        if native_emit.is_none() {
+        if native_emit.is_none()
+            && html_out.is_none()
+            && native_wasm.is_none()
+            && native_android.is_none()
+        {
             native_mode = true;
             native_requested = true;
         }

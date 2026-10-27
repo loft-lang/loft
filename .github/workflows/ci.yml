@@ -637,6 +637,8 @@ jobs:
         if: ${{ runner.os == 'Linux' && (matrix.shard == 'corpus' || matrix.shard == '' || matrix.shard == null) }}
         env:
           LOFT_BIN: ./target/debug/loft
+          # It counts the Rust writer's rewrites (@PLN203: the job's --native is the C).
+          LOFT_NATIVE_BACKEND: ''
         run: python3 scripts/rewrite_census.py
 
       # @P229 G3 reliability fix: pre-build every native lib package

@@ -46,7 +46,8 @@ fn emitted_from(file: &str, env: &[(&str, &str)]) -> String {
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut cmd = loft();
-    cmd.arg("--native-emit")
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file));
     for (k, v) in env {

@@ -156,6 +156,7 @@ fn run_html_wasm_full(
     // each other's emitted Rust or wasm output.
     let mut cmd = loft::platform::process::harness_command(&loft_bin);
     cmd.args([
+        "--native-rust",
         "--html",
         html.to_str().unwrap(),
         "--path",
@@ -720,6 +721,7 @@ fn parallel_html_builds_do_not_cross_contaminate() {
         .iter()
         .map(|src| {
             loft::platform::process::harness_command(&loft_bin)
+                .arg("--native-rust")
                 .arg("--html")
                 .arg(src)
                 .env("LOFT_TIMEOUT", "120")
@@ -925,6 +927,7 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
 
     let mut emit = loft::platform::process::harness_command(&loft_bin);
     emit.args([
+        "--native-rust",
         "--native-emit",
         rs.to_str()?,
         "--path",
@@ -1271,6 +1274,7 @@ fn pln26_phase3_native_package_runs_on_wasm() {
         fa::remove_dir_all(root.join("tests/lib/native_scalar_pkg/native/target/wasm32-wasip2"));
 
     let build = loft::platform::process::harness_command(&loft_bin)
+        .arg("--native-rust")
         .arg("--native-wasm")
         .arg(&wasm)
         .arg("--lib")
@@ -1541,6 +1545,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
             .arg(&src)
             .arg("--lib")
             .arg(tmp.join("nobridge"))
+            .arg("--native-rust")
             .arg("--html")
             .arg(tmp.join(format!("{name}.html")))
             .output()
@@ -1782,6 +1787,7 @@ fn pln24_a_reachable_c_binding_is_refused_end_to_end_on_wasm() {
 
     let build = |flag: &str, out: &str, src: &std::path::Path| -> (bool, String) {
         let o = loft::platform::process::harness_command(&loft_bin)
+            .arg("--native-rust")
             .args([flag, tmp.join(out).to_str().unwrap()])
             .arg(src)
             .output()
@@ -2313,7 +2319,7 @@ fn html_a_trap_is_reported_to_the_page() {
     )
     .expect("write source");
     let out = loft::platform::process::harness_command(&loft)
-        .args(["--html", html.to_str().unwrap()])
+        .args(["--native-rust", "--html", html.to_str().unwrap()])
         .arg(&src)
         .output()
         .expect("invoke loft --html");
@@ -2435,6 +2441,7 @@ fn a_browser_build_builds_no_host_native_library() {
         .current_dir(&root)
         .env("LOFT_TIMING", "1")
         .env("LOFT_NO_CACHE", "1")
+        .arg("--native-rust")
         .arg("--html")
         .arg(&html)
         .args(["--lib", "tests/fixtures/libs"])

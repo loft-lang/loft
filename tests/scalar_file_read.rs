@@ -24,6 +24,7 @@ fn hoist_blocks(tag: &str, env: &[(&str, &str)]) -> Vec<(String, usize)> {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args([
+        "--native-rust",
         "--native-emit",
         out.to_str().unwrap(),
         Path::new(env!("CARGO_MANIFEST_DIR"))

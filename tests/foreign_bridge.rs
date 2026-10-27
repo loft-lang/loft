@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: the bridge-answer reads differ on the C — its `--native` runs as `--native-rust` until then.
 //! @PLN174 F5 — a LIBRARY's bytes as a foreign store: the fixture cdylib
 //! (`tests/lib/native_pkg`) answers a `vector<u8>` through
 //! `LoftStore::foreign_vector_from_owned`, and the cell file reads it beside the copying
@@ -102,7 +103,7 @@ fn every_read_of_a_bridge_answer_matches_the_copying_bridge_on_both_backends() {
     if !fixture_built() {
         return;
     }
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         for (tag, envs) in [
             ("plain", vec![]),
             ("verify", vec![("LOFT_HOIST_VERIFY", "1")]),
@@ -128,7 +129,7 @@ fn the_view_and_the_copy_print_the_same_lines_on_both_backends() {
     if !fixture_built() {
         return;
     }
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (ok, with, _) = run("ab_view", backend, CELLS, false, &[]);
         let (ok2, without, _) = run(
             "ab_copy",
@@ -151,7 +152,7 @@ fn a_write_into_a_bridge_answer_is_refused_at_compile_time_with_the_copy_advice(
         ("refused", WRITE_REFUSED, "reached: the write landed"),
         ("grow_refused", GROW_REFUSED, "reached: the grow landed"),
     ] {
-        for backend in ["--interpret", "--native"] {
+        for backend in ["--interpret", "--native-rust"] {
             let (ok, _, out) = run(tag, backend, prog, true, &[]);
             assert!(!ok, "{backend} {tag}: the write must be refused:\n{out}");
             assert!(

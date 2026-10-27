@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: an undefended overflow is not surfaced by the C — its `--native` runs as `--native-rust` until then.
 
 //! `--dev-soft-halt` surfaces integer overflow, on both backends (loft#1265).
 //!
@@ -90,7 +91,7 @@ fn have_rustc() -> bool {
 fn backends() -> Vec<&'static str> {
     let mut v = vec!["--interpret"];
     if have_rustc() {
-        v.push("--native");
+        v.push("--native-rust");
     } else {
         println!("dev_soft_halt_surfaces_overflow: --native leg skipped (no rustc)");
     }

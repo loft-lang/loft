@@ -454,7 +454,11 @@ fn a_declared_font_reaches_the_emitted_page() {
 
     let html = dir.join("fontgame.html");
     let out = loft::platform::process::harness_command(&loft)
-        .args(["--html", html.to_str().expect("utf-8 path")])
+        .args([
+            "--native-rust",
+            "--html",
+            html.to_str().expect("utf-8 path"),
+        ])
         .arg("--lib")
         .arg(root.join("tests/fixtures/libs"))
         .arg(dir.join("src/fontgame.loft"))
@@ -541,7 +545,11 @@ fn a_drifting_family_is_refused_before_the_build() {
 
     let html = dir.join("driftgame.html");
     let out = loft::platform::process::harness_command(&loft)
-        .args(["--html", html.to_str().expect("utf-8 path")])
+        .args([
+            "--native-rust",
+            "--html",
+            html.to_str().expect("utf-8 path"),
+        ])
         .arg("--lib")
         .arg(root.join("tests/fixtures/libs"))
         .arg(dir.join("src/driftgame.loft"))

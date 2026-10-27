@@ -5784,6 +5784,7 @@ fn main() {\n\
     let wasm = dir.join("w.wasm");
     let build = loft::platform::process::harness_command(loft)
         .env("LOFT_TIMEOUT", "900")
+        .arg("--native-rust")
         .arg("--native-wasm")
         .arg(&wasm)
         .arg("--lib")

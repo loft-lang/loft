@@ -119,7 +119,7 @@ fn emit_tier(tag: &str, tier: &[&str], env: &[(&str, &str)]) -> String {
         out.to_str().unwrap().to_string(),
         cells().to_str().unwrap().to_string(),
     );
-    args.extend(["--native-emit", &out_s, &cells_s]);
+    args.extend(["--native-rust", "--native-emit", &out_s, &cells_s]);
     let status = loft(&args, env);
     assert!(
         fa::exists(&out),
@@ -317,6 +317,7 @@ fn a_straight_line_run_of_byte_appends_is_one_append() {
     let cells = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/158-push-run.loft");
     let status = loft(
         &[
+            "--native-rust",
             "--native-emit",
             out.to_str().unwrap(),
             cells.to_str().unwrap(),

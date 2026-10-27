@@ -58,7 +58,12 @@ fn baseline_present() -> bool {
 
 fn emit_native(loft_src: &str, out_path: &std::path::Path) {
     let status = loft::platform::process::harness_command(loft_binary())
-        .args(["--native-emit", out_path.to_str().unwrap(), loft_src])
+        .args([
+            "--native-rust",
+            "--native-emit",
+            out_path.to_str().unwrap(),
+            loft_src,
+        ])
         .current_dir(project_root())
         .status()
         .expect("failed to spawn loft binary — run `cargo build --release` first");
@@ -621,6 +626,7 @@ fn p244_text_native_wrapper_compiles_under_native() {
 fn pln10_n2_cdylib_text_wrapper_returns_owned_string() {
     let out_rs = std::env::temp_dir().join(format!("loft_pln10_n2_{}.rs", std::process::id()));
     let status = loft::platform::process::harness_command(loft_binary())
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out_rs)
         .arg("tests/integration/p244_smoke.loft")

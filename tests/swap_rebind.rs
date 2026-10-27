@@ -50,7 +50,15 @@ fn cells() -> String {
 #[test]
 fn every_cell_rebinds_through_the_exchange() {
     let rs = std::env::temp_dir().join(format!("loft_swap_rebind_{}.rs", std::process::id()));
-    let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells()], &[]);
+    let (_, err, ok) = loft(
+        &[
+            "--native-rust",
+            "--native-emit",
+            &rs.to_string_lossy(),
+            &cells(),
+        ],
+        &[],
+    );
     assert!(ok, "emit failed:\n{err}");
     let src = fa::read_to_string(&rs).expect("emitted source");
     let _ = fa::remove_file(&rs);

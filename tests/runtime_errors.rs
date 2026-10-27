@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: a contained fault (lazy driver, par worker, overflow) does not read as the interpreter's — its `--native` runs as `--native-rust` until then.
 
 //! Plan-07 phase 4 — typed runtime error binary tests.
 //!
@@ -604,7 +605,7 @@ fn run_loft_snippet_on(backend: &str, name: &str, source: &str) -> (String, Stri
 /// `--native` is bounded by `LOFT_TIMEOUT` because rustc can hang.
 fn rendering_shared_by_both_backends(name: &str, source: &str) -> (String, String) {
     let (i_out, i_err, i_code) = run_loft_snippet_on("--interpret", name, source);
-    let (n_out, n_err, n_code) = run_loft_snippet_on("--native", name, source);
+    let (n_out, n_err, n_code) = run_loft_snippet_on("--native-rust", name, source);
     let _ = fa::remove_file(std::env::temp_dir().join(format!("loft_{name}.loft")));
     assert_eq!(
         i_err, n_err,

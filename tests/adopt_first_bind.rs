@@ -36,7 +36,10 @@ fn loft() -> Command {
 
 fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd = loft();
-    cmd.arg("--native-emit").arg(out).arg(cells());
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
+        .arg(out)
+        .arg(cells());
     for (k, v) in env {
         cmd.env(k, v);
     }

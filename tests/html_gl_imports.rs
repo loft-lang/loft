@@ -90,7 +90,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
     .expect("write source");
 
     let out = loft::platform::process::harness_command(&loft)
-        .args(["--html", html.to_str().unwrap()])
+        .args(["--native-rust", "--html", html.to_str().unwrap()])
         .arg("--path")
         .arg(format!("{}/", root.display()))
         .arg(&src)

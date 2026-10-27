@@ -56,6 +56,7 @@ fn holds(env: &[(&str, &str)], tag: &str) -> Vec<(String, usize)> {
     let out = std::env::temp_dir().join(format!("loft_file_hold_{tag}.rs"));
     let mut cmd = loft();
     cmd.arg("--ship")
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out)
         .arg(cells());
