@@ -368,7 +368,7 @@ pub fn placed_locals(code: &Value, data: &Data) -> HashSet<u16> {
 /// they grow — in first-appearance order.  Exactly the ops [`blocks_header_hoist`] lets
 /// through under the push and mint tiers, so a caller that proves every root apart from a
 /// store may open those tiers.
-pub(super) fn mover_roots(
+pub(crate) fn mover_roots(
     stmts: &[Value],
     data: &Data,
     stores: &Stores,

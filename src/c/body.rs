@@ -130,10 +130,18 @@ pub(crate) struct FnWriter<'a> {
     /// The label number of each enclosing loop, innermost last.
     loops: Vec<u32>,
     labels: u32,
-    /// The vectors each enclosing loop holds (`loft_vh`), innermost last (@FR-R-Header).
-    headers: Vec<Vec<(crate::opt::writes::PathKey, String)>>,
+    /// The vectors each enclosing loop holds (`loft_vh`), innermost last (@FR-R-Header), each
+    /// with whether its element base stays valid for the loop's extent (`@FR-R-Base`: the
+    /// loop grows no store).  An `__inv` twin starts with its inputs as one frame.
+    headers: Vec<Vec<(crate::opt::writes::PathKey, String, bool)>>,
     /// The header gate's memo of which callees write a store.
     hoist_cache: std::collections::HashMap<u32, bool>,
+    /// The locals `(R-Place)` put in another record's store (`hoist::placed_locals`), for
+    /// the store facts the loop verdict proves bases apart with.
+    placed: std::collections::HashSet<u16>,
+    /// `@FR-R-Alias`'s versioned clause: the variable pairs the loop copy being written may
+    /// take as holding apart stores, tested at its entry.  Empty outside such a copy.
+    assumed: Vec<(u16, u16)>,
     /// `@FR-R-Range` (`opt::range`, native's proof): this function's non-null and range facts,
     /// computed on first use.
     range_facts: Option<
@@ -326,6 +334,8 @@ impl<'a> FnWriter<'a> {
             labels: 0,
             headers: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
+            placed: crate::generation::hoist::placed_locals(def.code(), cx.data),
+            assumed: Vec::new(),
             range_facts: None,
             cur_line: 0,
             where_told: false,
@@ -410,6 +420,18 @@ impl<'a> FnWriter<'a> {
                 .map(|(_, &a)| a)
                 .collect();
             self.store_links = store_links(self.cx, def, &seed);
+        }
+        self
+    }
+
+    /// This is an `__inv` twin (`@FR-R-Inputs`): `frame` is the headers its caller hands it,
+    /// valid for the call, since an admitted callee grows no store.
+    pub(crate) fn inputs(
+        mut self,
+        frame: Vec<(crate::opt::writes::PathKey, String, bool)>,
+    ) -> Self {
+        if !frame.is_empty() {
+            self.headers.push(frame);
         }
         self
     }
@@ -570,35 +592,202 @@ impl<'a> FnWriter<'a> {
         texts
     }
 
-    /// Before loop `b`: each vector the header gate admits (`opt::header::hoistable_vectors`)
-    /// held in a `loft_vh` — the frame the loop's element accesses read.
-    /// `LOFT_NO_VECTOR_HOIST=1` holds none, `LOFT_NO_WRITE_HOIST=1` none in a loop that writes.
+    /// Before loop `b`: each vector the loop verdict holds (`hoist::hoistable`, native's own —
+    /// the vectors the body indexes and the ones its admitted callees index, `@FR-R-Inputs`)
+    /// in a `loft_vh`, the frame the loop's element accesses read.  A loop that grows a store
+    /// (a push, a mint, a text set) keeps the record and the length, which no growth moves; it
+    /// keeps the base only of a vector whose store is proven apart from every store it grows
+    /// (`@FR-R-Base`'s growth clause, `StoreFacts`), and derives the others' base again at
+    /// each access (`loft_vh_fresh`).  `LOFT_NO_VECTOR_HOIST=1` holds none; the tier switches
+    /// are native's (`lower::switches`).
     fn hold_vectors(&mut self, b: &Block, ind: usize) -> Result<(), String> {
-        // A generator's locals live in its frame between resumes; a held header is not one.
-        if self.gen_elem.is_some() {
-            return Ok(());
-        }
-        let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
         let mut frame = Vec::new();
-        if !env_on("LOFT_NO_VECTOR_HOIST") {
-            let paths = crate::opt::header::hoistable_vectors(
-                b,
-                self.cx.data,
-                self.d,
-                &mut self.hoist_cache,
-                !env_on("LOFT_NO_WRITE_HOIST"),
-            );
-            for (path, expr) in paths {
+        if let Some(verdict) = self.verdict(b) {
+            let bases = self.kept_bases(&verdict);
+            for ((path, expr), base) in verdict.vectors.into_iter().zip(bases) {
+                // A path an enclosing frame holds as well — with a base, or without one where
+                // this loop would keep none either — is served by that frame.
+                let outer = self
+                    .headers
+                    .iter()
+                    .rev()
+                    .flat_map(|f| f.iter())
+                    .find(|(p, _, _)| *p == path)
+                    .map(|(_, _, b)| *b);
+                if outer.is_some_and(|b| b || !base) {
+                    continue;
+                }
                 let e = self.nested(|w| w.expr(&expr, ind))?;
                 let h = format!("h{}", self.decls.len() + 1);
                 self.decls
                     .push(format!("loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"));
                 self.line(ind, &format!("{h} = loft_vh_of({});", as_ref(e)?));
-                frame.push((path, h));
+                frame.push((path, h, base));
             }
         }
         self.headers.push(frame);
         Ok(())
+    }
+
+    /// The store facts the verdict proves stores apart with (`hoist::StoreFacts`), under
+    /// the versioned copy's `assumed` pairs; `None` under `LOFT_NO_DISTINCT_GROWTH=1`.
+    fn store_facts(&self) -> Option<crate::generation::hoist::StoreFacts<'_>> {
+        (!self.cx.switches.distinct_growth_disabled).then(|| crate::generation::hoist::StoreFacts {
+            vars: self.vars,
+            placed: &self.placed,
+            adopted: self.adopt.as_ref().map(|a| (a.v, a.vdb)),
+            owned: None,
+            assumed: &self.assumed,
+        })
+    }
+
+    /// Loop `b`'s header verdict (`hoist::hoistable`), or `None` where none is asked: in a
+    /// generator, whose locals live in its frame between resumes, or under
+    /// `LOFT_NO_VECTOR_HOIST=1`.
+    fn verdict(&mut self, b: &Block) -> Option<crate::generation::hoist::LoopHoist> {
+        if self.gen_elem.is_some() || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
+        {
+            return None;
+        }
+        let sw = self.cx.switches;
+        let tiers = crate::opt::writes::HoistTiers {
+            in_place: !sw.write_hoist_disabled,
+            scalars: false,
+            push: !sw.push_hoist_disabled,
+            mint: !sw.mint_hoist_disabled,
+            record_push: !sw.record_push_disabled,
+            heap_push: !sw.heap_record_push_disabled,
+            rebound_movers: !sw.rebound_mover_disabled,
+            text_set: false,
+        };
+        let mut cache = std::mem::take(&mut self.hoist_cache);
+        let facts = self.store_facts();
+        let memo = &mut *self.cx.hoist_memo.borrow_mut();
+        let v = crate::generation::hoist::hoistable(
+            b,
+            self.cx.data,
+            self.cx.stores,
+            self.d,
+            &mut cache,
+            &mut memo.writes,
+            tiers,
+            (!sw.callee_inputs_disabled).then_some(&mut memo.inputs),
+            None,
+            facts.as_ref(),
+        );
+        self.hoist_cache = cache;
+        Some(v)
+    }
+
+    /// Per held vector of `v`, whether its base stays valid for the loop's extent: every one
+    /// in a loop that grows no store, else each whose store is proven apart from every store
+    /// the loop grows (`StoreFacts::distinct`), as native's `begin_vector_hoist` decides.
+    fn kept_bases(&self, v: &crate::generation::hoist::LoopHoist) -> Vec<bool> {
+        if v.growth_free {
+            return vec![true; v.vectors.len()];
+        }
+        let facts = self.store_facts();
+        v.vectors
+            .iter()
+            .map(|(p, _)| {
+                !v.movers.is_empty()
+                    && facts
+                        .as_ref()
+                        .is_some_and(|f| v.movers.iter().all(|m| f.distinct(p.0, *m)))
+            })
+            .collect()
+    }
+
+    /// `@FR-R-Alias`'s versioned clause, as native's `distinct_version`: when loop `lp` grows
+    /// this function's return buffer and would hold more headers if each parameter's store were
+    /// apart from the buffer's, answer the pairs to test at run time and the pairs the tested
+    /// copy may assume apart.  `None` for a loop that gains nothing, cannot be copied (a
+    /// `yield`, a `par`, a function-value call), or under `LOFT_NO_DISTINCT_VERSION=1`.
+    #[expect(clippy::type_complexity, reason = "two pair lists, named in the doc")]
+    fn distinct_version(&mut self, lp: &Block) -> Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> {
+        let sw = self.cx.switches;
+        if sw.distinct_version_disabled
+            || sw.distinct_growth_disabled
+            || !self.assumed.is_empty()
+            || lp.operators.iter().any(|op| {
+                op.any_node(&mut |n| {
+                    matches!(
+                        n,
+                        Value::Yield(_) | Value::Parallel(_) | Value::CallRef(_, _)
+                    )
+                })
+            })
+        {
+            return None;
+        }
+        let data = self.cx.data;
+        let rb = crate::opt::attrs::retbuf_var(data, self.d)?;
+        let adopted = self
+            .adopt
+            .as_ref()
+            .filter(|a| a.buf == rb)
+            .map(|a| (a.v, a.vdb));
+        let bufs: Vec<u16> = std::iter::once(rb)
+            .chain(adopted.into_iter().flat_map(|(v, vdb)| [v, vdb]))
+            .collect();
+        let tested = adopted.map_or(rb, |(v, _)| v);
+        let vars = self.vars;
+        let params: Vec<u16> = (0..vars.count())
+            .filter(|&v| vars.is_argument(v) && v != rb && crate::data::is_dbref(vars.tp(v).base()))
+            .collect();
+        if params.is_empty() {
+            return None;
+        }
+        let plain = self.verdict(lp)?;
+        let grows =
+            crate::generation::hoist::mover_roots(&lp.operators, data, self.cx.stores, vars)
+                .iter()
+                .any(|&m| chain_reaches(vars, m, &bufs));
+        if plain
+            .pushes
+            .iter()
+            .chain(plain.mint_pushes.iter())
+            .all(|(p, _)| !bufs.contains(&p.0))
+            && !plain.movers.iter().any(|m| bufs.contains(m))
+            && !grows
+        {
+            return None;
+        }
+        let assumed: Vec<(u16, u16)> = params
+            .iter()
+            .flat_map(|&p| bufs.iter().map(move |&b| (p, b)))
+            .collect();
+        self.assumed.clone_from(&assumed);
+        let versioned = self.verdict(lp);
+        self.assumed.clear();
+        let versioned = versioned?;
+        // A path counts only when no enclosing frame holds it already.
+        let mut gained: Vec<u16> = Vec::new();
+        for (p, _) in &versioned.vectors {
+            if !plain.vectors.iter().any(|(q, _)| q == p)
+                && self.held_path(p).is_none()
+                && let Some(r) = param_root(vars, p.0, &params)
+                && !gained.contains(&r)
+            {
+                gained.push(r);
+            }
+        }
+        if gained.is_empty() {
+            return None;
+        }
+        let mut tests: Vec<(u16, u16)> = Vec::new();
+        let mut pairs: Vec<(u16, u16)> = Vec::new();
+        for r in gained {
+            if !tests.contains(&(r, tested)) {
+                tests.push((r, tested));
+            }
+            for &b in &bufs {
+                if !pairs.contains(&(r, b)) {
+                    pairs.push((r, b));
+                }
+            }
+        }
+        Some((tests, pairs))
     }
 
     /// `@FR-R-PushFill`'s window clause, as the Rust writer's `push_reserve`: before a COUNTED
@@ -676,18 +865,22 @@ impl<'a> FnWriter<'a> {
         let [(path, vector, size)] = paths.as_slice() else {
             return Ok(false);
         };
-        if self.windows.iter().any(|(p, _, _, _)| p == path)
-            || crate::generation::hoist::deep_window_ok(
-                lp,
-                path,
-                data,
-                self.d,
-                Some(self.cx.stores),
-                &mut self.hoist_cache,
-                None,
-            )
-            .is_err()
-        {
+        if self.windows.iter().any(|(p, _, _, _)| p == path) {
+            return Ok(false);
+        }
+        let mut cache = std::mem::take(&mut self.hoist_cache);
+        let facts = self.store_facts();
+        let ok = crate::generation::hoist::deep_window_ok(
+            lp,
+            path,
+            data,
+            self.d,
+            Some(self.cx.stores),
+            &mut cache,
+            facts.as_ref(),
+        );
+        self.hoist_cache = cache;
+        if ok.is_err() {
             return Ok(false);
         }
         let (path, vector, size) = (path.clone(), vector.clone(), *size);
@@ -921,15 +1114,27 @@ impl<'a> FnWriter<'a> {
         }
     }
 
-    /// The `loft_vh` an enclosing loop holds for vector expression `v`, if any.
+    /// The `loft_vh` an enclosing loop holds for vector expression `v`, if any, as the
+    /// expression an access reads: the header itself, or under growth the header with its
+    /// base derived again (`loft_vh_fresh`).
     fn held_vector(&self, v: &Value) -> Option<String> {
         let path = crate::opt::writes::vector_path(self.cx.data, v)?;
+        self.held_path(&path)
+    }
+
+    fn held_path(&self, path: &crate::opt::writes::PathKey) -> Option<String> {
         self.headers
             .iter()
             .rev()
             .flat_map(|f| f.iter())
-            .find(|(p, _)| *p == path)
-            .map(|(_, h)| h.clone())
+            .find(|(p, _, _)| p == path)
+            .map(|(_, h, base)| {
+                if *base {
+                    h.clone()
+                } else {
+                    format!("loft_vh_fresh({h})")
+                }
+            })
     }
 
     /// An element access of a held vector: `OpGetVector(v, size, i)` itself, or a scalar read
@@ -1191,8 +1396,33 @@ impl<'a> FnWriter<'a> {
         r
     }
 
-    /// A loop: its held vectors and its push window before it, the window closed after.
+    /// A loop: its held vectors and its push window before it, the window closed after —
+    /// written twice under `@FR-R-Alias`'s versioned clause (`distinct_version`): the copy
+    /// that assumes the parameters apart from the return buffer runs when a test of their
+    /// store numbers says so at its entry, the plain one otherwise.
     fn loop_stmt(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        if let Some((tests, pairs)) = self.distinct_version(b) {
+            let test = tests
+                .iter()
+                .map(|&(p, rb)| format!("{}.store_nr != {}.store_nr", self.var(rb), self.var(p)))
+                .collect::<Vec<_>>()
+                .join(" && ");
+            self.flush(ind);
+            self.line(ind, &format!("if ({test}) {{"));
+            self.assumed = pairs;
+            let r = self.loop_copy(b, ind + 1);
+            self.assumed.clear();
+            r?;
+            self.line(ind, "} else {");
+            self.loop_copy(b, ind + 1)?;
+            self.line(ind, "}");
+            crate::rewrite_census::fired("R-AliasVersion", 1);
+            return Ok(());
+        }
+        self.loop_copy(b, ind)
+    }
+
+    fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let held_file = self.open_file_hold(b, ind)?;
         self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
@@ -2747,19 +2977,36 @@ impl<'a> FnWriter<'a> {
         if shapes.len() != args.len() {
             return Err("a call whose arguments do not match its parameters".into());
         }
+        // `v.len()` of a vector an enclosing loop holds: the header's length.
+        if def.name() == "t_6vector_len"
+            && let [v] = args
+            && let Some(h) = self.held_vector(v)
+        {
+            return Ok(E::new(format!("{h}.len"), K::Int));
+        }
         let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
         self.value_args(args, &shapes, &values, &mut xs, ind)?;
-        let name = if places == 0 {
+        // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
+        let mut mask = places;
+        if super::native_c(def.name()).is_none()
+            && args.len() < 64
+            && let Some(headers) = self.twin_headers(d, args)
+        {
+            xs.extend(headers);
+            mask |= super::INV_BIT;
+        }
+        crate::rewrite_census::fired("R-Inputs", usize::from(mask & super::INV_BIT != 0));
+        let name = if mask == 0 {
             name
-        } else if super::native_c(def.name()).is_some() || args.len() > 64 {
+        } else if super::native_c(def.name()).is_some() || args.len() > 63 {
             return Err(format!("a store place handed to a & parameter of {callee}"));
         } else {
-            cx.request_twin(d, places);
-            super::twin_name(cx.data, d, places)
+            cx.request_twin(d, mask);
+            super::twin_name(cx.data, d, mask)
         };
         let call = format!("{name}({})", xs.join(", "));
         Ok(match ret {
@@ -2771,6 +3018,28 @@ impl<'a> FnWriter<'a> {
             }
             c => E::new(call, kind_of(c)),
         })
+    }
+
+    /// The headers `d`'s `__inv` twin takes for a call with `args`, as native's
+    /// `twin_call_inputs` keys them: each header input's path re-spelled over the argument —
+    /// every one held by an enclosing frame, or `None`.  A header passed under growth carries
+    /// a base derived at the call, valid while the callee runs, which grows no store.
+    fn twin_headers(&self, d: u32, args: &[Value]) -> Option<Vec<String>> {
+        if self.gen_elem.is_some() || self.headers.iter().all(Vec::is_empty) {
+            return None;
+        }
+        let fi = self.cx.callee_inputs(d)?;
+        if fi.headers.is_empty() {
+            return None;
+        }
+        let mut out = Vec::with_capacity(fi.headers.len());
+        for (p, offs, _) in &fi.headers {
+            let (c, mut key) =
+                crate::opt::writes::vector_path(self.cx.data, args.get(*p as usize)?)?;
+            key.extend_from_slice(offs);
+            out.push(self.held_path(&(c, key))?);
+        }
+        Some(out)
     }
 
     /// Evaluate the arguments at `values` into `xs`, in order; a function named where a
@@ -5241,4 +5510,36 @@ fn store_links(cx: &Cx, def: &crate::data::Definition, seed: &[u16]) -> Vec<bool
             return store;
         }
     }
+}
+
+/// Does `v`'s single-dep chain reach one of `bufs`?  As native's `grows_buffer` follows a
+/// mover's root.
+fn chain_reaches(vars: &crate::variables::Function, v: u16, bufs: &[u16]) -> bool {
+    let mut cur = v;
+    for _ in 0..vars.var_count() {
+        if bufs.contains(&cur) {
+            return true;
+        }
+        match vars.tp(cur).depend().as_slice() {
+            [d] if *d != cur => cur = *d,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// The member of `params` that `v`'s dep chain ends at, through single-dep views (sixteen
+/// steps at most), as native's `param_root`.
+fn param_root(vars: &crate::variables::Function, v: u16, params: &[u16]) -> Option<u16> {
+    let mut cur = v;
+    for _ in 0..16 {
+        if params.contains(&cur) {
+            return Some(cur);
+        }
+        let [d] = vars.tp(cur).depend()[..] else {
+            return None;
+        };
+        cur = d;
+    }
+    None
 }
