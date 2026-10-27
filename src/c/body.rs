@@ -148,6 +148,10 @@ pub(crate) struct FnWriter<'a> {
     /// A value staged into a C temporary, by the temporary's name, with its kind: what a
     /// `Value::RawExpr` the writer built for a rewrite reads (`keyed::keyed_in_place`).
     raw: std::collections::HashMap<String, K>,
+    /// Set by a text VALUE op (`@FR-R-TextBorrow`) for the one operand it reads at once: the
+    /// generic `OpGetText` answers the field's bytes where the store holds them instead of a
+    /// copy (`text_reads`).  Taken by the first `OpGetText` that sees it.
+    field_view: bool,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -378,6 +382,7 @@ impl<'a> FnWriter<'a> {
             vr: value::VrFn::of(cx, d).map(Box::new),
             widening: None,
             raw: std::collections::HashMap::new(),
+            field_view: false,
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
@@ -3296,47 +3301,70 @@ impl<'a> FnWriter<'a> {
     /// A variable is read in place unless a later operand may write it (@FR-E-Left: an
     /// operand is read before a later operand writes) — then it is read into a temporary too.
     fn args(&mut self, args: &[Value], ind: usize) -> Result<Vec<E>, String> {
-        let mut out = Vec::with_capacity(args.len());
-        for (i, a) in args.iter().enumerate() {
-            let e = self.expr(a, ind)?;
-            let later_writes = args[i + 1..].iter().any(|b| self.may_write(b));
-            if later_writes && matches!(a.unspan(), Value::Var(_)) && e.kind == K::View {
-                let t = self.temp(CType::Text);
-                self.line(ind, &format!("loft_text_set(&{t}, {});", e.code));
-                out.push(self.held(t, CType::Text));
-                continue;
-            }
-            let simple = match a.unspan() {
-                Value::Var(_) => !later_writes,
-                Value::Int(_) | Value::Long(_) | Value::Boolean(_) | Value::Text(_) => true,
-                _ => false,
-            };
-            // A temporary is already stable — and a second one would share the texts a tuple
-            // temporary owns, which the epilogue frees through each.
-            if simple
-                || matches!(e.kind, K::View | K::Void)
-                || self.temps.iter().any(|(t, _)| *t == e.code)
-            {
-                out.push(e);
-                continue;
-            }
-            let (c, code) = match e.kind {
-                K::Int => (CType::Int, e.code),
-                K::Int32 => (CType::Int32, e.code),
-                K::Ref => (CType::Ref, e.code),
-                K::Tup(id) => (CType::Tuple(id), e.code),
-                K::Enum => (CType::Enum, e.code),
-                K::Float => (CType::Float, e.code),
-                K::Single => (CType::Single, e.code),
-                K::Char => (CType::Char, e.code),
-                K::Fn => (CType::Fn, e.code),
-                _ => (CType::Bool, as_bool(e)?),
-            };
-            let t = self.temp(c);
-            self.line(ind, &format!("{t} = {code};"));
-            out.push(E::new(t, kind_of(c)));
+        (0..args.len()).map(|i| self.arg(args, i, ind)).collect()
+    }
+
+    /// The operands of a text VALUE op (`@FR-R-TextBorrow`: one that reads its operands at once
+    /// and writes no store), as `args` evaluates them — except that a text field read no later
+    /// operand can disturb (`may_write`) is the field's bytes where the store holds them, as
+    /// native's `&str` operand is, not a copy: nothing between the read and the op can grow,
+    /// free or rewrite that store.
+    fn text_reads(&mut self, args: &[Value], ind: usize) -> Result<Vec<E>, String> {
+        let data = self.cx.data;
+        (0..args.len())
+            .map(|i| {
+                let field = matches!(args[i].unspan(), Value::Call(d, xs)
+                    if xs.len() == 2 && data.def(*d).name() == "OpGetText");
+                if !field || args[i + 1..].iter().any(|b| self.may_write(b)) {
+                    return self.arg(args, i, ind);
+                }
+                self.field_view = true;
+                let e = self.expr(&args[i], ind);
+                self.field_view = false;
+                e
+            })
+            .collect()
+    }
+
+    /// Operand `i` of `args`, evaluated in order: a value a later operand may change is held
+    /// in a temporary.
+    fn arg(&mut self, args: &[Value], i: usize, ind: usize) -> Result<E, String> {
+        let a = &args[i];
+        let e = self.expr(a, ind)?;
+        let later_writes = args[i + 1..].iter().any(|b| self.may_write(b));
+        if later_writes && matches!(a.unspan(), Value::Var(_)) && e.kind == K::View {
+            let t = self.temp(CType::Text);
+            self.line(ind, &format!("loft_text_set(&{t}, {});", e.code));
+            return Ok(self.held(t, CType::Text));
         }
-        Ok(out)
+        let simple = match a.unspan() {
+            Value::Var(_) => !later_writes,
+            Value::Int(_) | Value::Long(_) | Value::Boolean(_) | Value::Text(_) => true,
+            _ => false,
+        };
+        // A temporary is already stable — and a second one would share the texts a tuple
+        // temporary owns, which the epilogue frees through each.
+        if simple
+            || matches!(e.kind, K::View | K::Void)
+            || self.temps.iter().any(|(t, _)| *t == e.code)
+        {
+            return Ok(e);
+        }
+        let (c, code) = match e.kind {
+            K::Int => (CType::Int, e.code),
+            K::Int32 => (CType::Int32, e.code),
+            K::Ref => (CType::Ref, e.code),
+            K::Tup(id) => (CType::Tuple(id), e.code),
+            K::Enum => (CType::Enum, e.code),
+            K::Float => (CType::Float, e.code),
+            K::Single => (CType::Single, e.code),
+            K::Char => (CType::Char, e.code),
+            K::Fn => (CType::Fn, e.code),
+            _ => (CType::Bool, as_bool(e)?),
+        };
+        let t = self.temp(c);
+        self.line(ind, &format!("{t} = {code};"));
+        Ok(E::new(t, kind_of(c)))
     }
 
     /// May evaluating `v` write a variable?  A statement, a block or a call that is not a
@@ -3753,6 +3781,13 @@ impl<'a> FnWriter<'a> {
         Ok(a)
     }
 
+    /// `two` for a text VALUE op: its text field operands read in place (`text_reads`).
+    fn text_two(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
+        let es = self.text_reads(args, ind)?;
+        let [a, b] = <[E; 2]>::try_from(es).map_err(|_| format!("{name} without two operands"))?;
+        Ok((a, b))
+    }
+
     fn two(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
         let es = self.args(args, ind)?;
         let [a, b] = <[E; 2]>::try_from(es).map_err(|_| format!("{name} without two operands"))?;
@@ -4083,7 +4118,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("(!{})", as_cond(a)?), K::Cond))
             }
             "OpEqText" | "OpNeText" => {
-                let (a, b) = self.two(name, args, ind)?;
+                let (a, b) = self.text_two(name, args, ind)?;
                 let neg = if name == "OpNeText" { "!" } else { "" };
                 Ok(E::new(
                     format!("{neg}loft_str_eq({}, {})", as_view(a)?, as_view(b)?),
@@ -4091,7 +4126,7 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             "OpLtText" | "OpLeText" => {
-                let (a, b) = self.two(name, args, ind)?;
+                let (a, b) = self.text_two(name, args, ind)?;
                 let f = if name == "OpLtText" {
                     "loft_text_lt"
                 } else {
@@ -4125,7 +4160,8 @@ impl<'a> FnWriter<'a> {
                         K::Void,
                     ));
                 }
-                let val = self.expr(val, ind)?;
+                let [val] = <[E; 1]>::try_from(self.text_reads(std::slice::from_ref(val), ind)?)
+                    .map_err(|_| "OpAppendText without its value".to_string())?;
                 Ok(E::new(
                     format!("loft_text_concat(&{dest}, {})", as_view(val)?),
                     K::Void,
@@ -4140,7 +4176,7 @@ impl<'a> FnWriter<'a> {
                 let (Value::Int(dir), Value::Int(token)) = (dir.unspan(), token.unspan()) else {
                     return Err("OpFormatText with a computed format".into());
                 };
-                let (val, width) = self.two(name, &[(*val).clone(), (*width).clone()], ind)?;
+                let (val, width) = self.text_two(name, &[(*val).clone(), (*width).clone()], ind)?;
                 Ok(E::new(
                     format!(
                         "loft_format_text(&{dest}, {}, {}, {dir}, {token})",
@@ -4185,7 +4221,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("loft_text_free(&{dest})"), K::Void))
             }
             "OpPrint" => {
-                let es = self.args(args, ind)?;
+                let es = self.text_reads(args, ind)?;
                 let [a] = <[E; 1]>::try_from(es)
                     .map_err(|_| "OpPrint without one operand".to_string())?;
                 Ok(E::new(format!("loft_print({})", as_view(a)?), K::Void))
@@ -4980,7 +5016,21 @@ impl<'a> FnWriter<'a> {
             }
             ("OpGetText", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
+                let view = std::mem::take(&mut self.field_view);
                 let r = self.expr(r, ind)?;
+                if view {
+                    // The record is named before the read: a call computing it runs here, in
+                    // program order, and the view itself reads nothing but the store.
+                    let code = as_ref(r)?;
+                    let at = if code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                        code
+                    } else {
+                        let t = self.temp(CType::Ref);
+                        self.line(ind, &format!("{t} = {code};"));
+                        t
+                    };
+                    return Ok(E::new(format!("loft_get_text({at}, {fld})"), K::View));
+                }
                 let t = self.temp(CType::Text);
                 self.line(ind, &format!("loft_text_free(&{t});"));
                 self.line(
