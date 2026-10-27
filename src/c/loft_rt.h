@@ -2424,6 +2424,64 @@ LOFT_HOT_INLINE void loft_win_finish(loft_win *w, loft_ref v, uint32_t size) {
     }
 }
 
+/* `@FR-R-PushRec` (native's record push header): a minted path's record, length and room, with
+ * no pointer — a growth of a sibling vector in the same store moves the store's memory, never
+ * this record — so several paths of one store each keep their own across a loop.  A mint takes
+ * the slot past the length while it fits; one that does not grows the record the runtime's way
+ * (`loft_vec_append`: claimed, doubled, refused when locked, dropped when absent) and the header
+ * is derived again.  The finish writes the length back, so the store answers every other read
+ * and no exit has anything to sync.  A locked store has no room, so its mints refuse as before. */
+typedef struct { loft_ref v; uint32_t rec; uint32_t len; uint32_t cap; } loft_ph;
+
+LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
+    loft_ph h;
+    h.v = v;
+    h.rec = 0;
+    h.len = 0;
+    h.cap = 0;
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return h;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return h;
+    h.rec = r;
+    h.len = loft_u32(s, r, 4);
+    if (s->read_only) return h;
+    int32_t claimed;
+    memcpy(&claimed, loft_at(s, r, 0), 4);
+    h.cap = claimed < 1 ? 0 : (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
+    return h;
+}
+
+LOFT_COLD static loft_ref loft_ph_grow(loft_ph *h, uint32_t size) {
+    loft_ref e = loft_vec_append(h->v, size);
+    *h = loft_ph_of(h->v, size);
+    return e;
+}
+
+LOFT_HOT_INLINE loft_ref loft_ph_new(loft_ph *h, uint32_t size) {
+    if (LOFT_UNLIKELY(h->len >= h->cap)) return loft_ph_grow(h, size);
+    loft_ref e;
+    e.store_nr = h->v.store_nr;
+    e.rec = h->rec;
+    e.pos = 8 + h->len * size;
+    return e;
+}
+
+LOFT_HOT_INLINE void loft_ph_finish(loft_ph *h) {
+    if (LOFT_UNLIKELY(h->rec == 0)) {
+        loft_vec_finish(h->v);
+        return;
+    }
+    h->len++;
+    memcpy(loft_at(&loft_stores[h->v.store_nr], h->rec, 4), &h->len, 4);
+}
+
+/* `LOFT_VERIFY`'s proof for a push header: a fresh derivation answers its record, length and room. */
+static int loft_ph_same(loft_ph h, uint32_t size) {
+    loft_ph f = loft_ph_of(h.v, size);
+    return f.rec == h.rec && f.len == h.len && f.cap == h.cap;
+}
+
 /* `LOFT_VERIFY`'s proof for a windowed push: the window still describes the vector — its
  * record, element base and room are what a fresh derivation answers. */
 static int loft_win_same(loft_win w, loft_ref v, uint32_t size) {
