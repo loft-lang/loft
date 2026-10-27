@@ -733,14 +733,14 @@ fn write_key_fields(stores: &mut Stores, parent: &Record, off: u32, keys: &[(u16
 
 /// Serialize `data` to a file-backed IR store at `path` (@PLN11 arc D).
 ///
-/// Materializes the whole `Data` into a fresh file-backed store (`Store::open`),
+/// Materializes the whole `Data` into a fresh file-backed store (`Store::try_open`),
 /// with the root claimed as record [`ds::IR_ROOT_REC`] so [`crate::ir_read::open_data`]
 /// can find it with no sidecar.  Dropping the store unmaps + flushes it to disk.
 /// The file is removed first so the root lands at the well-known first record.
 ///
 /// # Errors
-/// Propagates a file-remove error other than "not found"; `Store::open` itself
-/// panics on an unopenable path (consistent with the rest of the store layer).
+/// Propagates a file-remove error other than "not found", and the error for a path
+/// that cannot be created, opened or sized.
 ///
 /// # Panics
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`] (would mean the
@@ -752,7 +752,7 @@ pub fn save_data(data: &Data, path: &str) -> std::io::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    let fstore = crate::store::Store::open(path);
+    let fstore = crate::store::Store::try_open(path)?;
     let mut stores = Stores::new();
     let nr = stores.adopt_store(fstore);
     let rec = stores.allocations[nr as usize].claim(ds::DATA_ROOT_WORDS);
@@ -808,7 +808,8 @@ pub fn materialize_bundle(stores: &mut Stores, root: DbRef, data: &Data, schema:
 /// renamed into place.
 ///
 /// # Errors
-/// Propagates a file-remove, sidecar-write or `rename` error.
+/// Propagates a file-remove, sidecar-write or `rename` error, and the error for a temp
+/// path that cannot be created, opened or sized (a read-only cache directory).
 ///
 /// # Panics
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`].
@@ -821,7 +822,7 @@ pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::R
         Err(e) => return Err(e),
     }
     let slot = {
-        let fstore = crate::store::Store::open(&tmp);
+        let fstore = crate::store::Store::try_open(&tmp)?;
         let mut stores = Stores::new();
         let nr = stores.adopt_store(fstore);
         let rec = stores.allocations[nr as usize].claim(ds::BUNDLE_ROOT_WORDS);

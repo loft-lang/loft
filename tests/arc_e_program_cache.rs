@@ -1054,3 +1054,209 @@ fn every_binary_of_one_build_shares_one_stdlib_image() {
     );
     let _ = fa::remove_dir_all(&root);
 }
+
+/// Make `dir` and everything under it read-only (`writable == false`) or writable again.
+#[cfg(unix)]
+fn set_writable(dir: &std::path::Path, writable: bool) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = if writable { 0o755 } else { 0o555 };
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(p) = stack.pop() {
+        if fa::is_dir(&p) {
+            stack.extend(
+                fa::read_dir(&p)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(fa::PathText::os_spelling),
+            );
+            fa::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+        } else {
+            let file_mode = if writable { 0o644 } else { 0o444 };
+            fa::set_permissions(&p, std::fs::Permissions::from_mode(file_mode)).unwrap();
+        }
+    }
+}
+
+/// Does a read-only directory still accept a write?  Under root it does, and the
+/// permission cells below then measure nothing.
+#[cfg(unix)]
+fn permissions_bind(dir: &std::path::Path) -> bool {
+    let probe = dir.join("probe");
+    let bound = fa::write(&probe, b"x").is_err();
+    let _ = fa::remove_file(&probe);
+    bound
+}
+
+/// The startup cache is an optimisation: a cache directory the process cannot write, or
+/// one it can read but not open for writing, is a MISS, and the program runs from a fresh
+/// parse.  Before, each of these cells ended in an internal compiler error (exit 101).
+#[cfg(unix)]
+#[test]
+fn a_read_only_cache_is_a_miss_never_a_crash() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_rocache_{pid}.loft"));
+    fa::write(&script, "fn main() {\n  print(\"ro={6 * 7}\\n\");\n}\n").unwrap();
+
+    // C1: the cache directory exists, read-only.
+    let c1 = tmp.join(format!("loft_rocache_c1_{pid}"));
+    let _ = fa::remove_dir_all(&c1);
+    fa::create_dir_all(c1.join("loft")).unwrap();
+    set_writable(&c1, false);
+    if !permissions_bind(&c1.join("loft")) {
+        set_writable(&c1, true);
+        let _ = fa::remove_dir_all(&c1);
+        eprintln!("skipped: permissions do not bind for this user (root?)");
+        return;
+    }
+    let (ok, out) = run(&script, Some(&c1));
+    set_writable(&c1, true);
+    let _ = fa::remove_dir_all(&c1);
+    assert!(ok && out.contains("ro=42"), "C1 read-only cache dir: {out}");
+
+    // C2: the cache base is read-only and holds no `loft` directory yet.
+    let c2 = tmp.join(format!("loft_rocache_c2_{pid}"));
+    let _ = fa::remove_dir_all(&c2);
+    fa::create_dir_all(&c2).unwrap();
+    set_writable(&c2, false);
+    let (ok, out) = run(&script, Some(&c2));
+    set_writable(&c2, true);
+    let _ = fa::remove_dir_all(&c2);
+    assert!(
+        ok && out.contains("ro=42"),
+        "C2 read-only cache base: {out}"
+    );
+
+    // C4: a warm cache made read-only after the cold run wrote it.
+    let c4 = tmp.join(format!("loft_rocache_c4_{pid}"));
+    let _ = fa::remove_dir_all(&c4);
+    let (ok, out) = run(&script, Some(&c4));
+    assert!(ok && out.contains("ro=42"), "C4 cold run: {out}");
+    set_writable(&c4, false);
+    let (ok, out) = run(&script, Some(&c4));
+    set_writable(&c4, true);
+    let _ = fa::remove_dir_all(&c4);
+    let _ = fa::remove_file(&script);
+    assert!(
+        ok && out.contains("ro=42"),
+        "C4 read-only warm cache: {out}"
+    );
+}
+
+/// Run `loft --emit-image <out> <script>` with the program cache at `cache_dir`;
+/// answers (exit code, stdout, stderr).
+fn emit_image(
+    out: &std::path::Path,
+    script: &std::path::Path,
+    cache_dir: &std::path::Path,
+) -> (Option<i32>, String, String) {
+    let o = loft::platform::process::harness_command(loft_bin())
+        .arg("--emit-image")
+        .arg(out)
+        .arg(script)
+        .current_dir(workspace_root())
+        .env_remove("LOFT_STDLIB_CACHE")
+        .env_remove("LOFT_NO_CACHE")
+        .env("XDG_CACHE_HOME", cache_dir)
+        .output()
+        .expect("failed to invoke loft binary");
+    (
+        o.status.code(),
+        String::from_utf8_lossy(&o.stdout).into_owned(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+/// @PLN91 S0.2 — `--emit-image` writes the image the program cache saves for the same
+/// program, byte for byte, with its layout sidecar; it runs nothing and leaves the cache
+/// as it was.
+#[test]
+fn emit_image_writes_the_cache_image_and_runs_nothing() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_emitimg_{pid}.loft"));
+    fa::write(
+        &script,
+        "fn twice(n: integer) -> integer { n * 2 }\nfn main() {\n  print(\"ran={twice(21)}\\n\");\n}\n",
+    )
+    .unwrap();
+    let out = tmp.join(format!("loft_emitimg_{pid}.store"));
+    let side = std::path::PathBuf::from(format!("{}.dschema", out.display()));
+    let emit_cache = tmp.join(format!("loft_emitimg_cache_{pid}"));
+    let run_cache = tmp.join(format!("loft_emitimg_runcache_{pid}"));
+    for d in [&emit_cache, &run_cache] {
+        let _ = fa::remove_dir_all(d);
+    }
+
+    let (code, stdout, stderr) = emit_image(&out, &script, &emit_cache);
+    assert_eq!(code, Some(0), "emit-image failed: {stderr}");
+    assert!(stdout.is_empty(), "emit-image ran the program: {stdout}");
+    assert!(
+        fa::exists(&out) && fa::exists(&side),
+        "image and sidecar written"
+    );
+    // The program cache stays untouched; the standard library's image (one per build,
+    // shared by every program) may be used, as the cached run below uses it.
+    let program_files = fa::read_dir(emit_cache.join("loft"))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|e| e.parts().last().is_some_and(|n| n.starts_with("program-")))
+        .count();
+    assert_eq!(program_files, 0, "emit-image wrote into the program cache");
+
+    // The cache's own image of the same program, from an `--interpret` run.
+    let (ok, ran) = run(&script, Some(&run_cache));
+    assert!(ok && ran.contains("ran=42"), "cache run: {ran}");
+    let cached = fa::read_dir(run_cache.join("loft"))
+        .unwrap()
+        .into_iter()
+        .find(|e| {
+            fa::has_extension(e, "store")
+                && e.parts().last().is_some_and(|n| n.starts_with("program-"))
+        })
+        .expect("the run cached its program image");
+    assert!(
+        fa::read(&out).unwrap() == fa::read(&cached).unwrap(),
+        "the emitted image differs from the cache's image of the same program"
+    );
+
+    for d in [&emit_cache, &run_cache] {
+        let _ = fa::remove_dir_all(d);
+    }
+    let _ = fa::remove_file(&out);
+    let _ = fa::remove_file(&side);
+    let _ = fa::remove_file(&script);
+}
+
+/// @PLN91 S0.2 — an image that cannot be made leaves nothing behind: a program with an
+/// error, and a path that cannot be written.
+#[test]
+fn emit_image_refuses_without_leaving_a_file() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let cache = tmp.join(format!("loft_emitimg_refuse_cache_{pid}"));
+    let script = tmp.join(format!("loft_emitimg_bad_{pid}.loft"));
+    fa::write(&script, "fn main() {\n  x = undefined_name + 1;\n}\n").unwrap();
+    let out = tmp.join(format!("loft_emitimg_bad_{pid}.store"));
+    let (code, _, stderr) = emit_image(&out, &script, &cache);
+    assert_ne!(code, Some(0), "a program with an error emitted an image");
+    assert!(
+        !fa::exists(&out),
+        "a program with an error left an image: {stderr}"
+    );
+
+    let good = tmp.join(format!("loft_emitimg_good_{pid}.loft"));
+    fa::write(&good, "fn main() {\n  print(\"x\\n\");\n}\n").unwrap();
+    let nowhere = tmp
+        .join(format!("loft_emitimg_missing_dir_{pid}"))
+        .join("out.store");
+    let (code, _, stderr) = emit_image(&nowhere, &good, &cache);
+    assert_eq!(code, Some(1), "an unwritable path: {stderr}");
+    assert!(
+        stderr.contains("out.store"),
+        "the refusal names the path: {stderr}"
+    );
+    let _ = fa::remove_dir_all(&cache);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_file(&good);
+}

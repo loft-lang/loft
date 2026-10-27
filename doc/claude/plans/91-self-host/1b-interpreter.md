@@ -283,7 +283,7 @@ the design rather than loft.  The test is
 - **Not run:** `ir_schema_roundtrip`, which the design named.  It never calls
   `save_bundle`, so it could not move.
 
-### S0.2 — `loft --emit-image <out.store> prog.loft` — DESIGNED, not built
+### S0.2 — `loft --emit-image <out.store> prog.loft` — BUILT 2026-10-27
 
 **What.**  A command that writes a program's IMAGE (the bundle exactly as the startup cache
 saves it, with its S0.1 sidecar) to a path the caller names, and runs nothing.  It is how a
@@ -330,6 +330,39 @@ belongs to S0.3, whose loader reads an image the test harness emits.
 
 **Not in this step:** the loader in loft (S0.3).
 
+**Built — what changed from the design.**  The tests are in `tests/arc_e_program_cache.rs`
+(`emit_image_writes_the_cache_image_and_runs_nothing`,
+`emit_image_refuses_without_leaving_a_file`), next to the program cache they compare with.
+- **Failure path 3 met a bug on `main`: X11.**  `Store::open` panics on a file it cannot
+  create (`src/store.rs: open_mapped`).  The startup cache calls `save_bundle` on every cold
+  run, so a read-only cache directory crashed every such run with an internal compiler
+  error, and a warm load from one did too.  Fixed first, under the dogfood rule:
+  - `Store::try_open` (a file that cannot be created, opened or sized is an `io::Error`);
+  - `open_read_surface` returns `io::Result`;
+  - `adopt_read_surface` (`src/ir_read.rs`), the one home of the three loaders, makes it
+    their cache miss;
+  - `save_bundle` and `save_data` propagate it.
+
+  `open` keeps panicking for callers that treat it as a broken invariant.  The matrix:
+  - C1 read-only cache dir: was exit 101, now runs.
+  - C2 read-only cache base: was exit 101, now runs.
+  - C3 `--native`: runs.
+  - C4 warm load from a read-only cache: was exit 101, now a miss and a cold parse.
+  - C4b writable warm: still a hit.
+  - C6 user store builtins: never reach `Store::open`.
+
+  Guard: `a_read_only_cache_is_a_miss_never_a_crash` (C1, C2, C4; skipped under root, where
+  permissions do not bind).  Left as it is: a read-only cache is never USED warm, because
+  the read surface maps the file read-write.  That is slower, not wrong.
+- **"The program cache is neither read nor written" holds; the standard library's image is
+  another cache.**  The first run of the test asserted the whole cache directory was
+  untouched, and failed: the stdlib image (one per build, shared by every program) was
+  written.  The `--interpret` run the image is compared with uses it too, so the assertion
+  was narrowed to `program-*` files.
+- **Falsified:** without `close_program` the emitted image differs from the cache's image,
+  so the byte comparison is not vacuous.
+- `CHANGELOG.md`: the flag under New, the read-only cache under Bug fixes.
+
 ## The language for this job
 
 ### What loft already offers (measured or established in @PLN202 / OCAML_BAR.md)
@@ -363,6 +396,7 @@ belongs to S0.3, whose loader reads an image the test harness emits.
 | **X8** | no conversion between `float` and its bits (none in `default/*.loft`) | friction (to confirm in S1) | `to_bits`/`from_bits` for `float` and `single`; needed by an arena that stores floats in integer words |
 | **X9** | no `in` operator and no set of scalars (@PLN179 015); `{4 in ks}` fails as *"Formatter error"* | friction; the message is a wrong-error finding of its own | `contains` serves; the message should say there is no `in` |
 | **X10** | capturing closures cannot sit in a collection (@C116); no local recursive `fn` (@C63) | by design — costed | not expected to bite: the dispatch table holds plain fn-refs |
+| **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss (§ Steps, S0.2) |
 
 ### New constructs taken from OCaml's type expressions
 

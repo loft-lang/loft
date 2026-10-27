@@ -168,6 +168,11 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**`loft --emit-image out.store prog.loft` writes a program's compiled IR and runs nothing.**
+The image is the one the startup cache keeps for the program, with its `.dschema` sidecar
+beside it, so a loft program can `store_load` it through the IR's own types
+(`tools/ir_schema/ir.loft`) and read every definition the compiler made.
+
 **A test ledger records what your checked runs prove.**  Run your tests or your program with
 `LOFT_LEDGER=game.ledger`: each integer operator's site is counted as run, and as faulted when
 the processor's plain arithmetic would have answered differently — an overflow, a null operand,
@@ -327,6 +332,11 @@ web service checks a server against the bundled roots and the machine's own stor
 git do.
 
 ### Bug fixes
+
+**A cache directory loft cannot write no longer stops your program.**  With a read-only
+`~/.cache` (a sandbox, a container, a shared machine) every run that had to parse ended in an
+internal compiler error; one that found an earlier run's cache there did too.  Now the cache is
+simply not written, or not used, and the program runs from a fresh parse.
 
 **A `_ => null` arm joins an enum match as nullable.**  `match n { Lit { v } => v, _ => null }`
 is an `integer?`, as the named spelling `Var { name } => null` already was; the wildcard arm

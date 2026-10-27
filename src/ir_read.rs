@@ -513,11 +513,11 @@ pub fn ir_roundtrip_check(data: &Data) -> Result<(), crate::ir_schema::DataDiff>
 /// claims (mirrors worker stores), and also guards the cached artifact
 /// against accidental mutation.  The ONE home for this discipline; all
 /// three loaders (`open_data`, `open_bundle`, `open_bundle_into`) route
-/// through it.
+/// through it.  A file the process cannot open is the caller's cache miss, never a crash.
 #[cfg(feature = "mmap")]
-fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
-    let fstore = crate::store::Store::open_read_surface(path);
-    stores.adopt_store(fstore)
+fn adopt_read_surface(path: &str, stores: &mut Stores) -> std::io::Result<u16> {
+    let fstore = crate::store::Store::open_read_surface(path)?;
+    Ok(stores.adopt_store(fstore))
 }
 
 /// Load a native [`Data`] from a file-backed IR store written by
@@ -526,9 +526,10 @@ fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
 /// record ([`ds::IR_ROOT_REC`]) — no re-parse, no schema registration.
 ///
 /// # Errors
-/// Returns `NotFound` if `path` does not exist (a cache miss — the caller
-/// falls back to parsing).  `Store::open` panics on an unreadable/corrupt
-/// file; integrity-checked loading is arc E's drift-detection job (Q4).
+/// Returns `NotFound` if `path` does not exist, and the operating system's error if it
+/// cannot be opened (a read-only cache): both are a cache miss, and the caller falls back
+/// to parsing.  A file that opens but is corrupt is still refused by assertion;
+/// integrity-checked loading is arc E's drift-detection job (Q4).
 #[cfg(feature = "mmap")]
 pub fn open_data(path: &str) -> std::io::Result<Data> {
     // An empty name names nothing (`file_access` would answer for `.`).
@@ -539,7 +540,7 @@ pub fn open_data(path: &str) -> std::io::Result<Data> {
         ));
     }
     let mut stores = Stores::new();
-    let nr = adopt_read_surface(path, &mut stores);
+    let nr = adopt_read_surface(path, &mut stores)?;
     let root = DbRef {
         store_nr: nr,
         rec: ds::IR_ROOT_REC,
@@ -568,7 +569,7 @@ pub fn open_bundle(path: &str) -> std::io::Result<(Data, Vec<SchemaType>)> {
         ));
     }
     let mut stores = Stores::new();
-    let nr = adopt_read_surface(path, &mut stores);
+    let nr = adopt_read_surface(path, &mut stores)?;
     let root = DbRef {
         store_nr: nr,
         rec: ds::IR_ROOT_REC,
@@ -610,7 +611,7 @@ pub fn open_program_store(path: &str) -> std::io::Result<(Stores, DbRef, Data, V
         ));
     }
     let mut stores = Stores::new();
-    let nr = adopt_read_surface(path, &mut stores);
+    let nr = adopt_read_surface(path, &mut stores)?;
     let root = DbRef {
         store_nr: nr,
         rec: ds::IR_ROOT_REC,
