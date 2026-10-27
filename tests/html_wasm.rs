@@ -2462,3 +2462,104 @@ fn a_browser_build_builds_no_host_native_library() {
     );
     let _ = fa::remove_dir_all(&tmp);
 }
+
+#[path = "common/web_server.rs"]
+mod web_server;
+
+/// The web library's natives in a page: loft's own `loft_web` imports (`doc/loft-web.js`,
+/// `src/web_browser.rs`) against the server `tests/web_natives.rs` drives on the host, the
+/// answers the same where a page can give them.  A page has no group poll (the stub answers
+/// none) and its `WebSocket` accepts an `http:` URL, so those two lines are the host's alone.
+/// Each receive loop yields to the event loop (`frame_yield`), which is when a frame arrives.
+#[test]
+fn the_web_natives_answer_in_a_page() {
+    let (port, seen) = web_server::start();
+    let program = r#"use web_natives;
+
+fn main() {
+  base = "http://127.0.0.1:PORT";
+  ws = "ws://127.0.0.1:PORT";
+  st = web_natives::http_do("GET", "{base}/bin", "", "");
+  b = web_natives::http_body();
+  println("BIN {st} {b.len()} {web_natives::byte_at(0, b)} {web_natives::byte_at(1, b)} {web_natives::byte_at(2, b)} {web_natives::byte_at(3, b)} {web_natives::byte_at(4, b)}");
+  h = web_natives::http_headers().to_lowercase();
+  println("HDR {h.contains("x-test: yes")}");
+  st = web_natives::http_do("POST", "{base}/echo", "hello", "X-Mine: v1\n");
+  println("POST {st} {web_natives::http_body()}");
+  st = web_natives::http_do("GET", "{base}/missing", "", "");
+  println("MISSING {st} {web_natives::http_body()}");
+  st = web_natives::http_do("GET", "http://127.0.0.1:1/x", "", "");
+  println("REFUSED {st}");
+  println("SIZE {web_natives::http_head_size("{base}/sized")}");
+  web_natives::pack_reset();
+  web_natives::pack_u8(0);
+  web_natives::pack_u8(255);
+  web_natives::pack_u16_le(258);
+  web_natives::pack_u32_le(4294967295);
+  p = web_natives::pack_take();
+  println("PACK {p.len()} {web_natives::byte_at(0, p)} {web_natives::byte_at(1, p)} {web_natives::byte_at(2, p)} {web_natives::byte_at(3, p)} {web_natives::byte_at(7, p)}");
+  c = web_natives::ws_connect("{ws}/ws");
+  sent = false;
+  got = "";
+  for i in 0..4000 {
+    if !sent { sent = web_natives::ws_client_send(c, "hi"); }
+    if sent && web_natives::ws_client_recv(c) {
+      got = "{web_natives::ws_client_message()} {web_natives::ws_client_opcode()}";
+      break;
+    }
+    web_natives::frame_yield();
+  }
+  println("WS {got}");
+  web_natives::ws_client_send_binary(c, p);
+  got = "";
+  for i in 0..4000 {
+    if web_natives::ws_client_recv(c) {
+      m = web_natives::ws_client_message();
+      got = "{web_natives::ws_client_opcode()} {m.len()} {web_natives::byte_at(1, m)} {web_natives::byte_at(2, m)}";
+      break;
+    }
+    web_natives::frame_yield();
+  }
+  println("WSBIN {got}");
+  web_natives::ws_client_close(c);
+  println("DONE");
+}
+"#
+    .replace("PORT", &port.to_string());
+    let Some((out, err, ok)) = run_html_wasm_full(
+        "web_natives_page",
+        &program,
+        &["tests/fixtures"],
+        &[],
+        &[],
+        "tools/wasm_ws_repro.mjs",
+    ) else {
+        return;
+    };
+    assert!(
+        ok,
+        "the page ran to completion\nstdout:\n{out}\nstderr:\n{err}"
+    );
+    for want in [
+        "BIN 200 5 65 0 255 66 10",
+        "HDR true",
+        "POST 200 POST hello v1",
+        "MISSING 404 not here",
+        "REFUSED 0",
+        "SIZE 1234",
+        "PACK 8 0 255 2 1 255",
+        "WS echo:hi 1",
+        "WSBIN 2 8 255 2",
+        "DONE",
+    ] {
+        assert!(
+            out.lines().any(|l| l == want),
+            "the page wants `{want}`\nstdout:\n{out}\nstderr:\n{err}"
+        );
+    }
+    assert_eq!(
+        seen.lock().expect("seen").pongs,
+        1,
+        "the page's WebSocket answers the server's ping"
+    );
+}

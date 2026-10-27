@@ -11520,6 +11520,14 @@ fn main() {
                     }
                 }
             }
+            // The web library's natives are loft's (`web_browser`), so their `loft_web` imports
+            // are too — unless an older web version's own `host_js` already brought them.
+            let imports_web = crate::native_utils::html_wasm_import_modules(&wasm_bytes)
+                .is_some_and(|mods| mods.iter().any(|m| m == "loft_web"));
+            if imports_web && !s.contains("imports.loft_web") {
+                s.push_str("\n/* === loft's web natives: doc/loft-web.js === */\n");
+                s.push_str(include_str!("../doc/loft-web.js"));
+            }
             s
         };
         // Pick the page shell by what the wasm actually imports — minimal by

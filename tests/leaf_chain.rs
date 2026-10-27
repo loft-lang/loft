@@ -22,6 +22,7 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     // The cells pin which FRAMES survive; `@FR-R-InlineLeaf` would replace the scalar leaves
     // (`lower_byte`) by their bodies, and then there is no function left to read a frame of.
+    cmd.env_remove("LOFT_NATIVE_BACKEND");
     cmd.args(args)
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_NO_INLINE_LEAF", "1");

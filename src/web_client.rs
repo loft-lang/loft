@@ -9,9 +9,9 @@
 //! over TCP, TLS for `wss://`, reconnecting with backoff.  The C runtime's twin is
 //! `src/c/loft_web.h`; the browser's is `native::WEB_FUNCTIONS_WASM`.
 //!
-//! A response body, a binary frame and the pack buffer are BYTES that travel in a loft `text`
-//! (the library's binary protocol reads them back with `byte_at`), so they are built here
-//! without a UTF-8 check, as the crate they replace built them.
+//! A response body and a binary frame are BYTES that travel in a loft `text` (the library's
+//! binary protocol reads them back with `byte_at`), turned into one by
+//! [`crate::web_bytes::bytes_text`], which also holds the pack builder every target shares.
 //!
 //! Each native has two calling conventions: the interpreter's (`n_*` over the value stack,
 //! [`FUNCTIONS`]) and the compiled backend's typed twin ([`typed`], re-exported by
@@ -26,19 +26,8 @@ use std::cell::{Cell, RefCell};
 thread_local! {
     static LAST_BODY: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static LAST_HEADERS: RefCell<String> = const { RefCell::new(String::new()) };
-    static PACK_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static WS_GROUP: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
     static WS_GROUP_OFFSET: Cell<usize> = const { Cell::new(0) };
-}
-
-/// Bytes as the `text` the library reads them from: unchanged, a non-UTF-8 byte included.
-fn bytes_text(b: Vec<u8>) -> String {
-    match String::from_utf8(b) {
-        Ok(s) => s,
-        // SAFETY: the library treats these texts as byte buffers (`byte_at`, `send_binary`)
-        // and never as characters, the contract the crate this replaces kept.
-        Err(e) => unsafe { String::from_utf8_unchecked(e.into_bytes()) },
-    }
 }
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────────────────
@@ -132,29 +121,11 @@ fn http_size(url: &str) -> i64 {
 }
 
 fn last_body() -> String {
-    LAST_BODY.with(|b| bytes_text(b.borrow().clone()))
+    LAST_BODY.with(|b| crate::web_bytes::bytes_text(b.borrow().clone()))
 }
 
 fn last_headers() -> String {
     LAST_HEADERS.with(|h| h.borrow().clone())
-}
-
-// ── The pack builder and byte reads ──────────────────────────────────────────────────────
-
-fn pack_push(bytes: &[u8]) {
-    PACK_BUF.with(|b| b.borrow_mut().extend_from_slice(bytes));
-}
-
-fn pack_take() -> String {
-    bytes_text(PACK_BUF.with(|b| std::mem::take(&mut *b.borrow_mut())))
-}
-
-/// The byte at `idx`, or -1 outside the text.
-fn byte_at(idx: i64, t: &str) -> i64 {
-    usize::try_from(idx)
-        .ok()
-        .and_then(|i| t.as_bytes().get(i))
-        .map_or(-1, |b| i64::from(*b))
 }
 
 fn sleep_ms(ms: i64) {
@@ -556,7 +527,7 @@ mod ws {
             if *op == OP_TEXT {
                 String::from_utf8_lossy(bytes).into_owned()
             } else {
-                super::bytes_text(bytes.clone())
+                crate::web_bytes::bytes_text(bytes.clone())
             }
         })
     }
@@ -660,29 +631,29 @@ fn n_sleep_ms(stores: &mut Stores, stack: &mut DbRef) {
 }
 
 fn n_pack_reset(_stores: &mut Stores, _stack: &mut DbRef) {
-    PACK_BUF.with(|b| b.borrow_mut().clear());
+    crate::web_bytes::pack_reset();
 }
 
 fn n_pack_u8(stores: &mut Stores, stack: &mut DbRef) {
-    pack_push(&[(stores.get::<i64>(stack) & 0xff) as u8]);
+    crate::web_bytes::pack_u8(stores.get::<i64>(stack));
 }
 
 fn n_pack_u16_le(stores: &mut Stores, stack: &mut DbRef) {
-    pack_push(&((stores.get::<i64>(stack) & 0xffff) as u16).to_le_bytes());
+    crate::web_bytes::pack_u16_le(stores.get::<i64>(stack));
 }
 
 fn n_pack_u32_le(stores: &mut Stores, stack: &mut DbRef) {
-    pack_push(&((stores.get::<i64>(stack) & 0xffff_ffff) as u32).to_le_bytes());
+    crate::web_bytes::pack_u32_le(stores.get::<i64>(stack));
 }
 
 fn n_pack_take(stores: &mut Stores, stack: &mut DbRef) {
-    put_text(stores, stack, &pack_take());
+    put_text(stores, stack, &crate::web_bytes::pack_take());
 }
 
 fn n_byte_at(stores: &mut Stores, stack: &mut DbRef) {
     let t = stores.get::<Str>(stack).str().to_owned();
     let idx = stores.get::<i64>(stack);
-    stores.put(stack, byte_at(idx, &t));
+    stores.put(stack, crate::web_bytes::byte_at(idx, &t));
 }
 
 /// `frame_yield()`: the browser's frame suspend; a no-op off it, as the stdlib's
@@ -787,22 +758,22 @@ pub mod typed {
         super::sleep_ms(ms);
     }
     pub fn n_pack_reset(_cell: &UnsafeCell<Stores>) {
-        super::PACK_BUF.with(|b| b.borrow_mut().clear());
+        crate::web_bytes::pack_reset();
     }
     pub fn n_pack_u8(_cell: &UnsafeCell<Stores>, b: i64) {
-        super::pack_push(&[(b & 0xff) as u8]);
+        crate::web_bytes::pack_u8(b);
     }
     pub fn n_pack_u16_le(_cell: &UnsafeCell<Stores>, v: i64) {
-        super::pack_push(&((v & 0xffff) as u16).to_le_bytes());
+        crate::web_bytes::pack_u16_le(v);
     }
     pub fn n_pack_u32_le(_cell: &UnsafeCell<Stores>, v: i64) {
-        super::pack_push(&((v & 0xffff_ffff) as u32).to_le_bytes());
+        crate::web_bytes::pack_u32_le(v);
     }
     pub fn n_pack_take(_cell: &UnsafeCell<Stores>) -> String {
-        super::pack_take()
+        crate::web_bytes::pack_take()
     }
     pub fn n_byte_at(_cell: &UnsafeCell<Stores>, idx: i64, t: &str) -> i64 {
-        super::byte_at(idx, t)
+        crate::web_bytes::byte_at(idx, t)
     }
     pub fn n_ws_group_clear(_cell: &UnsafeCell<Stores>) {
         super::WS_GROUP.with(|g| g.borrow_mut().clear());
@@ -815,27 +786,5 @@ pub mod typed {
     pub fn n_frame_yield(_cell: &UnsafeCell<Stores>) {}
     pub fn n_ws_group_poll(_cell: &UnsafeCell<Stores>) -> i64 {
         super::group_poll()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_byte_outside_the_text_is_minus_one() {
-        assert_eq!(byte_at(0, "A"), 65);
-        assert_eq!(byte_at(1, "A"), -1);
-        assert_eq!(byte_at(-1, "A"), -1);
-    }
-
-    #[test]
-    fn a_packed_buffer_keeps_its_bytes() {
-        PACK_BUF.with(|b| b.borrow_mut().clear());
-        pack_push(&[0, 0xff]);
-        pack_push(&0x0102_u16.to_le_bytes());
-        let t = pack_take();
-        assert_eq!(t.as_bytes(), &[0, 0xff, 2, 1]);
-        assert_eq!(byte_at(1, &t), 255);
     }
 }

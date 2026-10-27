@@ -37,6 +37,7 @@ const REGIONS: &[&str] = &["n_cube", "n_e2", "n_e4", "n_first_over", "n_pp"];
 fn loft() -> Command {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    cmd.env_remove("LOFT_NATIVE_BACKEND");
     cmd.env("LOFT_TIMEOUT", "300")
         .env("LOFT_NATIVE_NO_CACHE", "1")
         .env_remove("LOFT_NO_APART")

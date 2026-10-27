@@ -545,62 +545,40 @@ fn n_ws_client_close(stores: &mut Stores, stack: &mut DbRef) {
     crate::wasm::host_ws_close(id);
 }
 
-// ── Pack helpers (per-thread byte buffer; pure Rust, no JS host) ───────
-
-#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-thread_local! {
-    static PACK_BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
-}
+// ── Pack helpers: the web library's byte helpers, shared by every target (`web_bytes`) ──
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_reset(_stores: &mut Stores, _stack: &mut DbRef) {
-    PACK_BUF.with(|b| b.borrow_mut().clear());
+    crate::web_bytes::pack_reset();
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-fn n_pack_u8(_stores: &mut Stores, stack: &mut DbRef) {
-    let b = _stores.get::<i64>(stack) as i32;
-    PACK_BUF.with(|buf| buf.borrow_mut().push((b & 0xff) as u8));
+fn n_pack_u8(stores: &mut Stores, stack: &mut DbRef) {
+    crate::web_bytes::pack_u8(stores.get::<i64>(stack));
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-fn n_pack_u16_le(_stores: &mut Stores, stack: &mut DbRef) {
-    let v = _stores.get::<i64>(stack) as i32;
-    PACK_BUF.with(|buf| {
-        let mut buf = buf.borrow_mut();
-        let v = (v & 0xffff) as u16;
-        buf.extend_from_slice(&v.to_le_bytes());
-    });
+fn n_pack_u16_le(stores: &mut Stores, stack: &mut DbRef) {
+    crate::web_bytes::pack_u16_le(stores.get::<i64>(stack));
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-fn n_pack_u32_le(_stores: &mut Stores, stack: &mut DbRef) {
-    let v = _stores.get::<i64>(stack) as i32;
-    PACK_BUF.with(|buf| {
-        let mut buf = buf.borrow_mut();
-        let v = v as u32;
-        buf.extend_from_slice(&v.to_le_bytes());
-    });
+fn n_pack_u32_le(stores: &mut Stores, stack: &mut DbRef) {
+    crate::web_bytes::pack_u32_le(stores.get::<i64>(stack));
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_pack_take(stores: &mut Stores, stack: &mut DbRef) {
-    let v = PACK_BUF.with(|buf| std::mem::take(&mut *buf.borrow_mut()));
-    let s = unsafe { String::from_utf8_unchecked(v) };
+    let s = crate::web_bytes::pack_take();
     put_owned_text_or_dest(stores, stack, s);
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 fn n_byte_at(stores: &mut Stores, stack: &mut DbRef) {
     let t = stores.get::<crate::keys::Str>(stack);
-    let idx = stores.get::<i64>(stack) as i32;
-    let bytes = t.str().as_bytes();
-    let result = if idx < 0 || (idx as usize) >= bytes.len() {
-        -1i32
-    } else {
-        i32::from(bytes[idx as usize])
-    };
-    stores.put(stack, i64::from(result));
+    let idx = stores.get::<i64>(stack);
+    let b = crate::web_bytes::byte_at(idx, t.str());
+    stores.put(stack, b);
 }
 
 /// @PLN18 phase 07 — the BROWSER kernel: the connector role's natives over

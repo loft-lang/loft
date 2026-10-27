@@ -19,7 +19,8 @@
 // Usage:
 //   node tools/wasm_ws_repro.mjs <wasm_file> [--trace] [--max-frames N]
 //
-// The driver loads host.js bridges the same way wasm_repro.mjs does:
+// The driver loads loft's own `doc/loft-web.js` (the `loft_web` imports a page carries), then
+// host.js bridges the same way wasm_repro.mjs does:
 //   * every <repoRoot>/lib/<X>/wasm/host.js, plus
 //   * colon-separated paths in $LOFT_WASM_HOST_JS (for libs outside lib/).
 // Node 22 has a global WebSocket, so a library's host.js that creates
@@ -185,6 +186,13 @@ try {
   }
 } catch (_e) {
   /* no lib/ dir */
+}
+// loft's own `loft_web` imports (the web library's natives, `src/web_browser.rs`), which the
+// `--html` page carries whenever the module imports them.
+try {
+  (0, eval)(fs.readFileSync(path.join(repoRoot, 'doc', 'loft-web.js'), 'utf8'));
+} catch (e) {
+  console.error(`doc/loft-web.js load failed: ${e.message}`);
 }
 for (const hostJs of (process.env.LOFT_WASM_HOST_JS || '').split(':').filter(Boolean)) {
   try {
