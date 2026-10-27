@@ -7,7 +7,8 @@
     scripts/c_sweep.py FILE...          # these programs
     scripts/c_sweep.py --verbose        # also every differing program's two outputs
     scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
-    scripts/c_sweep.py --all            # every refusal reason, not the top 25
+    scripts/c_sweep.py --all            # every refusal reason and every refused program, not the
+                                        # top 25 reasons with five programs each
     scripts/c_sweep.py --mode default   # one macro mode (strict, default, verify) instead of all
     scripts/c_sweep.py --shard K/N      # every N-th program from offset K (CI splits the sweep)
     scripts/c_sweep.py --stderr         # also compare stderr: a fault's message, its `-->` line,
@@ -39,7 +40,8 @@ in one bucket:
   differ    carried, and the answers differ — a defect of the C backend
   cc-error  carried, and the C does not compile — a defect of the C backend
   sanitizer (--asan) carried, and the C program trips a sanitizer — a defect of the C backend
-  refused   not carried yet; the reason is counted, and the ranking is the next work
+  refused   not carried yet; the reasons are ranked by count — the ranking is the next work —
+            each with the programs it refused (all of them in <scratch>/refused.tsv)
 
 Exit 1 when any program differs or fails to compile, else 0.  Needs `cc` on PATH.
 """
@@ -360,7 +362,7 @@ def main(argv: list[str]) -> int:
     if "--no-limit" not in argv:
         LAST.update(load_times(label))
     buckets = Counter()
-    reasons = Counter()
+    reasons: dict = {}
     bad = []
     timings = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
@@ -373,7 +375,7 @@ def main(argv: list[str]) -> int:
                 shutil.rmtree(os.path.join(SCRATCH, f"{Path(path).stem[:60]}-{zlib.crc32(path.encode()):08x}"),
                               ignore_errors=True)
             if bucket == "refused":
-                reasons[why] += 1
+                reasons.setdefault(why, []).append(path)
             elif bucket in ("differ", "cc-error", "sanitizer", "slow"):
                 bad.append((path, bucket, why, outs))
     total = len(files)
@@ -391,9 +393,21 @@ def main(argv: list[str]) -> int:
                 print(f"      C           stderr: {scrubbed(ce)[:400]!r}")
     report_times(timings, label)
     if reasons:
-        print("refused, by reason:")
-        for why, n in reasons.most_common(None if "--all" in argv else 25):
-            print(f"  {n:5}  {why}")
+        every = "--all" in argv
+        listing = os.path.join(SCRATCH, "refused.tsv")
+        with open(listing, "w", encoding="utf-8") as out:
+            for why, paths in sorted(reasons.items()):
+                for path in sorted(paths):
+                    out.write(f"{path}\t{why}\n")
+        ranked = sorted(reasons.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        print(f"refused, by reason (every program in {listing}):")
+        for why, paths in ranked if every else ranked[:25]:
+            print(f"  {len(paths):5}  {why}")
+            shown = sorted(paths) if every else sorted(paths)[:5]
+            for path in shown:
+                print(f"           {path}")
+            if len(paths) > len(shown):
+                print(f"           … and {len(paths) - len(shown)} more")
     return 1 if bad else 0
 
 
