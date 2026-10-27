@@ -1646,14 +1646,6 @@ fn unit_defines(
             "#define LOFT_LAZY 1\n#ifndef LOFT_HALT_RELEASE\n#define LOFT_HALT_RELEASE 1\n#endif\n",
         );
     }
-    if reached.iter().any(|&d| {
-        matches!(
-            data.def(d).name(),
-            "n_store_load_url" | "n_store_load_url_trusted"
-        )
-    }) {
-        out.push_str("#define LOFT_NET 1\n");
-    }
     let runtimes: Vec<&str> = reached
         .iter()
         .filter_map(|&d| in_binary_native(data.def(d).native()))
@@ -1669,17 +1661,7 @@ fn unit_defines(
     }) {
         out.push_str("#define LOFT_ENGINE 1\n");
     }
-    // A unit that fetches over a URL links the TLS client for its `https://` requests.
-    let fetches = runtimes.contains(&"loft_kernel_http_fetch")
-        || reached.iter().any(|&d| {
-            matches!(
-                data.def(d).name(),
-                "n_store_load_url" | "n_store_load_url_trusted"
-            )
-        });
-    if fetches {
-        out.push_str(&tls::unit_lines());
-    }
+    out.push_str(&fetch_defines(data, reached, &runtimes));
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
         let at = |f: &str| stores.position(sf, f);
@@ -1697,6 +1679,29 @@ fn unit_defines(
         );
     }
     (out, parses, reflects)
+}
+
+/// A unit that fetches over a URL: `LOFT_NET` for the whole-image loads (`loft_net.h`), and for
+/// it or `http_fetch` the TLS client its `https://` requests run over (`tls::unit_lines`).
+fn fetch_defines(
+    data: &Data,
+    reached: &std::collections::HashSet<u32>,
+    runtimes: &[&str],
+) -> String {
+    let loads = reached.iter().any(|&d| {
+        matches!(
+            data.def(d).name(),
+            "n_store_load_url" | "n_store_load_url_trusted"
+        )
+    });
+    let mut out = String::new();
+    if loads {
+        out.push_str("#define LOFT_NET 1\n");
+    }
+    if loads || runtimes.contains(&"loft_kernel_http_fetch") {
+        out.push_str(&tls::unit_lines());
+    }
+    out
 }
 
 /// `reflect_type` and `type_named` over the emitted table (`reflect.rs`, `loft_reflect.h`).

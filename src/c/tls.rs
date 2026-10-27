@@ -284,17 +284,10 @@ fn build() -> Result<std::path::PathBuf, String> {
     }
     let compiled: Vec<String> = SOURCES
         .iter()
-        .filter(|(name, _)| extension_is(name, "c"))
+        .filter(|(name, _)| crate::file_access::has_extension(*name, "c"))
         .map(|(name, _)| (*name).to_string())
         .collect();
     crate::c_shim::cc_archive(&dir.to_string_lossy(), &compiled)
-}
-
-/// Does the file `name` end in `.<ext>`?
-fn extension_is(name: &str, ext: &str) -> bool {
-    std::path::Path::new(name)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }
 
 #[cfg(test)]
@@ -306,10 +299,14 @@ mod tests {
     #[test]
     fn the_tls_sources_are_the_directory() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/c/tls/bearssl");
-        let mut on_disk: Vec<String> = std::fs::read_dir(dir)
+        let mut on_disk: Vec<String> = crate::file_access::read_dir(dir)
             .expect("the vendored BearSSL directory")
-            .filter_map(|e| e.ok()?.file_name().into_string().ok())
-            .filter(|n| super::extension_is(n, "c") || super::extension_is(n, "h"))
+            .iter()
+            .filter_map(|p| p.file_name().map(str::to_string))
+            .filter(|n| {
+                crate::file_access::has_extension(n.as_str(), "c")
+                    || crate::file_access::has_extension(n.as_str(), "h")
+            })
             .collect();
         on_disk.sort();
         let mut listed: Vec<String> = SOURCES
