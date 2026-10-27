@@ -267,6 +267,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpNullReported",
     "OpCastTextFromBool",
     "OpRangeDefault",
+    "OpNarrow32",
     "OpConvCharacterFromNull",
     "OpConstLongText",
     "OpCastIntFromText",

@@ -6034,14 +6034,14 @@ impl Parser {
         // and the other is a non-null scalar (heap types stay nullable; both-null stays as-is).
         let mut result_tp = merge_dependencies(&true_type, &false_type);
         // `@FR-I-Join` — the two arms' integer ranges join to their union.
-        if let Some(union) = Self::integer_arm_union(&true_type, &false_type) {
+        if let Some(union) = self.integer_arm_union(&true_type, &false_type) {
             result_tp = union;
         }
         // ...and so does an `else if` CHAIN, which is an arm too (loft#2066): its arms are
         // parsed expecting the full `integer` (`arm_expectation`), so its range has to reach
         // the join, or a declared destination checks only the then arm's.
         if let Some(chain) = &chain_borrow
-            && let Some(union) = Self::integer_arm_union(&result_tp, chain)
+            && let Some(union) = self.integer_arm_union(&result_tp, chain)
         {
             result_tp = union;
         }
@@ -16443,17 +16443,25 @@ impl Parser {
 
     /// `@FR-I-Join` — two integer arms join to the UNION of their ranges, optional when either
     /// is (`@FR-N-Join`); `None` when either arm is not an integer, or the ranges are one.
-    pub(super) fn integer_arm_union(a: &Type, b: &Type) -> Option<Type> {
+    pub(super) fn integer_arm_union(&self, a: &Type, b: &Type) -> Option<Type> {
         let (Type::Integer(x), Type::Integer(y)) = (a.base(), b.base()) else {
             return None;
         };
         if x == y {
             return None;
         }
+        // @PLN204 — under the 32-bit regime two 32-bit arms join to a 32-bit value: the
+        // union of their ranges without a forced width would read as the plain (64-bit)
+        // `integer` whenever it spans the whole `i32` range.
+        let forced_size = if self.data.width32() && x.is_width32() && y.is_width32() {
+            std::num::NonZeroU8::new(4)
+        } else {
+            None
+        };
         let base = Type::Integer(crate::data::IntegerSpec {
             min: x.min.min(y.min),
             max: x.max.max(y.max),
-            forced_size: None,
+            forced_size,
             ..*x
         });
         Some(
@@ -16771,7 +16779,7 @@ impl Parser {
         let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
         // `@FR-I-Join` — two integer arms join to the UNION of their ranges: `joined_deps`
         // keeps the first arm's, which an arithmetic arm (`@FR-N-Arith`) makes narrower.
-        let joined = Self::integer_arm_union(&joined, tp).unwrap_or(joined);
+        let joined = self.integer_arm_union(&joined, tp).unwrap_or(joined);
         // loft#1540 — two functions join to the parameters BOTH declare `const` (see `parse_if`).
         let joined = match (joined.function_consts(), tp.function_consts()) {
             (Some(jc), Some(ac)) if jc.common(ac) != jc => {

@@ -10338,6 +10338,16 @@ use a separate collection or add after the loop"
         {
             return None;
         }
+        // @PLN204 — a 32-bit operation's result is already inside the whole `i32` range with
+        // null as its default, which is all a guard for that range would check.
+        if let Value::Call(d, _) = code.unspan()
+            && self.data.def(*d).name() == "OpNarrow32"
+            && lo <= i64::from(i32::MIN) + 1
+            && hi >= i64::from(i32::MAX)
+            && dflt == i64::MIN
+        {
+            return None;
+        }
         let guarded = self.cl(
             "OpRangeDefault",
             &[

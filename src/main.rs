@@ -183,6 +183,12 @@ fn print_help() {
     println!("                                repeated for multiple directories");
     println!("  --log-conf <path>             use this log config file instead of the default");
     println!(
+        "  --width 32                    a plain integer is 32-bit and a plain float a single, in every"
+    );
+    println!(
+        "                                file but the standard library (`#width 64` in a file keeps it)"
+    );
+    println!(
         "  --timeout <secs>              hard-kill the process after <secs>+grace seconds (PLAN49)"
     );
     println!(
@@ -8127,6 +8133,20 @@ fn main() {
             // Defaults off so existing consumers are unaffected.
             // Env equivalent: LOFT_DENY_WARNINGS=1
             deny_warnings = true;
+        } else if a == "--width" {
+            // @PLN204 — `--width 32` puts every source but the stdlib under the 32-bit regime
+            // (a plain `integer` is an `i32`, a plain `float` a `single`), as `LOFT_WIDTH=32`
+            // does; a file's own `#width 64` still keeps it out.
+            let bits = argv.get(i).map(String::as_str).unwrap_or_default().to_string();
+            if bits != "32" && bits != "64" {
+                eprintln!("--width requires 32 or 64");
+                std::process::exit(2);
+            }
+            i += 1;
+            // SAFETY: as for --dev-soft-halt — set before any parse reads it.
+            unsafe {
+                std::env::set_var("LOFT_WIDTH", &bits);
+            }
         } else if a == "--timeout" {
             // @PLAN49 T3 — `--timeout <secs>` arms the watchdog.  The
             // graceful T2 fault (when shipped) fires at `<secs>`; the

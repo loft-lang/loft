@@ -47,6 +47,11 @@ recorded in [LOFT-history.md](LOFT-history.md), not here.
 | `integer`   | 64-bit signed integer end-to-end (stack, fields, arithmetic).  Range can be constrained with `limit(...)`; narrow widths (`u8`/`u16`/`i8`/`i16`/`i32`) keep compact storage.  Overflow yields null and continues (the spreadsheet model).  See "Arithmetic safety" below. |
 | `float`     | 64-bit floating-point; literals contain a `.`    |
 | `single`    | 32-bit float; literals end with `f`              |
+
+A file that starts with `#width 32` (or every file but the standard library under
+`--width 32`) reads `integer` as `i32` and `float` as `single`, keeps arithmetic on 32-bit
+values 32-bit, and spells the 64-bit forms `i64` / `123l` and `f64` / `2.5d`:
+[WIDTH32.md](WIDTH32.md).
 | `character` | A single Unicode character                       |
 | `text`      | A UTF-8 string; `len()` counts characters, `size()` bytes |
 

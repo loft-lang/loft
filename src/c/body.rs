@@ -2782,6 +2782,15 @@ impl<'a> FnWriter<'a> {
             // A self tail call's loop (`opt::tail_self`) leaves only by a `return`: it has no
             // value to put anywhere.
             v @ Value::Loop(lp) if lp.name == "tail_self" => self.stmt(v, ind),
+            // @PLN204 — a value stored into a 32-bit local is narrowed, so an operation of two
+            // 32-bit operands it stores is the 32-bit operation (`narrow32`): a loop's
+            // `i = i + 1` runs in `int32_t`.
+            v @ (Value::Call(..) | Value::Int(_)) if c == CType::Int32 => {
+                let e = self.narrow32(v, ind)?;
+                let code = as_int32(e)?;
+                self.line(ind, &format!("{target} = {code};"));
+                Ok(())
+            }
             v => {
                 let e = self.expr(v, ind)?;
                 // A temporary tuple that owns texts keeps them — its buffers are reused and the
@@ -3806,6 +3815,12 @@ impl<'a> FnWriter<'a> {
     /// answers the same: the 64-bit operation of two `int32_t` values cannot overflow, so
     /// narrowing its result is exactly the 32-bit operation's overflow check.
     fn narrow32(&mut self, x: &Value, ind: usize) -> Result<E, String> {
+        if let Value::Int(i) = x.unspan()
+            && *i != i32::MIN
+            && !super::no_c_int32()
+        {
+            return Ok(E::new(format!("INT32_C({i})"), K::Int32));
+        }
         if let Value::Call(d, args) = x.unspan()
             && args.len() == 2
             && is_operator(self.cx.data, *d)
