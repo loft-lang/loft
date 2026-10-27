@@ -4648,7 +4648,12 @@ impl Parser {
                 // loft#1848 — `lib::Type` reaches only what `use lib::*` would.
                 if source != u16::MAX
                     && source != self.data.source
-                    && let Some(msg) = self.data.qualified_refusal(source, type_name, &name)
+                    && let Some(msg) = self.data.qualified_refusal(
+                        source,
+                        type_name,
+                        &name,
+                        &self.lexer.pos().file,
+                    )
                 {
                     diagnostic!(self.lexer, Level::Error, "{msg}");
                 }

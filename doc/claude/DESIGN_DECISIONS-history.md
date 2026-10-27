@@ -4794,6 +4794,13 @@ decided by the file's own `pub` signatures; enum variant fields follow the struc
 non-`pub` type named in a `pub` signature is name only rather than a leak to warn about.
 **Not adopted:** fully hidden non-record types; read-only-outside fields.  Lands before
 contract 1 because it adds refusals.
+**Widened** 2026-10-27 (owner, @PLN91 S0.3a): `#package`.  **Measured**: a loft program split over
+several files paid `pub` on everything it shared (the self-hosting interpreter's IR vocabulary:
+25 types and 142 fields before a second file could read one field).  The owner kept the
+file-local default and rejected a manifest-based package (no dependency on a `.toml` file): a
+file that shares says so, and its directory plus the one above is the group (the level above
+composes the details below it; privacy enforces abstractions rather than hiding information).  It only relaxes, so no program
+changes.
 ## C141 — A decoded text or byte string may be a view into the bytes it was decoded from
 
 Asked 2026-10-07 while working the worst native routines: `pluginabi`'s `check_request` (12.0×

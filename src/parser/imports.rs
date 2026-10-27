@@ -64,6 +64,8 @@ impl Parser {
             self.parsed_sources.push(f.to_string());
         }
         self.lexer.switch(f);
+        // A used file's own directives: only `#package` applies to it (`@FR-F-Package`).
+        self.parse_file_directives(false);
     }
 
     /// Apply all pending imports whose target source matches the currently active source.

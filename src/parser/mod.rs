@@ -2303,31 +2303,44 @@ impl Parser {
     // * Parser functions *
     // ********************
 
-    /// Parse data from the current lexer.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn parse_file(&mut self) {
-        let start_def = self.data.definitions();
-        // #255 / @PLN9: file-level `#cwd` directive — opt this program out of the
-        // program-relative default so a *relative* file path resolves against the
-        // process cwd (CLI-tool semantics) rather than the program's own
-        // directory.  Whole-program; must precede declarations.  At file top the
-        // lexer's first token can only be this directive (`#rust`/`#native`/etc.
-        // are declaration-scoped, consumed later by `parse_rust`).
-        // `#link static` / `#link dynamic` names how a native build links the native libraries
-        // the program uses.  The DRIVER acts on it, reading the header before any parse
-        // (`native_utils::apply_link_directive`); here it is only checked, so a misspelt mode
-        // is refused rather than silently linking the default way.
+    /// The directives at the top of a file.  `entry` is the file a parse starts from, where
+    /// all three apply; a file a `use` switches into (`entry == false`) may only say
+    /// `#package`, because `#cwd` and `#link` set how the whole PROGRAM runs and links, and
+    /// a library must not change that for the program that uses it.
+    ///
+    /// `#cwd` (#255 / @PLN9) opts the program out of the program-relative default, so a
+    /// *relative* file path resolves against the process cwd (CLI-tool semantics) rather
+    /// than the program's own directory.  Whole-program; must precede declarations.  At file
+    /// top the lexer's first token can only be a directive (`#rust`/`#native`/etc. are
+    /// declaration-scoped, consumed later by `parse_rust`).
+    ///
+    /// `#link static` / `#link dynamic` names how a native build links the native libraries
+    /// the program uses.  The DRIVER acts on it, reading the header before any parse
+    /// (`native_utils::apply_link_directive`); here it is only checked, so a misspelt mode
+    /// is refused rather than silently linking the default way.
+    ///
+    /// `#package` (`@FR-F-Package`): this file shows its internals to the other files of its
+    /// own directory.
+    pub(super) fn parse_file_directives(&mut self, entry: bool) {
         while self.lexer.has_token("#") {
             match self.lexer.has_identifier().as_deref() {
-                Some("cwd") => {
-                    self.database.program_relative = false;
-                    let _ = self.lexer.has_token(";");
-                }
-                // `#package` (`@FR-F-Package`): this file shows its internals to the other files
-                // of its own directory.
                 Some("package") => {
                     let file = self.lexer.pos().file;
                     self.data.note_package_file(&file);
+                    let _ = self.lexer.has_token(";");
+                }
+                Some(whole @ ("cwd" | "link")) if !entry => {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "'#{whole}' sets how the whole program runs, so it is written in the \
+                         program's own file, not in a file it uses; a used file may say \
+                         '#package'"
+                    );
+                    break;
+                }
+                Some("cwd") => {
+                    self.database.program_relative = false;
                     let _ = self.lexer.has_token(";");
                 }
                 Some("link") => {
@@ -2352,6 +2365,13 @@ impl Parser {
                 }
             }
         }
+    }
+
+    /// Parse data from the current lexer.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_file(&mut self) {
+        let start_def = self.data.definitions();
+        self.parse_file_directives(true);
         // Tier-0 lazy auto-`use`: the file the lexer is on right now, captured
         // before the use-loop may switch away.  Scanned for `lib::` references
         // after the use-region (see the load loop below).

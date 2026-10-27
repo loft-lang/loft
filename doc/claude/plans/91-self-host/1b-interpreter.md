@@ -363,7 +363,7 @@ belongs to S0.3, whose loader reads an image the test harness emits.
   so the byte comparison is not vacuous.
 - `CHANGELOG.md`: the flag under New, the read-only cache under Bug fixes.
 
-### S0.3a — `#package`: a file shows its internals to its own directory — DESIGNED, not built
+### S0.3a — `#package`: a file shows its internals to its directory and the one above — DESIGNED, sub-steps 1–2 built
 
 **Why here.**  S0.3 met X2: under C140 every type and field is private to its FILE, so a loft
 program split over several files pays `pub` on everything it shares between them (167 items
@@ -372,11 +372,15 @@ an author should think about what escapes a file; a file that is part of somethi
 says so, and position decides the group.  No `loft.toml` is involved.  A language fix found
 by the dogfood work, built before the work continues.
 
+Privacy here is not about hiding information.  It is about ENFORCING THE RIGHT ABSTRACTIONS
+(owner): code above a layer must go through that layer's surface.  So the question is never
+"who may know this?" but "which code composes this?".
+
 **The rule.**  One sentence, from which every case follows:
 
 > A file whose directives include `#package` reads, to every other file in its own
-> directory, as if every item it declares and every field of those items were `pub`.  To
-> any other file it reads as C140 says.
+> directory and in the directory directly above it, as if every item it declares and every
+> field of those items were `pub`.  To any other file it reads as C140 says.
 
 ```
 #package
@@ -388,8 +392,16 @@ Consequences, each a case of that sentence rather than a rule of its own:
 - **One-sided consent.**  The file that shows its internals says so; a file that reads them
   says nothing.  A directory may mix: `run.loft` and `lower.loft` say `#package`, while
   `store.loft` leaves it off and keeps its internals behind its `pub` functions.
-- **Exactly one directory.**  Not the files below it, and not the parent.  The word
-  `package` reads as "the files that sit here", and reach never depends on depth.
+- **Its directory and one up (owner, 2026-10-27).**  Deeper directories hold the more
+  detailed algorithms and data structures, and the level above composes them, so a detail
+  shows its internals to its own directory and to its direct composer: `interp/store/arena.loft`
+  to `interp/store/` and to `interp/run.loft`.  Not further up, so each layer is open to the
+  one that builds on it and walled from everything beyond; and never down, because a detail
+  needing its composer's internals would be a cycle in the design.  A published library is
+  `<pkg>/src/*.loft`, whose parent `<pkg>/` holds no code, so the extra level grants nothing
+  there.  A flat file vendored into a project's `lib/` shows its internals to the project root,
+  which is acceptable: the reason is the abstraction, not secrecy, and vendored code already
+  sits in its consumer's tree.
 - **Membership is location, never route.**  Whether a file was reached by `use`, `--lib` or
   the registry does not matter; what decides is where it is.  A library's files share with
   each other, while its consumers, in other directories, see its `pub` surface as before.
@@ -398,8 +410,9 @@ Consequences, each a case of that sentence rather than a rule of its own:
   the same name collide exactly as two libraries' `pub` names do (the existing rule).
 - **It only relaxes.**  A program that compiles today compiles unchanged; only refusals
   between directory mates disappear.  So it is compatible (COMPATIBILITY.md).
-- **`api_surface` is unchanged.**  `#package` grants nothing to anyone outside the
-  directory, so a library's published surface (`pub_visible`) is the same.
+- **`api_surface` is unchanged.**  `#package` grants nothing outside those two
+  directories, so a library's published surface (`pub_visible`) is the same.  Below,
+  "a mate" means a file in the directory or the one above.
 
 **Code points.**
 - `src/parser/mod.rs:~2320`, the directive loop beside `#cwd` and `#link`: `Some("package")`
@@ -408,7 +421,8 @@ Consequences, each a case of that sentence rather than a rule of its own:
   - `package_files: HashSet<…>` holds the canonical paths of the files that said
     `#package`, filled in pass 1, read in pass 2.
   - `Data::shares_internals(owner_file, user_file) -> bool` answers: owner said `#package`,
-    and the two canonical parent directories are equal.  Cite `@FR-F-Package`.
+    and the user's canonical directory is the owner's, or the owner's parent.  Cite
+    `@FR-F-Package`.
   - `source_files` (`:5728`) gives a library source's file.
 - The four refusal sites, each of which has its own copy of "same source or same file"
   today, gain `|| shares_internals(owner, here)`:
@@ -424,13 +438,15 @@ Consequences, each a case of that sentence rather than a rule of its own:
 - Docs, see sub-step 4.
 
 **Failure paths (the matrix).**  Axes: directive (present / absent) × place (same directory,
-a subdirectory, the parent, an unrelated directory) × access (field read, field write,
+the parent, the grandparent, a subdirectory, a sibling directory) × access (field read, field write,
 literal, variant build, variant match, `lib::fn`, method, a name-only type built, glob
 import bare, selective import) × direction (the declaring file has it / the reading file
 has it).
 1. **Only the declaring file's directive counts**: B reading A's internals, where only B
    says `#package`, is refused.
-2. **A subdirectory and the parent are refused** (`src/sub/x.loft` reading `src/a.loft`).
+2. **The parent is admitted; the grandparent, a subdirectory and a sibling directory are
+   refused** (`src/sub/x.loft` reading `src/a.loft` is downward; `src/b/y.loft` reading
+   `src/a/x.loft` is a sibling).
 3. **Path spelling**: `./a.loft`, an absolute path and a symlinked directory name the same
    directory (canonical parents); two directories with the same last name do not.
 4. **A collision through glob imports** from two mates reports as two libraries' names do.
@@ -441,11 +457,19 @@ has it).
 7. **The stdlib and registry libraries** carry no `#package`: unchanged.
 
 **Sub-steps** (each small, tested and pushed before the next):
-1. The directive is parsed and recorded; `shares_internals` with unit tests (same directory,
-   subdirectory, parent, unrelated, no directive, spelling variants).  No behaviour change
-   yet; the unknown-directive message names `#package`.
-2. The four refusal sites consult it.  Matrix cells 1–3 and 6 for every access kind, in
-   `tests/pub_visibility.rs`, beside C140's own cells.
+1. **Built** (`e9667b46d`).  The directive is parsed and recorded; `shares_internals` with
+   unit tests (same directory, subdirectory, parent, unrelated, no directive, spelling
+   variants).  No behaviour change yet; the unknown-directive message names `#package`.
+   Revised with the parent level: the parent cell is admitted, and the grandparent and a
+   sibling are refused.
+2. **Built.**  The four refusal sites consult it.  Matrix cells 1–3 and 6 for every access
+   kind, in `tests/pub_visibility.rs`, beside C140's own cells.  **Found while building:** a
+   file a `use` switches into never passed the directive loop (the lexer switches mid-parse,
+   `Parser::switch_to_dep`), so a used file's `#package` was a syntax error.  The loop is now
+   `Parser::parse_file_directives(entry)`, also run after the switch.  In a used file only
+   `#package` is admitted: `#cwd` and `#link` set how the whole program runs, and are refused
+   there naming where they belong (they were "unexpected '#'" before; no corpus or registry
+   file says either in a used file).
 3. Imports: the importer reaches `exported`/`passes_on`; glob and selective cells; cell 4.
 4. The documentation.
    - `formal/calls.md`: `(F-Visible)` names `(F-Package)`, a new rule holding the sentence
@@ -457,8 +481,8 @@ has it).
      make features-gen`.
    - A `tests/reference` snippet.
 
-**Not in this step:** sharing with a subdirectory or across directories.  Both can be
-widened later if a real program asks for them; a widening is a relaxation.
+**Not in this step:** sharing downward, beyond one level up, or across sibling directories.
+Each can be widened later if a real program asks for it; a widening is a relaxation.
 
 ### S0.3 — the bundle opens in loft — DESIGNED, waits for S0.3a
 

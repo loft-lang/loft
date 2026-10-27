@@ -638,3 +638,179 @@ fn a_generic_instance_is_visible_as_its_template_is() {
         assert!(!ok && err.contains(why), "{tag}: {err}");
     }
 }
+
+/// `@FR-F-Package` — the private items `#package` cells reach: a function and a method that are
+/// not `pub`, beside `UNITS`' private fields, name-only types and private variants.
+const UNITS_PRIVATE_FNS: &str = "\
+fn secret() -> integer { 42 }
+fn twice(self: Unit) -> integer { self.hp * 2 }
+";
+
+/// `(stdout, stderr, ok)` of `program` placed at `<dir>/<at>/main.loft`, against
+/// `top/lib/units.loft` = `header` + `UNITS` + private functions.  `at` is `top/lib` for a
+/// file beside `units.loft`, `top` for the directory above it, `.` for two levels up,
+/// `top/lib/sub` for a subdirectory and `top/other` for a sibling directory.
+fn run_placed(
+    tag: &str,
+    header: &str,
+    at: &str,
+    program: &str,
+    env: &[(&str, &str)],
+) -> (String, String, bool) {
+    let dir = std::env::temp_dir().join(format!("loft_pub_pkg_{tag}_{}", std::process::id()));
+    let _ = loft::file_access::remove_dir_all(&dir);
+    for sub in ["top/lib/sub", "top/other"] {
+        loft::file_access::create_dir_all(dir.join(sub)).expect("scratch");
+    }
+    loft::file_access::write(
+        dir.join("top/lib/units.loft"),
+        format!("{header}{UNITS}{UNITS_PRIVATE_FNS}"),
+    )
+    .expect("units");
+    let src = dir.join(at).join("main.loft");
+    loft::file_access::write(&src, program).expect("program");
+    let mut c = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+    c.arg("--interpret")
+        .arg("--lib")
+        .arg(dir.join("top/lib"))
+        .arg(&src)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "120");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let out = c.output().expect("run loft");
+    let _ = loft::file_access::remove_dir_all(Path::new(&dir));
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.success(),
+    )
+}
+
+/// One program per access kind, with the line it prints when it is admitted and the refusal
+/// it meets when it is not.
+const PACKAGE_CELLS: &[(&str, &str, &str, &str)] = &[
+    (
+        "field-read",
+        "use units;\nfn main() { u = units::spawn(\"orc\"); println(\"{u.hp}\"); }\n",
+        "101\n", // spawn: hp 100 + Seed { v: 1 }.v
+        "field `hp` of `Unit` is not `pub` in `units`",
+    ),
+    (
+        "field-write",
+        "use units;\nfn main() { u = units::spawn(\"orc\"); u.hp = 5; println(\"{units::hp_of(u)}\"); }\n",
+        "5\n",
+        "field `hp` of `Unit` is not `pub` in `units`",
+    ),
+    (
+        "name-only-built",
+        "use units;\nfn main() { u = units::Unit { name: \"x\", hp: 3 }; println(\"{units::hp_of(u)}\"); }\n",
+        "3\n",
+        "`Unit` is not `pub` in `units`, so it cannot be built outside that file",
+    ),
+    (
+        "invisible-named",
+        "use units;\nfn f(s: units::Seed) -> integer { s.v }\nfn main() { println(\"{f(units::Seed { v: 9 })}\"); }\n",
+        "9\n",
+        "`Seed` is not `pub` in `units`",
+    ),
+    (
+        "variant-field",
+        "use units;\nfn main() { s = units::Blob { seed: 7 }; v = match s { units::Blob { seed } => seed, _ => 0 }; println(\"{v}\"); }\n",
+        "7\n",
+        "field `seed` of `Blob` is not `pub` in `units`",
+    ),
+    (
+        "private-variant",
+        "use units;\nfn main() { m = units::mood(true); v = match m { Angry => 1, _ => 0 }; println(\"{v}\"); }\n",
+        "1\n",
+        "`Angry` is a variant of `Mood`, which is not `pub` in `units`",
+    ),
+    (
+        "private-fn",
+        "use units;\nfn main() { println(\"{units::secret()}\"); }\n",
+        "42\n",
+        "`secret` is not `pub` in `units`",
+    ),
+    (
+        "private-method",
+        "use units;\nfn main() { u = units::spawn(\"orc\"); println(\"{u.twice()}\"); }\n",
+        "202\n", // 101 * 2
+        "`twice` is not `pub` in `units`",
+    ),
+];
+
+/// `@FR-F-Package` — a `#package` file shows every private item and field to the files of its
+/// own directory and of the directory above it, for every access kind; the same program two
+/// levels up, in a subdirectory, in a sibling directory, or with the directive on the READING
+/// file instead, meets C140's refusal unchanged.
+#[test]
+fn package_shows_internals_to_its_directory_and_the_one_above() {
+    for (kind, program, admitted, refusal) in PACKAGE_CELLS {
+        for (place, at) in [("same directory", "top/lib"), ("directory above", "top")] {
+            let tag = format!("{kind}-{}", place.replace(' ', "-"));
+            let (out, err, ok) = run_placed(&tag, "#package\n", at, program, &[]);
+            assert!(ok, "{kind} from the {place} is refused: {err}");
+            if !admitted.is_empty() {
+                assert_eq!(
+                    &out, admitted,
+                    "{kind} from the {place} reads the wrong value"
+                );
+            }
+        }
+        for (place, at) in [
+            ("grandparent", "."),
+            ("subdirectory", "top/lib/sub"),
+            ("sibling", "top/other"),
+        ] {
+            let (_, err, ok) =
+                run_placed(&format!("{kind}-{place}"), "#package\n", at, program, &[]);
+            assert!(
+                !ok && err.contains(refusal),
+                "{kind} from the {place}: {err}"
+            );
+        }
+        // The directive on the reading file grants nothing.
+        let reader = format!("#package\n{program}");
+        let (_, err, ok) = run_placed(&format!("{kind}-reader"), "", "top/lib", &reader, &[]);
+        assert!(
+            !ok && err.contains(refusal),
+            "{kind}, directive on the reader: {err}"
+        );
+    }
+}
+
+/// `@FR-F-Package` — the census (`LOFT_TRACE_VISIBILITY=1`, `scripts/pub_census.sh`) asks the
+/// same check, so a directory mate's use is no longer listed as missing its `pub`.
+#[test]
+fn package_mates_leave_the_census() {
+    let program = "use units;\nfn main() { u = units::spawn(\"orc\"); println(\"{u.hp}\"); }\n";
+    let trace = [("LOFT_TRACE_VISIBILITY", "1")];
+    let (_, err, ok) = run_placed("census-mate", "#package\n", "top/lib", program, &trace);
+    assert!(
+        ok && !err.contains("[visibility]"),
+        "a mate's use is listed: {err}"
+    );
+    let (_, err, _) = run_placed("census-far", "#package\n", ".", program, &trace);
+    assert!(
+        err.contains("[visibility]"),
+        "a use two levels up is not listed: {err}"
+    );
+}
+
+/// A used file may say `#package`; `#cwd` and `#link` set how the whole program runs, so in a
+/// used file they are refused, naming where they belong.
+#[test]
+fn a_used_file_may_say_package_but_not_cwd() {
+    let program = "use units;\nfn main() { println(\"{units::spawn(\\\"orc\\\").name}\"); }\n";
+    let (out, err, ok) = run_placed("used-package", "#package\n", ".", program, &[]);
+    assert!(ok && out == "orc\n", "a used file's #package: {out}{err}");
+    for directive in ["#cwd\n", "#link static\n"] {
+        let (_, err, ok) = run_placed("used-cwd", directive, ".", program, &[]);
+        assert!(
+            !ok && err.contains("sets how the whole program runs"),
+            "{directive}: {err}"
+        );
+    }
+}

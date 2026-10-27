@@ -386,6 +386,8 @@ DESIGN_DECISIONS.md @C123.
               (`L::name` inside L) means "in this file" and is not an outside reach.
 
   (F-Visible) everything a file F declares is private to F; `pub` gives consent (@C140).
+              "Outside F" below means outside F and, when F says `#package`, outside F's
+              directory and the one above it too (F-Package).
               A TYPE T of F, outside F, is
                 - INVISIBLE when T is not `pub` and no `pub` item of F names it: not named;
                 - NAME ONLY when T is not `pub` but a `pub` fn's signature of F, or a `pub`
@@ -415,6 +417,17 @@ DESIGN_DECISIONS.md @C123.
               `match` on one, and a literal or variant pattern against an A member read τ.
               Inside F, and as a `pub type`, A is τ.  A tuple spelled inline is no declaration: its
               members are visible wherever it is.
+
+  (F-Package) a file F whose directives include `#package` reads, to every other file in
+              F's own directory and in the directory directly above it, as if every item F
+              declares and every field of those items were `pub`; to any other file it reads
+              as (F-Visible) says.  The directories are the canonical ones (any spelling of a
+              path, a symlinked directory); two levels up, a subdirectory and a sibling
+              directory are outside.  Only F's own
+              directive counts: a file reading F's internals declares nothing.  Membership is
+              where F is, never how it was reached (`use`, `--lib`, the registry).  A file a
+              program `use`s may say `#package`, and only that: `#cwd` and `#link` set how
+              the whole program runs and are refused there.
 ```
 
 **`(F-Visible)` in words.** The levels are decided by what F's own `pub` items mention, so a
@@ -422,6 +435,19 @@ DESIGN_DECISIONS.md @C123.
 fields and its construction stay F's until F says otherwise.  The census
 (`scripts/pub_census.sh`, `LOFT_TRACE_VISIBILITY=1`) lists every outside use that lacks its
 `pub`; one check (`Parser::check_visibility`) answers both it and the refusal.
+
+**`(F-Package)` in words.** Privacy enforces the right abstractions; it does not hide
+information.  The default stays file-local, because an author should think about what escapes a
+file.  A file that is part of something bigger says so in its first line, and its place supplies
+the group: the files beside it, and the directory above, which holds the code that composes it
+(deeper directories hold the details).  Never downward, since a detail that needed its
+composer's internals would be a cycle; never further up, so each layer is walled from all but
+the one that builds on it.  The consent is one-sided — it sits in the file
+whose internals escape — so one directory can mix shared files with one that keeps its
+internals behind its `pub` functions.  Nothing outside the directory gains anything: a
+library's published surface, and what its consumers see, are unchanged.  The one home of the
+question is `Data::shares_internals` (`src/data.rs`), which every refusal of (F-Visible) and
+(F-Surface) asks after its own "same file" test (@C140).
 
 **In words.** `pub` is the boundary a library draws, and the owner's ruling is that the
 boundary holds: definitions without it "should not be reachable at all" from outside.  A

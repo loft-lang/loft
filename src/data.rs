@@ -12792,7 +12792,13 @@ impl Data {
     /// carries the one-edit cure: the owner's own qualifier for a name `lib` merely imported,
     /// or `pub` on `lib`'s side for an item it keeps private.
     #[must_use]
-    pub fn qualified_refusal(&self, lib_source: u16, lib: &str, name: &str) -> Option<String> {
+    pub fn qualified_refusal(
+        &self,
+        lib_source: u16,
+        lib: &str,
+        name: &str,
+        user_file: &str,
+    ) -> Option<String> {
         if lib_source == u16::MAX || lib_source == STD_SOURCE {
             return None;
         }
@@ -12831,7 +12837,10 @@ impl Data {
                     ),
                 });
             }
-            if !self.definitions[d as usize].pub_visible {
+            // `@FR-F-Package` — a mate of a `#package` file reads its items as `pub`.
+            if !self.definitions[d as usize].pub_visible
+                && !self.shares_internals(&self.definitions[d as usize].position.file, user_file)
+            {
                 return Some(format!(
                     "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \
                      library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
@@ -12868,9 +12877,10 @@ impl Data {
     }
 
     /// `@FR-F-Package` — does `owner`, the file that declares an item, show its internals to
-    /// `user`, the file that uses it?  Exactly when `owner` says `#package` and the two sit in
-    /// one directory: not a subdirectory, not the parent.  The one home of the question; every
-    /// visibility refusal asks it after its own "same file" test.
+    /// `user`, the file that uses it?  Exactly when `owner` says `#package` and `user` sits in
+    /// `owner`'s directory or in the one directly above it — the code that composes it.  Not
+    /// further up, not below, not a sibling.  The one home of the question; every visibility
+    /// refusal asks it after its own "same file" test.
     #[must_use]
     pub fn shares_internals(&self, owner: &str, user: &str) -> bool {
         if self.package_files.is_empty() {
@@ -12881,7 +12891,10 @@ impl Data {
             return false;
         }
         let user = Self::package_path(user);
-        owner != user && owner.parent().is_some_and(|dir| Some(dir) == user.parent())
+        let (Some(here), Some(place)) = (owner.parent(), user.parent()) else {
+            return false;
+        };
+        owner != user && (place == here || here.parent().is_some_and(|up| up == place))
     }
 
     /// Record the file `source` is parsed from (see `source_files`).
@@ -15112,69 +15125,83 @@ mod package_tests {
     use super::Data;
     use crate::file_access as fa;
 
-    /// `@FR-F-Package` — `#package` reaches exactly the files of its own directory, and only
-    /// from the file that says it; the place is the canonical one, whatever the spelling.
+    /// `@FR-F-Package` — `#package` reaches the files of its own directory and of the one
+    /// directly above, and only from the file that says it; the place is the canonical one,
+    /// whatever the spelling.
     #[test]
-    fn package_reaches_exactly_its_own_directory() {
+    fn package_reaches_its_directory_and_the_one_above() {
         let root = std::env::temp_dir().join(format!("loft_package_{}", std::process::id()));
         let _ = fa::remove_dir_all(&root);
-        for dir in ["dir/sub", "other"] {
+        for dir in ["top/dir/sub", "top/other"] {
             fa::create_dir_all(root.join(dir)).unwrap();
         }
         for file in [
-            "dir/a.loft",
-            "dir/b.loft",
-            "dir/sub/c.loft",
-            "other/a.loft",
-            "z.loft",
+            "top/dir/a.loft",
+            "top/dir/b.loft",
+            "top/dir/sub/c.loft",
+            "top/p.loft",
+            "top/other/a.loft",
+            "g.loft",
         ] {
             fa::write(root.join(file), b"").unwrap();
         }
         let path = |f: &str| root.join(f).to_string_lossy().into_owned();
+        let a = path("top/dir/a.loft");
         let mut data = Data::new();
         assert!(
-            !data.shares_internals(&path("dir/a.loft"), &path("dir/b.loft")),
+            !data.shares_internals(&a, &path("top/dir/b.loft")),
             "no directive: file-local"
         );
-        data.note_package_file(&path("dir/a.loft"));
+        data.note_package_file(&a);
+        let cells = [
+            ("top/dir/b.loft", true, "a file of the same directory"),
+            (
+                "top/p.loft",
+                true,
+                "a file of the directory above: the composer",
+            ),
+            ("g.loft", false, "two directories up"),
+            ("top/dir/sub/c.loft", false, "a subdirectory: never down"),
+            (
+                "top/other/a.loft",
+                false,
+                "a sibling directory, a file of the same name",
+            ),
+            (
+                "top/dir/a.loft",
+                false,
+                "the file itself: its own rule covers it",
+            ),
+        ];
+        for (user, shared, what) in cells {
+            assert_eq!(data.shares_internals(&a, &path(user)), shared, "{what}");
+        }
         assert!(
-            data.shares_internals(&path("dir/a.loft"), &path("dir/b.loft")),
-            "a directory mate sees a #package file's internals"
-        );
-        assert!(
-            !data.shares_internals(&path("dir/b.loft"), &path("dir/a.loft")),
+            !data.shares_internals(&path("top/dir/b.loft"), &a),
             "only the declaring file's directive counts"
         );
-        assert!(
-            !data.shares_internals(&path("dir/a.loft"), &path("dir/sub/c.loft")),
-            "a subdirectory is not the directory"
-        );
-        assert!(
-            !data.shares_internals(&path("dir/a.loft"), &path("z.loft")),
-            "the parent is not the directory"
-        );
-        assert!(
-            !data.shares_internals(&path("dir/a.loft"), &path("other/a.loft")),
-            "a file of the same name elsewhere is not a mate"
-        );
-        assert!(
-            !data.shares_internals(&path("dir/a.loft"), &path("dir/a.loft")),
-            "the file itself is not its own mate (its own rule covers it)"
-        );
-        // Another spelling of the same place.
+        // Other spellings of the same places.
         let dotted = root
-            .join("dir/../dir/b.loft")
+            .join("top/dir/../dir/b.loft")
             .to_string_lossy()
             .into_owned();
         assert!(
-            data.shares_internals(&path("dir/a.loft"), &dotted),
-            "`..` in a path names the same directory"
+            data.shares_internals(&a, &dotted),
+            "`..` names the same directory"
+        );
+        let dotted_up = root
+            .join("top/other/../p.loft")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            data.shares_internals(&a, &dotted_up),
+            "`..` names the same parent"
         );
         #[cfg(unix)]
         {
-            fa::symlink(root.join("dir"), root.join("link")).unwrap();
+            fa::symlink(root.join("top/dir"), root.join("top/link")).unwrap();
             assert!(
-                data.shares_internals(&path("link/a.loft"), &path("dir/b.loft")),
+                data.shares_internals(&path("top/link/a.loft"), &path("top/dir/b.loft")),
                 "a symlinked directory is the directory it names"
             );
         }
