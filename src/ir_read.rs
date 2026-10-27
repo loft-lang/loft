@@ -639,6 +639,29 @@ pub fn open_bundle_into(path: &str, database: &mut Stores) -> std::io::Result<Da
     Ok(data)
 }
 
+/// The program IMAGE a backend that is a separate part reads (@PLN205): `data` and the type
+/// schema of `stores` written as a bundle and read back into fresh stores, which carry nothing
+/// else of the running program but where relative paths resolve and the constants, rebuilt.  What a backend writes from
+/// the pair must equal what it writes from the originals; `LOFT_EMIT_FROM_IMAGE` is the probe.
+///
+/// # Errors
+/// The bundle could not be written or read back.
+#[cfg(feature = "mmap")]
+pub fn image_round_trip(data: &Data, stores: &Stores) -> std::io::Result<(Data, Stores)> {
+    let path = std::env::temp_dir().join(format!("loft_image_{}.bundle", std::process::id()));
+    let path = path.to_string_lossy().to_string();
+    crate::ir_store::save_bundle(data, &stores.types, &path)?;
+    let mut fresh = Stores::new();
+    let read = open_bundle_into(&path, &mut fresh);
+    let _ = crate::file_access::remove_file(&path);
+    let mut data = read?;
+    fresh.program_relative = stores.program_relative;
+    // The constants are built from the IR, as the compile pass builds them: the image carries
+    // the IR, not the stores built from it.
+    crate::const_literal::build_const_vectors(&mut fresh, &mut data, None);
+    Ok((data, fresh))
+}
+
 /// Rebuild one native [`Definition`] from a store `Definition` record.
 ///
 /// `attr_names` is re-derived from the restored attribute list (a derived

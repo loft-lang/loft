@@ -38,6 +38,9 @@ python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.y
                                                #   runs four shards per PR, miri.yml the
                                                #   --poison and --asan sweeps nightly
 make c-sweep ARGS="…"                          # the release loft built first, then the sweep
+python3 scripts/image_probe.py                 # every corpus program: the C written from the
+                                               #   program IMAGE (LOFT_EMIT_FROM_IMAGE=1) against
+                                               #   the C written from memory, byte for byte (@PLN205)
 ./scripts/find_problems.sh --subject c         # the C backend's guards (c_emit, c_https)
 python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
 python3 scripts/c_sweep.py --no-limit          # no kill at three times the last sweep's time

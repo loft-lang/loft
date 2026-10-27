@@ -13,10 +13,36 @@ minimal binary — see [200-backend-structure.md](200-backend-structure.md)) and
 
 ## Status
 
-Design, waiting for the owner's answers to the four questions under
-[Decisions to take](#decisions-to-take).  Nothing is built yet.  The `server` port that was on
-`firewall02-scripting` (Rust natives inside the binary, local commits e5d6fe572 and f022fa2ae, not
-pushed) is stopped: its C half and its guard move into L1, its Rust half is dropped.
+Active.  The owner took the four recommendations under [Decisions](#decisions) (2026-10-27).
+The `server` port that was on `firewall02-scripting` (Rust natives inside the binary) is
+stopped: its C half and its guard move into L1, its Rust half is dropped; the work is kept at
+the local ref `refs/keep/firewall02-server-in-binary-wip`.
+
+**L0a — answered yes.**  A library whose native part is C behind `loft-ffi/include/loft_ffi.h`,
+shipped prebuilt in `prebuilt/<triple>/`, runs on all three backends with nothing compiled to
+use it: the interpreter loads it as it loads a Rust cdylib (the bridge ABI is one C signature),
+the Rust writer links it by its typed symbols, and the C backend now resolves each symbol on
+the first call (`library_native` in `src/c/mod.rs`, `src/c/loft_ffi_host.h`).  Guard:
+`tests/ffi_c_library.rs` (binary text both ways, integers, a boolean, a float, a vector).
+What L1 owes from it:
+- the manifest needs a `[native]` line that names no crate to mark C-ABI natives; give it a
+  name of its own (`[native] prebuilt = true` or similar);
+- the C unit names the library by its absolute path, which a program written out with `--out`
+  cannot keep: bind it at start as the Rust writer does (@PLN195);
+- the C side refuses a library native that returns a vector or record (the store's `claim`
+  callbacks are wired, the answer conversion is not);
+- the "did not load" refusals still tell the user to rebuild with `cargo`.
+
+**L0b — under way.**  `LOFT_EMIT_FROM_IMAGE=1` makes `--emit-c` write from the image
+(`ir_read::image_round_trip`); `scripts/image_probe.py` compares that with the C written from
+memory over every program.  First 300 programs: 260 identical, 28 refused alike, 12 differing,
+all in constants:
+- the image carries no built constants (the compile pass built them, in the interpreter's
+  layer).  The builder moved to `const_literal::build_const_vectors`, which the image reader
+  now calls too;
+- the C written from memory was not reproducible either: the C backend copies a constant's
+  store words into the unit, and the store came from the free pool with stale bytes in it.
+  A constant store is now allocated fully defined (`Stores::database_defined`).
 
 ## Goal
 
@@ -72,7 +98,7 @@ with a C twin for the C backend (`src/c/loft_web.h`, `loft_engine.h`, `loft_proc
   Networking is loft's own (its URL loads, remote stores and package downloads use the same
   client), so it ships with loft rather than with the `web` package.  A component only one
   library needs ships in that library's package instead, prebuilt per platform by its CI
-  ([Decisions](#decisions-to-take) 2).
+  ([Decisions](#decisions) 2).
 
 ### Backends — the code generators
 
@@ -117,24 +143,24 @@ libraries with Rust crates remain.
 | a library's `[c] shim` is compiled with `cc` into a shared object for the interpreter (`c_shim`) | the package carries the shim prebuilt per platform; the C backend still compiles it into the unit (compiling is that command's job) |
 | the TLS archive is built with `cc` on first use (`src/c/tls.rs`, `~/.loft/c-tls/`) | prebuilt in `libloft_net` |
 
-## Decisions to take
+## Decisions
 
-The owner's answers settle the design; each has a recommendation.
+Taken by the owner as recommended (2026-10-27).
 
 1. **How a backend gets the program — the image, or a shared Rust library.**  The alternative
    to the image is a Rust `dylib` of the core that the binary, the backends and the tools all
    link dynamically (sound when every part comes from one release build, as here).  It saves the
-   copies of the core each part carries on disk, and the serialisation.  **Recommended: the
+   copies of the core each part carries on disk, and the serialisation.  **Taken: the
    image.**  It is a contract with a codec that is already gated over every program, a backend
    can be run and tested on a saved image alone, and nothing ties the parts to one `rustc`.
 2. **Where a runtime component ships — with loft, or with its library's package.**
-   **Recommended: with loft for what loft itself also uses (networking, processes), in the
+   **Taken: with loft for what loft itself also uses (networking, processes), in the
    package for the rest** (a graphics or imaging library's native part).
 3. **@C71 changes** from "libraries compile, scripts interpret" to "libraries run prebuilt or
    interpreted".  A contract change, so it is a new decision entry replacing @C71.
-   **Recommended: yes**; the speed of a compiled library is kept wherever its CI publishes the
+   **Taken**; the speed of a compiled library is kept wherever its CI publishes the
    artifact.
-4. **Which commands stay in the binary.**  **Recommended:** `run`, `test`, `debug`, `repl`
+4. **Which commands stay in the binary.**  **Taken:** `run`, `test`, `debug`, `repl`
    stay; everything else moves to `loft-<tool>`.  The REPL's line editor (`rustyline`) is the
    one dependency that keeping `repl` holds in.
 

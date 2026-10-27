@@ -12963,7 +12963,21 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         let ann =
             test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
         let expected = |name: &str| ann.expected_failure(name);
-        match loft::c::emit_program(&p.data, &state.database, &expected) {
+        // @PLN205 L0b — `LOFT_EMIT_FROM_IMAGE=1`: write the C from the program IMAGE (the
+        // `Data` and type schema saved as a bundle and read back into fresh stores), as a
+        // backend that is a separate part will read it.  The probe compares it with the C
+        // written from memory, over every program.
+        let from_image = std::env::var_os("LOFT_EMIT_FROM_IMAGE").is_some();
+        let emitted = if from_image {
+            loft::ir_read::image_round_trip(&p.data, &state.database)
+                .map_err(|e| format!("the program image did not round-trip: {e}"))
+                .and_then(|(data, db)| {
+                    loft::c::emit_program(&data, &db, &expected).map_err(|r| r.to_string())
+                })
+        } else {
+            loft::c::emit_program(&p.data, &state.database, &expected).map_err(|r| r.to_string())
+        };
+        match emitted {
             Ok(c) => {
                 if let Err(e) = fa::write(&out, c) {
                     eprintln!("loft: cannot write {out}: {e}");
