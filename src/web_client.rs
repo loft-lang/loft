@@ -330,10 +330,10 @@ mod ws {
         if len < 126 {
             frame.push(0x80 | len as u8);
         } else if let Ok(short) = u16::try_from(len) {
-            frame.push(0x80 | 126);
+            frame.push(0x80 | 0x7E);
             frame.extend_from_slice(&short.to_be_bytes());
         } else {
-            frame.push(0x80 | 127);
+            frame.push(0x80 | 0x7F);
             frame.extend_from_slice(&(len as u64).to_be_bytes());
         }
         let mask = pseudo_random(4);
@@ -428,16 +428,13 @@ mod ws {
             return false;
         }
         c.last_attempt = Instant::now();
-        match open(&c.url) {
-            Some(s) => {
-                c.stream = Some(s);
-                c.backoff = 0;
-                true
-            }
-            None => {
-                c.backoff = (c.backoff + 1).min(BACKOFF_MS.len() - 1);
-                false
-            }
+        if let Some(s) = open(&c.url) {
+            c.stream = Some(s);
+            c.backoff = 0;
+            true
+        } else {
+            c.backoff = (c.backoff + 1).min(BACKOFF_MS.len() - 1);
+            false
         }
     }
 
