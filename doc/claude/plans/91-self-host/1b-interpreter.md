@@ -567,6 +567,39 @@ test then runs as S0.3 designed it.
 reaches the same `use` code).  Falsified: without the "never the current file" filter M1
 fails again.  The module-clash suite (21) is green.
 
+### S0.3c — a package's tests see what `#package` shares — DESIGNED, not built
+
+**Owner's ruling (2026-10-27): tests are part of the package.**  Under S0.3a a package's
+`tests/` sits beside `src/`, so it was neither the shared directory nor the one above, and a
+test of an internal step (lowering, say) could only reach it by making it `pub` for every
+consumer.
+
+**The rule** (an addition to `(F-Package)`'s sentence, still purely positional):
+
+> A file in a directory named `tests` reads `#package` sharing as if it sat in the `src`
+> directory beside it.
+
+So `pkg/tests/lower.loft` sees what `pkg/src/lower.loft` shares (`src/` is its directory) and
+what `pkg/src/interp/x.loft` shares (`src/` is the one above).  Nothing depends on a
+`loft.toml`: `src/` and `tests/` are the package layout PACKAGES.md already fixes, and a
+directory that only happens to be called `tests` gains something only when a `src/` beside
+it holds a `#package` file.
+
+**Code point.**  `Data::shares_internals` (`src/data.rs`), the one home: before comparing
+places, a user directory whose last name is `tests` is replaced by its sibling `src`.  The
+imports (`shared_with`) and the four refusal sites follow, because they ask it.
+
+**Matrix.**
+- `pkg/tests/t.loft` reading `pkg/src/a.loft` (`#package`): admitted.
+- `pkg/tests/t.loft` reading `pkg/src/interp/x.loft` (`#package`): admitted (one up).
+- `pkg/tests/sub/t.loft` reading `pkg/src/a.loft`: refused (`tests/sub` is not `tests`).
+- `other/tests/t.loft` reading `pkg/src/a.loft`: refused (another package's tests).
+- `pkg/tests/t.loft` reading `pkg/src/a.loft` without `#package`: refused (C140).
+- End to end: `tests/pub_visibility.rs` builds and reads a private item from `pkg/tests/`.
+
+**Docs.**  `(F-Package)` gains the clause, plus C140's ruling, `LOFT_DECLARATIONS.md`, the
+`loft-write` skill and the CHANGELOG entry.
+
 ### S0.3 — the bundle opens in loft — DESIGNED, next
 
 **What.**  The first loft code of the strand: a `selfhost` package whose module `load` opens
