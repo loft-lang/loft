@@ -1940,8 +1940,10 @@ fn main() {{
     // Through `bind_port` like every other server test in this file: a hard-coded port
     // cannot be moved by `LOFT_TEST_PORT_OFFSET`, so a second checkout — or any other
     // process on the box that happens to hold it — fails this test with "cannot listen
-    // on port …" and nothing pointing at the port as the cause.
-    let listener = shape(&format!("run({}, 1000", common::bind_port(18099)), "stop");
+    // on port …" and nothing pointing at the port as the cause.  A base of its own: one
+    // shared with another test (s4 held 18099) is one port for both under `cargo test`,
+    // whose single process resolves a base once, and a race under nextest.
+    let listener = shape(&format!("run({}, 1000", common::bind_port(18101)), "stop");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for (tag, src) in [("local", &local), ("listener", &listener)] {
         for interpret in [true, false] {

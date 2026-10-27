@@ -376,7 +376,7 @@ fn https_to_an_address_the_certificate_does_not_name_is_refused() {
 }
 
 /// The paged loaders over a URL.  The program writes two images when `LOFT_PG_BASE` is empty —
-/// a hash of 20 000 records (`id = 7 i`, `val = 3 i + 1`, `name = "n<i>"`) and a sorted one of
+/// a hash of 100 000 records (`id = 7 i`, `val = 3 i + 1`, `name = "n<i>"`) and a sorted one of
 /// the same records — and otherwise reads them back by key, by several keys, by a key range and
 /// through a lazy binding, printing what it found.
 const PAGED: &str = r#"
@@ -391,7 +391,7 @@ fn main() {
   if base == "" {
     h: hash<Rec[id]> = [];
     s: sorted<Rec[id]> = [];
-    for i in 0..20000 {
+    for i in 0..100000 {
       h += Rec { id: 7 * i, val: 3 * i + 1, name: "n{i}" };
       s += Rec { id: 7 * i, val: 3 * i + 1, name: "n{i}" };
     }
@@ -409,8 +409,8 @@ fn main() {
   shown = if r == null { "null" } else { "{r.val} {r.name}" };
   println("KEY hit={hit} miss={miss} rec={shown} len={len(one)}");
   many: hash<Rec[id]> = [];
-  n = store_load_keys(many, url, [0, 70, 139993, 140000]);
-  last = many[139993];
+  n = store_load_keys(many, url, [0, 70, 699993, 700000]);
+  last = many[699993];
   lv = if last == null { "null" } else { "{last.val} {last.name}" };
   println("KEYS n={n} last={lv}");
   ordered: sorted<Rec[id]> = [];
@@ -427,23 +427,39 @@ fn main() {
 "#;
 
 /// The answers a reachable, well-formed pair of images gives, computed by hand: key 8638 is
-/// record 1234 (`val` 3703), 5 is no multiple of 7; of the four keys 140000 is past the last
-/// (139993, record 19999, `val` 59998); ids 700‥770 are records 100‥110, whose `val`s sum to
+/// record 1234 (`val` 3703), 5 is no multiple of 7; of the four keys 700000 is past the last
+/// (699993, record 99999, `val` 299998); ids 700‥770 are records 100‥110, whose `val`s sum to
 /// 3 · 1155 + 11 = 3476; key 5439 is record 777 (`val` 2332).
 const PAGED_ANSWERS: [&str; 4] = [
     "KEY hit=true miss=false rec=3703 n1234 len=1",
-    "KEYS n=3 last=59998 n19999",
+    "KEYS n=3 last=299998 n99999",
     "RANGE n=11 sum=3476",
     "LAZY bound=true rec=2332 n777 error=",
 ];
 
-/// Write the two images into `dir` (interpreted; `store_persist_copy` writes each sidecar).
+const IMAGES: [&str; 4] = [
+    "big.store",
+    "big.store.dschema",
+    "sorted.store",
+    "sorted.store.dschema",
+];
+
+/// The two images and their sidecars copied into `dir`: written once per process (interpreted;
+/// `store_persist_copy` writes each sidecar), because a case may change its copy.
 fn paged_images(dir: &Path) {
-    let (out, err) = run_paged("--interpret", dir, &[("LOFT_PG_DIR", path_text(dir))], None);
-    assert!(
-        out.contains("WROTE true true"),
-        "the images are written: {out}{err}"
-    );
+    static WRITTEN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let from = WRITTEN.get_or_init(|| {
+        let at = scratch("pg_images");
+        let (out, err) = run_paged("--interpret", &at, &[("LOFT_PG_DIR", path_text(&at))], None);
+        assert!(
+            out.contains("WROTE true true"),
+            "the images are written: {out}{err}"
+        );
+        at
+    });
+    for f in IMAGES {
+        fa::copy(from.join(f), dir.join(f)).expect("copy an image");
+    }
 }
 
 fn path_text(p: &Path) -> String {

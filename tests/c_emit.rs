@@ -75,6 +75,18 @@ fn have_cc() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+/// The inputs a unit names on its `/* link: … */` lines (an archive it is built with — a
+/// `[c] shim`, the TLS client of a unit that fetches over a URL or pages an image), as
+/// `c_driver::link_inputs` reads them.
+fn unit_links(c_src: &std::path::Path) -> Vec<String> {
+    fa::read_to_string(c_src)
+        .expect("read the C")
+        .lines()
+        .filter_map(|l| l.strip_prefix("/* link: ")?.strip_suffix(" */"))
+        .map(str::to_string)
+        .collect()
+}
+
 fn scratch(name: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("loft-c-emit-{}-{name}", std::process::id()));
     fa::create_dir_all(&d).expect("scratch dir");
@@ -2497,6 +2509,7 @@ impl Crossed {
             .arg("-o")
             .arg(&exe)
             .arg("-lm")
+            .args(unit_links(&c_src))
             .output()
             .expect("run cc");
         assert!(
