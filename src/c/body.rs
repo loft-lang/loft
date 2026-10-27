@@ -193,6 +193,10 @@ pub(crate) struct FnWriter<'a> {
     /// `for piece in t.split(c)` loops, by variable — each walked as a `loft_ls` over the text,
     /// the vector never built.  `LOFT_NO_LAZY_SPLIT=1` builds them, as on native.
     lazy: std::collections::BTreeMap<u16, crate::opt::lazy_split::LazySplit>,
+    /// `@FR-R-SplitTable` (`hoist::split_tables`): each bound split's local, as a `loft_stab`
+    /// `st<var>` declared up front; the walks' hidden vectors map to their table.
+    split_tabs: std::collections::BTreeMap<u16, crate::opt::text_borrow::SplitTable>,
+    tab_alias: std::collections::BTreeMap<u16, u16>,
     /// `@FR-R-CompleteWrite` (`hoist::complete_writes`): the element types every mint of this
     /// function writes completely, so the default image copied into a fresh element writes
     /// nothing that survives; computed on first use.
@@ -232,12 +236,28 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
     if std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0") {
         return b;
     }
-    let walks = crate::opt::text_borrow::borrowed_text_walks(
-        cx.data,
-        d,
-        &std::collections::BTreeSet::new(),
-        &std::collections::BTreeMap::new(),
-    );
+    // As native's setup: the lazy splits' and the split tables' walks need no store
+    // condition — their pieces are slices of a text — and a `?` discharge of a table's
+    // element borrows the piece too.
+    let tables = if cx.switches.split_table_disabled {
+        std::collections::BTreeMap::new()
+    } else {
+        crate::generation::hoist::split_tables(cx.data, d)
+    };
+    let lazy = if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
+        std::collections::BTreeMap::new()
+    } else {
+        crate::opt::lazy_split::lazy_splits(cx.data, d)
+    };
+    let sliced: std::collections::BTreeSet<u16> = lazy
+        .keys()
+        .copied()
+        .chain(tables.values().flat_map(|t| t.aliases.iter().copied()))
+        .collect();
+    let mut walks = crate::opt::text_borrow::borrowed_text_walks(cx.data, d, &sliced, &tables);
+    walks.extend(crate::generation::hoist::borrowed_discharge_temps(
+        cx.data, d, &tables,
+    ));
     let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
     let plain = store
         .locals
@@ -361,6 +381,12 @@ impl<'a> FnWriter<'a> {
             } else {
                 crate::opt::lazy_split::lazy_splits(cx.data, d)
             },
+            split_tabs: if cx.switches.split_table_disabled {
+                std::collections::BTreeMap::new()
+            } else {
+                crate::generation::hoist::split_tables(cx.data, d)
+            },
+            tab_alias: std::collections::BTreeMap::new(),
             char_walks: if std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0") {
                 std::collections::BTreeMap::new()
             } else {
@@ -453,6 +479,13 @@ impl<'a> FnWriter<'a> {
     /// The body: the locals, the temporaries and the statements.
     pub(crate) fn write(mut self) -> Result<String, String> {
         let code = self.code;
+        for (v, tab) in &self.split_tabs {
+            self.decls
+                .push(format!("loft_stab st{v} = {{ {{ 0, 0, 0 }}, 0, 0, 0 }};"));
+            for a in &tab.aliases {
+                self.tab_alias.insert(*a, *v);
+            }
+        }
         if self.ret == CType::Void {
             self.stmt(code, 1)?;
             self.epilogue(1);
@@ -555,6 +588,10 @@ impl<'a> FnWriter<'a> {
     fn epilogue(&mut self, ind: usize) {
         // A `return` from inside a held loop: the cursors go back before the frame does.
         self.release_holds(0, ind);
+        let tabs: Vec<u16> = self.split_tabs.keys().copied().collect();
+        for v in tabs {
+            self.line(ind, &format!("loft_stab_free(&st{v});"));
+        }
         for t in self.held_texts() {
             self.line(ind, &format!("loft_text_free(&{t});"));
         }
@@ -647,6 +684,10 @@ impl<'a> FnWriter<'a> {
             }
             let bases = self.kept_bases(&verdict);
             for ((path, expr), base) in verdict.vectors.into_iter().zip(bases) {
+                // A split table's local, or a walk's alias of one, is never built.
+                if self.split_tabs.contains_key(&path.0) || self.tab_alias.contains_key(&path.0) {
+                    continue;
+                }
                 // A path an enclosing frame holds as well — with a base, or without one where
                 // this loop would keep none either — is served by that frame.
                 let outer = self
@@ -2018,6 +2059,7 @@ impl<'a> FnWriter<'a> {
             && self.cx.data.def(*d).name() == "OpGetText"
             && let [r, fld] = args.as_slice()
             && self.lazy_vector(r, "OpGetVectorNullable").is_none()
+            && !matches!(r.unspan(), Value::Call(_, ra) if ra.first().is_some_and(|v| self.split_tab_of(v).is_some()))
         {
             let fld = Self::literal(fld, "field")?;
             let before = self.pending.len();
@@ -2083,6 +2125,89 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `@FR-R-SplitTable` — the bind of a table's local: the pieces recorded in `st<var>`.  The
+    /// vector's own null initialisation binds nothing.
+    fn split_tab_bind(
+        &mut self,
+        var: u16,
+        tab: &crate::opt::text_borrow::SplitTable,
+        x: &Value,
+        ind: usize,
+    ) -> Result<(), String> {
+        if matches!(x.unspan(), Value::Null) {
+            return Ok(());
+        }
+        let Value::Call(_, args) = x.unspan() else {
+            return Err("a split table bound from something other than its call".into());
+        };
+        let src = args.first().ok_or("a split call without its text")?;
+        let e = self.expr(src, ind)?;
+        let view = as_view(e)?;
+        self.line(
+            ind,
+            &format!(
+                "loft_stab_fill(&st{var}, {view}, {}u);",
+                u32::from(tab.separator)
+            ),
+        );
+        crate::rewrite_census::fired("R-SplitTable", 1);
+        self.flush(ind);
+        Ok(())
+    }
+
+    /// The table a vector expression `v` names: a table's local or a walk's alias of one.
+    fn split_tab_of(&self, v: &Value) -> Option<u16> {
+        let Value::Var(x) = v.unspan() else {
+            return None;
+        };
+        if self.split_tabs.contains_key(x) {
+            Some(*x)
+        } else {
+            self.tab_alias.get(x).copied()
+        }
+    }
+
+    /// `@FR-R-SplitTable`'s readers: the length, the element's text, and the mint of a buffer
+    /// only the split call served.  `None` for every other operator.
+    fn split_tab_op(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let data = self.cx.data;
+        match (name, args) {
+            ("OpLengthVector", [v]) => Ok(self
+                .split_tab_of(v)
+                .map(|t| E::new(format!("((int64_t) st{t}.n)"), K::Int))),
+            ("OpGetText", [elem, _]) => {
+                let Value::Call(d, inner) = elem.unspan() else {
+                    return Ok(None);
+                };
+                if !matches!(data.def(*d).name(), "OpGetVectorNullable" | "OpGetVector") {
+                    return Ok(None);
+                }
+                let (Some(v), Some(idx)) = (inner.first(), inner.get(2)) else {
+                    return Ok(None);
+                };
+                let Some(t) = self.split_tab_of(v) else {
+                    return Ok(None);
+                };
+                let i = self.expr(idx, ind)?;
+                Ok(Some(E::new(
+                    format!("loft_stab_get(&st{t}, {})", as_int(i)?),
+                    K::View,
+                )))
+            }
+            ("OpDatabase", [Value::Var(b), _])
+                if self.split_tabs.values().any(|t| t.dead_buf == Some(*b)) =>
+            {
+                Ok(Some(E::new("((void) 0)", K::Void)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// `@FR-R-LazySplit` — the bind of a lazy loop's vector: an iterator over the source text.
     /// A text parameter nothing in the function writes is walked in place; any other source is
     /// copied first, so no write in the loop body can reach what is being walked.
@@ -2137,6 +2262,16 @@ impl<'a> FnWriter<'a> {
     /// The binds a rewrite writes itself: a borrowed text's view (`@FR-R-TextBorrow`) and a
     /// lazy split's iterator (`@FR-R-LazySplit`).  `None` for every other bind.
     fn rewritten_bind(&mut self, var: u16, x: &Value, ind: usize) -> Option<Result<(), String>> {
+        // A walk's alias names the table; a buffer only the table's split would have filled is
+        // never minted.
+        if self.tab_alias.contains_key(&var)
+            || self.split_tabs.values().any(|t| t.dead_buf == Some(var))
+        {
+            return Some(Ok(()));
+        }
+        if let Some(tab) = self.split_tabs.get(&var).cloned() {
+            return Some(self.split_tab_bind(var, &tab, x, ind));
+        }
         if self.shapes[var as usize] == CType::Text && self.borrowed[var as usize] {
             return Some(self.borrowed_bind(var, x, ind));
         }
@@ -2190,6 +2325,7 @@ impl<'a> FnWriter<'a> {
             } else {
                 !(self.vars.is_skip_free(var) || self.vars.is_inline_ref(var))
             })
+            && !self.split_tabs.values().any(|t| t.dead_buf == Some(var))
         {
             self.owned_vector_null(var, ind);
             return Ok(());
@@ -2964,6 +3100,9 @@ impl<'a> FnWriter<'a> {
                 }
             }
             compound @ (Value::Block(_) | Value::Insert(_) | Value::If(..) | Value::Tuple(_)) => {
+                if let Some(e) = self.view_choice(compound, ind)? {
+                    return Ok(e);
+                }
                 let c = self.shape_of(compound)?;
                 self.nested(|w| {
                     if c == CType::Void {
@@ -2979,6 +3118,49 @@ impl<'a> FnWriter<'a> {
             Value::Null => Err("a null without a type".into()),
             other => Err(unsupported(other)),
         }
+    }
+
+    /// A text choice between views — `if c { a } else { b }`, as a `?` discharge writes it,
+    /// where each arm is a borrowed text variable or a literal — as the view it picks: the
+    /// bytes are the arm's own, valid as long as that variable is, so nothing is copied.
+    /// `None` for any other compound.
+    fn view_choice(&mut self, compound: &Value, ind: usize) -> Result<Option<E>, String> {
+        let (pre, last): (&[Value], &Value) = match compound.unspan() {
+            Value::Block(block) => match block.operators.split_last() {
+                Some((value, stmts)) => (stmts, value),
+                None => return Ok(None),
+            },
+            other => (&[], other),
+        };
+        let Value::If(cond, then, other) = last.unspan() else {
+            return Ok(None);
+        };
+        let viewable = |w: &Self, arm: &Value| match arm.unspan() {
+            Value::Text(_) => true,
+            Value::Var(var) => w.shapes[*var as usize] == CType::Text && w.borrowed[*var as usize],
+            _ => false,
+        };
+        if !viewable(self, then) || !viewable(self, other) {
+            return Ok(None);
+        }
+        // The block's own statements first — the discharge's bind of the variable it tests.
+        for op in pre {
+            self.stmt(op, ind)?;
+        }
+        let test = self.expr(cond, ind)?;
+        let test = as_cond(test)?;
+        let (then, other) = (self.expr(then, ind)?, self.expr(other, ind)?);
+        let view = format!("tv{}", self.decls.len() + 1);
+        self.decls.push(format!("loft_str {view} = {{ 0, 0 }};"));
+        self.line(
+            ind,
+            &format!(
+                "{view} = ({test}) ? {} : {};",
+                as_view(then)?,
+                as_view(other)?
+            ),
+        );
+        Ok(Some(E::new(view, K::View)))
     }
 
     /// Statements written inside an expression: they free only the temporaries they make, as
@@ -3158,6 +3340,9 @@ impl<'a> FnWriter<'a> {
         if def.name() == "t_6vector_len"
             && let [v] = args
         {
+            if let Some(t) = self.split_tab_of(v) {
+                return Ok(E::new(format!("((int64_t) st{t}.n)"), K::Int));
+            }
             if let Some(h) = self.held_vector(v) {
                 return Ok(E::new(format!("{h}.len"), K::Int));
             }
@@ -3487,6 +3672,11 @@ impl<'a> FnWriter<'a> {
         }
         if !self.lazy.is_empty()
             && let Some(e) = self.lazy_split_op(name, args)
+        {
+            return Ok(e);
+        }
+        if !self.split_tabs.is_empty()
+            && let Some(e) = self.split_tab_op(name, args, ind)?
         {
             return Ok(e);
         }

@@ -3893,6 +3893,48 @@ LOFT_HOT_INLINE loft_str loft_ls_next(loft_ls *ls, uint8_t *done) {
     return ls->rest;
 }
 
+/* `@FR-R-SplitTable` (codegen_runtime's split table): `parts = text.split(c)` read only by its
+ * length and its element reads, as the pieces `loft_ls` takes — none for an empty or null text —
+ * held as slices of a copy of the text the table owns, so no later write of the source reaches
+ * them.  The vector is never built; a rebind refills the same buffers. */
+typedef struct { loft_text src; loft_str *at; size_t n; size_t cap; } loft_stab;
+
+static void loft_stab_fill(loft_stab *t, loft_str s, uint32_t sep) {
+    t->n = 0;
+    if (s.len == 0 || loft_str_is_null(s)) return;
+    t->src.len = 0;
+    loft_push(&t->src, s.p, s.len);
+    loft_ls ls = loft_ls_of(loft_view(&t->src), sep);
+    uint8_t done = 0;
+    for (;;) {
+        loft_str piece = loft_ls_next(&ls, &done);
+        if (done) break;
+        if (t->n == t->cap) {
+            size_t cap = t->cap ? t->cap * 2 : 16;
+            loft_str *at = (loft_str *) realloc(t->at, cap * sizeof *at);
+            if (!at) { fputs("loft: out of memory\n", stderr); abort(); }
+            t->at = at;
+            t->cap = cap;
+        }
+        t->at[t->n++] = piece;
+    }
+}
+
+/* Element `from` as the vector read answers it: negative counts from the end, outside is null. */
+LOFT_HOT_INLINE loft_str loft_stab_get(const loft_stab *t, int64_t from) {
+    int64_t n = (int64_t) t->n;
+    int64_t f = from < 0 ? from + n : from;
+    return f < 0 || f >= n ? loft_null_text() : t->at[f];
+}
+
+static void loft_stab_free(loft_stab *t) {
+    loft_text_free(&t->src);
+    free(t->at);
+    t->at = 0;
+    t->n = 0;
+    t->cap = 0;
+}
+
 /* OpCastFloatFromText: `parse::<f64>().unwrap_or(NAN)`. */
 static double loft_float_of_text(loft_str t) {
     if (!loft_float_text_ok(t)) return (double) NAN;
