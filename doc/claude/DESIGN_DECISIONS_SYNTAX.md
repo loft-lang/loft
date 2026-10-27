@@ -315,7 +315,7 @@ widening, so it stays open.
 Decided 2026-10-06 (owner); `#package` 2026-10-27 (owner) — [record](DESIGN_DECISIONS-history.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants).
 **Holds at:** `@C140` — `./scripts/idx tag:@C140`: `tests/pub_visibility.rs`; every refusal
 holds on every build.
-**Catalogue:** @F2 / modules.  Extends [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.
+**Catalogue:** @F47 / modules.  Extends [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.
 
 ## C149 — one structural limit, 300, for every count a program has — a function's variables included
 

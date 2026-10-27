@@ -376,7 +376,7 @@ belongs to S0.3, whose loader reads an image the test harness emits.
   so the byte comparison is not vacuous.
 - `CHANGELOG.md`: the flag under New, the read-only cache under Bug fixes.
 
-### S0.3a — `#package`: a file shows its internals to its directory and the one above — DESIGNED, sub-steps 1–2 built
+### S0.3a — `#package`: a file shows its internals to its directory and the one above — BUILT 2026-10-27 (catalogue entry at the merge)
 
 **Why here.**  S0.3 met X2: under C140 every type and field is private to its FILE, so a loft
 program split over several files pays `pub` on everything it shares between them (167 items
@@ -483,7 +483,7 @@ has it).
    `#package` is admitted: `#cwd` and `#link` set how the whole program runs, and are refused
    there naming where they belong (they were "unexpected '#'" before; no corpus or registry
    file says either in a used file).
-3. Imports.  One question for all four binding paths (`import_all`, `import_name` and their
+3. **Built.**  Imports.  One question for all four binding paths (`import_all`, `import_name` and their
    `_overwrite` twins, `src/data.rs`): `Data::importable(key, lib, into) -> Option<(def,
    passes_on)>`, which is `exported` widened by `shares_internals` against the importer's file
    (`source_files[into]`).  `importable_names` serves the glob form.  A shared item binds
@@ -511,20 +511,24 @@ has it).
    - Tests: `package_items_import_bare_for_a_mate`, `package_names_collide_as_pub_names_do`
      (the same refusal as two `pub` names, compared line for line),
      `package_internals_do_not_pass_on_through_pub_use`.
-4. The documentation.
+4. **Built**, but for the catalogue entry.  The documentation.
    - `formal/calls.md`: `(F-Visible)` names `(F-Package)`, a new rule holding the sentence
      above.
    - `DESIGN_DECISIONS_SYNTAX.md` C140: the owner's ruling of 2026-10-27, recorded.
    - `LOFT_DECLARATIONS.md` § visibility, and `LOFT_DESIGN.md` beside `#cwd`/`#link`.
    - `CHANGELOG.md` New, and the `loft-write` skill.
-   - The `@F2` catalogue entry: edit the features issue, then `make features-fetch &&
-     make features-gen`.
-   - A `tests/reference` snippet.
+   - The `@F47` catalogue entry (library imports / modules; C140 named `@F2`, which is `??`,
+     and now names `@F47`): edit the features issue, then `make features-fetch && make
+     features-gen`.  **Deferred to the merge**: the tracker is shared by every branch, so
+     editing it now would hand `main`'s next `features-fetch` the documentation of a feature
+     only this branch has.
+   - A `tests/reference` snippet: not needed.  `LOFT_DECLARATIONS.md`'s example is short
+     and inline, and the cells in `tests/pub_visibility.rs` carry the behaviour.
 
 **Not in this step:** sharing downward, beyond one level up, or across sibling directories.
 Each can be widened later if a real program asks for it; a widening is a relaxation.
 
-### S0.3 — the bundle opens in loft — DESIGNED, waits for S0.3a
+### S0.3 — the bundle opens in loft — DESIGNED, next
 
 **What.**  The first loft code of the strand: a `selfhost` package whose module `load` opens
 an image (S0.2) as the IR's own records and answers questions about it.  It is the first

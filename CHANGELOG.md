@@ -168,6 +168,13 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**`#package` lets a file share its internals with the files around it.**  Everything a file
+declares stays private to it unless it says `pub`; a file that is part of something bigger now
+starts with `#package`, and the files of its own directory and of the directory directly above
+it (the code that builds on it) may then use its private functions, types, fields and variants,
+and import them, as if they were `pub`.  Nothing further away sees anything new, and a `pub use`
+still passes on only what is `pub`.
+
 **`loft --emit-image out.store prog.loft` writes a program's compiled IR and runs nothing.**
 The image is the one the startup cache keeps for the program, with its `.dschema` sidecar
 beside it, so a loft program can `store_load` it through the IR's own types
