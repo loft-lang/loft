@@ -293,7 +293,11 @@ element, a `?` discharge of a table's element (`hoist::borrowed_discharge_temps`
 borrowed text or a text parameter, a literal, a field read, a block ending in one), is held as
 a `loft_str` view instead of an owned copy (`@FR-R-TextBorrow`,
 `opt::text_borrow::borrowed_text_walks` and the plain clause of `hoist::borrowed_store_texts`);
-a bind that would view a temporary is refused by name, never left dangling.  A choice
+a bind that would view a temporary is refused by name, never left dangling.  A text FIELD that
+is an operand of a comparison, an append, a format or a print, or the argument of a callee that
+keeps every store in place (`Cx::call_keeps_stores`), is read where the store holds it when no
+later operand may write (`FnWriter::text_reads`, R-TextBorrow's operand clause); every other
+field read copies (`LOFT_NO_FIELD_VIEW=1` copies them all).  A choice
 between such views or literals, as a discharge writes it, is the view it picks, and a
 formatted value is appended from its work buffer, as native borrows it.  A `for c in t`
 walk takes an ASCII byte without decoding it and asks its null test once
@@ -326,7 +330,10 @@ BIGMIN, the prefix walk — snapshotted as `build_rec_scratch` lays them out.  A
 same digest, home bucket and walk as `loft_h_find`, the key compared in place; the digest of one
 integer key, in every path that hashes one, is SipHash's two words and finish unrolled
 (`loft_digest_i64`), which `the_c_hash_table_files_every_entry_where_hash_does` pins to
-`hash.rs`'s placement.
+`hash.rs`'s placement.  `c[k…] = T{…}` is written into the element the collection claims for
+it (`@FR-R-InPlaceLiteral`'s keyed clause, `loft_keyed_place_begin` / `_finish`), and over a
+hash keyed by one to four integer parts whose element owns no heap, into the entry one probe
+finds or files (`@FR-R-KeyedEntry`'s subscript clause, `loft_keyed_entry_ints`).
 
 **Store images.**  `store_persist_copy` is `Stores::persist_copy` ported: the root deep-copied
 into a scratch store, its trees laid out in van Emde Boas order (`rtree_relayout`), the store
