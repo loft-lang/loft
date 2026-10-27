@@ -134,6 +134,9 @@ pub(crate) struct FnWriter<'a> {
     /// with whether its element base stays valid for the loop's extent (`@FR-R-Base`: the
     /// loop grows no store).  An `__inv` twin starts with its inputs as one frame.
     headers: Vec<Vec<(crate::opt::writes::PathKey, String, bool)>>,
+    /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
+    /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
+    scalars: Vec<Vec<(crate::generation::hoist::ScalarKey, String, CType)>>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -337,6 +340,7 @@ impl<'a> FnWriter<'a> {
             labels: 0,
             headers: Vec::new(),
             push_heads: Vec::new(),
+            scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::generation::hoist::placed_locals(def.code(), cx.data),
             assumed: Vec::new(),
@@ -602,8 +606,34 @@ impl<'a> FnWriter<'a> {
     ) -> Result<Vec<(crate::opt::writes::PathKey, Value)>, String> {
         let mut frame = Vec::new();
         let mut mints = Vec::new();
+        let mut held_scalars = Vec::new();
         if let Some(verdict) = self.verdict(b) {
             mints.clone_from(&verdict.mint_pushes);
+            for (key, getter) in &verdict.scalars {
+                // A direct read the loop spells `getter(Var(v), fld)` is what this serves; a
+                // path scalar of a callee's input shares its key and its bytes.
+                if self.held_scalar(key).is_some() {
+                    continue;
+                }
+                let c = self.shape_of(getter)?;
+                if !matches!(
+                    c,
+                    CType::Int
+                        | CType::Float
+                        | CType::Single
+                        | CType::Bool
+                        | CType::Enum
+                        | CType::Char
+                ) {
+                    continue;
+                }
+                let e = self.nested(|w| w.expr(getter, ind))?;
+                let name = format!("s{}", self.decls.len() + 1);
+                self.decls
+                    .push(format!("{} {name} = {};", held(c), self.cx.initial(c)));
+                self.line(ind, &format!("{name} = {};", as_shape(e, c)?));
+                held_scalars.push((*key, name, c));
+            }
             let bases = self.kept_bases(&verdict);
             for ((path, expr), base) in verdict.vectors.into_iter().zip(bases) {
                 // A path an enclosing frame holds as well — with a base, or without one where
@@ -627,7 +657,18 @@ impl<'a> FnWriter<'a> {
             }
         }
         self.headers.push(frame);
+        self.scalars.push(held_scalars);
         Ok(mints)
+    }
+
+    /// The local an enclosing loop holds record scalar `key` in, with its shape.
+    fn held_scalar(&self, key: &crate::generation::hoist::ScalarKey) -> Option<(String, CType)> {
+        self.scalars
+            .iter()
+            .rev()
+            .flat_map(|f| f.iter())
+            .find(|(k, _, _)| k == key)
+            .map(|(_, n, c)| (n.clone(), *c))
     }
 
     /// `@FR-R-PushRec`, as native's record push header: before loop `b`, a `loft_ph` for each
@@ -774,7 +815,7 @@ impl<'a> FnWriter<'a> {
         let sw = self.cx.switches;
         let tiers = crate::opt::writes::HoistTiers {
             in_place: !sw.write_hoist_disabled,
-            scalars: false,
+            scalars: !sw.scalar_hoist_disabled,
             push: !sw.push_hoist_disabled,
             mint: !sw.mint_hoist_disabled,
             record_push: !sw.record_push_disabled,
@@ -1564,6 +1605,7 @@ impl<'a> FnWriter<'a> {
         self.loops.pop();
         self.headers.pop();
         self.push_heads.pop();
+        self.scalars.pop();
         if window {
             // The loop's one exit: the counted push loop has no break, return or
             // continue of its own (`hoist::push_loop`).
@@ -3425,6 +3467,12 @@ impl<'a> FnWriter<'a> {
             && let Some(e) = self.pushed_mint(name, args, ind)?
         {
             return Ok(e);
+        }
+        if self.scalars.iter().any(|f| !f.is_empty())
+            && let Some(key) = crate::generation::hoist::scalar_read(name, args)
+            && let Some((local, c)) = self.held_scalar(&key)
+        {
+            return Ok(E::new(local, kind_of(c)));
         }
         if !self.lazy.is_empty()
             && let Some(e) = self.lazy_split_op(name, args)

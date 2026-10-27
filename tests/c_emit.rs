@@ -815,7 +815,18 @@ fn mints(n: integer) -> text {
   for p in m.b { sb += p.k; }
   "{len(m.a)} {len(m.b)} {sa} {sb} {sx}"
 }
+struct Cfg { k: integer, m: integer }
+fn scal(c: Cfg, n: integer) -> integer {
+  acc = 0;
+  for i in 0..n {
+    acc += c.k;
+    if i % 3 == 0 { c.m += 1; }
+    acc += c.m;
+  }
+  acc
+}
 fn main() {
+  println("{scal(Cfg { k: 5, m: 0 }, 9)}");
   println(mints(1000));
   src: vector<integer> = [];
   dst: vector<integer> = [];
@@ -828,13 +839,15 @@ fn main() {
   println("{len(p)} {p[19]} {s.out}");
 }
 "#;
+    // scal: c.k is read nine times (45) and held; c.m is written in the loop and read after
+    // each write, 1 1 1 2 2 2 3 3 3 (18), so it is not held.
     // mints: two record vectors of one store minted in turn, each outgrowing its room many
     // times; a.k is the length read before each mint, 0..999 summing 499500 as a.x does, b.k
     // the doubled index, 999000.
     // rounds: after round r, dst[i] = 1 + 2r(i + 1); the reads sum 3·8 + 2·(1+2+3)·36 = 456.
     // grow: each pass of ten adds 2·55 + 10·10 = 210, 300 passes, plus 3000 elements.
     // build: v[i % 5]·3 + 1 cycles 7 13 19 25 31; p[19] is the fifth.
-    let want = "1000 1000 499500 999000 499500\n456 [7,13,19,25,31,37,43,49]\n66000\n\
+    let want = "63\n1000 1000 499500 999000 499500\n456 [7,13,19,25,31,37,43,49]\n66000\n\
                 20 31 [7,13,19,25,31,7,13]\n";
     let loft = env!("CARGO_BIN_EXE_loft");
     let dir = scratch("loop-verdict");
@@ -860,13 +873,15 @@ fn main() {
             .output()
             .is_ok_and(|o| o.status.success())
     };
-    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops, push headers)
-    for (mode, switch, twins, fresh, versioned, pushed) in [
-        ("held", "", 2, 3, 1, 2),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2),
-        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0),
-        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0),
+    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops, push headers,
+    // `scal`'s held scalars)
+    for (mode, switch, twins, fresh, versioned, pushed, scalars) in [
+        ("held", "", 2, 3, 1, 2, 1),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2, 1),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2, 1),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0, 1),
+        ("no-scalar", "LOFT_NO_SCALAR_HOIST", 2, 3, 1, 2, 0),
+        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
         let mut emit = loft::platform::process::harness_command(loft);
@@ -909,6 +924,26 @@ fn main() {
                 .count(),
             pushed,
             "{mode}: the record push headers"
+        );
+        let scal = body
+            .find("n_scal__fr(")
+            .and_then(|at| body[at..].find("{\n").map(|o| at + o))
+            .map_or("", |at| {
+                &body[at..at + body[at..].find("\n}\n").unwrap_or(0)]
+            });
+        assert_eq!(
+            scal.lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    t.starts_with('s')
+                        && t[1..]
+                            .split(" = ")
+                            .next()
+                            .is_some_and(|n| n.parse::<u32>().is_ok())
+                })
+                .count(),
+            scalars,
+            "{mode}: scal's held scalars"
         );
         let mut kinds: Vec<(&str, Vec<&str>)> = vec![
             ("strict", vec!["-DLOFT_STRICT", "-pedantic", "-Werror"]),
