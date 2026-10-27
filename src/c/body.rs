@@ -240,7 +240,7 @@ struct WindowLoop<'b> {
 
 /// `@FR-R-TextBorrow` — the text locals of function `d` the C holds as a `loft_str` view rather
 /// than an owned copy: the walk variables `opt::text_borrow::borrowed_text_walks` admits and the
-/// plain locals of `hoist::borrowed_store_texts` (its run-time-tested and work-text clauses need
+/// plain borrows of `hoist::borrowed_store_texts`, its `?` temps included (its run-time-tested and work-text clauses need
 /// emitter support the C does not have, so they keep their copies).  A local is kept only when
 /// EVERY bind of it is a shape the view form writes without a temporary — another borrowed
 /// local or a text parameter, a literal, a text field read, a block ending in one — so
@@ -278,9 +278,11 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
     ));
     // `@FR-R-SliceBorrow` rides on the same analysis: a value slice of a text parameter.
     let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
+    // Every variable the clause admits — the `?` / `??` temps it borrows a parameter's text
+    // for as well as its statement-bound locals, as native's `walks.extend(store.borrows)`.
     let plain = store
-        .locals
-        .iter()
+        .borrows
+        .keys()
         .filter(|v| !store.tested.contains_key(v) && !store.work.contains(v))
         .copied();
     for v in walks.keys().copied().chain(plain) {
