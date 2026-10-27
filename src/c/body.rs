@@ -2790,26 +2790,11 @@ impl<'a> FnWriter<'a> {
                     self.copy_member(&e.code, target, c, ind);
                     return Ok(());
                 }
-                // A call's tuple moves into the target, which may still hold the texts of the
-                // value it had (a loop body's local, every pass after the first): an owned
-                // local's are freed once the call has run — it may read them — and before the
-                // move.
                 if let CType::Tuple(id) = c
                     && self.cx.tuple_has_text(id)
                     && self.frees_old_tuple
                 {
-                    let mut old = Vec::new();
-                    self.tuple_text_leaves(target, id, &mut old);
-                    let frees: String = old
-                        .iter()
-                        .map(|t| format!(" loft_text_free(&{t});"))
-                        .collect();
-                    let value = as_shape(e, c)?;
-                    self.line(
-                        ind,
-                        &format!("{{ {} mv = {value};{frees} {target} = mv; }}", held(c)),
-                    );
-                    return Ok(());
+                    return self.move_tuple_in(e, target, id, ind);
                 }
                 let s = match c {
                     CType::Text => format!("loft_text_set(&{target}, {});", as_view(e)?),
@@ -2820,6 +2805,25 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
         }
+    }
+
+    /// A call's tuple `e` moved into the owned tuple local `target`, which may still hold the
+    /// texts of the value it had (a loop body's local, every pass after the first): those are
+    /// freed once the call has run — it may read them — and before the move (loft#2201).
+    fn move_tuple_in(&mut self, e: E, target: &str, id: u32, ind: usize) -> Result<(), String> {
+        let c = CType::Tuple(id);
+        let mut old = Vec::new();
+        self.tuple_text_leaves(target, id, &mut old);
+        let mut frees = String::new();
+        for t in &old {
+            let _ = write!(frees, " loft_text_free(&{t});");
+        }
+        let value = as_shape(e, c)?;
+        self.line(
+            ind,
+            &format!("{{ {} mv = {value};{frees} {target} = mv; }}", held(c)),
+        );
+        Ok(())
     }
 
     /// A tuple literal into `target`, of shape `c`.

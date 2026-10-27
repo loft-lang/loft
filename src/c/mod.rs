@@ -1841,6 +1841,46 @@ fn anchor(stores: &Stores) -> String {
     format!("loft_set_anchor({});", i32::from(stores.program_relative))
 }
 
+/// The C shape of each of a function's variables, in number order: a `&` parameter its target's,
+/// a local nothing binds or one only ever bound to `null` the integer null's.
+fn variable_shapes(
+    cx: &Cx,
+    vars: &crate::variables::Function,
+    args: &[u16],
+) -> Result<Vec<CType>, String> {
+    let mut shapes = Vec::with_capacity(vars.count() as usize);
+    for v in 0..vars.count() {
+        // A `&` parameter has its target's shape, passed as a pointer to it.
+        let tp = match vars.tp(v).base() {
+            Type::RefVar(inner) => inner,
+            tp => tp,
+        };
+        // A name the first pass met before its declaration became a local of no type; the
+        // second pass resolved it, so nothing binds it and the scope pass never scoped it.
+        // It is declared as a placeholder nothing reads.
+        if tp.is_unknown() && !args.contains(&v) && vars.scope(v) == u16::MAX {
+            shapes.push(CType::Int);
+            continue;
+        }
+        // A local only ever bound to `null` (`x = null;`, never given a type) holds the
+        // integer null; nothing reads it as another kind.
+        if matches!(tp, Type::Null) && !args.contains(&v) {
+            shapes.push(CType::Int);
+            continue;
+        }
+        let c = cx.ctype(tp).filter(|c| *c != CType::Void).ok_or_else(|| {
+            let what = if args.contains(&v) {
+                "parameter"
+            } else {
+                "local"
+            };
+            format!("{what} of type {}", type_word(tp))
+        })?;
+        shapes.push(c);
+    }
+    Ok(shapes)
+}
+
 /// The signature and the body of function `d`.
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
@@ -1883,36 +1923,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if args.len() != def.attributes().len() {
         return Err("parameters that do not match their arguments".into());
     }
-    let mut shapes = Vec::with_capacity(vars.count() as usize);
-    for v in 0..vars.count() {
-        // A `&` parameter has its target's shape, passed as a pointer to it.
-        let tp = match vars.tp(v).base() {
-            Type::RefVar(inner) => inner,
-            tp => tp,
-        };
-        // A name the first pass met before its declaration became a local of no type; the
-        // second pass resolved it, so nothing binds it and the scope pass never scoped it.
-        // It is declared as a placeholder nothing reads.
-        if tp.is_unknown() && !args.contains(&v) && vars.scope(v) == u16::MAX {
-            shapes.push(CType::Int);
-            continue;
-        }
-        // A local only ever bound to `null` (`x = null;`, never given a type) holds the
-        // integer null; nothing reads it as another kind.
-        if matches!(tp, Type::Null) && !args.contains(&v) {
-            shapes.push(CType::Int);
-            continue;
-        }
-        let c = cx.ctype(tp).filter(|c| *c != CType::Void).ok_or_else(|| {
-            let what = if args.contains(&v) {
-                "parameter"
-            } else {
-                "local"
-            };
-            format!("{what} of type {}", type_word(tp))
-        })?;
-        shapes.push(c);
-    }
+    let shapes = variable_shapes(cx, vars, &args)?;
     let params: Vec<String> = args
         .iter()
         .enumerate()
