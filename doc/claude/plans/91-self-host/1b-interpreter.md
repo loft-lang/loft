@@ -576,23 +576,29 @@ consumer.
 
 **The rule** (an addition to `(F-Package)`'s sentence, still purely positional):
 
-> A file in a directory named `tests` reads `#package` sharing as if it sat in the `src`
-> directory beside it.
+> A file anywhere inside a directory named `tests` (that directory or below it) reads
+> `#package` sharing as if it sat in the `src` directory beside that `tests`.
 
-So `pkg/tests/lower.loft` sees what `pkg/src/lower.loft` shares (`src/` is its directory) and
-what `pkg/src/interp/x.loft` shares (`src/` is the one above).  Nothing depends on a
+So `pkg/tests/lower.loft` and `pkg/tests/lowering/if.loft` both see what `pkg/src/lower.loft`
+shares (`src/` is its directory) and what `pkg/src/interp/x.loft` shares (`src/` is the one
+above).  The subtree is included because tests are not a layer (owner): nothing composes on
+top of a test, so depth inside `tests/` walls nothing off.  Among the `src/` modules the
+layering is unchanged.  Nothing depends on a
 `loft.toml`: `src/` and `tests/` are the package layout PACKAGES.md already fixes, and a
 directory that only happens to be called `tests` gains something only when a `src/` beside
 it holds a `#package` file.
 
 **Code point.**  `Data::shares_internals` (`src/data.rs`), the one home: before comparing
-places, a user directory whose last name is `tests` is replaced by its sibling `src`.  The
+places, a user directory inside a `tests` directory (the nearest ancestor so named, itself
+included) is replaced by that directory's sibling `src`.  The
 imports (`shared_with`) and the four refusal sites follow, because they ask it.
 
 **Matrix.**
 - `pkg/tests/t.loft` reading `pkg/src/a.loft` (`#package`): admitted.
 - `pkg/tests/t.loft` reading `pkg/src/interp/x.loft` (`#package`): admitted (one up).
-- `pkg/tests/sub/t.loft` reading `pkg/src/a.loft`: refused (`tests/sub` is not `tests`).
+- `pkg/tests/sub/t.loft` reading `pkg/src/a.loft`: admitted (the subtree of `tests`).
+- `pkg/src/tests/t.loft` reading `pkg/src/a.loft`: refused (a `tests` INSIDE `src` is a
+  subdirectory of `src`, and its sibling `src` does not exist).
 - `other/tests/t.loft` reading `pkg/src/a.loft`: refused (another package's tests).
 - `pkg/tests/t.loft` reading `pkg/src/a.loft` without `#package`: refused (C140).
 - End to end: `tests/pub_visibility.rs` builds and reads a private item from `pkg/tests/`.
