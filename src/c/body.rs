@@ -3501,8 +3501,8 @@ impl<'a> FnWriter<'a> {
         let mut xs = vec![String::new(); args.len()];
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
         let values = self.vr_args(args, values, dropped, &tuple_params, &mut xs, ind)?;
-        // A callee that keeps every store in place reads a text argument as a text VALUE op
-        // does — unless a store place goes to a `&` parameter, which its twin writes.
+        // A callee that runs no store write reads a text argument as a text VALUE op
+        // does (`@FR-F-ParamText`) — unless a store place goes to a `&` parameter, which its twin writes.
         let reads = places == 0 && cx.call_keeps_stores(d);
         self.value_args(args, &shapes, &values, &mut xs, reads, ind)?;
         if let Some(i) = dropped {

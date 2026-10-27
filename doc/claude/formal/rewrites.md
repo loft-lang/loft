@@ -2465,9 +2465,9 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  (`Output::text_value_unborrowed`).  A release emits no code on
                  native, so an early exit's does not end the text.
                  OPERAND CLAUSE: a text read `OpGetText(R, f)` that is an operand
-                 of a text VALUE op — or a `text` argument of a call whose callee
-                 claims, frees and rewrites no text in any store and is handed no
-                 store place at a `&` parameter — is a BORROW of the field for that
+                 of a text VALUE op — or a `text` argument of a call that runs no
+                 store write (F-ParamText) and hands no store place to a `&`
+                 parameter — is a BORROW of the field for that
                  op or call, provided no operand after it may write (a call, or a
                  block, that is not a pure operator).  R is evaluated where it
                  stands, in program order.  Nothing between the read and its use
@@ -2494,9 +2494,9 @@ buffer, so a backend that does not know what runs between the read and its use c
 claim, a copy and a release per read.  An op that reads its operands at once — a comparison,
 an append, a format, a print — needs no copy when nothing evaluated after the field can
 disturb it, and the `may_write` test that already decides whether a text VARIABLE operand is
-held decides that too.  A callee that keeps every store in place cannot disturb it while it
-runs; the verdict is `opt::writes::call_writes_store` / `in_place_only_writer`, the one
-`(R-Inputs)` holds a vector's base across a call on.  Native's operand is a `&str` read at
+held decides that too.  A callee that writes no store cannot disturb it while it runs; the
+verdict is `opt::writes::call_writes_store`, the one `(R-Inputs)` holds a vector's base
+across a call on.  Native's operand is a `&str` read at
 the op already; its argument is one too, but without the callee condition, which is
 `calls.md`'s open `D-call-31`.  The clause is built in the C: dryopea `mapfile_to_painted`
 −23 % instructions for the operand half (its palette scan compares a field per element) and

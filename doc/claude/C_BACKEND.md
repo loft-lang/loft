@@ -295,7 +295,7 @@ a `loft_str` view instead of an owned copy (`@FR-R-TextBorrow`,
 `opt::text_borrow::borrowed_text_walks` and the plain clause of `hoist::borrowed_store_texts`);
 a bind that would view a temporary is refused by name, never left dangling.  A text FIELD that
 is an operand of a comparison, an append, a format or a print, or the argument of a callee that
-keeps every store in place (`Cx::call_keeps_stores`), is read where the store holds it when no
+writes no store (`Cx::call_keeps_stores`), is read where the store holds it when no
 later operand may write (`FnWriter::text_reads`, R-TextBorrow's operand clause); every other
 field read copies (`LOFT_NO_FIELD_VIEW=1` copies them all).  A choice
 between such views or literals, as a discharge writes it, is the view it picks, and a

@@ -180,12 +180,6 @@ heap-returning tail discarded 800 000 times holds a flat resident size).
                    forwards the reference rather than dereferencing it, so the innermost
                    reassignment reaches the outermost caller at any depth.  A forwarder
                    therefore needs the `&` even though its own body never assigns.
-  (F-ParamText)    a `text` parameter is bound to the text its argument HAD AT THE CALL, as a
-                   scalar is: nothing the callee does to a store — growing it, freeing a
-                   record, rewriting the field the argument was read from — changes what the
-                   parameter reads.  Whether a backend copies the bytes or hands over a view of
-                   them is representation; a view is admissible only where the callee leaves
-                   the viewed store in place (rewrites.md R-TextBorrow's operand clause).
 ```
 
 **In words.** What a call can do to its arguments depends on the type. A **scalar** argument is
@@ -198,12 +192,6 @@ only rebinds the callee's local name; the caller keeps its value. To get write-b
 whole-value assignment, the parameter must be declared `&T` ([binding.md](binding.md)) — that is
 the one explicit channel. (Verified: `e.h=99` in a callee ⇒ caller sees `99`; `n=n+1` on a scalar
 ⇒ caller unchanged; `v=[9,9]` on a plain vector param ⇒ caller unchanged.)
-
-**A text argument is a value.** A `text` is not a heap parameter in `(F-ParamHeap)`'s sense:
-`f(w, w.rs[0].name)` hands `f` the name as it stood, and `f` growing `w.rs` or renaming
-`w.rs[0]` leaves its `s` unchanged.  `(F-ParamText)` says so because a text read out of a
-store is a slice of the store's buffer, and handing the slice on is the cheap form — correct
-only while the callee does not move that buffer.
 
 **A rebind need not be WRITTEN in the body it is local to.** `(F-ParamRebind)` is about the
 binding, not about the spelling: a plain heap parameter handed to a `&` parameter is rebound by
