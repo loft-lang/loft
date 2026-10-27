@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S1 kernel: the core of bench/01_fibonacci — calls and recursion.
+fn fib(n: integer) -> integer {
+  if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+  println("{fib(30)}");
+}

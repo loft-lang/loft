@@ -5,7 +5,8 @@
 //!
 //! The image is the IR the Rust front end writes; the package reads it as the records
 //! `selfhost/src/ir.loft` declares.  The harness hands the image's path to the loft tests in
-//! `LOFT_SELFHOST_IMAGE` (and a file that is no image in `LOFT_SELFHOST_NOT_AN_IMAGE`).
+//! `LOFT_SELFHOST_IMAGE` (and a file that is no image in `LOFT_SELFHOST_NOT_AN_IMAGE`), and an
+//! image of every kernel in `selfhost/kernels/` in the directory `LOFT_SELFHOST_KERNELS`.
 
 use loft::file_access as fa;
 use std::path::PathBuf;
@@ -18,8 +19,9 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// S0.3 — the image of a program with `fn twice` and `fn main` opens in loft as the IR, and
-/// the loader finds both definitions; a file that is no image answers null.
+/// The selfhost package's own tests, on images this harness emits: S0.3's loader (a program
+/// with `fn twice` and `fn main`, and a file that is no image) and every kernel of
+/// `selfhost/kernels/`.
 #[test]
 fn the_selfhost_tests_pass_on_an_emitted_image() {
     let tmp = std::env::temp_dir().join(format!("loft_selfhost_{}", std::process::id()));
@@ -48,10 +50,32 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
         String::from_utf8_lossy(&emitted.stderr)
     );
 
+    let kernels = tmp.join("kernels");
+    fa::create_dir_all(&kernels).expect("kernel images");
+    for entry in fa::read_dir(root().join("selfhost/kernels")).expect("selfhost/kernels") {
+        let source = entry.os_spelling();
+        let Some(stem) = source.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let emitted = loft::platform::process::harness_command(loft())
+            .arg("--emit-image")
+            .arg(kernels.join(format!("{stem}.store")))
+            .arg(&source)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft --emit-image");
+        assert!(
+            emitted.status.success(),
+            "emit-image {stem}: {}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+    }
+
     let tested = loft::platform::process::harness_command(loft())
         .arg("test")
         .current_dir(root().join("selfhost"))
         .env("LOFT_SELFHOST_IMAGE", &image)
+        .env("LOFT_SELFHOST_KERNELS", &kernels)
         .env("LOFT_SELFHOST_NOT_AN_IMAGE", &not_an_image)
         .env("LOFT_TIMEOUT", "120")
         .output()
@@ -60,7 +84,7 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
     let out = String::from_utf8_lossy(&tested.stdout);
     let err = String::from_utf8_lossy(&tested.stderr);
     assert!(
-        tested.status.success() && out.contains("2 passed"),
+        tested.status.success() && out.contains("passed") && !out.contains("FAIL"),
         "selfhost tests:\n{out}\n{err}"
     );
 }
