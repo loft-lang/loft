@@ -1333,6 +1333,15 @@ LOFT_HOT_INLINE int64_t loft_get_int(loft_ref r, uint32_t fld) {
     return v;
 }
 
+/* The bytes of record `r` for a run of scalar field writes (`@FR-R-ValueRecord`'s copy into a
+ * place): `loft_set_int`'s null test and write check once, and one address — 0 for the null
+ * record, which every write of the run skips as each setter would. */
+static uint8_t *loft_rec_w(loft_ref r) {
+    if (r.rec == 0) return 0;
+    LOFT_WRITE_CHECK(loft_store_of(r));
+    return loft_at(loft_store_of(r), r.rec, r.pos);
+}
+
 LOFT_HOT_INLINE void loft_set_int(loft_ref r, uint32_t fld, int64_t v) {
     if (r.rec == 0) return;
     LOFT_WRITE_CHECK(loft_store_of(r));
@@ -2708,6 +2717,15 @@ static void loft_vec_clear_release(const loft_tdesc *T, uint32_t loft_ntypes, lo
     /* A local bound to a view: the clear drops it, and the store is an ordinary empty one. */
     if (loft_st_is_foreign(s)) { loft_st_release_foreign(s); return; }
 #endif
+    /* A vector already empty — no block, or a block of length 0 — has nothing to release, and its
+     * clear is nothing (`v = []` on a vector that holds nothing).  An absent slot still takes the
+     * clear, which makes it the empty vector. */
+    uint32_t cur = loft_u32(s, v.rec, v.pos);
+    if (cur == 0) return;
+    if (cur != 0xFFFFFFFFu) {
+        uint32_t r0 = loft_collection_rec(s, v.rec, v.pos);
+        if (r0 != 0 && loft_u32(s, r0, 4) == 0) return;
+    }
     if (v.rec == 1) {
         uint16_t kt = s->known;
         int one_field = kt < loft_ntypes && T[kt].kind == LOFT_T_STRUCT && T[kt].n == 1;

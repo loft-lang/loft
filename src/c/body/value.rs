@@ -284,6 +284,37 @@ impl FnWriter<'_> {
         ind: usize,
     ) -> Result<(), String> {
         let layout = self.vr_layout(key)?;
+        // Scalar fields only: the destination resolved once (`loft_rec_w`) and each field
+        // written through it, where every setter would repeat the null test, the write check
+        // and the address.  A view part claims, which may move the store, so its layout keeps
+        // the setters.
+        let fields: Vec<(usize, i64, &str)> = layout
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, (off, _))| *off >= base && *off < end)
+            .map(|(i, (off, rt))| (i, *off - base, *rt))
+            .collect();
+        if fields.len() >= 2
+            && !fields
+                .iter()
+                .any(|(_, _, rt)| crate::opt::value_records::layout::is_view_part(rt))
+        {
+            self.line(
+                ind,
+                &format!("{{ uint8_t *loft_w = loft_rec_w({d}); if (loft_w) {{"),
+            );
+            for (i, at, rt) in fields {
+                let w = match rt {
+                    "f32" => format!("memcpy(loft_w + {at}, &{s}.f{i}, 4);"),
+                    "bool" => format!("loft_w[{at}] = (uint8_t) {s}.f{i};"),
+                    _ => format!("memcpy(loft_w + {at}, &{s}.f{i}, 8);"),
+                };
+                self.line(ind + 1, &w);
+            }
+            self.line(ind, "} }");
+            return Ok(());
+        }
         for (i, (off, rt)) in layout.fields.iter().enumerate() {
             if *off < base || *off >= end {
                 continue;
