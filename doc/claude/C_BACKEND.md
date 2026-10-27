@@ -34,8 +34,11 @@ python3 scripts/c_sweep.py --mode default      # one macro mode instead of all t
 python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
 python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's message, location
                                                #   and chain), the driver's `advice:` notes aside
-python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: CI splits the sweep
-                                               #   over linux-probe.yml runs (`-f run=…`)
+python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.yml's `c-sweep`
+                                               #   runs four shards per PR, miri.yml the
+                                               #   --poison and --asan sweeps nightly
+make c-sweep ARGS="…"                          # the release loft built first, then the sweep
+./scripts/find_problems.sh --subject c         # the C backend's guards (c_emit, c_https)
 python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
 python3 scripts/c_sweep.py --no-limit          # no kill at three times the last sweep's time
 LOFT_C_WHERE=1 loft --emit-c out.c prog.loft   # a refusal also prints the statement it met

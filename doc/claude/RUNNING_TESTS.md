@@ -355,7 +355,7 @@ gate.
 
 ### Subjects
 
-`parser scopes codegen runtime store wasm packages lsp sql docs host`, defined in
+`parser scopes codegen runtime store wasm packages lsp sql docs host winrules c`, defined in
 `scripts/test_subjects.sh` as binary-name **patterns**, not lists: a list is incomplete the day
 it is written, while a pattern picks up new binaries whose names match.  Patterns are expanded
 against the real binary list before nextest sees them, because nextest treats a pattern

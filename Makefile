@@ -606,7 +606,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: c-sweep gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -666,6 +666,9 @@ worst:  ## The worst routines of the last complete runs (interp-gap, perf-portal
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py --bless
+c-sweep:  ## The C backend against the interpreter over the corpus, three macro modes (@PLN203; ARGS="--shard 0/4", "--poison", "--asan", FILE…)
+	cargo build --release --bin loft -q
+	python3 scripts/c_sweep.py $(ARGS)
 decline-census:  ## Per rewrite rule: sites admitted vs refused, the refusals by reason (a report; ARGS="--record")
 	cargo build --release --bin loft -q
 	python3 scripts/decline_census.py $(ARGS)

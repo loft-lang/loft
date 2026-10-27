@@ -72,7 +72,7 @@ pattern_matches() {
   esac
 }
 
-SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host winrules'
+SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host winrules c'
 
 # Spelled as a case-function, not `declare -A`: macOS ships bash 3.2 as BOTH /bin/sh and
 # /bin/bash, which has no associative arrays — the array form made every `--subject` run on a
@@ -94,6 +94,9 @@ subject_patterns() {
     # @PLN184 Track W — the platform-sensitive set: `windows_rules` runs the file scripts under
     # the emulated Windows host itself; the rest are the file, directory and process families.
     (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =process_tree =windows_probe =sweep_ignored' ;;
+    # @PLN203 C8 — the C backend's own guards.  Its corpus reading is `scripts/c_sweep.py`
+    # (`make c-sweep`), which no test binary runs.
+    (c)         echo '=c_emit =c_https' ;;
     (*)        return 1 ;;
   esac
 }
@@ -130,6 +133,7 @@ subject_paths() {
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
     (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs' ;;
     (winrules) echo '^src/file_access/|^src/platform\.rs|^src/database/io\.rs|^src/database/loft_file\.rs|^src/state/io\.rs|^src/png_store\.rs' ;;
+    (c)        echo '^src/c/|^src/c_driver\.rs|^scripts/c_sweep\.py' ;;
     (*)        return 1 ;;
   esac
 }

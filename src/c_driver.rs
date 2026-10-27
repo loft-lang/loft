@@ -413,6 +413,15 @@ impl std::fmt::Display for BuildError {
     }
 }
 
+/// `cc` run to completion.  A deadline that falls in the compile names it (`blocked=`), as the
+/// rustc path does, rather than reading as `phase=parse`.
+fn run_cc(cmd: &mut Spawn) -> std::io::Result<loft::platform::process::Ran> {
+    loft::timeout::blocked_on("cc compiling the program");
+    let out = cmd.run(b"");
+    loft::timeout::unblocked();
+    out
+}
+
 /// How the unit's `link:` inputs reach the linker, placed as [`Placement`] says: the run paths
 /// to add to the flags, and the link arguments.  `binds`: the program opens the libraries its
 /// packages ship at start, so a `bound` library is not linked and a shim is linked whole into a
@@ -531,7 +540,7 @@ pub(crate) fn build(
     cmd.push_arg(&src).push_arg("-o").push_arg(&binary);
     cmd.push_args(&link_args);
     cmd.push_arg("-lm");
-    let out = cmd.run(b"");
+    let out = run_cc(&mut cmd);
     let keep = std::env::var_os("LOFT_KEEP_NATIVE_C").is_some();
     if !keep {
         let _ = fa::remove_file(&src);

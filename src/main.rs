@@ -4491,6 +4491,13 @@ fn exec_native_binary(
             |n| data.expect("checked").def(n).position().file.to_string(),
         );
     cmd.push_env("LOFT_NATIVE_MAIN_FILE", &main_file);
+    // The run bound is the whole run's, the compile included: the program gets what is left of
+    // it, so its own watchdog stops it gracefully (`deadline reached`, exit 124) before this
+    // driver — blocked in the wait below, with no checkpoint to stop at — reaches its hard kill
+    // and aborts with a crash report.  At least a second, because 0 disarms it.
+    if let Some(left) = loft::timeout::remaining() {
+        cmd.push_env("LOFT_TIMEOUT", left.as_secs().max(1).to_string());
+    }
     // @PLN195 — where the libraries this build linked are: the program binds them itself.
     if let Some(lib_path) = &lib_path {
         cmd.push_env("LOFT_LIB_PATH", lib_path);
@@ -4536,10 +4543,12 @@ fn exec_native_binary(
         std::process::exit(0);
     }
     let t_run = std::time::Instant::now();
+    loft::timeout::blocked_on("the compiled program");
     let run_status = cmd.status().unwrap_or_else(|e| {
         eprintln!("loft: failed to run native binary: {e}");
         std::process::exit(1);
     });
+    loft::timeout::unblocked();
     loft::platform::phase("run", t_run.elapsed().as_secs_f64());
     // Clean up temp binary (not the cached copy).
     //

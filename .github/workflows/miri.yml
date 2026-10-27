@@ -745,6 +745,34 @@ jobs:
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
+  c-sweep-unsound:
+    # @windows-exempt: a platform-independent invariant sweep of the C backend; its Windows reading is C8's MinGW/MSVC half
+    # @nightly-class: unsound — a store use-after-free, an unclaimed read or UB the C backend alone makes
+    name: C backend ${{ matrix.sweep }} sweep (${{ matrix.shard }}/4)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sweep: [poison, asan]
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold + sqlite
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libsqlite3-0
+      - name: Build the release loft binary
+        run: cargo build --release --bin loft
+      # @PLN203 C8 — `ci.yml`'s `c-sweep` compares answers; these read the C under the store's
+      # own falsifiers (`--poison`: a freed or unclaimed record reads as poison, against the
+      # interpreter under the same switch) and under AddressSanitizer + UBSan (`--asan`: any
+      # report is a defect), the two the PR leg does not run.
+      - name: Sweep this shard
+        run: python3 scripts/c_sweep.py --${{ matrix.sweep }} --shard ${{ matrix.shard }}/4
+
   poison-claim:
     # @windows-exempt: a platform-independent invariant sweep (unwritten claims); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a read of memory nothing wrote, hidden by zero-filled claims
