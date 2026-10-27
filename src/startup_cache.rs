@@ -604,6 +604,7 @@ pub fn warm_load_program(
 
 /// The files a program bundle's manifest hashes: every parsed source and the nearest
 /// `loft.toml` above each, sorted, without the stdlib's own files (the `stdk` line pins them).
+#[cfg(feature = "mmap")]
 fn hashed_sources(p: &Parser, default_dir: &str) -> Vec<String> {
     // The manifests decided which sources those were: a `[dependencies]` line removed or
     // repointed at a path that no longer resolves leaves every parsed source unchanged, and a
