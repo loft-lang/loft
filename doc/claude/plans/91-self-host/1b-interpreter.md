@@ -277,8 +277,58 @@ the design rather than loft.  The test is
   naming it through `schema_sidecar::dschema_path`, and their tests
   (`prune_dir_evicts_oldest_over_budget`, `stdlib_images_keep_the_newest_and_nothing_else`)
   assert that an evicted bundle's sidecar goes with it and a kept one's stays.
+- **Learned for later steps:** the cached image is taken after `scopes::check` AND after
+  `compile::close_program` (`src/main.rs:~10236`).  So "the same IR" is the IR after the
+  program-level rewrites too.  This matters for ownership.md's identical-IR boundary.
 - **Not run:** `ir_schema_roundtrip`, which the design named.  It never calls
   `save_bundle`, so it could not move.
+
+### S0.2 — `loft --emit-image <out.store> prog.loft` — DESIGNED, not built
+
+**What.**  A command that writes a program's IMAGE (the bundle exactly as the startup cache
+saves it, with its S0.1 sidecar) to a path the caller names, and runs nothing.  It is how a
+test, the loft-suite `selfhost` mode and the loft interpreter get the IR of any program.
+@PLN205 names the same artefact as the input of a backend that is a separate part, so this
+is its first spelling.  The name follows `--emit-c <out.c>`.
+
+**Code points.**
+- `src/main.rs:~7621` (beside `emit_c`): `let mut emit_image: Option<String>`; `:~7793`
+  (beside the `--emit-c` arm): parse `--emit-image <path>`, `native_mode = false`, as
+  `--emit-c` does.
+- `src/main.rs:~10213–10236`, the program cache's save point: under `--emit-image` the run
+  reaches the same state the cache saves (cold parse, `scopes::check`, `close_program`
+  under the same openness), then calls `ir_store::save_bundle(&p.data,
+  &p.database.types, out)` and exits 0.  The program cache is neither read nor written in
+  that run, so the image is always a fresh parse and the user's cache is untouched.
+- `src/main.rs: print_help` (`:~230`, beside `--native-emit`): one line.
+- `src/ir_store.rs: save_bundle`: reused as S0.1 left it.
+- Under a build without the `mmap` feature (the wasm build), `save_bundle` does not exist:
+  the flag is refused naming why.
+
+**Failure paths.**
+1. **The image is not the cache's image** (taken before `close_program`, or under another
+   openness): the "same IR" claim then means two different things.  The test compares the
+   emitted image byte for byte with the bundle the cache writes for the same program, in a
+   cache directory of its own (`XDG_CACHE_HOME`, `src/cache.rs: cache_base_dir`).
+2. **A program with errors**: the diagnostics print as for a run, the exit is non-zero,
+   and no file is written.
+3. **A path that cannot be written**: exit 1 naming the path, and nothing partial is left
+   (`save_bundle` writes through a temp file and renames).
+4. **The program runs anyway**, for example because a later mode switch overrides the
+   flag: the test's program prints, and the test asserts that stdout is empty.
+5. **`--emit-image` without a path**: refused, as `--emit-c` without one is.
+
+**Tests.**  A Rust test beside `tests/c_emit.rs` (`tests/emit_image.rs`) that runs the built
+binary:
+- path 1: the emitted image is byte-identical to the cache's, its sidecar exists, exit 0;
+- path 2: an erroring program exits non-zero and writes no file;
+- path 3: an unwritable path exits 1 and leaves nothing;
+- path 4: stdout is empty.
+
+Then the loft-side guard can exist: `tests/scripts/` cannot run a second process, so it
+belongs to S0.3, whose loader reads an image the test harness emits.
+
+**Not in this step:** the loader in loft (S0.3).
 
 ## The language for this job
 
