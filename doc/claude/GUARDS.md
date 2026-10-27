@@ -309,7 +309,7 @@ receipt does not say how to score it again is defective on its own terms.**
 | field | what it says | what its absence costs |
 |---|---|---|
 | **CHANNEL** | which channel carries the defect | a good patch and a bad one look identical |
-| **ARMED** | the instrument the measurement needs — asked only of a leak-class guard | an unarmed run gives a DIFFERENT channel, not a weaker one |
+| **ARMED** | the instrument the measurement needs — asked of a leak-class guard, and of a use-after-free guard whose stale read a plain run hides | an unarmed run gives a DIFFERENT channel, not a weaker one |
 | **WITNESS** | the concrete observation on the control — a value, a count, a leaked shape (`answers 99 where the file says 88`, `St1295×42`) | the re-read becomes a whole run instead of one comparison |
 | **HOLDS** | what must NOT move (*"every assertion passes on both trees"*) | the field that rejects a patch moving the wrong channel |
 
@@ -321,6 +321,13 @@ Write them as LABELLED lines — the canonical form:
 //   `falsify` requires HERE to be clean, so all four are clean on both.  The VALUE
 //   channel is the whole measurement here; a run scored on leaks would learn nothing.
 ```
+
+A guard whose defect is a stale read needs the instrument on EVERY run, not only when it is
+scored: a freed block keeps its old bytes until the allocator reuses it, so a plain run of the
+broken build answers right whenever an unrelated change moved the allocation order.  Such a
+guard also carries **`// @ARMED: LOFT_POISON=1`** in its header, and the per-commit runs set
+each `LOFT_X=v` on it — the language suite's runner on both lanes, `tests/native.rs` on the
+compiled program's run (a run-time switch only; the interpreter corpus is one process).
 
 Prose an older receipt already carries still counts, but the label is what makes the standard
 writable.  A label owns its wrapped continuation lines, and the leak-class test that decides
