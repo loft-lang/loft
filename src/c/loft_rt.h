@@ -556,17 +556,15 @@ static void loft_release_held(size_t floor) {
 #define LOFT_HOLD(n, ...) loft_text *const loft_hd[] = { __VA_ARGS__ }; loft_hold(loft_hd, n)
 #define LOFT_HOLD_MARK(m) size_t m = loft_nheld
 #define LOFT_HOLD_BACK(m) (loft_nheld = (m))
-#define LOFT_HELD_DEPTH() loft_nheld
 #define LOFT_RELEASE_HELD(floor) loft_release_held(floor)
+/* The depth a contained fault releases down to: the frames under the lazy driver keep theirs. */
+static LOFT_TLS size_t loft_lazy_held_floor = 0;
 #else
 #define LOFT_HOLD(n, ...) ((void) 0)
 #define LOFT_HOLD_MARK(m) ((void) 0)
 #define LOFT_HOLD_BACK(m) ((void) 0)
-#define LOFT_HELD_DEPTH() ((size_t) 0)
 #define LOFT_RELEASE_HELD(floor) ((void) 0)
 #endif
-/* The depth a contained fault releases down to: the frames under the lazy driver keep theirs. */
-static LOFT_TLS size_t loft_lazy_held_floor = 0;
 
 static void loft_fault_where(loft_str file, int64_t line);
 /* A fault inside a lazy driver is CONTAINED (`call_frames::in_lazy_driver`): it ends the driver,

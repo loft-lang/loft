@@ -717,19 +717,27 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
         volatile size_t depth = loft_nframes;
 #endif
         volatile int64_t answer = 0;
+#if defined(LOFT_HALT_RELEASE)
         volatile size_t held_outer = loft_lazy_held_floor;
+#endif
         if (setjmp(jb) == 0) {
             loft_lazy_jmp = &jb;
-            loft_lazy_held_floor = LOFT_HELD_DEPTH();
+#if defined(LOFT_HALT_RELEASE)
+            loft_lazy_held_floor = loft_nheld;
+#endif
             answer = driver(coll, loft_view(&b->source), key_int, key_text);
             loft_lazy_jmp = outer;
+#if defined(LOFT_HALT_RELEASE)
             loft_lazy_held_floor = held_outer;
+#endif
         } else {
             /* The driver faulted: the stores its abandoned frames made are freed (the teardown
              * the fault skipped, `lazy_watch_end`) — their texts went before the jump — and the
              * fault is the collection's failure. */
             loft_lazy_jmp = outer;
+#if defined(LOFT_HALT_RELEASE)
             loft_lazy_held_floor = held_outer;
+#endif
             for (uint32_t i = 0; i < loft_nstores; i++)
                 if (loft_stores[i].live && loft_stores[i].serial > serial0) {
                     loft_ref r = { (uint16_t) i, 0, 0 };
