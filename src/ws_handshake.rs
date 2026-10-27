@@ -7,8 +7,9 @@
 //! handshake, so it sits below both (@PLN191).  SHA-1 is inlined rather than pulling a crate
 //! for the one fixed-length hash; it is not a security boundary.
 
-/// Compute the `Sec-WebSocket-Accept` value: base64(sha1(key + the RFC 6455 GUID)).
-pub(crate) fn ws_accept_key(key: &str) -> String {
+/// Compute the `Sec-WebSocket-Accept` value: base64(sha1(key + the RFC 6455 GUID)).  Public for
+/// the test servers that answer a client's handshake (`tests/web_natives.rs`).
+pub fn ws_accept_key(key: &str) -> String {
     const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     let mut input = key.as_bytes().to_vec();
     input.extend_from_slice(GUID.as_bytes());

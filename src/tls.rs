@@ -17,7 +17,8 @@
 use std::sync::{Arc, OnceLock};
 
 /// The shared client config, built once per process: the platform store is read from disk.
-fn client_config() -> Arc<rustls::ClientConfig> {
+/// The web library's WebSocket client wraps its `wss://` sockets in it too.
+pub(crate) fn client_config() -> Arc<rustls::ClientConfig> {
     static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {

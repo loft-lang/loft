@@ -142,7 +142,9 @@ module and the C header and compare every answer and every byte of the store.
 | `loft_parse.h` | `T.parse(text)` and `T.parse(JsonValue)`: the walks into a type, read from the `loft_ptypes` table `parse.rs` writes, and the per-store `#errors` (`LOFT_PARSE`) |
 | `loft_io.h` | files and the filesystem |
 | `loft_lazy.h` | lazy stores: the bindings, their pins, the fault channel, the miss path (`LOFT_LAZY`) |
-| `loft_net.h` | whole-image loads over a URL: `file://`, HTTP/1.1, SHA-256 (`LOFT_NET`) |
+| `loft_https.h` | the client connection (a socket, TLS over it), the one HTTP/1.1 client, the WebSocket handshake's SHA-1 and accept key |
+| `loft_net.h` | loads over a URL: `file://`, an HTTP GET, a page by `Range`, SHA-256 (`LOFT_NET`) |
+| `loft_web.h` | the web library's natives: HTTP, a WebSocket client, the pack builder (`LOFT_WEB`) |
 | `deliver.rs` | `deliver(tag, value)`'s byte form: one walker per type the value reaches |
 
 ## The macro modes
@@ -522,7 +524,9 @@ the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and 
 by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
 native of its own binary.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
 drains every pipe, a child leads its own process group, the timeout stops the tree) and
-`lib/git` (`git_query`).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
+`lib/git` (`git_query`); `loft_web.h` carries the web library's natives (the HTTP client and a
+WebSocket client over the runtime's client connection, the pack builder; `src/web_client.rs` is
+the interpreter's twin, `tests/web_natives.rs` the guard).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
 the connector over WebSockets, the UDP state-sync channel, the events, ticks and `post`, the
 `D!:` debug channel answering as a build with no live tier, and `http_fetch` on a worker thread
 over the runtime's HTTP client (above).  Not carried, so refused by name: the

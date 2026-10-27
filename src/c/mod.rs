@@ -55,6 +55,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_lazy.h"),
     include_str!("loft_https.h"),
     include_str!("loft_net.h"),
+    include_str!("loft_web.h"),
     include_str!("loft_process.h"),
     include_str!("loft_engine.h")
 );
@@ -1707,6 +1708,9 @@ fn unit_defines(
     }) {
         out.push_str("#define LOFT_ENGINE 1\n");
     }
+    if runtimes.iter().any(|r| r.starts_with("loft_web_")) {
+        out.push_str("#define LOFT_WEB 1\n");
+    }
     out.push_str(&fetch_defines(data, reached, &runtimes, cx.lazy.get()));
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
@@ -1729,7 +1733,8 @@ fn unit_defines(
 
 /// A unit that fetches over a URL: `LOFT_NET` for the whole-image loads and for the paged loaders
 /// and lazy bindings, whose image may be an `http(s)://` one read by range (`loft_net.h`), and for
-/// any of them or `http_fetch` the TLS client its `https://` requests run over (`tls::unit_lines`).
+/// any of them, `http_fetch` or a web native the TLS client its `https://` and `wss://` requests
+/// run over (`tls::unit_lines`).
 fn fetch_defines(
     data: &Data,
     reached: &std::collections::HashSet<u32>,
@@ -1746,7 +1751,10 @@ fn fetch_defines(
     if loads {
         out.push_str("#define LOFT_NET 1\n");
     }
-    if loads || runtimes.contains(&"loft_kernel_http_fetch") {
+    if loads
+        || runtimes.contains(&"loft_kernel_http_fetch")
+        || runtimes.iter().any(|r| r.starts_with("loft_web_"))
+    {
         out.push_str(&tls::unit_lines());
     }
     out
@@ -2196,6 +2204,29 @@ fn c_binding_result(
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
+        // The web library's natives (`loft_web.h`; `src/web_client.rs` for the interpreter).
+        "n_http_do" => Some("loft_web_http_do"),
+        "n_http_body" => Some("loft_web_http_body"),
+        "n_http_headers" => Some("loft_web_http_headers"),
+        "n_http_head_size" => Some("loft_web_http_head_size"),
+        "n_ws_connect" => Some("loft_web_ws_connect"),
+        "n_ws_client_send" => Some("loft_web_ws_client_send"),
+        "n_ws_client_send_binary" => Some("loft_web_ws_client_send_binary"),
+        "n_ws_client_recv" => Some("loft_web_ws_client_recv"),
+        "n_ws_client_message" => Some("loft_web_ws_client_message"),
+        "n_ws_client_opcode" => Some("loft_web_ws_client_opcode"),
+        "n_ws_client_close" => Some("loft_web_ws_client_close"),
+        "n_sleep_ms" => Some("loft_web_sleep_ms"),
+        "n_pack_reset" => Some("loft_web_pack_reset"),
+        "n_pack_u8" => Some("loft_web_pack_u8"),
+        "n_pack_u16_le" => Some("loft_web_pack_u16_le"),
+        "n_pack_u32_le" => Some("loft_web_pack_u32_le"),
+        "n_pack_take" => Some("loft_web_pack_take"),
+        "n_byte_at" => Some("loft_web_byte_at"),
+        "n_ws_group_clear" => Some("loft_web_ws_group_clear"),
+        "n_ws_group_add" => Some("loft_web_ws_group_add"),
+        "n_ws_group_poll" => Some("loft_web_ws_group_poll"),
+        "n_frame_yield" => Some("loft_web_frame_yield"),
         "n_git_query" => Some("loft_git_query"),
         // `lib/engine_host`'s kernel (`loft_engine.h`).  Its build swap and background rebuild
         // (`swap_world`, `swap_start`, `rebuild_*`) are not carried: a unit that calls one refuses.

@@ -305,66 +305,6 @@ static int loft_eh_read_head(int fd, loft_text *head) {
     return 1;
 }
 
-/* SHA-1 (RFC 3174), for the WebSocket accept key alone. */
-static void loft_eh_sha1(const uint8_t *data, size_t n, uint8_t out[20]) {
-    uint32_t h[5] = { 0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u };
-    size_t total = ((n + 8) / 64 + 1) * 64;
-    uint8_t *m = (uint8_t *) calloc(total, 1);
-    if (!m) { fputs("loft: out of memory\n", stderr); abort(); }
-    memcpy(m, data, n);
-    m[n] = 0x80;
-    uint64_t bits = (uint64_t) n * 8;
-    for (int i = 0; i < 8; i++) m[total - 1 - i] = (uint8_t) (bits >> (8 * i));
-    for (size_t c = 0; c < total; c += 64) {
-        uint32_t w[80];
-        for (int i = 0; i < 16; i++)
-            w[i] = (uint32_t) m[c + 4 * i] << 24 | (uint32_t) m[c + 4 * i + 1] << 16 | (uint32_t) m[c + 4 * i + 2] << 8 |
-                   m[c + 4 * i + 3];
-        for (int i = 16; i < 80; i++) {
-            uint32_t x = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
-            w[i] = x << 1 | x >> 31;
-        }
-        uint32_t a = h[0], b = h[1], cc = h[2], d = h[3], e = h[4];
-        for (int i = 0; i < 80; i++) {
-            uint32_t f, k;
-            if (i < 20) { f = (b & cc) | (~b & d); k = 0x5A827999u; }
-            else if (i < 40) { f = b ^ cc ^ d; k = 0x6ED9EBA1u; }
-            else if (i < 60) { f = (b & cc) | (b & d) | (cc & d); k = 0x8F1BBCDCu; }
-            else { f = b ^ cc ^ d; k = 0xCA62C1D6u; }
-            uint32_t t = (a << 5 | a >> 27) + f + e + k + w[i];
-            e = d;
-            d = cc;
-            cc = b << 30 | b >> 2;
-            b = a;
-            a = t;
-        }
-        h[0] += a; h[1] += b; h[2] += cc; h[3] += d; h[4] += e;
-    }
-    free(m);
-    for (int i = 0; i < 5; i++)
-        for (int j = 0; j < 4; j++) out[4 * i + j] = (uint8_t) (h[i] >> (24 - 8 * j));
-}
-
-/* `ws_handshake::ws_accept_key`: base64(SHA-1(key + the RFC 6455 GUID)). */
-static void loft_eh_accept_key(const char *key, size_t kn, char out[29]) {
-    static const char guid[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    uint8_t in[256], d[20];
-    size_t n = kn < 200 ? kn : 200;
-    memcpy(in, key, n);
-    memcpy(in + n, guid, sizeof guid - 1);
-    loft_eh_sha1(in, n + sizeof guid - 1, d);
-    size_t o = 0;
-    for (int i = 0; i < 20; i += 3) {
-        uint32_t v = (uint32_t) d[i] << 16 | (i + 1 < 20 ? (uint32_t) d[i + 1] << 8 : 0) | (i + 2 < 20 ? d[i + 2] : 0);
-        out[o++] = b64[(v >> 18) & 63];
-        out[o++] = b64[(v >> 12) & 63];
-        out[o++] = i + 1 < 20 ? b64[(v >> 6) & 63] : '=';
-        out[o++] = i + 2 < 20 ? b64[v & 63] : '=';
-    }
-    out[o] = 0;
-}
-
 /* Upgrade a freshly accepted stream: read the request head (bounded), answer the handshake, the
  * cookie riding the 101 as `X-Loft-UDP` when there is one.  0 drops the connection. */
 static int loft_eh_ws_upgrade(int fd, const char *cookie) {
@@ -377,7 +317,7 @@ static int loft_eh_ws_upgrade(int fd, const char *cookie) {
     int upgrade = ok && loft_http_header(&head, "upgrade", &v, &vn) && vn == 9 && strncasecmp(v, "websocket", 9) == 0;
     char accept[29];
     if (upgrade && loft_http_header(&head, "sec-websocket-key", &v, &vn)) {
-        loft_eh_accept_key(v, vn, accept);
+        loft_ws_accept_key(v, vn, accept);
     } else {
         upgrade = 0;
     }

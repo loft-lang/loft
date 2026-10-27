@@ -458,7 +458,10 @@ pub mod serve;
 pub mod startup_cache;
 #[cfg(any(feature = "registry", feature = "remote-store"))]
 pub(crate) mod tls;
+// @PLN203 — the natives behind the web library (`[native] in_binary = true`).
 pub mod wasm_debug;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod web_client;
 // @PLAN12 phase 3.5a (2026-05-24) — re-export `extensions::native_call`
 // at the crate root so generated native code can write
 // `use loft::native_call;` without coupling to the extensions module.

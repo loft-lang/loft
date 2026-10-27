@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: counts the Rust writer's pooled mints — its `--native` runs as `--native-rust`.
 //! @PLN164 B1b (`@FR-O-Buffer`, `@FR-R-Reuse`, `@FR-O-Move`) — A CALLEE HANDED A LIVE BUFFER.
 //! The caller's record-buffer pool takes the buffer of a call whose result a local adopts, so
 //! a callee that promotes a local onto its buffer is handed the caller's store.  The cell
@@ -238,7 +239,7 @@ fn an_inline_container_over_an_adopting_callee_is_released() {
     // And with the adopt switched off (`(R-Switch)`'s off form copies): the temp still OWNS
     // what the call answered, so it is still hoisted and released (loft#1704).
     for env in [&[][..], &[("LOFT_NO_ADOPT_FIRST_BIND", "1")][..]] {
-        for mode in ["--interpret", "--native"] {
+        for mode in ["--interpret", "--native-rust"] {
             let mut cmd = loft();
             cmd.arg(mode)
                 .arg(cells())
@@ -281,7 +282,7 @@ fn a_chain_of_chains_adopts_its_callees_answer() {
         "outer: the chain's answer is adopted"
     );
     let _ = fa::remove_file(&out);
-    for mode in ["--interpret", "--native"] {
+    for mode in ["--interpret", "--native-rust"] {
         let mut cmd = loft();
         cmd.arg(mode)
             .arg(&guard)
@@ -323,7 +324,10 @@ fn the_store_census_drops() {
     // interpreter, native unchanged.  The three fixes are not the movers — the count is the
     // same with the branch-sink narrowed to frame-owned borrows and with it wide — so the
     // rise is the joined rewrites' (`make interp-gap` is the report that attributes it).
-    let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
+    let (n_on, n_off) = (
+        store_mints("--native-rust", &[]),
+        store_mints("--native-rust", OFF),
+    );
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),

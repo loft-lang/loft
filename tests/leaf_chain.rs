@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: a frameless helper is the Rust writer's leaf inlining — its `--native` runs as `--native-rust`.
 //! `@FR-R-LeafChain` — in the lean tier (`--ship`) a function whose whole call
 //! tree is frameless carries no prelude: no depth entry and no fn-ref buffer guard.  Every
 //! user function it reaches has a loft body, none is on a cycle, and none calls a fn-ref.
@@ -256,7 +257,7 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native", "--ship"] {
+        for mode in ["--native-rust", "--ship"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
             assert_eq!(
@@ -305,7 +306,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native", "--ship"] {
+        for mode in ["--native-rust", "--ship"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
             assert_eq!(
@@ -331,7 +332,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     )
     .expect("write the probe");
     let expected = "frame main\nframe t_1P_show\nframe t_1P_show\nframe t_1P_show\n9\n";
-    for mode in ["--interpret", "--native"] {
+    for mode in ["--interpret", "--native-rust"] {
         let res = loft(&[mode, &prog.to_string_lossy()], &[]);
         assert_eq!(
             String::from_utf8_lossy(&res.stdout),

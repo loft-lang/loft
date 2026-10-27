@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: the Rust emitter's own output — its native runs name `--native-rust`.
 
 //! Plan 09 phase 00 step 0.8 — emitter dispatch validation suite.
 //!
@@ -597,6 +598,7 @@ fn p244_text_native_wrapper_compiles_under_native() {
     // Direct binary invocation — see p203_reproducer_passes_under_native
     // for the nested-cargo race rationale.
     let status = loft::platform::process::harness_command(loft_binary())
+        .arg("--native-rust")
         .arg("tests/integration/p244_smoke.loft")
         .current_dir(project_root())
         .status()

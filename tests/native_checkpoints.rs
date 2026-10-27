@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: LOFT_NATIVE_CHECKPOINTS is the Rust runtime's report — its `--native` runs as `--native-rust`.
 //! `LOFT_NATIVE_CHECKPOINTS` — the per-OPERATOR instrument the generator writes into the
 //! emitted Rust, for the cases a sampler cannot reach (a stripped binary, a box without
 //! `perf`, wasm).  Three things are pinned here, because each one is a way the instrument
@@ -81,7 +82,7 @@ fn count_mode_counts_the_loop_exactly() {
     fa::create_dir_all(&dir).expect("scratch dir");
     let src = write_src(&dir);
     let o = loft()
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&src)
         .env("LOFT_NATIVE_CHECKPOINTS", "count")
         .output()
@@ -117,7 +118,7 @@ fn sites_name_the_loft_function_the_operator_was_written_in() {
     fa::create_dir_all(&dir).expect("scratch dir");
     let src = write_src(&dir);
     let o = loft()
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&src)
         .env("LOFT_NATIVE_CHECKPOINTS", "count")
         .output()

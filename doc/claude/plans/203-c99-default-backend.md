@@ -146,8 +146,14 @@ the `#rust` templates and NATIVE.md's rustc content go to history.
 
 - The memory model stays loft's ([@PLN200 B5](200-backend-structure.md), owner): the C
   runtime ports `store.rs` and the keyed layouts, never its own.
-- A library's native part is ANSI C the package ships (`[c] shim`), vendored and audited where
-  one exists (crypto's BearSSL and Monocypher), written by hand only where none fits (the
-  regex engine), and in loft wherever loft can express it — the C backend then writes the C.
+- No library keeps a Rust crate (owner, 2026-10-27).  A library's native part is ANSI C the
+  package ships (`[c] shim`), vendored and audited where one exists (crypto's BearSSL and
+  Monocypher), written by hand only where none fits (the regex engine), and in loft wherever
+  loft can express it — the C backend then writes the C.  The networking libraries are the
+  exception: their natives live in loft's binary (`[native] in_binary = true`, as `lib/process`
+  and `engine_host`'s do), over the HTTP client, TLS and WebSocket code each runtime already
+  carries, so the package ships loft source alone — `web` first (`src/web_client.rs`,
+  `src/c/loft_web.h`), `server` next.  The cost, accepted: a fix to their native part ships
+  with a loft release.
 - Compilers: `cc` for the host, `clang` for wasm32 (`LOFT_WASM_CC`); gcc has no wasm backend
   and the small C compilers have none, so there is no third choice to design for.

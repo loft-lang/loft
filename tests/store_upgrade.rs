@@ -302,6 +302,7 @@ fn cell_dir(name: &str) -> std::path::PathBuf {
 /// Run `loft <args>` in `dir`; (exit code, stdout, stderr).
 fn run_loft(dir: &std::path::Path, args: &[&str]) -> (i32, String, String) {
     let out = loft::platform::process::harness_command(loft_bin())
+        .env_remove("LOFT_NATIVE_BACKEND")
         .args(args)
         .current_dir(dir)
         .env("LOFT_TIMEOUT", "120")
@@ -882,6 +883,7 @@ fn a_reference_into_another_store_refuses_the_write() {
     let dir = cell_dir("ref_foreign");
     loft::file_access::write(dir.join("a.loft"), &writer).unwrap();
     let out = loft::platform::process::harness_command(loft_bin())
+        .env_remove("LOFT_NATIVE_BACKEND")
         .arg("a.loft")
         .current_dir(&dir)
         .env("LOFT_TIMEOUT", "120")
@@ -1214,6 +1216,7 @@ fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
     let lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("lib");
     for mode in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(loft_bin())
+            .env_remove("LOFT_NATIVE_BACKEND")
             .args([mode, "--lib"])
             .arg(&lib)
             .arg("b.loft")
@@ -1252,6 +1255,7 @@ fn cell_a_rebuild_checks_the_running_world_before_it_compiles() {
         let file = format!("{name}.loft");
         args.push(&file);
         let out = loft::platform::process::harness_command(loft_bin())
+            .env_remove("LOFT_NATIVE_BACKEND")
             .args(&args)
             .current_dir(&dir)
             .env("LOFT_TIMEOUT", "120")
@@ -1639,6 +1643,7 @@ fn cell_a_rebuild_decides_the_routine_by_the_worlds_release() {
         }
         args.push("next.loft");
         let out = loft::platform::process::harness_command(loft_bin())
+            .env_remove("LOFT_NATIVE_BACKEND")
             .args(&args)
             .current_dir(&dir)
             .env("LOFT_TIMEOUT", "120")

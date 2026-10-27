@@ -481,6 +481,13 @@ long loft_tls_read(struct loft_tls *t, void *buf, size_t n) {
 }
 
 /* All `n` bytes sent and flushed: 1, else 0. */
+/* Does the session hold decrypted application data a read returns without waiting?  A poller
+ * asks this before waiting on the socket, because a record already read off it is not there. */
+int loft_tls_pending(struct loft_tls *t) {
+    size_t len = 0;
+    return (br_ssl_engine_current_state(&t->sc.eng) & BR_SSL_RECVAPP) && br_ssl_engine_recvapp_buf(&t->sc.eng, &len) && len > 0;
+}
+
 int loft_tls_write_all(struct loft_tls *t, const void *buf, size_t n) {
     return br_sslio_write_all(&t->io, buf, n) == 0 && br_sslio_flush(&t->io) == 0;
 }

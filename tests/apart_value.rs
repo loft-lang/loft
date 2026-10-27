@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: reads the Rust writer's apart-value reports — its `--native` runs as `--native-rust`.
 //! `@FR-R-Apart` instance 2 — which functions have an apart twin and which bodies hold apart
 //! values, PINNED on the cells (`tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft`).
 //! The cells' values hold either way, so only this pin sees an admission move.  The plan is
@@ -243,7 +244,7 @@ fn inline_bodies(tier: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
 
 #[test]
 fn the_inline_buffers_are_where_the_cells_say() {
-    for tier in ["--native", "--ship"] {
+    for tier in ["--native-rust", "--ship"] {
         assert_eq!(
             inline_bodies(tier, &[], "on"),
             INLINE,
@@ -251,14 +252,14 @@ fn the_inline_buffers_are_where_the_cells_say() {
         );
     }
     assert!(
-        inline_bodies("--native", &[("LOFT_NO_APART_VECTOR", "1")], "off").is_empty(),
+        inline_bodies("--native-rust", &[("LOFT_NO_APART_VECTOR", "1")], "off").is_empty(),
         "LOFT_NO_APART_VECTOR=1 must hold no vector inline"
     );
 }
 
 #[test]
 fn the_vector_cells_hold_with_the_rule_off() {
-    for tier in ["--native", "--ship"] {
+    for tier in ["--native-rust", "--ship"] {
         let out = loft()
             .env("LOFT_NO_APART_VECTOR", "1")
             .arg(tier)
@@ -285,7 +286,9 @@ fn an_inline_buffer_reports_an_index_out_of_range_as_the_store_does() {
     .expect("write the probe");
     let run = |on: bool| {
         let mut cmd = loft();
-        cmd.arg("--native").arg(&src).env("LOFT_DEV_SOFT_HALT", "1");
+        cmd.arg("--native-rust")
+            .arg(&src)
+            .env("LOFT_DEV_SOFT_HALT", "1");
         if !on {
             cmd.env("LOFT_NO_APART_VECTOR", "1");
         }

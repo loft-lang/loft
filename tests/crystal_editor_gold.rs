@@ -198,6 +198,7 @@ fn crystal_editor_gl_matches_gold() {
     let shot = PathBuf::from("/tmp/crystal_editor_gold.png");
     let _ = fa::remove_file(&shot);
     let out = loft::platform::process::harness_command("xvfb-run")
+        .env_remove("LOFT_NATIVE_BACKEND")
         .args([
             "-a",
             "-s",

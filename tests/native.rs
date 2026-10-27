@@ -4964,6 +4964,7 @@ fn native_library_suite() -> std::io::Result<()> {
 /// skips cleanly when `rustc` / the loft rlib are unavailable, like the other
 /// native suites.
 #[test]
+// @PLN203 rust-writer: the `[native] crate` mechanism, which the C does not bridge (it waits for the library's own C)
 fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
@@ -4976,7 +4977,7 @@ fn native_crate_package_links_and_runs_via_cabi() -> std::io::Result<()> {
     let pkg_dir = Path::new("tests/lib/native_scalar_pkg");
 
     // --native: the C-ABI exec path (the path @PLN26 phase 4's Windows arm extends).
-    let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "answer", &["--native"])?;
+    let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "answer", &["--native-rust"])?;
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -5055,6 +5056,7 @@ fn a_library_calling_its_native_package_loads_compiled() -> std::io::Result<()> 
 /// library — so the byte check below can fail.  The fixture's two answers are its ABI oracle:
 /// 42, and -1, which a narrowed return would bring back as 4294967295.
 #[test]
+// @PLN203 rust-writer: @PLN195's link modes over a the `[native] crate` mechanism, which the C does not bridge (it waits for the library's own C)
 fn a_static_link_ships_one_file_that_runs_alone() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
@@ -5082,7 +5084,7 @@ fn a_static_link_ships_one_file_that_runs_alone() -> std::io::Result<()> {
             ),
         )?;
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            .args(["--native", "--check", "--lib"])
+            .args(["--native-rust", "--check", "--lib"])
             .arg(&lib_dir)
             .arg(&program)
             .env("LOFT_CHECK_ARTIFACT", "1")
@@ -5136,6 +5138,7 @@ fn a_static_link_ships_one_file_that_runs_alone() -> std::io::Result<()> {
 /// beside a DIFFERENT version, the run must fail naming the package, the version and the
 /// directories searched.  The binary must not name the directory its library was built in.
 #[test]
+// @PLN203 rust-writer: @PLN195's link modes over a the `[native] crate` mechanism, which the C does not bridge (it waits for the library's own C)
 fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
@@ -5163,7 +5166,7 @@ fn a_dynamic_program_finds_its_libraries_where_loft_looks() -> std::io::Result<(
     )?;
     let dist = root.join("dist");
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .args(["--ship", "--dynamic", "--lib"])
+        .args(["--ship", "--native-rust", "--dynamic", "--lib"])
         .arg(&lib_dir)
         .arg("--out")
         .arg(&dist)
@@ -5464,6 +5467,7 @@ fn a_shipped_c_library_travels_with_the_program() -> std::io::Result<()> {
 /// Serialises via `native_suite_lock` and skips cleanly without `rustc` / the
 /// loft rlib, like the other native suites.
 #[test]
+// @PLN203 rust-writer: a remapped symbol of a the `[native] crate` mechanism, which the C does not bridge (it waits for the library's own C)
 fn remapped_native_symbol_resolves_to_its_implementation_on_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
@@ -5478,7 +5482,7 @@ fn remapped_native_symbol_resolves_to_its_implementation_on_both_backends() -> s
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let pkg_dir = Path::new("tests/lib/native_remap_pkg");
 
-    for backend in ["--native", "--interpret"] {
+    for backend in ["--native-rust", "--interpret"] {
         let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, "remap", &[backend])?;
         let combined = format!(
             "{}{}",
@@ -5511,6 +5515,7 @@ fn remapped_native_symbol_resolves_to_its_implementation_on_both_backends() -> s
 /// Serialises via `native_suite_lock`; skips cleanly without `rustc` / the loft
 /// rlib, like the other native suites.
 #[test]
+// @PLN203 rust-writer: the imaging fixture's natives are a Rust crate, which the C does not bridge (it waits for the library's own C)
 fn imaging_fixture_png_roundtrip_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
@@ -5522,7 +5527,7 @@ fn imaging_fixture_png_roundtrip_both_backends() -> std::io::Result<()> {
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let pkg_dir = Path::new("tests/fixtures/libs/imaging");
     for stem in ["14-image", "15-regression"] {
-        for mode in ["--native", "--interpret"] {
+        for mode in ["--native-rust", "--interpret"] {
             let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, stem, &[mode])?;
             let combined = format!(
                 "{}{}",
