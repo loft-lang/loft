@@ -1180,6 +1180,79 @@ static void loft_hkey_sort(loft_hkey *a, size_t n, int nk, int depth) {
     }
 }
 
+/* A key that keeps its order as ONE unsigned 64-bit value, with its entry's place: the sort's
+ * item where the key packs (`loft_hkey_pack`), a single compare per step and 16 bytes moved. */
+typedef struct { uint64_t k; uint32_t pos; } loft_hk1;
+
+static void loft_hk1_sift(loft_hk1 *a, size_t root, size_t n) {
+    for (;;) {
+        size_t c = root * 2 + 1;
+        if (c >= n) return;
+        if (c + 1 < n && a[c].k < a[c + 1].k) c++;
+        if (!(a[root].k < a[c].k)) return;
+        loft_hk1 t = a[root]; a[root] = a[c]; a[c] = t;
+        root = c;
+    }
+}
+
+/* `loft_hkey_sort` over packed keys: the same introsort. */
+static void loft_hk1_sort(loft_hk1 *a, size_t n, int depth) {
+    while (n > 16) {
+        if (depth-- == 0) {
+            for (size_t i = n / 2; i-- > 0;) loft_hk1_sift(a, i, n);
+            for (size_t e = n - 1; e > 0; e--) {
+                loft_hk1 t = a[0]; a[0] = a[e]; a[e] = t;
+                loft_hk1_sift(a, 0, e);
+            }
+            return;
+        }
+        size_t mid = n / 2;
+        if (a[mid].k < a[0].k) { loft_hk1 t = a[mid]; a[mid] = a[0]; a[0] = t; }
+        if (a[n - 1].k < a[0].k) { loft_hk1 t = a[n - 1]; a[n - 1] = a[0]; a[0] = t; }
+        if (a[n - 1].k < a[mid].k) { loft_hk1 t = a[n - 1]; a[n - 1] = a[mid]; a[mid] = t; }
+        uint64_t pivot = a[mid].k;
+        size_t i = 0, j = n - 1;
+        for (;;) {
+            while (a[i].k < pivot) i++;
+            while (pivot < a[j].k) j--;
+            if (i >= j) break;
+            loft_hk1 t = a[i]; a[i] = a[j]; a[j] = t;
+            i++;
+            j--;
+        }
+        size_t left = j + 1;
+        if (left < n - left) {
+            loft_hk1_sort(a, left, depth);
+            a += left;
+            n -= left;
+        } else {
+            loft_hk1_sort(a + left, n - left, depth);
+            n = left;
+        }
+    }
+    for (size_t i = 1; i < n; i++) {
+        loft_hk1 t = a[i];
+        size_t j = i;
+        while (j > 0 && t.k < a[j - 1].k) { a[j] = a[j - 1]; j--; }
+        a[j] = t;
+    }
+}
+
+/* The key parts of `p` as one unsigned value in the same order — one part with its sign bit
+ * flipped, two parts that each fit 32 bits flipped the same way and packed high and low — or 0
+ * where they do not (a third part, a wider value, a null, which sorts first as INT64_MIN). */
+static int loft_hkey_pack(const loft_hkey *p, int nk, uint64_t *out) {
+    if (nk == 1) {
+        *out = (uint64_t) p->k[0] ^ UINT64_C(0x8000000000000000);
+        return 1;
+    }
+    if (nk == 2 && p->k[0] >= INT32_MIN && p->k[0] <= INT32_MAX && p->k[1] >= INT32_MIN && p->k[1] <= INT32_MAX) {
+        *out = (uint64_t) ((uint32_t) p->k[0] ^ 0x80000000u) << 32 | (uint64_t) ((uint32_t) p->k[1] ^ 0x80000000u);
+        return 1;
+    }
+    return 0;
+}
+
 static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int nk, uint32_t *n) {
     if (nk < 1 || nk > 4 || c.store_nr == 0xFFFF || c.rec == 0) return 0;
     for (int i = 0; i < nk; i++) {
@@ -1200,20 +1273,32 @@ static loft_ref *loft_hash_sorted_inline(loft_ref c, const loft_key *keys, int n
         loft_hkey *p = &pairs[live++];
         p->pos = e0 + at * h.stride;
         for (int i = 0; i < nk; i++) {
-            int64_t v = loft_key_get(s, claim, p->pos, &keys[i]).i;
+            /* An `integer` or `long` part is the 8 bytes where the key lies. */
+            int t = keys[i].type < 0 ? -keys[i].type : keys[i].type;
+            int64_t v;
+            if (t == 1 || t == 2) memcpy(&v, loft_at(s, claim, p->pos + keys[i].pos), 8);
+            else v = loft_key_get(s, claim, p->pos, &keys[i]).i;
             p->k[i] = keys[i].type < 0 ? ~v : v;
         }
     }
     int depth = 2;
     for (uint32_t m = live; m > 1; m >>= 1) depth += 2;
-    loft_hkey_sort(pairs, live, nk, depth);
     loft_ref *out = (loft_ref *) malloc(((size_t) live + 1) * 2 * sizeof *out);
     if (!out) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_hk1 *one = nk <= 2 ? (loft_hk1 *) malloc(((size_t) live + 1) * sizeof *one) : 0;
+    int packed = one != 0;
+    for (uint32_t i = 0; i < live && packed; i++) {
+        packed = loft_hkey_pack(&pairs[i], nk, &one[i].k);
+        one[i].pos = pairs[i].pos;
+    }
+    if (packed) loft_hk1_sort(one, live, depth);
+    else loft_hkey_sort(pairs, live, nk, depth);
     for (uint32_t i = 0; i < live; i++) {
         out[i].store_nr = c.store_nr;
         out[i].rec = claim;
-        out[i].pos = pairs[i].pos;
+        out[i].pos = packed ? one[i].pos : pairs[i].pos;
     }
+    free(one);
     free(pairs);
     *n = live;
     return out;
