@@ -608,6 +608,7 @@
 18_consumer_crawler	-	R-SplitTable	1
 18_consumer_crawler	-	R-TextBorrow	31
 18_consumer_crawler	-	R-TextClear	63
+18_consumer_crawler	-	R-TextLen	2
 18_consumer_crawler	-	R-TypedKeyed/compound	1
 18_consumer_crawler	-	R-TypedRead	2
 18_consumer_crawler	-	R-ValueLocal	3
