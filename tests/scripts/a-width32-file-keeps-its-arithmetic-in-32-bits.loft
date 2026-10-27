@@ -1,0 +1,74 @@
+#width 32
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN204 — in a `#width 32` file a plain `integer` is an `i32` and a plain `float` a `single`,
+// and an expression on 32-bit values stays 32-bit: a result outside the `i32` range reads null
+// (WIDTH32.md).  `i64` / `123l` and `f64` / `2.5d` keep 64 bits.  Each cell's value is
+// hand-computed in its comment; the interpreter, `--native` and `--native-c` must all answer it.
+//
+// @falsified-at: hand-measured (control, 2026-10-27) — the same cells without the `#width 32`
+// line, each printed rather than asserted, on the interpreter: c1 c2 c3 c4 c5 c9 c10 c11 c11b
+// fail (c1 reads 2147483648); c2b c4a c5a c6 c7 c8 c9b hold, as they guard the 64-bit side.
+// c12 is scored against the build before the generic's result was narrowed: `sum(big)` read
+// 4000000000 in an `i32`.
+
+struct P { x: integer, y: integer }
+
+fn sum_to(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { t += i; }
+  t
+}
+
+fn main() {
+  // c1: i32::MAX + 1 leaves the range.
+  a = 2147483647;
+  b = a + 1;
+  assert(b == null, "c1 {b}");
+  // c2: 46341 * 46341 = 2147488281 > i32::MAX; 46340 * 46340 = 2147395600 fits.
+  x = 46341;
+  y = 46340;
+  assert(x * x == null, "c2 {x * x}");
+  assert(y * y == 2147395600, "c2b {y * y}");
+  // c3: unary minus stays 32-bit, so -2147483647 - 1 reaches the null code.
+  q = -2147483647;
+  r = q - 1;
+  assert(r == null, "c3 {r}");
+  // c4: a shift past bit 30.
+  k = 1 << 30;
+  assert(k == 1073741824, "c4a {k}");
+  assert(1 << 31 == null, "c4 {1 << 31}");
+  // c5: a compound step in a loop: 0+1+..+69999 = 2449965000 overflows on the way; 0..4 is 6.
+  assert(sum_to(4) == 6, "c5a {sum_to(4)}");
+  assert(sum_to(70000) == null, "c5 {sum_to(70000)}");
+  // c6: an `i64` operand keeps the operation 64-bit.
+  c: i64 = a;
+  c += 1;
+  assert(c == 2147483648l, "c6 {c}");
+  // c7: an `l` literal is 64-bit; i64 + i64 = 3000000000.
+  e = 5000000000l;
+  assert(e - 2000000000l == 3000000000l, "c7 {e}");
+  // c8: a stdlib integer answer is narrowed to 32 bits and fits.
+  v = [1, 2, 3];
+  n = len(v);
+  assert(n + 2147483644 == 2147483647, "c8 {n}");
+  // c9: two `integer` fields are two `i32` fields.
+  assert(sizeof(P) == 8, "c9 {sizeof(P)}");
+  p = P { x: 3, y: 4 };
+  assert(p.x * p.y == 12, "c9b {p.x * p.y}");
+  // c10: an `if` joining an `i32` and a `u8` stays 32-bit: 1 + 2147483647 leaves the range.
+  z: u8 = 200;
+  j = if n == 3 { 1 } else { z };
+  assert(j + 2147483647 == null, "c10 {j + 2147483647}");
+  // c11: a plain decimal is a single; `d` is a double.  0.1 as a single is 0.100000001490116.
+  f = 0.1;
+  g = 0.1d;
+  assert(f as f64 != g, "c11 {f} {g}");
+  assert(f == 0.1f, "c11b {f}");
+  // c12: a generic stdlib `sum` over a `vector<i32>` answers a 32-bit value: 2000000000 * 2
+  // leaves the range; 30 + 10 + 20 = 60.
+  big = [2000000000, 2000000000];
+  assert(sum(big) == null, "c12 {sum(big)}");
+  assert(sum([30, 10, 20]) == 60, "c12b {sum([30, 10, 20])}");
+}

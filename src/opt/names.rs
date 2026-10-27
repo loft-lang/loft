@@ -104,6 +104,18 @@ pub(crate) fn collect_int_fn_refs(node: IrNode, calls: &mut HashSet<u32>) {
     }
 }
 
+/// Can definition `d` be the target of a function value?  It needs something to run: a body,
+/// a native, or a `#c` binding.  An interface's method stub (`__iface_…`) has none, and a
+/// plain integer equal to its number — `[30, 10, 20]` written into a `vector<i32>`, which the
+/// `OpSetInt4` / `OpPushInt4` recovery below cannot tell from a lambda's number — must not
+/// make it reachable: a backend that writes every reachable function refuses one it cannot
+/// write, so the over-approximation stops being free (the C backend refused every such
+/// vector).
+fn can_be_fn_value(data: &Data, d: u32) -> bool {
+    let def = data.def(d);
+    def.code() != &Value::Null || !def.native().is_empty() || !def.c_sig.is_empty()
+}
+
 /// Scan a definition's code for fn-ref literals:
 /// - `Set(var, Int(n))` where `var` has a `Function` or `Routine` type
 /// - `Call(d, args)` where a parameter of `d` is `Function`/`Routine` typed and the
@@ -207,6 +219,7 @@ pub(crate) fn collect_fn_ref_literals(
                 && (*dn as u32) < data.definitions()
                 && matches!(data.def(*dn as u32).def_type(), DefType::Function)
                 && !data.def(*dn as u32).name().starts_with("Op")
+                && can_be_fn_value(data, *dn as u32)
             {
                 calls.insert(*dn as u32);
             }

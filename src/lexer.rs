@@ -2545,9 +2545,9 @@ impl Lexer {
             // separate identifier and the reader was told a `;` was missing.
             // Not inside a format hole: a spec such as `{n:08x}` reads a width then a letter.
             // @PLN204 — `l` is the one suffix an integer literal takes: 64-bit in a file under
-            // the 32-bit regime, where a plain literal is an `i32`.
-            if !self.in_format_expr
-                && let Some('l') = self.iter.peek()
+            // the 32-bit regime, where a plain literal is an `i32`.  No format spec is `l`
+            // (`d b o x X e j`), so it is read inside a `{…}` hole too.
+            if let Some('l') = self.iter.peek()
                 && !self.iter.rest().nth(1).is_some_and(|n| n.is_ascii_alphanumeric() || n == '_')
             {
                 self.next_char();

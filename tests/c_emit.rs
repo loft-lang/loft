@@ -4920,3 +4920,107 @@ fn a_programs_constants_are_written_the_same_every_run_and_from_the_image() {
         "the image writes the same C as memory"
     );
 }
+
+/// Run `src` as `name` on the interpreter and as C (strict C99, `-Werror`), each answering
+/// `want`; answers the C the emitter wrote.
+fn both_answer(name: &str, src: &str, want: &str) -> String {
+    let dir = scratch(name);
+    let file = dir.join(format!("{name}.loft"));
+    fa::write(&file, src).expect("write program");
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter: {}",
+        String::from_utf8_lossy(&interp.stderr)
+    );
+    let c = dir.join(format!("{name}.c"));
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{name} is carried: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let exe = dir.join(name);
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "cc rejected {name}:\n{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the C program");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), want, "the C program");
+    fa::read_to_string(&c).expect("read the C")
+}
+
+/// A small integer in a `vector<i32>` literal is a value, not a function: the reachability walk
+/// read `20` written into a 4-byte element as the definition number of an interface stub, and
+/// the C backend refused a stub it cannot write (`iface_18#2_compare`).  The three values are
+/// the ones that named stubs; the program prints them back and their sum.
+#[test]
+fn a_small_integer_in_a_narrow_vector_is_not_a_function() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+fn main() {
+  v: vector<i32> = [30, 10, 20];
+  t = 0;
+  for e in v { t += e; }
+  println("{v} {t}");
+}
+"#;
+    both_answer("narrow_vec", src, "[30,10,20] 60\n");
+}
+
+/// @PLN204 — a `#width 32` file's arithmetic is 32-bit on the C backend too: the loop's locals
+/// are `int32_t` and its sum is `loft_add32`, and a sum that leaves the `i32` range reads null
+/// as the interpreter's `OpNarrow32` answers it.  0+1+2+3 = 6; 0+..+69999 = 2449965000 > i32::MAX.
+#[test]
+fn a_width32_loop_is_written_in_int32() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"#width 32
+fn sum_to(n: integer) -> integer {
+  t = 0;
+  for i in 0..n { t += i; }
+  t
+}
+fn main() {
+  println("{sum_to(4)} {sum_to(70000)}");
+}
+"#;
+    let c = both_answer("width32_loop", src, "6 null\n");
+    // The body that holds the loop (the frame-keeping wrapper, where there is one, only calls it).
+    let body = c
+        .split("static int32_t n_sum_to")
+        .skip(1)
+        .find(|b| b.contains("for (;;)"))
+        .and_then(|b| b.split("\n}\n").next())
+        .unwrap_or_else(|| panic!("sum_to returning int32_t, with its loop, in:\n{c}"));
+    assert!(body.contains("int32_t v0_n"), "a 32-bit parameter:\n{body}");
+    assert!(body.contains("loft_add32(v1_t, "), "a 32-bit sum:\n{body}");
+    assert!(!body.contains("int64_t"), "no 64-bit local:\n{body}");
+}

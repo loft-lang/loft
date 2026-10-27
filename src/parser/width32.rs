@@ -15,9 +15,10 @@
 use super::{Parser, Type, Value};
 
 impl Parser {
-    /// The type a call answers in the file being parsed: under the 32-bit regime, a plain
-    /// `integer` or `float` from a callee declared in a 64-bit file is narrowed to `i32` /
-    /// `single` here, and `code` wrapped in the conversion.  Anything else is `tp` unchanged.
+    /// The type a call answers in the file being parsed: under the 32-bit regime, an integer
+    /// (not `i64` or `u32`) or a plain `float` from a callee declared in a 64-bit file is
+    /// narrowed to 32 bits here, and `code` wrapped in the conversion.  Anything else is `tp`
+    /// unchanged.
     pub(crate) fn width32_call_result(&mut self, code: &mut Value, tp: Type) -> Type {
         if !self.data.width32() {
             return tp;
@@ -31,16 +32,23 @@ impl Parser {
         }
         let optional = matches!(tp, Type::Optional(_));
         let (op, narrow) = match tp.base() {
+            // Every integer but an `i64` (asked for) and a `u32` (whose upper half no `i32`
+            // holds).  A 32-bit type is narrowed too: a 64-bit file computes it in 64 bits —
+            // a generic `sum<T>` over a `vector<i32>` answers a `T` past the `i32` range —
+            // and keeps that type.
             Type::Integer(spec)
-                if !spec.is_width32() && spec.forced_size.map(std::num::NonZeroU8::get) != Some(8) =>
+                if spec.forced_size.map(std::num::NonZeroU8::get) != Some(8)
+                    && !(spec.forced_size.is_some() && spec.max > i64::from(i32::MAX)) =>
             {
-                (
-                    "OpNarrow32",
+                let narrow = if spec.is_width32() {
+                    tp.base().clone()
+                } else {
                     Type::Integer(crate::narrow::IntegerSpec {
                         not_null: spec.not_null,
                         ..crate::narrow::IntegerSpec::i32()
-                    }),
-                )
+                    })
+                };
+                ("OpNarrow32", narrow)
             }
             Type::Float => ("OpCastSingleFromFloat", Type::Single),
             _ => return tp,
