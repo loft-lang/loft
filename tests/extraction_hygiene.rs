@@ -580,37 +580,8 @@ fn manifest_native_functions_cover_drained_libraries() {
              the entry there."
         );
     }
-    // Phase 1b: web.  19 symbols.
-    let web_expected: &[&str] = &[
-        "n_http_do",
-        "n_http_body",
-        "n_ws_connect",
-        "n_ws_client_send",
-        "n_ws_client_send_binary",
-        "n_ws_client_recv",
-        "n_ws_client_message",
-        "n_ws_client_opcode",
-        "n_ws_client_close",
-        "n_sleep_ms",
-        "n_pack_reset",
-        "n_pack_u8",
-        "n_pack_u16_le",
-        "n_pack_u32_le",
-        "n_pack_take",
-        "n_byte_at",
-        "n_ws_group_clear",
-        "n_ws_group_add",
-        "n_ws_group_poll",
-    ];
-    for sym in web_expected {
-        assert!(
-            forbidden.iter().any(|(s, _)| s == sym),
-            "@PLAN12 — web symbol `{sym}` missing from forbidden list.  \
-             web declares its native bindings via co-located `#native` \
-             annotations in `lib/web/src/web.loft` (bare → `n_<fn>`, \
-             explicit string → override); restore the annotation."
-        );
-    }
+    // web is not checked: since web 0.5.0 its natives live in loft (`[native] in_binary =
+    // true`), so its symbols are sanctioned in `src/**` — see FORBIDDEN_LIBRARY_SYMBOLS_MANUAL.
 }
 
 /// @PLAN12 — the clean-libraries gate.  Every in-monorepo `lib/<X>/native/`
