@@ -37,7 +37,7 @@ its place moved bench 14 by −2.3 % of instructions and bench 16 by −0.2 %.
 | block sum | `vector::sum_blocks_i64` ported into the `sum` kernel | sum 6.8 → 2.0 |
 | text runtime | `loft_replace` by `memchr`; `.P` in exact integers; the shortest float form from 15 digits with its neighbour step; Clinger's fast parse; an inline hash walked by one sweep and an introsort | replace 9.6 → 1.50, quadratic_out 4.75 → 0.53, format_num 1.81 → 0.36, format_specs 2.80 → 1.10, hash_walk 8.6 → 2.97 |
 | repeat fill | `Stores::fill_from_template` ported: one exact resize, doubling block copies | enum_match 12.63 → 2.08 |
-| loop verdict | native's `hoist::hoistable`: callee headers through `__inv` twins, bases re-derived under growth unless `StoreFacts` proves the store apart, the loop versioned on distinct stores, record push headers (`loft_ph`) | talus_relax 6.42 → 1.72, build_vis 4.75 → 1.74, hydro_pitfill 3.41 → 1.83, sort_floats 2.54 → 1.65, mesh_emit 5.71 → 2.33, reload_and_record 4.29 → ~3.0 |
+| loop verdict | native's `hoist::hoistable`: callee headers through `__inv` twins, bases re-derived under growth unless `StoreFacts` proves the store apart, the loop versioned on distinct stores, record push headers (`loft_ph`) | talus_relax 6.42 → 1.65, mesh_emit 5.57 → 1.20, build_vis 4.75 → 2.31, hydro_pitfill 3.41 → 1.66, sort_floats 2.54 → 1.75; reload_and_record unmoved (4.2: its time is the ordered hash walk and the record results) |
 | held file cursor, deep window | `@FR-R-FileHold` (`lower::file_hold`) with a 4 KB cursor buffer and a release on every exit; `hoist::deep_window_ok`'s window for uncounted pushes; unheld reads into a stack buffer | binary_read 16.4 → 1.60 |
 | text walks | `@FR-R-LazySplit`, `@FR-R-TextBorrow` (walk variables and the plain locals of `hoist::borrowed_store_texts`), `@FR-R-CharWalk` (the ASCII arm, the null test asked once) | priced: join 10.2 → 2.6, split walk −38 % cycles |
 
@@ -74,9 +74,9 @@ unit, the hashes equal.
 | **record results** | resolve_move, emit_to_material, slope_path | `loft_store_make`, `loft_copy_record`, `loft_copy_claims`, `loft_remove_claims_mode` | value records, hand-over, apart records | — | generator M |
 | **ordered hash walk** | reload_and_record, mapfile_to_painted | `loft_hkey_sort` + `loft_hkey_lt` 15–31 %; the rest is the walk's lookups and pushes (the loop verdict) and the copy into the history (record results) | `hash::inline_sorted::<N>`, monomorphised per key count | a 2-key element (24 bytes for 40): −7 %, inside the noise — not the lever | runtime S |
 
-With the loop verdict built, record addresses (`@FR-R-RecPtr`) and record results are what
-the remaining routines over the bar share: mesh_emit still writes each field of a minted vertex
-through the store, and slope_path, emit_to_material and truncate_to copy records per result.
+With the loop verdict built, record results are what most of the remaining routines over the
+bar share: slope_path, emit_to_material, truncate_to and mapfile_to_painted copy records per
+result; record addresses (`@FR-R-RecPtr`) are the smaller half.
 
 **A finding the timed sweep made.**  `len(text)` counts characters, and a loop that tests
 `i < len(t)` counts the whole text per iteration on EVERY backend — the self-tail-call cell of
