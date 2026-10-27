@@ -1747,6 +1747,14 @@ pub fn c_thread_link_args() -> &'static [&'static str] {
     }
 }
 
+/// Does the C runtime have its POSIX host layer here — the sockets, processes, `mmap` and
+/// `realpath` `src/c/loft_cc.h` puts under `LOFT_POSIX_HOST` (@PLN203)?  Not on Windows, until
+/// C8 gives those parts their Windows form.
+#[must_use]
+pub fn c_runtime_posix_host() -> bool {
+    cfg!(unix)
+}
+
 /// What to install so the C backend can build a host program, said for this host (@PLN203
 /// C10).  Only the Debian/Ubuntu list is measured; the others name the tools, not packages.
 #[must_use]

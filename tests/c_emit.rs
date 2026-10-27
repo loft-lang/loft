@@ -3992,7 +3992,7 @@ fn a_halted_c_test_releases_the_texts_its_frames_hold() {
 /// emit the "not loaded" stub, which the interpreter cannot give for a native of its own binary.
 #[test]
 fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
-    if !have_cc() || !cfg!(unix) {
+    if !have_cc() || !loft::platform::c_runtime_posix_host() {
         eprintln!("skipped: no cc on PATH, or not a POSIX host");
         return;
     }
@@ -4064,7 +4064,7 @@ fn in_binary_natives_run_on_the_c_or_refuse_by_name() {
 fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};
-    if !have_cc() || !cfg!(unix) {
+    if !have_cc() || !loft::platform::c_runtime_posix_host() {
         eprintln!("skipped: no cc on PATH, or not a POSIX host");
         return;
     }

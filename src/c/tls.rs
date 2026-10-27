@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: a second compiled target, C — the TLS client a unit links
 
 //! The TLS client of the C runtime (@PLN203 C5): `src/c/tls/loft_tls.c` over BearSSL's engine,
 //! vendored under `src/c/tls/bearssl/` from the same upstream the crypto library vendors its
@@ -302,7 +303,7 @@ mod tests {
         let mut on_disk: Vec<String> = crate::file_access::read_dir(dir)
             .expect("the vendored BearSSL directory")
             .iter()
-            .filter_map(|p| p.file_name().map(str::to_string))
+            .filter_map(crate::file_access::file_name)
             .filter(|n| {
                 crate::file_access::has_extension(n.as_str(), "c")
                     || crate::file_access::has_extension(n.as_str(), "h")

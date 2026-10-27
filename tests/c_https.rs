@@ -274,7 +274,15 @@ fn world(dir: &Path) {
     );
 }
 
-const BACKENDS: [&str; 2] = ["--interpret", "--native-c"];
+/// The backends a case runs on: the C's HTTP client stands on its POSIX host layer, which a
+/// Windows build has not got yet (@PLN203 C8), so there the interpreter alone answers.
+fn backends() -> Vec<&'static str> {
+    if loft::platform::c_runtime_posix_host() {
+        vec!["--interpret", "--native-c"]
+    } else {
+        vec!["--interpret"]
+    }
+}
 
 /// A trusted CA, the host named both ways the certificate names it: the image loads and the
 /// fetch answers, on both backends.  `localhost` is checked by BearSSL's DNS-name match,
@@ -283,7 +291,7 @@ const BACKENDS: [&str; 2] = ["--interpret", "--native-c"];
 fn https_through_a_trusted_ca_answers_on_both_backends() {
     let ca = format!("{FIXTURES}ca.pem");
     for host in ["127.0.0.1", "localhost"] {
-        for backend in BACKENDS {
+        for backend in backends() {
             let dir = scratch(&format!("ok_{host}{}", &backend[1..]));
             world(&dir);
             let (port, seen) = start_server("127.0.0.1", dir.clone());
@@ -310,7 +318,7 @@ fn https_through_a_trusted_ca_answers_on_both_backends() {
 /// naming the certificate, and the fetch completes with a negative status.
 #[test]
 fn https_through_an_untrusted_ca_is_refused_on_both_backends() {
-    for backend in BACKENDS {
+    for backend in backends() {
         let dir = scratch(&format!("untrusted{}", &backend[1..]));
         world(&dir);
         let (port, seen) = start_server("127.0.0.1", dir.clone());
@@ -347,13 +355,17 @@ fn https_through_an_untrusted_ca_is_refused_on_both_backends() {
 }
 
 /// A trusted certificate that does not name the address connected to: `127.0.0.2` reaches the
-/// same server (Linux routes all of 127/8 to the loopback), whose certificate names `127.0.0.1`
+/// same server (where all of 127/8 is the loopback, as on Linux), whose certificate names `127.0.0.1`
 /// only.  The C refuses it at its iPAddress check, which BearSSL alone does not make.
-#[cfg(target_os = "linux")]
 #[test]
 fn https_to_an_address_the_certificate_does_not_name_is_refused() {
+    // A host that does not answer on all of 127/8 (macOS without an alias) cannot run it.
+    if TcpListener::bind("127.0.0.2:0").is_err() {
+        eprintln!("skipped: 127.0.0.2 is not a local address here");
+        return;
+    }
     let ca = format!("{FIXTURES}ca.pem");
-    for backend in BACKENDS {
+    for backend in backends() {
         let dir = scratch(&format!("name{}", &backend[1..]));
         world(&dir);
         let (port, seen) = start_server("0.0.0.0", dir.clone());
@@ -519,7 +531,7 @@ fn a_paged_load_over_a_url_reads_by_range_on_both_backends() {
         ),
     ];
     for (scheme, how) in ways {
-        for backend in BACKENDS {
+        for backend in backends() {
             let tag = format!("pg_{scheme}_{}{}", how.ranges, &backend[1..]);
             let dir = scratch(&tag);
             paged_images(&dir);
@@ -563,7 +575,7 @@ fn a_paged_load_over_a_url_reads_by_range_on_both_backends() {
 /// lazy binding names.
 #[test]
 fn a_paged_load_over_a_url_refuses_what_it_cannot_trust_on_both_backends() {
-    for backend in BACKENDS {
+    for backend in backends() {
         let dir = scratch(&format!("pg_refuse{}", &backend[1..]));
         paged_images(&dir);
         // An untrusted CA: nothing crosses, and the refusal names the fetch.
