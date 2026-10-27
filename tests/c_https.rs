@@ -187,7 +187,10 @@ fn world(dir: &Path) {
         &[("LOFT_HTTPS_STORE", store.to_string_lossy().to_string())],
         None,
     );
-    assert!(out.contains("WROTE true"), "the image is written: {out}{err}");
+    assert!(
+        out.contains("WROTE true"),
+        "the image is written: {out}{err}"
+    );
 }
 
 const BACKENDS: [&str; 2] = ["--interpret", "--native-c"];

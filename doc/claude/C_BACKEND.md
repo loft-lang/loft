@@ -19,6 +19,10 @@ loft --native-c prog.loft [args]   # emit, build with LOFT_CC / CC / cc, cache t
                                    #   --ship is -O3, --native-debug -O0 -g,
                                    #   --native-emit [out.c] writes the C; LOFT_NATIVE_BACKEND=c
                                    #   makes --native mean this; LOFT_KEEP_NATIVE_C=1 keeps the .c
+LOFT_C_LINT=1 loft --native-c p.loft  # compile afresh with -Wall -Wextra (minus the unused
+                                   #   family) instead of -w and print the warnings; =strict makes
+                                   #   each an error.  On request only, never in a build or a gate:
+                                   #   the instrument for a large C99 program once there is a reason
 loft --emit-c out.c prog.loft      # write the C; exit 2 with "does not carry this program
                                    #   yet: <fn>: <why>" for a construct not carried
 cc -std=c99 out.c -o prog -lm && ./prog
@@ -417,9 +421,20 @@ a fault inside it contained, as on the interpreter; a driver scheme with no driv
 unreachable.  The miss hook is written only into a unit that binds.
 
 **URL loads.**  `store_load_url` and `store_load_url_trusted` fetch the sidecar and the image
-(`file://` from the filesystem, `http://` as one HTTP/1.1 GET over a POSIX socket), gate the
-layout as `store_load` does, pin the bytes by SHA-256 for the first, and adopt them validated.
-An `https://` URL answers as a build without a TLS transport answers (`net::fetch_bytes`).
+(`file://` from the filesystem, `http://` and `https://` as one HTTP/1.1 GET), gate the layout
+as `store_load` does, pin the bytes by SHA-256 for the first, and adopt them validated.
+
+**HTTPS.**  Both HTTP clients of the runtime — the URL loads and `http_fetch` — run over one
+client connection (`loft_https.h`: a socket, or TLS over it).  The TLS client is
+`src/c/tls/loft_tls.c` over BearSSL's engine, vendored unmodified under `src/c/tls/bearssl/` from
+the upstream the crypto library vendors its primitives from.  It is not part of the unit:
+`src/c/tls.rs` builds it once per compiler into an archive under `~/.loft/c-tls/` and a unit that
+fetches over a URL names it on a `link:` line (`LOFT_HTTPS`).  It keeps `src/tls.rs`'s promise —
+the machine's trust (`SSL_CERT_FILE` / `SSL_CERT_DIR`, else the system bundle), every chain
+validated, the name always checked (a DNS name by BearSSL, an IP address against the
+certificate's iPAddress names by `loft_tls.c`) — with two differences: TLS 1.2 only (BearSSL has
+no 1.3, so a 1.3-only server refuses the handshake), and no bundled roots (a machine without a
+trust store refuses every server, naming where it looked).  `tests/c_https.rs` is the guard.
 
 **`#c` bindings.**  A function bound to a C symbol (`#c "abs" "int(int)"`) is a wrapper that
 declares the callee with the author's own signature text — so it agrees with a system header
@@ -454,7 +469,7 @@ drains every pipe, a child leads its own process group, the timeout stops the tr
 `lib/git` (`git_query`).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
 the connector over WebSockets, the UDP state-sync channel, the events, ticks and `post`, the
 `D!:` debug channel answering as a build with no live tier, and `http_fetch` on a worker thread
-— plain HTTP only, since the runtime has no TLS transport.  Not carried, so refused by name: the
+over the runtime's HTTP client (above).  Not carried, so refused by name: the
 build swap and the background rebuild (`swap_world`, `swap_start`, `rebuild_*`).  The live tier
 — a flip, a live edit, a breakpoint's eval — runs the interpreter inside the program, which a C
 build has not got: a C program's swap step serves and `live_flip` answers false, and the edit
@@ -474,7 +489,8 @@ platforms — is [@PLN203](plans/203-c99-default-backend.md), with the measured 
 starts from.
 
 No program of the corpus is refused.  What the C runtime does not have, it answers at run time
-the way a build without it answers: a ranged or a TLS transport for a URL; SQLite where the system
-has no `libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
+the way a build without it answers: a ranged transport for a URL; HTTPS on a host without
+sockets (wasm) or whose compiler could not build the TLS client; SQLite where the system has no
+`libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
 and a par row of a tuple holding a reference — each by name.  Not
 refused and not carried: a `#native` function (above).

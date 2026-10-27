@@ -288,7 +288,9 @@ fn archive_with(
                         ),
                     };
                     // The lowest-numbered failure is the one reported, as a serial build would.
-                    let mut f = first_failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut f = first_failure
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     if f.as_ref().is_none_or(|(j, _)| i < *j) {
                         *f = Some((i, why));
                     }

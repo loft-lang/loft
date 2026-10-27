@@ -93,11 +93,11 @@ them beside the binary, which C8 takes.  The two link-mode tests over `native_sc
 loft's own binary): the C runtime carries `lib/process`'s and `lib/git`'s
 (`loft_process.h`, POSIX hosts); an in-binary native it does not carry refuses the unit by
 name.  `engine_host`'s kernel is carried (`loft_engine.h`: listener, connector, UDP sync, debug
-channel, `http_fetch` over plain HTTP); its build swap and background rebuild are not — the swap
-needs the world written and read through the store converter (@PLN196) for a type known only at
-run time.  HTTPS for `http_fetch` (and `store_load_url`) waits on a TLS transport in the runtime:
-BearSSL's engine vendored as crypto's primitives are, or the host's TLS library opened at run
-time.  The live tier (flips, live edits, a breakpoint's eval) embeds the interpreter in a
+channel, `http_fetch`); its build swap and background rebuild are not — the swap needs the
+world written and read through the store converter (@PLN196) for a type known only at run time.
+HTTPS is BearSSL's engine vendored as crypto's primitives are (owner, 2026-10-27), built once
+into a cached archive (C_BACKEND.md § HTTPS); C8 adds the Windows certificate store, which the
+system-bundle probe does not read.  The live tier (flips, live edits, a breakpoint's eval) embeds the interpreter in a
 compiled program, which the C does not: after C9 the edit loop runs interpreted, and the
 `engine_host_*` scenarios that drive a live edit keep an interpreted leg.
 

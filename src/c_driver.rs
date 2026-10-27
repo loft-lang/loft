@@ -39,7 +39,16 @@ pub(crate) fn cc_program() -> String {
 /// poison modes when the environment asks for them as the interpreter's switches do.  Every flag is part of
 /// the cache key, since each one changes the binary.
 fn cc_flags(tier: Tier) -> Vec<String> {
-    let mut flags: Vec<String> = vec!["-std=c99".into(), "-w".into()];
+    let mut flags: Vec<String> = vec!["-std=c99".into()];
+    match lint() {
+        Lint::Off => flags.push("-w".into()),
+        on => {
+            flags.extend(LINT_WARNINGS.iter().map(|w| (*w).to_string()));
+            if on == Lint::Strict {
+                flags.push("-Werror".into());
+            }
+        }
+    }
     flags.extend(
         loft::platform::c_thread_link_args()
             .iter()
@@ -60,6 +69,41 @@ fn cc_flags(tier: Tier) -> Vec<String> {
     }
     flags
 }
+
+/// `LOFT_C_LINT`: the C a program is written as compiled with the warnings below instead of
+/// `-w`, on request — `1` reports them, `strict` makes each one an error.  Never on by default:
+/// a user does not read warnings about C they did not write, and a lint of every build is time
+/// spent for no reader.  It is the instrument for a larger C99 program the moment there is a
+/// reason to look (a new compiler, a new platform, a crash that smells of UB).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lint {
+    Off,
+    Report,
+    Strict,
+}
+
+fn lint() -> Lint {
+    match std::env::var("LOFT_C_LINT").as_deref() {
+        Ok("strict") => Lint::Strict,
+        Ok("1" | "true" | "report") => Lint::Report,
+        _ => Lint::Off,
+    }
+}
+
+/// The lint's warnings: everything `-Wall -Wextra` reports that can mean a wrong program (a
+/// conversion, an uninitialised read, a missing declaration, a format), without the `unused`
+/// family, which generated code trips by design (a parameter the body ignores, a helper the
+/// unit does not call).
+const LINT_WARNINGS: &[&str] = &[
+    "-Wall",
+    "-Wextra",
+    "-Wno-unused-parameter",
+    "-Wno-unused-function",
+    "-Wno-unused-variable",
+    "-Wno-unused-but-set-variable",
+    "-Wno-unused-label",
+    "-Wno-unused-value",
+];
 
 fn env_on(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -446,7 +490,13 @@ pub(crate) fn build(
     let key = build_key(c, &cc, &flags, &links);
     let exe = std::env::consts::EXE_SUFFIX;
     let cached = cache_dir.join(format!("native-c-{key}{exe}"));
-    if !no_cache && fa::exists(&cached) && crate::native_utils::cache_safe_to_execute(&cached) {
+    // A lint compiles afresh, so its warnings are seen every time it is asked for.
+    let linting = lint() != Lint::Off;
+    if !no_cache
+        && !linting
+        && fa::exists(&cached)
+        && crate::native_utils::cache_safe_to_execute(&cached)
+    {
         crate::native_utils::touch_cached_binary(&cached);
         return Ok(Built {
             binary: cached,
@@ -482,6 +532,9 @@ pub(crate) fn build(
              (LOFT_KEEP_NATIVE_C=1 keeps the source).\n{}",
             String::from_utf8_lossy(&out.stderr).trim_end()
         )));
+    }
+    if linting && !out.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
     }
     if keep {
         eprintln!("loft: C source preserved at {}", src.display());
