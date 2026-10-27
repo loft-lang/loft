@@ -46,7 +46,7 @@ fn function_name(param: type, other: type = default_value) -> return_type {
   that shares says so; the files that read it say nothing, so a directory can keep one file
   private beside others that share:
 
-  ```loft
+  ```grammar
   #package                                  // interp/run.loft
   struct Frame { pc: integer, base: integer }
   fn step(f: Frame) -> integer { f.pc + 1 }

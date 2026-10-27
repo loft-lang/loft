@@ -723,7 +723,7 @@ fn test_an_image_opens_as_the_ir() {
 - Tests: `tests/selfhost.rs` (emit an image, run the package's `loft test`: 2 passed), the
   S0.1 layout test on the new path, the schema drift gate.
 
-### S0.3d — `assert` narrows like a guard clause; the rule written down (fixes X13) — DESIGNED, not built
+### S0.3d — `assert` narrows like a guard clause; the rule written down (fixes X13) — BUILT 2026-10-28
 
 **Owner's ruling (2026-10-27):** one rule, `(N-Guard)` in `formal/types.md`.  A test whose
 failing side cannot continue proves its fact for the rest of the block, and `assert` is such
@@ -775,6 +775,28 @@ the `"assert"` block holding `if test { pass } else { fail }` for a built messag
 - The `loft-write` skill.
 - The CHANGELOG.
 
+**Built — what changed from the design.**
+- **As designed**, in one step of the block loop beside the guard clause.
+  `Parser::assert_condition` recognises both lowerings; the four families are fed from the
+  THEN side.
+- **The user page needed a program.**  DOC_CONTRACT rule 22 (`make fences`, gated in CI)
+  wants every `loft` sample to be a verbatim window of a program that runs.  So the
+  `LOFT.md` section is cut from `tests/reference/null-guard.loft`, and `tests/wrap.rs`
+  `reference` runs it.  The `#package` layout sample in `LOFT_DECLARATIONS.md` (S0.3a) is a
+  shape over several files, not one program, so it became a `grammar` fence.
+- **A false alarm, worth recording.**  Running the reference program after the falsification
+  run showed the warning again.  The falsification had rebuilt `target/debug/loft` with the
+  mutation, and the probes ran that binary until the next build.  An instrumented trace
+  (`LOFT_TRACE_NGUARD`, removed again) showed the assert matched and narrowed on a fresh
+  build.  Rule for later steps: rebuild after restoring a falsified edit, before probing.
+- Tests:
+  - `tests/callarg_nstore.rs`: `an_assert_narrows_like_a_guard_clause_{interpret,native}`
+    (constant message, built message, truthy; and still warning for the null case, a
+    reassignment, an assert inside a conditional) and
+    `an_assert_feeds_the_index_divisor_and_sign_proofs`.
+  - Falsified: with the hook off, all three fail.
+  - Parser subject 994/994; `make fences` 0 unsourced.
+
 ## The language for this job
 
 ### What loft already offers (measured or established in @PLN202 / OCAML_BAR.md)
@@ -810,7 +832,7 @@ the `"assert"` block holding `if test { pass } else { fail }` for a built messag
 | **X10** | capturing closures cannot sit in a collection (@C116); no local recursive `fn` (@C63) | by design — costed | not expected to bite: the dispatch table holds plain fn-refs |
 | **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss (§ Steps, S0.2) |
 | **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` (§ Steps, S0.3b) |
-| **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards (§ Steps, S0.3d) |
+| **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — fixed in S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards (§ Steps, S0.3d) |
 
 ### New constructs taken from OCaml's type expressions
 

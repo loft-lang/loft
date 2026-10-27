@@ -671,16 +671,20 @@ Simple variable reads skip the temporary since they have no side effects.
 After a test that stops the code when a value is absent, the value reads as present for the
 rest of the block, with no `??` needed (`formal/types.md` `(N-Guard)`):
 
+<!-- from tests/reference/null-guard.loft -->
 ```loft
-fn describe(s: text?) -> integer {
-    if s == null { return 0; }      // the absent case has left
-    len(s)                          // s reads as text here
+fn shout(s: text) -> text {
+  "{s}!"
 }
 
-fn test_the_image_opens() {
-    b = load(path);
-    assert(b != null, "the image opens");   // a failed assert stops the test
-    count(b)                                 // b reads as present here
+fn describe(s: text?) -> text {
+  if s == null { return "nobody"; }   // the absent case has left
+  shout(s)                            // s reads as text here
+}
+
+fn greet(name: text?) -> text {
+  assert(name != null, "a name");     // a failed assert stops the program
+  shout(name)                         // name reads as text here
 }
 ```
 
