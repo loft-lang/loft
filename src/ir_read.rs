@@ -2248,6 +2248,64 @@ mod tests {
         assert!(s.has_type("text"), "base type 'text' present after install");
     }
 
+    /// `@FR-L-Sound` / `@FR-S-Pair` — a saved bundle carries the `.dschema` sidecar of its
+    /// root type, and that sidecar is the layout a loft program declaring
+    /// `tools/ir_schema/ir.loft` reads it through.  The comparison is required to be
+    /// IDENTICAL, not merely loadable: a changed layout is converted on load rather than
+    /// refused, which would hide a drift between `ir.loft` and the Rust IR schema.
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn a_saved_bundle_carries_the_layout_ir_loft_declares() {
+        use crate::ir_store::save_bundle;
+        use crate::schema_sidecar::{LayoutIdentity, SchemaVerdict, check_beside, dschema_path};
+
+        let mut p = crate::parser::Parser::new();
+        p.parse_dir("default", true, false)
+            .expect("parse default/ stdlib");
+        let path =
+            std::env::temp_dir().join(format!("loft_bundle_side_{}.store", std::process::id()));
+        let path_str = path.to_str().unwrap();
+        save_bundle(&p.data, &p.database.types, path_str).expect("save_bundle");
+        let side = dschema_path(&path);
+        assert!(
+            side.exists(),
+            "save_bundle wrote no sidecar beside {path_str}"
+        );
+
+        // The IR schema the writer registers.
+        let mut ir = Stores::new();
+        let ids = register_ir_schema(&mut ir);
+        let rust_side = LayoutIdentity::of(&ir, &[ids.bundle]);
+        let verdict = check_beside(&path, &rust_side, ir.release()).expect("read sidecar");
+
+        // The same types, compiled by loft from their one source.
+        let mut q = crate::parser::Parser::new();
+        q.parse_dir("default", true, false)
+            .expect("parse default/ stdlib");
+        assert!(
+            q.parse("tools/ir_schema/ir.loft", false),
+            "tools/ir_schema/ir.loft does not compile"
+        );
+        let bundle = q.database.name("Bundle");
+        assert_ne!(bundle, u16::MAX, "ir.loft declares no Bundle");
+        let loft_side = LayoutIdentity::of(&q.database, &[bundle]);
+        let loft_verdict =
+            check_beside(&path, &loft_side, q.database.release()).expect("read sidecar");
+
+        let _ = crate::file_access::remove_file(&path);
+        let _ = crate::file_access::remove_file(&side);
+        assert_eq!(
+            verdict,
+            SchemaVerdict::Match,
+            "the sidecar disagrees with the IR schema"
+        );
+        assert_eq!(
+            loft_verdict,
+            SchemaVerdict::Match,
+            "ir.loft compiled by loft lays Bundle out differently from the Rust IR schema"
+        );
+    }
+
     /// Round-trip the real stdlib's database schema: parse default/, encode the
     /// resulting `Stores` schema, decode into a fresh `Stores`, and assert the
     /// re-encode is byte-identical (the schema has no `PartialEq`).
