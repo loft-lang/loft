@@ -4252,6 +4252,7 @@ fn run_asan(
         .args(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
         .arg(format!("-I{}", inc.display()))
         .arg(&c)
+        .args(unit_links(&c))
         .arg("-o")
         .arg(&exe)
         .args(["-lm", "-ldl"])
