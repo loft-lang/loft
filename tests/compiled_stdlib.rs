@@ -34,7 +34,15 @@ fn compiled_stdlib_up_to_date() {
 #[test]
 #[ignore = "maintenance: regenerates src/compiled_stdlib_gen.rs — run with `--ignored` via `make compiled-stdlib`"]
 fn regen_compiled_stdlib() {
-    fa::write("src/compiled_stdlib_gen.rs", generated()).expect("write the generated file");
+    // Written only when it changed: cargo fingerprints the file by its time stamp, so an
+    // identical rewrite rebuilds the whole release crate after it (`make compiled-stdlib`'s
+    // own build, and every cargo step of a derive run).
+    let text = generated();
+    if fa::read_to_string("src/compiled_stdlib_gen.rs").is_ok_and(|old| old == text) {
+        println!("src/compiled_stdlib_gen.rs unchanged");
+        return;
+    }
+    fa::write("src/compiled_stdlib_gen.rs", text).expect("write the generated file");
     println!("src/compiled_stdlib_gen.rs regenerated");
 }
 

@@ -228,7 +228,7 @@
       ],
       "check": null,
       "regen": [
-        "make -s doc"
+        "make -s doc GENDOC_PROFILE=--release"
       ],
       "ci": true,
       "note": "the reference pages gendoc writes, with the library pages rendered from the published packages `make doc` fetches — a box without them keeps the committed pages, so the runner (a clean cache, the registry reachable) is the reliable writer"

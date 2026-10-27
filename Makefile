@@ -2730,8 +2730,12 @@ native-ratio-gate:  ## Fail a native/Rust ratio over its bar in bench/ratio_orac
 # not carry.  On a box whose cache is empty every page still generates, and 42 of them
 # say "not on this build box" instead of showing the source.  Filling the cache first is
 # what makes a local build and the published site the same artefact.
+# The profile gendoc is built in: the dev one by default (what an edit loop has built), and
+# `--release` on a runner, where the release lib is already built and a dev build of the
+# whole crate would be a second one (scripts/derived_artefacts.json, reference-pages).
+GENDOC_PROFILE ?=
 doc: doc-packages  ## Build doc/*.html the way the release does (cache first, then gendoc)
-	cargo run --bin gendoc
+	cargo run $(GENDOC_PROFILE) --bin gendoc
 
 doc-packages:  ## Fetch every published package the doc build renders (no-op once cached)
 	@cargo build --release --bin loft
