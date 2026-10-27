@@ -134,6 +134,14 @@ pub(crate) struct FnWriter<'a> {
     headers: Vec<Vec<(crate::opt::writes::PathKey, String)>>,
     /// The header gate's memo of which callees write a store.
     hoist_cache: std::collections::HashMap<u32, bool>,
+    /// `@FR-R-Range` (`opt::range`, native's proof): this function's non-null and range facts,
+    /// computed on first use.
+    range_facts: Option<
+        std::rc::Rc<(
+            std::collections::HashMap<u16, bool>,
+            crate::opt::range::Ranges,
+        )>,
+    >,
     /// Declarations beside the temporaries: the held vectors.
     decls: Vec<String>,
     /// Which variables a statement written so far has bound: a later `Set` is a rebind.
@@ -318,6 +326,7 @@ impl<'a> FnWriter<'a> {
             labels: 0,
             headers: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
+            range_facts: None,
             cur_line: 0,
             where_told: false,
             adopt: if std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0") {
@@ -1286,12 +1295,16 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
             Value::If(c, t, e) => {
+                let null_test = self.null_test(c);
                 let c = self.expr(c, ind)?;
                 let c = as_cond(c)?;
                 self.line(ind, &format!("if ({}) {{", bare(&c)));
                 self.stmt(t, ind + 1)?;
                 if !matches!(e.unspan(), Value::Null) {
                     self.line(ind, "} else {");
+                    if null_test {
+                        self.line(ind + 1, "LOFT_COLD_PATH();");
+                    }
                     self.stmt(e, ind + 1)?;
                 }
                 self.line(ind, "}");
@@ -2196,16 +2209,7 @@ impl<'a> FnWriter<'a> {
                 r
             }
             Value::Insert(ops) => self.assign_seq(ops, target, c, ind),
-            Value::If(cond, t, e) => {
-                let cond = self.expr(cond, ind)?;
-                let cond = as_cond(cond)?;
-                self.line(ind, &format!("if ({}) {{", bare(&cond)));
-                self.assign(t, target, c, ind + 1)?;
-                self.line(ind, "} else {");
-                self.assign(e, target, c, ind + 1)?;
-                self.line(ind, "}");
-                Ok(())
-            }
+            Value::If(cond, t, e) => self.assign_if(cond, t, e, target, c, ind),
             Value::Tuple(vals) => self.assign_tuple(vals, target, c, ind),
             v @ (Value::Return(_) | Value::Break(_) | Value::Continue(_)) => self.stmt(v, ind),
             // A self tail call's loop (`opt::tail_self`) leaves only by a `return`: it has no
@@ -3023,6 +3027,9 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.gen_operator(name, args, ind)? {
             return Ok(e);
         }
+        if let Some(e) = self.range_operator(name, args, ind)? {
+            return Ok(e);
+        }
         if let Some(e) = self.probe_operator(name, args, ind)? {
             return Ok(e);
         }
@@ -3059,6 +3066,102 @@ impl<'a> FnWriter<'a> {
             return Ok(compare(&as_int(a)?, op, &as_int(b)?));
         }
         self.text_operator(name, args, ind)
+    }
+
+    /// `target = if cond { t } else { e }`, each arm assigning it; a not-null test's else opens
+    /// with `LOFT_COLD_PATH()` (see [`Self::null_test`]).
+    fn assign_if(
+        &mut self,
+        cond: &Value,
+        t: &Value,
+        e: &Value,
+        target: &str,
+        c: CType,
+        ind: usize,
+    ) -> Result<(), String> {
+        let null_test = self.null_test(cond);
+        let cond = self.expr(cond, ind)?;
+        let cond = as_cond(cond)?;
+        self.line(ind, &format!("if ({}) {{", bare(&cond)));
+        self.assign(t, target, c, ind + 1)?;
+        self.line(ind, "} else {");
+        if null_test {
+            self.line(ind + 1, "LOFT_COLD_PATH();");
+        }
+        self.assign(e, target, c, ind + 1)?;
+        self.line(ind, "}");
+        Ok(())
+    }
+
+    /// Is `c` a not-null test (`x != null` of a number)?  Its else is the null's path, which
+    /// `LOFT_COLD_PATH()` keeps a branch: a discharge is then a predicted jump, not a select in
+    /// the dependency chain of the code around it.
+    fn null_test(&self, c: &Value) -> bool {
+        matches!(c.unspan(), Value::Call(d, a) if a.len() == 1
+            && matches!(self.cx.data.def(*d).name(),
+                "OpConvBoolFromFloat" | "OpConvBoolFromSingle"
+                | "OpConvBoolFromInt" | "OpConvBoolFromLong"))
+    }
+
+    /// `@FR-R-Range`, as native writes it: an integer operator whose result the range proof
+    /// (`opt::range::op_range`, over this function's facts) shows fits the type cannot fault,
+    /// so it is the plain C operator — the exact value, the processor's instruction, and a
+    /// signed operation the compiler may reason about (a counted loop's step is one: its
+    /// wrapping or checked forms keep GCC from counting the loop).  Both lanes; a division
+    /// only where the range excludes a zero divisor.  `LOFT_NO_RANGE_ARITH=1` keeps every
+    /// operator checked, as on native.
+    fn range_operator(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        ind: usize,
+    ) -> Result<Option<E>, String> {
+        let Some(form) = crate::opt::range::plain_form(name, args.len()) else {
+            return Ok(None);
+        };
+        if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
+            return Ok(None);
+        }
+        let facts = if let Some(f) = &self.range_facts {
+            f.clone()
+        } else {
+            {
+                let data = self.cx.data;
+                let def = data.def(self.d);
+                let nn =
+                    crate::opt::non_sentinel::non_sentinel_vars(data, def.variables(), def.code());
+                let rv = crate::opt::range::range_vars(
+                    data,
+                    def.variables(),
+                    def.code(),
+                    &nn,
+                    &self.char_walks,
+                    &crate::opt::range::Ranges::default(),
+                );
+                let f = std::rc::Rc::new((nn, rv));
+                self.range_facts = Some(f.clone());
+                f
+            }
+        };
+        if crate::opt::range::op_range(self.cx.data, &facts.0, &facts.1, name, args, 0).is_none() {
+            return Ok(None);
+        }
+        crate::rewrite_census::fired("R-Range", 1);
+        if form == "wrapping_neg" {
+            let a = self.one(name, args, ind)?;
+            return Ok(Some(E::new(format!("(-({}))", as_int(a)?), K::Int)));
+        }
+        let op = match form {
+            "wrapping_add" => "+",
+            "wrapping_sub" => "-",
+            "wrapping_mul" => "*",
+            other => other,
+        };
+        let (a, b) = self.two(name, args, ind)?;
+        Ok(Some(E::new(
+            format!("(({}) {op} ({}))", as_int(a)?, as_int(b)?),
+            K::Int,
+        )))
     }
 
     /// `LOFT_RELEASE_PASS_PROBE=1` (generation time): the release-pass probe's form of an
