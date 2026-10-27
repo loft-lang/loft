@@ -33,10 +33,11 @@ What L1 owes from it:
   callbacks are wired, the answer conversion is not);
 - the "did not load" refusals still tell the user to rebuild with `cargo`.
 
-**L0b — under way.**  `LOFT_EMIT_FROM_IMAGE=1` makes `--emit-c` write from the image
+**L0b — answered yes.**  `LOFT_EMIT_FROM_IMAGE=1` makes `--emit-c` write from the image
 (`ir_read::image_round_trip`); `scripts/image_probe.py` compares that with the C written from
-memory over every program.  First 300 programs: 260 identical, 28 refused alike, 12 differing,
-all in constants:
+memory over every program.  Over all 2893 programs (CI, linux-probe run 40595296631): 2525
+byte-identical, 368 refused alike, none differing.  The first sample's 12 differences were all
+in constants, and both causes are fixed:
 - the image carries no built constants (the compile pass built them, in the interpreter's
   layer).  The builder moved to `const_literal::build_const_vectors`, which the image reader
   now calls too;
