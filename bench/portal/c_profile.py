@@ -41,7 +41,10 @@ RUNTIME_CALLS = {"memcpy", "memmove", "memset", "memchr", "memcmp", "malloc", "f
 
 
 def clean(sym):
-    return re.sub(r"\.(constprop|isra|part|cold)(\.\d+)?", "", sym)
+    """A symbol as its function: no GCC clone suffix, and a `__fr` twin (the body a function's
+    call-chain frame wraps, `LOFT_CALL_CHAIN`) as the loft function it is."""
+    sym = re.sub(r"\.(constprop|isra|part|cold)(\.\d+)?", "", sym)
+    return sym[:-4] if sym.endswith("__fr") else sym
 
 
 def fold(script_lines, leaf_mode):

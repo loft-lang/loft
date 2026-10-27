@@ -85,21 +85,32 @@
 
 /* A helper every element and field access goes through: inlined, so a reference passed and
  * returned by value never travels through memory. */
+/* `LOFT_COLD_PATH()` opens the branch a null takes: an empty volatile asm, which no compiler
+ * if-converts away, so a discharge stays a branch the processor predicts instead of a select
+ * in the dependency chain around it (a float discharge in a division loop was a `cmov` through
+ * the integer registers: 32 % of `par`'s worker).  Nothing under strict C99. */
 #if defined(LOFT_GNU)
 #define LOFT_HOT_INLINE static inline __attribute__((always_inline))
 #define LOFT_COLD __attribute__((cold))
 #define LOFT_LIKELY(x) __builtin_expect(!!(x), 1)
 #define LOFT_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#if defined(LOFT_STRICT)
+#define LOFT_COLD_PATH() ((void) 0)
+#else
+#define LOFT_COLD_PATH() __asm__ volatile("")
+#endif
 #elif defined(LOFT_MSVC)
 #define LOFT_HOT_INLINE static __forceinline
 #define LOFT_COLD
 #define LOFT_LIKELY(x) (x)
 #define LOFT_UNLIKELY(x) (x)
+#define LOFT_COLD_PATH() ((void) 0)
 #else
 #define LOFT_HOT_INLINE static inline
 #define LOFT_COLD
 #define LOFT_LIKELY(x) (x)
 #define LOFT_UNLIKELY(x) (x)
+#define LOFT_COLD_PATH() ((void) 0)
 #endif
 
 /* Is `x` a compile-time constant?  0 where the compiler cannot say, which only costs speed. */
