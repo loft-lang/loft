@@ -3791,10 +3791,11 @@ fn native_c_html_page_runs_its_program() {
     );
 }
 
-/// Does `cc` build and run an AddressSanitizer program with its leak check (Linux only: macOS
-/// has no LeakSanitizer by default)?  Probed once, so a box without the runtime skips.
+/// Does `cc` build and run an AddressSanitizer program with its leak check on?  Probed under
+/// the options the test runs with, so a host whose sanitizer has no leak check (macOS's) or a
+/// box without the runtime skips rather than fails.
 fn have_asan(dir: &std::path::Path) -> bool {
-    if !cfg!(target_os = "linux") || !have_cc() {
+    if !have_cc() {
         return false;
     }
     let src = dir.join("asan_probe.c");
@@ -3808,6 +3809,7 @@ fn have_asan(dir: &std::path::Path) -> bool {
         .output()
         .is_ok_and(|o| o.status.success())
         && loft::platform::process::harness_command(&exe)
+            .env("ASAN_OPTIONS", "detect_leaks=1")
             .output()
             .is_ok_and(|o| o.status.success())
 }
