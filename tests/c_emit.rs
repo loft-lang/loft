@@ -3819,7 +3819,7 @@ fn run_asan(
     prog: &std::path::Path,
     cwd: &std::path::Path,
 ) -> (i32, String, String) {
-    let stem = prog.file_stem().and_then(|s| s.to_str()).unwrap_or("p");
+    let stem = fa::file_stem(prog).unwrap_or_else(|| "p".into());
     let c = dir.join(format!("{stem}.c"));
     let exe = dir.join(stem);
     let emit = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
@@ -3960,10 +3960,10 @@ fn a_halted_c_test_releases_the_texts_its_frames_hold() {
     )
     .expect("write");
     let (code, out, err) = run_asan(&dir, &anchor, std::path::Path::new("/"));
-    let want = std::fs::canonicalize(&dir).expect("canonical scratch");
+    let want = fa::canonical(&dir).expect("canonical scratch").native();
     assert_eq!(
         (code, out.trim_end()),
-        (0, format!("dir {}", want.display()).as_str()),
+        (0, format!("dir {want}").as_str()),
         "{err}"
     );
 }
