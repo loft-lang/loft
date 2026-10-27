@@ -8934,6 +8934,9 @@ pub(super) fn build_padded_store_image(
         let off = (live_end as usize) * 8;
         out[off..off + 4].copy_from_slice(&size.to_le_bytes());
     }
+    // `(S-Frame)`: the image records its own length, so a reader can tell a file cut on a
+    // block boundary from a whole one (loft#2200).
+    out[4..8].copy_from_slice(&target_words.to_le_bytes());
     Some(out)
 }
 

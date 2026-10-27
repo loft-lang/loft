@@ -331,6 +331,8 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
             int32_t free_words = -(int32_t) (target - live_end);
             memcpy(img + (size_t) live_end * 8, &free_words, 4);
         }
+        /* `(S-Frame)`: the image records its own length (loft#2200). */
+        memcpy(img + 4, &target, 4);
         /* `@FR-S-Pair`: the image and its sidecar are both staged beside the target, and
          * only when both are written are they renamed into place, as persist_copy does. */
         char *p = loft_cpath(path, 0), *ptmp = loft_cpath(path, ".tmp");
@@ -505,7 +507,8 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc, const char 
 /* Why `n` bytes are not a whole store image, or 0 when they are (`image_words` and
  * `Store::validate_structure`, the same words): the signature, the header, whole words — every
  * writer pads an image to its last block's end, so a file that is not whole words was cut short
- * (loft#2200) — and a block chain that tiles the file (`(S-Frame)`). */
+ * (loft#2200) — the length the image records at bytes 4..8 where it records one (0 or 1 is an
+ * older writer's, or a live store's: none), and a block chain that tiles the file (`(S-Frame)`). */
 static const char *loft_image_refusal(const uint8_t *bytes, size_t n, char *why, size_t cap) {
     uint32_t sig, pos = LOFT_ST_PRIMARY, words;
     if (n < 16) return "it is too small to be a store image";
@@ -516,6 +519,15 @@ static const char *loft_image_refusal(const uint8_t *bytes, size_t n, char *why,
         return why;
     }
     words = (uint32_t) (n / 8);
+    {
+        uint32_t recorded;
+        memcpy(&recorded, bytes + 4, 4);
+        if (recorded > 1 && recorded != words) {
+            snprintf(why, cap, "it records %lu words and the file holds %lu \xe2\x80\x94 the image was cut short or added to",
+                     (unsigned long) recorded, (unsigned long) words);
+            return why;
+        }
+    }
     while (pos < words) {
         int32_t claim;
         memcpy(&claim, bytes + (size_t) pos * 8, 4);
@@ -700,7 +712,7 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
  * rejected first and the slot keeps the store it had. */
 static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted, const loft_sidecar *sc,
                             long recorded, const char *what, const char *who) {
-    char reason[96];
+    char reason[160];
     const char *bad = loft_image_refusal(bytes, n, reason, sizeof reason);
     (void) untrusted;
     if (bad) {
@@ -708,7 +720,9 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
         free(bytes);
         return 0;
     }
-    uint32_t words = (uint32_t) (n / 8);
+    uint32_t words = (uint32_t) (n / 8), unrecorded = 1;
+    /* A store in memory records no length: only a written image does (`(S-Frame)`). */
+    memcpy(bytes + 4, &unrecorded, 4);
     loft_store_t *s = &loft_stores[r.store_nr];
     /* `adopt_image`: the image's references re-pointed at this slot, read off its own bytes; a
      * refusal leaves the store as it was. */

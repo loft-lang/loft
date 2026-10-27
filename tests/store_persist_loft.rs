@@ -608,7 +608,7 @@ const CUT_READ: &str = "fn read(name: text) {
 
 fn main() {
   read(\"whole\");
-  for k in 0..4 { read(\"cut{k}\"); }
+  for k in 0..6 { read(\"cut{k}\"); }
 }
 ";
 
@@ -618,10 +618,11 @@ fn main() {
 /// (`name num5`), and a deeper cut panicked on the first read.  `(S-Frame)` defines an image as
 /// a chain that tiles the file, so each is now refused with its reason, on every backend.
 ///
-/// The cuts are chosen off the image's own chain, so a layout change cannot move one onto a
-/// block boundary: two inside the last word, one a word into the last block, one a word into a
-/// block near the middle.  A cut exactly ON a block boundary leaves a chain that tiles the
-/// shorter file and is not refused yet (loft#2200 stays open for it).
+/// The cuts are chosen off the image's own chain, so a layout change cannot move one: two
+/// inside the last word, one a word into the last block, one a word into a block past the
+/// middle, and two exactly ON a block boundary — the start of the last block and of that middle
+/// one — where the shorter chain still tiles the file and only the length the image records
+/// (bytes 4..8, `(S-Frame)`) tells it is not whole.
 #[test]
 fn a_store_image_cut_short_is_refused_on_every_backend() {
     let dir = scratch("store_load_cut_short");
@@ -657,11 +658,18 @@ fn a_store_image_cut_short_is_refused_on_every_backend() {
         whole.len() / 8 - last >= 2,
         "the last block is longer than a word"
     );
+    assert_eq!(
+        loft::store::image_recorded_words(&whole),
+        Some(u32::try_from(whole.len() / 8).expect("a store's words fit u32")),
+        "a written image records its own length"
+    );
     let cuts = [
         whole.len() - 1,
         whole.len() - 7,
         whole.len() - 8,
         mid * 8 + 8,
+        last * 8,
+        mid * 8,
     ];
     let side = fa::read(dir.join("whole.store.dschema")).expect("the sidecar");
     for (k, &n) in cuts.iter().enumerate() {
@@ -696,18 +704,16 @@ fn a_store_image_cut_short_is_refused_on_every_backend() {
                 "cut1 load=false",
                 "cut2 load=false",
                 "cut3 load=false",
+                "cut4 load=false",
+                "cut5 load=false",
             ],
             "{backend}: {stderr}"
         );
+        // Every cut changes the file's length, which the image records, so each says so.
         assert_eq!(
-            stderr.matches("not whole words").count(),
-            2,
-            "{backend}: a cut inside a word says so: {stderr}"
-        );
-        assert_eq!(
-            stderr.matches("words, past the").count(),
-            2,
-            "{backend}: a cut inside a block names the block: {stderr}"
+            stderr.matches("the image was cut short").count(),
+            6,
+            "{backend}: each cut says why: {stderr}"
         );
     }
 }

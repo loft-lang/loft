@@ -777,10 +777,20 @@ impl Drop for Store {
 /// `std::fs` failing and the host FS holding the file.  Without it a `--html` page could
 /// not read a store at ALL — `store_load` answered `false` for every path, politely and
 /// with nothing to act on (@PLN146 F4).
+/// The length in words a written image records at bytes 4..8 (`(S-Frame)`, loft#2200), or
+/// `None` where it records none: 0 or 1 there is what a writer before the length was
+/// recorded left, and what a store in memory or bound to a file holds.
+#[must_use]
+pub fn image_recorded_words(bytes: &[u8]) -> Option<u32> {
+    let w = u32::from_le_bytes([*bytes.get(4)?, bytes[5], bytes[6], bytes[7]]);
+    (w > 1).then_some(w)
+}
+
 /// The words a whole store image of `bytes` holds, or why it is not one: the signature
 /// (`(S-Frame)`), at least the header, a whole number of words — every writer pads the
 /// image to its last block's end, so a file that is not whole words was cut short
-/// (loft#2200) — and within the store limit.
+/// (loft#2200) — the length the image records, where it records one, and within the
+/// store limit.
 pub(crate) fn image_words(bytes: &[u8]) -> Result<u32, String> {
     if bytes.len() < 16 {
         return Err("it is too small to be a store image".into());
@@ -796,10 +806,24 @@ pub(crate) fn image_words(bytes: &[u8]) -> Result<u32, String> {
         ));
     }
     let words = bytes.len() / 8;
+    if let Some(recorded) = image_recorded_words(bytes)
+        && recorded as usize != words
+    {
+        return Err(format!(
+            "it records {recorded} words and the file holds {words} — the image was cut short \
+             or added to"
+        ));
+    }
     if words > MAX_STORE_WORDS as usize {
         return Err(format!("it exceeds the {MAX_STORE_WORDS}-word store limit"));
     }
     Ok(words as u32)
+}
+
+/// A store in memory records no image length (`(S-Frame)`): it grows, so only an image
+/// writer stamps one, on the file it writes.
+fn clear_recorded_words(ptr: *mut u8) {
+    unsafe { ptr.add(4).cast::<u32>().write_unaligned(1) };
 }
 
 pub(crate) fn image_bytes(path: &str) -> Option<Vec<u8>> {
@@ -1414,6 +1438,9 @@ impl Store {
             if read_surface {
                 store.read_only = true;
             } else {
+                // Bound, the file is a live store that grows: a written image's length no
+                // longer holds for it (`(S-Frame)`).
+                clear_recorded_words(store.ptr);
                 store.fl_rebuild();
                 store.claims_rebuild();
             }
@@ -1454,6 +1481,7 @@ impl Store {
             ptr.add(bytes.len())
                 .write_bytes(0, words as usize * 8 - bytes.len());
         }
+        clear_recorded_words(ptr);
         let mut store = Store {
             ptr,
             size: words,
@@ -1576,6 +1604,7 @@ impl Store {
             ptr.add(bytes.len())
                 .write_bytes(0, words as usize * 8 - bytes.len());
         }
+        clear_recorded_words(ptr);
         let mut store = Store {
             ptr,
             size: words,
