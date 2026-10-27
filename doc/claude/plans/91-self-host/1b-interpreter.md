@@ -877,7 +877,7 @@ integer it returns.  Both must print the same number, or the times do not compar
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
 
-### S1.1a — a block-bodied match arm needs no comma (fixes X14) — DESIGNED, not built
+### S1.1a — a block-bodied match arm needs no comma (fixes X14) — BUILT 2026-10-28
 
 **Found by S1.1.**  The lowering's `match` wrote block arms the way the reasoning (and
 Rust) writes them: `NdIf { … } => { … }` on its own lines, then the next arm, no comma.  The
@@ -899,6 +899,18 @@ after an arm whose body is a block it may be left out.
 and without the comma; an expression arm without a comma is still refused, on both match
 paths (enum, scalar).  Tests in `tests/parse_errors.rs` or beside the match cells, and the
 `LOFT_CONTROL.md` example compiled by a test.
+
+**Built — what changed from the design.**  `parse_match_arm_body` already computed whether
+the body opened with `{` (a local, `block_arm`); it now publishes that LAST, after the body,
+so a `match` nested inside the body cannot leave its own arm's answer behind.  That case is
+a cell: an outer expression arm whose inner `match` ends in a block still needs its comma.
+Tests: `parse_errors::a_block_bodied_match_arm_needs_no_comma` (enum path, scalar path,
+nested), `an_expression_bodied_match_arm_still_needs_its_comma` (plain and nested).
+Falsified: with the flag ignored the first fails.  `(M-Sep)` is in `formal/matching.md`.
+
+A side-observation, not this step's: `enum E { … }` compiles from the command line but is
+refused under the `code!` test harness ("conflicts with a constant of the same name", the
+stdlib's `E`), so the two drivers disagree on one program.  To check before a fix is chosen.
 
 ## The language for this job
 
@@ -936,7 +948,7 @@ paths (enum, scalar).  Tests in `tests/parse_errors.rs` or beside the match cell
 | **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss (§ Steps, S0.2) |
 | **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` (§ Steps, S0.3b) |
 | **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — fixed in S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards (§ Steps, S0.3d) |
-| **X14** | a block-bodied match arm demands a comma (`NdIf { … } => { … }` then the next arm), while Rust and the `LOFT_CONTROL.md` example leave it out | **bug — S1.1a** | the comma is optional after a block body (§ Steps, S1.1a) |
+| **X14** | a block-bodied match arm demands a comma (`NdIf { … } => { … }` then the next arm), while Rust and the `LOFT_CONTROL.md` example leave it out | **bug — fixed in S1.1a** | the comma is optional after a block body (§ Steps, S1.1a) |
 
 ### New constructs taken from OCaml's type expressions
 

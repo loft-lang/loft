@@ -347,6 +347,11 @@ git do.
 
 ### Bug fixes
 
+**A `match` arm whose body is a block needs no comma after it.**  `A { v } => { r = v; }` on one
+line and the next arm on the following one was refused with "Expect token ,", while Rust takes
+it and the loft reference showed it that way.  An arm whose body is an expression still needs
+its comma.
+
 **A cache directory loft cannot write no longer stops your program.**  With a read-only
 `~/.cache` (a sandbox, a container, a shared machine) every run that had to parse ended in an
 internal compiler error; one that found an earlier run's cache there did too.  Now the cache is

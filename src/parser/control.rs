@@ -7226,11 +7226,7 @@ impl Parser {
                     });
                 }
             }
-            if self.lexer.peek_token("}") {
-                self.lexer.has_token(","); // optional trailing comma
-            } else {
-                self.lexer.token(","); // comma required between arms
-            }
+            self.match_arm_separator();
         }
 
         self.lexer.token("}");
@@ -7467,6 +7463,16 @@ impl Parser {
     /// carve-outs it already applies to `else`.  A BARE arm (`1 => x`) has no block tail,
     /// so the same conversion is asked here through the same `convert_admitting` /
     /// `validate_convert` pair, and the carve-outs are restated in the same order.
+    /// `@FR-M-Sep` — the separator after a match arm: a comma, which may be left out before the
+    /// closing `}` and after an arm whose body is a block (`=> { … }`), as in Rust.
+    fn match_arm_separator(&mut self) {
+        if self.lexer.peek_token("}") || self.arm_body_was_block {
+            self.lexer.has_token(",");
+        } else {
+            self.lexer.token(",");
+        }
+    }
+
     fn parse_match_arm_body(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
         // A bare `null` arm, told from the SOURCE token; a block arm reports through
         // `block_tail_null_literal`, read in `parse_match_arm_body_inner`.
@@ -7493,6 +7499,9 @@ impl Parser {
         }
         self.vars.restore_write_state(&arm_write_state);
         self.end_pattern_arm();
+        // `@FR-M-Sep` — a body written as a block needs no comma after it.  Set last, so a
+        // `match` nested in this body cannot leave its own arm's answer behind.
+        self.arm_body_was_block = block_arm;
         tp
     }
 
@@ -11552,11 +11561,7 @@ impl Parser {
                 }
                 break;
             }
-            if self.lexer.peek_token("}") {
-                self.lexer.has_token(","); // optional trailing comma
-            } else {
-                self.lexer.token(","); // comma required between arms
-            }
+            self.match_arm_separator();
         }
         self.lexer.token("}");
 

@@ -578,6 +578,9 @@ pub struct Parser {
     /// the arms are joined and read once at the end, because "the running result is void" and
     /// "an arm was void" are different facts: the result starts void before any arm.
     pub(crate) match_void_arm: bool,
+    /// `@FR-M-Sep` — whether the match arm just parsed had a block body (`=> { … }`), after
+    /// which the separating comma may be left out.  Set by `parse_match_arm_body`.
+    pub(crate) arm_body_was_block: bool,
     /// @PLN87 B-Ref-AnnotationOnly — true while the parser is positioned at the HEAD
     /// of a place where `&` may legally appear: the whole right-hand side of a plain
     /// `=` binding, or the start of a statement (where the D-bind-7 guard reports a
@@ -1945,6 +1948,7 @@ impl Parser {
             lit_shape_refused: None,
             arms_of_statement_construct: false,
             match_void_arm: false,
+            arm_body_was_block: false,
             amp_head: AmpHead::default(),
             amp_identity: None,
             eq_rhs_at: None,
