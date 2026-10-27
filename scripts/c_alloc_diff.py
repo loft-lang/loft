@@ -50,7 +50,11 @@ def c(prog, d):
     r = subprocess.run([LOFT, "--emit-c", src, prog], capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
         return None, "refused: " + r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "refused"
-    r = subprocess.run(["cc", "-std=c99", "-O1", "-DLOFT_ALLOC_TRACE", src, "-o", exe, "-lm"],
+    # The archives the unit names (`/* link: … */`: a `[c] shim`, the TLS client of a unit that
+    # fetches over a URL or pages an image), as c_sweep.py links them.
+    with open(src, encoding="utf-8", errors="replace") as f:
+        links = re.findall(r"^/\* link: (.*) \*/$", f.read(), re.M)
+    r = subprocess.run(["cc", "-std=c99", "-O1", "-DLOFT_ALLOC_TRACE", src, "-o", exe, "-lm", *links],
                        capture_output=True, text=True)
     if r.returncode != 0:
         return None, "cc: " + r.stderr[:300]
