@@ -4192,7 +4192,7 @@ impl<'a> FnWriter<'a> {
     }
 
     /// `LOFT_RELEASE_PASS_PROBE=1` (generation time): the release-pass probe's form of an
-    /// integer operator — the processor's wrapping arithmetic, each wrap defined
+    /// integer operator or a float compare — the processor's wrapping arithmetic, each wrap defined
     /// (`loft_wrap_*` in `loft_rt.h`) — for exactly the operators and operand shapes
     /// `generation::ops::int_arith::probe_form` gives the Rust generator, so the C and Rust
     /// ship lanes measure the same tier.  The `Nullable` forms and the null test keep their
@@ -4206,6 +4206,19 @@ impl<'a> FnWriter<'a> {
     ) -> Result<Option<E>, String> {
         if !crate::env_once!(std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0")) {
             return Ok(None);
+        }
+        // A float compare is the plain C operator, as native's `FloatCompareEmitter` writes it
+        // under the probe (`non_sentinel::plain_float_compare` names the operators).
+        if let Some(op) = crate::opt::non_sentinel::plain_float_compare(name)
+            && args.len() == 2
+        {
+            let (a, b) = self.two(name, args, ind)?;
+            let (a, b) = if name.ends_with("Single") {
+                (as_single(a)?, as_single(b)?)
+            } else {
+                (as_float(a)?, as_float(b)?)
+            };
+            return Ok(Some(E::new(format!("(({a}) {op} ({b}))"), K::Cond)));
         }
         let shift_k =
             || matches!(args.get(1).map(Value::unspan), Some(Value::Int(k)) if (0..64).contains(k));
