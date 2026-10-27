@@ -4634,6 +4634,17 @@ impl Parser {
         type_name: &str,
         returned: bool,
     ) -> Option<Type> {
+        // @PLN204 — under the 32-bit regime a plain `integer` is an `i32` and a plain
+        // `float` a `single`; `i64` / `f64` name the 64-bit forms there and everywhere.
+        let type_name = if self.data.width32() {
+            match type_name {
+                "integer" => "i32",
+                "float" => "single",
+                other => other,
+            }
+        } else {
+            type_name
+        };
         // Phase 2c round 10c: `long` has been removed as a user-facing
         // type.  Callers now use `integer` everywhere; if anyone still
         // writes `long` it parses as an unknown identifier and fails

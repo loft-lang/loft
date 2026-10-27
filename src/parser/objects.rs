@@ -876,6 +876,7 @@ impl Parser {
                 *code = Value::Int(i32::from(tp));
             } else {
                 t = self.parse_call(code, source, &nm, &call_pos);
+                t = self.width32_call_result(code, t);
             }
         } else if self.closure_param != u16::MAX
             && !self.first_pass

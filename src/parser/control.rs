@@ -23320,7 +23320,7 @@ impl Parser {
             self.check_call_arguments(val, &positional, &named);
             self.method_checked = true;
         }
-        tp
+        self.width32_call_result(val, tp)
     }
 
     #[expect(

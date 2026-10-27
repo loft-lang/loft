@@ -5693,6 +5693,10 @@ pub struct Data {
     /// caller that deliberately seeded a base — `loft test`, sharing one library
     /// parse across the test files that `use` exactly it — ever fills it.
     preloaded_uses: HashMap<String, u16>,
+    /// @PLN204 — the sources parsed under the 32-bit regime (`#width 32`, or `LOFT_WIDTH=32`
+    /// for every source but the stdlib): there a plain `integer` is an `i32`, a plain `float`
+    /// a `single`, and arithmetic on 32-bit operands stays 32-bit ([`Self::width32`]).
+    width32_sources: std::collections::BTreeSet<u16>,
     /// Every import that has been applied, so [`rebuild_indices`](Self::rebuild_indices)
     /// can replay it.
     ///
@@ -6369,9 +6373,10 @@ impl Write for Into {
 pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
     Some(match name {
         // Rust / C / Java / Go habits for the 64-bit integer loft calls `integer`.
-        "int" | "i64" | "u64" | "long" => "integer",
-        // `float` is 64-bit and `single` is 32-bit, so f64→float and f32→single.
-        "f64" | "double" => "float",
+        // (`i64` and `f64` are legal names since @PLN204: the 64-bit forms a 32-bit file asks for.)
+        "int" | "u64" | "long" => "integer",
+        // `float` is 64-bit and `single` is 32-bit, so double→float and f32→single.
+        "double" => "float",
         "f32" => "single",
         "str" | "string" => "text",
         "bool" => "boolean",
@@ -6544,6 +6549,7 @@ impl Data {
             def_names: DefIndex::default(),
             use_names: HashMap::new(),
             preloaded_uses: HashMap::new(),
+            width32_sources: std::collections::BTreeSet::new(),
             applied: Vec::new(),
             bare_uses: Vec::new(),
             private_imports: HashMap::new(),
@@ -6605,6 +6611,27 @@ impl Data {
     /// hand copies of it to several program parses.  The libraries named here
     /// must actually be present in `definitions`: this only stops the loader,
     /// it does not supply anything.
+    /// @PLN204 — is source `src` parsed under the 32-bit regime?
+    #[must_use]
+    pub fn width32_source(&self, src: u16) -> bool {
+        self.width32_sources.contains(&src)
+    }
+
+    /// @PLN204 — is the source now being parsed under the 32-bit regime?
+    #[must_use]
+    pub fn width32(&self) -> bool {
+        self.width32_source(self.source)
+    }
+
+    /// @PLN204 — record whether source `src` is parsed under the 32-bit regime.
+    pub fn set_width32(&mut self, src: u16, on: bool) {
+        if on {
+            self.width32_sources.insert(src);
+        } else {
+            self.width32_sources.remove(&src);
+        }
+    }
+
     pub fn freeze_uses(&mut self) {
         self.preloaded_uses = self.use_names.clone();
         self.preloaded_uses.remove("std"); // `reset` seeds it unconditionally

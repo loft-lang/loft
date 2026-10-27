@@ -50,6 +50,13 @@ pub type i32 = integer size(4);
 /// numbers, counts, tick fields) where the byte width is the load-bearing property; plain
 /// `integer` holds the whole 0..2^32-1 range and more.
 pub type u32 = integer limit(0, 4294967294) size(4);
+/// 8-byte signed: the full `integer`, spelled so that it stays 64-bit in a file under the
+/// 32-bit regime (`#width 32`), where a plain `integer` is an `i32`.  Elsewhere it is
+/// `integer` by another name.
+pub type i64 = integer size(8);
+/// The 64-bit `float`, spelled so that it stays a double in a file under the 32-bit regime
+/// (`#width 32`), where a plain `float` is a `single`.  Elsewhere it is `float`.
+pub type f64 = float;
 /// Where one value stands against another: what `compare` answers.  An enum rather than a
 /// signed number, so a comparison cannot be written as a subtraction that overflows.
 pub enum Ordering {
@@ -217,6 +224,13 @@ fn OpNot(v1: boolean) -> boolean;
 fn OpRangeDefault(val: integer, lo: const integer, hi: const integer, dflt: const integer) -> integer;
 #cold
 #rust"{{ let _rv = @val; if _rv == i64::MIN {{ if @dflt == i64::MIN {{ _rv }} else {{ @dflt }} }} else if _rv >= @lo && _rv <= @hi {{ _rv }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::RangeDefaulted {{ value: _rv, lo: @lo, hi: @hi }}); @dflt }} }}"
+// @PLN204 — the 32-bit regime's arithmetic: a result that leaves the `i32` range reads null,
+// as a 64-bit overflow does (C85), and silently, as that does.  The parser wraps every
+// integer operation of a `#width 32` file whose operands are 32-bit in one; the C backend
+// carries such an operation in `int32_t` (`loft_narrow32`).
+fn OpNarrow32(val: integer) -> integer;
+#cold
+#rust"ops::op_narrow32(@val)"
 fn OpConstInt(val: const integer) -> integer;
 #hot
 #rust"@val"

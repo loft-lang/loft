@@ -533,6 +533,40 @@ LOFT_HOT_INLINE int64_t loft_rem(int64_t a, int64_t b) {
     return a % b;
 }
 
+/* @PLN204 — the 32-bit integers (`CType::Int32`): `int32_t`, null `INT32_MIN`.  `loft_w64`
+ * widens one where a 64-bit value is wanted; `loft_n32` narrows a 64-bit value, a value that
+ * does not fit reading null as `OpNarrow32` answers it.  The operators answer what the
+ * interpreter's `OpNarrow32(OpAddInt(a, b))` answers: a null operand or a result outside
+ * `INT32_MIN + 1 ..= INT32_MAX` is null.  Taken in 64 bits only where 32 cannot hold the
+ * intermediate (a product); a sum is checked against the range before it is formed. */
+#define LOFT_NULL32 INT32_MIN
+LOFT_HOT_INLINE int64_t loft_w64(int32_t a) { return a == LOFT_NULL32 ? LOFT_NULL : (int64_t) a; }
+LOFT_HOT_INLINE int32_t loft_n32(int64_t a) {
+    return (a > (int64_t) INT32_MIN && a <= (int64_t) INT32_MAX) ? (int32_t) a : LOFT_NULL32;
+}
+LOFT_HOT_INLINE int32_t loft_add32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32) return LOFT_NULL32;
+    if ((b > 0 && a > INT32_MAX - b) || (b < 0 && a <= INT32_MIN - b)) return LOFT_NULL32;
+    return a + b;
+}
+LOFT_HOT_INLINE int32_t loft_sub32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32) return LOFT_NULL32;
+    if ((b < 0 && a > INT32_MAX + b) || (b > 0 && a <= INT32_MIN + b)) return LOFT_NULL32;
+    return a - b;
+}
+LOFT_HOT_INLINE int32_t loft_mul32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32) return LOFT_NULL32;
+    return loft_n32((int64_t) a * (int64_t) b);
+}
+LOFT_HOT_INLINE int32_t loft_div32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32 || b == 0) return LOFT_NULL32;
+    return a / b; /* INT32_MIN is null, so INT32_MIN / -1 is never reached */
+}
+LOFT_HOT_INLINE int32_t loft_rem32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32 || b == 0) return LOFT_NULL32;
+    return a % b;
+}
+
 /* The release-pass probe's forms (`LOFT_RELEASE_PASS_PROBE=1`, @PLN201): the processor's
  * wrapping arithmetic, as `generation::ops::int_arith::probe_form` emits it for Rust — a
  * MEASUREMENT of the ship tier's ceiling, never a build anyone ships (@C129).  Each wrap is

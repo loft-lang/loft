@@ -86,6 +86,11 @@ impl std::fmt::Display for Refusal {
 pub(crate) enum CType {
     /// A 64-bit integer, `int64_t`; null is `LOFT_NULL`.
     Int,
+    /// @PLN204 — an integer whose type fits 32 bits (`i32`, `u8`, a `limit` inside `i32`,
+    /// every plain `integer` of a `#width 32` file), `int32_t`; null is `LOFT_NULL32`.  Read
+    /// where a 64-bit value is wanted it widens (`loft_w64`), and a 64-bit value stored into
+    /// one narrows (`loft_n32`), so only the operations written for it run in 32 bits.
+    Int32,
     /// A boolean, stored as `uint8_t` (0, 1, `LOFT_BOOL_NULL`).
     Bool,
     /// A text: an owned `loft_text` where it is held, a `loft_str` view where it is passed.
@@ -108,10 +113,24 @@ pub(crate) enum CType {
     Void,
 }
 
+/// @PLN204 — `LOFT_NO_C_INT32=1` holds every integer in `int64_t`, as before `CType::Int32`:
+/// the first bisect step for a C-only wrong answer on a program with 32-bit integers.
+pub(crate) fn no_c_int32() -> bool {
+    static NO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *NO.get_or_init(|| std::env::var_os("LOFT_NO_C_INT32").is_some_and(|v| v != "0"))
+}
+
+/// The C shape a native runtime function takes or answers for loft shape `c`: the runtime is
+/// written in `int64_t`, so a 32-bit integer crosses it widened.
+pub(crate) fn native_shape(c: CType) -> CType {
+    if c == CType::Int32 { CType::Int } else { c }
+}
+
 /// The C type a local or a result of shape `c` is held in.
 pub(crate) fn held(c: CType) -> String {
     match c {
         CType::Int => "int64_t".into(),
+        CType::Int32 => "int32_t".into(),
         CType::Bool => "uint8_t".into(),
         CType::Text => "loft_text".into(),
         CType::Ref => "loft_ref".into(),
@@ -456,6 +475,7 @@ impl<'a> Cx<'a> {
         match tp.base() {
             // A narrow integer is held as a plain one: its range is enforced where a value
             // enters it (`OpRangeDefault`) and where a field stores it.
+            Type::Integer(spec) if spec.is_width32() && !no_c_int32() => Some(CType::Int32),
             Type::Integer(_) => Some(CType::Int),
             Type::Boolean => Some(CType::Bool),
             Type::Float => Some(CType::Float),
@@ -514,6 +534,7 @@ impl<'a> Cx<'a> {
     pub(crate) fn initial(&self, c: CType) -> String {
         match c {
             CType::Int => "LOFT_NULL".into(),
+            CType::Int32 => "LOFT_NULL32".into(),
             CType::Bool => "LOFT_BOOL_NULL".into(),
             CType::Text => "{ 0, 0, 0 }".into(),
             CType::Ref => "{ 0xFFFF, 0, 0 }".into(),

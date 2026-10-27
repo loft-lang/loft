@@ -34,6 +34,8 @@ pub(crate) fn var_name(name: &str, v: u16) -> String {
 enum K {
     /// `int64_t`.
     Int,
+    /// @PLN204 — `int32_t`, null `LOFT_NULL32` (`CType::Int32`).
+    Int32,
     /// A C condition, 0 or 1.
     Cond,
     /// A stored boolean, `uint8_t` 0, 1 or `LOFT_BOOL_NULL`.
@@ -88,6 +90,7 @@ impl E {
 fn kind_of(c: CType) -> K {
     match c {
         CType::Int => K::Int,
+        CType::Int32 => K::Int32,
         CType::Bool => K::Bool,
         CType::Text => K::View,
         CType::Ref => K::Ref,
@@ -1556,6 +1559,7 @@ impl<'a> FnWriter<'a> {
     fn null_into(&mut self, target: &str, c: CType, ind: usize) {
         let s = match c {
             CType::Int => format!("{target} = LOFT_NULL;"),
+            CType::Int32 => format!("{target} = LOFT_NULL32;"),
             CType::Bool => format!("{target} = LOFT_BOOL_NULL;"),
             CType::Text => format!("loft_text_set(&{target}, loft_null_text());"),
             CType::Ref => format!("{target} = loft_ref_null();"),
@@ -3272,6 +3276,7 @@ impl<'a> FnWriter<'a> {
             }
             let (c, code) = match e.kind {
                 K::Int => (CType::Int, e.code),
+                K::Int32 => (CType::Int32, e.code),
                 K::Ref => (CType::Ref, e.code),
                 K::Tup(id) => (CType::Tuple(id), e.code),
                 K::Enum => (CType::Enum, e.code),
@@ -3384,6 +3389,16 @@ impl<'a> FnWriter<'a> {
                 return Ok(e);
             }
         }
+        // A native runtime function is written in `int64_t`: a 32-bit integer crosses it widened.
+        let native = super::native_c(def.name()).is_some();
+        let (ret, shapes) = if native {
+            (
+                super::native_shape(ret),
+                shapes.into_iter().map(super::native_shape).collect(),
+            )
+        } else {
+            (ret, shapes)
+        };
         let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
@@ -3729,6 +3744,11 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.probe_operator(name, args, ind)? {
             return Ok(e);
         }
+        if name == "OpNarrow32"
+            && let [x] = args
+        {
+            return self.narrow32(x, ind);
+        }
         let arith = match name {
             // The `Nullable` forms answer the same values; only the overflow report differs.
             "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
@@ -3758,10 +3778,66 @@ impl<'a> FnWriter<'a> {
             _ => None,
         };
         if let Some(op) = cmp {
-            let (a, b) = self.two(name, args, ind)?;
+            let (a, b) = self.two32(name, args, ind)?;
+            // Two 32-bit operands compare as they are: the null is the lowest value in
+            // either width, so the order is the 64-bit one.
+            if a.kind == K::Int32 && b.kind == K::Int32 {
+                return Ok(compare(&a.code, op, &b.code));
+            }
             return Ok(compare(&as_int(a)?, op, &as_int(b)?));
         }
         self.text_operator(name, args, ind)
+    }
+
+    /// @PLN204 — the two operands of a binary integer operator, a literal that fits taken as a
+    /// 32-bit one, so an operation on 32-bit values can be written in 32 bits.
+    fn two32(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
+        let (a, b) = self.two(name, args, ind)?;
+        let lit = |v: &Value, e: E| match v.unspan() {
+            Value::Int(i) if *i != i32::MIN => E::new(format!("INT32_C({i})"), K::Int32),
+            _ => e,
+        };
+        Ok((lit(&args[0], a), lit(&args[1], b)))
+    }
+
+    /// @PLN204 — `OpNarrow32(x)`, the 32-bit regime's arithmetic: `x` computed and narrowed to
+    /// `int32_t`, a value that does not fit reading null.  An add, subtract, multiply, divide
+    /// or remainder of two 32-bit operands is written in 32 bits (`loft_add32` …), which
+    /// answers the same: the 64-bit operation of two `int32_t` values cannot overflow, so
+    /// narrowing its result is exactly the 32-bit operation's overflow check.
+    fn narrow32(&mut self, x: &Value, ind: usize) -> Result<E, String> {
+        if let Value::Call(d, args) = x.unspan()
+            && args.len() == 2
+            && is_operator(self.cx.data, *d)
+        {
+            let name = self.cx.data.def(*d).name();
+            let f = match name {
+                "OpAddInt" | "OpAddIntNullable" => Some("loft_add32"),
+                "OpMinInt" | "OpMinIntNullable" => Some("loft_sub32"),
+                "OpMulInt" | "OpMulIntNullable" => Some("loft_mul32"),
+                "OpDivInt" | "OpDivIntNullable" => Some("loft_div32"),
+                "OpRemInt" | "OpRemIntNullable" => Some("loft_rem32"),
+                _ => None,
+            };
+            if let Some(f) = f
+                && !super::no_c_int32()
+            {
+                let (a, b) = self.two32(name, args, ind)?;
+                if a.kind == K::Int32 && b.kind == K::Int32 {
+                    return Ok(E::new(format!("{f}({}, {})", a.code, b.code), K::Int32));
+                }
+                let w = &f[..f.len() - 2];
+                return Ok(E::new(
+                    format!("loft_n32({w}({}, {}))", as_int(a)?, as_int(b)?),
+                    K::Int32,
+                ));
+            }
+        }
+        let e = self.expr(x, ind)?;
+        if super::no_c_int32() {
+            return Ok(E::new(format!("loft_w64(loft_n32({}))", as_int(e)?), K::Int));
+        }
+        Ok(E::new(as_int32(e)?, K::Int32))
     }
 
     /// `target = if cond { t } else { e }`, each arm assigning it; a not-null test's else opens
@@ -5539,6 +5615,8 @@ fn c_long(n: i64) -> String {
 fn as_int(e: E) -> Result<String, String> {
     match e.kind {
         K::Int => Ok(e.code),
+        // @PLN204 — a 32-bit integer read as a 64-bit one: its null stays null.
+        K::Int32 => Ok(format!("loft_w64({})", e.code)),
         // The slot the bytecode writes is the integer's: a character's code point, a
         // boolean's byte, a function value's definition number (`FnRefDnr`).
         K::Char | K::Bool => Ok(format!("((int64_t) ({}))", e.code)),
@@ -5604,6 +5682,8 @@ fn as_char(e: E) -> Result<String, String> {
         // An integer written as a character: its low 32 bits, as the store keeps them (an
         // integer null is the character null, 0).
         K::Int => Ok(format!("((uint32_t) ({}))", e.code)),
+        // `INT32_MIN`, the 32-bit null, is the character null too: 0.
+        K::Int32 => Ok(format!("((uint32_t) loft_w64({}))", e.code)),
         k => Err(format!("a character expected, a {k:?} found")),
     }
 }
@@ -5623,9 +5703,19 @@ fn as_view(e: E) -> Result<String, String> {
 }
 
 /// The value of `e` converted to shape `c`, for a parameter or a store.
+/// @PLN204 — `e` as a 32-bit integer: a 64-bit value that does not fit reads null, as the
+/// interpreter's `OpNarrow32` answers it.
+fn as_int32(e: E) -> Result<String, String> {
+    match e.kind {
+        K::Int32 => Ok(e.code),
+        _ => Ok(format!("loft_n32({})", as_int(e)?)),
+    }
+}
+
 fn as_shape(e: E, c: CType) -> Result<String, String> {
     match c {
         CType::Int => as_int(e),
+        CType::Int32 => as_int32(e),
         CType::Bool => as_bool(e),
         CType::Text => as_view(e),
         CType::Ref => as_ref(e),
@@ -5813,6 +5903,14 @@ const OP_CHAR: &[&str] = &[
 
 /// The C shape an operator's value is held in, for the operators this backend writes.
 fn op_shape(name: &str) -> Option<CType> {
+    // @PLN204 — `OpNarrow32` answers an `int32_t` (`FnWriter::narrow32`).
+    if name == "OpNarrow32" {
+        return Some(if super::no_c_int32() {
+            CType::Int
+        } else {
+            CType::Int32
+        });
+    }
     let shapes = [
         (OP_INT, CType::Int),
         (OP_BOOL, CType::Bool),

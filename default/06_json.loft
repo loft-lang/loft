@@ -97,7 +97,7 @@ pub fn as_number(self: const JsonValue) -> float;
 
 /// Typed extractor — returns `null` on kind mismatch.  A `JInteger`
 /// answers its exact value; a `JNumber` is truncated toward zero.
-pub fn as_long(self: const JsonValue) -> integer;
+pub fn as_long(self: const JsonValue) -> i64;
 #pure
 
 /// Typed extractor — returns `null` on kind mismatch.

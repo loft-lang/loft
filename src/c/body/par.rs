@@ -132,6 +132,7 @@ impl FnWriter<'_> {
         let store = match result_shape {
             _ if name == "n_parallel_discard" => self.par_discard(&call, result_shape),
             CType::Int => format!("loft_b[loft_i].i = {call};"),
+            CType::Int32 => format!("loft_b[loft_i].i = loft_w64({call});"),
             CType::Bool | CType::Enum | CType::Char => {
                 format!("loft_b[loft_i].i = (int64_t) {call};")
             }
@@ -307,6 +308,7 @@ impl FnWriter<'_> {
         let store = match result_shape {
             _ if name == "n_parallel_discard" => self.par_discard(&call, result_shape),
             CType::Int => format!("loft_b[loft_i].i = {call};"),
+            CType::Int32 => format!("loft_b[loft_i].i = loft_w64({call});"),
             CType::Bool | CType::Enum | CType::Char => {
                 format!("loft_b[loft_i].i = (int64_t) {call};")
             }
@@ -516,6 +518,7 @@ impl FnWriter<'_> {
                     CType::Ref => "loft_e".into(),
                     CType::Text => "loft_get_text(loft_e, 0)".into(),
                     CType::Int => format!("loft_i64_bits({bits})"),
+                    CType::Int32 => format!("loft_n32(loft_i64_bits({bits}))"),
                     CType::Float => format!("loft_f64({bits})"),
                     CType::Single => format!("loft_f32((uint32_t) {bits})"),
                     CType::Char => format!("(uint32_t) {bits}"),
