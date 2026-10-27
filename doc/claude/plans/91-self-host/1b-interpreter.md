@@ -723,6 +723,58 @@ fn test_an_image_opens_as_the_ir() {
 - Tests: `tests/selfhost.rs` (emit an image, run the package's `loft test`: 2 passed), the
   S0.1 layout test on the new path, the schema drift gate.
 
+### S0.3d — `assert` narrows like a guard clause; the rule written down (fixes X13) — DESIGNED, not built
+
+**Owner's ruling (2026-10-27):** one rule, `(N-Guard)` in `formal/types.md`.  A test whose
+failing side cannot continue proves its fact for the rest of the block, and `assert` is such
+a test.
+
+**Why it is sound.**
+- A failed `assert` halts (`operational.md`: "the only runtime halts are the explicit
+  `panic`/`assert`").
+- `assert` is checked in every build: the compiler's own refusal of `debug_assert` says so,
+  and `debug_assert` is the reserved companion a release would elide.  So `debug_assert`
+  must NOT narrow when it is built.
+- The one exception is `LOFT_DEV_SOFT_HALT`, an opt-in debugging switch that turns raises
+  into log-and-continue.  There a null flows on into the non-null slot, which is exactly
+  what the warning describes today; the rule states it.
+
+**The one home, already there.**  `src/parser/control.rs:~1233`, the block loop's guard-clause
+flow narrowing.  After `if <test> { <diverges> }` with no `else`, it records what holds on
+the fall-through, across four families:
+- non-null names (`narrowing_from_condition`, the ELSE side);
+- in-bounds index pairs (`collect_guard_pairs_negated`);
+- non-zero divisors (`divisor_proof_from_condition`);
+- math signs (`math_sign_proof_from_condition`).
+
+`assert(test)` is the same statement with the opposite polarity: on the fall-through `test`
+HOLDS.  So the loop gains one step.  When the statement is an assert, the same four families
+are fed from its condition's THEN side: `narrowing_from_condition` returning `true`,
+`collect_guard_pairs`, and the divisor and math proofs' `true` side.  One predicate,
+`assert_condition(&n)`, recognises both of the assert's lowered forms in
+`Parser::parse_call_diagnostic` (`src/parser/control.rs:~21138`): a call to `n_assert`, or
+the `"assert"` block holding `if test { pass } else { fail }` for a built message.
+
+**Matrix** (each cell on both backends; the typing is front-end, the values are run):
+1. `assert(b != null, "m")`, then `b` into a non-null parameter: no warning, right value.
+2. The same with a built message (`"m {x}"`, the block form): narrowed too.
+3. `assert(b == null)`: not narrowed (the use still warns).
+4. `assert(b != null)`, then `b = mk(0)`: the narrowing ends (inherited, as measured for the
+   guard clause).
+5. An `assert` inside an inner block narrows that block only.
+6. The twins: `assert(i < len(v))` then `v[i]`; `assert(d != 0)` then `a / d`;
+   `assert(x >= 0.0)` then `sqrt(x)`: each reads as its guard-clause spelling does.
+7. A failing `assert` still halts, with its own message, before the narrowed use.
+8. `selfhost/tests/load.loft` compiles without its three warnings.
+
+**Docs.**
+- `formal/types.md`: `(N-Guard)` among the eliminations, naming both forms and the soft-halt
+  caveat.  The guard clause is written down for the first time.
+- `LOFT_CONTROL.md` or the null section of `LOFT.md`, wherever narrowing is described for
+  users.
+- The `loft-write` skill.
+- The CHANGELOG.
+
 ## The language for this job
 
 ### What loft already offers (measured or established in @PLN202 / OCAML_BAR.md)
@@ -758,7 +810,7 @@ fn test_an_image_opens_as_the_ir() {
 | **X10** | capturing closures cannot sit in a collection (@C116); no local recursive `fn` (@C63) | by design — costed | not expected to bite: the dispatch table holds plain fn-refs |
 | **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss (§ Steps, S0.2) |
 | **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` (§ Steps, S0.3b) |
-| **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — owner question | write the guard narrowing as a rule, with `assert` as one of its guards (a failed assert halts) |
+| **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — S0.3d | owner: `(N-Guard)`, the guard narrowing written as a rule with `assert` as one of its guards (§ Steps, S0.3d) |
 
 ### New constructs taken from OCaml's type expressions
 
