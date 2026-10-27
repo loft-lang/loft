@@ -296,6 +296,25 @@ the design rather than loft.  The test is
 - **Not run:** `ir_schema_roundtrip`, which the design named.  It never calls
   `save_bundle`, so it could not move.
 
+### S0.1b — an orphaned sidecar is evicted too — DESIGNED, not built
+
+**Found 2026-10-28** in the user's cache: 42 stdlib `.dschema` files beside 16 images.  A
+binary with S0.1 writes a sidecar beside each image; a binary without S0.1's eviction fix
+(`main` until this branch merges) later prunes the image and leaves its sidecar.  Each
+eviction removes a sidecar only TOGETHER with its image, so a sidecar whose image is already
+gone stays forever.
+
+**Fix.**  Both evictions also remove a `*.store.dschema` whose `*.store` is gone:
+`src/cache.rs: prune_dir` (program images) and `prune_stdlib_dir` (stdlib images).  Each
+scans the directory it already lists, and only names of its own kind (`program-…`,
+`stdlib-<64 hex>`), so a sidecar of a user's store elsewhere is never touched.  It cannot
+race a writer: `save_bundle` renames the image into place BEFORE its sidecar (`@FR-S-Pair`),
+so a sidecar is never alone for long; a sidecar older than the image's write is the only
+alone one.
+
+**Tests.**  The two eviction tests gain an orphan: a `.dschema` with no image is removed, a
+sidecar with its image stays, and an orphan of a foreign name stays.
+
 ### S0.2 — `loft --emit-image <out.store> prog.loft` — BUILT 2026-10-27
 
 **What.**  A command that writes a program's IMAGE (the bundle exactly as the startup cache
