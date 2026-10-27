@@ -139,9 +139,60 @@ static void loft_log_refusal_once(loft_str raw, const char *why, size_t why_len)
     fputc('\n', stderr);
 }
 
+#if defined(_WIN32)
+#define LOFT_PATH_SEP(c) ((c) == '/' || (c) == '\\')
+/* PathText::parse_with's Windows prefix: a drive (`C:`, its letter upper-cased) or a UNC share
+ * (`\\srv\share`, written `//srv/share`), the `\\?\` verbatim spellings read as their plain
+ * twins.  The prefix goes to `pfx` (never longer than what it consumed of `raw`); the answer is
+ * where the names start, and `*rooted` says a separator follows the prefix. */
+static size_t loft_win_prefix(loft_str raw, char *pfx, size_t *plen, int *rooted) {
+    const char *p = raw.p;
+    size_t n = raw.len, i = 0;
+    int unc = 0;
+    *plen = 0;
+    if (n >= 4 && LOFT_PATH_SEP(p[0]) && LOFT_PATH_SEP(p[1]) && p[2] == '?' && LOFT_PATH_SEP(p[3])) {
+        i = 4;
+        if (n - i >= 4 && memcmp(p + i, "UNC", 3) == 0 && LOFT_PATH_SEP(p[i + 3])) {
+            i += 4;
+            unc = 1;
+        }
+    } else if (n >= 2 && LOFT_PATH_SEP(p[0]) && LOFT_PATH_SEP(p[1])) {
+        i = 2;
+        unc = 1;
+    }
+    if (unc) {
+        /* The server and the share are the prefix; the path is rooted under them. */
+        pfx[(*plen)++] = '/';
+        pfx[(*plen)++] = '/';
+        for (int part = 0; part < 2; part++) {
+            if (part) {
+                pfx[(*plen)++] = '/';
+                if (i < n) i++;
+            }
+            size_t s = i;
+            while (i < n && !LOFT_PATH_SEP(p[i])) i++;
+            memcpy(pfx + *plen, p + s, i - s);
+            *plen += i - s;
+        }
+        *rooted = 1;
+        return i;
+    }
+    if (n - i >= 2 && ((p[i] >= 'a' && p[i] <= 'z') || (p[i] >= 'A' && p[i] <= 'Z')) && p[i + 1] == ':') {
+        pfx[0] = (char) (p[i] >= 'a' ? p[i] - 32 : p[i]);
+        pfx[1] = ':';
+        *plen = 2;
+        i += 2;
+    }
+    *rooted = i < n && LOFT_PATH_SEP(p[i]);
+    return i;
+}
+#endif
+
 /* PathText's normal form of `raw`, malloc'd: '.' dropped, '..' folded, '/' between names — under
  * `base` when `raw` is relative and `base` is not empty.  With `check`, a name no platform
- * takes refuses the path (said on stderr, as `log_refusal_once` says it) and answers 0. */
+ * takes refuses the path (said on stderr, as `log_refusal_once` says it) and answers 0.  On
+ * Windows a drive or UNC prefix leads the result, as `PathText` keeps it; with `check`, a
+ * drive without a root (`C:x`) is refused, as `PathText::program` refuses it. */
 static char *loft_normalize(loft_str raw, const char *base, int check) {
     size_t blen = strlen(base);
     char *out = (char *) malloc(blen + raw.len + 3);
@@ -150,12 +201,31 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
         strcpy(out, base);
         return out;
     }
-    int rooted = raw.p[0] == '/' || raw.p[0] == '\\';
-    /* The names, each in `parts` from the offset in `at`. */
+    /* The names, each in `parts` from the offset in `at`; the Windows prefix in `pfx`. */
     char *parts = (char *) malloc(raw.len + 1);
     size_t *at = (size_t *) malloc((raw.len + 2) * sizeof *at);
-    if (!parts || !at) { fputs("loft: out of memory\n", stderr); abort(); }
-    size_t np = 0, used = 0, i = 0;
+    char *pfx = (char *) malloc(raw.len + 1);
+    if (!parts || !at || !pfx) { fputs("loft: out of memory\n", stderr); abort(); }
+    size_t plen = 0, i = 0;
+    int rooted;
+#if defined(_WIN32)
+    i = loft_win_prefix(raw, pfx, &plen, &rooted);
+    if (check && plen && pfx[0] != '/' && !rooted) {
+        char why[96];
+        int wl = snprintf(why, sizeof why,
+                          "it is relative to drive %c:'s current directory, which no other platform has",
+                          pfx[0]);
+        loft_log_refusal_once(raw, why, (size_t) wl);
+        free(parts);
+        free(at);
+        free(pfx);
+        free(out);
+        return 0;
+    }
+#else
+    rooted = raw.p[0] == '/' || raw.p[0] == '\\';
+#endif
+    size_t np = 0, used = 0;
     at[0] = 0;
     while (i <= raw.len) {
         size_t s = i;
@@ -171,6 +241,7 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
             free(why);
             free(parts);
             free(at);
+            free(pfx);
             free(out);
             return 0;
         }
@@ -187,7 +258,11 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
         at[++np] = used;
     }
     size_t o = 0;
-    if (blen && !rooted) {
+    if (plen) {
+        memcpy(out, pfx, plen);
+        o = plen;
+        if (rooted) out[o++] = '/';
+    } else if (blen && !rooted) {
         memcpy(out, base, blen);
         o = blen;
         if (np > 0 && out[o - 1] != '/') out[o++] = '/';
@@ -201,6 +276,7 @@ static char *loft_normalize(loft_str raw, const char *base, int check) {
     out[o] = 0;
     free(parts);
     free(at);
+    free(pfx);
     return out;
 }
 
