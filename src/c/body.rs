@@ -134,6 +134,9 @@ pub(crate) struct FnWriter<'a> {
     /// with whether its element base stays valid for the loop's extent (`@FR-R-Base`: the
     /// loop grows no store).  An `__inv` twin starts with its inputs as one frame.
     headers: Vec<Vec<(crate::opt::writes::PathKey, String, bool)>>,
+    /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
+    /// path, the header and the element size, innermost last.
+    push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
     /// The header gate's memo of which callees write a store.
     hoist_cache: std::collections::HashMap<u32, bool>,
     /// The locals `(R-Place)` put in another record's store (`hoist::placed_locals`), for
@@ -333,6 +336,7 @@ impl<'a> FnWriter<'a> {
             loops: Vec::new(),
             labels: 0,
             headers: Vec::new(),
+            push_heads: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::generation::hoist::placed_locals(def.code(), cx.data),
             assumed: Vec::new(),
@@ -589,9 +593,17 @@ impl<'a> FnWriter<'a> {
     /// (`@FR-R-Base`'s growth clause, `StoreFacts`), and derives the others' base again at
     /// each access (`loft_vh_fresh`).  `LOFT_NO_VECTOR_HOIST=1` holds none; the tier switches
     /// are native's (`lower::switches`).
-    fn hold_vectors(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+    /// Answers the minted paths the verdict gives a record push header (`mint_pushes`), for
+    /// [`Self::hold_pushes`] once the loop's window is chosen.
+    fn hold_vectors(
+        &mut self,
+        b: &Block,
+        ind: usize,
+    ) -> Result<Vec<(crate::opt::writes::PathKey, Value)>, String> {
         let mut frame = Vec::new();
+        let mut mints = Vec::new();
         if let Some(verdict) = self.verdict(b) {
+            mints.clone_from(&verdict.mint_pushes);
             let bases = self.kept_bases(&verdict);
             for ((path, expr), base) in verdict.vectors.into_iter().zip(bases) {
                 // A path an enclosing frame holds as well — with a base, or without one where
@@ -615,7 +627,128 @@ impl<'a> FnWriter<'a> {
             }
         }
         self.headers.push(frame);
+        Ok(mints)
+    }
+
+    /// `@FR-R-PushRec`, as native's record push header: before loop `b`, a `loft_ph` for each
+    /// minted path of `mints` that no window and no enclosing loop serves; the path's mints and
+    /// finishes go through it (`Self::pushed_mint`).  `LOFT_NO_RECORD_PUSH=1` admits none, in
+    /// the verdict, as on native.
+    fn hold_pushes(
+        &mut self,
+        b: &Block,
+        mints: Vec<(crate::opt::writes::PathKey, Value)>,
+        ind: usize,
+    ) -> Result<(), String> {
+        let mut frame = Vec::new();
+        for (path, expr) in mints {
+            if self.windows.iter().any(|(p, _, _, _)| *p == path) || self.push_head(&path).is_some()
+            {
+                continue;
+            }
+            let Some(size) = self.mint_size(b, &path) else {
+                continue;
+            };
+            let e = self.nested(|w| w.expr(&expr, ind))?;
+            let h = format!("ph{}", self.decls.len() + 1);
+            self.decls
+                .push(format!("loft_ph {h} = {{ {{ 0xFFFF, 0, 0 }}, 0, 0, 0 }};"));
+            self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
+            crate::rewrite_census::fired("R-PushRec", 1);
+            frame.push((path, h, size));
+        }
+        self.push_heads.push(frame);
         Ok(())
+    }
+
+    /// The element size of the records loop `b` mints into `path`, read off its first mint.
+    fn mint_size(&self, b: &Block, path: &crate::opt::writes::PathKey) -> Option<u32> {
+        let data = self.cx.data;
+        let mut size = None;
+        for op in &b.operators {
+            op.any_node(&mut |n| {
+                if size.is_none()
+                    && let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpNewRecord"
+                    && let Some(t) = crate::opt::writes::mint_target(
+                        data,
+                        self.cx.stores,
+                        "OpNewRecord",
+                        args,
+                        self.vars,
+                    )
+                    && t.path == *path
+                {
+                    size = Some(u32::from(
+                        self.cx.stores.size(self.cx.stores.content(t.vector_tp)),
+                    ));
+                }
+                false
+            });
+        }
+        size
+    }
+
+    /// The record push header an enclosing loop binds for `path`, with its element size.
+    fn push_head(&self, path: &crate::opt::writes::PathKey) -> Option<(String, u32)> {
+        self.push_heads
+            .iter()
+            .rev()
+            .flat_map(|f| f.iter())
+            .find(|(p, _, _)| p == path)
+            .map(|(_, h, size)| (h.clone(), *size))
+    }
+
+    /// A mint, a finish or a length of a path a record push header serves.
+    fn pushed_mint(&mut self, name: &str, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        let data = self.cx.data;
+        if name == "OpLengthVector" {
+            return Ok(args
+                .first()
+                .and_then(|v| crate::opt::writes::vector_path(data, v))
+                .and_then(|p| self.push_head(&p))
+                .map(|(h, _)| E::new(format!("((int64_t) {h}.len)"), K::Int)));
+        }
+        // A group's reservation is capacity, observably nothing; the header's mint grows the
+        // record itself, and a reservation made beside it would claim a record it does not hold.
+        if name == "OpPreAllocVector" {
+            return Ok(args
+                .first()
+                .and_then(|v| crate::opt::writes::vector_path(data, v))
+                .and_then(|p| self.push_head(&p))
+                .map(|_| E::new("((void) 0)", K::Void)));
+        }
+        if !matches!(name, "OpNewRecord" | "OpFinishRecord") {
+            return Ok(None);
+        }
+        let Some(t) = crate::opt::writes::mint_target(data, self.cx.stores, name, args, self.vars)
+        else {
+            return Ok(None);
+        };
+        let Some((h, size)) = self.push_head(&t.path) else {
+            return Ok(None);
+        };
+        if name == "OpFinishRecord" {
+            return Ok(Some(E::new(format!("loft_ph_finish(&{h})"), K::Void)));
+        }
+        let elem = self.cx.stores.content(t.vector_tp);
+        let ptp = u16::try_from(Self::literal(&args[1], "type")?)
+            .map_err(|_| "a type number out of range")?;
+        let proof_at = format!("{}:{h}", data.def(self.d).original_name());
+        let e = self.temp(CType::Ref);
+        self.line(
+            ind,
+            &format!(
+                "{e} = (LOFT_PROVED(loft_ph_same({h}, {size}), {}), loft_ph_new(&{h}, {size}));",
+                c_string(&proof_at)
+            ),
+        );
+        if !self.mint_complete(ptp) {
+            let (image, n) = self.cx.default_image(elem);
+            self.line(ind, &format!("loft_fill({e}, {image}, {n});"));
+        }
+        Ok(Some(E::new(e, K::Ref)))
     }
 
     /// The store facts the verdict proves stores apart with (`hoist::StoreFacts`), under
@@ -1413,8 +1546,9 @@ impl<'a> FnWriter<'a> {
 
     fn loop_copy(&mut self, b: &Block, ind: usize) -> Result<(), String> {
         let held_file = self.open_file_hold(b, ind)?;
-        self.hold_vectors(b, ind)?;
+        let mints = self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
+        self.hold_pushes(b, mints, ind)?;
         self.labels += 1;
         let l = self.labels;
         self.loops.push(l);
@@ -1429,6 +1563,7 @@ impl<'a> FnWriter<'a> {
         self.line(ind, &format!("brk_{l}:;"));
         self.loops.pop();
         self.headers.pop();
+        self.push_heads.pop();
         if window {
             // The loop's one exit: the counted push loop has no break, return or
             // continue of its own (`hoist::push_loop`).
@@ -2969,9 +3104,13 @@ impl<'a> FnWriter<'a> {
         // `v.len()` of a vector an enclosing loop holds: the header's length.
         if def.name() == "t_6vector_len"
             && let [v] = args
-            && let Some(h) = self.held_vector(v)
         {
-            return Ok(E::new(format!("{h}.len"), K::Int));
+            if let Some(h) = self.held_vector(v) {
+                return Ok(E::new(format!("{h}.len"), K::Int));
+            }
+            if let Some(e) = self.pushed_mint("OpLengthVector", args, ind)? {
+                return Ok(e);
+            }
         }
         let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
         // A link argument is the address of the caller's variable; the others are values,
@@ -3279,6 +3418,11 @@ impl<'a> FnWriter<'a> {
         }
         if !self.windows.is_empty()
             && let Some(e) = self.windowed(name, args, ind)?
+        {
+            return Ok(e);
+        }
+        if self.push_heads.iter().any(|f| !f.is_empty())
+            && let Some(e) = self.pushed_mint(name, args, ind)?
         {
             return Ok(e);
         }

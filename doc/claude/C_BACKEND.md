@@ -213,11 +213,16 @@ the record and the length, which no growth moves; it keeps the base only of a ve
 base again at each access (`loft_vh_fresh`, one load).  A loop that grows the return buffer and
 would hold a parameter's vectors if their stores were apart is written twice (`@FR-R-Alias`'s
 versioned clause, native's `distinct_version`): the copy assuming them apart runs when a test
-of the store numbers says so at its entry, the plain one otherwise.  Each held access carries
+of the store numbers says so at its entry, the plain one otherwise.  A path the verdict mints
+records into (`mint_pushes`, `@FR-R-PushRec`) and no window serves takes a record push header,
+`loft_ph` — record, length and room, no pointer, so two vectors of one store each keep theirs
+while the other grows: a mint takes the slot past the length, one that does not fit grows the
+record the runtime's way, and the finish writes the length back, so the store answers every
+other read and no exit syncs anything; the group's reservation is then nothing.  Each held access carries
 `LOFT_PROVED(loft_vh_same(…))`, so `LOFT_VERIFY` catches a held vector that changed.
 `LOFT_NO_VECTOR_HOIST=1` holds none, `LOFT_NO_CALLEE_INPUTS=1` writes no twin,
-`LOFT_NO_DISTINCT_VERSION=1` no second copy and `LOFT_NO_DISTINCT_GROWTH=1` keeps no base under
-growth, as for the Rust writer; `tests/c_emit.rs`
+`LOFT_NO_DISTINCT_VERSION=1` no second copy, `LOFT_NO_DISTINCT_GROWTH=1` keeps no base under
+growth and `LOFT_NO_RECORD_PUSH=1` binds no push header, as for the Rust writer; `tests/c_emit.rs`
 (`a_loop_holds_its_callees_headers_and_rederives_a_base_under_growth`) counts each form against
 hand-computed values under `LOFT_VERIFY` and AddressSanitizer.
 

@@ -37,6 +37,7 @@ its place moved bench 14 by −2.3 % of instructions and bench 16 by −0.2 %.
 | block sum | `vector::sum_blocks_i64` ported into the `sum` kernel | sum 6.8 → 2.0 |
 | text runtime | `loft_replace` by `memchr`; `.P` in exact integers; the shortest float form from 15 digits with its neighbour step; Clinger's fast parse; an inline hash walked by one sweep and an introsort | replace 9.6 → 1.50, quadratic_out 4.75 → 0.53, format_num 1.81 → 0.36, format_specs 2.80 → 1.10, hash_walk 8.6 → 2.97 |
 | repeat fill | `Stores::fill_from_template` ported: one exact resize, doubling block copies | enum_match 12.63 → 2.08 |
+| loop verdict | native's `hoist::hoistable`: callee headers through `__inv` twins, bases re-derived under growth unless `StoreFacts` proves the store apart, the loop versioned on distinct stores, record push headers (`loft_ph`) | talus_relax 6.42 → 1.72, build_vis 4.75 → 1.74, hydro_pitfill 3.41 → 1.83, sort_floats 2.54 → 1.65, mesh_emit 5.71 → 2.33, reload_and_record 4.29 → ~3.0 |
 | held file cursor, deep window | `@FR-R-FileHold` (`lower::file_hold`) with a 4 KB cursor buffer and a release on every exit; `hoist::deep_window_ok`'s window for uncounted pushes; unheld reads into a stack buffer | binary_read 16.4 → 1.60 |
 | text walks | `@FR-R-LazySplit`, `@FR-R-TextBorrow` (walk variables and the plain locals of `hoist::borrowed_store_texts`), `@FR-R-CharWalk` (the ASCII arm, the null test asked once) | priced: join 10.2 → 2.6, split walk −38 % cycles |
 
@@ -67,15 +68,15 @@ unit, the hashes equal.
 | mechanism | routines | what the profile shows | native has | priced | size |
 |---|---|---|---|---|---|
 | **the repeat fill** | enum_match | `[for _ in 0..4096 { 0 }]` is `loft_vec_append_copy`: an append, a byte copy and a finish per element, 36 % of the routine; the C also grows by doubling where the interpreter resizes once, so the store layouts differ | `Stores::fill_from_template`: one append, one exact resize, the template copied in doubling blocks, claims per element only for a type that owns heap | enum_match 186 → 44.7 µs (0.24×) | runtime XS |
-| **the loop verdict** | mesh_emit, talus, vis, pitfill, sort_floats, binary_map, reload_and_record | `loft_at` / `loft_vec_len` / `loft_vec_get` 30–50 %; `loft_vec_append` + finish per push (25–36 %).  The C asks `opt::header::hoistable_vectors`, the P4a tier, which holds NOTHING in a loop that grows any store or calls a writer | `hoist::hoistable`: push headers for pushed paths (§ V-q), record push headers for minted records (`@FR-R-PushRec`, § V-t: record, length and capacity, no pointer, so a growth of a sibling vector in the same store cannot stale it), bases kept under growth of a store proven apart (`@FR-R-Base`, `StoreFacts`), scalar reads (`@FR-R-Scalar`), kept headers into callees | not yet — the port is the price | generator M |
 | **record addresses** | mesh_emit, emit_to_material, slope_path | every field write is `loft_field` + `loft_set_float` through the store (9 per vertex in mesh_emit) | `@FR-R-RecPtr`: one address per pushed element, writes through it | — | generator S |
 | **the held file cursor** | binary_read | `loft_read_file` 43 %: per 2-byte read the format checks, the position read from and written to the File record, a handle lookup, a `malloc`/`free` of a 3-byte buffer | `@FR-R-FileHold` (`lower::file_hold`, the cursor held across the loop) and a push window on the `while` | — | generator S + runtime XS |
 | **stack vectors** | mesh_emit (`ox`, `oz`) | element reads through `loft_vec_get` | `@FR-R-Apart` (`ApVec`) | — | generator M |
 | **record results** | resolve_move, emit_to_material, slope_path | `loft_store_make`, `loft_copy_record`, `loft_copy_claims`, `loft_remove_claims_mode` | value records, hand-over, apart records | — | generator M |
 | **ordered hash walk** | reload_and_record, mapfile_to_painted | `loft_hkey_sort` + `loft_hkey_lt` 15–31 %; the rest is the walk's lookups and pushes (the loop verdict) and the copy into the history (record results) | `hash::inline_sorted::<N>`, monomorphised per key count | a 2-key element (24 bytes for 40): −7 %, inside the noise — not the lever | runtime S |
 
-The loop verdict is the one that reaches furthest: it is the reason seven of these routines read
-their vectors through the store per access.
+With the loop verdict built, record addresses (`@FR-R-RecPtr`) and record results are what
+the remaining routines over the bar share: mesh_emit still writes each field of a minted vertex
+through the store, and slope_path, emit_to_material and truncate_to copy records per result.
 
 **A finding the timed sweep made.**  `len(text)` counts characters, and a loop that tests
 `i < len(t)` counts the whole text per iteration on EVERY backend — the self-tail-call cell of

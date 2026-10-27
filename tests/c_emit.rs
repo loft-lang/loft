@@ -799,7 +799,24 @@ fn build(s: Sim, n: integer) -> vector<integer> {
   for i in 0..n { pix += [look(s, i) + 1]; }
   pix
 }
+struct Pt { x: float, k: integer }
+struct Pair { a: vector<Pt>, b: vector<Pt> }
+fn mints(n: integer) -> text {
+  m = Pair { a: [], b: [] };
+  for i in 0..n {
+    base = len(m.a);
+    m.a += [Pt { x: i as float, k: base }];
+    m.b += [Pt { x: 0.5, k: i * 2 }];
+  }
+  sa = 0;
+  sx = 0.0;
+  for p in m.a { sa += p.k; sx += p.x; }
+  sb = 0;
+  for p in m.b { sb += p.k; }
+  "{len(m.a)} {len(m.b)} {sa} {sb} {sx}"
+}
 fn main() {
+  println(mints(1000));
   src: vector<integer> = [];
   dst: vector<integer> = [];
   for i in 0..8 { src += [i + 1]; dst += [1]; }
@@ -811,10 +828,14 @@ fn main() {
   println("{len(p)} {p[19]} {s.out}");
 }
 "#;
+    // mints: two record vectors of one store minted in turn, each outgrowing its room many
+    // times; a.k is the length read before each mint, 0..999 summing 499500 as a.x does, b.k
+    // the doubled index, 999000.
     // rounds: after round r, dst[i] = 1 + 2r(i + 1); the reads sum 3·8 + 2·(1+2+3)·36 = 456.
     // grow: each pass of ten adds 2·55 + 10·10 = 210, 300 passes, plus 3000 elements.
     // build: v[i % 5]·3 + 1 cycles 7 13 19 25 31; p[19] is the fifth.
-    let want = "456 [7,13,19,25,31,37,43,49]\n66000\n20 31 [7,13,19,25,31,7,13]\n";
+    let want = "1000 1000 499500 999000 499500\n456 [7,13,19,25,31,37,43,49]\n66000\n\
+                20 31 [7,13,19,25,31,7,13]\n";
     let loft = env!("CARGO_BIN_EXE_loft");
     let dir = scratch("loop-verdict");
     let file = dir.join("verdict.loft");
@@ -839,12 +860,13 @@ fn main() {
             .output()
             .is_ok_and(|o| o.status.success())
     };
-    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops)
-    for (mode, switch, twins, fresh, versioned) in [
-        ("held", "", 2, 3, 1),
-        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0),
-        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0),
-        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0),
+    // (mode, switch, __inv calls, lines reading a fresh base, versioned loops, push headers)
+    for (mode, switch, twins, fresh, versioned, pushed) in [
+        ("held", "", 2, 3, 1, 2),
+        ("no-inputs", "LOFT_NO_CALLEE_INPUTS", 0, 3, 0, 2),
+        ("no-version", "LOFT_NO_DISTINCT_VERSION", 1, 3, 0, 2),
+        ("no-record-push", "LOFT_NO_RECORD_PUSH", 2, 3, 1, 0),
+        ("unheld", "LOFT_NO_VECTOR_HOIST", 0, 0, 0, 0),
     ] {
         let c = dir.join(format!("{mode}.c"));
         let mut emit = loft::platform::process::harness_command(loft);
@@ -880,6 +902,13 @@ fn main() {
             body.matches("_pix.store_nr != ").count(),
             versioned,
             "{mode}: the loops written twice"
+        );
+        assert_eq!(
+            body.lines()
+                .filter(|l| l.contains(" = loft_ph_of("))
+                .count(),
+            pushed,
+            "{mode}: the record push headers"
         );
         let mut kinds: Vec<(&str, Vec<&str>)> = vec![
             ("strict", vec!["-DLOFT_STRICT", "-pedantic", "-Werror"]),
