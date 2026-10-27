@@ -2011,6 +2011,15 @@ jobs:
       # `make gallery` protects the demo grid.
       - name: make game
         run: make game
+      # index/target_surface.json asks rustc which runtime methods the `--html` rlib has;
+      # `make game` has just built that rlib (`target/loft/html`, the same flags), so this
+      # costs the probe compile alone.  The derive runs its own wasm build for the surface
+      # only when `default/` moved, where builtins and ops are declared — this is the check
+      # on every other change.
+      - name: Target surface is current
+        run: >
+          python3 scripts/gen_target_surface.py --check
+          || { echo "::error::index/target_surface.json is stale — run \`make surface-gen\` (or \`scripts/derive-ci.sh\` with default/ changed) and commit it"; exit 1; }
 
       # The browser RENDER gate, here rather than in the `test` job: it asserts against
       # `doc/brick-buster.html`, and `tests/html_render.rs` deliberately refuses to build

@@ -95,7 +95,12 @@ git push origin HEAD:derive-probe   # before derive.yml is on main, or to try a 
 
 The runner is the better writer for these.  It builds the wasm rlib fresh, which a local
 `surface-gen` does not guarantee, and `make doc` there fetches every published package into a
-clean cache.  Dispatch it where the branch stops moving: after a join, and before opening a
+clean cache.  Two steps cost a wasm build of the whole crate, and neither runs every time: the
+browser bundle rebuilds only when its source stamp moved, and the target surface only when
+`default/` (where builtins and ops are declared) differs from `main`.  The PR's `gallery` job
+checks the surface on every change, after `make game` has built the same rlib, so a surface
+that moved for another reason fails there.  Each step's seconds are in the run's log and its
+job summary.  Dispatch it where the branch stops moving: after a join, and before opening a
 PR.  It refuses `main`, and it never force-pushes; when the branch moved during the run, it
 fails and asks for a new dispatch.  A ratchet (a `pin`, the census, the drop gate) never
 carries `ci`: a moved count is a decision, so it stays with `join.py rederive`.

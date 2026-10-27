@@ -94,11 +94,12 @@
         "src/",
         "default/"
       ],
-      "check": "make -s surface-check",
+      "check": "git fetch -q --depth=1 origin main && git diff --quiet FETCH_HEAD -- default/ || make -s surface-check",
       "regen": [
-        "make -s surface-gen"
+        "git fetch -q --depth=1 origin main && git diff --quiet FETCH_HEAD -- default/ || make -s surface-gen"
       ],
-      "ci": true
+      "ci": true,
+      "note": "a wasm32 build of the whole crate, so it runs only when default/ (where builtins and ops are declared) differs from main; the PR's gallery job checks it on every change, after `make game` has built the same rlib"
     },
     {
       "name": "browser-bundle",
