@@ -390,16 +390,19 @@ static void loft_eprint(loft_str s) {
  * constant operand the portable check folds to one compare, cheaper still.  Addition and
  * subtraction keep the portable comparison: an overflow builtin hides the operands' ranges
  * from the optimiser (measured on clang: a masked accumulator's loop ran 2.7x slower). */
+/* The checked `+` and `-`: null in, null out, and null where the result does not fit — the
+ * compiler's overflow builtin (`LOFT_ADD_OVF`), which both GCC and Clang lower to one flag test,
+ * where Clang kept the spelled-out range comparisons as compares and branches. */
 LOFT_HOT_INLINE int64_t loft_add(int64_t a, int64_t b) {
+    int64_t r;
     if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
-    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) return LOFT_NULL;
-    return a + b;
+    return LOFT_ADD_OVF(a, b, &r) ? LOFT_NULL : r;
 }
 
 LOFT_HOT_INLINE int64_t loft_sub(int64_t a, int64_t b) {
+    int64_t r;
     if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
-    if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) return LOFT_NULL;
-    return a - b;
+    return LOFT_SUB_OVF(a, b, &r) ? LOFT_NULL : r;
 }
 
 LOFT_HOT_INLINE int64_t loft_mul(int64_t a, int64_t b) {
@@ -2329,6 +2332,16 @@ LOFT_COLD static loft_win loft_win_grow(loft_win w, loft_ref v, uint32_t size, u
     return loft_win_of(v, size);
 }
 
+/* The slow path of a push in place: the window grown through a COPY, so the caller's window never
+ * has its address handed to a call — Clang then keeps its fields in registers across the loop,
+ * where `*w = loft_win_grow(*w, …)` (a 24-byte struct passed and returned through memory) kept
+ * the whole window on the stack and reloaded it at every push. */
+LOFT_HOT_INLINE void loft_win_grow_into(loft_win *w, loft_ref v, uint32_t size, uint64_t bits) {
+    loft_win t = *w;
+    t = loft_win_grow(t, v, size, bits);
+    *w = t;
+}
+
 /* A push through the window: one comparison, one store and a bump while it fits (the element's
  * bytes as the ordinary push writes them, encoded by the caller), the growth arm otherwise. */
 LOFT_HOT_INLINE void loft_win_put8(loft_win *w, loft_ref v, uint64_t bits) {
@@ -2336,7 +2349,7 @@ LOFT_HOT_INLINE void loft_win_put8(loft_win *w, loft_ref v, uint64_t bits) {
         memcpy(w->base + (size_t) w->len * 8, &bits, 8);
         w->len++;
     } else {
-        *w = loft_win_grow(*w, v, 8, bits);
+        loft_win_grow_into(w, v, 8, bits);
     }
 }
 
@@ -2345,7 +2358,7 @@ LOFT_HOT_INLINE void loft_win_put4(loft_win *w, loft_ref v, uint32_t bits) {
         memcpy(w->base + (size_t) w->len * 4, &bits, 4);
         w->len++;
     } else {
-        *w = loft_win_grow(*w, v, 4, bits);
+        loft_win_grow_into(w, v, 4, bits);
     }
 }
 
@@ -2354,7 +2367,7 @@ LOFT_HOT_INLINE void loft_win_put1(loft_win *w, loft_ref v, uint8_t bits) {
         w->base[w->len] = bits;
         w->len++;
     } else {
-        *w = loft_win_grow(*w, v, 1, bits);
+        loft_win_grow_into(w, v, 1, bits);
     }
 }
 
