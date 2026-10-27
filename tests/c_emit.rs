@@ -3821,7 +3821,7 @@ fn run_asan(
 ) -> (i32, String, String) {
     let stem = fa::file_stem(prog).unwrap_or_else(|| "p".into());
     let c = dir.join(format!("{stem}.c"));
-    let exe = dir.join(stem);
+    let exe = dir.join(&stem);
     let emit = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--emit-c")
         .arg(&c)
