@@ -2961,9 +2961,8 @@ script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (A
 
 .PHONY: compiled-stdlib
 compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdlib's compiled loft bodies (run after changing default/*.loft)
-	@cargo test --release --test compiled_stdlib regen_compiled_stdlib -- --ignored --nocapture > /dev/null 2>&1
-	@cargo build --release --bin loft -q
-	@echo "src/compiled_stdlib_gen.rs regenerated and built"
+	@out=$$(cargo run --release -q --bin loft-stdlib-gen) || exit 1; echo "$$out"; \
+	case "$$out" in *regenerated*) cargo build --release --bin loft -q ;; esac
 
 .PHONY: kernel-ratio
 kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)
