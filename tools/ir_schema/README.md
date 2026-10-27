@@ -18,13 +18,14 @@ ir.loft  ──(loft --native --show-rust)──▶  generated.rs  ──(extrac
                               hand-written typed API (src/data_store.rs) ◀──┘
 ```
 
-1. **`ir.loft`** — the COMPLETE IR transcribed as loft `struct`/`enum`
+1. **`ir.loft`** (`selfhost/src/ir.loft`, its one home since @PLN91 S0.3: the loft-written
+   interpreter reads program images as these same records) — the COMPLETE IR transcribed as loft `struct`/`enum`
    declarations (source of truth, hand-maintained to mirror `src/data.rs`).
    Verified to parse + lay out under `--interpret`.
 2. **`generated.rs`** — `loft --native --show-rust` output (gitignored,
    ~139 KB; regenerate, never edit):
    ```
-   loft --introspect --show-rust --rust-out tools/ir_schema/generated.rs tools/ir_schema/ir.loft
+   loft --introspect --show-rust --rust-out tools/ir_schema/generated.rs selfhost/src/ir.loft
    ```
    Its `init(db)` body holds the authoritative schema: `db.structure` /
    `db.enumerate` / `db.field` / `db.value` / `db.vector` with every field
@@ -88,7 +89,7 @@ accessors.  The round-trip test (native `Data` → store → read back) is the
 guard that the transcription stayed faithful.
 
 ```
-loft --introspect --show-rust --rust-out tools/ir_schema/generated.rs tools/ir_schema/ir.loft
+loft --introspect --show-rust --rust-out tools/ir_schema/generated.rs selfhost/src/ir.loft
 python3 tools/ir_schema/extract.py tools/ir_schema/generated.rs > src/ir_schema_gen.rs
 ```
 

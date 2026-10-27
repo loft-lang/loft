@@ -2251,7 +2251,7 @@ mod tests {
 
     /// `@FR-L-Sound` / `@FR-S-Pair` — a saved bundle carries the `.dschema` sidecar of its
     /// root type, and that sidecar is the layout a loft program declaring
-    /// `tools/ir_schema/ir.loft` reads it through.  The comparison is required to be
+    /// `selfhost/src/ir.loft` reads it through.  The comparison is required to be
     /// IDENTICAL, not merely loadable: a changed layout is converted on load rather than
     /// refused, which would hide a drift between `ir.loft` and the Rust IR schema.
     #[cfg(feature = "mmap")]
@@ -2285,10 +2285,10 @@ mod tests {
             .expect("parse default/ stdlib");
         // `parse` answers whether ANY diagnostic was raised, an advice included; only an
         // error means the types did not compile.
-        q.parse("tools/ir_schema/ir.loft", false);
+        q.parse("selfhost/src/ir.loft", false);
         assert!(
             q.diagnostics.level() < crate::diagnostics::Level::Error,
-            "tools/ir_schema/ir.loft does not compile"
+            "selfhost/src/ir.loft does not compile"
         );
         let bundle = q.database.name("Bundle");
         assert_ne!(bundle, u16::MAX, "ir.loft declares no Bundle");

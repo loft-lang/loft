@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The loader seen from outside, through its `pub` surface (@PLN91 S0.3).  The image is the
+// one `tests/selfhost.rs` emits, of a program with `fn twice` and `fn main`; its path comes
+// in `LOFT_SELFHOST_IMAGE`.
+use load;
+
+fn test_an_image_opens_as_the_ir() {
+  b = load::load(env_variable("LOFT_SELFHOST_IMAGE"));
+  assert(b != null, "the image opens");
+  assert(load::definitions(b) > 800, "the stdlib and the program: {load::definitions(b)}");
+  assert(load::definition(b, "n_twice") != null, "the program's own function is there");
+  assert(load::definition(b, "n_main") != null, "and its main");
+  assert(load::definition(b, "n_nowhere") == null, "a name the program lacks is not");
+}
+
+fn test_a_file_that_is_no_image_is_null() {
+  assert(load::load(env_variable("LOFT_SELFHOST_NOT_AN_IMAGE")) == null, "not an image");
+}

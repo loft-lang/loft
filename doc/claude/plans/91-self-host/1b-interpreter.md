@@ -615,7 +615,7 @@ the helper) and `pub_visibility::package_tests_see_what_src_shares` (end to end 
 `pkg/tests/lowering/`, a consumer refused).  Falsified: without the mapping the end-to-end cell
 fails.
 
-### S0.3 — the bundle opens in loft — DESIGNED, next
+### S0.3 — the bundle opens in loft — BUILT 2026-10-27
 
 **What.**  The first loft code of the strand: a `selfhost` package whose module `load` opens
 an image (S0.2) as the IR's own records and answers questions about it.  It is the first
@@ -700,6 +700,29 @@ fn test_an_image_opens_as_the_ir() {
    First decided "pay it"; then the owner designed the cure, `#package` (S0.3a), built
    first.
 
+**Built — design → code** (the first step that measures loft).
+- **Transcribed directly:** the loader's three functions read as designed, and the package
+  layout, `use ir;`, the record types and `store_load` into a `Bundle` all worked first time.
+  With `#package` (S0.3a) the vocabulary file needs one line where it would have needed 167
+  `pub`.
+- **Three gaps, each fixed in loft first or put to the owner** (the dogfood rule):
+  - X2, per-file privacy: owner's cure `#package` (S0.3a) and its tests clause (S0.3c).
+  - X12: a test named after its module bound itself.  Fixed (S0.3b).
+  - X13: `assert(b != null, …)` does not narrow `b`, so every later use of `b` in the test
+    warns that a `Bundle?` reaches a non-null parameter.  `if b == null { return; }`,
+    `if b != null { … }`, `?? return` and `?? panic(…)` all narrow.  A failed `assert` halts
+    (`operational.md`), so narrowing after it would be sound; but `types.md` writes no
+    null-test narrowing rule at all (the discharges listed are `??`, `?`, `match`), so the
+    working guard narrowing is itself unwritten.  An owner question; the test keeps the
+    natural `assert` spelling, warnings and all, until it is answered.
+- **Not from loft:** the `@FTR-078` worked-example tag indexes functions only, so the
+  vocabulary keeps one small function, `empty_bundle`, which the loader uses for its root.
+- **Generator:** the moved file, with `#package` and without `main`, generates the committed
+  schema byte for byte (`scripts/ir_schema_check.sh`); only the generated header names the
+  new path.
+- Tests: `tests/selfhost.rs` (emit an image, run the package's `loft test`: 2 passed), the
+  S0.1 layout test on the new path, the schema drift gate.
+
 ## The language for this job
 
 ### What loft already offers (measured or established in @PLN202 / OCAML_BAR.md)
@@ -735,6 +758,7 @@ fn test_an_image_opens_as_the_ir() {
 | **X10** | capturing closures cannot sit in a collection (@C116); no local recursive `fn` (@C63) | by design — costed | not expected to bite: the dispatch table holds plain fn-refs |
 | **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss (§ Steps, S0.2) |
 | **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — fixed in S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` (§ Steps, S0.3b) |
+| **X13** | `assert(x != null, …)` does not narrow `x`; the other null tests (`if … return`, `if != null`, `?? return`, `?? panic`) do, and `types.md` writes none of them as a rule | rule gap — owner question | write the guard narrowing as a rule, with `assert` as one of its guards (a failed assert halts) |
 
 ### New constructs taken from OCaml's type expressions
 

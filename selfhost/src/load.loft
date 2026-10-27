@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A program IMAGE (`loft --emit-image`) opened as the compiler's own IR records (`ir.loft`),
+// and the first questions asked of it.  The interpreter's first module (@PLN91 S0.3).
+use ir;
+
+// The image at `path`, or null when it is missing, written under another layout, or not an
+// image at all: `store_load` refuses each, and says why on stderr.
+pub fn load(path: text) -> ir::Bundle? {
+  b = ir::empty_bundle();
+  if !store_load(b, path) {
+    return null;
+  }
+  b
+}
+
+// The definition the compiler named `name` (`n_main` for `fn main`), or null.
+pub fn definition(b: ir::Bundle, name: text) -> ir::Definition? {
+  for d in b.data.definitions {
+    if d.name == name {
+      return d;
+    }
+  }
+  null
+}
+
+// How many definitions the image holds: the standard library's and the program's.
+pub fn definitions(b: ir::Bundle) -> integer {
+  len(b.data.definitions)
+}

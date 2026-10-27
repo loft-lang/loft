@@ -64,7 +64,7 @@ de-risking probes below are the Stage-A spec for the spine.
   ASan and UBSan; 1789 tests pass across the modes and the sanitizers (owner, 2026-10-24),
   the refusals concentrated in file and system I/O, generators, `&` locals, `par`, native
   library calls, spatial and trie.
-- **The IR is already written in loft:** `tools/ir_schema/ir.loft` transcribes the complete
+- **The IR is already written in loft:** `selfhost/src/ir.loft` (moved from `tools/ir_schema/` in 1b S0.3) transcribes the complete
   IR as loft `struct`/`enum` declarations (hand-mirrored from `src/data.rs`), and the IR
   codec round-trips the stdlib, every corpus file and the language suite
   (`cargo test --release --test ir_schema_roundtrip`) — so a front end written in loft has
@@ -80,7 +80,7 @@ de-risking probes below are the Stage-A spec for the spine.
 
 | Item | Status | Notes |
 |---|---|---|
-| **1a — The compiler in loft** | Open — **the trunk, first** | Lexer, parser, scopes and types in loft, emitting the codec IR (`tools/ir_schema/ir.loft` is the type vocabulary), compiled by the stage-0 backend. Gate: a byte-identical IR diff against the Rust parser over the corpus and the language suite, the same instrument as `scripts/introspect_diff.sh`; the measurement is HOW MANY programs agree. The existing backends stay as they are, so no runtime question is opened. **The AST holds its children in a `vector<Node>`, in a keyed collection (records that do not move), or as arena indices — never `&v[i]` into a vector that grows** (loft#2163: the interpreter reads null, `--native` the moved record's old bytes). The bar rows 1a uses, measured, and the steps that close them: @PLN202. |
+| **1a — The compiler in loft** | Open — **the trunk, first** | Lexer, parser, scopes and types in loft, emitting the codec IR (`selfhost/src/ir.loft` is the type vocabulary), compiled by the stage-0 backend. Gate: a byte-identical IR diff against the Rust parser over the corpus and the language suite, the same instrument as `scripts/introspect_diff.sh`; the measurement is HOW MANY programs agree. The existing backends stay as they are, so no runtime question is opened. **The AST holds its children in a `vector<Node>`, in a keyed collection (records that do not move), or as arena indices — never `&v[i]` into a vector that grows** (loft#2163: the interpreter reads null, `--native` the moved record's old bytes). The bar rows 1a uses, measured, and the steps that close them: @PLN202. |
 | **1b — The runtime in loft** | Open — **first (owner, 2026-10-27)**, gated by P-perf at its S1 | The interpreter in loft, reading the bundle the Rust front end writes as `ir.loft` records; designed one step at a time in [1b-interpreter.md](1b-interpreter.md), with ownership as track O ([ownership.md](ownership.md)). Pulls strands 2–4 with it. |
 | **2 — Bundle/mod system for the core** | Open | Convert central switches (`fill.rs` opcode match, parser operator/precedence table, native registry) into additive scanner-wired registration seams. No `src/` edits to extend. |
 | **3 — Migrate types/structures into bundles** | Open | Base language = the default bundle set; no privileged core path; enables subsettable / "limited" loft builds. |
@@ -224,7 +224,7 @@ host with a C compiler.** The Rust implementation degrades to the bootstrap comp
 - **@PLN202** (the OCaml bar, for the compiler) — 1a's child: the bar rows a front end uses, measured, and the parser steps that close them.
 - **@PLN200** (the interpreter and the code generators as defined parts) — strand 5's home (B5) and the seam 1a writes into (B3's `lower`); B6 is the minimal binary.
 - **@PLN179** (scripts in loft) — the findings register 1a files its language gaps on; its measured weights of the collection kinds are strand 3's input.
-- **@PLN11** (IR as stores) — `tools/ir_schema/ir.loft`, 1a's type vocabulary.
+- **@PLN11** (IR as stores) — `selfhost/src/ir.loft`, the type vocabulary of 1a and 1b.
 - **@PLN35** (PEG match patterns) — self-host *enabler* (the compiler's front end).
 - **@PLN52** (stdlib fast-start cache) — perf prerequisite for a bundle-ized stdlib; **MET** — delivered via @PLN11 arc D/D2b (opt-in `LOFT_STDLIB_CACHE`); @PLN52 closed 2026-07-09.
 - **@PLN86** (sandbox-subset-flag) — enabled by subsettable type bundles (strand 3).

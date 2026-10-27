@@ -2249,7 +2249,7 @@ fn diagnostics_spell_types_as_the_author_wrote_them() {
     );
 }
 
-/// `src/ir_schema_gen.rs` must be what `tools/ir_schema/ir.loft` generates.
+/// `src/ir_schema_gen.rs` must be what `selfhost/src/ir.loft` generates.
 ///
 /// The generated file IS the store layout — record sizes, field byte offsets, the `Node`
 /// discriminants that `data_store.rs` mirrors in its baked `DISC_*` constants — and it

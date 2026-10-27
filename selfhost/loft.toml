@@ -1,0 +1,11 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# @PLN91 strand 1b — loft written in loft, starting with the interpreter.  It reads the
+# program IMAGE the Rust front end writes (`loft --emit-image`) as the compiler's own IR
+# records (`src/ir.loft`).  Plan: doc/claude/plans/91-self-host/1b-interpreter.md.
+
+[package]
+name    = "selfhost"
+version = "0.0.0"
+loft    = ">=0.8"

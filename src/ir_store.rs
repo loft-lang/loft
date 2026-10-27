@@ -802,7 +802,7 @@ pub fn materialize_bundle(stores: &mut Stores, root: DbRef, data: &Data, schema:
 ///
 /// Like every store image, the bundle carries a `.dschema` sidecar recording the
 /// layout of its root type, the IR's `Bundle` (`@FR-L-Sound`).  So a loft program
-/// can `store_load` it through the same types, declared in `tools/ir_schema/ir.loft`,
+/// can `store_load` it through the same types, declared in `selfhost/src/ir.loft`,
 /// and is checked against the layout the records were written with.  The image and
 /// its sidecar are one write (`@FR-S-Pair`): both are staged first, then both
 /// renamed into place.
