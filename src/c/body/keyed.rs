@@ -1235,7 +1235,43 @@ impl FnWriter<'_> {
         let n = values.len();
         let kv = value_array(&values);
         let (keys, nk) = self.cx.keys_of(tp);
+        // `@FR-R-TypedKeyed`: a hash with ONE 8-byte integer key, looked up by that integer,
+        // takes the typed entry — the same digest, home bucket, walk and equality, in place.
+        // Two to four such keys take the compound entry (the same clause's compound form).
+        let ints: Option<Vec<&str>> = (kind == Keyed::Hash
+            && n == nk
+            && (1..=4).contains(&n)
+            && types.iter().take(n).all(|t| matches!(t, 1 | 2)))
+        .then(|| {
+            values
+                .iter()
+                .map(|v| {
+                    v.strip_prefix("loft_kv_int(")
+                        .and_then(|v| v.strip_suffix(')'))
+                })
+                .collect()
+        })
+        .flatten();
+        // One text key takes the text entry (the same clause's text form).
+        let text_find = (kind == Keyed::Hash && n == 1 && nk == 1 && types[0] == 6)
+            .then(|| {
+                values[0]
+                    .strip_prefix("loft_kv_text(")
+                    .and_then(|v| v.strip_suffix(')'))
+                    .map(|key| format!("loft_h_find_text({data}, {keys}, {key})"))
+            })
+            .flatten();
+        let typed_find = ints
+            .map(|ks| match ks.as_slice() {
+                [key] => format!("loft_h_find_i64({data}, {keys}, {key})"),
+                ks => format!(
+                    "loft_h_find_ints({data}, {keys}, {n}, (int64_t[]){{ {} }})",
+                    ks.join(", ")
+                ),
+            })
+            .or(text_find);
         let find = match kind {
+            Keyed::Hash if typed_find.is_some() => typed_find.clone().unwrap_or_default(),
             Keyed::Hash => format!("loft_h_find({data}, {keys}, {kv}, {n})"),
             Keyed::Sorted => format!("loft_seq_find({data}, {size}, {keys}, {nk}, {kv}, {n})"),
             Keyed::Index => format!("loft_ix_find({data}, {keys}, {nk}, {kv}, {n})"),
@@ -1259,20 +1295,7 @@ impl FnWriter<'_> {
             );
             return Ok(E::new(t, K::Ref));
         }
-        Ok(E::new(
-            match kind {
-                Keyed::Hash => format!("loft_h_find({data}, {keys}, {kv}, {n})"),
-                Keyed::Sorted => format!("loft_seq_find({data}, {size}, {keys}, {nk}, {kv}, {n})"),
-                Keyed::Index => format!("loft_ix_find({data}, {keys}, {nk}, {kv}, {n})"),
-                Keyed::Ordered => format!("loft_seq_find({data}, 0, {keys}, {nk}, {kv}, {n})"),
-                Keyed::Spatial | Keyed::Trie => format!(
-                    "loft_rx_find({data}, {keys}, {nk}, {}, {kv}, {n})",
-                    u8::from(kind == Keyed::Trie)
-                ),
-                Keyed::Array => return Err("a keyed lookup in an array".into()),
-            },
-            K::Ref,
-        ))
+        Ok(E::new(find, K::Ref))
     }
 
     /// `OpIterate(data, on, arg, keys, n_from, from…, n_till, till…)`: the walk's first state.

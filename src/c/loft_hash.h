@@ -734,6 +734,99 @@ static loft_ref loft_h_find(loft_ref c, const loft_key *keys, const loft_kv *kv,
     return loft_ref_null();
 }
 
+/* `@FR-R-TypedKeyed` (hash::find_long): a hash whose ONE key is an 8-byte integer, looked up by
+ * that integer — the general entry's digest, home bucket and walk to the first empty bucket, the
+ * key compared in place instead of through a key value.  Every exit is `loft_h_find`'s. */
+static loft_ref loft_h_find_i64(loft_ref c, const loft_key *keys, int64_t key) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) == 0) return loft_ref_null();
+    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
+    uint64_t hv = loft_digest_i64(loft_h_read_seed(s, claim), key);
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        if (slot == 0) break;
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
+            loft_ref e;
+            int64_t have;
+            e.store_nr = c.store_nr;
+            loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
+            if (e.rec != 0) {
+                memcpy(&have, loft_at(s, e.rec, e.pos + kpos), 8);
+                if (have == key) return e;
+            }
+        }
+        if (++index >= count) index = 0;
+    }
+    return loft_ref_null();
+}
+
+/* `@FR-R-TypedKeyed`'s compound clause (hash::find_ints): two to four 8-byte integer key parts,
+ * hashed as the general entry hashes them and compared part by part in place. */
+static loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) == 0) return loft_ref_null();
+    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
+    uint64_t hv = loft_digest_ints(loft_h_read_seed(s, claim), ks, n);
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count);
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        if (slot == 0) break;
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
+            loft_ref e;
+            e.store_nr = c.store_nr;
+            loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
+            if (e.rec != 0) {
+                int same = 1;
+                for (int k = 0; k < n && same; k++) {
+                    int64_t have;
+                    memcpy(&have, loft_at(s, e.rec, e.pos + keys[k].pos), 8);
+                    same = have == ks[k];
+                }
+                if (same) return e;
+            }
+        }
+        if (++index >= count) index = 0;
+    }
+    return loft_ref_null();
+}
+
+/* `@FR-R-TypedKeyed`'s text clause (hash::find_str): one text key, hashed as the general entry
+ * hashes a text part and compared against each entry's key text in place — equal exactly when
+ * `loft_kv_cmp` says so: the same length and the same bytes. */
+static loft_ref loft_h_find_text(loft_ref c, const loft_key *keys, loft_str key) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) == 0) return loft_ref_null();
+    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
+    loft_kv kv = loft_kv_text(key);
+    uint64_t hv = loft_kv_digest(&kv, 1, loft_h_read_seed(s, claim));
+    uint32_t tag = (uint32_t) hv, index = loft_h_home(hv, count), kpos = keys[0].pos;
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + index * sb);
+        if (slot == 0) break;
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, index, tag)) {
+            loft_ref e;
+            e.store_nr = c.store_nr;
+            loft_h_at_bucket(&ents, s, slot, index, &e.rec, &e.pos);
+            if (e.rec != 0) {
+                loft_str have = loft_store_str(s, loft_u32(s, e.rec, e.pos + kpos));
+                if (have.len == key.len && (key.len == 0 || memcmp(have.p, key.p, key.len) == 0)) return e;
+            }
+        }
+        if (++index >= count) index = 0;
+    }
+    return loft_ref_null();
+}
+
 /* hash::hash_rec_pos: the bucket naming the entry `rec`, and what it holds; 0 when none does. */
 static int loft_h_rec_pos(loft_store_t *s, uint32_t claim, const loft_hents *ents, loft_ref rec, const loft_key *keys,
                           int nk, uint32_t *at, uint32_t *val) {
