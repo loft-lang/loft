@@ -65,7 +65,7 @@ static void loft_reserve(loft_text *t, size_t extra) {
     t->cap = cap;
 }
 
-static void loft_push(loft_text *t, const char *p, size_t n) {
+static void loft_push_slow(loft_text *t, const char *p, size_t n) {
     if (n == 0) return;
     if (t->p && p >= t->p && p < t->p + t->cap) {
         /* Appending a part of itself: the buffer may move, so copy the part first. */
@@ -80,6 +80,18 @@ static void loft_push(loft_text *t, const char *p, size_t n) {
         memcpy(t->p + t->len, p, n);
     }
     t->len += n;
+}
+
+/* The append every text build runs per piece: in place while the buffer has room and the piece
+ * is not a part of the buffer itself, the growth and the self-append out of line. */
+LOFT_HOT_INLINE void loft_push(loft_text *t, const char *p, size_t n) {
+    if (n == 0) return;
+    if (LOFT_LIKELY(t->len + n <= t->cap) && (p < t->p || p >= t->p + t->cap)) {
+        memcpy(t->p + t->len, p, n);
+        t->len += n;
+        return;
+    }
+    loft_push_slow(t, p, n);
 }
 
 static void loft_push_char(loft_text *t, char c) {
