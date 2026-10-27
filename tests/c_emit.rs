@@ -765,6 +765,232 @@ fn main() {
     }
 }
 
+/// `@FR-R-TypedKeyed` in the C: a hash looked up by one integer key, by two integer keys or by
+/// one text key takes its typed entry, which compares the key in place.  A bucket's 32-bit tag
+/// filters almost every other key first, so the comparison decides only on a TAG COLLISION —
+/// these keys collide under `LOFT_HASH_SEED=12345` (found offline from the same SipHash-1-3):
+/// `k0016413` and `k0039727`, 31541 and 69084, (612, 23) and (48, 51).  Each table holds the first
+/// and is asked for both: the first is found, the second is not.  Values by hand.
+#[test]
+fn a_typed_hash_lookup_compares_the_key_on_a_tag_collision() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"
+struct W { word: text, count: integer }
+struct I { id: integer, v: integer }
+struct P { q: integer, r: integer, v: integer }
+struct Db { words: hash<W[word]>, ids: hash<I[id]>, pairs: hash<P[q, r]> }
+fn main() {
+  db = Db { words: [], ids: [], pairs: [] };
+  db.words += [W { word: "k0016413", count: 7 }];
+  db.ids += [I { id: 31541, v: 8 }];
+  db.pairs += [P { q: 612, r: 23, v: 9 }];
+  println("{db.words["k0016413"]?.count} {db.words["k0039727"] == null}");
+  println("{db.ids[31541]?.v} {db.ids[69084] == null}");
+  println("{db.pairs[612, 23]?.v} {db.pairs[48, 51] == null}");
+}
+"#;
+    let want = "7 true\n8 true\n9 true\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("typed-keyed");
+    let file = dir.join("tk.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .env("LOFT_HASH_SEED", "12345")
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let c = dir.join("tk.c");
+    let _ = fa::remove_file(&c);
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    for entry in ["loft_h_find_text(", "loft_h_find_i64(", "loft_h_find_ints("] {
+        assert!(
+            text.lines()
+                .any(|l| l.contains(entry) && !l.starts_with("static")),
+            "the typed entry {entry} is called"
+        );
+    }
+    for (kind, flags) in [
+        ("strict", &["-DLOFT_STRICT", "-pedantic", "-Werror"][..]),
+        ("verify", &["-DLOFT_VERIFY", "-w"][..]),
+    ] {
+        let exe = dir.join(format!("tk-{kind}"));
+        let cc = loft::platform::process::harness_command("cc")
+            .args(["-std=c99", "-O1"])
+            .args(flags)
+            .arg(&c)
+            .arg("-o")
+            .arg(&exe)
+            .arg("-lm")
+            .output()
+            .expect("run cc");
+        assert!(
+            cc.status.success(),
+            "{kind}: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
+        let out = loft::platform::process::harness_command(&exe)
+            .env("LOFT_HASH_SEED", "12345")
+            .output()
+            .expect("run the C program");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{kind}");
+    }
+}
+
+/// `@FR-R-ValueRecord` in the C, from native's plan: `mk` returns its `P` as a struct and takes
+/// no buffer, its value local is read field by field and handed to a tuple parameter, and
+/// copied into a vector slot it is materialised field by field; `pick` returns a `Q?` whose
+/// null exit is the absent struct and whose presence word the `!= null` test reads; and a
+/// build that writes its fields out of order runs them in the order the program wrote them.
+/// Each value is computed by hand; `LOFT_NO_VALUE_RECORD=1` keeps the record form and answers
+/// the same.
+#[test]
+fn a_record_result_travels_as_a_struct_in_the_c() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"struct P { x: integer, y: float }
+struct Q { a: integer, b: integer }
+struct Ord3 { f: integer, n: integer, ok: boolean }
+fn mk(i: integer) -> P { P { x: i * 3, y: i as float * 0.5 } }
+fn pick(i: integer) -> Q? { if i % 2 == 0 { Q { a: i, b: i + 1 } } else { null } }
+fn sum_p(p: P) -> float { p.x as float + p.y }
+fn tick(n: integer, log: &vector<integer>) -> integer { log += [n]; n }
+fn ord(log: &vector<integer>) -> Ord3 { Ord3 { ok: tick(1, log) > 0, f: tick(2, log), n: tick(3, log) } }
+fn main() {
+  t = 0.0;
+  c = 0;
+  for i in 0..10 {
+    p = mk(i);
+    t += sum_p(p);
+    q = pick(i);
+    if q != null { c += q.a + q.b; }
+  }
+  v: vector<P> = [];
+  for i in 0..4 { v += [mk(i)]; }
+  sx = 0;
+  sy = 0.0;
+  for e in v { sx += e.x; sy += e.y; }
+  log: vector<integer> = [];
+  o = ord(log);
+  println("{t} {c} {sx} {sy} {o.f} {o.n} {o.ok} {log}");
+}
+"#;
+    // t: sum_p(mk(i)) = 3i + 0.5i over 0..10 = 3.5 * 45.  c: (i) + (i + 1) over the even i, 45.
+    // v: x 0 3 6 9, y 0 0.5 1 1.5.  ord: the fields read in the order written, 1 2 3.
+    let want = "157.5 45 18 3 2 3 true [1,2,3]\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("value-record");
+    let file = dir.join("vr.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        want,
+        "the interpreter"
+    );
+    let asan = {
+        let probe = dir.join("probe.c");
+        fa::write(&probe, "int main(void) { return 0; }\n").expect("write probe");
+        loft::platform::process::harness_command("cc")
+            .args(["-fsanitize=address", "-o"])
+            .arg(dir.join("probe"))
+            .arg(&probe)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    for (mode, off, structs) in [("value", "0", true), ("record", "1", false)] {
+        let c = dir.join(format!("{mode}.c"));
+        let _ = fa::remove_file(&c);
+        let emit = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_VALUE_RECORD", off)
+            .arg("--emit-c")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft --emit-c");
+        assert!(
+            emit.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        for f in ["n_mk__fr(", "n_pick__fr("] {
+            let sig = text
+                .lines()
+                .find(|l| l.starts_with("static ") && l.contains(f))
+                .unwrap_or_default();
+            assert_eq!(sig.starts_with("static loft_tup"), structs, "{mode}: {sig}");
+        }
+        let mut kinds: Vec<(&str, Vec<&str>)> = vec![
+            ("strict", vec!["-DLOFT_STRICT", "-pedantic", "-Werror"]),
+            ("verify", vec!["-DLOFT_VERIFY", "-w"]),
+        ];
+        if asan {
+            kinds.push((
+                "asan",
+                vec![
+                    "-g",
+                    "-fsanitize=address,undefined",
+                    "-fno-sanitize-recover=all",
+                    "-w",
+                ],
+            ));
+        }
+        for (kind, flags) in kinds {
+            let exe = dir.join(format!("{mode}-{kind}"));
+            let cc = loft::platform::process::harness_command("cc")
+                .args(["-std=c99", "-O1"])
+                .args(&flags)
+                .arg(&c)
+                .arg("-o")
+                .arg(&exe)
+                .arg("-lm")
+                .output()
+                .expect("run cc");
+            assert!(
+                cc.status.success(),
+                "{mode} {kind}: {}",
+                String::from_utf8_lossy(&cc.stderr)
+            );
+            let out = loft::platform::process::harness_command(&exe)
+                .output()
+                .expect("run the C program");
+            assert!(
+                out.status.success(),
+                "{mode} {kind}: exit {:?}\n{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{mode} {kind}");
+        }
+    }
+}
+
 /// `@FR-R-SplitTable`: a `parts = text.split(c)` read only by its length, its element reads
 /// and a walk keeps its pieces as slices of a copy of the text (`loft_stab`) and never builds
 /// the vector or mints its buffer.  The cells: separators at both ends and doubled, an empty

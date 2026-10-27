@@ -31,7 +31,7 @@ python3 scripts/c_sweep.py --asan  # the same, built with AddressSanitizer + UBS
 python3 scripts/c_sweep.py --poison  # the store poison modes, against the interpreter's
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
-python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
+python3 scripts/c_sweep.py --all               # every refusal reason and program, not the top 25
 python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's message, location
                                                #   and chain), the driver's `advice:` notes aside
 python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.yml's `c-sweep`
@@ -71,7 +71,8 @@ Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
 it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It
 builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`), `slow` or `refused`, and ranks the
-refusals by reason — that ranking is the work list.  Each program gets a directory of its own
+refusals by reason, each with the programs it refused (five, or all of them under `--all`; the
+full list in `refused.tsv` beside the run's directories) — that ranking is the work list.  Each program gets a directory of its own
 (its unit `p.c`, its binary, and a `tmp/` that is its `TMPDIR` in every run) under the sweep's
 scratch, `<temp>/loft-c-sweep-<checkout>/<pid>/` (`scripts/run_scratch.py`): a program that
 matched or was refused loses it at once, every other keeps it and the report prints its path
@@ -317,7 +318,12 @@ record cursors.  A sorted is a vector kept in key order (`sorted_new`, `sorted_f
 `remove_owned` and `remove_vector_at` give it.  A `spatial` and a `trie` are
 `src/radix_tree.rs` ported (`loft_radix.h`) under `radix_db.rs`' Morton oracle and
 `trie_db.rs`' text oracle, with their walks — the outward walk from a point, the box walk by
-BIGMIN, the prefix walk — snapshotted as `build_rec_scratch` lays them out.
+BIGMIN, the prefix walk — snapshotted as `build_rec_scratch` lays them out.  A hash with ONE
+8-byte integer key looked up by that integer takes `loft_h_find_i64` (`@FR-R-TypedKeyed`): the
+same digest, home bucket and walk as `loft_h_find`, the key compared in place; the digest of one
+integer key, in every path that hashes one, is SipHash's two words and finish unrolled
+(`loft_digest_i64`), which `the_c_hash_table_files_every_entry_where_hash_does` pins to
+`hash.rs`'s placement.
 
 **Store images.**  `store_persist_copy` is `Stores::persist_copy` ported: the root deep-copied
 into a scratch store, its trees laid out in van Emde Boas order (`rtree_relayout`), the store

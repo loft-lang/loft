@@ -1723,14 +1723,19 @@ static void loft_fill(loft_ref r, const uint8_t *image, uint32_t n) {
 }
 
 /* get_vector: the element at `from` (negative counts from the end), or the null reference. */
+/* `@FR-R-ElementPath`: the collection record and the length read once each, one unsigned
+ * compare (a negative index past the front fails it too), the element's reference built here. */
 LOFT_HOT_INLINE loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
-    if (v.store_nr == 0xFFFF) return loft_ref_null();
-    int64_t len = loft_vec_len(v);
+    loft_ref e = loft_ref_null();
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return e;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return e;
+    int64_t len = (int64_t) loft_u32(s, r, 4);
     int64_t f = from < 0 ? from + len : from;
-    if (f < 0 || f >= len) return loft_ref_null();
-    loft_ref e;
+    if ((uint64_t) f >= (uint64_t) len) return e;
     e.store_nr = v.store_nr;
-    e.rec = loft_collection_rec(loft_store_of(v), v.rec, v.pos);
+    e.rec = r;
     e.pos = (uint32_t) (8 + (uint64_t) f * size);
     return e;
 }
@@ -2511,6 +2516,7 @@ LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
     return h;
 }
 
+/* `@FR-R-Refresh`: the growth re-derives the whole header at its own site. */
 LOFT_COLD static loft_ref loft_ph_grow(loft_ph *h, uint32_t size) {
     loft_ref e = loft_vec_append(h->v, size);
     *h = loft_ph_of(h->v, size);
@@ -4416,7 +4422,8 @@ static int loft_eq_content(loft_eq_fn f, loft_ref a, loft_ref b) {
 
 /* ── Kernels and conversions the stdlib calls natively ─────────────────────────────────── */
 
-/* vector_sum_int (loop_kernels.rs): `acc` plus every element, with integer addition's rules.  The
+/* vector_sum_int (loop_kernels.rs, `@FR-R-BoundedNest`'s reduction clause): `acc` plus every
+ * element, with integer addition's rules.  The
  * elements are read off the vector's base, a block of LOFT_SUM_BLOCK at a time (vector::
  * sum_blocks_i64): a block whose every element lies in [-2^40, 2^40) and whose total starts more
  * than 2^50 from the int64 edge cannot overflow and holds no null, so its plain sum is what the

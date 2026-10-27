@@ -120,6 +120,36 @@ routine whose `cship` time is over 3.5× its Rust twin is a bug, one issue per p
 (bench/README.md § When a gap is a bug), from the moment the initial store port has landed;
 the work before that is bench/portal/analysis/c-store-gaps.md.
 
+*C7's value records.*  The record routines over the bar (slope_path, emit_to_material,
+truncate_to, mapfile_to_painted, resolve_move) mint a store per record-returning call, copy the
+result in and copy it out again; native returns such a record's fields BY VALUE
+(`@FR-R-ValueRecord`, `@FR-R-ValueLocal`).  The C reads the same plan, `opt::value_records`,
+and the same per-function facts (`value_locals_in`, `dead_buffers`, `forward_sites`,
+`value_leaves`), so the two backends admit exactly the same functions, and writes each layout
+as a `loft_tup` struct — `i64`, `f64`, `f32` and `bool` as the C's integer, float, single and
+boolean shapes, a view leaf as a `loft_ref`, a nullable layout's presence word as a boolean
+after the fields.  What changes per construct, each as native writes it:
+
+- an admitted function returns the struct and takes no return buffer; a call to it passes no
+  buffer, and a tuple parameter (`R-ValueLocal`) takes the struct;
+- a value local and a tuple parameter are struct locals: a field read (directly or through an
+  inline sub-record, at the summed offset) is a member, a free is nothing, a store-identity test
+  against one is distinct, and a copy FROM one materialises the struct into the destination
+  field by field;
+- an exit is a leaf: an `Object` build is the struct of its writes, a view the struct of its
+  field getters, a forward the callee's struct, a `null` exit of a `-> S?` the absent struct
+  (every field null, presence false), a dense leaf where a nullable one is expected the struct
+  widened with presence true; a materialised view return returns the copy source's struct;
+- a dead buffer is never minted and never freed; a forward site writes the callee's struct into
+  the buffer it was handed, minted where absent;
+- a record handed to a tuple parameter is the struct of its getters.
+
+The plan is program-wide (one call site that consumes a record declines the callee
+everywhere), so the C uses it whole or not at all: a program whose plan holds a form the C
+does not write — a function-value dispatch answering a tuple (`R-FnRefValue`) until it is
+ported — keeps the record form throughout.  `LOFT_NO_VALUE_RECORD=1` keeps it as on native,
+and the falsifier is that switch's A/B on hand-computed values, with the sweep.
+
 **C8 — platforms and CI.**  MSVC: the macro layer's `_MSC_VER` arms built and swept on the
 Windows runner; the C sweep as a job in `ci.yml` beside the native leg, ASan and poison in the
 nightly; `scripts/test_subjects.sh` gains `c`.

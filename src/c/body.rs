@@ -13,6 +13,7 @@ mod generator;
 mod keyed;
 mod misc;
 mod par;
+mod value;
 
 use super::{CType, Cx, c_name, held, is_operator, type_word};
 use crate::data::{Block, Value};
@@ -140,6 +141,10 @@ pub(crate) struct FnWriter<'a> {
     /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
     /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
     scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
+    /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
+    vr: Option<Box<value::VrFn>>,
+    /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
+    widening: Option<usize>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -264,6 +269,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
     walks.extend(crate::opt::hoist::borrowed_discharge_temps(
         cx.data, d, &tables,
     ));
+    // `@FR-R-SliceBorrow` rides on the same analysis: a value slice of a text parameter.
     let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
     let plain = store
         .locals
@@ -366,6 +372,8 @@ impl<'a> FnWriter<'a> {
             labels: 0,
             headers: Vec::new(),
             push_heads: Vec::new(),
+            vr: value::VrFn::of(cx, d).map(Box::new),
+            widening: None,
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
@@ -486,6 +494,10 @@ impl<'a> FnWriter<'a> {
     /// The body: the locals, the temporaries and the statements.
     pub(crate) fn write(mut self) -> Result<String, String> {
         let code = self.code;
+        // The return buffer an admitted function's signature dropped is a local nothing binds.
+        if let Some(p) = self.vr.as_ref().and_then(|f| f.phantom) {
+            self.params[p as usize] = false;
+        }
         for (v, tab) in &self.split_tabs {
             self.decls
                 .push(format!("loft_stab st{v} = {{ {{ 0, 0, 0 }}, 0, 0, 0 }};"));
@@ -696,7 +708,8 @@ impl<'a> FnWriter<'a> {
                     continue;
                 }
                 // A path an enclosing frame holds as well — with a base, or without one where
-                // this loop would keep none either — is served by that frame.
+                // this loop would keep none either — is served by that frame (`@FR-R-State`:
+                // one holder per path).
                 let outer = self
                     .headers
                     .iter()
@@ -730,7 +743,9 @@ impl<'a> FnWriter<'a> {
             .map(|(_, n, c)| (n.clone(), *c))
     }
 
-    /// `@FR-R-PushRec`, as native's record push header: before loop `b`, a `loft_ph` for each
+    /// `@FR-R-PushRec`, as native's record push header (`@FR-R-Mint`'s group, the path's one
+    /// holder under `@FR-R-State`, re-derived after a growth under `@FR-R-Refresh`): before
+    /// loop `b`, a `loft_ph` for each
     /// minted path of `mints` that no window and no enclosing loop serves; the path's mints and
     /// finishes go through it (`Self::pushed_mint`).  `LOFT_NO_RECORD_PUSH=1` admits none, in
     /// the verdict, as on native.
@@ -865,7 +880,9 @@ impl<'a> FnWriter<'a> {
 
     /// Loop `b`'s header verdict (`hoist::hoistable`), or `None` where none is asked: in a
     /// generator, whose locals live in its frame between resumes, or under
-    /// `LOFT_NO_VECTOR_HOIST=1`.
+    /// `LOFT_NO_VECTOR_HOIST=1`.  The C keeps a header only where the verdict says so, so it
+    /// keeps what native's gate enforces: `@FR-R-InPlace` (only in-place sets run in a held
+    /// loop) and `@FR-R-Callee` (a callee is admitted as its own writes are).
     fn verdict(&mut self, b: &Block) -> Option<crate::opt::hoist::LoopHoist> {
         if self.gen_elem.is_some() || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
         {
@@ -1744,6 +1761,9 @@ impl<'a> FnWriter<'a> {
             | Value::Enum(..)
             | Value::Text(_) => Ok(()),
             Value::Span(b) => self.stmt(&b.1, ind),
+            // `@FR-R-ValueRecord` — a materialised view return, or a build that returns what
+            // it builds, standing as a statement returns its struct.
+            Value::Block(b) if self.vr_stmt_leaf(b) => self.vr_stmt(v, b, ind),
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => self.set_stmt(*var, x, ind),
@@ -2291,6 +2311,12 @@ impl<'a> FnWriter<'a> {
         reason = "one arm per kind of bind; the rewritten binds are already helpers"
     )]
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        if self.vr.is_some()
+            && let Some(r) = self.vr_set(var, x, ind)
+        {
+            self.bound[var as usize] = true;
+            return r;
+        }
         // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
         // every later read and write of it goes through.
         if self.store_links[var as usize] {
@@ -2699,6 +2725,9 @@ impl<'a> FnWriter<'a> {
 
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
     fn assign(&mut self, v: &Value, target: &str, c: CType, ind: usize) -> Result<(), String> {
+        if self.vr.is_some() && self.vr_assign(v, target, c, ind)? {
+            return Ok(());
+        }
         match v.unspan() {
             // A tuple that owns texts is copied element by element: a struct copy would share them.
             Value::Var(src) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) => {
@@ -3167,7 +3196,8 @@ impl<'a> FnWriter<'a> {
         }
     }
 
-    /// A text choice between views — `if c { a } else { b }`, as a `?` discharge writes it,
+    /// `@FR-R-TextBorrow`'s discharge clause, its value: a text choice between views —
+    /// `if c { a } else { b }`, as a `?` discharge writes it,
     /// where each arm is a borrowed text variable or a literal — as the view it picks: the
     /// bytes are the arm's own, valid as long as that variable is, so nothing is copied.
     /// `None` for any other compound.
@@ -3324,27 +3354,46 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `v.len()` of a vector this body holds — the stdlib wrapper answered as its op
+    /// (`@FR-R-Wrapper`) — a split table's count, a held header's length or a push header's.
+    /// `None` for any other vector.
+    fn held_len(&mut self, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        let [v] = args else { return Ok(None) };
+        if let Some(t) = self.split_tab_of(v) {
+            return Ok(Some(E::new(format!("((int64_t) st{t}.n)"), K::Int)));
+        }
+        if let Some(h) = self.held_vector(v) {
+            return Ok(Some(E::new(format!("{h}.len"), K::Int)));
+        }
+        self.pushed_mint("OpLengthVector", args, ind)
+    }
+
+    /// An operator call: a bare `null` argument is the null of the operand's declared type, as
+    /// the bytecode pushes it (`OpSetDbRef(g, 0, null)`, `OpPushInt(v, null)`).
+    fn call_operator(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
+        let cx = self.cx;
+        if args.iter().any(|a| matches!(a.unspan(), Value::Null)) {
+            let attrs = cx.data.def(d).attributes();
+            let typed: Vec<Value> = args
+                .iter()
+                .enumerate()
+                .map(|(i, a)| match a.unspan() {
+                    Value::Null => attrs
+                        .get(i)
+                        .and_then(|at| self.typed_null(&at.typedef))
+                        .unwrap_or(Value::Null),
+                    _ => a.clone(),
+                })
+                .collect();
+            return self.operator(cx.data.def(d).name(), &typed, ind);
+        }
+        self.operator(cx.data.def(d).name(), args, ind)
+    }
+
     fn call(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
         let cx = self.cx;
         if is_operator(cx.data, d) {
-            // A bare `null` argument is the null of the operand's declared type, as the
-            // bytecode pushes it (`OpSetDbRef(g, 0, null)`, `OpPushInt(v, null)`).
-            if args.iter().any(|a| matches!(a.unspan(), Value::Null)) {
-                let attrs = cx.data.def(d).attributes();
-                let typed: Vec<Value> = args
-                    .iter()
-                    .enumerate()
-                    .map(|(i, a)| match a.unspan() {
-                        Value::Null => attrs
-                            .get(i)
-                            .and_then(|at| self.typed_null(&at.typedef))
-                            .unwrap_or(Value::Null),
-                        _ => a.clone(),
-                    })
-                    .collect();
-                return self.operator(cx.data.def(d).name(), &typed, ind);
-            }
-            return self.operator(cx.data.def(d).name(), args, ind);
+            return self.call_operator(d, args, ind);
         }
         let def = cx.data.def(d);
         if let Some(e) = self.keyed_native(def.name(), args, ind)? {
@@ -3365,9 +3414,17 @@ impl<'a> FnWriter<'a> {
             return Ok(E::new(format!("loft_env_variables({size})"), K::Ref));
         }
         let callee = def.original_name();
-        let ret = cx
-            .ctype(def.returned())
-            .ok_or_else(|| format!("a call to {callee} returning {}", type_word(def.returned())))?;
+        // `@FR-R-ValueRecord` — an admitted callee answers its struct and takes no buffer; a
+        // tuple parameter takes a struct.
+        let (vr_key, dropped, tuple_params) = self.vr_callee(d);
+        let ret = match vr_key {
+            Some(key) => cx
+                .vr_ctype(key)
+                .ok_or("a value record without its layout")?,
+            None => cx.ctype(def.returned()).ok_or_else(|| {
+                format!("a call to {callee} returning {}", type_word(def.returned()))
+            })?,
+        };
         let shapes: Vec<CType> = def
             .attributes()
             .iter()
@@ -3384,19 +3441,10 @@ impl<'a> FnWriter<'a> {
         if shapes.len() != args.len() {
             return Err("a call whose arguments do not match its parameters".into());
         }
-        // `v.len()` of a vector an enclosing loop holds: the header's length.
         if def.name() == "t_6vector_len"
-            && let [v] = args
+            && let Some(e) = self.held_len(args, ind)?
         {
-            if let Some(t) = self.split_tab_of(v) {
-                return Ok(E::new(format!("((int64_t) st{t}.n)"), K::Int));
-            }
-            if let Some(h) = self.held_vector(v) {
-                return Ok(E::new(format!("{h}.len"), K::Int));
-            }
-            if let Some(e) = self.pushed_mint("OpLengthVector", args, ind)? {
-                return Ok(e);
-            }
+            return Ok(e);
         }
         // A native runtime function is written in `int64_t`: a 32-bit integer crosses it widened.
         let native = super::native_c(def.name()).is_some();
@@ -3413,7 +3461,11 @@ impl<'a> FnWriter<'a> {
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
+        let values = self.vr_args(args, values, dropped, &tuple_params, &mut xs, ind)?;
         self.value_args(args, &shapes, &values, &mut xs, ind)?;
+        if let Some(i) = dropped {
+            xs.remove(i);
+        }
         // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
         let mut mask = places;
         if super::native_c(def.name()).is_none()
@@ -3433,6 +3485,11 @@ impl<'a> FnWriter<'a> {
             super::twin_name(cx.data, d, mask)
         };
         let call = format!("{name}({})", xs.join(", "));
+        if let Some(key) = vr_key
+            && let Some(buf) = self.vr_forward_target(args, dropped)
+        {
+            return self.vr_forward(&call, key, buf, ind);
+        }
         Ok(match ret {
             CType::Text => {
                 let t = self.temp(CType::Text);
@@ -3707,6 +3764,11 @@ impl<'a> FnWriter<'a> {
             "OpFormatStackDatabase" => "OpFormatDatabase",
             n => n,
         };
+        if self.vr.is_some()
+            && let Some(e) = self.vr_operator(name, args, ind)?
+        {
+            return Ok(e);
+        }
         if !self.headers.is_empty()
             && let Some(e) = self.held_access(name, args, ind)?
         {

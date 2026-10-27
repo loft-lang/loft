@@ -221,6 +221,10 @@ pub(crate) struct Cx<'a> {
     /// The loop verdict's memos shared across the unit (`hoist::hoistable`,
     /// `hoist::callee_inputs`): which callees write a store, their write sets, their inputs.
     pub(crate) hoist_memo: std::cell::RefCell<HoistMemo>,
+    /// `@FR-R-ValueRecord`'s plan (`opt::value_records`), computed on first use: empty under
+    /// `LOFT_NO_VALUE_RECORD=1` and for a program whose plan holds a form the C does not
+    /// write (`Cx::value_records`).
+    vr: std::cell::OnceCell<std::rc::Rc<crate::opt::value_records::layout::ValueRecords>>,
 }
 
 /// The memos [`Cx::hoist_memo`] keeps.
@@ -285,7 +289,90 @@ impl<'a> Cx<'a> {
             twins: std::cell::RefCell::new(Vec::new()),
             switches: crate::lower::switches::Switches::from_env(),
             hoist_memo: std::cell::RefCell::new(HoistMemo::default()),
+            vr: std::cell::OnceCell::new(),
         }
+    }
+
+    /// The value-record plan the C writes from, native's own (`opt::value_records`), or an
+    /// empty one: the plan is program-wide, so the C takes it whole or not at all, and it
+    /// declines a plan with a function-value dispatch answering a tuple
+    /// (`@FR-R-FnRefValue`), which it does not write yet.
+    pub(crate) fn value_records(
+        &self,
+    ) -> std::rc::Rc<crate::opt::value_records::layout::ValueRecords> {
+        self.vr
+            .get_or_init(|| {
+                use crate::opt::value_records::layout as vl;
+                let vr = crate::opt::value_records::value_records(self.data, self.stores, false);
+                let views = vr
+                    .types
+                    .values()
+                    .any(|t| t.fields.iter().any(|(_, rt)| vl::is_view_part(rt)));
+                let fnref = vr.fnref_sites.keys().any(|(d, v)| {
+                    vl::fnref_value(&vr.fnref_sites, &vr.fns, *d, *v).is_some()
+                }) || vr.fnref_sites.values().any(|(arms, _)| {
+                    arms.iter()
+                        .any(|a| vr.fns.contains_key(a) || vr.params.contains_key(a))
+                });
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    eprintln!(
+                        "[valuerec] the C takes {} function(s), {} with tuple parameters (views {views}, fn-ref {fnref})",
+                        vr.fns.len(),
+                        vr.params.len()
+                    );
+                }
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    for (d, key) in &vr.fns {
+                        let view = vr.types.get(key).is_some_and(|t| t.fields.iter().any(|(_, rt)| vl::is_view_part(rt)));
+                        eprintln!("[valuerec] the C's plan: {} key {key}{}", self.data.def(*d).name(), if view { " (view)" } else { "" });
+                    }
+                }
+                if fnref {
+                    return std::rc::Rc::new(vl::ValueRecords::default());
+                }
+                std::rc::Rc::new(vr)
+            })
+            .clone()
+    }
+
+    /// The C shape of value-record layout `key`: a `loft_tup` of its fields — `i64`, `f64`,
+    /// `f32` and `bool` as integer, float, single and boolean — and, for a nullable layout,
+    /// the presence word as a boolean after them.
+    /// `d`'s value locals (`opt::value_records::value_locals_in`): each with its layout key.
+    pub(crate) fn vr_locals(&self, d: u32) -> std::collections::HashMap<u16, u16> {
+        let vr = self.value_records();
+        if vr.fns.is_empty() && vr.params.is_empty() {
+            return std::collections::HashMap::new();
+        }
+        crate::opt::value_records::value_locals_in(
+            self.data,
+            d,
+            &vr.fns,
+            &vr.params,
+            &vr.view_offs,
+            &vr.fnref_sites,
+            &vr.sp,
+        )
+    }
+
+    pub(crate) fn vr_ctype(&self, key: u16) -> Option<CType> {
+        let vr = self.value_records();
+        let layout = vr.types.get(&key)?;
+        let mut shapes: Vec<CType> = layout
+            .fields
+            .iter()
+            .map(|(_, rt)| match *rt {
+                "f64" => CType::Float,
+                "f32" => CType::Single,
+                "bool" => CType::Bool,
+                rt if crate::opt::value_records::layout::is_view_part(rt) => CType::Ref,
+                _ => CType::Int,
+            })
+            .collect();
+        if layout.nullable {
+            shapes.push(CType::Bool);
+        }
+        Some(CType::Tuple(self.tuple_id(shapes)))
     }
 
     /// The kind of record collection type `tp` and its element type, or `None` for any other
@@ -1937,9 +2024,17 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if def.code() == &Value::Null && !unloaded {
         return Err(format!("native {}", def.original_name()));
     }
-    let ret = cx
-        .ctype(def.returned())
-        .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
+    // `@FR-R-ValueRecord` — an admitted function returns its record's fields as a struct.
+    let vr = cx.value_records();
+    let vr_key = vr.fns.get(&d).copied();
+    let ret = match vr_key {
+        Some(key) => cx
+            .vr_ctype(key)
+            .ok_or("a value record without its layout")?,
+        None => cx
+            .ctype(def.returned())
+            .ok_or_else(|| format!("returns {}", type_word(def.returned())))?,
+    };
     if unloaded {
         if let Some(runtime) = in_binary_native(def.native()) {
             return forwarded_native(cx, d, ret, runtime);
@@ -1967,10 +2062,12 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if args.len() != def.attributes().len() {
         return Err("parameters that do not match their arguments".into());
     }
-    let shapes = variable_shapes(cx, vars, &args)?;
+    let mut shapes = variable_shapes(cx, vars, &args)?;
+    let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
     let params: Vec<String> = args
         .iter()
         .enumerate()
+        .filter(|(i, _)| dropped != Some(*i))
         .map(|(i, &a)| {
             let c = shapes[a as usize];
             let name = body::var_name(vars.name(a), a);
@@ -1986,17 +2083,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
     // them; its body serves those vectors' accesses from them as a loop's held headers.
     let mut params = params;
-    let mut inputs: Vec<(crate::opt::writes::PathKey, String, bool)> = Vec::new();
-    if mask & INV_BIT != 0 {
-        let fi = cx
-            .callee_inputs(d)
-            .filter(|fi| !fi.headers.is_empty())
-            .ok_or("an __inv twin of a function with no header inputs")?;
-        for (k, (p, offs, _)) in fi.headers.iter().enumerate() {
-            params.push(format!("loft_vh hi{k}"));
-            inputs.push(((*p, offs.clone()), format!("hi{k}"), true));
-        }
-    }
+    let inputs = inv_inputs(cx, d, mask, &mut params)?;
     let params = if params.is_empty() {
         "void".to_string()
     } else {
@@ -2029,6 +2116,42 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
     // the compiler folds into its caller.
     Ok((sig, framed(cx, d, &name, &params, ret, &body)))
+}
+
+/// An `__inv` twin's header parameters, appended to `params`, and the frame its body serves
+/// their vectors' accesses from; none for any other mask.
+fn inv_inputs(
+    cx: &Cx,
+    d: u32,
+    mask: u64,
+    params: &mut Vec<String>,
+) -> Result<Vec<(crate::opt::writes::PathKey, String, bool)>, String> {
+    let mut inputs = Vec::new();
+    if mask & INV_BIT != 0 {
+        let fi = cx
+            .callee_inputs(d)
+            .filter(|fi| !fi.headers.is_empty())
+            .ok_or("an __inv twin of a function with no header inputs")?;
+        for (k, (p, offs, _)) in fi.headers.iter().enumerate() {
+            params.push(format!("loft_vh hi{k}"));
+            inputs.push(((*p, offs.clone()), format!("hi{k}"), true));
+        }
+    }
+    Ok(inputs)
+}
+
+/// `@FR-R-ValueLocal` — `d`'s value locals (the tuple parameters among them) take their struct
+/// shapes, and an admitted function's return buffer is no parameter: answers the attribute
+/// the signature drops.
+fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Option<usize> {
+    for (v, key) in &cx.vr_locals(d) {
+        if let Some(c) = cx.vr_ctype(*key)
+            && (*v as usize) < shapes.len()
+        {
+            shapes[*v as usize] = c;
+        }
+    }
+    vr_key.and_then(|_| crate::opt::attrs::ret_buffer_attr(cx.data.def(d)))
 }
 
 /// A `#c` binding (`c_signature`, `c_call`): a wrapper declaring the callee by the author's own
