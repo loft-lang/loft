@@ -494,8 +494,9 @@ impl PageProvider for PageSource {
 /// sidecar beside it and compare its recorded layout with the running program's
 /// `current` identity (`@FR-S-Gate`).  An ABSENT sidecar, an unreachable one and one
 /// that cannot be read all yield a verdict that is not raw-safe ([`SchemaVerdict::Bare`],
-/// [`SchemaVerdict::Unreadable`]): an image whose layout nothing records is never
-/// range-read at schema-derived offsets, and neither is a mismatched one.
+/// [`SchemaVerdict::Refused`] naming why the fetch failed, [`SchemaVerdict::Unreadable`]):
+/// an image whose layout nothing records is never range-read at schema-derived offsets,
+/// and neither is a mismatched one.
 #[must_use]
 pub fn check_sidecar(
     spec: &str,
@@ -505,8 +506,13 @@ pub fn check_sidecar(
     use crate::schema_sidecar::SchemaVerdict;
     if spec.starts_with("http://") || spec.starts_with("https://") {
         match crate::net::fetch_text(&format!("{spec}.dschema")) {
-            Some(text) => crate::schema_sidecar::verdict_for_sidecar_text(&text, current, release),
-            None => SchemaVerdict::Bare,
+            Ok(text) => crate::schema_sidecar::verdict_for_sidecar_text(&text, current, release),
+            Err(None) => SchemaVerdict::Bare,
+            // The request failed, so nothing is known about the sidecar: refused, naming
+            // why, never read as "there is none".
+            Err(Some(why)) => SchemaVerdict::Refused(format!(
+                "its layout sidecar (`.dschema`) could not be fetched: {why}"
+            )),
         }
     } else {
         crate::schema_sidecar::check_beside(std::path::Path::new(spec), current, release)

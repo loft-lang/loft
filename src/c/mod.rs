@@ -1661,7 +1661,7 @@ fn unit_defines(
     }) {
         out.push_str("#define LOFT_ENGINE 1\n");
     }
-    out.push_str(&fetch_defines(data, reached, &runtimes));
+    out.push_str(&fetch_defines(data, reached, &runtimes, cx.lazy.get()));
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
         let at = |f: &str| stores.position(sf, f);
@@ -1681,19 +1681,21 @@ fn unit_defines(
     (out, parses, reflects)
 }
 
-/// A unit that fetches over a URL: `LOFT_NET` for the whole-image loads (`loft_net.h`), and for
-/// it or `http_fetch` the TLS client its `https://` requests run over (`tls::unit_lines`).
+/// A unit that fetches over a URL: `LOFT_NET` for the whole-image loads and for the paged loaders
+/// and lazy bindings, whose image may be an `http(s)://` one read by range (`loft_net.h`), and for
+/// any of them or `http_fetch` the TLS client its `https://` requests run over (`tls::unit_lines`).
 fn fetch_defines(
     data: &Data,
     reached: &std::collections::HashSet<u32>,
     runtimes: &[&str],
+    lazy: bool,
 ) -> String {
-    let loads = reached.iter().any(|&d| {
-        matches!(
-            data.def(d).name(),
-            "n_store_load_url" | "n_store_load_url_trusted"
-        )
-    });
+    let loads = lazy
+        || reached.iter().any(|&d| {
+            let name = data.def(d).name();
+            matches!(name, "n_store_load_url" | "n_store_load_url_trusted")
+                || native_c(name) == Some("loft_pg_load_keys")
+        });
     let mut out = String::new();
     if loads {
         out.push_str("#define LOFT_NET 1\n");

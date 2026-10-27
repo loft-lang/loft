@@ -291,8 +291,11 @@ texts and vectors relocated, then filed by the collection's own insert.  Which c
 loader serves and which entry types it can copy is the Rust store's answer
 (`collection_type_of_store`, `is_copyable_entry`), asked when the program is written to C; a
 loader that cannot serve its collection runs and answers 0, saying why on stderr, as the
-interpreter does.  A paged load from an `http(s)://` source answers that it cannot open it as
-a paged source: the C has no ranged HTTP transport.  `tests/c_emit.rs` crosses every
+interpreter does.  An `http(s)://` image is read the same way, a page per `Range` GET
+(`HttpRangeProvider`'s port: sized by a `bytes=0-0` probe, its signature read before anything
+else, a host that ignores `Range` read through to the page) and gated by its fetched sidecar;
+the Rust provider's concurrent batches are not ported, so each page is one round trip.
+`tests/c_emit.rs` crosses every
 loader with every writer and reader, and
 `tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft` mutates every record of
 each image.  The key compare, the range search and the sorted insert are
@@ -424,12 +427,13 @@ unreachable.  The miss hook is written only into a unit that binds.
 (`file://` from the filesystem, `http://` and `https://` as one HTTP/1.1 GET), gate the layout
 as `store_load` does, pin the bytes by SHA-256 for the first, and adopt them validated.
 
-**HTTPS.**  Both HTTP clients of the runtime — the URL loads and `http_fetch` — run over one
-client connection (`loft_https.h`: a socket, or TLS over it).  The TLS client is
+**HTTPS.**  Every fetch of the runtime — the URL loads, the paged loaders' range reads and
+`http_fetch` — runs through one HTTP/1.1 client over one client connection (`loft_https.h`: a
+socket, or TLS over it; redirects followed, connecting and every read bounded by 30 seconds).  The TLS client is
 `src/c/tls/loft_tls.c` over BearSSL's engine, vendored unmodified under `src/c/tls/bearssl/` from
 the upstream the crypto library vendors its primitives from.  It is not part of the unit:
 `src/c/tls.rs` builds it once per compiler into an archive under `~/.loft/c-tls/` and a unit that
-fetches over a URL names it on a `link:` line (`LOFT_HTTPS`).  It keeps `src/tls.rs`'s promise —
+fetches over a URL or pages an image names it on a `link:` line (`LOFT_HTTPS`).  It keeps `src/tls.rs`'s promise —
 the machine's trust (`SSL_CERT_FILE` / `SSL_CERT_DIR`, else the system bundle), every chain
 validated, the name always checked (a DNS name by BearSSL, an IP address against the
 certificate's iPAddress names by `loft_tls.c`) — with two differences: TLS 1.2 only (BearSSL has
@@ -489,7 +493,7 @@ platforms — is [@PLN203](plans/203-c99-default-backend.md), with the measured 
 starts from.
 
 No program of the corpus is refused.  What the C runtime does not have, it answers at run time
-the way a build without it answers: a ranged transport for a URL; HTTPS on a host without
+the way a build without it answers: HTTPS on a host without
 sockets (wasm) or whose compiler could not build the TLS client; SQLite where the system has no
 `libsqlite3`.  Refused at emit time: a link re-pointed to a narrow or a text store place,
 and a par row of a tuple holding a reference — each by name.  Not

@@ -3,12 +3,24 @@
  * from the file the first time a walk touches it, every address comes from the caller's key and
  * the bytes already read, and a byte past the end of the image reads as 0 — so a malformed
  * image answers "absent" and never faults.  Pages are 64 KiB and the cache is uncapped, the
- * Rust reader's default.  The source is a local file; an `http(s)://` one is not carried. */
+ * Rust reader's default.  The source is a local file, or an `http(s)://` image read by `Range` GETs
+ * (`HttpRangeProvider`, through `loft_net.h`) in a unit that has the transport (`LOFT_NET`). */
 
 #define LOFT_PG_PAGE 65536u
 
+#ifdef LOFT_NET
+static long loft_net_range(const char *url, uint64_t off, uint8_t *buf, size_t len, char *err, size_t cap);
+static int loft_net_size(const char *url, uint64_t *size, char *err, size_t cap);
+#endif
+
+/* Is `path` an image a paged load reads over HTTP (`PageSource::open`)? */
+static int loft_pg_is_url(const char *path) {
+    return strncmp(path, "http://", 7) == 0 || strncmp(path, "https://", 8) == 0;
+}
+
 typedef struct {
     FILE *f;
+    char *url;                 /* the image's URL when it is read over HTTP, else 0 */
     uint64_t size;
     uint8_t **pages;           /* by page number, 0 until read */
     uint64_t npages;
@@ -22,22 +34,50 @@ typedef struct {
     uint32_t krec;
 } loft_pg;
 
-/* LocalFileProvider::open: the file, refused when it does not begin with the store signature. */
-static int loft_pg_open(loft_pg *r, const char *path) {
+/* PageSource::open: the image, refused when it does not begin with the store signature — 1, else
+ * 0 with `err` saying why.  A URL is sized by its probe and its first four bytes range-read
+ * (`HttpRangeProvider::open`). */
+static int loft_pg_open(loft_pg *r, const char *path, char *err, size_t cap) {
     memset(r, 0, sizeof *r);
     r->krec = UINT32_MAX;
-    r->f = fopen(path, "rb");
-    if (!r->f) return 0;
     uint8_t head[4];
-    uint32_t sig;
-    if (fread(head, 1, 4, r->f) != 4 || (memcpy(&sig, head, 4), sig != LOFT_ST_SIGNATURE) ||
-        fseek(r->f, 0, SEEK_END) != 0) {
-        fclose(r->f);
-        r->f = 0;
+    uint32_t sig = 0;
+    if (loft_pg_is_url(path)) {
+#ifdef LOFT_NET
+        if (!loft_net_size(path, &r->size, err, cap)) return 0;
+        long got = loft_net_range(path, 0, head, 4, err, cap);
+        if (got < 0) return 0;
+        if (got == 4) memcpy(&sig, head, 4);
+        if (got != 4 || sig != LOFT_ST_SIGNATURE) {
+            snprintf(err, cap, "%s does not begin with the store signature — it is reachable but is not a loft store image", path);
+            return 0;
+        }
+        size_t n = strlen(path) + 1;
+        r->url = (char *) malloc(n);
+        if (!r->url) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(r->url, path, n);
+#else
+        snprintf(err, cap, "this build has no HTTP transport, so it cannot range-read %s", path);
         return 0;
+#endif
+    } else {
+        r->f = fopen(path, "rb");
+        if (!r->f) {
+            int e = errno;
+            snprintf(err, cap, "%s (os error %d)", strerror(e), e);
+            return 0;
+        }
+        size_t got = fread(head, 1, 4, r->f);
+        if (got == 4) memcpy(&sig, head, 4);
+        if (got != 4 || sig != LOFT_ST_SIGNATURE) {
+            snprintf(err, cap, "not a loft store image (the file does not begin with the store signature)");
+            fclose(r->f);
+            r->f = 0;
+            return 0;
+        }
+        long end = fseek(r->f, 0, SEEK_END) == 0 ? ftell(r->f) : -1;
+        r->size = end < 0 ? 0 : (uint64_t) end;
     }
-    long end = ftell(r->f);
-    r->size = end < 0 ? 0 : (uint64_t) end;
     r->npages = (r->size + LOFT_PG_PAGE - 1) / LOFT_PG_PAGE;
     r->pages = (uint8_t **) calloc(r->npages ? (size_t) r->npages : 1, sizeof(uint8_t *));
     if (!r->pages) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -48,6 +88,7 @@ static void loft_pg_close(loft_pg *r) {
     for (uint64_t p = 0; p < r->npages; p++) free(r->pages[p]);
     free(r->pages);
     free(r->kbuf);
+    free(r->url);
     if (r->f) fclose(r->f);
     memset(r, 0, sizeof *r);
 }
@@ -61,8 +102,14 @@ static const uint8_t *loft_pg_page(loft_pg *r, uint64_t p) {
         uint64_t off = p * LOFT_PG_PAGE, want = r->size - off < LOFT_PG_PAGE ? r->size - off : LOFT_PG_PAGE;
         /* A short read leaves the page's tail as `calloc` made it: zero, which is what a byte
          * past the end reads as.  The count is READ (a `(void)` cast does not satisfy glibc's
-         * `warn_unused_result` on `fread`). */
-        if (fseek(r->f, (long) off, SEEK_SET) == 0) {
+         * `warn_unused_result` on `fread`).  A range read that fails reads as zeros too, as the
+         * Rust provider's does. */
+        if (r->url) {
+#ifdef LOFT_NET
+            char err[1100];
+            if (loft_net_range(r->url, off, b, (size_t) want, err, sizeof err) < 0) memset(b, 0, (size_t) want);
+#endif
+        } else if (fseek(r->f, (long) off, SEEK_SET) == 0) {
             size_t got = fread(b, 1, (size_t) want, r->f);
             if (got < (size_t) want) memset(b + got, 0, (size_t) want - got);
         }

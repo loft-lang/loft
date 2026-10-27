@@ -681,7 +681,7 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
     loft_lazy_bind *b = loft_lazy_binding(coll);
     if (!b) return 0;
     const char *source = b->source.p;
-    char why[512];
+    char why[1100];
     if (b->pinned) {
         uint64_t len = 0, mtime = 0, ino = 0;
         if (!loft_lazy_pin(source, &len, &mtime, &ino) || len != b->len || mtime != b->mtime || ino != b->ino) {
@@ -773,21 +773,11 @@ static int loft_lazy_miss(loft_ref coll, const loft_kv *key, int n) {
     /* Unreachable is decided by the open, a refusal by what the loader said, else the key is
      * absent from a source that was reached (`fetch_from_file`). */
     char *p = loft_cpath(loft_view(&b->source), 0);
-    FILE *f = fopen(p, "rb");
+    loft_pg probe;
+    int reached = loft_pg_open(&probe, p, why, sizeof why);
+    loft_pg_close(&probe);
     free(p);
-    if (!f) {
-        int err = errno;
-        snprintf(why, sizeof why, "%s (os error %d)", strerror(err), err);
-        loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
-        return 0;
-    }
-    uint8_t head[4];
-    size_t got = fread(head, 1, 4, f);
-    fclose(f);
-    uint32_t sig = 0;
-    if (got == 4) memcpy(&sig, head, 4);
-    if (got != 4 || sig != LOFT_ST_SIGNATURE) {
-        snprintf(why, sizeof why, "not a loft store image (the file does not begin with the store signature)");
+    if (!reached) {
         loft_lazy_refuse(coll, loft_lit(why, strlen(why)));
         return 0;
     }

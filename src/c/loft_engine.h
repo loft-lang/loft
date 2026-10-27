@@ -262,20 +262,6 @@ static void loft_eh_drain_http(loft_eh_queue *q) {
 #if defined(LOFT_POSIX_HOST)
 /* ── Socket mechanics ── */
 
-static void loft_eh_cloexec(int fd) {
-    fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
-}
-
-static void loft_eh_blocking(int fd, int on) {
-    int fl = fcntl(fd, F_GETFL);
-    fcntl(fd, F_SETFL, on ? (fl & ~O_NONBLOCK) : (fl | O_NONBLOCK));
-}
-
-static void loft_eh_timeout(int fd, int64_t ms) {
-    struct timeval tv = { (time_t) (ms / 1000), (long) ((ms % 1000) * 1000) };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-}
-
 /* Every byte of `p`, or 0. */
 static int loft_eh_write_all(int fd, const char *p, size_t n) {
     while (n > 0) {
@@ -317,34 +303,6 @@ static int loft_eh_read_head(int fd, loft_text *head) {
         if (head->len > 16 * 1024) return 0;
     }
     return 1;
-}
-
-/* The value of header `name` (case-blind) in an HTTP head, trimmed; 0 when absent. */
-static int loft_eh_header(const loft_text *head, const char *name, const char **v, size_t *vn) {
-    size_t nl = strlen(name), i = 0;
-    while (i < head->len) {
-        size_t s = i;
-        while (i < head->len && head->p[i] != '\n') i++;
-        size_t e = i;
-        i++;
-        if (e > s && head->p[e - 1] == '\r') e--;
-        const char *colon = (const char *) memchr(head->p + s, ':', e - s);
-        if (!colon) continue;
-        size_t ks = s, ke = (size_t) (colon - head->p);
-        while (ks < ke && isspace((unsigned char) head->p[ks])) ks++;
-        while (ke > ks && isspace((unsigned char) head->p[ke - 1])) ke--;
-        if (ke - ks != nl) continue;
-        size_t k = 0;
-        while (k < nl && tolower((unsigned char) head->p[ks + k]) == tolower((unsigned char) name[k])) k++;
-        if (k != nl) continue;
-        size_t vs = (size_t) (colon - head->p) + 1, ve = e;
-        while (vs < ve && isspace((unsigned char) head->p[vs])) vs++;
-        while (ve > vs && isspace((unsigned char) head->p[ve - 1])) ve--;
-        *v = head->p + vs;
-        *vn = ve - vs;
-        return 1;
-    }
-    return 0;
 }
 
 /* SHA-1 (RFC 3174), for the WebSocket accept key alone. */
@@ -410,15 +368,15 @@ static void loft_eh_accept_key(const char *key, size_t kn, char out[29]) {
 /* Upgrade a freshly accepted stream: read the request head (bounded), answer the handshake, the
  * cookie riding the 101 as `X-Loft-UDP` when there is one.  0 drops the connection. */
 static int loft_eh_ws_upgrade(int fd, const char *cookie) {
-    loft_eh_blocking(fd, 1);
-    loft_eh_timeout(fd, 500);
+    loft_sock_blocking(fd, 1);
+    loft_sock_timeout(fd, 500);
     loft_text head = { 0, 0, 0 };
     const char *v;
     size_t vn;
     int ok = loft_eh_read_head(fd, &head);
-    int upgrade = ok && loft_eh_header(&head, "upgrade", &v, &vn) && vn == 9 && strncasecmp(v, "websocket", 9) == 0;
+    int upgrade = ok && loft_http_header(&head, "upgrade", &v, &vn) && vn == 9 && strncasecmp(v, "websocket", 9) == 0;
     char accept[29];
-    if (upgrade && loft_eh_header(&head, "sec-websocket-key", &v, &vn)) {
+    if (upgrade && loft_http_header(&head, "sec-websocket-key", &v, &vn)) {
         loft_eh_accept_key(v, vn, accept);
     } else {
         upgrade = 0;
@@ -431,7 +389,7 @@ static int loft_eh_ws_upgrade(int fd, const char *cookie) {
                      "Sec-WebSocket-Accept: %s\r\n%s%s%s\r\n",
                      accept, *cookie ? "X-Loft-UDP: " : "", cookie, *cookie ? "\r\n" : "");
     if (!loft_eh_write_all(fd, resp, (size_t) n)) return 0;
-    loft_eh_timeout(fd, 20);
+    loft_sock_timeout(fd, 20);
     return 1;
 }
 
@@ -523,7 +481,7 @@ static int loft_eh_read_frame(int fd, loft_text *out) {
 static int loft_eh_bind(int64_t port, int type) {
     int fd = socket(AF_INET, type, 0);
     if (fd < 0) return -1;
-    loft_eh_cloexec(fd);
+    loft_sock_cloexec(fd);
     int one = 1;
     if (type == SOCK_STREAM) setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
 #if defined(SO_REUSEPORT)
@@ -537,7 +495,7 @@ static int loft_eh_bind(int64_t port, int type) {
         close(fd);
         return -1;
     }
-    loft_eh_blocking(fd, 0);
+    loft_sock_blocking(fd, 0);
     return fd;
 }
 
@@ -925,7 +883,7 @@ static int64_t loft_kernel_pump(void) {
     for (;;) {
         int fd = accept(loft_ehk.listener, 0, 0);
         if (fd < 0) break;
-        loft_eh_cloexec(fd);
+        loft_sock_cloexec(fd);
         size_t cid = 0;
         while (cid < loft_ehk.nconns && loft_ehk.conns[cid].fd >= 0) cid++;
         char cookie[17] = { 0 };
@@ -1136,7 +1094,7 @@ static int loft_ehc_ctl_listener(void) {
     if (!loft_eh_debug_on()) return -1;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
-    loft_eh_cloexec(fd);
+    loft_sock_cloexec(fd);
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
@@ -1147,7 +1105,7 @@ static int loft_ehc_ctl_listener(void) {
         close(fd);
         return -1;
     }
-    loft_eh_blocking(fd, 0);
+    loft_sock_blocking(fd, 0);
     printf("engine_host: debug control on 127.0.0.1:%u\n", (unsigned) ntohs(a.sin_port));
     fflush(stdout);
     return fd;
@@ -1159,7 +1117,7 @@ static void loft_ehc_pump_ctl(void) {
     for (;;) {
         int fd = accept(loft_ehc.ctl, 0, 0);
         if (fd < 0) break;
-        loft_eh_cloexec(fd);
+        loft_sock_cloexec(fd);
         if (!loft_eh_ws_upgrade(fd, "")) {
             close(fd);
             continue;
@@ -1259,24 +1217,6 @@ static uint8_t loft_kernel_local(int64_t tick_us) {
     return 1;
 }
 
-#if defined(LOFT_POSIX_HOST)
-/* Connect within `ms`: 1 when the TCP handshake completed. */
-static int loft_eh_connect_within(int fd, const struct sockaddr *a, socklen_t al, int64_t ms) {
-    loft_eh_blocking(fd, 0);
-    int r = connect(fd, a, al);
-    if (r != 0 && errno != EINPROGRESS) return 0;
-    if (r != 0) {
-        struct pollfd p = { fd, POLLOUT, 0 };
-        if (poll(&p, 1, (int) ms) <= 0) return 0;
-        int err = 0;
-        socklen_t el = sizeof err;
-        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el) != 0 || err != 0) return 0;
-    }
-    loft_eh_blocking(fd, 1);
-    return 1;
-}
-#endif
-
 /* `kernel_connect`: dial (retried across a swap's gap, five seconds), upgrade with the RFC's
  * sample key (anti-cache, not auth), take the `X-Loft-UDP` cookie, prepare the UDP socket.  A
  * kind-0 event marks the connect, as the listener's does. */
@@ -1301,8 +1241,8 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
     for (;;) {
         fd = socket(family, SOCK_STREAM, 0);
         if (fd >= 0) {
-            loft_eh_cloexec(fd);
-            if (loft_eh_connect_within(fd, (struct sockaddr *) &addr, al, 3000)) break;
+            loft_sock_cloexec(fd);
+            if (loft_sock_connect_within(fd, (struct sockaddr *) &addr, al, 3000)) break;
             close(fd);
             fd = -1;
         }
@@ -1312,7 +1252,7 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
         }
         loft_eh_sleep_us(100000);
     }
-    loft_eh_timeout(fd, 5000);
+    loft_sock_timeout(fd, 5000);
     char req[1024];
     int n = snprintf(req, sizeof req,
                      "GET /ws HTTP/1.1\r\nHost: %s:%u\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -1335,18 +1275,18 @@ static uint8_t loft_kernel_connect(loft_str host, int64_t port, int64_t tick_us)
     const char *v;
     size_t vn;
     char cookie[64] = { 0 };
-    if (loft_eh_header(&head, "x-loft-udp", &v, &vn) && vn < sizeof cookie) memcpy(cookie, v, vn);
+    if (loft_http_header(&head, "x-loft-udp", &v, &vn) && vn < sizeof cookie) memcpy(cookie, v, vn);
     free(head.p);
-    loft_eh_timeout(fd, 20);
+    loft_sock_timeout(fd, 20);
     loft_ehc_reset(tick_us);
     loft_ehc.conn = fd;
     memcpy(loft_ehc.cookie, cookie, sizeof cookie);
     if (cookie[0]) {
         int u = socket(family, SOCK_DGRAM, 0);
         if (u >= 0) {
-            loft_eh_cloexec(u);
+            loft_sock_cloexec(u);
             if (connect(u, (struct sockaddr *) &addr, al) == 0) {
-                loft_eh_blocking(u, 0);
+                loft_sock_blocking(u, 0);
                 loft_ehc.udp = u;
             } else {
                 close(u);
@@ -1545,109 +1485,11 @@ static uint8_t loft_live_flip(loft_str name, uint8_t on) {
 #if defined(LOFT_POSIX_HOST)
 typedef struct { int64_t id; char *method, *url, *body, *headers; } loft_eh_req;
 
-/* Read an HTTP head from `s` to its blank line, a byte at a time (no over-read past it); 0 on a
- * closed or silent connection, or a head past 16 KiB. */
-static int loft_eh_stream_head(loft_stream *s, loft_text *head) {
-    while (head->len < 4 || memcmp(head->p + head->len - 4, "\r\n\r\n", 4) != 0) {
-        char b;
-        if (loft_stream_read(s, &b, 1) != 1) return 0;
-        loft_push(head, &b, 1);
-        if (head->len > 16 * 1024) return 0;
-    }
-    return 1;
-}
-
-/* One HTTP/1.1 exchange on `url` (http, or https over the runtime's TLS client): the status and
- * the body, or -1 and why.  `hops` redirects are followed, as the Rust kernel's client follows
- * them. */
+/* One HTTP/1.1 exchange on `url` over the runtime's client (`loft_https.h`): the status and the
+ * body, or -1 and why.  `hops` redirects are followed, as the Rust kernel's client follows them. */
 static int64_t loft_eh_http(const char *method, const char *url, const char *body, const char *headers,
                             loft_text *out, int hops) {
-    int tls = strncmp(url, "https://", 8) == 0;
-    if (!tls && strncmp(url, "http://", 7) != 0) {
-        loft_push_cstr(out, url);
-        loft_push_cstr(out, ": Bad URL: unknown scheme");
-        return -1;
-    }
-    const char *auth = url + (tls ? 8 : 7), *slash = strchr(auth, '/');
-    size_t alen = slash ? (size_t) (slash - auth) : strlen(auth);
-    const char *path = slash ? slash : "/";
-    char host[512], port[16];
-    snprintf(port, sizeof port, "%s", tls ? "443" : "80");
-    const char *hp = auth, *colon = 0;
-    size_t hl = alen;
-    if (alen && auth[0] == '[') {
-        const char *close_ = (const char *) memchr(auth, ']', alen);
-        if (!close_) { loft_push_cstr(out, "Bad URL: unterminated IPv6 host"); return -1; }
-        hp = auth + 1;
-        hl = (size_t) (close_ - hp);
-        if ((size_t) (close_ + 1 - auth) < alen && close_[1] == ':') colon = close_ + 1;
-    } else {
-        colon = (const char *) memchr(auth, ':', alen);
-        if (colon) hl = (size_t) (colon - auth);
-    }
-    if (hl == 0 || hl >= sizeof host) { loft_push_cstr(out, "Bad URL: no host"); return -1; }
-    memcpy(host, hp, hl);
-    host[hl] = 0;
-    if (colon) {
-        size_t pl = alen - (size_t) (colon + 1 - auth);
-        if (pl == 0 || pl >= sizeof port) { loft_push_cstr(out, "Bad URL: bad port"); return -1; }
-        memcpy(port, colon + 1, pl);
-        port[pl] = 0;
-    }
-    struct addrinfo hints, *res = 0, *ai;
-    memset(&hints, 0, sizeof hints);
-    hints.ai_socktype = SOCK_STREAM;
-    int gai = getaddrinfo(host, port, &hints, &res);
-    if (gai != 0) {
-        loft_push_cstr(out, url);
-        loft_push_cstr(out, ": Dns Failed: ");
-        loft_push_cstr(out, gai_strerror(gai));
-        return -1;
-    }
-    int fd = -1, err = 0;
-    for (ai = res; ai && fd < 0; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, SOCK_STREAM, 0);
-        if (fd < 0) continue;
-        loft_eh_cloexec(fd);
-        if (!loft_eh_connect_within(fd, ai->ai_addr, (socklen_t) ai->ai_addrlen, 30000)) {
-            int e = 0;
-            socklen_t el = sizeof e;
-            getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &el);
-            err = e ? e : errno;
-            close(fd);
-            fd = -1;
-        }
-    }
-    freeaddrinfo(res);
-    if (fd < 0) {
-        char m[160];
-        snprintf(m, sizeof m, ": Connection Failed: Connect error: %s (os error %d)", strerror(err ? err : ECONNREFUSED),
-                 err ? err : ECONNREFUSED);
-        loft_push_cstr(out, url);
-        loft_push_cstr(out, m);
-        return -1;
-    }
-    loft_eh_timeout(fd, 30000);
-    struct timeval tv = { 30, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-    loft_stream st = { fd, 0 };
-    if (tls) {
-        char why[768];
-        if (!loft_stream_tls(&st, host, why, sizeof why)) {
-            loft_stream_close(&st);
-            loft_push_cstr(out, url);
-            loft_push_cstr(out, ": Connection Failed: ");
-            loft_push_cstr(out, why);
-            return -1;
-        }
-    }
-    loft_text req = { 0, 0, 0 };
-    loft_push_cstr(&req, method);
-    loft_push_cstr(&req, " ");
-    loft_push_cstr(&req, path);
-    loft_push_cstr(&req, " HTTP/1.1\r\nHost: ");
-    loft_push(&req, auth, alen);
-    loft_push_cstr(&req, "\r\n");
+    loft_text lines = { 0, 0, 0 };
     for (const char *l = headers; *l;) {
         const char *e = strchr(l, '\n');
         size_t n = e ? (size_t) (e - l) : strlen(l);
@@ -1657,91 +1499,28 @@ static int64_t loft_eh_http(const char *method, const char *url, const char *bod
             size_t kn = (size_t) (c - l), vn = n - kn - 1;
             loft_eh_trim(&k, &kn);
             loft_eh_trim(&v, &vn);
-            loft_push(&req, k, kn);
-            loft_push_cstr(&req, ": ");
-            loft_push(&req, v, vn);
-            loft_push_cstr(&req, "\r\n");
+            loft_push(&lines, k, kn);
+            loft_push_cstr(&lines, ": ");
+            loft_push(&lines, v, vn);
+            loft_push_cstr(&lines, "\r\n");
         }
         l += n + (e ? 1 : 0);
     }
-    if (*body) {
-        char cl[48];
-        snprintf(cl, sizeof cl, "Content-Length: %zu\r\n", strlen(body));
-        loft_push_cstr(&req, cl);
-    }
-    loft_push_cstr(&req, "Connection: close\r\n\r\n");
-    loft_push_cstr(&req, body);
-    loft_text head = { 0, 0, 0 };
-    int ok = loft_stream_write_all(&st, req.p, req.len) && loft_eh_stream_head(&st, &head);
-    free(req.p);
+    loft_push(&lines, "", 1);
+    loft_http h;
+    char err[1024];
+    int ok = loft_http_open(&h, method, url, lines.p, body, hops, err, sizeof err);
+    free(lines.p);
     if (!ok) {
-        free(head.p);
-        loft_stream_close(&st);
-        loft_push_cstr(out, url);
-        loft_push_cstr(out, ": Connection Failed: the server closed the connection or timed out");
+        loft_push_cstr(out, err);
         return -1;
-    }
-    int64_t status = -1;
-    {
-        const char *sp = (const char *) memchr(head.p, ' ', head.len);
-        if (sp && head.len - (size_t) (sp - head.p) > 3) loft_eh_int(sp + 1, 3, &status);
-    }
-    const char *v;
-    size_t vn;
-    if (status >= 300 && status < 400 && status != 304 && hops > 0 && loft_eh_header(&head, "location", &v, &vn)) {
-        loft_text next = { 0, 0, 0 };
-        if (vn && v[0] == '/') {
-            loft_push_cstr(&next, tls ? "https://" : "http://");
-            loft_push(&next, auth, alen);
-        }
-        loft_push(&next, v, vn);
-        loft_push(&next, "", 1);
-        free(head.p);
-        loft_stream_close(&st);
-        int get = status == 303 || ((status == 301 || status == 302) && strcmp(method, "POST") == 0);
-        int64_t r = loft_eh_http(get ? "GET" : method, next.p, get ? "" : body, headers, out, hops - 1);
-        free(next.p);
-        return r;
     }
     loft_text raw = { 0, 0, 0 };
     char buf[65536];
-    int chunked = loft_eh_header(&head, "transfer-encoding", &v, &vn) && vn >= 7 && strncasecmp(v + vn - 7, "chunked", 7) == 0;
-    int64_t clen = -1;
-    if (!chunked && loft_eh_header(&head, "content-length", &v, &vn)) loft_eh_int(v, vn, &clen);
-    int nobody = strcmp(method, "HEAD") == 0 || status == 204 || status == 304 || (status >= 100 && status < 200);
-    free(head.p);
-    if (!nobody) {
-        if (chunked) {
-            for (;;) {
-                loft_text line = { 0, 0, 0 };
-                while (line.len < 2 || memcmp(line.p + line.len - 2, "\r\n", 2) != 0) {
-                    char b;
-                    if (loft_stream_read(&st, &b, 1) != 1) { line.len = 0; break; }
-                    loft_push(&line, &b, 1);
-                }
-                unsigned long n = line.len ? strtoul(line.p, 0, 16) : 0;
-                free(line.p);
-                if (n == 0) break;
-                char *chunk = (char *) malloc(n + 2);
-                if (!chunk) { fputs("loft: out of memory\n", stderr); abort(); }
-                int got = loft_stream_read_exact(&st, chunk, n + 2);
-                if (got) loft_push(&raw, chunk, n);
-                free(chunk);
-                if (!got) break;
-            }
-        } else if (clen >= 0) {
-            while ((int64_t) raw.len < clen) {
-                size_t want = (size_t) (clen - (int64_t) raw.len) < sizeof buf ? (size_t) (clen - (int64_t) raw.len) : sizeof buf;
-                long r = loft_stream_read(&st, buf, want);
-                if (r <= 0) break;
-                loft_push(&raw, buf, (size_t) r);
-            }
-        } else {
-            long r;
-            while ((r = loft_stream_read(&st, buf, sizeof buf)) > 0) loft_push(&raw, buf, (size_t) r);
-        }
-    }
-    loft_stream_close(&st);
+    long r;
+    while ((r = loft_http_read(&h, buf, sizeof buf)) > 0) loft_push(&raw, buf, (size_t) r);
+    int64_t status = h.status;
+    loft_http_close(&h);
     /* A body that is not UTF-8 reads as empty, as the Rust client's `into_string` gives up. */
     if (loft_utf8_valid((const unsigned char *) raw.p, raw.len)) loft_push(out, raw.p, raw.len);
     free(raw.p);

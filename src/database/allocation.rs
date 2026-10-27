@@ -7175,13 +7175,15 @@ impl Stores {
         // `refuse_paged` rather than its own `eprintln`, so the program can read
         // it back too: a refusal reachable by one route and not another is the
         // same silence in a different place (loft#802).
-        let reason = if verdict == crate::schema_sidecar::SchemaVerdict::Bare {
-            Self::BARE_IMAGE.to_string()
-        } else {
-            format!(
+        let reason = match verdict {
+            crate::schema_sidecar::SchemaVerdict::Bare => Self::BARE_IMAGE.to_string(),
+            // A refusal carries its own sentence: a store too old for this release, or a
+            // sidecar that could not be fetched.
+            crate::schema_sidecar::SchemaVerdict::Refused(why) => why,
+            verdict => format!(
                 "its recorded layout differs from this program's (verdict: \
                  {verdict:?}); not range-reading foreign bytes"
-            )
+            ),
         };
         self.refuse_paged(path, &reason);
         false
