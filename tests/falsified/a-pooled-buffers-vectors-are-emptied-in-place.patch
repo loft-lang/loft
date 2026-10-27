@@ -1,7 +1,7 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+diff --git a/src/opt/hoist.rs b/src/opt/hoist.rs
 index 206fcc989..9b9eecb68 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
+--- a/src/opt/hoist.rs
++++ b/src/opt/hoist.rs
 @@ -9428,7 +9428,7 @@ pub fn refill_vector_callee(
      stores: &Stores,
      callee: u32,

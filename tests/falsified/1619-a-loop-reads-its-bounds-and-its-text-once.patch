@@ -1,7 +1,7 @@
-diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+diff --git b/src/opt/hoist.rs a/src/opt/hoist.rs
 index 646790b80..fd3f80c9a 100644
---- b/src/generation/hoist.rs
-+++ a/src/generation/hoist.rs
+--- b/src/opt/hoist.rs
++++ a/src/opt/hoist.rs
 @@ -349,26 +349,6 @@ pub fn nested_counted_loops<'a>(
                  if seeds == 1
                      && let Some(s) = seed

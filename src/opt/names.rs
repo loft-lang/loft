@@ -448,3 +448,9 @@ pub(crate) fn rust_fn_ident(name: &str) -> String {
         })
         .collect()
 }
+
+/// The identifier a local named `name` is emitted under: `#` (a compiler-made name) is not an
+/// identifier character, so it is spelled `__`.
+pub(crate) fn sanitize(name: &str) -> String {
+    name.replace('#', "__")
+}

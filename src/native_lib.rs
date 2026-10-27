@@ -992,7 +992,7 @@ fn shared_bridge_wrapper(
     // when it supplied one, a fresh store when it did not, and `(*ret).dbref` names it
     // either way — so the C boundary keeps its record contract while the loft-to-loft
     // call inside the cdylib takes the value path.
-    let value_rec = crate::generation::hoist::value_records(data, stores, true);
+    let value_rec = crate::opt::hoist::value_records(data, stores, true);
     let value_fields = value_rec
         .fn_fields(d_nr)
         .map(<[(i64, &'static str)]>::to_vec);
@@ -1001,7 +1001,7 @@ fn shared_bridge_wrapper(
     // the orphan free below like any record the callee did not return.
     let value_presence = value_rec
         .fn_layout(d_nr)
-        .and_then(crate::generation::hoist::ValueTuple::presence);
+        .and_then(crate::opt::hoist::ValueTuple::presence);
     use std::fmt::Write as _;
     let def = data.def(d_nr);
     // Same identifier the emitted program uses for this fn (#305).
@@ -1157,11 +1157,8 @@ fn shared_bridge_wrapper(
                     .param_type(d_nr, i)
                     .and_then(|tp| value_rec.types.get(&tp))
                 {
-                    let reads = crate::generation::hoist::layout_reads(
-                        layout,
-                        &var,
-                        "unsafe { &*cell.get() }",
-                    );
+                    let reads =
+                        crate::opt::hoist::layout_reads(layout, &var, "unsafe { &*cell.get() }");
                     let _ = write!(fwd, ", {reads}");
                 } else {
                     let _ = write!(fwd, ", {var}");

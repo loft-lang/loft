@@ -161,10 +161,10 @@ index f4026638e..b6bd91f87 100644
          self.record_finish(parent, &new, parent_tp, field);
          // @P317 — LOFT_LOG=copy_check: warn if the keyed deep copy changed any
          // nested collection length (before the source-free below).
-diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+diff --git b/src/opt/hoist.rs a/src/opt/hoist.rs
 index f0d39db9c..3df393006 100644
---- b/src/generation/hoist.rs
-+++ a/src/generation/hoist.rs
+--- b/src/opt/hoist.rs
++++ a/src/opt/hoist.rs
 @@ -3946,7 +3946,7 @@ fn foreign_store_writer(
              let mut named = false;
              for (i, a) in args.iter().enumerate() {

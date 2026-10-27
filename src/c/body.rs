@@ -136,7 +136,7 @@ pub(crate) struct FnWriter<'a> {
     headers: Vec<Vec<(crate::opt::writes::PathKey, String, bool)>>,
     /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
     /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
-    scalars: Vec<Vec<(crate::generation::hoist::ScalarKey, String, CType)>>,
+    scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -245,7 +245,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
     let tables = if cx.switches.split_table_disabled {
         std::collections::BTreeMap::new()
     } else {
-        crate::generation::hoist::split_tables(cx.data, d)
+        crate::opt::hoist::split_tables(cx.data, d)
     };
     let lazy = if std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0") {
         std::collections::BTreeMap::new()
@@ -258,7 +258,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
         .chain(tables.values().flat_map(|t| t.aliases.iter().copied()))
         .collect();
     let mut walks = crate::opt::text_borrow::borrowed_text_walks(cx.data, d, &sliced, &tables);
-    walks.extend(crate::generation::hoist::borrowed_discharge_temps(
+    walks.extend(crate::opt::hoist::borrowed_discharge_temps(
         cx.data, d, &tables,
     ));
     let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
@@ -365,7 +365,7 @@ impl<'a> FnWriter<'a> {
             push_heads: Vec::new(),
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
-            placed: crate::generation::hoist::placed_locals(def.code(), cx.data),
+            placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
             assumed: Vec::new(),
             range_facts: None,
             cur_line: 0,
@@ -387,7 +387,7 @@ impl<'a> FnWriter<'a> {
             split_tabs: if cx.switches.split_table_disabled {
                 std::collections::BTreeMap::new()
             } else {
-                crate::generation::hoist::split_tables(cx.data, d)
+                crate::opt::hoist::split_tables(cx.data, d)
             },
             tab_alias: std::collections::BTreeMap::new(),
             char_walks: if std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0") {
@@ -718,7 +718,7 @@ impl<'a> FnWriter<'a> {
     }
 
     /// The local an enclosing loop holds record scalar `key` in, with its shape.
-    fn held_scalar(&self, key: &crate::generation::hoist::ScalarKey) -> Option<(String, CType)> {
+    fn held_scalar(&self, key: &crate::opt::hoist::ScalarKey) -> Option<(String, CType)> {
         self.scalars
             .iter()
             .rev()
@@ -850,8 +850,8 @@ impl<'a> FnWriter<'a> {
 
     /// The store facts the verdict proves stores apart with (`hoist::StoreFacts`), under
     /// the versioned copy's `assumed` pairs; `None` under `LOFT_NO_DISTINCT_GROWTH=1`.
-    fn store_facts(&self) -> Option<crate::generation::hoist::StoreFacts<'_>> {
-        (!self.cx.switches.distinct_growth_disabled).then(|| crate::generation::hoist::StoreFacts {
+    fn store_facts(&self) -> Option<crate::opt::hoist::StoreFacts<'_>> {
+        (!self.cx.switches.distinct_growth_disabled).then(|| crate::opt::hoist::StoreFacts {
             vars: self.vars,
             placed: &self.placed,
             adopted: self.adopt.as_ref().map(|a| (a.v, a.vdb)),
@@ -863,7 +863,7 @@ impl<'a> FnWriter<'a> {
     /// Loop `b`'s header verdict (`hoist::hoistable`), or `None` where none is asked: in a
     /// generator, whose locals live in its frame between resumes, or under
     /// `LOFT_NO_VECTOR_HOIST=1`.
-    fn verdict(&mut self, b: &Block) -> Option<crate::generation::hoist::LoopHoist> {
+    fn verdict(&mut self, b: &Block) -> Option<crate::opt::hoist::LoopHoist> {
         if self.gen_elem.is_some() || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
         {
             return None;
@@ -882,7 +882,7 @@ impl<'a> FnWriter<'a> {
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let facts = self.store_facts();
         let memo = &mut *self.cx.hoist_memo.borrow_mut();
-        let v = crate::generation::hoist::hoistable(
+        let v = crate::opt::hoist::hoistable(
             b,
             self.cx.data,
             self.cx.stores,
@@ -901,7 +901,7 @@ impl<'a> FnWriter<'a> {
     /// Per held vector of `v`, whether its base stays valid for the loop's extent: every one
     /// in a loop that grows no store, else each whose store is proven apart from every store
     /// the loop grows (`StoreFacts::distinct`), as native's `begin_vector_hoist` decides.
-    fn kept_bases(&self, v: &crate::generation::hoist::LoopHoist) -> Vec<bool> {
+    fn kept_bases(&self, v: &crate::opt::hoist::LoopHoist) -> Vec<bool> {
         if v.growth_free {
             return vec![true; v.vectors.len()];
         }
@@ -958,10 +958,9 @@ impl<'a> FnWriter<'a> {
             return None;
         }
         let plain = self.verdict(lp)?;
-        let grows =
-            crate::generation::hoist::mover_roots(&lp.operators, data, self.cx.stores, vars)
-                .iter()
-                .any(|&m| chain_reaches(vars, m, &bufs));
+        let grows = crate::opt::hoist::mover_roots(&lp.operators, data, self.cx.stores, vars)
+            .iter()
+            .any(|&m| chain_reaches(vars, m, &bufs));
         if plain
             .pushes
             .iter()
@@ -1089,7 +1088,7 @@ impl<'a> FnWriter<'a> {
         }
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let facts = self.store_facts();
-        let ok = crate::generation::hoist::deep_window_ok(
+        let ok = crate::opt::hoist::deep_window_ok(
             lp,
             path,
             data,
@@ -3700,7 +3699,7 @@ impl<'a> FnWriter<'a> {
             return Ok(e);
         }
         if self.scalars.iter().any(|f| !f.is_empty())
-            && let Some(key) = crate::generation::hoist::scalar_read(name, args)
+            && let Some(key) = crate::opt::hoist::scalar_read(name, args)
             && let Some((local, c)) = self.held_scalar(&key)
         {
             return Ok(E::new(local, kind_of(c)));

@@ -209,7 +209,7 @@ grows geometrically first (it does in the profile: no repeated `resize`).
 
 **What runs.** The element is minted by `OpNewRecord` with its default prefill
 (`set_default_value_nullable`, 3 %), and then `OpMoveField` overwrites every byte of it.
-`(R-CompleteWrite)` (`group_covers_type`, `src/generation/hoist.rs`) ignores a field MOVE, so
+`(R-CompleteWrite)` (`group_covers_type`, `src/opt/hoist.rs`) ignores a field MOVE, so
 it never proves the write complete (F9's prefill clause).
 
 **Build.** Count an `OpMoveField` whose destination is the whole element (`_elm` at offset 0,
@@ -239,7 +239,7 @@ Ordered by what each buys per unit of work.  "Size" is the build effort, XS to M
 ### F1. The two-argument libm dispatchers are store-free — XS
 
 `OpMathFunc2Float` and `OpMathFunc2Single` (`atan2`, `log(x, base)`) are missing from
-`PURE_NULLARY_OPS` (`src/generation/hoist.rs`), which lists their one-argument siblings
+`PURE_NULLARY_OPS` (`src/opt/hoist.rs`), which lists their one-argument siblings
 `OpMathFuncFloat` / `OpMathFuncSingle`.  Their `const` function-selector parameter makes
 `native_op_is_store_free` read them as writers, so ONE `atan2` anywhere in a callee — here
 on a cold arc branch of hex_way's `seg_distance` — declines the loop hoist of every caller,
@@ -266,7 +266,7 @@ header per call, although the loop already holds the header for that path.
 
 ### F3. A record parameter's field accesses take its address once — M
 
-`(R-RecPtr)` (`record_view_ptr`, `src/generation/hoist.rs`) only considers `Value::Set`
+`(R-RecPtr)` (`record_view_ptr`, `src/opt/hoist.rs`) only considers `Value::Set`
 bindings; a PARAMETER is never a candidate, and the decline ("not a binding") is not traced.
 `fixstep::timer_spend(t: Timer)` makes 7 field accesses, each `stores.store(&db).get_int(…)`
 with its strict-store and bounds checks — which also bloats the function past what

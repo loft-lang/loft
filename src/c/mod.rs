@@ -199,7 +199,7 @@ pub(crate) struct Cx<'a> {
 #[derive(Default)]
 pub(crate) struct HoistMemo {
     pub(crate) writes: crate::opt::body_writes::WriteCache,
-    pub(crate) inputs: crate::generation::hoist::InputCache,
+    pub(crate) inputs: crate::opt::hoist::InputCache,
     pub(crate) stores_written: std::collections::HashMap<u32, bool>,
 }
 
@@ -940,14 +940,14 @@ impl Cx<'_> {
     pub(crate) fn callee_inputs(
         &self,
         d: u32,
-    ) -> Option<std::rc::Rc<crate::generation::hoist::CalleeInputs>> {
+    ) -> Option<std::rc::Rc<crate::opt::hoist::CalleeInputs>> {
         if self.switches.callee_inputs_disabled
             || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
         {
             return None;
         }
         let memo = &mut *self.hoist_memo.borrow_mut();
-        crate::generation::hoist::callee_inputs(
+        crate::opt::hoist::callee_inputs(
             d,
             self.data,
             self.stores,

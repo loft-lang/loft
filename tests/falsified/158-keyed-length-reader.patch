@@ -1,5 +1,5 @@
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
+--- a/src/opt/hoist.rs
++++ b/src/opt/hoist.rs
 @@ -72,7 +72,7 @@
  /// direction: a reader left out of this list only means a loop that keeps re-deriving its
  /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist

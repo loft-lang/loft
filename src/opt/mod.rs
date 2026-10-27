@@ -8,11 +8,13 @@
 //! code generator reads the same answers without carrying the Rust writer.  Each item moved
 //! from `generation/` keeps a re-export at its old path.
 
+pub mod apart;
 pub mod attrs;
 pub mod body_writes;
 pub mod char_walk;
 pub mod frame_calls;
 pub mod header;
+pub mod hoist;
 pub mod iteration;
 pub mod laps;
 pub mod lazy_split;

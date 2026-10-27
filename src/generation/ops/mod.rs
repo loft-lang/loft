@@ -289,7 +289,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     }
     // @PLN157 § V-q — a scalar push goes through the loop's push header; the same ops
     // fall back to their template outside a loop that hoisted one.
-    for (op, _, _) in crate::generation::hoist::FUSABLE_PUSHES {
+    for (op, _, _) in crate::opt::hoist::FUSABLE_PUSHES {
         r.insert(op, Box::new(vector_ops::HoistedPushEmitter));
     }
     r.insert("OpPreAllocVector", Box::new(vector_ops::PreAllocEmitter));
@@ -465,7 +465,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // @PLN157 P4c — the same emitter serves every scalar field getter: a read the loop
     // hoisted as a record scalar emits the local the prelude bound, and the three
     // fusable kinds try the element fusion first.
-    for name in crate::generation::hoist::SCALAR_GETTERS {
+    for name in crate::opt::hoist::SCALAR_GETTERS {
         r.insert(name, Box::new(vector_ops::FusedElementReadEmitter));
     }
     // @PLN164 C5 — a view-leaf field read off a value local is the tuple's reference.

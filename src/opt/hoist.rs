@@ -400,7 +400,7 @@ pub(crate) fn mover_roots(
 /// Can a value of type `t` hold a record of definition `target`, at any depth — through a
 /// reference, an enum's payload, a collection's elements, a tuple?  A type this walk does not
 /// know answers YES: a miss here would let a loop hold a header something can still move.
-pub(super) fn type_reaches(data: &Data, t: &Type, target: u32, seen: &mut HashSet<u32>) -> bool {
+pub(crate) fn type_reaches(data: &Data, t: &Type, target: u32, seen: &mut HashSet<u32>) -> bool {
     match t {
         Type::Integer(_)
         | Type::Boolean
@@ -4263,7 +4263,7 @@ pub fn param_untouched(
 /// alone) — that owns the store it names: its deps name its own `__vdb_` witness, it is no
 /// link and no closure capture.  Its store is fresh to this frame, so it cannot be a
 /// parameter's.
-pub(super) fn local_owns_store(
+pub(crate) fn local_owns_store(
     data: &Data,
     d_nr: u32,
     vars: &crate::variables::Function,
@@ -5594,11 +5594,13 @@ pub fn invariant_literals(data: &Data, def_nr: u32) -> LitHoist {
     // Two admitted locals sharing a sanitized name would share the one fn-top binding.
     let mut by_name: HashMap<String, u32> = HashMap::new();
     for v in cands.keys() {
-        *by_name.entry(super::sanitize(vars.name(*v))).or_default() += 1;
+        *by_name
+            .entry(super::names::sanitize(vars.name(*v)))
+            .or_default() += 1;
     }
     let mut out = LitHoist::default();
     for v in cands.into_keys() {
-        if by_name[&super::sanitize(vars.name(v))] != 1 {
+        if by_name[&super::names::sanitize(vars.name(v))] != 1 {
             continue;
         }
         if let Some(vdb) = flat_of.get(&v) {

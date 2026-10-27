@@ -88,7 +88,7 @@ LAYERS: list[tuple[str, list[str]]] = [
     ]),
     ("opt", [
         "ctor_literal", "leaf_inline", "lib_ids", "native_gate", "opt", "self_replace",
-        "value_record", "zero_count",
+        "text_len", "value_record", "zero_count",
     ]),
     ("interp", [
         "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",

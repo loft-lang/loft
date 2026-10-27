@@ -5,12 +5,12 @@
 use crate::data::{Context, Data, DefType, Type, Value};
 use crate::database::Stores;
 use crate::ir_node::IrBlock;
+pub use crate::opt::apart;
 use crate::rust_spelling::native_narrow_int;
 pub use crate::rust_spelling::rust_type;
 pub(crate) use crate::rust_spelling::{is_raw_scalar_ref, link_base_type};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
-pub mod apart;
 mod apart_emit;
 pub use crate::lower::apart_records;
 mod apart_records_emit;
@@ -31,7 +31,7 @@ pub use crate::fnref;
 pub use crate::lower::file_hold;
 pub use crate::lower::hand_over;
 pub mod fault_flag;
-pub mod hoist;
+pub use crate::opt::hoist;
 pub mod kept;
 pub use crate::lower::keyed_entry;
 pub use crate::lower::keyed_place;
@@ -1251,9 +1251,7 @@ fn nest_chain_at(
     }
 }
 
-fn sanitize(name: &str) -> String {
-    name.replace('#', "__")
-}
+use crate::opt::names::sanitize;
 
 /// Use this to determine whether a type is a narrow integer subtype (u8/u16/i8/i16).
 /// Returns `Some("u8")` etc. when a cast from `i32` to that type is needed at return sites.

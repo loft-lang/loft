@@ -3149,7 +3149,7 @@ fn every_subject_claims_the_paths_it_names() {
     let cells: &[(&str, &str)] = &[
         ("src/parser/mod.rs", "parser"),
         ("src/scopes.rs", "scopes"),
-        ("src/generation/hoist.rs", "codegen"),
+        ("src/opt/hoist.rs", "codegen"),
         ("src/state/mod.rs", "runtime"),
         ("src/store.rs", "store"),
         ("src/lsp.rs", "lsp"),

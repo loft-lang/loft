@@ -1,7 +1,7 @@
-diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+diff --git a/src/opt/hoist.rs b/src/opt/hoist.rs
 index a6060db9a..c0e93f9bf 100644
---- a/src/generation/hoist.rs
-+++ b/src/generation/hoist.rs
+--- a/src/opt/hoist.rs
++++ b/src/opt/hoist.rs
 @@ -1390,7 +1390,7 @@ fn apart_mint(
      let fresh = apart_fresh(body, data, stores, vars, &target.path);
      let reaches =

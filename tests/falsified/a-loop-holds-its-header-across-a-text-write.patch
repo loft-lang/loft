@@ -1,7 +1,7 @@
-diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+diff --git b/src/opt/hoist.rs a/src/opt/hoist.rs
 index f259ccb5a..e421e8942 100644
---- b/src/generation/hoist.rs
-+++ a/src/generation/hoist.rs
+--- b/src/opt/hoist.rs
++++ a/src/opt/hoist.rs
 @@ -1554,7 +1554,7 @@ pub fn hoistable(
      // off) appends through the runtime and grows its store all the same, and a base bound
      // for a sibling field of the same record would address the buffer that growth freed.
