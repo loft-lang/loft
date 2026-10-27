@@ -363,7 +363,104 @@ belongs to S0.3, whose loader reads an image the test harness emits.
   so the byte comparison is not vacuous.
 - `CHANGELOG.md`: the flag under New, the read-only cache under Bug fixes.
 
-### S0.3 — the bundle opens in loft — DESIGNED, two owner decisions open
+### S0.3a — `#package`: a file shows its internals to its own directory — DESIGNED, not built
+
+**Why here.**  S0.3 met X2: under C140 every type and field is private to its FILE, so a loft
+program split over several files pays `pub` on everything it shares between them (167 items
+for `ir.loft` alone).  The owner's ruling (2026-10-27): the file-local default stays, because
+an author should think about what escapes a file; a file that is part of something bigger
+says so, and position decides the group.  No `loft.toml` is involved.  A language fix found
+by the dogfood work, built before the work continues.
+
+**The rule.**  One sentence, from which every case follows:
+
+> A file whose directives include `#package` reads, to every other file in its own
+> directory, as if every item it declares and every field of those items were `pub`.  To
+> any other file it reads as C140 says.
+
+```
+#package
+struct Frame { pc: integer, base: integer }   // run.loft, lower.loft, … beside it see pc
+fn step(f: Frame) -> integer { f.pc + 1 }     // and may call step, build a Frame, match it
+```
+
+Consequences, each a case of that sentence rather than a rule of its own:
+- **One-sided consent.**  The file that shows its internals says so; a file that reads them
+  says nothing.  A directory may mix: `run.loft` and `lower.loft` say `#package`, while
+  `store.loft` leaves it off and keeps its internals behind its `pub` functions.
+- **Exactly one directory.**  Not the files below it, and not the parent.  The word
+  `package` reads as "the files that sit here", and reach never depends on depth.
+- **Membership is location, never route.**  Whether a file was reached by `use`, `--lib` or
+  the registry does not matter; what decides is where it is.  A library's files share with
+  each other, while its consumers, in other directories, see its `pub` surface as before.
+- **Imports follow.**  To a directory mate, a `#package` file's items are `pub`, so a glob
+  `use a;` binds them bare and a selective `use a::helper` binds one.  Two mates exporting
+  the same name collide exactly as two libraries' `pub` names do (the existing rule).
+- **It only relaxes.**  A program that compiles today compiles unchanged; only refusals
+  between directory mates disappear.  So it is compatible (COMPATIBILITY.md).
+- **`api_surface` is unchanged.**  `#package` grants nothing to anyone outside the
+  directory, so a library's published surface (`pub_visible`) is the same.
+
+**Code points.**
+- `src/parser/mod.rs:~2320`, the directive loop beside `#cwd` and `#link`: `Some("package")`
+  records the file; the unknown-directive message lists `#package` too.
+- `src/data.rs`, beside `is_name_only` (`:~12757`): the ONE home of the question.
+  - `package_files: HashSet<…>` holds the canonical paths of the files that said
+    `#package`, filled in pass 1, read in pass 2.
+  - `Data::shares_internals(owner_file, user_file) -> bool` answers: owner said `#package`,
+    and the two canonical parent directories are equal.  Cite `@FR-F-Package`.
+  - `source_files` (`:5728`) gives a library source's file.
+- The four refusal sites, each of which has its own copy of "same source or same file"
+  today, gain `|| shares_internals(owner, here)`:
+  - `src/parser/visibility.rs: check_visibility` (`:~80`): fields, literals, variants,
+    patterns, keys;
+  - `refuse_unpublished_method` (`:~171`): `.m()` and `lib::m`;
+  - `refuse_building_a_name_only_type` (`:~214`);
+  - `Data::qualified_refusal` (`src/data.rs:~12786`), which gets the user's file from its
+    callers `parser/definitions.rs:4651` and `parser/objects.rs:649`.
+- Imports: `Data::exported`, `exported_names` and `passes_on` (`src/data.rs:12724–12752`)
+  judge per library and do not know the importer.  They get the importing source, so the
+  bindings at `:12408`, `:12474`, `:12617`, `:12699` and `:12715` admit a mate's items.
+- Docs, see sub-step 4.
+
+**Failure paths (the matrix).**  Axes: directive (present / absent) × place (same directory,
+a subdirectory, the parent, an unrelated directory) × access (field read, field write,
+literal, variant build, variant match, `lib::fn`, method, a name-only type built, glob
+import bare, selective import) × direction (the declaring file has it / the reading file
+has it).
+1. **Only the declaring file's directive counts**: B reading A's internals, where only B
+   says `#package`, is refused.
+2. **A subdirectory and the parent are refused** (`src/sub/x.loft` reading `src/a.loft`).
+3. **Path spelling**: `./a.loft`, an absolute path and a symlinked directory name the same
+   directory (canonical parents); two directories with the same last name do not.
+4. **A collision through glob imports** from two mates reports as two libraries' names do.
+5. **The warm cache**: removing `#package` changes the file's hash, so the next run parses
+   and refuses again, never a stale admission.
+6. **The census** (`LOFT_TRACE_VISIBILITY=1`, `scripts/pub_census.sh`) stops listing a
+   mate's use, because it reads the same check.
+7. **The stdlib and registry libraries** carry no `#package`: unchanged.
+
+**Sub-steps** (each small, tested and pushed before the next):
+1. The directive is parsed and recorded; `shares_internals` with unit tests (same directory,
+   subdirectory, parent, unrelated, no directive, spelling variants).  No behaviour change
+   yet; the unknown-directive message names `#package`.
+2. The four refusal sites consult it.  Matrix cells 1–3 and 6 for every access kind, in
+   `tests/pub_visibility.rs`, beside C140's own cells.
+3. Imports: the importer reaches `exported`/`passes_on`; glob and selective cells; cell 4.
+4. The documentation.
+   - `formal/calls.md`: `(F-Visible)` names `(F-Package)`, a new rule holding the sentence
+     above.
+   - `DESIGN_DECISIONS_SYNTAX.md` C140: the owner's ruling of 2026-10-27, recorded.
+   - `LOFT_DECLARATIONS.md` § visibility, and `LOFT_DESIGN.md` beside `#cwd`/`#link`.
+   - `CHANGELOG.md` New, and the `loft-write` skill.
+   - The `@F2` catalogue entry: edit the features issue, then `make features-fetch &&
+     make features-gen`.
+   - A `tests/reference` snippet.
+
+**Not in this step:** sharing with a subdirectory or across directories.  Both can be
+widened later if a real program asks for them; a widening is a relaxation.
+
+### S0.3 — the bundle opens in loft — DESIGNED, waits for S0.3a
 
 **What.**  The first loft code of the strand: a `selfhost` package whose module `load` opens
 an image (S0.2) as the IR's own records and answers questions about it.  It is the first
@@ -392,7 +489,8 @@ pub fn definition(b: ir::Bundle, name: text) -> ir::Definition? {
 **Code points.**
 - `selfhost/loft.toml`, `selfhost/src/load.loft`: new.
 - `selfhost/src/ir.loft`: the IR vocabulary, moved from `tools/ir_schema/ir.loft` (decision 1),
-  with `pub` on its 25 types and 142 fields (decision 2).  Its `fn main` (which exists so
+  with `#package` as its first line (S0.3a), instead of `pub` on its 25 types and 142
+  fields.  Its `fn main` (which exists so
   `loft --show-rust` lays the schema out) moves to `tools/ir_schema/gen.loft`, a two-line
   driver that `use`s it.
 - `tools/ir_schema/README.md`, `extract.py` and the header of `src/ir_schema_gen.rs`: the
@@ -412,15 +510,13 @@ pub fn definition(b: ir::Bundle, name: text) -> ir::Definition? {
    `ir.loft` compiled by loft).
 
 **Owner decisions.**
-1. **`ir.loft`'s home.**  Recommended: move it into `selfhost/src/` as its one home, and
-   point the generator at it.  The alternative is a `path` dependency on
+1. **`ir.loft`'s home.**  Decided (owner, 2026-10-27): move it into `selfhost/src/` as its
+   one home, and point the generator at it.  The alternative is a `path` dependency on
    `tools/ir_schema/`, which leaves the vocabulary in a tools directory while it becomes
    the core.
 2. **X2, `pub` on 167 items** (C140: privacy is per FILE; there is no package scope).
-   Recommended for S0.3: pay it, mechanically, and keep X2 open with the measured count.
-   Every further module of the interpreter pays the same for each record it shares, and
-   that cost is the evidence if C140 is ever revisited (a package scope, or a type-level
-   "every field `pub`").  It is C140's stated trade-off, and the owner's to reopen.
+   First decided "pay it"; then the owner designed the cure, `#package` (S0.3a), built
+   first.
 
 ## The language for this job
 
@@ -446,7 +542,7 @@ pub fn definition(b: ir::Bundle, name: text) -> ir::Definition? {
 | id | what | kind | proposal |
 |---|---|---|---|
 | **X1** | `store_load` refuses the program bundle: *"it has no layout sidecar (`.dschema`) beside it"*. The bundle carries its own schema (`Bundle.types`), but `ir_store::save_bundle` writes no sidecar, so loft cannot read the compiler's own output | **bug — fixed in S0.1** | `save_bundle` writes the sidecar (§ Steps, S0.1) |
-| **X2** | `ir.loft` used as a library: every type and every field is private to its FILE (@C140; no package scope), so `use ir; ir::Bundle` is refused | by design (C140) — costed | measured: 167 `pub` (25 types, 142 fields) before another file of the same package reads one field; every interpreter module pays the same per shared record.  Revisit candidates: a package scope, or a type-level "every field `pub`" (S0.3 decision 2) |
+| **X2** | `ir.loft` used as a library: every type and every field is private to its FILE (@C140; no package scope), so `use ir; ir::Bundle` is refused | **language fix — S0.3a** | measured: 167 `pub` (25 types, 142 fields) before another file of the same package reads one field.  The owner's cure: `#package` shows a file's internals to its own directory (S0.3a), and the file-local default stays |
 | **X3** | a generic type alias does not parse: `type Env<T> = hash<B<T>[name]>;` → *"Expect token ;"* | friction | generic aliases, OCaml's `type 'a env = …` |
 | **X4** | `hash<(integer, text)>` → *"tuple element types only allowed on vector / iterator"* | friction | tuple elements, and tuple keys, in keyed collections (OCaml `(int * string, v) Hashtbl.t`); memo tables keyed by (definition, type) want it (bar B2) |
 | **X5** | a phantom tag needs a dummy field: `struct NodeTag { }` → *"Expect attribute"* | friction | an empty struct, or a declared abstract type with no body (OCaml `type node_tag`) |
