@@ -8,6 +8,7 @@
 //! still in scope where it is freed.  An owned text temporary is freed after the statement
 //! that made it; every `return` first copies its value out, then frees the function's texts.
 
+mod chain;
 mod files;
 mod generator;
 mod keyed;
@@ -156,6 +157,12 @@ pub(crate) struct FnWriter<'a> {
     /// (by node address); at a rotate site, the callee whose next call goes to that twin.
     nk_skip: Option<usize>,
     nk_call: Option<u32>,
+    /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of its admitted
+    /// chain operators, and the guard they branch on (`None` in the plain copy of an innermost
+    /// loop, where every one is plain).
+    plain_chains: Vec<(std::collections::HashSet<usize>, Option<String>)>,
+    /// The guards written so far, which numbers each one's flag.
+    chain_guards: u32,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -391,6 +398,8 @@ impl<'a> FnWriter<'a> {
             field_view: false,
             nk_skip: None,
             nk_call: None,
+            plain_chains: Vec::new(),
+            chain_guards: 0,
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
@@ -1780,19 +1789,27 @@ impl<'a> FnWriter<'a> {
         let mints = self.hold_vectors(b, ind)?;
         let window = self.open_window(b, ind)?;
         self.hold_pushes(b, mints, ind)?;
-        self.labels += 1;
-        let l = self.labels;
-        self.loops.push(l);
-        if let Some(walk) = self.char_walks.get(&b.scope).cloned() {
-            self.char_walk_loop(b, &walk, ind)?;
-        } else {
-            self.line(ind, "for (;;) {");
-            self.block_stmt(b, ind + 1)?;
+        match self.chain_guard(b, ind)? {
+            Some((guard, admitted, true)) => {
+                // An innermost loop: the guarded copy plain, the checked loop as the `else`.
+                self.line(ind, &format!("if ({guard}) {{"));
+                self.plain_chains.push((admitted, None));
+                let r = self.loop_core(b, ind + 1);
+                self.plain_chains.pop();
+                r?;
+                self.line(ind, "} else {");
+                self.loop_core(b, ind + 1)?;
+                self.line(ind, "}");
+            }
+            Some((guard, admitted, false)) => {
+                // Loops inside: written once, each admitted operator branching on the guard.
+                self.plain_chains.push((admitted, Some(guard)));
+                let r = self.loop_core(b, ind);
+                self.plain_chains.pop();
+                r?;
+            }
+            None => self.loop_core(b, ind)?,
         }
-        self.line(ind, &format!("cont_{l}:;"));
-        self.line(ind, "}");
-        self.line(ind, &format!("brk_{l}:;"));
-        self.loops.pop();
         self.headers.pop();
         self.push_heads.pop();
         self.scalars.pop();
@@ -1807,6 +1824,24 @@ impl<'a> FnWriter<'a> {
             let (_, c, _) = self.file_holds.pop().expect("the cursor this loop holds");
             self.line(ind, &format!("loft_fcur_release(&{c});"));
         }
+        Ok(())
+    }
+
+    /// The loop itself: its labels, its `for (;;)` (or a character walk's) and its body.
+    fn loop_core(&mut self, b: &Block, ind: usize) -> Result<(), String> {
+        self.labels += 1;
+        let l = self.labels;
+        self.loops.push(l);
+        if let Some(walk) = self.char_walks.get(&b.scope).cloned() {
+            self.char_walk_loop(b, &walk, ind)?;
+        } else {
+            self.line(ind, "for (;;) {");
+            self.block_stmt(b, ind + 1)?;
+        }
+        self.line(ind, &format!("cont_{l}:;"));
+        self.line(ind, "}");
+        self.line(ind, &format!("brk_{l}:;"));
+        self.loops.pop();
         Ok(())
     }
 
@@ -3941,6 +3976,11 @@ impl<'a> FnWriter<'a> {
         };
         if self.vr.is_some()
             && let Some(e) = self.vr_operator(name, args, ind)?
+        {
+            return Ok(e);
+        }
+        if !self.plain_chains.is_empty()
+            && let Some(e) = self.chain_operator(name, args, ind)?
         {
             return Ok(e);
         }

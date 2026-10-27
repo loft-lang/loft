@@ -2168,7 +2168,11 @@ the guard and freed after BOTH arms, or the plain arm neither sees it nor frees 
 (`ops::range_verify` at every admitted operator).  Cells `tests/scripts/157-guarded-chain.loft`
 c1–c6, pins `tests/guarded_chain.rs`.  Sites: `Output::chain_fast_path`,
 `Output::in_plain_chain`, `hoist::nested_counted_loops`, `hoist::written_vars`, the chain
-arm in `ops::int_arith`, the loop hook in `emit.rs`.
+arm in `ops::int_arith`, the loop hook in `emit.rs`; in the C, `FnWriter::chain_guard` and
+`FnWriter::chain_operator` (`src/c/body/chain.rs`), the guard's bounds spelled with
+`loft_gc_*`.  The C writes an innermost loop twice only when its body calls no loft function:
+a doubled body with a call doubles what the C compiler inlines there, and crawler `vis` lost
+36 % instructions that way under GCC, so such a loop branches per operator instead.
 
 ### A `for` statement runs fast under a fault flag, and as written when it faults
 

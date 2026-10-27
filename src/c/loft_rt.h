@@ -390,6 +390,25 @@ static void loft_eprint(loft_str s) {
  * constant operand the portable check folds to one compare, cheaper still.  Addition and
  * subtraction keep the portable comparison: an overflow builtin hides the operands' ranges
  * from the optimiser (measured on clang: a masked accumulator's loop ran 2.7x slower). */
+/* `@FR-R-GuardedChain`'s guard arithmetic: the magnitude bound of a chain, each step clearing
+ * `*ok` where it does not fit (`checked_add`, `checked_mul`, `checked_abs` — the last fails on the
+ * null sentinel, which has no absolute value).  The value after a failure is never read. */
+static int64_t loft_gc_abs(int64_t a, int *ok) {
+    if (a == LOFT_NULL) { *ok = 0; return 0; }
+    return a < 0 ? -a : a;
+}
+static int64_t loft_gc_add(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (LOFT_ADD_OVF(a, b, &r)) { *ok = 0; return 0; }
+    return r;
+}
+static int64_t loft_gc_mul(int64_t a, int64_t b, int *ok) {
+    int64_t r;
+    if (LOFT_MUL_OVF(a, b, &r)) { *ok = 0; return 0; }
+    return r;
+}
+static int64_t loft_gc_max(int64_t a, int64_t b) { return a > b ? a : b; }
+
 /* The checked `+` and `-`: null in, null out, and null where the result does not fit — the
  * compiler's overflow builtin (`LOFT_ADD_OVF`), which both GCC and Clang lower to one flag test,
  * where Clang kept the spelled-out range comparisons as compares and branches. */
