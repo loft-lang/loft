@@ -75,6 +75,8 @@ def main() -> int:
     ap.add_argument("--loft", default=str(ROOT / "target" / "debug" / "loft"))
     ap.add_argument("--keep", default="")
     args = ap.parse_args()
+    # Each emit runs in its program's directory, so the binary is named absolutely.
+    args.loft = str(Path(args.loft).resolve())
     progs = programs()
     if args.limit:
         progs = progs[: args.limit]
