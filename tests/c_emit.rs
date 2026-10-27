@@ -3790,3 +3790,180 @@ fn native_c_html_page_runs_its_program() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// Does `cc` build and run an AddressSanitizer program with its leak check (Linux only: macOS
+/// has no LeakSanitizer by default)?  Probed once, so a box without the runtime skips.
+fn have_asan(dir: &std::path::Path) -> bool {
+    if !cfg!(target_os = "linux") || !have_cc() {
+        return false;
+    }
+    let src = dir.join("asan_probe.c");
+    let exe = dir.join("asan_probe");
+    fa::write(&src, "int main(void) { return 0; }\n").expect("write probe");
+    loft::platform::process::harness_command("cc")
+        .args(["-fsanitize=address"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .is_ok_and(|o| o.status.success())
+        && loft::platform::process::harness_command(&exe)
+            .output()
+            .is_ok_and(|o| o.status.success())
+}
+
+/// `prog` written as C by the `loft` binary, built under AddressSanitizer and UBSan, run from
+/// `cwd` with the leak check on: its exit status, stdout and stderr.
+fn run_asan(
+    dir: &std::path::Path,
+    prog: &std::path::Path,
+    cwd: &std::path::Path,
+) -> (i32, String, String) {
+    let stem = prog.file_stem().and_then(|s| s.to_str()).unwrap_or("p");
+    let c = dir.join(format!("{stem}.c"));
+    let exe = dir.join(stem);
+    let emit = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(prog)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{stem}: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let inc = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-g", "-DLOFT_CALL_CHAIN", "-pthread"])
+        .args(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
+        .arg(format!("-I{}", inc.display()))
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .args(["-lm", "-ldl"])
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{stem}: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .current_dir(cwd)
+        .env("ASAN_OPTIONS", "detect_leaks=1")
+        .env_remove("LOFT_SOURCE_DIR")
+        .output()
+        .expect("run the program");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Faults that end a test inside frames holding texts, for the leak check below: a 10 000-deep
+/// recursion (the hold stack grows), a tuple's texts, and a lazy driver's CONTAINED fault, twenty
+/// times, under a caller whose own text must survive each one.
+const HALTS: &str = r#"
+fn down(n: integer) -> text {
+  own = "level {n}";
+  if n == 0 {
+    assert(false, "bottom {own}");
+  }
+  r = down(n - 1);
+  "{own}/{r}"
+}
+
+// @EXPECT_FAIL: bottom level 0
+fn test_a_deep_recursion_halts() {
+  x = down(10000);
+  assert(len(x) > 0, "never");
+}
+
+fn pair(k: integer) -> (text, text) {
+  ("left {k}", "right {k}")
+}
+
+// @EXPECT_FAIL: tuple left 7 right 7
+fn test_a_tuple_of_texts_at_a_halt() {
+  p = pair(7);
+  (a, b) = p;
+  assert(len(a) < 0, "tuple {a} {b}");
+}
+
+struct LuPerson { id: integer, nm: text }
+struct LuWorld { people: hash<LuPerson[id]> = [] }
+
+fn lazy_fetch(coll: hash<LuPerson[id]>, source: text, key_int: integer, key_text: text) -> integer {
+  mine = "driver {key_int} {source}";
+  assert(key_int != 1, "driver faults holding {mine}");
+  coll += [LuPerson { id: key_int, nm: "ok-{key_int}" }];
+  1
+}
+
+fn test_a_contained_fault_keeps_the_callers_texts() {
+  outer = "caller {6 * 7}";
+  w = LuWorld { };
+  _ = store_bind_lazy(w.people, "duckdb:unwind");
+  for _i in 0..20 {
+    r = w.people[1];
+    assert(r == null, "a faulted fetch answers null");
+  }
+  after = "{outer} still {len(outer)}";
+  assert(after == "caller 42 still 9", "got {after}");
+  two = w.people[2];
+  assert(two != null && two.nm == "ok-2", "the next fetch inserts");
+}
+
+fn test_after_them() {
+  s = "after {10 + 1}";
+  assert(s == "after 11", "got {s}");
+}
+"#;
+
+/// loft#2198: a failed assert or a panic ends a C test by `longjmp`, past every scope-exit free,
+/// so each text its frames held stayed allocated; a lazy driver's contained fault did the same
+/// once per failed fetch.  Each function now names the texts its epilogue frees and the halt
+/// releases them before it jumps — a contained one only above the driver.  Scored by
+/// LeakSanitizer: on the build before the fix, 2121's six functions leaked 35 allocations, the
+/// recursion and the tuple 58 leak records, and the driver one text per contained fault.  A
+/// release that reached a live caller's text would show here as a use-after-free, or as
+/// `caller 42` read wrong.
+///
+/// loft#2199: the program-directory anchor was a `loft_text` used as a C string with no
+/// terminator, so `chdir` failed on the bytes after it (and the fault log read past it): run
+/// from `/`, `directory()` answered `/` instead of the program's own directory.
+#[test]
+fn a_halted_c_test_releases_the_texts_its_frames_hold() {
+    let dir = scratch("halt-release");
+    if !have_asan(&dir) {
+        eprintln!("skipped: no AddressSanitizer runtime for cc here");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let halts = dir.join("halts.loft");
+    fa::write(&halts, HALTS).expect("write halts.loft");
+    let guard = root.join("tests/scripts/2121-a-halted-frame-releases-the-texts-it-holds.loft");
+    for prog in [guard.as_path(), halts.as_path()] {
+        let (code, _, err) = run_asan(&dir, prog, &dir);
+        assert!(
+            code == 0 && !err.contains("Sanitizer") && !err.contains("runtime error:"),
+            "{}: exit {code}\n{err}",
+            prog.display()
+        );
+    }
+    let anchor = dir.join("anchor.loft");
+    fa::write(
+        &anchor,
+        "fn main() {\n  println(\"dir {directory()}\");\n}\n",
+    )
+    .expect("write");
+    let (code, out, err) = run_asan(&dir, &anchor, std::path::Path::new("/"));
+    let want = std::fs::canonicalize(&dir).expect("canonical scratch");
+    assert_eq!(
+        (code, out.trim_end()),
+        (0, format!("dir {}", want.display()).as_str()),
+        "{err}"
+    );
+}

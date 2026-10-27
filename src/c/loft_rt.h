@@ -525,6 +525,49 @@ static LOFT_TLS int loft_in_test = 0;
 /* The message of the last failed assert, for a test expected to fail with it. */
 static LOFT_TLS loft_text loft_fail_msg = { 0, 0, 0 };
 
+/* The texts the running frames hold (loft#2198), in a unit that runs tests: a fault that ends a
+ * test `longjmp`s past every scope-exit free, so each function names the slots its epilogue
+ * frees (`LOFT_HOLD`), its wrapper drops them again on return (`LOFT_HOLD_MARK`/`_BACK`), and a
+ * halt releases what the abandoned frames still hold before it jumps — while those frames are
+ * still on the stack.  A unit that binds a lazy collection keeps them too, since a driver's fault
+ * is contained and the program goes on (`loft_lazy_held_floor`).  Every other unit compiles this
+ * to nothing: there a halt ends the process. */
+#ifdef LOFT_HALT_RELEASE
+typedef struct { loft_text *const *slot; size_t n; } loft_held_frame;
+static LOFT_TLS loft_held_frame *loft_held = 0;
+static LOFT_TLS size_t loft_nheld = 0, loft_capheld = 0;
+static void loft_hold(loft_text *const *slot, size_t n) {
+    if (loft_nheld == loft_capheld) {
+        loft_capheld = loft_capheld ? loft_capheld * 2 : 64;
+        loft_held = (loft_held_frame *) realloc(loft_held, loft_capheld * sizeof *loft_held);
+        if (!loft_held) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_held[loft_nheld].slot = slot;
+    loft_held[loft_nheld].n = n;
+    loft_nheld++;
+}
+/* Free the texts of every frame above `floor`, innermost first; a slot already freed is empty. */
+static void loft_release_held(size_t floor) {
+    while (loft_nheld > floor) {
+        loft_held_frame *f = &loft_held[--loft_nheld];
+        for (size_t i = 0; i < f->n; i++) loft_text_free(f->slot[i]);
+    }
+}
+#define LOFT_HOLD(n, ...) loft_text *const loft_hd[] = { __VA_ARGS__ }; loft_hold(loft_hd, n)
+#define LOFT_HOLD_MARK(m) size_t m = loft_nheld
+#define LOFT_HOLD_BACK(m) (loft_nheld = (m))
+#define LOFT_HELD_DEPTH() loft_nheld
+#define LOFT_RELEASE_HELD(floor) loft_release_held(floor)
+#else
+#define LOFT_HOLD(n, ...) ((void) 0)
+#define LOFT_HOLD_MARK(m) ((void) 0)
+#define LOFT_HOLD_BACK(m) ((void) 0)
+#define LOFT_HELD_DEPTH() ((size_t) 0)
+#define LOFT_RELEASE_HELD(floor) ((void) 0)
+#endif
+/* The depth a contained fault releases down to: the frames under the lazy driver keep theirs. */
+static LOFT_TLS size_t loft_lazy_held_floor = 0;
+
 static void loft_fault_where(loft_str file, int64_t line);
 /* A fault inside a lazy driver is CONTAINED (`call_frames::in_lazy_driver`): it ends the driver,
  * not the program — `loft_lazy_miss` set the jump and records `<kind>: <message>` as the
@@ -536,6 +579,7 @@ static void loft_lazy_contain(const char *label, loft_str message) {
     loft_push(&loft_lazy_fault, label, strlen(label));
     loft_push(&loft_lazy_fault, ": ", 2);
     loft_push(&loft_lazy_fault, message.p, message.len);
+    LOFT_RELEASE_HELD(loft_lazy_held_floor);
     longjmp(*loft_lazy_jmp, 1);
 }
 
@@ -558,7 +602,7 @@ static void loft_assert(uint8_t test, loft_str message, loft_str file, int64_t l
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "assertion failed: ", 18);
     loft_push(&loft_fail_msg, message.p, message.len);
-    if (loft_in_test) longjmp(loft_test_jmp, 1);
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
     fflush(stdout);
     exit(1);
 }
@@ -573,7 +617,7 @@ static void loft_locked_write(void) {
     fputc('\n', stderr);
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, msg, sizeof msg - 1);
-    if (loft_in_test) longjmp(loft_test_jmp, 1);
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
     fflush(stdout);
     exit(1);
 }
@@ -684,7 +728,7 @@ static void loft_panic(loft_str message, loft_str file, int64_t line) {
     loft_fail_msg.len = 0;
     loft_push(&loft_fail_msg, "panic: ", 7);
     loft_push(&loft_fail_msg, message.p, message.len);
-    if (loft_in_test) longjmp(loft_test_jmp, 1);
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); longjmp(loft_test_jmp, 1); }
     fflush(stdout);
     exit(1);
 }
@@ -697,6 +741,7 @@ static void loft_exit(int64_t code) {
         sprintf(m, "exit %lld", (long long) code);
         loft_fail_msg.len = 0;
         loft_push(&loft_fail_msg, m, strlen(m));
+        LOFT_RELEASE_HELD(0);
         longjmp(loft_test_jmp, 1);
     }
     fflush(stdout);

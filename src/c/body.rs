@@ -448,6 +448,10 @@ impl<'a> FnWriter<'a> {
         for d in &self.decls {
             let _ = writeln!(out, "    {d}");
         }
+        let slots: Vec<String> = self.held_texts().iter().map(|t| format!("&{t}")).collect();
+        if !slots.is_empty() {
+            let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
+        }
         out.push_str(&self.body);
         Ok(out)
     }
@@ -488,6 +492,15 @@ impl<'a> FnWriter<'a> {
 
     /// Free every text the function holds: its locals and its temporaries.
     fn epilogue(&mut self, ind: usize) {
+        for t in self.held_texts() {
+            self.line(ind, &format!("loft_text_free(&{t});"));
+        }
+    }
+
+    /// The texts the function holds, each freed by its epilogue — and released by a halt in a
+    /// unit that runs tests (`LOFT_HOLD`, loft#2198): its text locals, the texts its tuple
+    /// locals own, its text temporaries and the texts its tuple temporaries hold.
+    fn held_texts(&self) -> Vec<String> {
         let mut texts: Vec<String> = (0..self.shapes.len())
             .filter(|&v| {
                 !self.params[v]
@@ -521,9 +534,7 @@ impl<'a> FnWriter<'a> {
         for (t, id) in tuple_temps {
             self.tuple_text_leaves(&t, id, &mut texts);
         }
-        for t in texts {
-            self.line(ind, &format!("loft_text_free(&{t});"));
-        }
+        texts
     }
 
     /// Before loop `b`: each vector the header gate admits (`opt::header::hoistable_vectors`)

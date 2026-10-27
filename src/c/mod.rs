@@ -1582,7 +1582,11 @@ fn unit_defines(
         out.push_str("#define LOFT_REFLECT 1\n");
     }
     if cx.lazy.get() {
-        out.push_str("#define LOFT_LAZY 1\n");
+        // A driver's fault is contained and the program goes on, so its frames' texts are
+        // released at the jump (`LOFT_HOLD`, loft#2198) — or every failed fetch leaks them.
+        out.push_str(
+            "#define LOFT_LAZY 1\n#ifndef LOFT_HALT_RELEASE\n#define LOFT_HALT_RELEASE 1\n#endif\n",
+        );
     }
     if reached.iter().any(|&d| {
         matches!(
@@ -2059,11 +2063,13 @@ fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> 
         body::c_string(&frame_name),
         body::c_string(&def.position().file)
     );
+    // The body names the texts it holds (`LOFT_HOLD`); the frame drops them on its return.
+    let push = format!("{push}    LOFT_HOLD_MARK(hm);\n");
     if ret == CType::Void {
-        format!("{push}    {call};\n    loft_frame_pop();\n")
+        format!("{push}    {call};\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n")
     } else {
         format!(
-            "{push}    {} r = {call};\n    loft_frame_pop();\n    return r;\n",
+            "{push}    {} r = {call};\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n",
             held(ret)
         )
     }
@@ -2129,7 +2135,12 @@ pub fn emit_tests_of(
     tests: &[u32],
     expected: &dyn Fn(&str) -> Vec<String>,
 ) -> Result<String, Refusal> {
-    let mut out = emit_unit(data, stores, tests)?;
+    // A failed test `longjmp`s past its frames' frees: the unit keeps the texts they hold
+    // (`LOFT_HOLD`) so the halt releases them (loft#2198).
+    let mut out = format!(
+        "#define LOFT_HALT_RELEASE 1\n{}",
+        emit_unit(data, stores, tests)?
+    );
     let _ = write!(
         out,
         "\nint main(int argc, char **argv) {{\n    int failed = 0;\n    const char *loft_only = argc > 1 ? argv[1] : 0;\n    loft_bind_tables();\n    loft_start(argc, argv);\n    {}\n    loft_in_test = 1;\n",

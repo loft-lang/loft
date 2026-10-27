@@ -1093,6 +1093,11 @@ static void loft_par_job_run(loft_par_job *j) {
     free(loft_frames);
     loft_frames = 0;
 #endif
+#if defined(LOFT_HALT_RELEASE)
+    free(loft_held);
+    loft_held = 0;
+    loft_nheld = loft_capheld = 0;
+#endif
 }
 
 #if defined(_WIN32)

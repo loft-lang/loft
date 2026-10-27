@@ -42,8 +42,10 @@ static void loft_set_anchor(int program_relative) {
     if (env && *env) loft_anchor = env;
     else {
         loft_text dir = loft_program_directory(loft_lit("", 0));
-        loft_anchor = dir.p ? dir.p : "";
-        if (dir.len && (dir.p[dir.len - 1] == '/' || dir.p[dir.len - 1] == '\\') && dir.len > 1) dir.p[dir.len - 1] = 0;
+        if (dir.len > 1 && (dir.p[dir.len - 1] == '/' || dir.p[dir.len - 1] == '\\')) dir.len--;
+        /* The anchor is read as a C string (`chdir`, `strlen`): a text carries no terminator. */
+        loft_push(&dir, "", 1);
+        loft_anchor = dir.p;
     }
     loft_program_relative = program_relative;
     env = getenv("LOFT_PATHS");
