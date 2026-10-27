@@ -295,12 +295,9 @@ impl FnWriter<'_> {
                 if base != 0 {
                     return Err("a view part inside a copied sub-record".into());
                 }
-                let (_, elem) = crate::opt::hoist::view_field_types(
-                    self.cx.stores,
-                    layout_record(key),
-                    *off,
-                )
-                .ok_or("a view part with no vector type")?;
+                let (_, elem) =
+                    crate::opt::hoist::view_field_types(self.cx.stores, layout_record(key), *off)
+                        .ok_or("a view part with no vector type")?;
                 self.cx.copy_type(elem)?;
                 let add = if self.cx.stores.is_linked(elem) {
                     "loft_vec_add_array"
@@ -715,8 +712,7 @@ impl FnWriter<'_> {
                 fld,
                 off,
             } => {
-                let stride =
-                    crate::opt::hoist::element_stride(self.cx.stores, *parent_tp, *fld);
+                let stride = crate::opt::hoist::element_stride(self.cx.stores, *parent_tp, *fld);
                 let r = self.expr(&Value::Var(root.0), ind)?;
                 let r = as_ref(r)?;
                 let container = if root.1 == crate::use_analysis::ANY_FIELD {
