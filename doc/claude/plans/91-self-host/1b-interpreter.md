@@ -61,8 +61,10 @@ implementation.  So the usual "work around it and move on" is not allowed here:
   on purpose (@C89 positional variants, @C116 closures in collections, @C63 local recursive
   functions), the register records what the interpreter paid for it.  That cost is the
   input if the owner ever revisits the decision.
-- **Findings are filed as loft's own** (`hit-by:loft`, `Found-via: @PLN91 1b` in the body),
-  and are fixed before the step that met them continues.
+- **A finding fixed on the spot needs no issue.**  Its register row and the fixing commit
+  are its record (CLAUDE.md: the default is fix, not file).  One that cannot be fixed
+  inside the step is filed as loft's own (`hit-by:loft`, `Found-via: @PLN91 1b` in the
+  body), and the step waits for its fix.
 
 ## The working norm (owner, 2026-10-27)
 
@@ -204,7 +206,7 @@ cannot quietly shrink.
 
 ## Steps
 
-### S0.1 — the bundle carries its layout sidecar (fixes X1) — DESIGNED, not built
+### S0.1 — the bundle carries its layout sidecar (fixes X1) — BUILT 2026-10-27
 
 **What.**  `save_bundle` writes a `.dschema` sidecar beside the bundle, as every other
 store writer does, so `store_load` can check the file against the type it is read through
@@ -245,6 +247,39 @@ a stable bundle path.
 **Not in this step:** a CLI flag to write a bundle at a chosen path (S0.2, designed after
 this lands); the loft loader `selfhost/src/interp/load.loft` (S0.3).
 
+**Built — what changed from the design.**  This is a step in the Rust tree, so it measures
+the design rather than loft.  The test is
+`ir_read::tests::a_saved_bundle_carries_the_layout_ir_loft_declares`.
+- **Failure path 2 was wrong as written.**  A changed layout is not refused: `load_path`
+  CONVERTS it (`load_upgraded`, `src/database/allocation.rs:~5361`).  So a drift between
+  `ir.loft` and the Rust schema would have been converted silently.  The test therefore
+  requires the verdict `Match` for both sides, not "the load succeeds".
+- **The identity comes from a `Stores` of its own** (`register_ir_schema`,
+  `src/ir_schema_gen.rs:238`, whose `IrSchemaIds::bundle` is the root).  So the image's
+  bytes cannot change (failure path 4).  The write follows `@FR-S-Pair` exactly: stage the
+  sidecar, rename the image, then rename the sidecar.
+- **The sidecar staging name is fixed** (`<path>.dschema.tmp`, `src/schema_sidecar.rs:
+  stage_to`), not per-process.  The C runtime and the guard `tests/scripts/2173-…` depend
+  on it, so it stays.  For the bundle it is harmless: two processes saving one program
+  write identical text, and any failure leaves the bundle refused, never read unchecked.
+- **`Parser::parse` answers "no diagnostic at all"** (`src/parser/passes.rs:158`
+  `self.diagnostics.is_empty()`), so an advice made it return false.  The test's first
+  falsification failed at its "does not compile" assertion and never reached the layout
+  comparison.  The test now asserts no error-level diagnostic.
+- **Falsified:** a field added to `Bundle` in `ir.loft` fails the test at the layout
+  assertion (`Changed(LayoutDiff { changed: ["Bundle"] })`); the restored file passes.
+- **End to end:** a loft program declaring `ir.loft`'s types `store_load`s a bundle the
+  rebuilt binary wrote (`fn twice` + `fn main`) and reads its 845 definitions, `n_twice`
+  and `n_main` among them.  So the root is where `store_load` places it.
+- **A consequence the design missed: eviction.**  Every program bundle and stdlib image in
+  the startup cache now has a sidecar, and neither eviction removed it
+  (`src/cache.rs: prune_dir`'s `remove_pair`, `prune_stdlib_dir`).  Both now remove it,
+  naming it through `schema_sidecar::dschema_path`, and their tests
+  (`prune_dir_evicts_oldest_over_budget`, `stdlib_images_keep_the_newest_and_nothing_else`)
+  assert that an evicted bundle's sidecar goes with it and a kept one's stays.
+- **Not run:** `ir_schema_roundtrip`, which the design named.  It never calls
+  `save_bundle`, so it could not move.
+
 ## The language for this job
 
 ### What loft already offers (measured or established in @PLN202 / OCAML_BAR.md)
@@ -268,7 +303,7 @@ this lands); the loft loader `selfhost/src/interp/load.loft` (S0.3).
 
 | id | what | kind | proposal |
 |---|---|---|---|
-| **X1** | `store_load` refuses the program bundle: *"it has no layout sidecar (`.dschema`) beside it"*. The bundle carries its own schema (`Bundle.types`), but `ir_store::save_bundle` writes no sidecar, so loft cannot read the compiler's own output | **bug — step S0.1** | `save_bundle` writes the sidecar (§ Steps, S0.1) |
+| **X1** | `store_load` refuses the program bundle: *"it has no layout sidecar (`.dschema`) beside it"*. The bundle carries its own schema (`Bundle.types`), but `ir_store::save_bundle` writes no sidecar, so loft cannot read the compiler's own output | **bug — fixed in S0.1** | `save_bundle` writes the sidecar (§ Steps, S0.1) |
 | **X2** | `ir.loft` used as a library: every type and every field is private to its file (@C140), so `use ir; ir::Bundle` is refused | friction | a vocabulary module wants every field public: a way to say that once per type or per file, instead of `pub` on ~200 fields |
 | **X3** | a generic type alias does not parse: `type Env<T> = hash<B<T>[name]>;` → *"Expect token ;"* | friction | generic aliases, OCaml's `type 'a env = …` |
 | **X4** | `hash<(integer, text)>` → *"tuple element types only allowed on vector / iterator"* | friction | tuple elements, and tuple keys, in keyed collections (OCaml `(int * string, v) Hashtbl.t`); memo tables keyed by (definition, type) want it (bar B2) |

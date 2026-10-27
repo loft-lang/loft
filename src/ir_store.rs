@@ -836,9 +836,9 @@ pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::R
             pos: ds::IR_ROOT_POS,
         };
         materialize_bundle(&mut stores, root, data, schema);
+        // Leaving the block drops `stores`: the file-backed Store unmaps and flushes
+        // `tmp` fully before the atomic rename publishes it at `path`.
         nr
-        // Drop `stores` → the file-backed Store unmaps + flushes `tmp` fully
-        // before the atomic rename publishes it at `path`.
     };
     // The identity comes from the IR schema alone, registered in a `Stores` of its own,
     // so computing it cannot change a byte of the image.  The slot is the writer's

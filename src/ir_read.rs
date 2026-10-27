@@ -2268,7 +2268,7 @@ mod tests {
         save_bundle(&p.data, &p.database.types, path_str).expect("save_bundle");
         let side = dschema_path(&path);
         assert!(
-            side.exists(),
+            crate::file_access::exists(&side),
             "save_bundle wrote no sidecar beside {path_str}"
         );
 
@@ -2282,8 +2282,11 @@ mod tests {
         let mut q = crate::parser::Parser::new();
         q.parse_dir("default", true, false)
             .expect("parse default/ stdlib");
+        // `parse` answers whether ANY diagnostic was raised, an advice included; only an
+        // error means the types did not compile.
+        q.parse("tools/ir_schema/ir.loft", false);
         assert!(
-            q.parse("tools/ir_schema/ir.loft", false),
+            q.diagnostics.level() < crate::diagnostics::Level::Error,
             "tools/ir_schema/ir.loft does not compile"
         );
         let bundle = q.database.name("Bundle");
