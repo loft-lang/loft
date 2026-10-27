@@ -799,7 +799,7 @@ pub(crate) fn image_words(bytes: &[u8]) -> Result<u32, String> {
     if sig != SIGNATURE {
         return Err("it has no store signature".into());
     }
-    if bytes.len() % 8 != 0 {
+    if !bytes.len().is_multiple_of(8) {
         return Err(format!(
             "its {} bytes are not whole words — the image was cut short",
             bytes.len()
