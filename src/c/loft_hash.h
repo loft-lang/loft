@@ -797,6 +797,58 @@ static loft_ref loft_h_find_ints(loft_ref c, const loft_key *keys, int n, const 
     return loft_ref_null();
 }
 
+/* `@FR-R-KeyedEntry` (hash::entry_ints): the entry `c[k…] = T{…}` writes its fields into, for a
+ * hash keyed by one to four integer parts — the one already under `ks`, or a fresh one filed in
+ * the empty bucket the walk stopped at, every key part written.  ONE walk from the key's home
+ * answers both; a hit is overwritten by the caller, which is the replace (`@FR-Col-Insert`) for
+ * an element that owns no heap.  The null reference, with nothing changed, where the table
+ * cannot be walked this way: no table yet, a table that borrows its entries, no empty bucket,
+ * a locked store (the general insert's refusal to make). */
+static loft_ref loft_h_entry_ints(loft_ref c, const loft_key *keys, int n, const int64_t *ks) {
+    loft_store_t *s = loft_store_of(c);
+    uint32_t claim = loft_collection_rec(s, c.rec, c.pos);
+    if (claim == 0 || loft_rec_words(s, claim) <= LOFT_H_RESERVED) return loft_ref_null();
+    loft_hents ents = loft_h_entries(s, claim, c.store_nr);
+    if (ents.stride == 0) return loft_ref_null();
+    uint32_t count = loft_h_hdr(s, claim).count, sb = loft_h_slot_bytes(s, claim);
+    uint64_t hv = loft_digest_ints(loft_h_read_seed(s, claim), ks, n);
+    uint32_t tag = (uint32_t) hv, at = loft_h_home(hv, count), bucket = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t slot = loft_u32(s, claim, LOFT_H_BUCKET0 + at * sb);
+        if (slot == 0) {
+            bucket = LOFT_H_BUCKET0 + at * sb;
+            break;
+        }
+        if (!(ents.inl && slot == LOFT_H_TOMB) && !loft_h_tag_differs(s, claim, sb, at, tag)) {
+            loft_ref e;
+            e.store_nr = c.store_nr;
+            loft_h_at_bucket(&ents, s, slot, at, &e.rec, &e.pos);
+            int same = e.rec != 0;
+            for (int k = 0; k < n && same; k++) {
+                int64_t have;
+                memcpy(&have, loft_at(s, e.rec, e.pos + keys[k].pos), 8);
+                same = have == ks[k];
+            }
+            if (same) return e;
+        }
+        if (++at >= count) at = 0;
+    }
+    if (bucket == 0 || s->read_only) return loft_ref_null();
+    loft_ref e;
+    if (ents.inl) {
+        uint32_t iat;
+        claim = loft_h_inline_slot_for(c, claim, tag, &iat);
+        e = loft_h_inline_file(s, c.store_nr, claim, iat, tag, 1);
+        for (int k = 0; k < n; k++) memcpy(loft_at(s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
+        return e;
+    }
+    e.store_nr = c.store_nr;
+    uint32_t index = loft_ar_alloc_at(s, claim, ents.stride, c.rec, &e.rec, &e.pos);
+    for (int k = 0; k < n; k++) memcpy(loft_at(s, e.rec, e.pos + keys[k].pos), &ks[k], 8);
+    loft_h_add_at(c, e, bucket, index, tag, keys, n);
+    return e;
+}
+
 /* `@FR-R-TypedKeyed`'s text clause (hash::find_str): one text key, hashed as the general entry
  * hashes a text part and compared against each entry's key text in place — equal exactly when
  * `loft_kv_cmp` says so: the same length and the same bytes. */

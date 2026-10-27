@@ -1240,6 +1240,15 @@ impl FnWriter<'_> {
             return Ok(None);
         }
         self.cx.copy_type(elem)?;
+        // `@FR-R-KeyedEntry`'s subscript clause (native's `output_keyed_entry_subscript`): the
+        // entry under the key overwritten in place of removed and claimed again, its key parts
+        // the subscript's, so the literal's key-field writes are staged and dropped.
+        let entry_keys = if kind == Keyed::Hash {
+            crate::lower::keyed_entry::subscript_keys(self.cx.stores, site.tp, &site.setters(data))
+                .filter(|k| k.len() == site.keys.len())
+        } else {
+            None
+        };
         // The staged part: each field write's operands, in program order, into temporaries;
         // a statement computing one runs where it stood.
         let mut writes: Vec<(String, Vec<Value>)> = Vec::new();
@@ -1266,7 +1275,13 @@ impl FnWriter<'_> {
                         self.raw.insert(t.clone(), super::kind_of(c));
                         staged.push(Value::RawExpr(t));
                     }
-                    writes.push((data.def(*d).name().to_string(), staged));
+                    let key_write = entry_keys.as_ref().is_some_and(|k| {
+                        matches!(a.get(1).map(Value::unspan), Some(Value::Int(o))
+                            if u16::try_from(*o).is_ok_and(|o| k.contains(&o)))
+                    });
+                    if !key_write {
+                        writes.push((data.def(*d).name().to_string(), staged));
+                    }
                 }
                 _ => self.stmt(op, ind)?,
             }
@@ -1275,6 +1290,30 @@ impl FnWriter<'_> {
         let coll = self.expr(site.coll, ind)?;
         let ct = self.temp(CType::Ref);
         self.line(ind, &format!("{ct} = {};", as_ref(coll)?));
+        let (keys, nk) = self.cx.keys_of(site.tp);
+        if entry_keys.is_some() {
+            let mut parts = Vec::new();
+            for k in site.keys {
+                let e = self.expr(k, ind)?;
+                parts.push(as_int(e)?);
+            }
+            let e = self.temp(CType::Ref);
+            self.line(
+                ind,
+                &format!(
+                    "{e} = loft_keyed_entry_ints(loft_types, {elem}, {ct}, {keys}, {nk}, (int64_t[]){{ {} }});",
+                    parts.join(", ")
+                ),
+            );
+            self.raw.insert(e.clone(), K::Ref);
+            for (name, mut staged) in writes {
+                staged[0] = Value::RawExpr(e.clone());
+                let w = self.operator(&name, &staged, ind)?;
+                self.line(ind, &format!("{};", w.code));
+            }
+            crate::rewrite_census::fired("R-KeyedEntry/subscript", 1);
+            return Ok(Some(E::new("((void) 0)", K::Void)));
+        }
         let mut values = Vec::new();
         for (k, t) in site.keys.iter().zip(&types) {
             let e = self.expr(k, ind)?;
@@ -1282,7 +1321,6 @@ impl FnWriter<'_> {
         }
         let n = values.len();
         let kv = value_array(&values);
-        let (keys, nk) = self.cx.keys_of(site.tp);
         let kind_c = match kind {
             Keyed::Hash => "LOFT_KEYED_HASH",
             Keyed::Sorted => "LOFT_KEYED_SORTED",

@@ -585,6 +585,31 @@ static void loft_keyed_place_finish(const loft_tdesc *T, uint16_t etp, loft_ref 
     else (void) loft_ordered_insert(T, etp, c, e, keys, nk, 0);
 }
 
+/* `@FR-R-KeyedEntry`'s subscript clause (Stores::keyed_entry_ints): the entry `c[ks…] = T{…}`
+ * writes its non-key fields into — found or filed in one probe (`loft_h_entry_ints`), its key
+ * parts written.  Where that walk cannot serve (a walk over `c` is live, no table yet) the entry
+ * is claimed, keyed and filed through `loft_keyed_place_begin` / `_finish` first, and the filed
+ * place answered: an inline table moves the staged entry into itself. */
+static loft_ref loft_keyed_entry_ints(const loft_tdesc *T, uint16_t etp, loft_ref c, const loft_key *keys, int nk,
+                                      const int64_t *ks) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    int live = 0;
+    for (int i = 0; i < loft_nscratches && !live; i++)
+        live = loft_scratches[i].source.store_nr == c.store_nr && loft_scratches[i].source.rec == c.rec &&
+               loft_scratches[i].source.pos == c.pos;
+    if (!live) {
+        loft_ref e = loft_h_entry_ints(c, keys, nk, ks);
+        if (e.rec != 0) return e;
+    }
+    loft_kv kv[4];
+    for (int i = 0; i < nk && i < 4; i++) kv[i] = loft_kv_int(ks[i]);
+    loft_ref e = loft_keyed_place_begin(T, etp, c, LOFT_KEYED_HASH, keys, nk, kv, nk);
+    if (e.rec == 0) return e;
+    memset(loft_at(loft_store_of(e), e.rec, e.pos), 0, T[etp].size);
+    loft_keyed_place_finish(T, etp, c, e, LOFT_KEYED_HASH, keys, nk, kv, nk);
+    return loft_h_find_ints(c, keys, nk, ks);
+}
+
 /* OpFillKeyed (Stores::fill_keyed_from_vector): each element of the vector `src` filed into the
  * keyed collection `c` as a deep copy under its own key (`insert_keyed_copy`, the latest of one
  * key winning); a null linked element has no key and stays out.  Every element is resolved
