@@ -167,6 +167,16 @@ pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
         eprintln!("{}", runtime_lib_missing_diagnostic(stem, &lib));
         return None;
     }
+    if let Some(prebuilt) = prebuilt_native_lib(pkg_dir, stem) {
+        return Some(prebuilt);
+    }
+    auto_build_native(pkg_dir, stem)
+}
+
+/// The native library a package ships PREBUILT for this host, never a build: what
+/// [`resolve_native_lib`] tries first, and all the C backend links (@PLN205).
+#[must_use]
+pub fn prebuilt_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     let filename = platform_lib_name(stem);
     // @PLN21 Phase 1 — a precompiled cdylib shipped for THIS host triple wins
     // over a source build (the "no rustc to use a library" path).  A cdylib
@@ -187,10 +197,7 @@ pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     }
     // Legacy platform-agnostic prebuilt (existence-only; kept for back-compat).
     let prebuilt = format!("{pkg_dir}/native/{filename}");
-    if crate::file_access::exists(&prebuilt) {
-        return Some(prebuilt);
-    }
-    auto_build_native(pkg_dir, stem)
+    crate::file_access::exists(&prebuilt).then_some(prebuilt)
 }
 
 /// The host OS as a display name, for runtime-lib diagnostics + platform-scoping.

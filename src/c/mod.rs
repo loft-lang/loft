@@ -57,7 +57,13 @@ const RUNTIME: &str = concat!(
     include_str!("loft_net.h"),
     include_str!("loft_web.h"),
     include_str!("loft_process.h"),
-    include_str!("loft_engine.h")
+    include_str!("loft_engine.h"),
+    // A library's native part behind the loft-ffi ABI (@PLN205): the ABI's own header, then
+    // the host side.
+    "#ifdef LOFT_FFI\n",
+    include_str!("../../loft-ffi/include/loft_ffi.h"),
+    include_str!("loft_ffi_host.h"),
+    "#endif\n"
 );
 
 /// Why a function cannot be written as C yet.
@@ -180,6 +186,8 @@ pub(crate) struct Cx<'a> {
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
     /// consults the binding on a miss (`loft_lazy_miss`).
     pub(crate) lazy: std::cell::Cell<bool>,
+    /// A function calls a library's prebuilt native part (`LOFT_FFI`, [`library_native`]).
+    pub(crate) ffi: std::cell::Cell<bool>,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -251,6 +259,7 @@ impl<'a> Cx<'a> {
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
+            ffi: std::cell::Cell::new(false),
             par_sites: std::cell::Cell::new(0),
             sql_plans: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             lazy_fetchers: std::cell::Cell::new(0),
@@ -1712,6 +1721,9 @@ fn unit_defines(
         out.push_str("#define LOFT_WEB 1\n");
     }
     out.push_str(&fetch_defines(data, reached, &runtimes, cx.lazy.get()));
+    if cx.ffi.get() {
+        out.push_str("#define LOFT_FFI 1\n");
+    }
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
         let at = |f: &str| stores.position(sf, f);
@@ -1910,6 +1922,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if unloaded {
         if let Some(runtime) = in_binary_native(def.native()) {
             return forwarded_native(cx, d, ret, runtime);
+        }
+        if let Some(lib) = prebuilt_library(cx.data, def.native()) {
+            return library_native(cx, d, ret, &lib);
         }
         // A native loft's own binary implements is never unloaded there: the stub would answer
         // what the interpreter never does, so a native the runtime does not carry refuses.
@@ -2298,6 +2313,162 @@ fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
         });
     }
     Ok(params)
+}
+
+/// The library a `#native` symbol's package ships prebuilt for this host (`prebuilt/<triple>/`,
+/// the loft-ffi C ABI): the file the interpreter loads for it too
+/// (`native_build::prebuilt_native_lib`).  None for a package without one — never a build.
+fn prebuilt_library(data: &Data, native: &str) -> Option<String> {
+    let krate = data.native_symbol_crates.get(native)?;
+    let (name, pkg_dir) = data
+        .native_packages
+        .iter()
+        .find(|(c, _)| c.replace('-', "_") == *krate)?;
+    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+        .and_then(|m| m.native)
+        .unwrap_or_else(|| name.replace('-', "_"));
+    crate::native_build::prebuilt_native_lib(pkg_dir, &stem)
+}
+
+/// A `#native` function of a package whose native part is a prebuilt library (@PLN205): a body
+/// that resolves the library's typed symbol on the first call and calls it with the loft-ffi
+/// signature (`loft-ffi/include/loft_ffi.h`): a store first when an argument or the answer is
+/// a heap value, a text as its bytes and length, a vector as its data record.
+fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, String), String> {
+    let def = cx.data.def(d);
+    let params = declared_params(cx, d)?;
+    let mut ffi_params: Vec<String> = Vec::new();
+    let mut ffi_args: Vec<String> = Vec::new();
+    let mut prep = String::new();
+    let mut store_arg: Option<usize> = None;
+    for (i, a) in def.attributes().iter().enumerate() {
+        let tp = a.typedef.base();
+        if tp.heap_dep().is_some() {
+            store_arg.get_or_insert(i);
+            ffi_params.push("loft_ffi_ref".into());
+            if matches!(tp, Type::Vector(_, _)) {
+                let _ = writeln!(
+                    prep,
+                    "    loft_ffi_ref r{i} = {{ a{i}.store_nr, a{i}.rec ? loft_collection_rec(loft_store_of(a{i}), a{i}.rec, a{i}.pos) : 0, 0 }};"
+                );
+            } else {
+                let _ = writeln!(
+                    prep,
+                    "    loft_ffi_ref r{i} = {{ a{i}.store_nr, a{i}.rec, a{i}.pos }};"
+                );
+            }
+            ffi_args.push(format!("r{i}"));
+            continue;
+        }
+        match tp {
+            Type::Text(_) => {
+                ffi_params.push("const uint8_t *".into());
+                ffi_params.push("size_t".into());
+                ffi_args.push(format!("(const uint8_t *) a{i}.p"));
+                ffi_args.push(format!("a{i}.len"));
+            }
+            Type::Integer(s) if s.forced_size.is_none() => {
+                ffi_params.push("int64_t".into());
+                ffi_args.push(format!("a{i}"));
+            }
+            Type::Integer(_) => {
+                ffi_params.push("int32_t".into());
+                ffi_args.push(format!("(int32_t) a{i}"));
+            }
+            Type::Float => {
+                ffi_params.push("double".into());
+                ffi_args.push(format!("a{i}"));
+            }
+            Type::Single => {
+                ffi_params.push("float".into());
+                ffi_args.push(format!("a{i}"));
+            }
+            Type::Boolean => {
+                ffi_params.push("bool".into());
+                ffi_args.push(format!("a{i} == 1"));
+            }
+            _ => {
+                return Err(format!(
+                    "native {} (a library parameter of type {})",
+                    def.original_name(),
+                    type_word(&a.typedef)
+                ));
+            }
+        }
+    }
+    let ffi_ret = match def.returned().base() {
+        Type::Void => "void",
+        Type::Integer(s) if s.forced_size.is_none() => "int64_t",
+        Type::Integer(_) => "int32_t",
+        Type::Float => "double",
+        Type::Single => "float",
+        Type::Boolean => "uint8_t",
+        Type::Text(_) => "loft_ffi_str",
+        other => {
+            return Err(format!(
+                "native {} (a library answer of type {})",
+                def.original_name(),
+                type_word(other)
+            ));
+        }
+    };
+    if let Some(i) = store_arg {
+        ffi_params.insert(0, "loft_ffi_store".into());
+        ffi_args.insert(0, format!("loft_ffi_store_of(loft_store_of(a{i}))"));
+    }
+    cx.ffi.set(true);
+    let fp = format!(
+        "{ffi_ret} (*)({})",
+        if ffi_params.is_empty() {
+            "void".to_string()
+        } else {
+            ffi_params.join(", ")
+        }
+    );
+    let sig = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(cx.data, d),
+        if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        }
+    );
+    let mut body = String::new();
+    let _ = writeln!(
+        body,
+        "    static {ffi_ret} (*fp)({}) = 0;",
+        if ffi_params.is_empty() {
+            "void".to_string()
+        } else {
+            ffi_params.join(", ")
+        }
+    );
+    let _ = writeln!(
+        body,
+        "    if (!fp) fp = ({fp}) loft_ffi_sym({}, {});",
+        body::c_string(lib),
+        body::c_string(def.native())
+    );
+    body.push_str(&prep);
+    let call = format!("fp({})", ffi_args.join(", "));
+    match def.returned().base() {
+        Type::Void => {
+            let _ = writeln!(body, "    {call};");
+        }
+        Type::Text(_) => {
+            let _ = writeln!(body, "    loft_ffi_str t = {call};");
+            let _ = writeln!(
+                body,
+                "    return loft_text_own(loft_lit(t.ptr ? (const char *) t.ptr : \"\", t.len));"
+            );
+        }
+        _ => {
+            let _ = writeln!(body, "    return {call};");
+        }
+    }
+    Ok((sig, body))
 }
 
 /// An `in_binary` native the runtime carries: a body that hands its arguments on.

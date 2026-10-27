@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The natives of native/ffi_c_library.c: binary text both ways, integers, a boolean, a
+// float and a vector argument.
+
+pub fn make_bin() -> text;
+#native
+pub fn text_len(t: text) -> integer;
+#native
+pub fn wrap(t: text) -> text;
+#native
+pub fn byte(t: text, i: integer) -> integer;
+#native
+pub fn add(a: integer, b: integer) -> integer;
+#native
+pub fn is_even(a: integer) -> boolean;
+#native
+pub fn sum_bytes(v: vector<u8>) -> integer;
+#native
+pub fn half(x: float) -> float;
+#native
