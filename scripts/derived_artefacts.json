@@ -140,14 +140,14 @@
         "tools/brick-buster/pack_atlas.loft",
         "tests/fixtures/libs/assets/"
       ],
-      "check": "cd tools/brick-buster && ../../target/release/loft --interpret check_pack.loft",
+      "check": "cd tools/brick-buster && LOFT_NO_NATIVE_LIBS=1 ../../target/release/loft --interpret check_pack.loft",
       "regen": [
-        "cd tools/brick-buster && ../../target/release/loft --interpret check_pack.loft >/dev/null 2>&1 || { ../../target/release/loft --interpret pack_atlas.loft >/dev/null && cp assets/bb.meta.store assets/bb.blobs.store assets/bb.meta.store.dschema assets/bb.blobs.store.dschema ../../doc/assets/; }"
+        "cd tools/brick-buster && LOFT_NO_NATIVE_LIBS=1 ../../target/release/loft --interpret check_pack.loft >/dev/null 2>&1 || { ../../target/release/loft --interpret pack_atlas.loft >/dev/null && cp assets/bb.meta.store assets/bb.blobs.store assets/bb.meta.store.dschema assets/bb.blobs.store.dschema ../../doc/assets/; }"
       ],
       "ci": true,
       "job": "small",
       "needs": ["host"],
-      "note": "the gallery's Brick Buster sprite pack: stored records, so a layout rule that moves a field leaves it unreadable and the page draws nothing (loft#1956). Rebuilt only when check_pack.loft refuses it: the packer does not write byte-identical output twice"
+      "note": "the gallery's Brick Buster sprite pack: stored records, so a layout rule that moves a field leaves it unreadable and the page draws nothing (loft#1956). Rebuilt only when check_pack.loft refuses it: the packer does not write byte-identical output twice; the check interprets its libraries (`LOFT_NO_NATIVE_LIBS=1`) — it needs their types, not their speed, and their auto-native build cost half a minute a run"
     },
     {
       "name": "features-shadow",

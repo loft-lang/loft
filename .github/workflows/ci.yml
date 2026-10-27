@@ -1965,6 +1965,18 @@ jobs:
           restore-keys: |
             ubuntu-cargo-gallery-${{ hashFiles('**/Cargo.lock') }}-
             ubuntu-cargo-gallery-
+      # The libraries' native crate builds (`~/.loft/build-cache`), apart from the build
+      # above so its path list stays as saved: `make game` packs the sprites through
+      # `use graphics`, whose hand-written crate is keyed on loft-ffi and the loft version,
+      # not on this build, so main's copy serves every branch — and the derive restores it.
+      - name: Cache the libraries' native builds
+        id: loft-build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.loft/build-cache
+          key: ubuntu-loft-build-cache-gallery-${{ hashFiles('tools/brick-buster/loft.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ubuntu-loft-build-cache-gallery-${{ hashFiles('tools/brick-buster/loft.lock') }}-
 
       # Instantiate the committed doc/pkg/{loft.js, loft_bg.wasm} pair
       # exactly as the browser would.  A drifted pair fails here with
@@ -2063,6 +2075,12 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save the libraries' native builds (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.loft/build-cache
+          key: ${{ steps.loft-build-cache.outputs.cache-primary-key }}
 
   # Doc hygiene — blocking CI gate (promoted 2026-05-18).
   #

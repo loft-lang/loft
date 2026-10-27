@@ -50,6 +50,8 @@ jobs:
     name: Plan the parallel jobs
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
     steps:
@@ -68,6 +70,9 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Read-only: only `commit` pushes.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -79,8 +84,11 @@ jobs:
         with:
           targets: ${{ matrix.wasm && 'wasm32-unknown-unknown' || '' }}
 
-      - name: Install mold + binaryen
-        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen
+      # No mold: `.cargo/config.toml` links through `scripts/cc-mold`, plain `cc` where mold
+      # is absent, and the apt index update that installed it took 30 s to almost 2 min a job.
+      - name: Install binaryen
+        if: matrix.wasm_pack
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y binaryen
 
       - name: Install wasm-pack
         if: matrix.wasm_pack
@@ -102,9 +110,17 @@ jobs:
           restore-keys: |
             ubuntu-cargo-gallery-${{ hashFiles('**/Cargo.lock') }}-
             ubuntu-cargo-gallery-
-      # The test job's carries `~/.loft/build-cache`: the libraries' native builds, which a
-      # `use graphics` would otherwise compile from source.
-      - name: Restore the library build cache (ci.yml's test job's, read-only)
+      # The gallery job's native-library cache: graphics' crate, which the sprite-pack
+      # check's `use graphics` would otherwise compile from source (about a minute).
+      - name: Restore the libraries' native builds (ci.yml's gallery job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.loft/build-cache
+          key: ubuntu-loft-build-cache-gallery-${{ hashFiles('tools/brick-buster/loft.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ubuntu-loft-build-cache-gallery-${{ hashFiles('tools/brick-buster/loft.lock') }}-
+      # The test job's carries the registry and its own `~/.loft/build-cache`.
+      - name: Restore the registry (ci.yml's test job's, read-only)
         uses: actions/cache/restore@v4
         with:
           path: |
