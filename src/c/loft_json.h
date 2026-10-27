@@ -533,12 +533,21 @@ static int loft_jp_scan_number(const loft_jp *p, size_t start, loft_jv *v, size_
     memcpy(buf, b + start, n);
     buf[n] = 0;
     if (!fractional) {
-        errno = 0;
-        char *e = 0;
-        long long x = strtoll(buf, &e, 10);
-        if (errno == 0 && e && *e == 0) {
+        /* What `strtoll` over the whole span answers, read in place: an optional `-` and digits
+         * only, within int64 — anything else (an exponent, an overflow) is the float parse's. */
+        size_t k = start;
+        int neg = k < i && b[k] == '-', ok = 1;
+        uint64_t acc = 0;
+        if (neg) k++;
+        if (k == i) ok = 0;
+        for (; ok && k < i; k++) {
+            unsigned d = (unsigned) b[k] - '0';
+            if (d > 9 || acc > (UINT64_MAX - d) / 10) ok = 0;
+            else acc = acc * 10 + d;
+        }
+        if (ok && acc <= (neg ? UINT64_C(9223372036854775808) : UINT64_C(9223372036854775807))) {
             v->kind = LOFT_JV_INT;
-            v->i = (int64_t) x;
+            v->i = neg ? (int64_t) ((uint64_t) 0 - acc) : (int64_t) acc;
             *end = i;
             return 1;
         }

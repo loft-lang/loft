@@ -765,6 +765,102 @@ fn main() {
     }
 }
 
+/// `@FR-F-Render`'s shortest form written without `printf` where the digits allow it: a float of
+/// at most 15 significant digits (6 for a single) and magnitude in [1e-6, 1e15) is the integer
+/// nearest |v| * 10^k for the least k that reads back (`loft_push_shortest_fast`); every other
+/// float takes the `%.*e` search.  The spot values are Rust's `{}` by hand — across the fast
+/// range, past its edges (17 digits, 1e21, 1e-7, the zeros) — and `bulk` prints 160 280 floats
+/// and singles the C must render byte for byte as the interpreter does.
+#[test]
+fn a_float_prints_its_shortest_form_with_or_without_printf() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let src = r#"fn bulk() {
+  out = "";
+  st = 12345;
+  for i in 0..20000 {
+    st = (st * 1103515245 + 12345) & 2147483647;
+    a = i as float * 0.1;
+    b = i as float / 3.0;
+    c = 1.0 / (i + 1) as float;
+    d = st as float * 0.00001;
+    e = (st % 100000) as float / 1000.0 - 50.0;
+    f = (st % 1000) as float * 1000000000.0;
+    g = (i as float * 0.37) as single;
+    h = (st % 10000) as single / 100.0f;
+    out += "{a} {b} {c} {d} {e} {f} {g} {h}\n";
+    if i % 2000 == 1999 { print(out); out = ""; }
+  }
+  for k in 0..40 {
+    p = 1.0;
+    for j in 0..k { p = p * 10.0; }
+    print("{p} {1.0 / p} {p * 1.5} {p + 0.5} {0.1 + 0.2} {123456789012345.0} {999999999999999.9}\n");
+  }
+}
+
+fn main() {
+  println("{0.1 + 0.2} {1.0 / 3.0} {2.5} {100.0} {0.000001} {0.0000001} {123456789012345.0}");
+  println("{1500000000000000.0} {0.37f} {1234.56} {-0.25} {1000000000000000000000.0} {-0.0} {0.0}");
+  bulk();
+}
+"#;
+    let spots = "0.30000000000000004 0.3333333333333333 2.5 100 0.000001 0.0000001 123456789012345\n\
+                 1500000000000000 0.37 1234.56 -0.25 1000000000000000000000 -0 0\n";
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("shortest-float");
+    let file = dir.join("ff.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    let want = String::from_utf8_lossy(&interp.stdout).to_string();
+    assert!(want.starts_with(spots), "the interpreter's spot values");
+    assert_eq!(want.lines().count(), 20042, "the interpreter's lines");
+    let c = dir.join("ff.c");
+    let _ = fa::remove_file(&c);
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let exe = dir.join("ff");
+    let cc = loft::platform::process::harness_command("cc")
+        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .output()
+        .expect("run cc");
+    assert!(
+        cc.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let out = loft::platform::process::harness_command(&exe)
+        .output()
+        .expect("run the C program");
+    let got = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        got.starts_with(spots),
+        "the C's spot values: {}",
+        &got[..got.len().min(300)]
+    );
+    let first = got.lines().zip(want.lines()).position(|(g, w)| g != w);
+    assert_eq!(first, None, "the first line the C renders otherwise");
+    assert_eq!(got.lines().count(), want.lines().count(), "the C's lines");
+}
+
 /// `@FR-R-TypedKeyed` in the C: a hash looked up by one integer key, by two integer keys or by
 /// one text key takes its typed entry, which compares the key in place.  A bucket's 32-bit tag
 /// filters almost every other key first, so the comparison decides only on a TAG COLLISION —

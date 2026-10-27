@@ -301,11 +301,14 @@ walk takes an ASCII byte without decoding it and asks its null test once
 `LOFT_NO_SPLIT_TABLE=1`, `LOFT_NO_TEXT_BORROW=1` and `LOFT_NO_CHAR_WALK=1` turn them off,
 as on native.
 
-**Float text.**  `(F-Float-Text)` (@C156): the shortest form takes `printf`'s nearest p-digit
-candidate from 15 digits up (6 for a single; from one digit for a subnormal), else its
+**Float text.**  `(F-Float-Text)` (@C156): a value of at most 15 significant digits (6 for a
+single) between 1e-6 and 1e15 is the integer nearest |v|·10^k for the least k whose correctly
+rounded quotient reads back — no `printf` (`loft_push_shortest_fast`); otherwise the shortest
+form takes `printf`'s nearest p-digit candidate from 15 digits up (6 for a single; from one digit for a subnormal), else its
 neighbour on the value's other side at the same length; `.P` up to 9 decimals is exact integer
 arithmetic; a parse takes Clinger's fast path where the significand fits 2^53 and the power of
-ten 10^22.  Where none applies, `printf` / `strtod` answer, so the C library must round
+ten 10^22, and an integer in JSON is read in place.  Decimal integers are written digit by digit.
+Where none applies, `printf` / `strtod` answer, so the C library must round
 correctly — glibc and wasi-libc do (both sweeps).
 
 **Keyed collections.**  A persisted image carries a collection's layout, so the layouts are

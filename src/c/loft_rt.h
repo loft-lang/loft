@@ -294,6 +294,19 @@ static void loft_pad_rendered(loft_text *s, size_t start, size_t sign, int64_t w
     loft_text_free(&rendered);
 }
 
+/* The decimal digits of `v`, most significant first, into `buf` (twenty at most): what `%llu`
+ * writes, without parsing a format per number. */
+static int loft_u64_dec(char *buf, uint64_t v) {
+    char tmp[20];
+    int n = 0;
+    do {
+        tmp[n++] = (char) ('0' + (int) (v % 10));
+        v /= 10;
+    } while (v);
+    for (int i = 0; i < n; i++) buf[i] = tmp[n - 1 - i];
+    return n;
+}
+
 /* ops::push_decimal */
 static void loft_push_decimal(loft_text *s, int neg, uint64_t abs, int plus, int64_t width,
                               int dir, uint8_t token) {
@@ -302,7 +315,7 @@ static void loft_push_decimal(loft_text *s, int neg, uint64_t abs, int plus, int
     else if (plus) loft_push_char(s, '+');
     size_t sign = s->len - start;
     char buf[24];
-    int n = snprintf(buf, sizeof buf, "%llu", (unsigned long long) abs);
+    int n = loft_u64_dec(buf, abs);
     loft_push(s, buf, (size_t) n);
     loft_pad_rendered(s, start, sign, width, dir, token);
 }
@@ -3275,7 +3288,51 @@ static int loft_shortest_other(char *buf, size_t cap, int p, double v, double ne
     return 1;
 }
 
+/* The shortest form of a `v` with at most 15 significant digits (6 for a single) and
+ * 1e-6 <= |v| < 1e15, without printf: the integer m nearest |v| * 10^k for the least k at which
+ * m / 10^k reads back as `v` — the division is correctly rounded, so it is what `strtod` answers
+ * for those digits — m's neighbours tried too, since |v| * 10^k may itself be inexact.  At that
+ * many digits the decimal grid is coarser than `v`'s spacing, so at most one grid point reads
+ * back and the first k found is the shortest form `loft_push_shortest`'s search arrives at.
+ * Answers 0, writing nothing, for every other `v`. */
+static int loft_push_shortest_fast(loft_text *s, double v, int single) {
+    static const double p10[16] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7,
+                                   1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15};
+    double a = fabs(v);
+    if (!(a >= 1e-6 && a < 1e15)) return 0;
+    uint64_t lim = single ? UINT64_C(1000000) : UINT64_C(1000000000000000);
+    for (int k = 0; k <= 15; k++) {
+        double sc = a * p10[k];
+        if (sc >= (double) lim) return 0;
+        double r = floor(sc + 0.5);
+        for (int d = 0; d < 3; d++) {
+            double c = d == 0 ? r : d == 1 ? r - 1 : r + 1;
+            if (c < 1 || c >= (double) lim) continue;
+            double back = c / p10[k];
+            if (single ? (float) back != (float) a : back != a) continue;
+            uint64_t m = (uint64_t) c;
+            char dig[24];
+            int nd = loft_u64_dec(dig, m);
+            if (v < 0) loft_push_char(s, '-');
+            if (nd <= k) {
+                loft_push(s, "0.", 2);
+                for (int z = 0; z < k - nd; z++) loft_push_char(s, '0');
+                loft_push(s, dig, (size_t) nd);
+            } else {
+                loft_push(s, dig, (size_t) (nd - k));
+                if (k > 0) {
+                    loft_push_char(s, '.');
+                    loft_push(s, dig + nd - k, (size_t) k);
+                }
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void loft_push_shortest(loft_text *s, double v, int single) {
+    if (loft_push_shortest_fast(s, v, single)) return;
     if (isinf(v)) {
         if (v < 0) loft_push(s, "-inf", 4); else loft_push(s, "inf", 3);
         return;
@@ -3444,7 +3501,9 @@ static void loft_push_cstr(loft_text *s, const char *p) {
 
 static void loft_push_i64(loft_text *s, int64_t v) {
     char buf[24];
-    int n = snprintf(buf, sizeof buf, "%lld", (long long) v);
+    int n = 0;
+    if (v < 0) buf[n++] = '-';
+    n += loft_u64_dec(buf + n, v < 0 ? (uint64_t) 0 - (uint64_t) v : (uint64_t) v);
     loft_push(s, buf, (size_t) n);
 }
 
