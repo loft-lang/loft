@@ -22183,6 +22183,8 @@ impl Parser {
             for (i, expected) in param_types.iter().enumerate() {
                 self.convert(&mut converted[i], &types[i], expected);
             }
+            // `@FR-F-ParamText` — a closure may grow the store a text argument views.
+            self.copy_store_text_args_to(&param_types, &mut converted);
             // inject hidden work-buffer DbRef args for text-returning lambdas.
             // Each block emits OpCreateStack → 12-byte DbRef, matching callee's &text param.
             // Order: visible params → work bufs → __closure (must match callee slot layout).

@@ -64,6 +64,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // without `LOFT_LEDGER`.
     crate::opt::ledger_sites::rewrite_program(data);
     laps.lap("ledger_sites");
+    // `@FR-F-ParamText` — a store-viewing text argument keeps its copy only where the call
+    // can write a store; first, so every later pass sees the call as it runs.
+    crate::opt::arg_copy::rewrite_program(data);
+    laps.lap("arg_copy");
     crate::value_record::rewrite_program(data, database);
     laps.lap("value_record");
     // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the

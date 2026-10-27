@@ -6294,6 +6294,11 @@ pub fn v_set(var: u16, value: Value) -> Value {
 /// prelude: a rewrite that matches that prelude by shape steps over a block of this name.
 pub const RANGE_NULL_GUARD: &str = "Range null guard";
 
+/// The name of the block a store-viewing `text` argument is copied in at a call
+/// (`@FR-F-ParamText`): the parser spells the copy, `opt::arg_copy` unwraps it where no store
+/// can be written while the callee holds the text.
+pub const TEXT_ARG_COPY: &str = "text argument copy";
+
 #[must_use]
 pub fn v_block(operators: Vec<Value>, result: Type, name: &'static str) -> Value {
     Value::Block(Box::new(Block {

@@ -153,6 +153,13 @@ heap-returning tail discarded 800 000 times holds a flat resident size).
   (F-ParamScalar)  a scalar parameter (integer/float/single/boolean/character) is bound to a
                    COPY of the argument.  `p = e` inside the body is a local update; the caller's
                    value is UNCHANGED.
+  (F-ParamText)    a `text` parameter is bound to the argument's VALUE at the call, whatever the
+                   argument is read from: `f(w, w.rs[0].name)` hands `f` the name as it was, and
+                   a callee that grows, rewrites or frees the store the field lives in — through
+                   another parameter, at any depth, or through a closure — does not change the
+                   parameter.  Reading the argument as a view of the store is a representation
+                   choice, admitted only where nothing the call runs can write a store
+                   (loft#2203).
   (F-ParamHeap)    a heap parameter (a struct / vector / keyed collection) is bound so that the
                    parameter and the caller's argument share the same store: a MUTATION THROUGH
                    the parameter — `p.field = v`, `p[i] = v`, `p.field += …` — IS VISIBLE to the
