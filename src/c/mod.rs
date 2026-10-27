@@ -1075,6 +1075,28 @@ impl Cx<'_> {
         )
     }
 
+    /// Does a call to `d` leave every store's bytes where they are — it claims, frees and
+    /// rewrites no text in any store, at most setting scalars in place?  The verdict the hoist
+    /// holds a vector's base across a call on (`hoist::callee_inputs`): a text argument may
+    /// then view the store it was read from (`FnWriter::text_reads`).
+    pub(crate) fn call_keeps_stores(&self, d: u32) -> bool {
+        let memo = &mut *self.hoist_memo.borrow_mut();
+        let mut active = std::collections::HashSet::new();
+        !crate::opt::writes::call_writes_store(
+            d,
+            self.data,
+            &mut memo.stores_written,
+            &mut active,
+            None,
+        ) || crate::opt::writes::in_place_only_writer(
+            d,
+            self.data,
+            &mut memo.stores_written,
+            &mut active,
+            None,
+        )
+    }
+
     /// The place twin `(d, mask)` is called: it is written with the unit.
     pub(crate) fn request_twin(&self, d: u32, mask: u64) {
         let mut t = self.twins.borrow_mut();

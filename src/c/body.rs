@@ -3309,11 +3309,15 @@ impl<'a> FnWriter<'a> {
     /// operand can disturb (`may_write`) is the field's bytes where the store holds them, as
     /// native's `&str` operand is, not a copy: nothing between the read and the op can grow,
     /// free or rewrite that store.
+    /// `LOFT_NO_FIELD_VIEW=1` copies every such field again.
     fn text_reads(&mut self, args: &[Value], ind: usize) -> Result<Vec<E>, String> {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = *OFF.get_or_init(|| std::env::var("LOFT_NO_FIELD_VIEW").is_ok_and(|v| v != "0"));
         let data = self.cx.data;
         (0..args.len())
             .map(|i| {
-                let field = matches!(args[i].unspan(), Value::Call(d, xs)
+                let field = !off
+                    && matches!(args[i].unspan(), Value::Call(d, xs)
                     if xs.len() == 2 && data.def(*d).name() == "OpGetText");
                 if !field || args[i + 1..].iter().any(|b| self.may_write(b)) {
                     return self.arg(args, i, ind);
@@ -3497,7 +3501,10 @@ impl<'a> FnWriter<'a> {
         let mut xs = vec![String::new(); args.len()];
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
         let values = self.vr_args(args, values, dropped, &tuple_params, &mut xs, ind)?;
-        self.value_args(args, &shapes, &values, &mut xs, ind)?;
+        // A callee that keeps every store in place reads a text argument as a text VALUE op
+        // does — unless a store place goes to a `&` parameter, which its twin writes.
+        let reads = places == 0 && cx.call_keeps_stores(d);
+        self.value_args(args, &shapes, &values, &mut xs, reads, ind)?;
         if let Some(i) = dropped {
             xs.remove(i);
         }
@@ -3566,6 +3573,7 @@ impl<'a> FnWriter<'a> {
         shapes: &[CType],
         values: &[usize],
         xs: &mut [String],
+        reads: bool,
         ind: usize,
     ) -> Result<(), String> {
         let mut rest = Vec::new();
@@ -3585,7 +3593,11 @@ impl<'a> FnWriter<'a> {
             }
         }
         let vals: Vec<Value> = rest.iter().map(|&i| args[i].clone()).collect();
-        let es = self.args(&vals, ind)?;
+        let es = if reads {
+            self.text_reads(&vals, ind)?
+        } else {
+            self.args(&vals, ind)?
+        };
         for (e, &i) in es.into_iter().zip(&rest) {
             xs[i] = as_shape(e, shapes[i])?;
         }
@@ -3641,7 +3653,7 @@ impl<'a> FnWriter<'a> {
             }
         }
         let sig = cx.fn_sig(modes, ret);
-        self.value_args(&args[..shapes.len()], &shapes, &values, &mut xs, ind)?;
+        self.value_args(&args[..shapes.len()], &shapes, &values, &mut xs, false, ind)?;
         let mut list = vec![self.var(v)];
         list.extend(xs);
         let call = format!("loft_call{sig}({})", list.join(", "));
