@@ -502,18 +502,36 @@ static int loft_image_gate(const char *path, const loft_sidecar *sc, const char 
     return loft_image_gate_text(path, text, sc, who);
 }
 
-/* `Store::validate_structure`: the block chain of `words` words from word 1 partitions the image
- * — no zero-size block, none past the end — so nothing walks garbage headers. */
-static int loft_image_structure_ok(const uint8_t *bytes, uint32_t words) {
-    uint32_t pos = LOFT_ST_PRIMARY;
+/* Why `n` bytes are not a whole store image, or 0 when they are (`image_words` and
+ * `Store::validate_structure`, the same words): the signature, the header, whole words — every
+ * writer pads an image to its last block's end, so a file that is not whole words was cut short
+ * (loft#2200) — and a block chain that tiles the file (`(S-Frame)`). */
+static const char *loft_image_refusal(const uint8_t *bytes, size_t n, char *why, size_t cap) {
+    uint32_t sig, pos = LOFT_ST_PRIMARY, words;
+    if (n < 16) return "it is too small to be a store image";
+    memcpy(&sig, bytes, 4);
+    if (sig != LOFT_ST_SIGNATURE) return "it has no store signature";
+    if (n % 8 != 0) {
+        snprintf(why, cap, "its %lu bytes are not whole words \xe2\x80\x94 the image was cut short", (unsigned long) n);
+        return why;
+    }
+    words = (uint32_t) (n / 8);
     while (pos < words) {
         int32_t claim;
         memcpy(&claim, bytes + (size_t) pos * 8, 4);
         uint32_t span = claim < 0 ? (uint32_t) -(int64_t) claim : (uint32_t) claim;
-        if (span == 0 || (uint64_t) pos + span > words) return 0;
+        if (span == 0) {
+            snprintf(why, cap, "zero-size block header at record %lu", (unsigned long) pos);
+            return why;
+        }
+        if ((uint64_t) pos + span > words) {
+            snprintf(why, cap, "record %lu claims %lu words, past the %lu-word store", (unsigned long) pos,
+                     (unsigned long) span, (unsigned long) words);
+            return why;
+        }
         pos += span;
     }
-    return pos == words;
+    return 0;
 }
 
 /* `store_load` (`load_path`), and with `untrusted` `store_load_untrusted`
@@ -656,6 +674,12 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
         }
     }
     fclose(f);
+    /* `store_load` asks for at least the header before it reads (`image_at_least`): a shorter
+     * file is no image and says nothing; the untrusted loader reads it and says why. */
+    if (!untrusted && n < 16) {
+        free(bytes);
+        return 0;
+    }
     long recorded = -1;
     if (sc && sc->types) {
         char *q = loft_cpath(path, 0);
@@ -676,20 +700,15 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
  * rejected first and the slot keeps the store it had. */
 static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted, const loft_sidecar *sc,
                             long recorded, const char *what, const char *who) {
-    uint32_t sig;
-    if (n < 16 || (memcpy(&sig, bytes, 4), sig != LOFT_ST_SIGNATURE)) {
+    char reason[96];
+    const char *bad = loft_image_refusal(bytes, n, reason, sizeof reason);
+    (void) untrusted;
+    if (bad) {
+        fprintf(stderr, "%s: refusing %s \xe2\x80\x94 %s.\n", who, what, bad);
         free(bytes);
         return 0;
     }
-    uint32_t words = (uint32_t) ((n + 7) / 8);
-    if (words < 2) words = 2;
-    bytes = (uint8_t *) realloc(bytes, (size_t) words * 8);
-    if (!bytes) { fputs("loft: out of memory\n", stderr); abort(); }
-    memset(bytes + n, 0, (size_t) words * 8 - n);
-    if (untrusted && !loft_image_structure_ok(bytes, words)) {
-        free(bytes);
-        return 0;
-    }
+    uint32_t words = (uint32_t) (n / 8);
     loft_store_t *s = &loft_stores[r.store_nr];
     /* `adopt_image`: the image's references re-pointed at this slot, read off its own bytes; a
      * refusal leaves the store as it was. */

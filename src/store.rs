@@ -777,6 +777,31 @@ impl Drop for Store {
 /// `std::fs` failing and the host FS holding the file.  Without it a `--html` page could
 /// not read a store at ALL — `store_load` answered `false` for every path, politely and
 /// with nothing to act on (@PLN146 F4).
+/// The words a whole store image of `bytes` holds, or why it is not one: the signature
+/// (`(S-Frame)`), at least the header, a whole number of words — every writer pads the
+/// image to its last block's end, so a file that is not whole words was cut short
+/// (loft#2200) — and within the store limit.
+pub(crate) fn image_words(bytes: &[u8]) -> Result<u32, String> {
+    if bytes.len() < 16 {
+        return Err("it is too small to be a store image".into());
+    }
+    let sig = u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    if sig != SIGNATURE {
+        return Err("it has no store signature".into());
+    }
+    if bytes.len() % 8 != 0 {
+        return Err(format!(
+            "its {} bytes are not whole words — the image was cut short",
+            bytes.len()
+        ));
+    }
+    let words = bytes.len() / 8;
+    if words > MAX_STORE_WORDS as usize {
+        return Err(format!("it exceeds the {MAX_STORE_WORDS}-word store limit"));
+    }
+    Ok(words as u32)
+}
+
 pub(crate) fn image_bytes(path: &str) -> Option<Vec<u8>> {
     match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
@@ -1403,25 +1428,18 @@ impl Store {
     /// on **every** target (wasm has no mmap) and is **not** durable — writes
     /// stay in memory and never touch the file.  @PLN97 arc G Phase 1
     /// ([#522](https://github.com/loft-lang/loft/issues/522)) — the whole-file
-    /// load the wasm / browser working-set path builds on.  Panics on a
-    /// missing / truncated / wrong-signature file (a `read`, an under-16-byte
-    /// image, or a bad `SIGNATURE`); callers that want a clean reject wrap it in
-    /// `catch_unwind` (see `Stores::load_path`).
-    pub fn load(path: &str) -> Store {
-        let bytes = image_bytes(path).expect("store load: cannot read file");
-        assert!(
-            bytes.len() >= 16,
-            "store load: file too small to be a store image"
-        );
-        let sig = u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        assert_eq!(sig, SIGNATURE, "store load: unknown file format");
-        // Round the byte length up to a whole 8-byte word; the copy writes the image and
-        // only the bytes past it are zeroed, so the loaded store is DEFINED.
-        let words = bytes.len().div_ceil(8).max(2) as u32;
-        assert!(
-            words <= MAX_STORE_WORDS,
-            "store load: image exceeds the {MAX_STORE_WORDS}-word store limit"
-        );
+    /// load the wasm / browser working-set path builds on.  Refuses, with the
+    /// reason, a file it cannot read and any file that is not a whole image
+    /// ([`image_words`]: the signature, whole words, the size limit) or whose
+    /// block chain does not tile it ([`Store::validate_structure`]) — a file cut
+    /// short is one of those (loft#2200), and adopting it read zeros and
+    /// whatever followed the arena as data.
+    ///
+    /// # Errors
+    /// Why the file is not a store image.
+    pub fn load(path: &str) -> Result<Store, String> {
+        let bytes = image_bytes(path).ok_or_else(|| "it cannot be read".to_string())?;
+        let words = image_words(&bytes)?;
         let l = Layout::from_size_align(words as usize * 8, 8).expect("Problem");
         let ptr = unsafe { A.alloc(l) };
         // The value used on is the GUARDED one: an allocation that failed is null.
@@ -1482,11 +1500,13 @@ impl Store {
             parse_type: u16::MAX,
             init_shadow: Vec::new(),
         };
+        // `(S-Frame)`: the chain tiles the file, checked before `fl_rebuild` walks it.
+        store.validate_structure()?;
         #[cfg(debug_assertions)]
         store.validate(0);
         store.fl_rebuild();
         store.claims_rebuild();
-        store
+        Ok(store)
     }
 
     /// Adopt an in-memory byte buffer as a store — the slice counterpart of
@@ -1535,21 +1555,20 @@ impl Store {
 
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Store> {
-        if bytes.len() < 16 {
-            return None;
-        }
-        let sig = u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        if sig != SIGNATURE {
-            return None;
-        }
-        let words = bytes.len().div_ceil(8).max(2) as u32;
-        if words > MAX_STORE_WORDS {
-            return None;
-        }
-        let l = Layout::from_size_align(words as usize * 8, 8).ok()?;
+        Self::from_bytes_checked(bytes).ok()
+    }
+
+    /// [`Store::from_bytes`] with the reason a buffer is refused.
+    ///
+    /// # Errors
+    /// Why `bytes` is not a store image.
+    pub fn from_bytes_checked(bytes: &[u8]) -> Result<Store, String> {
+        let words = image_words(bytes)?;
+        let l = Layout::from_size_align(words as usize * 8, 8)
+            .map_err(|_| "its size is not a layout this host can allocate".to_string())?;
         let ptr = unsafe { A.alloc(l) };
         if ptr.is_null() {
-            return None;
+            return Err("there is no memory to hold it".into());
         }
         crate::store_budget::add(u16::MAX, words as usize * 8, 0);
         unsafe {
@@ -1603,13 +1622,11 @@ impl Store {
         // @PLN97 arc G Phase 2 — fail-closed structural validation of an
         // UNTRUSTED buffer, ALWAYS-ON and BEFORE `fl_rebuild`.  A crafted
         // 0-size block or an out-of-bounds record is rejected here (returning
-        // `None`; dropping `store` frees the arena), so `fl_rebuild` never walks
+        // the reason; dropping `store` frees the arena), so `fl_rebuild` never walks
         // garbage headers (the release infinite-loop / heap-over-read hazards).
-        if store.validate_structure().is_err() {
-            return None;
-        }
+        store.validate_structure()?;
         store.fl_rebuild();
-        Some(store)
+        Ok(store)
     }
 
     pub fn init(&mut self) {

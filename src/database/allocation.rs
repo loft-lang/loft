@@ -5343,8 +5343,9 @@ impl Stores {
     /// Load a persisted store image at `path` into `slot`, HEAP-backed.  There is
     /// no mmap, so it works on **every** backend.  The slot's empty store is replaced by a heap
     /// store copied from the file, keeping the slot bookkeeping.  Returns
-    /// `false` on a missing / truncated / wrong-format file (via the
-    /// `Store::load` signature check under `catch_unwind`), never a misread.
+    /// `false` on a missing file, and `false` with the reason on stderr on one that
+    /// is not a whole image (`Store::load`: cut short, another format, a chain that
+    /// does not tile it) — never a misread.
     /// @PLN97 arc G Phase 1 (#522).
     pub fn load_path(&mut self, slot: u16, path: &std::path::Path) -> bool {
         // A relative path is the program's, re-homed against its anchor (`resolve_path`).
@@ -5382,14 +5383,14 @@ impl Stores {
             (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned)
         };
 
-        // Store::load panics on a bad signature / unreadable file — surface
-        // that as a clean `false` instead of crashing the interpreter.
-        let new_store = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::store::Store::load(path_str)
-        }));
-        let mut new_store = match new_store {
+        // A file that is not a whole image — cut short, or another format — is refused
+        // with the reason, never adopted (`(S-Frame)`, loft#2200).
+        let mut new_store = match crate::store::Store::load(path_str) {
             Ok(s) => s,
-            Err(_) => return false,
+            Err(why) => {
+                crate::loft_eprintln!("store_load: refusing {} — {why}.", path.display());
+                return false;
+            }
         };
 
         new_store.set_known_type(preserved.0);
@@ -6778,8 +6779,12 @@ impl Stores {
         }
         let s = &self.allocations[slot as usize];
         let preserved = (s.known_type, s.free, s.created_at, s.last_op_at, s.pinned);
-        let Some(mut new_store) = crate::store::Store::from_bytes(bytes) else {
-            return false;
+        let mut new_store = match crate::store::Store::from_bytes_checked(bytes) {
+            Ok(s) => s,
+            Err(why) => {
+                crate::loft_eprintln!("{builtin}: refusing {what} — {why}.");
+                return false;
+            }
         };
         new_store.set_known_type(preserved.0);
         new_store.free = preserved.1;
