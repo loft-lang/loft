@@ -4277,7 +4277,9 @@ fn run_asan(
 
 /// Faults that end a test inside frames holding texts, for the leak check below: a 10 000-deep
 /// recursion (the hold stack grows), a tuple's texts, and a lazy driver's CONTAINED fault, twenty
-/// times, under a caller whose own text must survive each one.
+/// times, under a caller whose own text must survive each one.  Beside them a passing test whose
+/// generic loop moves a callback's `(integer, text)` into one local per pass: on the build before
+/// the fix every pass but the last left the old tuple's text allocated.
 const HALTS: &str = r#"
 fn down(n: integer) -> text {
   own = "level {n}";
@@ -4332,6 +4334,17 @@ fn test_a_contained_fault_keeps_the_callers_texts() {
 fn test_after_them() {
   s = "after {10 + 1}";
   assert(s == "after 11", "got {s}");
+}
+
+fn app<U>(v: vector<integer>, f: fn(integer) -> U) -> vector<U> {
+  out: vector<U> = [];
+  for c in v { out += [f(c)]; }
+  out
+}
+
+fn test_a_generic_callback_answers_tuples_of_texts() {
+  t = app([1, 2, 3], |x| { (x, "w{x}") });
+  assert(len(t) == 3 && t[0].1 == "w1" && t[2].1 == "w3" && t[1].0 == 2, "{t[1].1}");
 }
 "#;
 

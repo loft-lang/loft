@@ -158,6 +158,9 @@ pub(crate) struct FnWriter<'a> {
     >,
     /// Declarations beside the temporaries: the held vectors.
     decls: Vec<String>,
+    /// `set_stmt` is assigning a tuple local this function owns: a call's tuple moving into it
+    /// frees the old value's texts first (`assign`).
+    frees_old_tuple: bool,
     /// Which variables a statement written so far has bound: a later `Set` is a rebind.
     bound: Vec<bool>,
     /// A generator's element shape (`body::generator`): its `yield`s and its `return` differ.
@@ -394,6 +397,7 @@ impl<'a> FnWriter<'a> {
             },
             complete_mints: None,
             decls: Vec::new(),
+            frees_old_tuple: false,
             // A parameter arrives bound: its first `Set` is a rebind.
             bound: {
                 let vars = def.variables();
@@ -2395,7 +2399,13 @@ impl<'a> FnWriter<'a> {
         if !first && c == CType::Ref && self.displacing_rebind(var, x, &name, ind)? {
             return Ok(());
         }
-        self.assign(x, &name, c, ind)?;
+        // A tuple local this function owns gives up the texts of its old value when a call's
+        // tuple moves in (`assign`); a parameter's or a link's texts are the caller's.
+        let owner = !self.params[var as usize] && !self.links[var as usize];
+        let outer = std::mem::replace(&mut self.frees_old_tuple, owner);
+        let done = self.assign(x, &name, c, ind);
+        self.frees_old_tuple = outer;
+        done?;
         self.flush(ind);
         Ok(())
     }
@@ -2778,6 +2788,27 @@ impl<'a> FnWriter<'a> {
                     && self.temps.iter().any(|(t, _)| *t == e.code)
                 {
                     self.copy_member(&e.code, target, c, ind);
+                    return Ok(());
+                }
+                // A call's tuple moves into the target, which may still hold the texts of the
+                // value it had (a loop body's local, every pass after the first): an owned
+                // local's are freed once the call has run — it may read them — and before the
+                // move.
+                if let CType::Tuple(id) = c
+                    && self.cx.tuple_has_text(id)
+                    && self.frees_old_tuple
+                {
+                    let mut old = Vec::new();
+                    self.tuple_text_leaves(target, id, &mut old);
+                    let frees: String = old
+                        .iter()
+                        .map(|t| format!(" loft_text_free(&{t});"))
+                        .collect();
+                    let value = as_shape(e, c)?;
+                    self.line(
+                        ind,
+                        &format!("{{ {} mv = {value};{frees} {target} = mv; }}", held(c)),
+                    );
                     return Ok(());
                 }
                 let s = match c {
