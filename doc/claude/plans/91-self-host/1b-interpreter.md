@@ -296,7 +296,7 @@ the design rather than loft.  The test is
 - **Not run:** `ir_schema_roundtrip`, which the design named.  It never calls
   `save_bundle`, so it could not move.
 
-### S0.1b — an orphaned sidecar is evicted too — DESIGNED, not built
+### S0.1b — an orphaned sidecar is evicted too — BUILT 2026-10-28
 
 **Found 2026-10-28** in the user's cache: 42 stdlib `.dschema` files beside 16 images.  A
 binary with S0.1 writes a sidecar beside each image; a binary without S0.1's eviction fix
@@ -314,6 +314,11 @@ alone one.
 
 **Tests.**  The two eviction tests gain an orphan: a `.dschema` with no image is removed, a
 sidecar with its image stays, and an orphan of a foreign name stays.
+
+**Built.**  One helper, `prune_orphan_sidecars`, called first by both evictions (before
+either can return early), each with its own name test.  The cells sit in one new test,
+`cache::tests::an_orphaned_sidecar_is_evicted`, not in the two eviction tests.  Falsified:
+with the helper inert, the test fails.
 
 ### S0.2 — `loft --emit-image <out.store> prog.loft` — BUILT 2026-10-27
 

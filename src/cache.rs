@@ -1342,6 +1342,7 @@ fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration
     let Ok(entries) = crate::file_access::read_dir(base) else {
         return;
     };
+    prune_orphan_sidecars(&entries, |stem| stem.starts_with("program-"));
     struct Bundle {
         store: std::path::PathBuf,
         mtime: std::time::SystemTime,
@@ -1412,6 +1413,28 @@ pub fn prune_stdlib_images() {
     prune_stdlib_dir(&cache_base_dir(), KEEP_STDLIB_IMAGES);
 }
 
+/// `@FR-S-Pair` — remove each `<stem>.store.dschema` among `entries` whose `<stem>.store` is
+/// gone, for the stems `is_ours` accepts.  A sidecar alone is one an eviction without this
+/// clause left behind when it removed the image, and nothing reads it.  The writer renames
+/// the image into place BEFORE its sidecar, so a live pair is never a lone sidecar.
+fn prune_orphan_sidecars(entries: &[crate::file_access::PathText], is_ours: impl Fn(&str) -> bool) {
+    for entry in entries {
+        let Some(name) = entry.parts().last() else {
+            continue;
+        };
+        let Some(store_name) = name.strip_suffix(".dschema") else {
+            continue;
+        };
+        if !store_name.strip_suffix(".store").is_some_and(&is_ours) {
+            continue;
+        }
+        let sidecar = entry.os_spelling();
+        if !crate::file_access::exists(sidecar.with_file_name(store_name)) {
+            let _ = crate::file_access::remove_file(&sidecar);
+        }
+    }
+}
+
 /// [`prune_stdlib_images`] against an explicit directory, for the tests.  Only a
 /// `stdlib-<64 hex>.store` name is considered.
 fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
@@ -1419,6 +1442,10 @@ fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
     let Ok(entries) = fa::read_dir(fa::PathText::from_os(base)) else {
         return;
     };
+    prune_orphan_sidecars(&entries, |stem| {
+        stem.strip_prefix("stdlib-")
+            .is_some_and(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))
+    });
     let mut images: Vec<(std::time::SystemTime, fa::PathText)> = entries
         .into_iter()
         .filter(|p| {
@@ -2081,6 +2108,59 @@ mod tests {
             "a program bundle is left alone"
         );
         let _ = fa::remove_dir_all(&root);
+    }
+
+    /// `@FR-S-Pair` (S0.1b) — a sidecar whose image an older eviction removed is evicted by
+    /// both prunes; a sidecar beside its image, and a lone sidecar of a name the prune does not
+    /// own, stay.
+    #[test]
+    fn an_orphaned_sidecar_is_evicted() {
+        use crate::file_access as fa;
+        let dir = std::env::temp_dir().join(format!("loft_orphan_side_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&dir);
+        fa::create_dir_all(&dir).unwrap();
+        let hex = |i: u8| format!("{i:02x}").repeat(32);
+        let files = [
+            format!("program-kept.store"),
+            format!("program-kept.store.dschema"),
+            format!("program-gone.store.dschema"),
+            format!("stdlib-{}.store", hex(1)),
+            format!("stdlib-{}.store.dschema", hex(1)),
+            format!("stdlib-{}.store.dschema", hex(2)),
+            "mine.store.dschema".to_string(),
+            "stdlib-zzz.store.dschema".to_string(),
+        ];
+        for f in &files {
+            fa::write(dir.join(f), b"x").unwrap();
+        }
+        prune_dir(&dir, u64::MAX, std::time::Duration::from_hours(24 * 365));
+        prune_stdlib_dir(&dir, 8);
+        let here = |f: &str| fa::exists(dir.join(f));
+        assert!(
+            !here("program-gone.store.dschema"),
+            "a program image's orphan goes"
+        );
+        assert!(
+            !here(&format!("stdlib-{}.store.dschema", hex(2))),
+            "a stdlib image's orphan goes"
+        );
+        assert!(
+            here("program-kept.store.dschema"),
+            "a sidecar beside its image stays"
+        );
+        assert!(
+            here(&format!("stdlib-{}.store.dschema", hex(1))),
+            "and the stdlib one"
+        );
+        assert!(
+            here("mine.store.dschema"),
+            "a sidecar of a name the prune does not own stays"
+        );
+        assert!(
+            here("stdlib-zzz.store.dschema"),
+            "a foreign stdlib-like name stays"
+        );
+        let _ = fa::remove_dir_all(&dir);
     }
 
     #[test]
