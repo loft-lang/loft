@@ -201,20 +201,34 @@ plain enum) holds the place's address, as `--native` does; a narrow or a text pl
 that way is refused.  A text result's hidden buffer is a link the caller makes for the call.  A
 rebind of a `&` record releases the record it displaces.
 
-**Held vectors.**  Before a loop, each vector `opt::header::hoistable_vectors` admits — a loop
-that writes no store but in place, so no record moves and no length changes — is held in a
-`loft_vh` (store, record, length, element base), and the loop's element reads and in-place
-writes go through it.  Each held access carries `LOFT_PROVED(loft_vh_same(…))`, so
-`LOFT_VERIFY` catches a held vector that changed.  `LOFT_NO_VECTOR_HOIST=1` holds none and
-`LOFT_NO_WRITE_HOIST=1` none in a loop that writes, as for the Rust writer.
+**Held vectors.**  Before a loop the C asks native's loop verdict, `generation::hoist::hoistable`,
+with native's tier switches (`lower::switches`), and holds each vector it names in a `loft_vh`
+(store, record, length, element base); the loop's element reads, in-place writes and `len` go
+through it.  The verdict names the vectors the body indexes and the ones an admitted callee —
+store-free or writing only in place — indexes (`@FR-R-Inputs`): such a call goes to the callee's
+`__inv` twin (`INV_BIT` in the twin mask), which takes the caller's headers as parameters and
+serves its own accesses from them.  A loop that grows a store (a push, a mint, a text set) keeps
+the record and the length, which no growth moves; it keeps the base only of a vector whose store
+`StoreFacts` proves apart from every store it grows (`@FR-R-Base`), and derives every other
+base again at each access (`loft_vh_fresh`, one load).  A loop that grows the return buffer and
+would hold a parameter's vectors if their stores were apart is written twice (`@FR-R-Alias`'s
+versioned clause, native's `distinct_version`): the copy assuming them apart runs when a test
+of the store numbers says so at its entry, the plain one otherwise.  Each held access carries
+`LOFT_PROVED(loft_vh_same(…))`, so `LOFT_VERIFY` catches a held vector that changed.
+`LOFT_NO_VECTOR_HOIST=1` holds none, `LOFT_NO_CALLEE_INPUTS=1` writes no twin,
+`LOFT_NO_DISTINCT_VERSION=1` no second copy and `LOFT_NO_DISTINCT_GROWTH=1` keeps no base under
+growth, as for the Rust writer; `tests/c_emit.rs`
+(`a_loop_holds_its_callees_headers_and_rederives_a_base_under_growth`) counts each form against
+hand-computed values under `LOFT_VERIFY` and AddressSanitizer.
 
 **Adopted return buffers.**  A vector-returning function whose result local is delivered
 through the hidden return buffer builds in that buffer (`@FR-R-RetAdopt`): the C reads the Rust
 writer's own analysis, `generation::hoist::ret_adopt`.  The local's bind is the buffer — minted
 as its witness would have been when the caller offered none, emptied when it did — the witness
-store is never minted, and the exit's clear-and-append copy emits nothing.  The held-vector gate
-above stays sound: it holds nothing across a loop that grows a store, so a buffer that shares a
-parameter's store moves no held record.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies, as for the
+store is never minted, and the exit's clear-and-append copy emits nothing.  The held vectors
+above stay sound beside it: the verdict knows the adopted local as the buffer (`StoreFacts`'
+`adopted`), and a parameter's vector is held across the buffer's growth only in the versioned
+copy, whose entry tested the stores apart.  `LOFT_NO_RETBUF_ADOPT=1` keeps the copies, as for the
 Rust writer; `tests/c_emit.rs` counts the adopted binds both ways against hand-computed values.
 
 **Push windows.**  A counted push loop the Rust writer's admission passes

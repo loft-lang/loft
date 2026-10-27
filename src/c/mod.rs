@@ -184,7 +184,25 @@ pub(crate) struct Cx<'a> {
     /// The place twins the unit calls (`twin_name`): a function by definition number, with
     /// the mask of its `&` parameters that receive a store place rather than a variable.
     twins: std::cell::RefCell<Vec<(u32, u64)>>,
+    /// The compiled-target rewrite switches (`LOFT_NO_*`), read once, as native reads them.
+    pub(crate) switches: crate::lower::switches::Switches,
+    /// The loop verdict's memos shared across the unit (`hoist::hoistable`,
+    /// `hoist::callee_inputs`): which callees write a store, their write sets, their inputs.
+    pub(crate) hoist_memo: std::cell::RefCell<HoistMemo>,
 }
+
+/// The memos [`Cx::hoist_memo`] keeps.
+#[derive(Default)]
+pub(crate) struct HoistMemo {
+    pub(crate) writes: crate::opt::body_writes::WriteCache,
+    pub(crate) inputs: crate::generation::hoist::InputCache,
+    pub(crate) stores_written: std::collections::HashMap<u32, bool>,
+}
+
+/// The mask bit of an `__inv` twin (`@FR-R-Inputs`): the function written again taking the
+/// headers its caller holds for the vectors it indexes (`hoist::callee_inputs`).  The bits
+/// below it are the place mask, one per `&` parameter.
+pub(crate) const INV_BIT: u64 = 1 << 63;
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
@@ -232,6 +250,8 @@ impl<'a> Cx<'a> {
             sql_plans: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
+            switches: crate::lower::switches::Switches::from_env(),
+            hoist_memo: std::cell::RefCell::new(HoistMemo::default()),
         }
     }
 
@@ -898,15 +918,41 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// instances, `parser/store_text.rs`): the function written again with each `&`
 /// parameter whose bit is set receiving a store place (a field, an element) as a `loft_ref`
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
+/// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    if mask == 0 {
-        c_name(data, d)
+    let places = mask & !INV_BIT;
+    let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
+    if places == 0 {
+        format!("{}{inv}", c_name(data, d))
     } else {
-        format!("{}_pl{mask}", c_name(data, d))
+        format!("{}_pl{places}{inv}", c_name(data, d))
     }
 }
 
 impl Cx<'_> {
+    /// `d`'s invariant inputs (`@FR-R-Inputs`, `hoist::callee_inputs`): the vectors it indexes
+    /// that a caller holding their headers may hand it.  `None` when it has none, under
+    /// `LOFT_NO_CALLEE_INPUTS=1` / `LOFT_NO_VECTOR_HOIST=1`, or when it is not a loft body.
+    pub(crate) fn callee_inputs(
+        &self,
+        d: u32,
+    ) -> Option<std::rc::Rc<crate::generation::hoist::CalleeInputs>> {
+        if self.switches.callee_inputs_disabled
+            || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
+        {
+            return None;
+        }
+        let memo = &mut *self.hoist_memo.borrow_mut();
+        crate::generation::hoist::callee_inputs(
+            d,
+            self.data,
+            self.stores,
+            &mut memo.stores_written,
+            &mut memo.writes,
+            &mut memo.inputs,
+        )
+    }
+
     /// The place twin `(d, mask)` is called: it is written with the unit.
     pub(crate) fn request_twin(&self, d: u32, mask: u64) {
         let mut t = self.twins.borrow_mut();
@@ -1701,8 +1747,9 @@ fn anchor(stores: &Stores) -> String {
 }
 
 /// The signature and the body of function `d`.
-fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
+fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
+    let places = mask & !INV_BIT;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -1772,15 +1819,29 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
             }
         })
         .collect();
+    // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
+    // them; its body serves those vectors' accesses from them as a loop's held headers.
+    let mut params = params;
+    let mut inputs: Vec<(crate::opt::writes::PathKey, String, bool)> = Vec::new();
+    if mask & INV_BIT != 0 {
+        let fi = cx
+            .callee_inputs(d)
+            .filter(|fi| !fi.headers.is_empty())
+            .ok_or("an __inv twin of a function with no header inputs")?;
+        for (k, (p, offs, _)) in fi.headers.iter().enumerate() {
+            params.push(format!("loft_vh hi{k}"));
+            inputs.push(((*p, offs.clone()), format!("hi{k}"), true));
+        }
+    }
     let params = if params.is_empty() {
         "void".to_string()
     } else {
         params.join(", ")
     };
-    let name = twin_name(data, d, places);
+    let name = twin_name(data, d, mask);
     let sig = format!("static {} {name}({params})", held(ret));
     if let Type::Iterator(elem, _) = def.returned().base() {
-        if places != 0 {
+        if mask != 0 {
             return Err("a generator handed a store place for a & parameter".into());
         }
         // A tuple rides the frame as a struct copy, a move; a yield copies its texts into the
@@ -1798,6 +1859,7 @@ fn function(cx: &Cx, d: u32, places: u64) -> Result<(String, String), String> {
     }
     let body = body::FnWriter::new(cx, d, shapes, ret)
         .places(places)
+        .inputs(inputs)
         .write()?;
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call

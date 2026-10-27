@@ -1641,6 +1641,14 @@ LOFT_HOT_INLINE loft_vh loft_vh_of(loft_ref v) {
     return h;
 }
 
+/* A header held by a loop that grows a store: the record and the length stand (no growth moves
+ * another vector's record or changes its length, `@FR-R-Base`), the store's memory may have
+ * moved, so the base is derived again from the held record — one load, no record walk. */
+LOFT_HOT_INLINE loft_vh loft_vh_fresh(loft_vh h) {
+    if (h.rec != 0) h.base = loft_elem_base(&loft_stores[h.store_nr], h.rec);
+    return h;
+}
+
 /* (R-Header)'s proof, checked under LOFT_VERIFY at every held access: the vector still has the
  * record, length and base it was held with. */
 static int loft_vh_same(loft_vh h, loft_ref v) {
