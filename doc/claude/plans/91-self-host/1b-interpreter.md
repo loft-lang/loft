@@ -29,7 +29,7 @@ It holds four constraints:
    decisions (every free, every copy) are already in the IR. The interpreter carries them
    out and never derives them again.
 2. **The same types.**  The interpreter reads the bundle as the records
-   `tools/ir_schema/ir.loft` declares (`Bundle`, `Data`, `Definition`, `Node`, `TypeT`,
+   `selfhost/src/ir.loft` declares (`Bundle`, `Data`, `Definition`, `Node`, `TypeT`,
    `DbType`, …): the compiler's own IR vocabulary, used verbatim.  There is no second IR,
    so the `lib/code.loft` sketch is not a starting point.
 3. **The same syntax.**  The language it runs is loft as it is.  When the loft-written
@@ -528,6 +528,40 @@ has it).
 **Not in this step:** sharing downward, beyond one level up, or across sibling directories.
 Each can be widened later if a real program asks for it; a widening is a relaxation.
 
+### S0.3b — a file never `use`s itself (fixes X12) — DESIGNED, not built
+
+**Found by S0.3.**  `selfhost/tests/load.loft` says `use load;` and every `load::…` read
+*"Unknown function"*: the import bound the TEST FILE itself.  It is on `main` (2026.10.0), and
+it breaks the layout PACKAGES.md documents (`tests/draw.loft` testing module `draw`).
+
+**Cause.**  loft#976's rule says a bare `use <module>` inside a package binds the package's
+own `src/<module>.loft`.  The code that finds that file, `Parser::own_module_path`
+(`src/parser/imports.rs:822`), looks beside the CURRENT FILE (`<dir>/<id>.loft`,
+`<dir>/lib/<id>.loft`): right for a file in `src/`, but from `tests/load.loft` the first
+candidate is the file itself.  A file is never its own module, and the rule's home is
+`src/`.
+
+**Fix.**  `own_module_path` never answers the current file, and after the two
+current-directory candidates it asks the package root's `src/<id>.loft`.  The root comes
+from `resolution_scope::project_root`, the one home of "the package a file is in", which the
+same `use` code already asks (`src/parser/mod.rs:~2465`).  The order keeps a file in `src/`
+exactly as it is.
+
+**Matrix (measured on `main` before the fix):**
+- M1 `pkg/tests/load.loft` says `use load;`, with `src/load.loft` present: the bug.  Must bind
+  `src/load.loft`.
+- M2 `pkg/tests/loader.loft` says `use load;`: works today through the flat library route.
+  Must keep working, now through the own-module route.
+- M3 `pkg/src/other.loft` says `use load;` for a sibling: works.  Unchanged.
+- M4 a script outside any package, named like the `--lib` library it uses: works (the
+  advice names the clash, the library wins).  Untouched: no package, no own-module rule.
+- M5 `pkg/tests/pkg.loft` says `use pkg;`, the package's own name: works through the
+  special case beside the rule.  Unchanged.
+
+**Tests.**  `tests/module_name_clash.rs`, beside loft#976's cells: M1 and M2 as `loft test`
+runs of a package; M3 and M5 stay covered by the cells there.  The selfhost package's own
+test then runs as S0.3 designed it.
+
 ### S0.3 — the bundle opens in loft — DESIGNED, next
 
 **What.**  The first loft code of the strand: a `selfhost` package whose module `load` opens
@@ -647,6 +681,7 @@ fn test_an_image_opens_as_the_ir() {
 | **X9** | no `in` operator and no set of scalars (@PLN179 015); `{4 in ks}` fails as *"Formatter error"* | friction; the message is a wrong-error finding of its own | `contains` serves; the message should say there is no `in` |
 | **X10** | capturing closures cannot sit in a collection (@C116); no local recursive `fn` (@C63) | by design — costed | not expected to bite: the dispatch table holds plain fn-refs |
 | **X11** | a read-only cache directory crashed every cold run, and every warm load from it, with an internal compiler error (`Store::open` panics) | **bug — fixed in S0.2** | `Store::try_open`; a read surface that cannot be opened is a miss (§ Steps, S0.2) |
+| **X12** | inside a package, a file named like one of its modules (`tests/load.loft`) gets ITSELF for `use load;`, so every name reads "Unknown function" (on `main`) | **bug — S0.3b** | `own_module_path` never answers the current file, and asks the package's `src/` (§ Steps, S0.3b) |
 
 ### New constructs taken from OCaml's type expressions
 
