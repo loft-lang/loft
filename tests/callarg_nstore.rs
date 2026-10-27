@@ -252,6 +252,138 @@ fn guard_clause_narrows_native_585() {
     assert_guard_585("--native");
 }
 
+// ── `@FR-N-Guard`: an `assert` narrows like a guard clause (@PLN91 S0.3d, X13) ──────────────
+//
+// A failed `assert` halts, and `assert` is checked in every build, so its condition holds on the
+// fall-through, which is what a guard clause's fall-through proves.  Both lowerings count: a
+// constant message (a call to `n_assert`) and a built one (the `"assert"` block).  The boundary
+// matches the guard's: a test that proves the NULL case, a reassignment after the assert, and an
+// assert inside a conditional all leave the later use warning.
+
+const A_CONST_MSG: &str = "fn sink(s: text) -> integer { len(s) }\n\
+fn f(s: text?) -> integer { assert(s != null, \"s\"); sink(s) }\n\
+fn main() { x = f(\"hi\"); print(\"x={x}\"); }\n";
+const A_BUILT_MSG: &str = "fn sink(s: text) -> integer { len(s) }\n\
+fn f(s: text?, k: integer) -> integer { assert(s != null, \"s at {k}\"); sink(s) }\n\
+fn main() { x = f(\"hi\", 3); print(\"x={x}\"); }\n";
+const A_TRUTHY: &str = "fn sink(s: text) -> integer { len(s) }\n\
+fn f(s: text?) -> integer { assert(s, \"s\"); sink(s) }\n\
+fn main() { x = f(\"hi\"); print(\"x={x}\"); }\n";
+
+const AW_NULL_CASE: &str = "fn sink(s: text) -> integer { len(s) }\n\
+fn f(s: text?) -> integer { assert(s == null, \"s\"); sink(s) }\n\
+fn main() { x = f(null); print(\"x={x}\"); }\n";
+const AW_REASSIGNED: &str = "fn sink(s: text) -> integer { len(s) }\n\
+fn f(s: text?) -> integer { t = s; assert(t != null, \"t\"); t = s; sink(t) }\n\
+fn main() { x = f(\"hi\"); print(\"x={x}\"); }\n";
+const AW_NESTED_COND: &str = "fn sink(s: text) -> integer { len(s) }\n\
+fn f(s: text?, b: boolean) -> integer { if b { assert(s != null, \"s\"); } sink(s) }\n\
+fn main() { x = f(\"hi\", true); print(\"x={x}\"); }\n";
+
+fn assert_narrows(backend: &str) {
+    for (body, tag) in [
+        (A_CONST_MSG, "a_const_msg"),
+        (A_BUILT_MSG, "a_built_msg"),
+        (A_TRUTHY, "a_truthy"),
+    ] {
+        let (ok, warns, out) = run(body, backend, true, &format!("{tag}_{backend}"));
+        assert!(
+            ok && out == "x=2",
+            "[{backend}] `{tag}` must compile and run: {out}"
+        );
+        assert_eq!(
+            warns, 0,
+            "[{backend}] `{tag}`: an assert proves the var non-null on the fall-through"
+        );
+    }
+    for (body, tag) in [
+        (AW_NULL_CASE, "aw_null_case"),
+        (AW_REASSIGNED, "aw_reassigned"),
+        (AW_NESTED_COND, "aw_nested_cond"),
+    ] {
+        let (_, warns, _) = run(body, backend, true, &format!("{tag}_{backend}"));
+        assert_eq!(
+            warns, 1,
+            "[{backend}] `{tag}`: the var may still be null here — the warning must still fire"
+        );
+    }
+}
+
+#[test]
+fn an_assert_narrows_like_a_guard_clause_interpret() {
+    assert_narrows("--interpret");
+}
+
+#[test]
+fn an_assert_narrows_like_a_guard_clause_native() {
+    assert_narrows("--native");
+}
+
+/// `@FR-N-Guard` — the same assert feeds the guard clause's three other families: an index it
+/// bounds, a divisor it proves non-zero, an operand it proves non-negative.  Each reads exactly
+/// as its guard-clause spelling: no diagnostic, the same value.
+#[test]
+fn an_assert_feeds_the_index_divisor_and_sign_proofs() {
+    let cells = [
+        (
+            "fn f(v: vector<integer>, i: integer) -> integer { CHECK x: integer = v[i]; x }\nfn main() { print(\"{f([4, 5, 6], 1)}\"); }\n",
+            "if i < 0 or i >= len(v) { return 0; }",
+            "assert(i >= 0 and i < len(v), \"i\");",
+            "5",
+        ),
+        (
+            "fn g(a: integer, d: integer) -> integer { CHECK q: integer = a / d; q }\nfn main() { print(\"{g(9, 3)}\"); }\n",
+            "if d == 0 { return 0; }",
+            "assert(d != 0, \"d\");",
+            "3",
+        ),
+        (
+            "fn h(x: float) -> float { CHECK r: float = sqrt(x); r }\nfn main() { print(\"{h(16.0)}\"); }\n",
+            "if x < 0.0 { return 0.0; }",
+            "assert(x >= 0.0, \"x\");",
+            "4",
+        ),
+    ];
+    for (i, (template, guard, assertion, value)) in cells.iter().enumerate() {
+        let diagnostics = |check: &str, tag: &str| {
+            let script =
+                std::env::temp_dir().join(format!("loft_ng_{}_{i}_{tag}.loft", std::process::id()));
+            fa::write(&script, template.replace("CHECK", check)).expect("write script");
+            let out = loft::platform::process::harness_command(loft_bin())
+                .arg("--interpret")
+                .arg(&script)
+                .current_dir(workspace_root())
+                .env("LOFT_TIMEOUT", "120")
+                .env("LOFT_NO_CACHE", "1")
+                .output()
+                .expect("run loft");
+            let _ = fa::remove_file(&script);
+            let err = String::from_utf8_lossy(&out.stderr).into_owned();
+            let count = err
+                .lines()
+                .filter(|l| l.starts_with("warning") || l.starts_with("advice"))
+                .count();
+            (count, String::from_utf8_lossy(&out.stdout).into_owned())
+        };
+        let (none, _) = diagnostics("", "none");
+        let (guarded, guard_out) = diagnostics(guard, "guard");
+        let (asserted, assert_out) = diagnostics(assertion, "assert");
+        assert!(
+            none > 0,
+            "cell {i}: the unchecked form must be diagnosed, or the cell is vacuous"
+        );
+        assert_eq!(guarded, 0, "cell {i}: the guard clause proves it");
+        assert_eq!(
+            asserted, 0,
+            "cell {i}: the assert proves what the guard proves"
+        );
+        assert!(
+            guard_out == *value && assert_out == *value,
+            "cell {i}: {guard_out} / {assert_out}"
+        );
+    }
+}
+
 // ── OK: discharged arg, τ? param, null-transparent fn — all silent ────────────────────────────
 
 // @speed 1.6

@@ -313,6 +313,10 @@ use arguments as args;               // library alias → `args::parse_args` (qu
   Prefer it over `pub` on every field of a type shared inside one component; keep `pub` for
   what the component offers outside.  A used file may say `#package`, never `#cwd`/`#link`.
 - `use lib as m;` gives a qualifier alias only (`m::fn`); it does not wildcard-import.
+- **A null test that leaves narrows**: after `if v == null { return …; }` or `assert(v != null,
+  …)`, `v` reads as present to the end of the block (until it is assigned again); no `?? d`
+  needed.  The same holds for an index bound, a non-zero divisor and a non-negative `sqrt`
+  operand proven by an `if … { return }` or an `assert`.
 - A qualified `lib::fn()` auto-loads the library — an explicit `use` is optional for
   qualified access.
 

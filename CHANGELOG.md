@@ -176,6 +176,12 @@ and import them, as if they were `pub`.  A package's tests are part of it: anyth
 `tests/` sees what its `src/` shares.  Nothing further away sees anything new, and a `pub use`
 still passes on only what is `pub`.
 
+**`assert(x != null, …)` proves `x` is there, as `if x == null { return; }` already did.**  A
+failed assert stops the program, so after it the value reads as present for the rest of the block:
+a test no longer warns that a nullable value reaches a non-null parameter right after asserting
+it is not null.  It proves an index in bounds, a divisor non-zero and a square root's operand
+non-negative the same way.
+
 **`loft --emit-image out.store prog.loft` writes a program's compiled IR and runs nothing.**
 The image is the one the startup cache keeps for the program, with its `.dschema` sidecar
 beside it, so a loft program can `store_load` it through the IR's own types

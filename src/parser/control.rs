@@ -1288,6 +1288,34 @@ impl Parser {
                     self.math_sign_proven.push((v, sg));
                 }
             }
+            // `@FR-N-Guard` — an `assert` proves its condition on the fall-through: a failed
+            // assert halts, and it is checked in every build.  So it feeds the same four
+            // families as the guard clause above, from the condition's THEN side.
+            if let Some(test) = self.assert_condition(&n) {
+                let test = test.clone();
+                if let Some((v, true)) = self.narrowing_from_condition(&test)
+                    && !self.narrowed_non_null.contains(&v)
+                {
+                    self.narrowed_non_null.push(v);
+                }
+                let caps = std::collections::HashMap::new();
+                for pair in crate::parser::operators::collect_guard_pairs(&test, &self.data, &caps)
+                {
+                    if !self.index_bounded.contains(&pair) {
+                        self.index_bounded.push(pair);
+                    }
+                }
+                if let Some((v, true)) = self.divisor_proof_from_condition(&test)
+                    && !self.divisor_nonzero.contains(&v)
+                {
+                    self.divisor_nonzero.push(v);
+                }
+                if let Some((v, sg, true)) = self.math_sign_proof_from_condition(&test)
+                    && !self.math_sign_proven.iter().any(|(slot, _)| *slot == v)
+                {
+                    self.math_sign_proven.push((v, sg));
+                }
+            }
             if let Value::Insert(ls) = n {
                 let spliced = !ls.is_empty();
                 Self::move_insert_elements(&mut l, ls);
@@ -5235,6 +5263,24 @@ impl Parser {
     /// Returns `(var, non_null_in_then)`: `v != null` / `if v` (truthy) narrow `v` in the
     /// THEN branch (`true`); `v == null` narrows `v` in the ELSE branch (`false`). The null
     /// side of a comparison is any `OpConv*FromNull()` (the parser's typed-null lowering).
+    /// `@FR-N-Guard` — the condition an `assert` statement proves on its fall-through, in either
+    /// lowering [`Parser::parse_call_diagnostic`] gives it: a call to `n_assert`, or the
+    /// `"assert"` block that tests the condition before building a message.  `None` for any
+    /// other statement.
+    fn assert_condition<'v>(&self, n: &'v Value) -> Option<&'v Value> {
+        match n.unspan() {
+            Value::Call(d, args) if *d == self.data.def_nr("n_assert") => args.first(),
+            Value::Block(bl) if bl.name == "assert" => match bl.operators.as_slice() {
+                [only] => match only.unspan() {
+                    Value::If(test, _, _) => Some(test),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub(crate) fn narrowing_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         // `if v` BEFORE the boolean conversion is materialised — the same truthy test as the
         // `OpConvBoolFrom*` arm below, just earlier in the pipeline.  PASS 1 leaves the
