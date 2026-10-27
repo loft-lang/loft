@@ -28,13 +28,25 @@ fn is_copy(v: &Value) -> bool {
     matches!(v.unspan(), Value::Block(b) if b.name == TEXT_ARG_COPY)
 }
 
-/// The view a copy block was made from: its `OpAppendText(work, view)`'s second operand.
-fn view_of(v: &Value) -> Option<&Value> {
+/// The view a copy block was made from — only while the block is still the three statements
+/// the parser wrote (`work = ""; OpAppendText(work, view); work`).  The scope pass may have
+/// lifted a temporary into it that is freed before the call (`__lift = parse_errors_of(u); …;
+/// OpFreeRef(__lift)`): then the view's source dies first, and the copy is what holds it.
+fn view_of<'a>(v: &'a Value, data: &Data) -> Option<&'a Value> {
     let Value::Block(b) = v.unspan() else {
         return None;
     };
-    match b.operators.get(1)?.unspan() {
-        Value::Call(_, a) => a.get(1),
+    let [Value::Set(w, _), append, Value::Var(r)] = b.operators.as_slice() else {
+        return None;
+    };
+    match append.unspan() {
+        Value::Call(op, a)
+            if w == r
+                && data.def(*op).name() == "OpAppendText"
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if x == w) =>
+        {
+            a.get(1)
+        }
         _ => None,
     }
 }
@@ -47,16 +59,16 @@ fn rewrite(node: &mut Value, data: &Data, vars: &Function, cache: &mut HashMap<u
     if !args.iter().any(is_copy) {
         return;
     }
-    let views: Vec<Value> = args
-        .iter()
-        .map(|a| {
-            if is_copy(a) {
-                view_of(a).cloned().unwrap_or(Value::Null)
-            } else {
-                a.clone()
-            }
-        })
-        .collect();
+    let mut views = Vec::with_capacity(args.len());
+    for a in args.iter() {
+        if !is_copy(a) {
+            views.push(a.clone());
+        } else if let Some(v) = view_of(a, data) {
+            views.push(v.clone());
+        } else {
+            return;
+        }
+    }
     let probe = Value::Call(*d, views);
     // Judged with the caller's variables, so the hidden `&text` buffer a text-returning callee
     // is handed (`OpCreateStack` of a text local) reads as the frame address it is.

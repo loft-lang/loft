@@ -43,8 +43,15 @@ impl Parser {
     /// [`Parser::copy_store_text_args`] for a call whose parameter types are `params` — also
     /// the call through a function value, whose callee is a run-time fact.
     pub(super) fn copy_store_text_args_to(&mut self, params: &[Type], actual: &mut [Value]) {
+        // Only a function body has a frame to hold the copy: a struct field's default
+        // (`len($.name)`) is parsed in the struct's own context.
+        if self.data.def_type(self.context) != DefType::Function {
+            return;
+        }
         for (arg, param) in actual.iter_mut().zip(params) {
-            if !matches!(param, Type::Text(_)) || !store_text_view(&self.data, arg) {
+            if !matches!(param.peel_optional().0, Type::Text(_))
+                || !store_text_view(&self.data, arg)
+            {
                 continue;
             }
             let w = self.vars.work_text_p2(&mut self.lexer);
