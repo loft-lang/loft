@@ -684,9 +684,13 @@ fn branch_arm_stores(v: &Value, function: &Function, out: &mut Vec<u16>) {
             branch_arm_stores(t, function, out);
             branch_arm_stores(e, function, out);
         }
+        // @FR-O-Proxy asks free — an arm the frame owns is handed to the capturing closure,
+        // which then releases it instead of the frame; @FR-O-Override's never-free veto
+        // answers first.
         Value::Var(x)
             if function.name(*x).starts_with("__")
                 && !function.is_argument(*x)
+                && !function.is_skip_free(*x)
                 && function.tp(*x).depend().is_empty()
                 && function.tp(*x).base().heap_def_nr().is_some() =>
         {
