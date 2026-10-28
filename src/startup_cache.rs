@@ -500,17 +500,10 @@ pub fn warm_load_program(
     // same prebuilt-or-auto-build freshness check a cold parse runs (a loft
     // rebuild still triggers the package rebuild).  Any failure → treat the
     // whole thing as a cache miss and let the cold path report it.
-    let mut native_libs = Vec::new();
-    for (stem, pkg_dir) in &state.native_lib_regs {
-        let Some(path) = crate::interp::extensions::resolve_native_lib(pkg_dir, stem) else {
-            return warm_miss(&format!(
-                "native library {stem} in {pkg_dir} does not resolve"
-            ));
-        };
-        if !native_libs.contains(&path) {
-            native_libs.push(path);
-        }
-    }
+    let native_libs = match resolve_native_libs(&state.native_lib_regs) {
+        Ok(libs) => libs,
+        Err(why) => return warm_miss(&why),
+    };
     // @PLN11 Arc N / N1 — touch-on-use: a warm hit marks the bundle recently-used
     // so the idle-TTL GC keeps actively-run programs and ages out one-offs.
     crate::cache::touch_now(&bundle);
@@ -614,6 +607,24 @@ pub fn warm_load_program(
         eprintln!("[warm] hit: {}", bundle.display());
     }
     Some(state.user_def_start.unwrap_or_else(|| p.data.definitions()))
+}
+
+/// Each `[library] native` registration's library path, deduplicated in registration order, or
+/// why one no longer resolves (a warm miss: the cold parse would resolve it again).
+#[cfg(feature = "mmap")]
+fn resolve_native_libs(regs: &[(String, String)]) -> Result<Vec<String>, String> {
+    let mut libs = Vec::new();
+    for (stem, pkg_dir) in regs {
+        let Some(path) = crate::interp::extensions::resolve_native_lib(pkg_dir, stem) else {
+            return Err(format!(
+                "native library {stem} in {pkg_dir} does not resolve"
+            ));
+        };
+        if !libs.contains(&path) {
+            libs.push(path);
+        }
+    }
+    Ok(libs)
 }
 
 /// The parse-time `Data` state the IR bundle does not carry, replayed on a warm hit exactly as
