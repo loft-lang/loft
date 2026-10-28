@@ -3032,7 +3032,18 @@ instance 4, `LOFT_TRACE_APART=1`).  Instance 4 measured on dryopea `truncate_to`
 µs inlined the boundary with the layout's constants; the built form asks the element type's
 plan at run time.  Instance 4's guard `tests/scripts/158-apart-records.loft`, its pins
 `tests/apart_records.rs`; like instance 2 it is made only where no live tier ships
-(`--ship`).  Not admitted yet: an
+(`--ship`).  The C takes instances 2, 3 and 4 from the same plans, in every C build (it has no
+live tier), and declares no apart value as a record — `expr` answers its C value, so a mention
+no clause rewrote is a C type error, never a wrong value.  Instance 2 (`c::body::apart_value`):
+a `loft_ap_<T>` struct of `double[N]` fields; an `__apv` twin answers it through `loft_apo` and
+takes record parameters as `const` pointers; a region's `return` is `loft_ap_store`, the
+constructor's steps into the function's buffer.  Instance 3 (`c::body::apart`): a `loft_apvec`
+of 64 inline elements and a spill the frame frees with its texts; only the paths rooted at an
+apart value lose their headers and windows (`mesh_emit` −4 % / −6 % instructions under GCC /
+Clang).  Instance 4: each field a `loft_text` byte buffer, an `__apr` twin taking them, and
+the boundaries `loft_apart_write_fresh` and `loft_rotate_from_parts` (`truncate_to` −72 %
+under GCC, −70 % under Clang).  The C's elements answer what its store path answers: an
+index out of range reads null and writes nothing, without the report native's makes.  Not admitted yet: an
 element or a field of another type, `len(v)` spelled through the stdlib wrapper, a twin's
 text or record-of-another-type parameter, `return g(…)` forwarded through a hidden buffer.
 Guards `tests/scripts/a-record-of-fixed-vectors-travels-as-a-value.loft` (`@falsify-tier:

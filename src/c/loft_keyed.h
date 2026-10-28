@@ -687,6 +687,177 @@ static int loft_rotate_into(loft_ref vec, loft_ref src, uint32_t size, int64_t k
     return 1;
 }
 
+/* `@FR-R-Apart` instance 2 (codegen_runtime::ap_get_f64 / ap_set_f64 / ap_store_f64): a record
+ * of fixed-length `vector<float>` fields held as a C struct, one `double[N]` per field, while
+ * it travels between the functions that build it, read and write its elements and hand it on.
+ * An element answers what the C's store path answers: an index from the end, and an index out
+ * of range read as null (NaN) and written as nothing. */
+static inline double loft_ap_get(const double *a, int64_t n, int64_t i) {
+    int64_t f = i < 0 ? i + n : i;
+    return f < 0 || f >= n ? (double) NAN : a[f];
+}
+
+static inline void loft_ap_set(double *a, int64_t n, int64_t i, double x) {
+    int64_t f = i < 0 ? i + n : i;
+    if (f >= 0 && f < n) a[f] = x;
+}
+
+/* The BOUNDARY: the value written into the return buffer `buf` with the steps its constructor
+ * runs — a buffer that holds no record minted (`bytes`, type `tp`), then each `vector<float>`
+ * field at `offs[k]` emptied in place and its `lens[k]` elements appended.  Answers the buffer,
+ * which is what the unrewritten function returns. */
+static loft_ref loft_ap_store(loft_ref buf, uint32_t bytes, uint16_t tp, int nf, const uint32_t *offs,
+                              const double *const *vals, const uint32_t *lens) {
+    if (buf.store_nr == 0xFFFF || buf.rec == 0) {
+        buf = loft_ref_null();
+        loft_database_typed(&buf, bytes, tp);
+        for (int k = 0; k < nf; k++) loft_set_u32(loft_store_of(buf), buf.rec, buf.pos + offs[k], 0);
+    }
+    for (int k = 0; k < nf; k++) {
+        loft_ref fld = loft_field(buf, offs[k]);
+        loft_vec_clear(fld);
+        loft_vec_prealloc(fld, lens[k], 8);
+        for (uint32_t i = 0; i < lens[k]; i++) loft_vec_push_float(fld, vals[k][i]);
+    }
+    return buf;
+}
+
+/* `@FR-R-Apart` instance 3 (codegen_runtime::ApVec): a `vector<float>` local that never leaves
+ * its function — its first 64 elements inline, the rest in a spill (a text buffer, so the frame's
+ * epilogue frees it with its texts).  Each operation answers what the C's store path answers for
+ * the vector it stands for: an empty vector at its init, an index from the end, and an index out
+ * of range read as null (NaN) and written as nothing. */
+#define LOFT_APV_INLINE 64
+typedef struct { size_t n; double d[LOFT_APV_INLINE]; loft_text spill; } loft_apvec;
+
+static inline void loft_apv_clear(loft_apvec *v) {
+    v->n = 0;
+    v->spill.len = 0;
+}
+
+static inline void loft_apv_push(loft_apvec *v, double x) {
+    if (v->n < LOFT_APV_INLINE) v->d[v->n] = x;
+    else loft_push(&v->spill, (const char *) &x, sizeof x);
+    v->n++;
+}
+
+/* The element `i` names (from the end when negative), or -1 out of range. */
+static inline int64_t loft_apv_index(const loft_apvec *v, int64_t i) {
+    int64_t f = i < 0 ? i + (int64_t) v->n : i;
+    return f < 0 || (uint64_t) f >= (uint64_t) v->n ? -1 : f;
+}
+
+static inline double *loft_apv_at(loft_apvec *v, int64_t f) {
+    return f < LOFT_APV_INLINE ? &v->d[f] : (double *) (void *) (v->spill.p + (size_t) (f - LOFT_APV_INLINE) * sizeof(double));
+}
+
+static inline double loft_apv_get(loft_apvec *v, int64_t i) {
+    int64_t f = loft_apv_index(v, i);
+    if (f < 0) return (double) NAN;
+    double x;
+    memcpy(&x, loft_apv_at(v, f), sizeof x);
+    return x;
+}
+
+static inline void loft_apv_set(loft_apvec *v, int64_t i, double x) {
+    int64_t f = loft_apv_index(v, i);
+    if (f >= 0) memcpy(loft_apv_at(v, f), &x, sizeof x);
+}
+
+/* `@FR-R-Apart` instance 4 (codegen_runtime::AprVec): one field of a record of record vectors
+ * held apart is the bytes of its elements, `esize` each, in the element's store layout — a text
+ * buffer, so the frame's epilogue frees it with its texts.  Clearing keeps the capacity: a value
+ * rebuilt every iteration allocates nothing once it has grown.  A pushed element starts as zeros
+ * only so that its padding is defined; the plan admits a push only when every field is written.
+ * Answers the element's byte offset. */
+static size_t loft_apr_push(loft_text *v, uint32_t esize) {
+    size_t at = v->len, need = at + esize;
+    if (need > v->cap) {
+        size_t c = v->cap ? v->cap * 2 : 256;
+        while (c < need) c *= 2;
+        char *p = (char *) realloc(v->p, c);
+        if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
+        v->p = p;
+        v->cap = c;
+    }
+    memset(v->p + at, 0, esize);
+    v->len = need;
+    return at;
+}
+
+/* Stores::apart_block: a block of `s` holding the `n` elements whose `len` bytes are `bytes` —
+ * `reuse` when it is large enough (0 claims one), grown when too small. */
+static uint32_t loft_apart_block(loft_store_t *s, uint32_t reuse, const char *bytes, size_t len, uint32_t n) {
+    uint32_t words = 1 + (uint32_t) ((len + 7) / 8);
+    uint32_t b = reuse == 0 ? loft_st_claim(s, words)
+                 : loft_rec_words(s, reuse) < words ? loft_st_resize(s, reuse, words) : reuse;
+    loft_set_u32(s, b, 4, n);
+    memcpy(loft_at(s, b, 8), bytes, len);
+    return b;
+}
+
+/* `@FR-R-Apart` instance 4's boundary (Stores::apart_write_fresh): the apart record's `nf` fields
+ * written into the FRESH element `dst` — per field a block of exactly its elements claimed in
+ * `dst`'s store with the bytes copied in, its number written at the field's slot; an empty field
+ * writes the empty vector (0).  A null destination is left as the store path's copy leaves it,
+ * and a locked store refuses the write (`@FR-H-WriteLocked`). */
+static void loft_apart_write_fresh(loft_ref dst, const loft_text *f, const uint32_t *slot, const uint32_t *esize, int nf) {
+    if (dst.store_nr == 0xFFFF || dst.rec == 0 || dst.store_nr >= loft_nstores) return;
+    loft_store_t *s = loft_store_of(dst);
+    if (s->read_only) {
+        loft_locked_write();
+        return;
+    }
+    for (int k = 0; k < nf; k++) {
+        uint32_t n = (uint32_t) (f[k].len / esize[k]);
+        uint32_t b = n == 0 ? 0 : loft_apart_block(s, 0, f[k].p, f[k].len, n);
+        loft_set_u32(s, dst.rec, dst.pos + slot[k], b);
+    }
+}
+
+/* `@FR-R-HandOver`'s rotate clause from an apart record (Stores::rotate_from_parts): as
+ * `loft_rotate_into`, the new element's vectors given as the apart fields rather than read from
+ * a record — each written into the block element 0 owns (grown where too small, released when
+ * the field is empty), then the slots rotated left by one.  0, with nothing changed, on the
+ * tests `loft_rotate_into` makes, or when the fields are not the element type's plain vectors
+ * (`plan`, `count` pairs of offset and element bytes). */
+static int loft_rotate_from_parts(loft_ref vec, const loft_text *f, const uint32_t *slot, int nf, uint32_t size,
+                                  int64_t k, const uint32_t *plan, int count) {
+    if (k < 1 || size > 64 || count > 8 || count != nf || vec.store_nr == 0xFFFF || vec.rec == 0) return 0;
+    loft_store_t *vs = loft_store_of(vec);
+    if (vs->read_only) return 0;
+#ifdef LOFT_FOREIGN
+    if (loft_st_is_foreign(vs)) return 0;
+#endif
+    uint32_t vrec = loft_collection_rec(vs, vec.rec, vec.pos);
+    if (vrec == 0 || vrec >= vs->size || (int64_t) loft_u32(vs, vrec, 4) != k) return 0;
+    for (int i = 0; i < count; i++)
+        if (plan[2 * i] != slot[i] || f[i].len % plan[2 * i + 1] != 0) return 0;
+    uint32_t held[8] = { 0 };
+    for (int i = 0; i < count; i++) {
+        uint32_t cur = loft_u32(vs, vrec, 8 + plan[2 * i]);
+        if (cur == 0 || cur == 0xFFFFFFFFu) continue;
+        if (cur >= vs->size || loft_bits_contains(&vs->referenced, cur)) return 0;
+        held[i] = cur;
+    }
+    for (int i = 0; i < count; i++) {
+        uint32_t n = (uint32_t) (f[i].len / plan[2 * i + 1]);
+        if (n == 0) {
+            if (held[i] != 0) loft_st_delete(vs, held[i]);
+            loft_set_u32(vs, vrec, 8 + slot[i], 0);
+            continue;
+        }
+        uint32_t b = loft_apart_block(vs, held[i], f[i].p, f[i].len, n);
+        loft_set_u32(vs, vrec, 8 + slot[i], b);
+    }
+    /* A claim or a resize above may have moved the store: the base is read after them. */
+    uint8_t *base = loft_at(vs, vrec, 8), tmp[64];
+    memcpy(tmp, base, size);
+    memmove(base, base + size, (size_t) (k - 1) * size);
+    memcpy(base + (size_t) (k - 1) * size, tmp, size);
+    return 1;
+}
+
 /* OpFillKeyed (Stores::fill_keyed_from_vector): each element of the vector `src` filed into the
  * keyed collection `c` as a deep copy under its own key (`insert_keyed_copy`, the latest of one
  * key winning); a null linked element has no key and stays out.  Every element is resolved

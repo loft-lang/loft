@@ -8,6 +8,8 @@
 //! still in scope where it is freed.  An owned text temporary is freed after the statement
 //! that made it; every `return` first copies its value out, then frees the function's texts.
 
+mod apart;
+mod apart_value;
 mod chain;
 mod files;
 mod generator;
@@ -256,6 +258,19 @@ pub(crate) struct FnWriter<'a> {
     /// with the field's type (`CompleteWrites::fresh_fields`): their null arm writes the
     /// field's default (`fresh_null_arm`); computed with `complete_mints`.
     fresh_fields: std::collections::HashMap<usize, u16>,
+    /// `@FR-R-Apart` instance 4: this body's apart records of record vectors and their push
+    /// groups' elements, or its `__apr` twin's parameter (`apart.rs`), and the program's plan.
+    apr: crate::lower::apart_records::RecRoles,
+    apr_plan: Option<std::rc::Rc<crate::lower::apart_records::RecPlan>>,
+    /// `@FR-R-Apart` instance 3: this body's apart `vector<float>` locals and their companions.
+    apv: crate::generation::apart_vector::VecRoles,
+    /// `@FR-R-Apart` instance 2: this body's apart and dead records of fixed-length float
+    /// vectors (its twin's, or its region's), whether it is an `__apv` twin, the program's plan
+    /// and the function's return buffer (`apart_value.rs`).
+    av: crate::lower::apart_value::Roles,
+    av_twin: bool,
+    av_plan: Option<std::rc::Rc<crate::lower::apart_value::ApartPlan>>,
+    av_rb: Option<u16>,
     /// `@FR-R-FileHold` (`lower::file_hold::held_file`, native's gate): the files the enclosing
     /// loops read through a held cursor, each with its `loft_fcur` and the index in `loops` of
     /// the loop that holds it.
@@ -462,6 +477,13 @@ impl<'a> FnWriter<'a> {
             },
             complete_mints: None,
             fresh_fields: std::collections::HashMap::new(),
+            apr: crate::lower::apart_records::RecRoles::default(),
+            apr_plan: None,
+            apv: crate::generation::apart_vector::VecRoles::default(),
+            av: crate::lower::apart_value::Roles::default(),
+            av_twin: false,
+            av_plan: None,
+            av_rb: None,
             decls: Vec::new(),
             frees_old_tuple: false,
             // A parameter arrives bound: its first `Set` is a rebind.
@@ -571,6 +593,9 @@ impl<'a> FnWriter<'a> {
                 self.tab_alias.insert(*a, *v);
             }
         }
+        self.apr_decls();
+        self.apv_decls();
+        self.av_decls();
         self.bind_param_ptrs(code);
         if self.ret == CType::Void {
             self.stmt(code, 1)?;
@@ -581,7 +606,8 @@ impl<'a> FnWriter<'a> {
             self.ret_value(Some(code), 1)?;
         }
         let mut out = String::new();
-        for v in (0..self.shapes.len()).filter(|v| !self.params[*v]) {
+        // An apart record and a push group's element are no records (`apart.rs`).
+        for v in (0..self.shapes.len()).filter(|v| !self.params[*v] && !self.apr_holds(*v as u16)) {
             let c = self.shapes[v];
             if self.store_links[v] {
                 let name = var_name(self.vars.name(v as u16), v as u16);
@@ -720,6 +746,9 @@ impl<'a> FnWriter<'a> {
         for (t, id) in tuple_temps {
             self.tuple_text_leaves(&t, id, &mut texts);
         }
+        // And the field buffers of the apart records it owns (`@FR-R-Apart` instance 4).
+        texts.extend(self.apr_texts());
+        texts.extend(self.apv_texts());
         texts
     }
 
@@ -951,7 +980,10 @@ impl<'a> FnWriter<'a> {
     /// keeps what native's gate enforces: `@FR-R-InPlace` (only in-place sets run in a held
     /// loop) and `@FR-R-Callee` (a callee is admitted as its own writes are).
     fn verdict(&mut self, b: &Block) -> Option<crate::opt::hoist::LoopHoist> {
-        if self.gen_elem.is_some() || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
+        // A twin and a region body (`@FR-R-Apart` instance 2) are emitted with the hoists off.
+        if self.gen_elem.is_some()
+            || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
+            || self.av_any()
         {
             return None;
         }
@@ -982,6 +1014,15 @@ impl<'a> FnWriter<'a> {
             facts.as_ref(),
         );
         self.hoist_cache = cache;
+        // `@FR-R-Apart`: a path rooted at a value held apart names no record, so it takes no
+        // header, base, push header or held scalar; the loop's other paths keep theirs.
+        let mut v = v;
+        if self.apr_any() {
+            v.vectors.retain(|(p, _)| !self.apr_holds(p.0));
+            v.pushes.retain(|(p, _)| !self.apr_holds(p.0));
+            v.mint_pushes.retain(|(p, _)| !self.apr_holds(p.0));
+            v.scalars.retain(|(k, _)| !self.apr_holds(k.0));
+        }
         Some(v)
     }
 
@@ -1105,12 +1146,20 @@ impl<'a> FnWriter<'a> {
     /// none, as on native.  Answers whether a window was opened.
     fn open_window(&mut self, lp: &Block, ind: usize) -> Result<bool, String> {
         let env_on = |k: &str| std::env::var(k).is_ok_and(|v| v != "0");
-        if self.gen_elem.is_some() || env_on("LOFT_NO_PUSH_FILL") || env_on("LOFT_NO_PUSH_WINDOW") {
+        if self.gen_elem.is_some()
+            || env_on("LOFT_NO_PUSH_FILL")
+            || env_on("LOFT_NO_PUSH_WINDOW")
+            || self.av_any()
+        {
             return Ok(false);
         }
         let Some(p) = self.window_loop(lp) else {
             return self.deep_window(lp, ind);
         };
+        // A push window on a value held apart (`@FR-R-Apart`) has no record to open.
+        if self.apr_holds(p.path.0) {
+            return Ok(false);
+        }
         let n = self.decls.len() + 1;
         let (w, pv) = (format!("pw{n}"), format!("pv{n}"));
         self.decls
@@ -1161,6 +1210,7 @@ impl<'a> FnWriter<'a> {
                     && let Some(fp) =
                         crate::opt::writes::fused_push(data, data.def(*d).name(), args)
                     && !paths.iter().any(|(p, _, _)| *p == fp.path)
+                    && !self.apr_holds(fp.path.0)
                 {
                     paths.push((fp.path, fp.vector.clone(), fp.size));
                 }
@@ -1672,6 +1722,11 @@ impl<'a> FnWriter<'a> {
     fn stmts_in(&mut self, ops: &[Value], ind: usize) -> Result<(), String> {
         let mut i = 0;
         while i < ops.len() {
+            // `@FR-R-Apart` instance 2: a construction run builds its value as a whole.
+            if let Some(next) = self.av_construction(ops, i, ind)? {
+                i = next;
+                continue;
+            }
             if let Some(last) = self.rotate_site(ops, i, ind)? {
                 i = last + 1;
                 continue;
@@ -1705,6 +1760,7 @@ impl<'a> FnWriter<'a> {
         let trace = crate::env_once!(std::env::var("LOFT_TRACE_RECPTR").is_ok_and(|v| v != "0"));
         for p in self.vars.arguments() {
             if self.shapes.get(p as usize) != Some(&CType::Ref)
+                || self.apr_holds(p)
                 || self.links[p as usize]
                 || self.vr_local(p).is_some()
                 || crate::opt::hoist::scalar_field_uses(stmts, p, data, &[]) < 2
@@ -1778,6 +1834,7 @@ impl<'a> FnWriter<'a> {
         };
         let r = *r;
         if self.vr_local(r).is_some()
+            || self.apr_holds(r)
             || self.rec_ptrs.iter().any(|(v, _, _)| *v == r)
             || self.shapes.get(r as usize) != Some(&CType::Ref)
         {
@@ -2057,15 +2114,19 @@ impl<'a> FnWriter<'a> {
         };
         let vec = self.expr(&site.vector, ind)?;
         let vec = as_ref(vec)?;
-        let src = self.expr(site.src, ind)?;
-        let src = as_ref(src)?;
-        self.line(
-            ind,
-            &format!(
-                "if (loft_rotate_into({vec}, {src}, {size}u, INT64_C({}), {plan_c}, {count})) {{",
-                site.k
-            ),
-        );
+        // An apart source (`@FR-R-Apart` instance 4) rotates in from its field buffers.
+        let rotate = match self.apr_rotate(site.src, &vec, size, site.k, &plan_c, count) {
+            Some(r) => r,
+            None => {
+                let src = self.expr(site.src, ind)?;
+                let src = as_ref(src)?;
+                format!(
+                    "loft_rotate_into({vec}, {src}, {size}u, INT64_C({}), {plan_c}, {count})",
+                    site.k
+                )
+            }
+        };
+        self.line(ind, &format!("if ({rotate}) {{"));
         for s in &site.between {
             self.stmt(s, ind + 1)?;
         }
@@ -2306,7 +2367,12 @@ impl<'a> FnWriter<'a> {
             Value::Block(b) if self.vr_stmt_leaf(b) => self.vr_stmt(v, b, ind),
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
-            Value::Set(var, x) => self.set_stmt(*var, x, ind),
+            Value::Set(var, x) => {
+                if self.apr_set(*var, x, ind)? || self.apv_stmt(v, ind) || self.av_set(*var, x, ind)? {
+                    return Ok(());
+                }
+                self.set_stmt(*var, x, ind)
+            }
             Value::TuplePut(var, i, x) => {
                 let CType::Tuple(id) = self.shapes[*var as usize] else {
                     return Err("a tuple write into a non-tuple".into());
@@ -2320,6 +2386,7 @@ impl<'a> FnWriter<'a> {
                 self.flush(ind);
                 Ok(())
             }
+            Value::If(..) if self.apv_stmt(v, ind) => Ok(()),
             Value::If(c, t, e) => {
                 let null_test = self.null_test(c);
                 let c = self.expr(c, ind)?;
@@ -2355,6 +2422,7 @@ impl<'a> FnWriter<'a> {
                 Ok(())
             }
             // A generator's `return` ends it: what it returns is done for its effect.
+            Value::Return(x) if self.av_any() && self.av_return(x, ind)? => Ok(()),
             Value::Return(x) if self.gen_elem.is_some() => {
                 self.stmt(x, ind)?;
                 self.line(ind, "goto loft_gen_end;");
@@ -3685,6 +3753,11 @@ impl<'a> FnWriter<'a> {
                 format!("loft_lit({}, {})", c_string(s), s.len()),
                 K::View,
             )),
+            // `@FR-R-Apart` instance 4: an apart value is its buffers — what a twin call takes, and
+            // a C type error anywhere a record was meant.
+            Value::Var(var) if let Some(buf) = self.apr_buf(*var) => Ok(E::new(buf, K::Ref)),
+            Value::Var(var) if self.apv_vec(*var) => Ok(E::new(format!("loft_apv{var}"), K::Ref)),
+            Value::Var(var) if let Some(val) = self.av_val(*var) => Ok(E::new(val, K::Ref)),
             Value::Var(var) if self.store_links[*var as usize] => {
                 let read = self.link_access(*var, None)?;
                 self.expr(&read, ind)
@@ -3707,7 +3780,17 @@ impl<'a> FnWriter<'a> {
                 }
                 Ok(E::new(place, kind_of(c)))
             }
-            Value::Call(d, args) => self.call(*d, args, ind),
+            Value::Call(d, args) => {
+                // `@FR-R-Apart` instance 3: an apart vector's element, push, length or clear.
+                if let Some(e) = self.apv_operator(self.cx.data.def(*d).name(), v, args, ind)? {
+                    return Ok(e);
+                }
+                // Instance 2: an element of a record held as a value, its length, its free.
+                if let Some(e) = self.av_operator(v, ind)? {
+                    return Ok(e);
+                }
+                self.call(*d, args, ind)
+            }
             Value::CallRef(v, args) => self.call_ref(*v, args, ind),
             // The definition number a function value names, as an integer.
             Value::FnRefDnr(v) => Ok(E::new(format!("{}.d", self.var(*v)), K::Int)),
@@ -3992,6 +4075,9 @@ impl<'a> FnWriter<'a> {
     )]
     fn call(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
         let cx = self.cx;
+        if let Some(e) = self.apr_length(cx.data.def(d).name(), args) {
+            return Ok(e);
+        }
         if is_operator(cx.data, d) {
             return self.call_operator(d, args, ind);
         }
@@ -4073,6 +4159,7 @@ impl<'a> FnWriter<'a> {
         let mut mask = places;
         if super::native_c(def.name()).is_none()
             && args.len() < 64
+            && !self.apr_twin_call(d, args)
             && let Some(headers) = self.twin_headers(d, args)
         {
             xs.extend(headers);
@@ -4082,6 +4169,11 @@ impl<'a> FnWriter<'a> {
         if self.nk_call == Some(d) {
             self.nk_call = None;
             mask |= super::NK_BIT;
+        }
+        // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin,
+        // which takes it as its buffers (`expr` answered them at that argument).
+        if self.apr_twin_call(d, args) {
+            mask |= super::APR_BIT;
         }
         let name = if mask == 0 {
             name
@@ -4388,6 +4480,9 @@ impl<'a> FnWriter<'a> {
             "OpFormatStackDatabase" => "OpFormatDatabase",
             n => n,
         };
+        if let Some(e) = self.apr_operator(name, args, ind)? {
+            return Ok(e);
+        }
         if self.vr.is_some()
             && let Some(e) = self.vr_operator(name, args, ind)?
         {

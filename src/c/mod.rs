@@ -226,6 +226,8 @@ pub(crate) struct Cx<'a> {
     /// `LOFT_NO_VALUE_RECORD=1` and for a program whose plan holds a form the C does not
     /// write (`Cx::value_records`).
     vr: std::cell::OnceCell<std::rc::Rc<crate::opt::value_records::layout::ValueRecords>>,
+    apr: std::cell::OnceCell<std::rc::Rc<crate::lower::apart_records::RecPlan>>,
+    ap2: std::cell::OnceCell<std::rc::Rc<crate::lower::apart_value::ApartPlan>>,
 }
 
 /// The memos [`Cx::hoist_memo`] keeps.
@@ -245,6 +247,15 @@ pub(crate) const INV_BIT: u64 = 1 << 63;
 /// written again without its keep statement, which the rotate has done
 /// (`lower::hand_over::keep_statement`).
 pub(crate) const NK_BIT: u64 = 1 << 62;
+
+/// The mask bit of an `__apr` twin (`@FR-R-Apart` instance 4): the function written again taking
+/// its apart parameter as the value's field buffers (`loft_text *loft_aprp`), not a record.
+pub(crate) const APR_BIT: u64 = 1 << 61;
+
+/// The mask bit of an `__apv` twin (`@FR-R-Apart` instance 2): the function written again
+/// answering its record of fixed-length float vectors as a value through `loft_apo`, taking its
+/// record parameters as values (`const loft_ap_<T> *`) and no return buffer.
+pub(crate) const APV_BIT: u64 = 1 << 60;
 
 /// The record collections beside a plain vector the C carries; each layout is described in
 /// `loft_keyed.h`.  An `array` and an `ordered` are the forms a vector and a sorted take when
@@ -296,6 +307,8 @@ impl<'a> Cx<'a> {
             switches: crate::lower::switches::Switches::from_env(),
             hoist_memo: std::cell::RefCell::new(HoistMemo::default()),
             vr: std::cell::OnceCell::new(),
+            apr: std::cell::OnceCell::new(),
+            ap2: std::cell::OnceCell::new(),
         }
     }
 
@@ -303,6 +316,40 @@ impl<'a> Cx<'a> {
     /// empty one: the plan is program-wide, so the C takes it whole or not at all, and it
     /// declines a plan with a function-value dispatch answering a tuple
     /// (`@FR-R-FnRefValue`), which it does not write yet.
+    /// `@FR-R-Apart` instance 4's plan for the program (`lower::apart_records::plan`, native's
+    /// decision): the records of record vectors held apart, their owners and their twins.
+    /// Empty under `LOFT_NO_APART_RECORDS=1`.
+    pub(crate) fn apr_plan(&self) -> std::rc::Rc<crate::lower::apart_records::RecPlan> {
+        self.apr
+            .get_or_init(|| {
+                std::rc::Rc::new(if crate::lower::apart_records::disabled() {
+                    crate::lower::apart_records::RecPlan::default()
+                } else {
+                    crate::lower::apart_records::plan(self.data, self.stores)
+                })
+            })
+            .clone()
+    }
+
+    /// `@FR-R-Apart` instance 2's plan for the program (`lower::apart_value::plan`, native's
+    /// decision), after the value records, whose functions it leaves alone.  Empty under
+    /// `LOFT_NO_APART=1`.
+    pub(crate) fn ap2_plan(&self) -> std::rc::Rc<crate::lower::apart_value::ApartPlan> {
+        self.ap2
+            .get_or_init(|| {
+                let vr = self.value_records();
+                let value_fns: crate::fxhash::FxHashSet<u32> =
+                    vr.fns.keys().copied().chain(vr.params.keys().copied()).collect();
+                std::rc::Rc::new(crate::lower::apart_value::plan(self.data, self.stores, &value_fns))
+            })
+            .clone()
+    }
+
+    /// The C struct of instance 2's type `rec`, by its layout's name.
+    pub(crate) fn ap2_ctype(&self, rec: u32) -> Option<String> {
+        self.ap2_plan().types.get(&rec).map(|l| format!("loft_ap_{}", l.rust))
+    }
+
     pub(crate) fn value_records(
         &self,
     ) -> std::rc::Rc<crate::opt::value_records::layout::ValueRecords> {
@@ -984,6 +1031,20 @@ impl<'a> Cx<'a> {
                 }
             );
         }
+        // `@FR-R-Apart` instance 2: each record of fixed-length float vectors as its value.
+        if let Some(ap2) = self.ap2.get() {
+            let mut types: Vec<&crate::lower::apart_value::ApLayout> = ap2.types.values().collect();
+            types.sort_by(|a, b| a.rust.cmp(&b.rust));
+            for t in types {
+                let fields: Vec<String> = t
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(k, f)| format!("double f{k}[{}];", f.len.max(1)))
+                    .collect();
+                let _ = writeln!(out, "typedef struct {{ {} }} loft_ap_{};", fields.join(" "), t.rust);
+            }
+        }
         for (id, shapes) in self.tuples.borrow().iter().enumerate() {
             let fields: Vec<String> = shapes
                 .iter()
@@ -1064,13 +1125,15 @@ pub(crate) fn type_word(tp: &Type) -> String {
 /// — `--native`'s `_st` twins.  Mask 0 is the function itself.
 /// An `__inv` twin ([`INV_BIT`]) adds `__inv` after the place mask's name.
 pub(crate) fn twin_name(data: &Data, d: u32, mask: u64) -> String {
-    let places = mask & !INV_BIT & !NK_BIT;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT;
     let inv = if mask & INV_BIT == 0 { "" } else { "__inv" };
     let nk = if mask & NK_BIT == 0 { "" } else { "__nk" };
+    let apr = if mask & APR_BIT == 0 { "" } else { "__apr" };
+    let apv = if mask & APV_BIT == 0 { "" } else { "__apv" };
     if places == 0 {
-        format!("{}{inv}{nk}", c_name(data, d))
+        format!("{}{inv}{nk}{apr}{apv}", c_name(data, d))
     } else {
-        format!("{}_pl{places}{inv}{nk}", c_name(data, d))
+        format!("{}_pl{places}{inv}{nk}{apr}{apv}", c_name(data, d))
     }
 }
 
@@ -2050,7 +2113,7 @@ fn variable_shapes(
 /// The signature and the body of function `d`.
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
-    let places = mask & !INV_BIT & !NK_BIT;
+    let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT;
     let def = data.def(d);
     // A `#c` binding (@PLN24): the C function itself, called by its declared signature.
     if def.code() == &Value::Null && !def.c_sig.is_empty() {
@@ -2093,6 +2156,20 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         }
         return unloaded_native(cx, d, ret);
     }
+    // `@FR-R-Apart` instance 2: an `__apv` twin answers its value through `loft_apo` and takes
+    // no return buffer; its record parameters arrive as values.
+    let apv = if mask & APV_BIT == 0 {
+        None
+    } else {
+        let plan = cx.ap2_plan();
+        let rec = *plan
+            .twins
+            .get(&d)
+            .ok_or("an __apv twin of a function the plan has no twin for")?;
+        let roles = plan.twin_roles.get(&d).cloned().unwrap_or_default();
+        Some((rec, roles, def.hidden_return_buffer_attr()))
+    };
+    let ret = if apv.is_some() { CType::Void } else { ret };
     let vars = def.variables();
     // The parameters are the argument variables, in number order: `ref_return` can promote a
     // local into the return buffer's place, so parameter i is not always variable i.
@@ -2102,14 +2179,26 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     }
     let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
     let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
+    // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
+    let apr_at = if mask & APR_BIT == 0 {
+        None
+    } else {
+        Some(cx.apr_plan().twins.get(&d).ok_or("an __apr twin of a function the plan has no twin for")?.1)
+    };
     let params: Vec<String> = args
         .iter()
         .enumerate()
         .filter(|(i, _)| dropped != Some(*i))
+        .filter(|(i, _)| apv.as_ref().is_none_or(|(_, _, rb)| *rb != Some(*i)))
         .map(|(i, &a)| {
             let c = shapes[a as usize];
             let name = body::var_name(vars.name(a), a);
-            if places & (1 << i) != 0 || vars.is_store_text_link(a) {
+            let apv_rec = apv.as_ref().and_then(|(_, roles, _)| roles.apart.get(&a));
+            if let Some(t) = apv_rec.and_then(|r| cx.ap2_ctype(*r)) {
+                format!("const {t} *loft_avp{a}")
+            } else if apr_at == Some(i) {
+                "loft_text *loft_aprp".to_string()
+            } else if places & (1 << i) != 0 || vars.is_store_text_link(a) {
                 format!("loft_ref {name}")
             } else if matches!(vars.tp(a).base(), Type::RefVar(_)) {
                 format!("{} *{name}", held(c))
@@ -2121,6 +2210,10 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
     // them; its body serves those vectors' accesses from them as a loop's held headers.
     let mut params = params;
+    if let Some((rec, _, _)) = &apv {
+        let t = cx.ap2_ctype(*rec).ok_or("an __apv twin of no apart type")?;
+        params.push(format!("{t} *loft_apo"));
+    }
     let inputs = inv_inputs(cx, d, mask, &mut params)?;
     let params = if params.is_empty() {
         "void".to_string()
@@ -2150,6 +2243,8 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         .places(places)
         .inputs(inputs)
         .nokeep(mask & NK_BIT != 0)?
+        .apart(mask & APR_BIT != 0)
+        .apart_value(mask & APV_BIT != 0)
         .write()?;
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
