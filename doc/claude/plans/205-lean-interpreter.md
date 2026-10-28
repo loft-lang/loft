@@ -57,6 +57,17 @@ the C writer's `loft_web_*` map.  A browser page keeps its own (`web_browser.rs`
 host layer there is @PLN203 C8's, so the web library stays on its Rust crate (web 0.4.5) until
 the component builds there — L1.4 waits for it.
 
+**L1.3 — the server's natives in `libloft_net`.**  `src/c/loft_server.h`: the HTTP listener, the
+request parser, the responses, the WebSocket server and the event pump, in C over the runtime's
+`loft_stream`; a TLS listener over `tls/loft_tls.c`'s server session (BearSSL's server files, an
+EC or RSA certificate, a key that does not match refused).  The 32 `n_tcp_*` / `n_ws_*`
+exports join the web's 22.  The frame codec is one (`loft_ws_write_frame` /
+`loft_ws_read_frame` in `loft_https.h`), shared by the web client and the server.  The parked
+Rust port never landed, so nothing in the binary is removed.  Guard: `tests/server_natives.rs`
+(fixture `[native] component = "net"`): a script of requests, a binary body, caller headers,
+WebSockets, the event pump, and TLS over both certificate kinds, the same on all three
+backends.
+
 **L0b — answered yes.**  `LOFT_EMIT_FROM_IMAGE=1` makes `--emit-c` write from the image
 (`ir_read::image_round_trip`); `scripts/image_probe.py` compares that with the C written from
 memory over every program.  Over all 2893 programs (CI, linux-probe run 40595296631): 2525

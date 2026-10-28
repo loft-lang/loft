@@ -195,65 +195,14 @@ static void loft_web_random(uint8_t *out, size_t n) {
 }
 
 static int loft_web_write_frame(loft_stream *s, int opcode, const char *p, size_t n) {
-    loft_text f = { 0, 0, 0 };
-    uint8_t hdr[14], mask[4];
-    size_t h = 0;
-    hdr[h++] = (uint8_t) (0x80 | opcode);
-    if (n < 126) {
-        hdr[h++] = (uint8_t) (0x80 | n);
-    } else if (n <= 0xFFFF) {
-        hdr[h++] = 0x80 | 126;
-        hdr[h++] = (uint8_t) (n >> 8);
-        hdr[h++] = (uint8_t) n;
-    } else {
-        hdr[h++] = 0x80 | 127;
-        for (int i = 7; i >= 0; i--) hdr[h++] = (uint8_t) ((uint64_t) n >> (8 * i));
-    }
+    uint8_t mask[4];
     loft_web_random(mask, 4);
-    memcpy(hdr + h, mask, 4);
-    h += 4;
-    loft_push(&f, (const char *) hdr, h);
-    for (size_t i = 0; i < n; i++) {
-        char c = (char) (p[i] ^ mask[i % 4]);
-        loft_push(&f, &c, 1);
-    }
-    int ok = loft_stream_write_all(s, f.p, f.len);
-    free(f.p);
-    return ok;
+    return loft_ws_write_frame(s, opcode, p, n, mask);
 }
 
 /* One frame: 1 with its opcode and payload, 0 when the stream failed or ended. */
 static int loft_web_read_frame(loft_stream *s, int *opcode, loft_text *payload) {
-    uint8_t h[2];
-    if (!loft_stream_read_exact(s, h, 2)) return 0;
-    uint64_t len = h[1] & 0x7F;
-    if (len == 126) {
-        uint8_t b[2];
-        if (!loft_stream_read_exact(s, b, 2)) return 0;
-        len = (uint64_t) b[0] << 8 | b[1];
-    } else if (len == 127) {
-        uint8_t b[8];
-        if (!loft_stream_read_exact(s, b, 8)) return 0;
-        len = 0;
-        for (int i = 0; i < 8; i++) len = len << 8 | b[i];
-    }
-    if (len > 256u * 1024 * 1024) return 0;
-    uint8_t mask[4] = { 0, 0, 0, 0 };
-    if ((h[1] & 0x80) && !loft_stream_read_exact(s, mask, 4)) return 0;
-    payload->len = 0;
-    if (len) {
-        char *p = (char *) malloc((size_t) len);
-        if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
-        if (!loft_stream_read_exact(s, p, (size_t) len)) {
-            free(p);
-            return 0;
-        }
-        for (uint64_t i = 0; i < len; i++) p[i] ^= (char) mask[i % 4];
-        loft_push(payload, p, (size_t) len);
-        free(p);
-    }
-    *opcode = h[0] & 0x0F;
-    return 1;
+    return loft_ws_read_frame(s, opcode, payload, 256u * 1024 * 1024);
 }
 
 /* The upgrade; the head is read a byte at a time, so a frame sent right after the 101 stays

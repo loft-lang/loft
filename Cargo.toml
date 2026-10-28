@@ -197,6 +197,8 @@ rustyline          = "14"
 [dev-dependencies]
 stdext = "0.3"
 png    = "0.17"
+# The TLS client of tests/server_natives.rs (the same rustls the library builds with).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 [profile.test]
 # Line tables only (`debug = 1`), the SAME value `[profile.dev]` sets below — and it
