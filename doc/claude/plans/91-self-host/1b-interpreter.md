@@ -557,6 +557,41 @@ jump-is-refused` becomes `…-warns` (`@EXPECT_WARNING`) and the line in
   compiles with the warning and answers 7.  The control (main 6f31a726b) fails the cell as
   parse errors.
 
+#### T3 — a function that certainly never ends is refused — DESIGNED 2026-10-28
+
+**What.**  `error[endless-recursion]` at the function's name: every way through its body
+calls itself before it can finish, so no input lets it end — the one case the owner's rule
+keeps a compile error for.  The answer must be CERTAIN, so the predicate only says yes where
+nothing before the self-call could leave:
+
+- a self-call is certain; so is any operator or call one of whose ARGUMENTS is (they are all
+  evaluated first);
+- a block is certain when one of its operators is and none before it could leave;
+- `if c { a } else { b }` is certain when `c` is, or both `a` and `b` are;
+- an assignment or a `return` is certain when its value is;
+- everything else is not: a loop (it may run no turn), and any operator that could LEAVE —
+  a `return`, a `break` out, or a call of anything but a plain operator (a user function or
+  `assert` may halt, and a halt ends the program).
+
+So `fn f(n) { f(n) }`, `fn g(n) -> integer { 1 + g(n + 1) }` and an `if` whose both arms
+recurse are refused; a base case, an `assert` before the call, a call of another function
+before it, or the call inside a loop are not.  Generic functions are asked per instance,
+where the warning of T2 is asked.
+
+**What it changes.**  Programs that halt at the frame limit on purpose become refused:
+the `runtime_errors.rs` guards of loft#1058 (`spin1058`, `runaway1058`-shaped
+`1 + f(…)`) take a base case that never fires (`if n < -1 { return 0 }`), keeping what they
+measure; the other overflow guards (`deep`, `rec1058`, oracle 32) have base cases already.
+
+**Code points:** the predicate in `src/tail_frame.rs` beside `tail_calls` (it walks the same
+shapes), the refusal in `src/parser/definitions.rs` and `src/parser/generics.rs` beside T2's
+warning; a row in DIAGNOSTICS.md, the code in `tests/e1_code_set.rs` (no mechanical fix: a
+`FIX_BLOCKED` row naming that a base case is the author's), an error-message case.
+
+**Cases**: the three refused shapes; the five kept ones; a deeper certain one
+(`{ x = f(n); x }`); a function reached only through another (mutual recursion: not asked —
+the rule is about one function's own body).
+
 ### X16–X18 — a test's module, a record's default, an enum's narrowing (fix loft#2212, loft#2209, loft#2211) — BUILT 2026-10-28
 
 **X16.**  `tests/lower.loft`'s `use load;` bound `tests/load.loft`, the test OF load: X12 only
