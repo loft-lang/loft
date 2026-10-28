@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S1 kernel: the core of bench/02_sum_loop — a counted loop and bit operators.
+fn mix(count: integer, salt: integer) -> integer {
+  acc = salt;
+  for i in 0..count {
+    acc = ((acc ^ i) + (i & 7)) & 16777215;
+  }
+  acc
+}
+
+fn main() {
+  println("{mix(5000000, 1)}");
+}

@@ -282,6 +282,39 @@ integer it returns.  Both must print the same number, or the times do not compar
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
 
+### S1.3 — loops: `mix` and `collatz_len` lower and run — DESIGNED 2026-10-28
+
+**What the IR is.**  A `for i in a..b` reaches the bundle as a block holding a `loop`: the
+index starts one below `a`, and each turn an iterator BLOCK steps it, breaks past the end
+(`if end <= i break(0) else null`) and answers it, before the body.  So the new nodes are
+`NdSet` (an assignment), `NdLoop`, `NdBreak { n }` / `NdContinue { n }` (`n` loops out),
+`NdNull` (the empty `else`), and a block in statement position.  No iterator object: the
+range form is plain integer code, and `NdIter` stays refused.
+
+**The lowering** (`selfhost/src/lower.loft`):
+- `NdSet { var, inner }`: the value, then `Store var`.  `NdNull` as a statement: nothing.
+  A block as a statement: every operator a statement.  An `if` as a statement: `cond`,
+  `JumpIfFalse`, the then-side, and where the else-side is not `NdNull`, a `Jump` over it.
+- `NdLoop`: its start is noted, its block lowered as statements, and a `Jump` back to the
+  start ends it.  `NdBreak { n }` emits a `Jump` to be patched to the end of the loop `n`
+  levels out; `NdContinue { n }` jumps to that loop's start.  The open loops are a stack in
+  the `Lowering` (starts, and the break sites with the loop each belongs to).
+- **The stack depth is tracked statically**: each emitted op moves it by its known effect, an
+  `if`'s else-side restarts from the depth its then-side started at.  A `break` or `continue`
+  taken while values are pending (a loop inside an operand) would leave them on the stack,
+  so it is refused by name, never lowered wrong.  The kernels never do it.
+- A call whose value is dropped (an expression statement) is followed by `Pop`.
+
+**The run loop needs nothing new**: `Store`, `Pop`, `Jump` and `JumpIfFalse` are carried.
+
+**Cases** (computed outside this code — Python, and `loft --interpret` for the two large
+ones): `mix(10, 1)` 41, `mix(5000000, 1)` 6 495 169; `collatz_len(9)` 20, `collatz_len(27)`
+112; `longest(1, 10)` 9 020, `longest(1, 100000)` 77 031 351.  A `break` with a value pending
+is refused, by a probe written to have one.
+
+**Code points:** `selfhost/src/lower.loft`, `selfhost/kernels/{mix,collatz}.loft` (new),
+`selfhost/tests/run.loft`.
+
 ### S1.2 — the run loop: `fib(25)` answers what `--interpret` answers — BUILT 2026-10-28
 
 **What.**  `selfhost/src/run.loft`, `pub fn run(b: ir::Bundle, entry: integer, args:
