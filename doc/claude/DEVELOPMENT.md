@@ -18,6 +18,7 @@ documentation and tooling above code.  Everything needed to work on loft is in t
 ## Contents
 - [Branches](#branches) — [Stay close to `main`](#stay-close-to-main--rebase-rigorously) ·
   [Opening a PR is the owner's call](#opening-a-pr-is-the-owners-call)
+  · [The PR cycle](#the-pr-cycle)
 - [Working on a change](#working-on-a-change) —
   [Inserting Discovered Enhancements](#inserting-discovered-enhancements-into-the-active-plan) ·
   [Where a rule's letter and the code disagree](#where-a-rules-letter-and-the-code-disagree) ·
@@ -97,6 +98,29 @@ They reconcile on time-to-MERGE: a PR is cheap exactly when it lands promptly.  
 owner asks, opening takes minutes — the PR's own `ci.yml` runs the same gate on the exact sha,
 so the opening is not held for a local `make ci`.  **A branch a sibling has joined twice is
 overdue**; that is a fact to report, not a request to make.
+
+### The PR cycle
+
+Once the owner asks for a PR, it runs as one sequence.  It suits a box where other agents work
+on their own branches at the same time: no step waits on them, and none touches their trees.
+
+1. **Join every active loft branch.**  List them with `git fetch` and `scripts/join.py survey`
+   (by content, not ancestry: a squash leaves no ancestry), take one cut sha per source, and
+   build after each source ([JOINING.md](JOINING.md)).  A sibling's commit announced as not yet
+   green stays out.
+2. **Fix what the join broke, at once** — a conflict's compile error, a clippy finding, a
+   derived artefact both sides changed (re-derive it, never pick a side).
+3. **Check each fix on its own**, with a targeted CI probe on the step it repairs
+   (`gh workflow run linux-probe.yml -f filter=…` or `-f run=…`; `windows-probe.yml` for a
+   Windows step), not with a full gate.  A probe that cannot fail proves nothing: check that
+   its filter selects the test.
+4. **Open the PR** on the joined branch, current on `origin/main` (CLAUDE.md § Branch policy
+   rule 6), and arm `gh pr merge --auto --squash`.
+5. **Start the next branch** (`<host>-pr<N>-next`) on the PR's tip, and fix the PR run's red
+   steps there, each checked with its own probe as in step 3.
+6. **Push those fixes to the PR branch only after its current run has finished**, all at once.
+   Each run is then read whole, and its red steps are fixed before the next run starts.
+   Cancel the runs a push made obsolete (`gh run cancel`).  Repeat 5–6 until the PR merges.
 
 A language change can retro-break a shipped library while every branch gate stays green,
 because the library gate runs only on PRs and on `main`: run
