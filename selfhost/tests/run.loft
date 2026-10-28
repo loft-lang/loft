@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The run loop (@PLN91 S1.2) against values computed outside this code: the Fibonacci numbers,
+// and `fib(25)` as `loft --interpret` prints it for `kernels/fib.loft`.
+use load;
+use lower;
+use run;
+
+fn kernel(name: text) -> ir::Bundle {
+  b = load::load("{env_variable("LOFT_SELFHOST_KERNELS")}/{name}.store");
+  assert(b != null, "the {name} kernel's image opens");
+  b
+}
+
+fn test_fib_answers_what_the_interpreter_answers() {
+  b = kernel("fib");
+  fib = lower::find(b, "n_fib");
+  assert(fib >= 0, "the image has fib");
+  got = "";
+  for n in 0..11 {
+    o = run::run(b, fib, [n]);
+    assert(o.refused == "", "fib({n}) refused: {o.refused}");
+    got += "{o.value} ";
+  }
+  assert(got == "0 1 1 2 3 5 8 13 21 34 55 ", "fib(0..10): {got}");
+  o = run::run(b, fib, [25]);
+  assert(o.value == 75025, "fib(25): {o.value} {o.refused}");
+}
+
+fn test_an_entry_given_the_wrong_arguments_is_refused() {
+  b = kernel("fib");
+  fib = lower::find(b, "n_fib");
+  o = run::run(b, fib, []);
+  assert(o.refused == "the entry takes 1 arguments, given 0", "refused: {o.refused}");
+}
+
+fn test_a_function_the_lowering_refuses_is_named_not_run() {
+  b = kernel("fib");
+  main = lower::find(b, "n_main");
+  assert(main >= 0, "the image has main");
+  o = run::run(b, main, []);
+  assert(o.refused != "", "main formats text, which S1 does not carry: {o.value}");
+}

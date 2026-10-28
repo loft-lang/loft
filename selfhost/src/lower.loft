@@ -45,10 +45,13 @@ struct Op {
   b: integer,
 }
 
-// A function's ops, or the first construct it holds that S1 does not carry.
+// A function's ops, or the first construct it holds that S1 does not carry; `slots` is the
+// frame's size (one per IR variable) and `params` how many of them the caller fills.
 struct Lowering {
   ops: vector<Op>,
   refused: text,
+  slots: integer,
+  params: integer,
 }
 
 // The op an operator definition lowers to, or null for one S1 does not carry.
@@ -146,8 +149,8 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
 
 // The ops of definition `def_nr`'s body.
 pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
-  l = Lowering { ops: [], refused: "" };
   d = b.data.definitions[def_nr]?;
+  l = Lowering { ops: [], refused: "", slots: len(d.variables.variables), params: len(d.attributes) };
   expr(l, b, d.code[0]?);
   l
 }

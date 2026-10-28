@@ -1,0 +1,152 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The run loop (@PLN91 S1.2): the ops `lower.loft` makes, executed by one loop over two
+// explicit stacks, so a deep recursion in the program is never a deep recursion here.  An
+// operator is loft's own operator, so its overflow and null are the language's.  What S1 does
+// not carry is answered as `refused`, by name, never as a guessed value.
+use ir;
+use lower;
+
+// The entry's result — a loft integer, so null when the program answers null — or the first
+// thing S1 does not carry.
+pub struct Outcome {
+  pub value: integer?,
+  pub refused: text,
+}
+
+// `v` pushed at `sp`: overwritten below the length, appended at it.  The program's values are
+// loft integers, null included, so the stack holds `integer?`.
+fn put(stack: vector<integer?>, sp: integer, v: integer?) {
+  if sp < len(stack) {
+    stack[sp] = v;
+  } else {
+    stack += [v];
+  }
+}
+
+// Definition `entry` called with `args`.
+pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
+  progs: vector<lower::Lowering> = [];
+  lowered: vector<boolean> = [];
+  for _ in 0..len(b.data.definitions) {
+    progs += [lower::Lowering { ops: [], refused: "", slots: 0, params: 0 }];
+    lowered += [false];
+  }
+  first = lower::lower(b, entry);
+  if first.refused != "" {
+    return Outcome { value: 0, refused: first.refused };
+  }
+  if first.params != len(args) {
+    return Outcome { value: 0, refused: "the entry takes {first.params} arguments, given {len(args)}" };
+  }
+  progs[entry] = first;
+  lowered[entry] = true;
+  stack: vector<integer?> = [];
+  sp = 0;
+  for a in args {
+    put(stack, sp, a);
+    sp += 1;
+  }
+  for _ in len(args)..first.slots {
+    put(stack, sp, 0);
+    sp += 1;
+  }
+  f_def: vector<integer> = [];
+  f_pc: vector<integer> = [];
+  f_base: vector<integer> = [];
+  fp = 0;
+  def = entry;
+  pc = 0;
+  base = 0;
+  ops = progs[entry].ops;
+  while true {
+    op = ops[pc] ?? panic("the lowering ends every path in `Ret`, so `pc` stays inside the ops");
+    pc += 1;
+    match op.code {
+      PushInt => { put(stack, sp, op.a); sp += 1; }
+      Load => { put(stack, sp, stack[base + op.a]); sp += 1; }
+      Store => { sp -= 1; stack[base + op.a] = stack[sp]; }
+      Pop => { sp -= 1; }
+      Jump => { pc = op.a; }
+      JumpIfFalse => {
+        sp -= 1;
+        if stack[sp] == 0 {
+          pc = op.a;
+        }
+      }
+      Call => {
+        callee = op.a;
+        if !lowered[callee] {
+          progs[callee] = lower::lower(b, callee);
+          lowered[callee] = true;
+        }
+        callee_prog = progs[callee] ?? panic("lowered above");
+        if callee_prog.refused != "" {
+          return Outcome { value: 0, refused: callee_prog.refused };
+        }
+        if fp < len(f_def) {
+          f_def[fp] = def;
+          f_pc[fp] = pc;
+          f_base[fp] = base;
+        } else {
+          f_def += [def];
+          f_pc += [pc];
+          f_base += [base];
+        }
+        fp += 1;
+        def = callee;
+        pc = 0;
+        base = sp - op.b;
+        for _ in op.b..callee_prog.slots {
+          put(stack, sp, 0);
+          sp += 1;
+        }
+        ops = callee_prog.ops;
+      }
+      Ret => {
+        sp -= 1;
+        v = stack[sp];
+        if fp == 0 {
+          return Outcome { value: v, refused: "" };
+        }
+        sp = base;
+        fp -= 1;
+        // Every frame below the top was saved by the call that entered the one above it.
+        def = f_def[fp] ?? panic("a saved frame");
+        pc = f_pc[fp] ?? panic("a saved frame");
+        base = f_base[fp] ?? panic("a saved frame");
+        ops = progs[def].ops;
+        put(stack, sp, v);
+        sp += 1;
+      }
+      _ => {
+        sp -= 1;
+        y = stack[sp];
+        sp -= 1;
+        x = stack[sp];
+        r = match op.code {
+          Add => x + y,
+          Sub => x - y,
+          Mul => x * y,
+          Div => x / y,
+          Rem => x % y,
+          BitAnd => x & y,
+          BitOr => x | y,
+          BitXor => x ^ y,
+          Eq => if x == y { 1 } else { 0 },
+          Ne => if x != y { 1 } else { 0 },
+          Lt => if x < y { 1 } else { 0 },
+          Le => if x <= y { 1 } else { 0 },
+          Gt => if x > y { 1 } else { 0 },
+          Ge => if x >= y { 1 } else { 0 },
+          _ => 0,
+        };
+        put(stack, sp, r);
+        sp += 1;
+      }
+    }
+  }
+  Outcome { value: 0, refused: "the program ran off its last op" }
+}

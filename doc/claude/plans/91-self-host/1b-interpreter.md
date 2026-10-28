@@ -282,7 +282,7 @@ integer it returns.  Both must print the same number, or the times do not compar
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
 
-### S1.2 — the run loop: `fib(25)` answers what `--interpret` answers — DESIGNED 2026-10-28
+### S1.2 — the run loop: `fib(25)` answers what `--interpret` answers — BUILT 2026-10-28
 
 **What.**  `selfhost/src/run.loft`, `pub fn run(b: ir::Bundle, entry: integer, args:
 vector<integer>) -> Outcome`, with `struct Outcome { value: integer, refused: text }`: the entry's
@@ -319,6 +319,18 @@ result, or the first thing S1 does not carry, named (never a guessed value).
 **Cases** (hand-computed, both backends): the eleven small values and 75 025; a call into a
 function the lowering refuses answers `refused` naming it, not a value; an entry with the
 wrong number of arguments is refused.
+
+**Design → code.**
+- As designed; `fib(0..10)`, `fib(25)` = 75 025 and both refusals pass on both backends
+  (`selfhost/tests/run.loft`).
+- **The value stack is `vector<integer?>`.**  A program's integer may be null, so its values
+  are carried as `integer?` and loft's own operators propagate the null; a `?` there would
+  have turned a null into 0, a wrong answer.  `Outcome.value` is `integer?` for the same
+  reason.
+- **The bookkeeping reads discharge with `?? panic(…)`** — the op at `pc`, a saved frame, a
+  lowered callee: an element read is `τ?` even where the index is in range by construction,
+  and a missing one is an interpreter bug.  Without it every counter restored from a frame
+  turned `integer?`, and 37 warnings followed from three reads.  Registered as X19.
 
 ### S1.1b — a tail self-call jumps wherever it can, and warns where it cannot (fixes X15) — DESIGNED 2026-10-28
 
@@ -614,6 +626,7 @@ stdlib's `E`), so the two drivers disagree on one program.  To check before a fi
 | **X16** | inside a package, a test file binds a SIBLING test file named like a module (`tests/lower.loft`'s `use load;` gets `tests/load.loft`), on `main` (loft#2212) | **bug — fixed** | from the package's `tests/` subtree, `own_module_path` asks `src/<id>.loft` first (§ Steps, X16–X18) |
 | **X17** | `x?` of a record from ANOTHER module falls back to `null`, with no diagnostic (on `main`, loft#2209); under `#package` the same shape is refused as a default of type `unknown`, and beside a same-named local record as `Item` not assignable to `Item` | **bug, silent-wrong — fixed (§ Steps, X17)** | `build_default` pins the record's name to its definition for the sub-parse, and a sub-parse that builds anything else is `None`, reported |
 | **X18** | a nullable plain enum is not narrowed by `if x != null` (on `main`, loft#2211): its test lowers to a double negation | **bug — fixed** | `narrowing_from_condition` reads any negation as its operand's proof on the other side (§ Steps, X17 and X18) |
+| **X19** | an element read is `τ?` even where the index is in range by construction, so an interpreter's frame restore and op fetch each take `?? panic(…)`; left out, the nullability spreads to every counter restored from them (37 warnings from three reads) | friction — costed (S1.2) | the discharge is honest (a missing frame is a bug); a read the bounds guard proves in range could be `τ`, as `(N-Domain)` already proves the index |
 
 ### New constructs taken from OCaml's type expressions
 
