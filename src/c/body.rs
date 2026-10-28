@@ -763,6 +763,9 @@ impl<'a> FnWriter<'a> {
         Ok((out, statements))
     }
 
+    /// `v`'s C spelling.  A link holds its source's ADDRESS, so every use dereferences it and
+    /// reads the source as it is at that use (`@FR-B-Ref-Read`); a read-only record parameter
+    /// passed by pointer (`Cx::vr_ptr_params`) is spelled the same way.
     fn var(&self, v: u16) -> String {
         let name = var_name(self.vars.name(v), v);
         if self.links[v as usize] || self.vr_ptr[v as usize] {
@@ -2588,6 +2591,8 @@ impl<'a> FnWriter<'a> {
             Value::If(..) if self.apv_stmt(v, ind) => Ok(()),
             Value::If(c, t, e) => {
                 let null_test = self.null_test(c);
+                // The test first; each arm inside its braces (`@FR-E-And`, `@FR-E-Or`, as in
+                // `assign_if`).
                 let c = self.expr(c, ind)?;
                 let c = as_cond(c)?;
                 self.line(ind, &format!("if ({}) {{", bare(&c)));
@@ -3959,6 +3964,7 @@ impl<'a> FnWriter<'a> {
             Value::Var(var) if let Some(buf) = self.apr_buf(*var) => Ok(E::new(buf, K::Ref)),
             Value::Var(var) if self.apv_vec(*var) => Ok(E::new(format!("loft_apv{var}"), K::Ref)),
             Value::Var(var) if let Some(val) = self.av_val(*var) => Ok(E::new(val, K::Ref)),
+            // A link to a field or element reads that place at each use (`@FR-B-Ref-Read`).
             Value::Var(var) if self.store_links[*var as usize] => {
                 let read = self.link_access(*var, None)?;
                 self.expr(&read, ind)
@@ -4879,6 +4885,10 @@ impl<'a> FnWriter<'a> {
         ind: usize,
     ) -> Result<(), String> {
         let null_test = self.null_test(cond);
+        // Only the test is evaluated before the `if`; each arm's work — its call temporaries
+        // included — is emitted inside that arm's braces, so it runs only when the arm does.
+        // `a && b` and `a || b` arrive as such an `if`, which is what keeps the right operand
+        // unevaluated when the left decides (`@FR-E-And`, `@FR-E-Or`).
         let cond = self.expr(cond, ind)?;
         let cond = as_cond(cond)?;
         self.line(ind, &format!("if ({}) {{", bare(&cond)));
