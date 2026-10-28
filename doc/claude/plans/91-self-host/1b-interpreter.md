@@ -403,6 +403,17 @@ the C backend's own.  All three are over the owner's 3× line, so the rows went 
 performance stream (loft-13, laptop-c-perf), with the reproduction and the routine's shape;
 it is not a gate here.
 
+**Where the time goes** (`perf` on the C driver for `mix`, read with the emitted C): 39% in
+the three-line push helper `put()`, called out of line on every push with a stack-trace frame
+and a hold mark per call; about half of the loop's samples reload spilled locals after each
+such call; `match op.code` is an `if` chain that re-converts the enum byte per arm, the binary
+operators in its last arm; smaller costs are the per-statement line writes, the checked `+ 1`
+on `pc` and `sp`, and a bounds-checked fetch per op.  Against the Rust interpreter's fused ops,
+register-held position and unchecked pushes.  **The interpreter's loft stays readable (owner,
+2026-10-28)**: these are compiler classes — a leaf call inlined with its frame bookkeeping, a
+`match` on a plain enum as a `switch`, an element path past the store table — handed to the
+performance stream with the profile, never worked around in `run.loft`.
+
 
 ### S1.3 — loops: `mix` and `collatz_len` lower and run — BUILT 2026-10-28
 
