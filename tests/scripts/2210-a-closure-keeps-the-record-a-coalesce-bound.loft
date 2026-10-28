@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A CLOSURE KEEPS THE RECORD A `??` BOUND (`@FR-L-CapOwn`, `@FR-O-Proxy`, loft#2210).
+// `p = mk(n) ?? P {..}` binds whichever arm ran: the record the call answered, held by the `??`
+// temp, or the default.  A closure that captures `p` and LEAVES the frame must be handed that
+// store, as it is for the default arm and for a collection's `??` (loft#1721, loft#1725);
+// otherwise the frame frees it on return and the closure reads a released record.  The cells
+// vary the arm that ran (the call's, the default), what the closure does (writes, only reads),
+// what follows the build (a rebind, none, a second `??`), the shape of the join (a chain, a
+// `??` inside a branch arm), the record (a scalar field, a text field), and where the closure
+// is called (after it escaped, in a loop, still in its frame).
+//
+// @ARMED: LOFT_POISON=1
+//
+// @falsified-at: a5703bf91 — main reads the scribble through the escaped closure: "6 8" came
+//   back as "-2401053088876216590 8", and the text record panicked "Store access out of
+//   bounds"; on the interpreter, and the C writer the same under -DLOFT_POISON.
+// CHANNEL: the asserts (the value read through the escaped closure), and the corpus runner's
+//   leak gate (`wrap.rs` Part B) for the stores the hand-off must not orphan.
+// ARMED: `LOFT_POISON=1`, so a released record reads the scribble instead of its old bytes.
+// WITNESS: the frame's own rebind (`p = P2210 { a: 70 }`) keeps its value beside the closure's.
+// HOLDS: `test_a_closure_called_in_its_frame` and `test_no_rebind_after_the_build`, clean
+//   before the fix too.
+
+struct P2210 { a: integer }
+struct T2210 { a: integer, t: text }
+
+fn mp2210(n: integer) -> P2210? { if n <= 0 { null } else { P2210 { a: n } } }
+fn mt2210(n: integer) -> T2210? { if n == 0 { null } else { T2210 { a: n, t: "m{n}" } } }
+fn run2210(f: fn(integer) -> text) -> text { f(1); f(2) }
+
+fn writes2210(n: integer) -> fn(integer) -> text {
+  p = mp2210(n) ?? P2210 { a: 5 };
+  h = fn(x: integer) -> text { p.a += x; "{p.a}" };
+  p = P2210 { a: 70 };
+  h
+}
+
+fn reads2210(n: integer) -> fn(integer) -> text {
+  p = mp2210(n) ?? P2210 { a: 5 };
+  h = fn(x: integer) -> text { "{p.a + x}" };
+  p = P2210 { a: 70 };
+  h
+}
+
+fn rebound2210(n: integer) -> fn(integer) -> text {
+  p = mp2210(n) ?? P2210 { a: 5 };
+  h = fn(x: integer) -> text { p.a += x; "{p.a}" };
+  p = mp2210(70) ?? P2210 { a: 9 };
+  h
+}
+
+fn kept2210(n: integer) -> fn(integer) -> text {
+  p = mp2210(n) ?? P2210 { a: 5 };
+  fn(x: integer) -> text { p.a += x; "{p.a}" }
+}
+
+fn chain2210(n: integer) -> fn(integer) -> text {
+  p = mp2210(n) ?? mp2210(n + 1) ?? P2210 { a: 5 };
+  h = fn(x: integer) -> text { p.a += x; "{p.a}" };
+  p = P2210 { a: 70 };
+  h
+}
+
+fn branch2210(n: integer, c: boolean) -> fn(integer) -> text {
+  p = if c { mp2210(n) ?? P2210 { a: 5 } } else { P2210 { a: 9 } };
+  h = fn(x: integer) -> text { p.a += x; "{p.a}" };
+  p = P2210 { a: 70 };
+  h
+}
+
+fn text2210(n: integer) -> fn(integer) -> text {
+  p = mt2210(n) ?? T2210 { a: 5, t: "d" };
+  h = fn(x: integer) -> text { p.a += x; p.t += "!"; "{p.a}{p.t}" };
+  p = T2210 { a: 70, t: "z" };
+  h
+}
+
+fn local2210(n: integer) -> text {
+  p = mp2210(n) ?? P2210 { a: 5 };
+  h = fn(x: integer) -> text { p.a += x; "{p.a}" };
+  p = P2210 { a: 70 };
+  "{h(1)} {h(2)} {p.a}"
+}
+
+fn test_the_calls_record_escapes_with_the_closure() {
+  assert(run2210(writes2210(3)) == "6", "call arm: {run2210(writes2210(3))}");
+  assert(run2210(writes2210(0)) == "8", "default arm: {run2210(writes2210(0))}");
+}
+
+fn test_a_reading_closure_keeps_it_too() {
+  assert(run2210(reads2210(3)) == "5", "read-only: {run2210(reads2210(3))}");
+}
+
+fn test_a_second_coalesce_rebinds_beside_it() {
+  assert(run2210(rebound2210(3)) == "6", "rebound: {run2210(rebound2210(3))}");
+}
+
+fn test_no_rebind_after_the_build() {
+  assert(run2210(kept2210(3)) == "6", "kept: {run2210(kept2210(3))}");
+}
+
+fn test_a_chain_and_a_branch_arm() {
+  assert(run2210(chain2210(3)) == "6", "chain, first: {run2210(chain2210(3))}");
+  assert(run2210(chain2210(0)) == "4", "chain, second: {run2210(chain2210(0))}");
+  assert(run2210(chain2210(-5)) == "8", "chain, default: {run2210(chain2210(-5))}");
+  assert(run2210(branch2210(3, true)) == "6", "branch, call: {run2210(branch2210(3, true))}");
+  assert(run2210(branch2210(0, true)) == "8", "branch, default: {run2210(branch2210(0, true))}");
+  assert(run2210(branch2210(3, false)) == "12", "branch, other: {run2210(branch2210(3, false))}");
+}
+
+fn test_a_record_with_text_keeps_its_text() {
+  assert(run2210(text2210(3)) == "6m3!!", "text, call: {run2210(text2210(3))}");
+  assert(run2210(text2210(0)) == "8d!!", "text, default: {run2210(text2210(0))}");
+}
+
+fn test_closures_made_in_a_loop() {
+  s = "";
+  for i in 0..4 {
+    f = writes2210(i);
+    f(1);
+    s += f(10) + " ";
+  }
+  assert(s == "16 12 13 14 ", "loop: {s}");
+}
+
+fn test_a_closure_called_in_its_frame() {
+  assert(local2210(3) == "4 6 70", "local: {local2210(3)}");
+}
