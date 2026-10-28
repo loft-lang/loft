@@ -184,6 +184,18 @@ Each phase runs the old path beside the new one and compares exactly before the 
 L0a and L0b come first because each can kill its half of the design for the price of a probe.
 L1 needs only L0a.  L3 and L4 need @PLN200 B4's crates.
 
+## L1 — `libloft_net`, cut into steps
+
+What L0a settled: a component is a shared library behind `loft_ffi.h`, loaded or linked by
+symbol on every backend.  L1 makes the first one and moves `web` and `server` onto it.
+
+| step | change | check |
+|---|---|---|
+| L1.1 | the component loader: `[native] component = "net"` in a package's manifest names a library loft ships, found beside the executable (`<exe>/../lib/loft/<version>/`, and `target/components/<triple>/` for a development build); the three backends resolve it as they resolve `prebuilt/<triple>/`.  `make components` builds it, never `loft` itself.  Also takes L0a's follow-ups: the marker line, the C unit binding by search order instead of an absolute path, the refusals that name `cargo` | `tests/ffi_c_library.rs` with the fixture's library as a component; a missing component refused by name on all three |
+| L1.2 | `libloft_net` holds `web`'s natives: `loft_web.h` as typed `n_*` symbols plus bridges, the HTTP client and TLS client of `loft_https.h` / `loft_tls.c` + BearSSL inside it | `tests/web_natives.rs` (12 lines, the pong, both close frames) on three backends through the component, beside the in-binary path |
+| L1.3 | `server`'s natives in it, from the parked port (`refs/keep/firewall02-server-in-binary-wip`: the C half, BearSSL's server files, the guard and its test PKI) | `tests/server_natives.rs` on three backends |
+| L1.4 | the in-binary path goes: `web_client.rs`, the interpreter's `web` registration, `loft_web.h` in the C runtime; the web and server packages declare the component (loft-libs-net, a PR per library) | the two guards unchanged; web's and server's own suites on their testbeds |
+
 ## Open questions
 
 - Windows: the components need MSVC or MinGW builds in release CI (@PLN203 C8 builds the C
