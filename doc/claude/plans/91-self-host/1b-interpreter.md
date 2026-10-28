@@ -367,7 +367,7 @@ copy; S1.4's load column before and after.
 image, mapped at start-up the same way — functions are named by their global definition
 number inside one image, so nothing needs relocating.
 
-### S1.4 — the measurement: the loft interpreter against the Rust one — DESIGNED 2026-10-28
+### S1.4 — the measurement: the loft interpreter against the Rust one — FIRST NUMBERS 2026-10-28
 
 **The owner's ruling (2026-10-28):** measure first, before T3 and T4.  Parity is not a gate:
 the strand goes on whatever the number.  But where the loft interpreter, compiled through the
@@ -386,6 +386,23 @@ stream (the C-backend agent) is told, with the row.  This settles open question 
 
 **Code points:** `selfhost/kernels/*.loft` (`main` times its call), `selfhost/bench/run_kernel.loft`
 and `selfhost/bench/measure.py` (new).
+
+**First numbers** (2026-10-28, best of five, `target/release/loft` of this branch, `main`'s C
+backend without the C-perf commits after `f8343fa6c`, the box under load ≈7 of 20 cores — to
+repeat on a quiet box):
+
+| kernel | answer (both sides) | Rust `--interpret` | loft interpreter, `--native-c --ship` | ratio |
+|---|---:|---:|---:|---:|
+| `fib(30)` | 832 040 | 82 ms | 403 ms | 4.9× |
+| `mix(5000000, 1)` | 6 495 169 | 107 ms | 1 342 ms | 12.6× |
+| `longest(1, 100000)` | 77 031 351 | 446 ms | 4 030 ms | 9.0× |
+
+The image load is 4.3–4.8 ms beside it.  The same driver through rustc (`--native --ship`) is
+slower still on `mix` (1 752 ms), so the gap is how `run.loft` compiles on any backend, not
+the C backend's own.  All three are over the owner's 3× line, so the rows went to the
+performance stream (loft-13, laptop-c-perf), with the reproduction and the routine's shape;
+it is not a gate here.
+
 
 ### S1.3 — loops: `mix` and `collatz_len` lower and run — BUILT 2026-10-28
 

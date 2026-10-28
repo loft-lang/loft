@@ -18,10 +18,18 @@ KERNELS = [("fib", "n_fib", ["30"]), ("mix", "n_mix", ["5000000", "1"]),
 LINE = 3.0
 
 def run(cmd, env):
+    """Run `cmd`; answer the fields of its last stdout line."""
+    out = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1200)
+    lines = out.stdout.strip().splitlines()
+    if out.returncode != 0 or not lines:
+        sys.exit(f"failed: {' '.join(cmd)}\n{out.stdout[-1000:]}\n{out.stderr[-2000:]}")
+    return lines[-1].split()
+
+def emit(cmd, env):
+    """Run a command that prints nothing on success."""
     out = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1200)
     if out.returncode != 0:
         sys.exit(f"failed: {' '.join(cmd)}\n{out.stderr[-2000:]}")
-    return out.stdout.strip().splitlines()[-1].split()
 
 def main():
     ap = argparse.ArgumentParser()
@@ -39,7 +47,7 @@ def main():
     for k, entry, args in KERNELS:
         src = os.path.join(kdir, f"{k}.loft")
         image = os.path.join(tmp, f"{k}.store")
-        run([loft, "--emit-image", image, src], env)
+        emit([loft, "--emit-image", image, src], env)
         rust = [run([loft, "--interpret", src], env) for _ in range(o.runs)]
         mine = [run([loft, "--native-c", "--ship", driver, image, entry] + args, env)
                 for _ in range(o.runs)]
