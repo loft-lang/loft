@@ -315,8 +315,12 @@ integer it returns.  Both must print the same number, or the times do not compar
 
 **Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store
 image can be used where it lies: mapping it costs no algorithm, and start-up then costs the
-pages a run touches.  The loft interpreter reads the program image with `store_load`, and so
-does every loft program that ships a dataset.  Measured by S1.4's `load us` column, before and
+pages a run touches.  For loft code that is guaranteed: a loft program works on store records
+directly, so a mapped image IS its data.  The Rust interpreter is the harder case — its
+routines work on Rust structures, so its program cache decodes the mapped bundle into `Data`
+(`ir_read.rs::read_data`), and leaving the bodies in the map answered wrong (loft#2012).  The
+loft interpreter reads the program image with `store_load`, and so does every loft program
+that ships a dataset.  Measured by S1.4's `load us` column, before and
 after.
 
 **What happens today** (`src/database/allocation.rs::load_path`, `src/store.rs::Store::load`):
