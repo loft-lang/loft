@@ -402,6 +402,10 @@ null text and a null float propagating; the census before and after; the S1 test
 - `selfhost/kernels/format.loft`: 14 specs over the three kinds (radix, `#`, fill, `+`,
   alignment, precision, a null integer, a single), each against a hand-written rendering.
   The package's tests pass on `--interpret`, `--native` and `--native-c`.
+- The census's small operators: `abs` of each kind, the nullable `/` and `%` (equal to the
+  plain ones for every pair), a plain enum as its number, `OpRangeDefault`, a text slice (as
+  loft's own `t[a..b]`, which is that operator), and the casts by their `OpCast…` names.
+  **The census: 1 018 programs, 27 pass, 0 wrong, 0 crash**; what is left is the store's.
 
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 

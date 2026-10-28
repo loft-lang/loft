@@ -104,6 +104,8 @@ fn test_the_small_integer_operators_answer_as_loft_does() {
   // |-6 / 4| = 1.5, as a float and as a single, each times 100.
   assert(ran("small_ops", "n_abs_floats", [-6]) == 300, "abs_floats(-6)");
   assert(ran("small_ops", "n_abs_floats", [6]) == 300, "abs_floats(6)");
+  assert(ran("small_ops", "n_char_or_zero", [0]) == 0, "char_or_zero(0)");
+  assert(ran("small_ops", "n_char_or_zero", [233]) == 233, "char_or_zero(233)");
   assert(ran("small_ops", "n_narrow", [200]) == 200, "narrow(200)");
   assert(ran("small_ops", "n_narrow", [300]) == 7, "narrow(300)");
   assert(ran("small_ops", "n_narrow_or_null", [200]) == 200, "narrow_or_null(200)");

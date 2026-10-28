@@ -255,6 +255,7 @@ fn operator_op(name: text) -> Op? {
     "OpConvBoolFromSingle" => Op { code: NonNull, kind: KFloat, a: 0, b: 0 },
     "OpConvBoolFromText" => Op { code: NonNull, kind: KText, a: 0, b: 0 },
     "OpConvIntFromNull" => Op { code: PushNull, kind: KInt, a: 0, b: 0 },
+    "OpConvCharacterFromNull" => Op { code: PushNull, kind: KInt, a: 0, b: 0 },
     "OpConvBoolFromNull" => Op { code: PushNull, kind: KInt, a: 0, b: 0 },
     "OpConvFloatFromNull" => Op { code: PushNull, kind: KFloat, a: 0, b: 0 },
     "OpConvSingleFromNull" => Op { code: PushNull, kind: KFloat, a: 0, b: 0 },
