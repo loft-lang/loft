@@ -1313,9 +1313,9 @@ impl Parser {
                      (`x: i64 = {nr}`)"
                 );
                 self.lexer.fix_last(crate::diagnostics::Fix {
-                    kind: crate::diagnostics::FixKind::Mechanical,
+                    kind: crate::diagnostics::FixKind::Conditional,
                     title: format!("write `{nr}l`, a 64-bit literal"),
-                    condition: None,
+                    condition: Some("the number is meant to be 64-bit here".to_string()),
                     edit: None,
                     concept: "integer width",
                     concept_ref: "@F4",
