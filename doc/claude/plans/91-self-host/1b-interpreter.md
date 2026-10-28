@@ -418,9 +418,8 @@ a record would be a place to disagree with the real one.  So `OpGetInt(p, 0)` ca
 routine that calls the runtime's own accessor, a record has the layout the image's type table
 gives, and the interpreter's loft code stays readable because the storage is C.
 
-**Open for the paper design** (to the owner before any building): how a reference (store,
-record, position) crosses a `#c` call, which passes scalars; the list of `crt` routines, each one
-the runtime already defines; and the census cells the first slice carries (records, then vectors).
+**The paper design is [1b-s3.md](1b-s3.md)**, for the owner's review: the invariant, how a
+reference crosses a `#c` call, where the type table comes from, the first slice and its probes.
 
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
