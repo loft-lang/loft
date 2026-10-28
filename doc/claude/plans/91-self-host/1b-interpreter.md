@@ -309,6 +309,44 @@ is refused naming `n_println` or the format op — the first rows of the S2 work
   failure), or two thirds of the gate stays invisible.  Folded into S2.2.
 - The whole-corpus baseline follows in the next commit's note.
 
+### S2.2 — texts and floats: a stack per kind; the format operators reachable — DESIGNED 2026-10-28
+
+**Found by S2.1:** 900 of the 1 025 plain programs stop first at a text, nearly all at the
+empty work text a formatted string is built in.
+
+**A stack per kind.**  The IR is typed (every op is one type's: `OpAddInt`, `OpAddFloat`,
+`OpAppendText`), so the run loop keeps one stack per KIND, each holding loft values of that
+kind, null included: `I` (`vector<integer?>`: integer, long, boolean, character, a plain enum —
+the S1 stack), `F` (`vector<float?>`: float, single) and `T` (`vector<text?>`).  Everything
+else (references, collections, tuples) stays refused until S3.
+- **The lowering gives every node its kind**: a literal by its variant, a variable by its
+  `type_def`, a call by the definition's `returned`, a block by its `result`, an `if` by its
+  branches.  Each variable gets a slot in its kind's frame; a frame's size is three counts,
+  and a function's parameters fill the first slots of their kinds, in order.
+- **Ops carry the kind**: `Load`/`Store`/`Pop`/`Ret` per kind; a float or text constant is
+  an index into the `Lowering`'s own constant tables (an op's operands are integers); a call
+  takes its arguments from the kinds' stacks and leaves its value on its result's.
+- **The float and text operators run as loft's own**: `x + y` on floats, `t1 + t2` on texts,
+  the comparisons, the conversions by `as`.  A text-WRITING operator names its destination
+  variable: `OpAppendText`/`OpAppendCharacter` append to that slot, `OpClearText`/
+  `OpFreeText` empty it.
+
+**The format operators (owner, 2026-10-28: option 1).**  `OpFormatInt`/`Float`/`Single`/`Text`
+have no loft spelling: a format spec is static (F-Spec), and their radix, fill, precision,
+sign and direction arrive as runtime values.  The interpreter reaches them through stdlib
+wrappers whose bodies call the operator itself, so it runs the C runtime's own formatting.
+Two compiler changes make the wrappers possible:
+- inside the stdlib, an operator's `pos` parameter accepts a `&text` variable, given the
+  operator's stack form as the bytecode generator already picks it for `OpAppendText`;
+- **open (asked):** the format parameters the Rust interpreter takes as bytecode IMMEDIATES
+  (`radix`, `token`, `plus`, `note`, `dir`, `precision` are `const`) — its `add_const` writes
+  nothing for a runtime value, which desynchronises the stream, and every stdlib body is
+  compiled — become runtime operands.
+
+**Cases** (both backends, hand-computed): a text literal, `+` on texts, `+=` of a text and a
+character, a float sum and comparison, a call returning a text and one taking a float, a
+null text and a null float propagating; the census before and after; the S1 tests unchanged.
+
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
 **Why now (owner, 2026-10-28):** the store's file format IS its memory format, so a store
