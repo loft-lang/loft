@@ -10,8 +10,12 @@
 //
 // Expected, by hand: 20 000 `Go` nodes count 1 each, `len(deeper)` is 0 on every one, and
 // the leaf adds 5, so 20 005.
-// @falsified-at: c3ea8977d — control: stack overflow after 10 000 frames of `walk` on both
-//   backends (exit channel); here 20005 on both
+// @falsified-at: 6f31a726b — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control compiles `walk` and leaves its tail call a call.
+//   WITNESS: the control halts with a stack overflow after 10 000 frames of `fn walk()`,
+//   on both backends, before the assert.
+//   HOLDS: leak, panic and refusals are equal on both trees; the control refuses nothing,
+//   so the exit channel is the depth, not a compile error.
 
 enum K { Stop { v: integer }, Go { ks: vector<K> } }
 struct S { k: K, kids: vector<S> }
