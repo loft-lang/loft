@@ -3179,6 +3179,63 @@ static void loft_bind_copy(const loft_tdesc *T, uint16_t tp, loft_ref *dst, loft
     loft_copy_claims(T, tp, src, *dst);
 }
 
+/* `@FR-R-DeferredCopy`'s remap: `y` — a view into the graph rooted at `from` — moved to the same
+ * position in `to`, the copy `loft_bind_copy` made of it, walking both in step as
+ * `loft_copy_claims` built `to`: the root's inline bytes, each struct field, each vector's record
+ * and its elements, a struct-enum's variant.  1 with `*out` set when `y` lies in the graph. */
+static int loft_dc_find(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to, loft_ref y, loft_ref *out) {
+    const loft_tdesc *d = &T[tp];
+    if (y.rec == from.rec && y.pos >= from.pos && y.pos < from.pos + d->size) {
+        out->store_nr = to.store_nr;
+        out->rec = to.rec;
+        out->pos = to.pos + (y.pos - from.pos);
+        return 1;
+    }
+    loft_store_t *fs = loft_store_of(from);
+    switch (d->kind) {
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++) {
+            const loft_fld *f = &d->fields[i];
+            if (f->view) continue;
+            if (loft_dc_find(T, f->type, loft_field(from, f->pos), loft_field(to, f->pos), y, out)) return 1;
+        }
+        return 0;
+    case LOFT_T_ENUM: {
+        int e = (int) *loft_at(fs, from.rec, from.pos) - 1;
+        return e >= 0 && e < d->n && d->variants[e] != 0xFFFF
+            && loft_dc_find(T, d->variants[e], from, to, y, out);
+    }
+    case LOFT_T_VECTOR: {
+        uint32_t cur = loft_u32(fs, from.rec, from.pos);
+        if (cur == 0 || cur == 0xFFFFFFFFu) return 0;
+        uint32_t into = loft_u32(loft_store_of(to), to.rec, to.pos);
+        if (y.rec == cur) {
+            out->store_nr = to.store_nr;
+            out->rec = into;
+            out->pos = y.pos;
+            return 1;
+        }
+        uint16_t e = d->elem;
+        if (T[e].kind == LOFT_T_SCALAR || T[e].kind == LOFT_T_DBREF || T[e].kind == LOFT_T_TEXT) return 0;
+        uint32_t len = loft_u32(fs, cur, 4), size = T[e].size;
+        for (uint32_t i = 0; i < len; i++) {
+            loft_ref a = { from.store_nr, cur, 8 + i * size };
+            loft_ref b = { to.store_nr, into, 8 + i * size };
+            if (loft_dc_find(T, e, a, b, y, out)) return 1;
+        }
+        return 0;
+    }
+    default:
+        return 0;
+    }
+}
+
+static loft_ref loft_dc_remap(const loft_tdesc *T, uint16_t tp, loft_ref from, loft_ref to, loft_ref y) {
+    loft_ref out;
+    if (y.store_nr != from.store_nr || y.rec == 0 || from.rec == 0) return y;
+    return loft_dc_find(T, tp, from, to, y, &out) ? out : y;
+}
+
 /* ── Floats (src/ops.rs, the stdlib's #rust templates) ─────────────────────────────────────
  * float is a double, single a float; NaN is null.  A literal is written from its bits, so no
  * decimal round trip can change it. */

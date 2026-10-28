@@ -4217,6 +4217,35 @@ line in `Output::output_function`'s prelude.
                  `LOFT_NO_VR_PTR=1`; guard
                  `a-read-only-record-parameter-reads-the-callers-value-at-the-call.loft`.
 
+  (R-DeferredCopy) (C) a record local bound by a COPY under (B-Copy) — a whole-value bind
+                 from a variable that is itself a VIEW (`prog = callee_prog`) — that the
+                 function only READS takes the copy where it could first be observed
+                 instead of at the bind.  The bind takes the source's reference and raises
+                 a flag; before each statement that may write a store not proven apart from
+                 the source's (`call_writes_store` says the operator or callee writes at
+                 all; `StoreFacts::distinct` says the store it writes differs), the copy is
+                 taken if the flag is still up.  Nothing changed the source between the
+                 bind and that statement, so the values are the copy's — (B-Copy) holds,
+                 later.  Required: an owner witness (`@FR-O-Witness`, it records whether
+                 the local owns its copy, so a deferred view is never released); every
+                 mention of the local and of each reference derived from it (`op =
+                 prog.ops[pc]`) a read (`reads_only`: a bind, a read operator's base, the
+                 witness's bookkeeping); no text borrowed from it; a type whose records
+                 the remap follows (structs, struct-enum variants, plain vectors).  At the
+                 copy point each derived reference moves to the same position in the copy
+                 (`loft_dc_remap`) and each address held for one is derived again
+                 (`@FR-R-RecPtr`); no header is held for a path rooted at either.  The
+                 cost is one flag test per possibly-writing statement; the copy happens
+                 only when such a statement runs while the local still views its source —
+                 in an interpreter's call loop, once per function lowered instead of once
+                 per call (the self-host's `run`: −58 % instructions on fib(25) when
+                 priced by hand).  A static rule: no registry of views and no per-write
+                 work elsewhere.  Switch `LOFT_NO_DEFERRED_COPY=1`; trace
+                 `LOFT_TRACE_DEFERRED_COPY=1`; guard
+                 `loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft`
+                 (four of its five cells fail with the copy point removed, and the
+                 overwrite cell with the remap removed).
+
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
                  `static inline`, its frame wrapper with it.  The hint changes no
                  observable behaviour; what it moves is the C compiler's inlining

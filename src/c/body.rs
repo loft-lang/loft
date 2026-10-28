@@ -11,6 +11,7 @@
 mod apart;
 mod apart_value;
 mod chain;
+mod deferred;
 mod files;
 mod generator;
 mod keyed;
@@ -140,6 +141,9 @@ pub(crate) struct FnWriter<'a> {
     /// Which parameters are `&` links: a pointer to the caller's variable, read and written
     /// through (`(*v)`), as the bytecode reads and writes through the stack reference.
     links: Vec<bool>,
+    /// The locals whose copy is deferred to the first statement that may write its source
+    /// (`@FR-R-DeferredCopy`, `deferred::deferred_plan`).
+    dc: deferred::DeferredCopies,
     /// Which value-record parameters arrive as `const loft_tupN *` (`Cx::vr_ptr_params`,
     /// `@FR-R-ValueRecord`'s pointer clause): read through (`(*v)`), never written.
     vr_ptr: Vec<bool>,
@@ -405,25 +409,6 @@ fn apart_calls(
             && (crate::data::is_dbref(vars.tp(v).base())
                 || matches!(vars.tp(v).base(), crate::data::Type::RefVar(_)))
     };
-    // Every store-naming variable a mentions is proven apart from `r`'s store; a scalar field
-    // read of any record — `op.a` handed to a helper — passes a number, not its store.
-    fn mentions_apart(x: &Value, data: &crate::data::Data, ok: &dyn Fn(u16) -> bool) -> bool {
-        match x.unspan() {
-            Value::Var(v) => ok(*v),
-            Value::Call(g, a)
-                if (*g as usize) < data.definitions.len()
-                    && crate::opt::loop_records::SCALAR_GETTERS.contains(&data.def(*g).name())
-                    && matches!(a.first().map(Value::unspan), Some(Value::Var(_))) =>
-            {
-                a[1..].iter().all(|y| mentions_apart(y, data, ok))
-            }
-            other => {
-                let mut all = true;
-                other.for_each_child(&mut |c| all &= mentions_apart(c, data, ok));
-                all
-            }
-        }
-    }
     let var_apart = |v: u16| v != r && (!names_store(v) || facts.distinct(r, v));
     let apart = |args: &[Value]| args.iter().all(|a| mentions_apart(a, data, &var_apart));
     ops.iter()
@@ -449,6 +434,30 @@ fn apart_calls(
             o
         })
         .collect()
+}
+
+/// Does every store-naming variable `x` mentions pass `ok`?  A scalar field read of any record —
+/// `op.a` handed to a helper — passes a number, not its store, so its record is not judged.
+pub(super) fn mentions_apart(
+    x: &Value,
+    data: &crate::data::Data,
+    ok: &dyn Fn(u16) -> bool,
+) -> bool {
+    match x.unspan() {
+        Value::Var(v) => ok(*v),
+        Value::Call(g, a)
+            if (*g as usize) < data.definitions.len()
+                && crate::opt::loop_records::SCALAR_GETTERS.contains(&data.def(*g).name())
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(_))) =>
+        {
+            a[1..].iter().all(|y| mentions_apart(y, data, ok))
+        }
+        other => {
+            let mut all = true;
+            other.for_each_child(&mut |c| all &= mentions_apart(c, data, ok));
+            all
+        }
+    }
 }
 
 /// Per variable of `d`: whether it is a value-record parameter passed by pointer
@@ -488,6 +497,7 @@ fn view_bind(cx: &Cx, vars: &Function, borrowed: &[bool], x: &Value) -> bool {
 }
 
 impl<'a> FnWriter<'a> {
+    #[expect(clippy::too_many_lines)]
     pub(crate) fn new(cx: &'a Cx<'a>, d: u32, shapes: Vec<CType>, ret: CType) -> FnWriter<'a> {
         let def = cx.data.def(d);
         FnWriter {
@@ -508,6 +518,7 @@ impl<'a> FnWriter<'a> {
                 .map(|v| matches!(def.variables().tp(v).base(), crate::data::Type::RefVar(_)))
                 .collect(),
             vr_ptr: vr_ptr_flags(cx, d),
+            dc: deferred::DeferredCopies::default(),
             // A store instance's text parameter (`n_app@st1`, `parser/store_text.rs`) is a
             // store link: the IR reads and writes it as the field it names.
             store_links: {
@@ -678,6 +689,12 @@ impl<'a> FnWriter<'a> {
     /// declarations, the blank lines and the frame-site bookkeeping (`small_function`).
     pub(crate) fn write(mut self) -> Result<(String, usize), String> {
         let code = self.code;
+        self.dc = self.deferred_plan();
+        let mut flags: Vec<u16> = self.dc.vars.keys().copied().collect();
+        flags.sort_unstable();
+        for x in flags {
+            self.decls.push(format!("uint8_t loft_dcv{x} = 0;"));
+        }
         // The return buffer an admitted function's signature dropped is a local nothing binds.
         if let Some(p) = self.vr.as_ref().and_then(|f| f.phantom) {
             self.params[p as usize] = false;
@@ -1143,6 +1160,13 @@ impl<'a> FnWriter<'a> {
         self.hoist_cache = cache;
         // `@FR-R-Apart`: a path rooted at a value held apart names no record, so it takes no
         // header, base, push header or held scalar; the loop's other paths keep theirs.
+        // `@FR-R-DeferredCopy`: a deferred local, and a view derived from one, moves to its copy
+        // at a copy point, so no header is held for a path rooted at either.
+        if !self.dc.vars.is_empty() {
+            v.vectors.retain(|(p, _)| !self.dc_root(p.0));
+            v.pushes.retain(|(p, _)| !self.dc_root(p.0));
+            v.mint_pushes.retain(|(p, _)| !self.dc_root(p.0));
+        }
         if self.apr_any() {
             v.vectors.retain(|(p, _)| !self.apr_holds(p.0));
             v.pushes.retain(|(p, _)| !self.apr_holds(p.0));
@@ -2329,11 +2353,20 @@ impl<'a> FnWriter<'a> {
         if self.nk_skip == Some(std::ptr::from_ref(v.unspan()) as usize) {
             return Ok(());
         }
+        // `@FR-R-DeferredCopy`: a deferred bind takes the source's reference; any statement that
+        // may write a source's store takes the copies it would otherwise disturb first.
+        if let Value::Set(var, rhs) = v.unspan()
+            && self.dc_set(v, *var, rhs, ind).is_some()
+        {
+            return Ok(());
+        }
+        self.dc_before(v, ind);
         let r = self.stmt_kind(v, ind);
         if r.is_ok()
             && let Value::Set(var, _) = v.unspan()
         {
             self.refresh_rebound_header(*var, ind);
+            self.dc_after(v, ind);
         }
         // `LOFT_C_WHERE=1`: a refusal names the innermost statement it came from, on stderr.
         if let Err(why) = &r
