@@ -54,7 +54,7 @@ fn the_selfhost_tests_pass_on_an_emitted_image() {
     fa::create_dir_all(&kernels).expect("kernel images");
     for entry in fa::read_dir(root().join("selfhost/kernels")).expect("selfhost/kernels") {
         let source = entry.os_spelling();
-        let Some(stem) = source.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+        let Some(stem) = fa::file_stem(&source) else {
             continue;
         };
         let emitted = loft::platform::process::harness_command(loft())
