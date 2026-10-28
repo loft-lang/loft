@@ -2403,6 +2403,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
     let mut c = String::new();
     for part in [
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_keys.h"),
@@ -2689,6 +2690,7 @@ fn the_c_index_files_every_record_where_btree_does() {
     let mut c = String::new();
     for part in [
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_keys.h"),
@@ -2991,6 +2993,7 @@ fn the_c_trees_place_every_record_where_radix_tree_does() {
     let mut c = String::new();
     for part in [
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_keys.h"),
@@ -3617,6 +3620,7 @@ fn the_c_reads_json_as_json_rs_does() {
     let mut c = String::from("#define LOFT_JSON 1\n");
     for part in [
         include_str!("../src/c/loft_cc.h"),
+        include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
         include_str!("../src/c/loft_rt.h"),
         include_str!("../src/c/loft_json.h"),

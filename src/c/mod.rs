@@ -34,6 +34,7 @@ use std::fmt::Write as _;
 /// The C runtime every unit starts with.
 const RUNTIME: &str = concat!(
     include_str!("loft_cc.h"),
+    include_str!("loft_text.h"),
     include_str!("loft_store.h"),
     include_str!("loft_rt.h"),
     include_str!("loft_keys.h"),
