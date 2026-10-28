@@ -125,29 +125,6 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     // implementation, two calling conventions.
     RuntimeFn { name: "n_git_query",                  abi: Abi::Cell },
     RuntimeFn { name: "n_process_run",                abi: Abi::Cell },
-    // The web library's natives (`web_client::typed`, re-exported below).
-    RuntimeFn { name: "n_http_do",                    abi: Abi::Cell },
-    RuntimeFn { name: "n_http_body",                  abi: Abi::Cell },
-    RuntimeFn { name: "n_http_headers",               abi: Abi::Cell },
-    RuntimeFn { name: "n_http_head_size",             abi: Abi::Cell },
-    RuntimeFn { name: "n_frame_yield",                abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_connect",                 abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_client_send",             abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_client_send_binary",      abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_client_recv",             abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_client_message",          abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_client_opcode",           abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_client_close",            abi: Abi::Cell },
-    RuntimeFn { name: "n_sleep_ms",                   abi: Abi::Cell },
-    RuntimeFn { name: "n_pack_reset",                 abi: Abi::Cell },
-    RuntimeFn { name: "n_pack_u8",                    abi: Abi::Cell },
-    RuntimeFn { name: "n_pack_u16_le",                abi: Abi::Cell },
-    RuntimeFn { name: "n_pack_u32_le",                abi: Abi::Cell },
-    RuntimeFn { name: "n_pack_take",                  abi: Abi::Cell },
-    RuntimeFn { name: "n_byte_at",                    abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_group_clear",             abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_group_add",               abi: Abi::Cell },
-    RuntimeFn { name: "n_ws_group_poll",              abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_listen",              abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_pump",                abi: Abi::Cell },
     RuntimeFn { name: "n_kernel_next_event",          abi: Abi::Cell },
@@ -213,6 +190,34 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     RuntimeFn { name: "n_swap_retired",               abi: Abi::Cell },
 ];
 
+/// The web library's natives, which a browser page's runtime carries (`web_browser::typed`,
+/// re-exported by `codegen_runtime` on that target, all `Abi::Cell`).  On a host they are the
+/// `net` component's (`src/c/components/net.c`), called as a library's natives are.
+pub const BROWSER_RUNTIME_FNS: &[&str] = &[
+    "n_http_do",
+    "n_http_body",
+    "n_http_headers",
+    "n_http_head_size",
+    "n_frame_yield",
+    "n_ws_connect",
+    "n_ws_client_send",
+    "n_ws_client_send_binary",
+    "n_ws_client_recv",
+    "n_ws_client_message",
+    "n_ws_client_opcode",
+    "n_ws_client_close",
+    "n_sleep_ms",
+    "n_pack_reset",
+    "n_pack_u8",
+    "n_pack_u16_le",
+    "n_pack_u32_le",
+    "n_pack_take",
+    "n_byte_at",
+    "n_ws_group_clear",
+    "n_ws_group_add",
+    "n_ws_group_poll",
+];
+
 /// Look up the ABI of a runtime helper.  Returns `Abi::Cell` for
 /// unknown names — user-defined functions and Op stubs default to the
 /// post-P199.A cell ABI.
@@ -230,6 +235,13 @@ pub fn abi_of(name: &str) -> Abi {
 #[must_use]
 pub fn is_codegen_runtime_fn(name: &str) -> bool {
     CODEGEN_RUNTIME_FNS.iter().any(|f| f.name == name)
+}
+
+/// [`is_codegen_runtime_fn`] for the target the program is written for: a browser page's
+/// runtime also carries [`BROWSER_RUNTIME_FNS`].
+#[must_use]
+pub fn is_codegen_runtime_fn_on(name: &str, browser: bool) -> bool {
+    is_codegen_runtime_fn(name) || (browser && BROWSER_RUNTIME_FNS.contains(&name))
 }
 
 /// `@FR-R-FoldCompare` — which text predicate `codegen_runtime::fold_compare` answers.

@@ -4,8 +4,8 @@
 
 //! The web library's natives in a page `loft --html` builds: the typed twins `codegen_runtime`
 //! re-exports for the browser target, over the `loft_web` host imports `doc/loft-web.js`
-//! provides (a `WebSocket` per handle with its inbound queue, `fetch()`).  The host's twins are
-//! `web_client`; the byte helpers are `web_bytes`, shared by both.
+//! provides (a `WebSocket` per handle with its inbound queue, `fetch()`).  A host's are the `net`
+//! component (`src/c/components/net.c`); the byte helpers are `web_bytes`.
 //!
 //! `fetch()` and `WebSocket.onmessage` are asynchronous, so a synchronous loft call waits through
 //! `ws_yield`, the asyncify suspend the page's `wasm-opt --asyncify` pass instruments: it returns

@@ -4,9 +4,8 @@
  * libloft_net — the component behind the web library (@PLN205 L1.2): its `#native` functions as
  * the loft-ffi ABI's typed symbols and bridges (`loft-ffi/include/loft_ffi.h`), over the C
  * runtime's own HTTP client, TLS and WebSocket code (`loft_https.h`, `loft_web.h`,
- * `tls/loft_tls.c`), which a C unit also pastes.  Built ahead of time, never where it is used;
- * the build step and the switch of `web` onto it are the rest of @PLN205 L1.2 — until then
- * nothing compiles this file and the web natives stay in the binary. */
+ * `tls/loft_tls.c`), which a C unit also pastes.  Built ahead of time by `loft-components`
+ * (`src/c/component.rs`), never where it is used. */
 #include "loft_cc.h"
 #include "loft_text.h"
 #define LOFT_HTTPS 1

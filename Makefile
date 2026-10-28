@@ -172,7 +172,7 @@ SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$
 # skipped runtimes.  Set by `make install-native` / `install-user-fast`.
 NATIVE_ONLY ?=
 
-.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-main install-main-build install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-main install-main-build install-wasm-artifacts components uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check decisions decisions-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -305,6 +305,10 @@ install:
 		$(MAKE) --no-print-directory install-wasm-artifacts PREFIX="$(PREFIX)"; \
 	fi
 	@$(SUDO) chmod -R a+rX $(PREFIX)/share/loft
+	@$(AS_USER) $(MAKE) --no-print-directory components
+	@$(SUDO) rm -rf $(PREFIX)/lib/loft/components
+	@$(SUDO) install -d $(PREFIX)/lib/loft/components
+	@$(SUDO) cp target/components/lib* target/components/.loft-build-fp $(PREFIX)/lib/loft/components/
 	@$(SUDO) install -d $(PREFIX)/bin
 	@# The production binary, built with the runtime beside it (scripts/lean_build.sh):
 	@# no development aids, and one feature set for the interpreter and `--native`.
@@ -426,6 +430,12 @@ install-wasm-artifacts:
 # Sudo-free install into the user's home prefix — reinstall as often as you like
 # (e.g. after each PR merge) with no root.  Just `make install` with PREFIX pointed
 # at ~/.local, which is user-writable so $(SUDO) resolves empty.
+# @PLN205 — the components loft ships beside its binary (`libloft_net`, the web library's
+# natives), built by `loft-components` into target/components/, where a development `loft`
+# looks.  `loft` never builds one itself; `make install` copies them to <prefix>/lib/loft/.
+components:
+	@cargo run --quiet --bin loft-components -- --out target/components
+
 install-user:
 	@$(MAKE) --no-print-directory install PREFIX=$(HOME)/.local
 

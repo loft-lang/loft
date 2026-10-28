@@ -546,9 +546,10 @@ the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and 
 by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
 native of its own binary.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
 drains every pipe, a child leads its own process group, the timeout stops the tree) and
-`lib/git` (`git_query`); `loft_web.h` carries the web library's natives (the HTTP client and a
-WebSocket client over the runtime's client connection, the pack builder; `src/web_client.rs` is
-the interpreter's twin, `tests/web_natives.rs` the guard).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
+`lib/git` (`git_query`).  The web library's natives are not the runtime's: they are the `net`
+component (`loft_web.h` and the HTTP client compiled into `libloft_net` by
+`src/c/component.rs`), which a C unit calls through the loft-ffi ABI as it calls any prebuilt
+library (`tests/web_natives.rs` the guard).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
 the connector over WebSockets, the UDP state-sync channel, the events, ticks and `post`, the
 `D!:` debug channel answering as a build with no live tier, and `http_fetch` on a worker thread
 over the runtime's HTTP client (above).  Not carried, so refused by name: the

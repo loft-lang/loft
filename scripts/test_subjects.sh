@@ -131,7 +131,7 @@ subject_paths() {
     (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
-    (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs|^src/web_client\.rs' ;;
+    (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs|^src/c/components/|^src/c/loft_web\.h' ;;
     (winrules) echo '^src/file_access/|^src/platform\.rs|^src/database/io\.rs|^src/database/loft_file\.rs|^src/state/io\.rs|^src/png_store\.rs' ;;
     (c)        echo '^src/c/|^src/c_driver\.rs|^scripts/c_sweep\.py' ;;
     (*)        return 1 ;;

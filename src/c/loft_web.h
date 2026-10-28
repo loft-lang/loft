@@ -1,10 +1,10 @@
-/* ── The web library's natives (`[native] in_binary = true`; `src/web_client.rs`) ──────────────
+/* ── The web library's natives, compiled into the `net` component (`src/c/components/net.c`) ───
  * The HTTP client is the runtime's (`loft_https.h`: a socket, TLS over it for https, redirects,
  * the 30-second bounds); a WebSocket session is RFC 6455 over the same client connection,
- * reconnecting with backoff as the interpreter's does.  A response body, a binary frame and the
+ * reconnecting with backoff.  A response body, a binary frame and the
  * pack buffer are bytes carried in a `text` (the library reads them with `byte_at`), so they are
- * copied as bytes.  Per-thread, as the interpreter's thread-locals are.  Pasted only into a unit
- * that calls a web native (`LOFT_WEB`); POSIX hosts. */
+ * copied as bytes.  Per-thread.  Never pasted into a unit: the component defines `LOFT_WEB`
+ * (`c::component`); POSIX hosts. */
 #ifdef LOFT_WEB
 #if defined(LOFT_POSIX_HOST)
 #include <time.h>

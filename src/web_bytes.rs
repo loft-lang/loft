@@ -4,8 +4,9 @@
 
 //! The web library's binary helpers, the same on every target: the pack builder (`pack_reset`,
 //! `pack_u8`, `pack_u16_le`, `pack_u32_le`, `pack_take`), `byte_at`, and bytes turned into the
-//! `text` that carries them.  The host natives (`web_client`), the browser's (`web_browser`) and
-//! the in-browser interpreter's (`native::WEB_FUNCTIONS_WASM`) all call these.
+//! `text` that carries them.  The browser page's natives (`web_browser`) and the in-browser
+//! interpreter's (`native::WEB_FUNCTIONS_WASM`) call these; a host's are the `net` component's
+//! C (`src/c/loft_web.h`).
 //!
 //! A packed buffer, a response body and a binary frame are BYTES carried in a loft `text` — the
 //! library reads them back with `byte_at` and never as characters — so [`bytes_text`] keeps a

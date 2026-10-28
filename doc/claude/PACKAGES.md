@@ -188,6 +188,12 @@ builders = ["set"]          # the one declared half: the free `pub fn`s a consum
 # Rust crate in native/ — compiled to rlib (interpreter/native) or
 # wasm (WASM target) at install time or first use.
 crate = "native"
+# OR the natives are a COMPONENT loft ships beside its binary: a prebuilt C
+# library behind loft-ffi's C ABI (`loft-ffi/include/loft_ffi.h`), found in
+# <prefix>/lib/loft/components/ (`src/components.rs` has the search order;
+# `make components` builds them in a loft tree).  Nothing is compiled when it
+# is used, and a missing component is refused by name on every backend.
+# component = "net"         # libloft_net: the web library's HTTP, TLS, WebSockets
 
 # Functions implemented in Rust.  Keys are loft function names;
 # values are Rust symbol paths.  The loft compiler verifies signatures

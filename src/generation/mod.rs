@@ -11433,7 +11433,9 @@ extern crate loft;"
         // would shadow the real implementation.  Plan 09 phase 01
         // consolidated the hardcoded list into the registry in
         // `src/codegen_runtime.rs::CODEGEN_RUNTIME_FNS`.
-        if *def.code() == Value::Null && crate::runtime_abi::is_codegen_runtime_fn(def.name()) {
+        if *def.code() == Value::Null
+            && crate::runtime_abi::is_codegen_runtime_fn_on(def.name(), self.wasm_browser)
+        {
             return Ok(());
         }
         // N8b.1: generator functions (returning iterator<T>) are emitted as state machines.

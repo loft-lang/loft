@@ -41,8 +41,21 @@ backends resolve it through `native_build::prebuilt_native_lib` as they resolve 
 `prebuilt/<triple>/`, and a missing one is never built — each backend refuses naming the
 component and where it looked.  Guard: `tests/ffi_c_library.rs`
 (`a_component_answers_on_every_backend`, `a_missing_component_is_refused_by_name`).  Still owed
-from L0a: `make components`, the C unit binding by search order, the cargo advice in the
-refusals of a package's own library.
+from L0a: the C unit binding by search order, the cargo advice in the refusals of a package's
+own library.
+
+**L1.2 — `libloft_net`.**  `src/c/components/net.c` over the runtime's `loft_web.h`,
+`loft_https.h` and the TLS archive, built by the `loft-components` tool (`src/c/component.rs`;
+`make components` → `target/components/`, `make install` → `<prefix>/lib/loft/components/`):
+a 215 KB library exporting the 22 `n_*` symbols and the two registrations, nothing else,
+rebuilt only when its sources, the compiler or the loft-ffi ABI change.  The in-binary path is
+gone: `src/web_client.rs`, the interpreter's registration, the Rust runtime's typed twins and
+the C writer's `loft_web_*` map.  A browser page keeps its own (`web_browser.rs`, the
+`runtime_abi::BROWSER_RUNTIME_FNS` rows the writer reads only for that target).  Guard:
+`tests/web_natives.rs` (fixture `[native] component = "net"`), which builds the component with
+`loft-components` first, so CI needs no step of its own.  Not on Windows: the C runtime's
+host layer there is @PLN203 C8's, so the web library stays on its Rust crate (web 0.4.5) until
+the component builds there — L1.4 waits for it.
 
 **L0b — answered yes.**  `LOFT_EMIT_FROM_IMAGE=1` makes `--emit-c` write from the image
 (`ir_read::image_round_trip`); `scripts/image_probe.py` compares that with the C written from
