@@ -554,7 +554,7 @@ fn seq_computed<'a>(data: &Data, v: &'a Value, out: &mut Vec<&'a Value>) {
 
 /// The field writes the clause sees through: one value into one field of the record named
 /// by the first argument.  A reference write (`OpSetRef`) is not among them.
-const FIELD_SETS: [&str; 13] = [
+pub(crate) const FIELD_SETS: [&str; 13] = [
     "OpSetEnum",
     "OpSetBoolean",
     "OpSetInt",

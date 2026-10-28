@@ -31,8 +31,9 @@
 //!
 //! Both halves share the sources no position makes legal: a MEMBER of a container (a projection,
 //! or a variable assigned one, such as a loop variable or a `match` binding), a PARAMETER or a
-//! local holding the caller's record, and a CAPTURED variable.  Nothing that emits code reads this
-//! module.
+//! local holding the caller's record, and a CAPTURED variable.  One emitter reads the liveness
+//! answer ([`Frame::read_after`]): the C's deferred copy (`@FR-R-DeferredCopy`) moves only the
+//! views read after a copy point.  Nothing that emits code reads the verdicts.
 
 use crate::data::{Data, Definition, Type, Value};
 use crate::use_analysis::{projection_root, releases_first_arg};
@@ -316,6 +317,17 @@ impl<'a> Frame<'a> {
             }
         }
         Lease::Move
+    }
+
+    /// Is `var`'s value — or a view of it — read after `site` on some path?  `None` where the
+    /// pass does not reach `site`, a node the body does not hold; a caller treats that as read.
+    #[must_use]
+    pub fn read_after(&self, site: &Value, var: u16) -> Option<bool> {
+        match self.live_after(site, var) {
+            AtSite::Unreached => None,
+            AtSite::Dead => Some(false),
+            AtSite::Live(_) => Some(true),
+        }
     }
 
     /// The liveness answer on copying the whole variable `var` at `site`.

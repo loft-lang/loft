@@ -9,14 +9,20 @@
 //! takes the source's reference and raises the local's flag (`loft_dcv<x>`), and before each
 //! statement that may write a store not proven apart from the source's
 //! (`StoreFacts::distinct`) the copy is taken if the flag is still up — the values are the
-//! copy's, since nothing changed the source between the bind and that statement.  An
+//! copy's, since nothing changed the source between the bind and that statement.  Where every
+//! deferred bind's source is an element view `V[e]` and the statement writes a path rooted at
+//! `V[k]`, the guard also asks whether `V[k]` is the element the local views
+//! (`loft_dc_is_elem`); a write rooted at another element changes nothing the local reads.  An
 //! interpreter's `prog = callee_prog` then costs one copy per lowering, not one per call.
+//! Design: `bench/portal/analysis/deferred-copy.md`.
 //!
 //! The local must hold an owner witness (`__own_<x>`, `@FR-O-Witness`): it marks whether the
 //! local owns a copy, so a deferred view is never released.  Every mention of the local, and of
 //! each reference variable derived from it (`op = prog.ops[pc]`), must be a read; a derived
 //! view is moved into the copy when it is taken (`loft_dc_remap`), as is any address held for
-//! one of them (`@FR-R-RecPtr`).  A text borrowed from the local declines it.
+//! one of them (`@FR-R-RecPtr`) — only the views read after the point (`lease::Frame::read_after`),
+//! and no point is emitted where the local and its views are not read again.  A text borrowed
+//! from the local declines it.
 //! Opt-in (`LOFT_DEFERRED_COPY=1`) while a derived view's remap costs GCC's hot loops;
 //! `LOFT_TRACE_DEFERRED_COPY=1` names each admission, decline and copy point.
 use super::FnWriter;
@@ -39,6 +45,20 @@ pub(crate) struct DcVar {
     /// The statements after which the local and its views are dead (`dead_after`): a write
     /// there needs no copy, since nothing reads what it would have disturbed.
     pub dead: HashSet<usize>,
+    /// `(V, element size)` when every deferred bind's source is a whole element of the vector
+    /// variable `V` (`elem_source`): the local's reference is then that element's, and a write
+    /// rooted at `V[k]` is guarded by comparing the two elements.
+    pub elem: Option<(u16, i64)>,
+}
+
+/// What a statement asks of a deferred local before it runs.
+enum Point {
+    /// It writes nothing the local's source could be in.
+    Clear,
+    /// Its only unproven writes are rooted at `V[k]` for these `k` (`DcVar::elem`'s `V`).
+    Index(Vec<Value>),
+    /// It may write the source some other way.
+    Flag,
 }
 
 /// The function's deferred locals.
@@ -47,6 +67,9 @@ pub(crate) struct DeferredCopies {
     pub vars: HashMap<u16, DcVar>,
     /// `call_writes_store`'s memo, shared by every copy-point test of the function.
     pub writes: std::rc::Rc<std::cell::RefCell<HashMap<u32, bool>>>,
+    /// The reference variables that hold the null reference at every mention (`null_only`):
+    /// a callee handed one names no store that exists, so whatever it writes through it is new.
+    pub null_only: HashSet<u16>,
 }
 
 /// An operator that only READS through its first operand.
@@ -112,6 +135,22 @@ impl FnWriter<'_> {
                 out.vars.insert(x, dv);
             }
         }
+        if !out.vars.is_empty() {
+            out.null_only = (0..vars.count())
+                .filter(|v| {
+                    self.shapes.get(*v as usize) == Some(&super::CType::Ref)
+                        && !vars.is_argument(*v)
+                        && !vars.is_captured(*v)
+                        && !vars.is_lazy_buffer(*v)
+                        && !facts.placed.contains(v)
+                        && facts.adopted.is_none_or(|(a, w)| *v != a && *v != w)
+                        && facts
+                            .owned
+                            .is_none_or(|o| !o.buffers.contains(v) && !o.records.contains(v))
+                        && null_only(code, self.cx.data, *v)
+                })
+                .collect();
+        }
         out
     }
 
@@ -142,7 +181,7 @@ impl FnWriter<'_> {
             why("its type reaches a keyed collection, which the remap does not follow");
             return None;
         }
-        let (binds, sources) = match self.dc_binds(x, facts) {
+        let (binds, sources, srcs) = match self.dc_binds(x, facts) {
             Ok(Some(b)) => b,
             Ok(None) => return None,
             Err(()) => {
@@ -167,8 +206,15 @@ impl FnWriter<'_> {
         }
         derived.sort_unstable();
         if Self::dc_trace() {
+            let ends: Vec<String> = sources
+                .iter()
+                .map(|t| {
+                    let fresh = if facts.fresh(*t) { " fresh" } else { "" };
+                    format!("{}{fresh}", vars.name(*t))
+                })
+                .collect();
             eprintln!(
-                "deferred-copy: {} {} deferred ({} bind(s), {} derived view(s))",
+                "deferred-copy: {} {} deferred ({} bind(s), {} derived view(s), source store {ends:?})",
                 data.def(self.d).name(),
                 vars.name(x),
                 binds.len(),
@@ -176,6 +222,13 @@ impl FnWriter<'_> {
             );
         }
         let dead = dead_after(self.code, &refs, &binds);
+        let elem = self.dc_elem(&srcs);
+        if Self::dc_trace() {
+            match elem {
+                Some((v, _)) => eprintln!("deferred-copy:   index guard on {}", vars.name(v)),
+                None => eprintln!("deferred-copy:   flag only: a source is not a whole element"),
+            }
+        }
         Some(DcVar {
             own,
             derived,
@@ -183,6 +236,7 @@ impl FnWriter<'_> {
             sources,
             binds,
             dead,
+            elem,
         })
     }
 
@@ -194,10 +248,11 @@ impl FnWriter<'_> {
         &self,
         x: u16,
         facts: &crate::opt::hoist::StoreFacts<'_>,
-    ) -> Result<Option<(HashSet<usize>, Vec<u16>)>, ()> {
+    ) -> Result<Option<(HashSet<usize>, Vec<u16>, Vec<u16>)>, ()> {
         let vars = self.vars;
         let mut binds = HashSet::new();
         let mut sources = Vec::new();
+        let mut srcs = Vec::new();
         let mut bad_source = false;
         self.code.any_node(&mut |node| {
             if let Value::Set(v, rhs) = node
@@ -211,6 +266,9 @@ impl FnWriter<'_> {
                         if !sources.contains(&t) {
                             sources.push(t);
                         }
+                        if !srcs.contains(&src) {
+                            srcs.push(src);
+                        }
                     }
                     _ => bad_source = true,
                 }
@@ -220,7 +278,68 @@ impl FnWriter<'_> {
         if bad_source {
             return Err(());
         }
-        Ok((!binds.is_empty()).then_some((binds, sources)))
+        Ok((!binds.is_empty()).then_some((binds, sources, srcs)))
+    }
+
+    /// `(V, element size)` when every one of `srcs` is only ever bound to a whole element of
+    /// the one vector variable `V` — `s = V[e]`, through a `??` discharge's temp — and `V` is
+    /// an argument or a local that owns its store, so it cannot be re-pointed at a vector
+    /// inside an element (`@FR-R-DeferredCopy`'s index guard).
+    fn dc_elem(&self, srcs: &[u16]) -> Option<(u16, i64)> {
+        let data = self.cx.data;
+        let vars = self.vars;
+        let mut found: Option<(u16, i64)> = None;
+        for &s in srcs {
+            let e = elem_source(self.code, data, vars, s, 0)?;
+            if found.is_some_and(|f| f != e) {
+                return None;
+            }
+            found = Some(e);
+        }
+        let (v, _) = found?;
+        let owner = vars.is_argument(v) || vars.tp(v).depend().is_empty();
+        (owner
+            && !vars.is_captured(v)
+            && self.shapes.get(v as usize) == Some(&super::CType::Ref)
+            && !matches!(vars.tp(v).base(), Type::RefVar(_)))
+        .then_some(found?)
+    }
+
+    /// The `k` of a write the operator `name` makes through `args` when the one place it
+    /// writes is rooted at `V[k]` (`dv.elem`'s `V`): a field setter's record, `OpCopyRecord`'s
+    /// destination.  `OpCopyRecord` reads its source, and releases it only under
+    /// `COPY_FREE_SOURCE`, whose contract makes it a callee's fresh temporary.  `k` must be a
+    /// literal or an integer local nothing links to and the statement `s` does not rebind, so
+    /// the guard evaluates it to the value the write uses.
+    fn dc_indexed(&self, name: &str, args: &[Value], dv: &DcVar, s: &Value) -> Option<Value> {
+        let (v, size) = dv.elem?;
+        let place = if crate::same_read::FIELD_SETS.contains(&name) {
+            args.first()?
+        } else if name == "OpCopyRecord" && args.len() == 3 {
+            &args[1]
+        } else {
+            return None;
+        };
+        let (root, sz, k) = index_root(self.cx.data, place)?;
+        if root != v || sz != size {
+            return None;
+        }
+        let vars = self.vars;
+        if let Some(n) = int_constant(self.cx.data, k) {
+            return Some(Value::Int(n));
+        }
+        match k.unspan() {
+            Value::Var(i)
+                if !vars.is_captured(*i)
+                    && matches!(vars.tp(*i).base(), Type::Integer(..))
+                    && !(0..vars.count())
+                        .any(|w| crate::opt::body_writes::link_targets(vars, w).contains(i))
+                    && !s.any_node(&mut |n| matches!(n, Value::Set(t, _) if t == i)) =>
+            {
+                Some(k.clone())
+            }
+            _ => None,
+        }
     }
 
     /// The reference variables derived from `x` — deps reaching it, closed — or `None` where a
@@ -257,10 +376,10 @@ impl FnWriter<'_> {
     /// point its copy must be taken before.  A read operator writes nothing; any other operator
     /// or call writes at most the stores its operands name (a scalar field read passes a
     /// number).  The witnesses of deferred locals name only their copies.
-    fn dc_writes_source(&self, s: &Value, dv: &DcVar) -> bool {
+    fn dc_writes_source(&self, s: &Value, whole: &Value, dv: &DcVar) -> Point {
         let data = self.cx.data;
         let Some(facts) = self.store_facts() else {
-            return true;
+            return Point::Flag;
         };
         let vars = self.vars;
         // The witnesses name only their copies, and a deferred local and its views are only
@@ -284,6 +403,7 @@ impl FnWriter<'_> {
         };
         let apart = |v: u16| {
             owns.contains(&v)
+                || self.dc.null_only.contains(&v)
                 || (v as usize) >= vars.var_count()
                 || !(crate::data::is_dbref(vars.tp(v).base())
                     || matches!(vars.tp(v).base(), Type::RefVar(_)))
@@ -292,7 +412,8 @@ impl FnWriter<'_> {
                     .iter()
                     .all(|t| *t != v && (facts.distinct(*t, v) || records_apart(*t, v)))
         };
-        let mut hit = false;
+        let mut flag = false;
+        let mut ks: Vec<Value> = Vec::new();
         let memo = self.dc.writes.clone();
         let mut memo = memo.borrow_mut();
         s.any_node(&mut |node| {
@@ -310,6 +431,10 @@ impl FnWriter<'_> {
                 )
                 && !args.iter().all(|a| super::mentions_apart(a, data, &apart))
             {
+                if let Some(k) = self.dc_indexed(data.def(*op).name(), args, dv, whole) {
+                    ks.push(k);
+                    return false;
+                }
                 if Self::dc_trace() {
                     let names: Vec<String> = args
                         .iter()
@@ -335,11 +460,17 @@ impl FnWriter<'_> {
                         names.join(",")
                     );
                 }
-                hit = true;
+                flag = true;
             }
-            hit
+            flag
         });
-        hit
+        if flag {
+            Point::Flag
+        } else if ks.is_empty() {
+            Point::Clear
+        } else {
+            Point::Index(ks)
+        }
     }
 
     /// Before statement `s`: take every deferred copy `s` may disturb the source of.
@@ -353,33 +484,86 @@ impl FnWriter<'_> {
             other => other,
         };
         let at = node_addr(s);
-        let mut due: Vec<u16> = self
-            .dc
-            .vars
-            .iter()
-            .filter(|(_, dv)| !dv.dead.contains(&at) && self.dc_writes_source(probe, dv))
-            .map(|(x, _)| *x)
-            .collect();
-        due.sort_unstable();
-        for x in due {
-            self.dc_materialise(x, ind);
+        let mut due: Vec<(u16, Option<Vec<Value>>)> = Vec::new();
+        for (x, dv) in &self.dc.vars {
+            if dv.dead.contains(&at) {
+                continue;
+            }
+            match self.dc_writes_source(probe, s, dv) {
+                Point::Clear => {}
+                Point::Index(ks) => due.push((*x, Some(ks))),
+                Point::Flag => due.push((*x, None)),
+            }
+        }
+        if due.is_empty() {
+            return;
+        }
+        due.sort_unstable_by_key(|(x, _)| *x);
+        let data = self.cx.data;
+        let frame = crate::lease::Frame::new(data, data.def(self.d));
+        for (x, ks) in due {
+            // Only what is read at or after the point needs the copy: a view the statement
+            // mentions, or one the per-path liveness finds read later (an unreached site is read).
+            let dv = &self.dc.vars[&x];
+            let refs: HashSet<u16> = dv.derived.iter().copied().chain([x]).collect();
+            let here = s.any_node(&mut |n| matches!(n, Value::Var(v) if refs.contains(v)));
+            let read = |v: u16| here || frame.read_after(s, v) != Some(false);
+            let moved: Vec<u16> = dv.derived.iter().copied().filter(|d| read(*d)).collect();
+            if !read(x) && moved.is_empty() {
+                if Self::dc_trace() {
+                    eprintln!(
+                        "deferred-copy:   no point: {} is not read again",
+                        self.vars.name(x)
+                    );
+                }
+                continue;
+            }
+            if Self::dc_trace() {
+                let names: Vec<&str> = moved.iter().map(|d| self.vars.name(*d)).collect();
+                let form = if ks.is_some() { "index guard" } else { "flag" };
+                eprintln!(
+                    "deferred-copy:   {form} point for {}, moving {names:?}",
+                    self.vars.name(x)
+                );
+            }
+            self.dc_materialise(x, ind, ks.as_deref(), &moved);
         }
     }
 
-    /// The copy point: if `x` still views its source, copy it, move its derived views into the
-    /// copy, and derive again the addresses held for any of them.
-    fn dc_materialise(&mut self, x: u16, ind: usize) {
+    /// The copy point: if `x` still views its source — and, for an indexed write, views the
+    /// element at one of `ks` — copy it, move the derived views in `moved` into the copy, and
+    /// derive again the addresses held for any of them.
+    fn dc_materialise(&mut self, x: u16, ind: usize, ks: Option<&[Value]>, moved: &[u16]) {
         let dv = self.dc.vars[&x].clone();
         let name = self.var(x);
         let own = self.var(dv.own);
         let flag = format!("loft_dcv{x}");
-        self.line(ind, &format!("if ({flag}) {{"));
+        let cond = match (ks, dv.elem) {
+            (Some(ks), Some((v, size))) => {
+                let vn = self.var(v);
+                let tests: Vec<String> = ks
+                    .iter()
+                    .map(|k| {
+                        let kc = match k.unspan() {
+                            Value::Var(i) => format!("(int64_t) {}", self.var(*i)),
+                            Value::Int(n) => format!("INT64_C({n})"),
+                            _ => unreachable!("dc_indexed admits a variable or a literal"),
+                        };
+                        format!("loft_dc_is_elem({name}, {vn}, {size}, {kc})")
+                    })
+                    .collect();
+                crate::rewrite_census::fired("R-DeferredCopy/index", 1);
+                format!("{flag} && ({})", tests.join(" || "))
+            }
+            _ => flag.clone(),
+        };
+        self.line(ind, &format!("if ({cond}) {{"));
         self.line(ind + 1, "loft_ref loft_dcc = loft_ref_null();");
         self.line(
             ind + 1,
             &format!("loft_bind_copy(loft_types, {}, &loft_dcc, {name});", dv.tp),
         );
-        for d in &dv.derived {
+        for d in moved {
             let dn = self.var(*d);
             self.line(
                 ind + 1,
@@ -634,4 +818,131 @@ fn reads_only(
         }
     }
     walk(code, data, refs, x, own, copies)
+}
+
+/// Does `v` hold the null reference at every mention in `code`?  An allow-list: a bind of
+/// `null`, an argument of a function (whatever it does with a null reference, it names no store
+/// that exists), an operand of a release.  Any other mention — a mint into it, a bind of a value
+/// — answers no.
+fn null_only(code: &Value, data: &crate::data::Data, v: u16) -> bool {
+    fn walk(n: &Value, data: &crate::data::Data, v: u16) -> bool {
+        match n.unspan() {
+            Value::Var(w) => *w != v,
+            Value::Set(t, rhs) if *t == v => matches!(rhs.unspan(), Value::Null),
+            Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
+                let name = data.def(*op).name();
+                let passes = !name.starts_with("Op") || name.starts_with("OpFree");
+                args.iter().all(|a| {
+                    (passes && matches!(a.unspan(), Value::Var(w) if *w == v)) || walk(a, data, v)
+                })
+            }
+            other => {
+                let mut ok = true;
+                other.for_each_child(&mut |c| ok &= walk(c, data, v));
+                ok
+            }
+        }
+    }
+    walk(code, data, v)
+}
+
+/// `(V, element size)` when every bind of `s` in `code` is a whole element of the vector
+/// variable `V`: `OpGetVector(V, size, e)`, a value block ending in one, or a compiler temp
+/// (a `??` discharge's `__ncr_N`) bound only so.  A bind of `null` is no place and is skipped.
+fn elem_source(
+    code: &Value,
+    data: &crate::data::Data,
+    vars: &crate::variables::Function,
+    s: u16,
+    depth: u8,
+) -> Option<(u16, i64)> {
+    fn class(
+        rhs: &Value,
+        code: &Value,
+        data: &crate::data::Data,
+        vars: &crate::variables::Function,
+        depth: u8,
+    ) -> Result<Option<(u16, i64)>, ()> {
+        match rhs.unspan() {
+            Value::Null => Ok(None),
+            Value::Block(b) => match b.operators.last() {
+                Some(tail) => class(tail, code, data, vars, depth),
+                None => Err(()),
+            },
+            Value::Var(t) if depth < 3 && vars.is_compiler_generated(*t) => {
+                elem_source(code, data, vars, *t, depth + 1)
+                    .map(Some)
+                    .ok_or(())
+            }
+            Value::Call(op, args)
+                if (*op as usize) < data.definitions.len()
+                    && matches!(data.def(*op).name(), "OpGetVector" | "OpGetVectorNullable")
+                    && args.len() == 3 =>
+            {
+                match (args[0].unspan(), args[1].unspan()) {
+                    (Value::Var(v), Value::Int(size)) => Ok(Some((*v, i64::from(*size)))),
+                    _ => Err(()),
+                }
+            }
+            _ => Err(()),
+        }
+    }
+    let mut found: Option<(u16, i64)> = None;
+    let mut bad = false;
+    code.any_node(&mut |n| {
+        if let Value::Set(t, rhs) = n
+            && *t == s
+        {
+            match class(rhs, code, data, vars, depth) {
+                Ok(Some(e)) if found.is_none_or(|f| f == e) => found = Some(e),
+                Ok(None) => {}
+                _ => bad = true,
+            }
+        }
+        bad
+    });
+    if bad { None } else { found }
+}
+
+/// `(V, element size, k)` when the place `p` is rooted at element `k` of the vector variable
+/// `V`: `OpGetVector(V, size, k)` itself, or a field or an element reached from it.  The root is
+/// the element nearest the variable, so `ps[1].ops[0].a` is rooted at `ps[1]`.  A pointer field
+/// or a call on the way answers `None`: the place it reaches is not owned through the element.
+fn index_root<'v>(data: &crate::data::Data, p: &'v Value) -> Option<(u16, i64, &'v Value)> {
+    let Value::Call(op, args) = p.unspan() else {
+        return None;
+    };
+    if (*op as usize) >= data.definitions.len() {
+        return None;
+    }
+    match data.def(*op).name() {
+        "OpGetField" if !args.is_empty() => index_root(data, &args[0]),
+        "OpGetVector" | "OpGetVectorNullable" if args.len() == 3 => match args[0].unspan() {
+            Value::Var(v) => match args[1].unspan() {
+                Value::Int(size) => Some((*v, i64::from(*size), &args[2])),
+                _ => None,
+            },
+            _ => index_root(data, &args[0]),
+        },
+        _ => None,
+    }
+}
+
+/// The value of `k` when it is an integer literal or the negation of one (`-1` is
+/// `OpMinSingleInt(1)`).
+fn int_constant(data: &crate::data::Data, k: &Value) -> Option<i32> {
+    match k.unspan() {
+        Value::Int(n) => Some(*n),
+        Value::Call(op, args)
+            if (*op as usize) < data.definitions.len()
+                && data.def(*op).name() == "OpMinSingleInt"
+                && args.len() == 1 =>
+        {
+            match args[0].unspan() {
+                Value::Int(n) => n.checked_neg(),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }

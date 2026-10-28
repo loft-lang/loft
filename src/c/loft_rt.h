@@ -3236,6 +3236,14 @@ static loft_ref loft_dc_remap(const loft_tdesc *T, uint16_t tp, loft_ref from, l
     return loft_dc_find(T, tp, from, to, y, &out) ? out : y;
 }
 
+/* `@FR-R-DeferredCopy`'s index guard: is `x` the element `k` of the vector `v` names?  `k` is
+ * resolved exactly as `loft_vec_get` resolves it (a negative index counts from the end), so the
+ * test compares positions, never the raw integers; an index outside the vector names nothing. */
+LOFT_HOT_INLINE int loft_dc_is_elem(loft_ref x, loft_ref v, uint32_t size, int64_t k) {
+    loft_ref e = loft_vec_get(v, size, k);
+    return e.rec != 0 && x.store_nr == e.store_nr && x.rec == e.rec && x.pos == e.pos;
+}
+
 /* ── Floats (src/ops.rs, the stdlib's #rust templates) ─────────────────────────────────────
  * float is a double, single a float; NaN is null.  A literal is written from its bits, so no
  * decimal round trip can change it. */
