@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// S1.3 probe: a `break` taken while an operand is pending (`1 + { … break … }`).  The loft
+// interpreter must refuse it by name rather than leave the operand on its stack.
+fn pending(n: integer) -> integer {
+  t = 0;
+  for i in 0..n {
+    t += 1 + {
+      if i > 2 { break; }
+      1
+    };
+  }
+  t
+}
+
+fn main() {
+  println("{pending(10)}");
+}

@@ -31,7 +31,17 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   progs: vector<lower::Lowering> = [];
   lowered: vector<boolean> = [];
   for _ in 0..len(b.data.definitions) {
-    progs += [lower::Lowering { ops: [], refused: "", slots: 0, params: 0 }];
+    progs += [lower::Lowering {
+      ops: [],
+      refused: "",
+      slots: 0,
+      params: 0,
+      depth: 0,
+      loop_start: [],
+      loop_depth: [],
+      brk_loop: [],
+      brk_at: [],
+    }];
     lowered += [false];
   }
   first = lower::lower(b, entry);
@@ -121,6 +131,11 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
         put(stack, sp, v);
         sp += 1;
       }
+      PushNull => { put(stack, sp, null); sp += 1; }
+      // `OpNot` is `v != 1` and `OpConvBoolFromInt` is `v != null`, as the stdlib writes them;
+      // a boolean is 1 or 0 on this stack.
+      Not => { stack[sp - 1] = if stack[sp - 1] == 1 { 0 } else { 1 }; }
+      NonNull => { stack[sp - 1] = if stack[sp - 1] != null { 1 } else { 0 }; }
       _ => {
         sp -= 1;
         y = stack[sp];

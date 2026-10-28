@@ -35,6 +35,9 @@ enum Code {
   BitAnd,
   BitOr,
   BitXor,
+  Not,
+  NonNull,
+  PushNull,
 }
 
 // One op: `a` is a value, a slot, a jump target or a callee's definition number; `b` is a
@@ -46,12 +49,20 @@ struct Op {
 }
 
 // A function's ops, or the first construct it holds that S1 does not carry; `slots` is the
-// frame's size (one per IR variable) and `params` how many of them the caller fills.
+// frame's size (one per IR variable) and `params` how many of them the caller fills.  While
+// lowering, `depth` is how many values the ops so far leave on the stack, and the open loops
+// are a stack: each one's first op and the depth at its start, and every `break` still to be
+// pointed at the end of the loop it leaves (`brk_loop` the loop's level, `brk_at` the op).
 struct Lowering {
   ops: vector<Op>,
   refused: text,
   slots: integer,
   params: integer,
+  depth: integer,
+  loop_start: vector<integer>,
+  loop_depth: vector<integer>,
+  brk_loop: vector<integer>,
+  brk_at: vector<integer>,
 }
 
 // The op an operator definition lowers to, or null for one S1 does not carry.
@@ -71,12 +82,40 @@ fn operator_code(name: text) -> Code? {
     "OpLandInt" => BitAnd,
     "OpLorInt" => BitOr,
     "OpEorInt" => BitXor,
+    "OpNot" => Not,
+    "OpConvBoolFromInt" => NonNull,
+    "OpConvIntFromNull" => PushNull,
     _ => null,
+  }
+}
+
+// How many values `code` adds to the stack (negative: takes); a call takes its `b` arguments
+// and leaves its value.
+fn effect(code: Code, b: integer) -> integer {
+  match code {
+    PushInt => 1,
+    Load => 1,
+    Store => -1,
+    Pop => -1,
+    Jump => 0,
+    JumpIfFalse => -1,
+    Call => 1 - b,
+    Ret => -1,
+    Not => 0,
+    NonNull => 0,
+    PushNull => 1,
+    _ => -1,
   }
 }
 
 fn emit(l: Lowering, code: Code, a: integer, b: integer) {
   l.ops += [Op { code: code, a: a, b: b }];
+  l.depth += effect(code, b);
+}
+
+// The level of the loop `n` loops out from the innermost, or -1 when there is none.
+fn loop_level(l: Lowering, n: integer) -> integer {
+  len(l.loop_start) - 1 - n
 }
 
 fn refuse(l: Lowering, what: text) {
@@ -96,10 +135,13 @@ fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
       expr(l, b, cond[0]?);
       to_else = len(l.ops);
       emit(l, JumpIfFalse, 0, 0);
+      at_branch = l.depth;
       expr(l, b, t[0]?);
       to_end = len(l.ops);
       emit(l, Jump, 0, 0);
       l.ops[to_else].a = len(l.ops);
+      // The else-side runs from where the then-side started, not from where it ended.
+      l.depth = at_branch;
       expr(l, b, f[0]?);
       l.ops[to_end].a = len(l.ops);
     }
@@ -137,12 +179,84 @@ fn block_value(l: Lowering, b: ir::Bundle, blk: ir::Block) {
   expr(l, b, blk.operators[last]?);
 }
 
+// A block as a statement: every operator a statement.
+fn block_statement(l: Lowering, b: ir::Bundle, blk: ir::Block) {
+  for op in blk.operators {
+    statement(l, b, op);
+  }
+}
+
+// A jump out of the loop `n` levels out, to its end (`is_break`) or its start: refused where
+// it would leave values on the stack, which only a loop inside an operand could do.
+fn leave_loop(l: Lowering, n: integer, is_break: boolean) {
+  level = loop_level(l, n);
+  if level < 0 {
+    refuse(l, "a break or continue outside a loop");
+    return;
+  }
+  if l.depth != l.loop_depth[level] {
+    refuse(l, "a break or continue with values pending, which S1 does not carry");
+    return;
+  }
+  if is_break {
+    l.brk_loop += [level];
+    l.brk_at += [len(l.ops)];
+    emit(l, Jump, 0, 0);
+  } else {
+    emit(l, Jump, l.loop_start[level] ?? panic("an open loop"), 0);
+  }
+}
+
 // `n`, a statement: its ops leave the stack as they found it.
 fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
   match n {
     NdLine { n: _ } => {},
+    NdNull => {},
     NdSpan { inner } => statement(l, b, inner[0]?),
     NdReturn { inner } => expr(l, b, n),
+    NdSet { var, inner } => {
+      expr(l, b, inner[0]?);
+      emit(l, Store, var, 0);
+    }
+    NdBlock { block } => block_statement(l, b, block[0]?),
+    NdIf { cond, t, f } => {
+      expr(l, b, cond[0]?);
+      to_else = len(l.ops);
+      emit(l, JumpIfFalse, 0, 0);
+      statement(l, b, t[0]?);
+      else_side = f[0]?;
+      if else_side is NdNull {
+        l.ops[to_else].a = len(l.ops);
+      } else {
+        to_end = len(l.ops);
+        emit(l, Jump, 0, 0);
+        l.ops[to_else].a = len(l.ops);
+        statement(l, b, else_side);
+        l.ops[to_end].a = len(l.ops);
+      }
+    }
+    NdLoop { block } => {
+      level = len(l.loop_start);
+      l.loop_start += [len(l.ops)];
+      l.loop_depth += [l.depth];
+      block_statement(l, b, block[0]?);
+      emit(l, Jump, l.loop_start[level] ?? panic("an open loop"), 0);
+      end = len(l.ops);
+      for i in 0..len(l.brk_at) {
+        if l.brk_loop[i] == level {
+          l.ops[l.brk_at[i] ?? panic("a break site")].a = end;
+          l.brk_loop[i] = -1;
+        }
+      }
+      l.loop_start.remove(level);
+      l.loop_depth.remove(level);
+    }
+    NdBreak { n: out } => leave_loop(l, out, true),
+    NdContinue { n: out } => leave_loop(l, out, false),
+    NdCall { def_nr: _, args: _ } => {
+      expr(l, b, n);
+      emit(l, Pop, 0, 0);
+    }
     _ => refuse(l, "a statement S1 does not carry: {n}"),
   }
 }
@@ -150,7 +264,17 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
 // The ops of definition `def_nr`'s body.
 pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   d = b.data.definitions[def_nr]?;
-  l = Lowering { ops: [], refused: "", slots: len(d.variables.variables), params: len(d.attributes) };
+  l = Lowering {
+    ops: [],
+    refused: "",
+    slots: len(d.variables.variables),
+    params: len(d.attributes),
+    depth: 0,
+    loop_start: [],
+    loop_depth: [],
+    brk_loop: [],
+    brk_at: [],
+  };
   expr(l, b, d.code[0]?);
   l
 }

@@ -282,7 +282,7 @@ integer it returns.  Both must print the same number, or the times do not compar
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
 
-### S1.3 — loops: `mix` and `collatz_len` lower and run — DESIGNED 2026-10-28
+### S1.3 — loops: `mix` and `collatz_len` lower and run — BUILT 2026-10-28
 
 **What the IR is.**  A `for i in a..b` reaches the bundle as a block holding a `loop`: the
 index starts one below `a`, and each turn an iterator BLOCK steps it, breaks past the end
@@ -314,6 +314,18 @@ is refused, by a probe written to have one.
 
 **Code points:** `selfhost/src/lower.loft`, `selfhost/kernels/{mix,collatz}.loft` (new),
 `selfhost/tests/run.loft`.
+
+**Design → code.**
+- As designed; all six values and the refusal pass on both backends
+  (`selfhost/tests/run.loft`; the probe is `selfhost/kernels/pending.loft`, which
+  `--interpret` runs to 6).
+- **A range with variable bounds guards them against null** before the loop
+  (`if !OpConvBoolFromInt(start) { start = 1; end = 0 }`), and starts the index at
+  `OpConvIntFromNull()`, which the constant range of `mix` does not.  So three more codes:
+  `NonNull` (`OpConvBoolFromInt`, the stdlib's `v != i64::MIN`), `Not` (`OpNot`, its `v != 1`,
+  a boolean being 1 or 0 on the stack) and `PushNull`, each with its own stack effect.
+- Not yet run: the `tests/selfhost.rs` harness over the whole package, held for another
+  session's timing window; it runs before S1.4.
 
 ### S1.2 — the run loop: `fib(25)` answers what `--interpret` answers — BUILT 2026-10-28
 
