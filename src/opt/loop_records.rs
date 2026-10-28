@@ -92,6 +92,7 @@ pub(crate) fn is_scalar(tp: &Type) -> bool {
 /// elision, never miscompile it.  A struct-ENUM element is covered where the group writes
 /// every field position of every variant (`variant_union`): whichever variant the literal
 /// builds, no byte a variant's field reads is left to the prefill.
+#[expect(clippy::too_many_lines)]
 pub(crate) fn group_covers_type(
     ops: &[Value],
     at: usize,
@@ -256,7 +257,10 @@ pub(crate) fn group_covers_type(
 /// one per position — the positions a covering
 /// group must write — or `None` where two variants put fields of different widths at one
 /// position (a write of the narrower would leave bytes of the wider to the prefill).
-fn variant_union(stores: &Stores, variants: &[(u16, String)]) -> Option<Vec<crate::database::Field>> {
+fn variant_union(
+    stores: &Stores,
+    variants: &[(u16, String)],
+) -> Option<Vec<crate::database::Field>> {
     let mut out: Vec<crate::database::Field> = Vec::new();
     for (vt, _) in variants {
         let Some(crate::database::Parts::EnumValue(_, fields)) =

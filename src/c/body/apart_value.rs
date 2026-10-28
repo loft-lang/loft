@@ -66,7 +66,10 @@ impl FnWriter<'_> {
 
     /// Is `v` a twin's record parameter, which arrives as a pointer to its value?
     fn av_param(&self, v: u16) -> bool {
-        self.av_twin && self.vars.is_argument(v) && self.av_rb != Some(v) && self.av.apart.contains_key(&v)
+        self.av_twin
+            && self.vars.is_argument(v)
+            && self.av_rb != Some(v)
+            && self.av.apart.contains_key(&v)
     }
 
     /// The value apart variable `v` holds, as a C lvalue (a parameter's is read-only).
@@ -91,7 +94,13 @@ impl FnWriter<'_> {
     /// The apart locals as declarations, and — in a twin — its return buffer as the null local
     /// its other mentions name.
     pub(super) fn av_decls(&mut self) {
-        let mut vs: Vec<u16> = self.av.apart.keys().copied().filter(|v| !self.av_param(*v)).collect();
+        let mut vs: Vec<u16> = self
+            .av
+            .apart
+            .keys()
+            .copied()
+            .filter(|v| !self.av_param(*v))
+            .collect();
         vs.sort_unstable();
         for v in vs {
             let rec = self.av.apart[&v];
@@ -112,7 +121,12 @@ impl FnWriter<'_> {
     /// A construction run of an apart variable starting at `ops[at]`: the value built in a
     /// temporary, each element written in the order the program wrote it, then assigned.
     /// Answers the index of the first statement after the run.
-    pub(super) fn av_construction(&mut self, ops: &[Value], at: usize, ind: usize) -> Result<Option<usize>, String> {
+    pub(super) fn av_construction(
+        &mut self,
+        ops: &[Value],
+        at: usize,
+        ind: usize,
+    ) -> Result<Option<usize>, String> {
         if self.av.is_empty() {
             return Ok(None);
         }
@@ -136,25 +150,40 @@ impl FnWriter<'_> {
     }
 
     /// Build construction `c` in a temporary and assign it to `target`.
-    fn av_construct(&mut self, c: &Construction<'_>, target: &str, ind: usize) -> Result<(), String> {
-        let rec = *self.av.apart.get(&c.v).ok_or("a construction of no apart value")?;
-        let t = self.cx.ap2_ctype(rec).ok_or("no apart type")?;
-        let n = self.decls.len();
-        let tmp = format!("loft_apc{n}");
-        self.decls.push(format!("{t} {tmp};"));
+    fn av_construct(
+        &mut self,
+        c: &Construction<'_>,
+        target: &str,
+        ind: usize,
+    ) -> Result<(), String> {
+        let rec = *self
+            .av
+            .apart
+            .get(&c.v)
+            .ok_or("a construction of no apart value")?;
+        let ctype = self.cx.ap2_ctype(rec).ok_or("no apart type")?;
+        let slot = self.decls.len();
+        let tmp = format!("loft_apc{slot}");
+        self.decls.push(format!("{ctype} {tmp};"));
         self.line(ind, &format!("memset(&{tmp}, 0, sizeof {tmp});"));
         let fields = self.av_layout(c.v).map_or(0, |l| l.fields.len());
         let mut next = vec![0usize; fields];
         for (f, e) in &c.order {
             match e {
                 Elem::Val(x) => {
-                    let y = self.expr(x, ind)?;
-                    self.line(ind, &format!("{tmp}.f{f}[{}] = {};", next[*f], as_float(y)?));
+                    let value = self.expr(x, ind)?;
+                    self.line(
+                        ind,
+                        &format!("{tmp}.f{f}[{}] = {};", next[*f], as_float(value)?),
+                    );
                     next[*f] += 1;
                 }
                 Elem::Copies(k) => {
                     for _ in 0..*k {
-                        self.line(ind, &format!("{tmp}.f{f}[{}] = {tmp}.f{f}[{}];", next[*f], next[*f] - 1));
+                        self.line(
+                            ind,
+                            &format!("{tmp}.f{f}[{}] = {tmp}.f{f}[{}];", next[*f], next[*f] - 1),
+                        );
                         next[*f] += 1;
                     }
                 }
@@ -172,7 +201,8 @@ impl FnWriter<'_> {
         let ops = &bl.operators;
         let plan = self.av_plan.as_ref()?;
         for (&v, rec) in &self.av.apart {
-            if let Some(c) = apart_value::construction(self.cx.data, &plan.types[rec], ops, 0, &|u| u == v)
+            if let Some(c) =
+                apart_value::construction(self.cx.data, &plan.types[rec], ops, 0, &|u| u == v)
                 && c.end + 1 == ops.len()
                 && matches!(ops[c.end].unspan(), Value::Var(u) if *u == c.v)
             {
@@ -184,7 +214,13 @@ impl FnWriter<'_> {
 
     /// A twin's call `<g>__apv(…, dest)`: a record argument as a pointer to its value, the
     /// buffer left out, every other argument (a number) as itself.
-    fn av_twin_call(&mut self, g: u32, args: &[Value], dest: &str, ind: usize) -> Result<(), String> {
+    fn av_twin_call(
+        &mut self,
+        g: u32,
+        args: &[Value],
+        dest: &str,
+        ind: usize,
+    ) -> Result<(), String> {
         let gdef = self.cx.data.def(g);
         let rbi = gdef.hidden_return_buffer_attr();
         let mut xs = Vec::new();
@@ -227,7 +263,10 @@ impl FnWriter<'_> {
             let n = l.fields[f].len;
             let val = self.av_val(v).ok_or("no apart value")?;
             let i = self.expr(idx, ind)?;
-            return Ok(Some(E::new(format!("loft_ap_get({val}.f{f}, {n}, {})", as_int(i)?), K::Float)));
+            return Ok(Some(E::new(
+                format!("loft_ap_get({val}.f{f}, {n}, {})", as_int(i)?),
+                K::Float,
+            )));
         }
         if let Some((v, off, idx, val, _)) = apart_value::element_write(data, x)
             && let Some(l) = self.av_layout(v)
@@ -236,14 +275,24 @@ impl FnWriter<'_> {
             let n = l.fields[f].len;
             let target = self.av_val(v).ok_or("no apart value")?;
             let (i, y) = self.two("OpSetFloat", &[idx, val], ind)?;
-            self.line(ind, &format!("loft_ap_set({target}.f{f}, {n}, {}, {});", as_int(i)?, as_float(y)?));
+            self.line(
+                ind,
+                &format!(
+                    "loft_ap_set({target}.f{f}, {n}, {}, {});",
+                    as_int(i)?,
+                    as_float(y)?
+                ),
+            );
             return Ok(Some(E::new("((void) 0)", K::Void)));
         }
         if let Some((v, off)) = apart_value::length_of(data, x)
             && let Some(l) = self.av_layout(v)
             && let Some(f) = l.field(off)
         {
-            return Ok(Some(E::new(format!("INT64_C({})", l.fields[f].len), K::Int)));
+            return Ok(Some(E::new(
+                format!("INT64_C({})", l.fields[f].len),
+                K::Int,
+            )));
         }
         if let Value::Call(d, args) = x.unspan()
             && matches!(data.def(*d).name(), "OpFreeRef" | "OpFreeRefIfDistinct")
@@ -274,7 +323,12 @@ impl FnWriter<'_> {
             Value::Null => {
                 self.line(ind, &format!("memset(&{val}, 0, sizeof {val});"));
             }
-            Value::Call(g, args) if self.av_plan.as_ref().is_some_and(|p| p.twins.contains_key(g)) => {
+            Value::Call(g, args)
+                if self
+                    .av_plan
+                    .as_ref()
+                    .is_some_and(|p| p.twins.contains_key(g)) =>
+            {
                 let dest = self.av_ptr(var);
                 self.av_twin_call(*g, args, &dest, ind)?;
             }
@@ -321,7 +375,11 @@ impl FnWriter<'_> {
                 self.line(ind, &format!("{dest} = {val};"));
             }
             (1, Value::Call(g, args)) => {
-                let ptr = if self.av_twin { "loft_apo".to_string() } else { format!("&{dest}") };
+                let ptr = if self.av_twin {
+                    "loft_apo".to_string()
+                } else {
+                    format!("&{dest}")
+                };
                 self.av_twin_call(*g, args, &ptr, ind)?;
             }
             _ => {
@@ -338,9 +396,19 @@ impl FnWriter<'_> {
         let layout = plan.types[&rec].clone();
         self.cx.describe_type(layout.rec_tp);
         let bytes = self.cx.stores.enum_parent_size(layout.rec_tp);
-        let offs: Vec<String> = layout.fields.iter().map(|f| format!("{}u", f.off)).collect();
-        let vals: Vec<String> = (0..layout.fields.len()).map(|k| format!("{dest}.f{k}")).collect();
-        let lens: Vec<String> = layout.fields.iter().map(|f| format!("{}u", f.len)).collect();
+        let offs: Vec<String> = layout
+            .fields
+            .iter()
+            .map(|f| format!("{}u", f.off))
+            .collect();
+        let vals: Vec<String> = (0..layout.fields.len())
+            .map(|k| format!("{dest}.f{k}"))
+            .collect();
+        let lens: Vec<String> = layout
+            .fields
+            .iter()
+            .map(|f| format!("{}u", f.len))
+            .collect();
         let b = self.var(rb);
         self.line(
             ind,

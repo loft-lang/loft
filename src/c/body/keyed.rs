@@ -1372,6 +1372,7 @@ impl FnWriter<'_> {
     /// the key written and filed (`loft_keyed_entry_ints` / `_text`), then the other fields
     /// written into it.  The index of the site's last statement, or `None` where `ops[at]`
     /// opens no admitted site.  `LOFT_NO_KEYED_ENTRY=1` keeps the claim, writes and file.
+    #[expect(clippy::too_many_lines)]
     pub(super) fn keyed_entry_site(
         &mut self,
         ops: &[Value],

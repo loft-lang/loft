@@ -52,7 +52,7 @@ impl FnWriter<'_> {
     fn chain_bound(&self, v: &Value, l: &mut Leaves, counters: bool) -> Option<String> {
         match v.unspan() {
             Value::Int(k) => Some(format!("INT64_C({})", i64::from(*k).unsigned_abs())),
-            Value::Long(n) if *n != i64::MIN && n.unsigned_abs() <= i64::MAX as u64 => {
+            Value::Long(n) if *n != i64::MIN && n.unsigned_abs() <= i64::MAX.unsigned_abs() => {
                 Some(format!("INT64_C({})", n.unsigned_abs()))
             }
             Value::Var(x) => {
@@ -78,14 +78,14 @@ impl FnWriter<'_> {
                 let name = self.cx.data.def(*d).name();
                 match (name, args.len()) {
                     ("OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable", 2) => {
-                        let a = self.chain_bound(&args[0], l, counters)?;
-                        let b = self.chain_bound(&args[1], l, counters)?;
-                        Some(format!("loft_gc_add({a}, {b}, &loft_gc_ok)"))
+                        let lhs = self.chain_bound(&args[0], l, counters)?;
+                        let rhs = self.chain_bound(&args[1], l, counters)?;
+                        Some(format!("loft_gc_add({lhs}, {rhs}, &loft_gc_ok)"))
                     }
                     ("OpMulInt" | "OpMulIntNullable", 2) => {
-                        let a = self.chain_bound(&args[0], l, counters)?;
-                        let b = self.chain_bound(&args[1], l, counters)?;
-                        Some(format!("loft_gc_mul({a}, {b}, &loft_gc_ok)"))
+                        let lhs = self.chain_bound(&args[0], l, counters)?;
+                        let rhs = self.chain_bound(&args[1], l, counters)?;
+                        Some(format!("loft_gc_mul({lhs}, {rhs}, &loft_gc_ok)"))
                     }
                     ("OpMinSingleInt", 1) => self.chain_bound(&args[0], l, counters),
                     ("OpGetInt", _) => {
@@ -113,6 +113,7 @@ impl FnWriter<'_> {
     /// plain copy under the guard) — or `None`: no chain, one admitted operator (the
     /// profitability decline), a nested loop whose seed or end is not a leaf, a body that
     /// must not be copied, or the release-pass probe (its operators are plain already).
+    #[expect(clippy::too_many_lines)]
     pub(super) fn chain_guard(
         &mut self,
         b: &Block,

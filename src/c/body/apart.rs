@@ -69,14 +69,18 @@ impl FnWriter<'_> {
         let mut vs: Vec<u16> = self.apv.apart.iter().copied().collect();
         vs.sort_unstable();
         for v in vs {
-            self.decls.push(format!("loft_apvec loft_apv{v} = {{ 0, {{ 0 }}, {{ 0, 0, 0 }} }};"));
+            self.decls.push(format!(
+                "loft_apvec loft_apv{v} = {{ 0, {{ 0 }}, {{ 0, 0, 0 }} }};"
+            ));
         }
     }
 
     pub(super) fn apv_texts(&self) -> Vec<String> {
         let mut vs: Vec<u16> = self.apv.apart.iter().copied().collect();
         vs.sort_unstable();
-        vs.into_iter().map(|v| format!("loft_apv{v}.spill")).collect()
+        vs.into_iter()
+            .map(|v| format!("loft_apv{v}.spill"))
+            .collect()
     }
 
     /// A statement of instance 3 that emits nothing of the store's: a free or a save naming only
@@ -118,20 +122,33 @@ impl FnWriter<'_> {
             && self.apv_vec(v)
         {
             let i = self.expr(idx, ind)?;
-            return Ok(Some(E::new(format!("loft_apv_get(&loft_apv{v}, {})", as_int(i)?), K::Float)));
+            return Ok(Some(E::new(
+                format!("loft_apv_get(&loft_apv{v}, {})", as_int(i)?),
+                K::Float,
+            )));
         }
         if let Some((v, idx, val)) = apart_vector::write(data, x)
             && self.apv_vec(v)
         {
             let (i, y) = self.two("OpSetFloat", &[idx, val], ind)?;
-            self.line(ind, &format!("loft_apv_set(&loft_apv{v}, {}, {});", as_int(i)?, as_float(y)?));
+            self.line(
+                ind,
+                &format!(
+                    "loft_apv_set(&loft_apv{v}, {}, {});",
+                    as_int(i)?,
+                    as_float(y)?
+                ),
+            );
             return Ok(Some(E::new("((void) 0)", K::Void)));
         }
         if let Some((v, val)) = apart_vector::push(data, x)
             && self.apv_vec(v)
         {
             let y = self.expr(val, ind)?;
-            self.line(ind, &format!("loft_apv_push(&loft_apv{v}, {});", as_float(y)?));
+            self.line(
+                ind,
+                &format!("loft_apv_push(&loft_apv{v}, {});", as_float(y)?),
+            );
             return Ok(Some(E::new("((void) 0)", K::Void)));
         }
         if let Some((op, v)) = apart_vector::unary(data, x)
@@ -215,7 +232,8 @@ impl FnWriter<'_> {
         for v in owners {
             let k = self.apr_layout(v).map_or(0, |l| l.fields.len());
             let zero = vec!["{ 0, 0, 0 }"; k].join(", ");
-            self.decls.push(format!("loft_text loft_apr{v}[{k}] = {{ {zero} }};"));
+            self.decls
+                .push(format!("loft_text loft_apr{v}[{k}] = {{ {zero} }};"));
         }
         let mut elems: Vec<u16> = self.apr.elems.keys().copied().collect();
         elems.sort_unstable();
@@ -268,7 +286,10 @@ impl FnWriter<'_> {
         let (v, k) = self.apr_field(fa.first()?, fa.get(1)?)?;
         let esize = self.apr_layout(v)?.fields[k].esize;
         let buf = self.apr_buf(v)?;
-        Some(E::new(format!("((int64_t) ({buf}[{k}].len / {esize}u))"), K::Int))
+        Some(E::new(
+            format!("((int64_t) ({buf}[{k}].len / {esize}u))"),
+            K::Int,
+        ))
     }
 
     /// Does this call of `d` hand an apart value to `d`'s `__apr` twin at the position the plan
@@ -302,7 +323,8 @@ impl FnWriter<'_> {
         if matches!(x.unspan(), Value::Null) {
             return Ok(true);
         }
-        if !matches!(x.unspan(), Value::Call(d, _) if self.cx.data.def(*d).name() == "OpNewRecord") {
+        if !matches!(x.unspan(), Value::Call(d, _) if self.cx.data.def(*d).name() == "OpNewRecord")
+        {
             return Err("an apart element bound to something other than its push".into());
         }
         let esize = self
@@ -311,7 +333,10 @@ impl FnWriter<'_> {
             .fields[k]
             .esize;
         let buf = self.apr_buf(owner).ok_or("an element of no apart value")?;
-        self.line(ind, &format!("loft_apo{var} = loft_apr_push(&{buf}[{k}], {esize}u);"));
+        self.line(
+            ind,
+            &format!("loft_apo{var} = loft_apr_push(&{buf}[{k}], {esize}u);"),
+        );
         Ok(true)
     }
 
@@ -445,8 +470,16 @@ impl FnWriter<'_> {
 
 /// The fields' slots and element sizes of `layout`, as C array literals.
 fn parts(layout: &RecLayout) -> (String, String) {
-    let slots: Vec<String> = layout.fields.iter().map(|f| format!("{}u", f.off)).collect();
-    let sizes: Vec<String> = layout.fields.iter().map(|f| format!("{}u", f.esize)).collect();
+    let slots: Vec<String> = layout
+        .fields
+        .iter()
+        .map(|f| format!("{}u", f.off))
+        .collect();
+    let sizes: Vec<String> = layout
+        .fields
+        .iter()
+        .map(|f| format!("{}u", f.esize))
+        .collect();
     (
         format!("(const uint32_t[]){{ {} }}", slots.join(", ")),
         format!("(const uint32_t[]){{ {} }}", sizes.join(", ")),

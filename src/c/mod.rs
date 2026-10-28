@@ -338,16 +338,27 @@ impl<'a> Cx<'a> {
         self.ap2
             .get_or_init(|| {
                 let vr = self.value_records();
-                let value_fns: crate::fxhash::FxHashSet<u32> =
-                    vr.fns.keys().copied().chain(vr.params.keys().copied()).collect();
-                std::rc::Rc::new(crate::lower::apart_value::plan(self.data, self.stores, &value_fns))
+                let value_fns: crate::fxhash::FxHashSet<u32> = vr
+                    .fns
+                    .keys()
+                    .copied()
+                    .chain(vr.params.keys().copied())
+                    .collect();
+                std::rc::Rc::new(crate::lower::apart_value::plan(
+                    self.data,
+                    self.stores,
+                    &value_fns,
+                ))
             })
             .clone()
     }
 
     /// The C struct of instance 2's type `rec`, by its layout's name.
     pub(crate) fn ap2_ctype(&self, rec: u32) -> Option<String> {
-        self.ap2_plan().types.get(&rec).map(|l| format!("loft_ap_{}", l.rust))
+        self.ap2_plan()
+            .types
+            .get(&rec)
+            .map(|l| format!("loft_ap_{}", l.rust))
     }
 
     pub(crate) fn value_records(
@@ -1042,7 +1053,12 @@ impl<'a> Cx<'a> {
                     .enumerate()
                     .map(|(k, f)| format!("double f{k}[{}];", f.len.max(1)))
                     .collect();
-                let _ = writeln!(out, "typedef struct {{ {} }} loft_ap_{};", fields.join(" "), t.rust);
+                let _ = writeln!(
+                    out,
+                    "typedef struct {{ {} }} loft_ap_{};",
+                    fields.join(" "),
+                    t.rust
+                );
             }
         }
         for (id, shapes) in self.tuples.borrow().iter().enumerate() {
@@ -2111,6 +2127,7 @@ fn variable_shapes(
 }
 
 /// The signature and the body of function `d`.
+#[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let data = cx.data;
     let places = mask & !INV_BIT & !NK_BIT & !APR_BIT & !APV_BIT;
@@ -2183,7 +2200,13 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let apr_at = if mask & APR_BIT == 0 {
         None
     } else {
-        Some(cx.apr_plan().twins.get(&d).ok_or("an __apr twin of a function the plan has no twin for")?.1)
+        Some(
+            cx.apr_plan()
+                .twins
+                .get(&d)
+                .ok_or("an __apr twin of a function the plan has no twin for")?
+                .1,
+        )
     };
     let params: Vec<String> = args
         .iter()

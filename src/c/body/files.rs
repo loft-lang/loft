@@ -213,7 +213,10 @@ impl FnWriter<'_> {
         self.decls.push(format!("loft_fcur {c};"));
         self.decls.push(format!("loft_fpos {c}p;"));
         let file = self.expr(&Value::Var(f), ind)?;
-        self.line(ind, &format!("{c}p = loft_fcur_hold(&{c}, {});", as_ref(file)?));
+        self.line(
+            ind,
+            &format!("{c}p = loft_fcur_hold(&{c}, {});", as_ref(file)?),
+        );
         crate::rewrite_census::fired("R-FileHold", 1);
         // The loop takes the next index in `loops` once `loop_stmt` pushes it.
         self.file_holds.push((f, c, self.loops.len()));
@@ -299,7 +302,10 @@ impl FnWriter<'_> {
             let name = self.var(var);
             self.line(
                 ind,
-                &format!("loft_fcur_read(&{c}, &{c}p, {w}, {}, &{name});", i32::from(signed)),
+                &format!(
+                    "loft_fcur_read(&{c}, &{c}p, {w}, {}, &{name});",
+                    i32::from(signed)
+                ),
             );
             return Ok(E::new("(void) 0", K::Void));
         }

@@ -18,10 +18,10 @@ mod misc;
 mod par;
 mod value;
 
-use std::borrow::Borrow;
 use super::{CType, Cx, c_name, held, is_operator, type_word};
 use crate::data::{Block, Value};
 use crate::variables::Function;
+use std::borrow::Borrow;
 use std::fmt::Write as _;
 
 /// A C-safe name for variable `v`: its number first, so two loft names that sanitise alike
@@ -125,6 +125,8 @@ fn kind_of(c: CType) -> K {
 }
 
 /// One function's body under construction.
+// Its flags are independent per-rewrite facts about one function, not one state to enumerate.
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct FnWriter<'a> {
     cx: &'a Cx<'a>,
     /// The function's definition number.
@@ -1786,16 +1788,20 @@ impl<'a> FnWriter<'a> {
             self.hoist_cache = cache;
             if let Err(why) = verdict {
                 if trace && why != "not a plain record" {
-                    eprintln!("recptr: {} declines parameter {}: {why}", data.def(self.d).name(), self.vars.name(p));
+                    eprintln!(
+                        "recptr: {} declines parameter {}: {why}",
+                        data.def(self.d).name(),
+                        self.vars.name(p)
+                    );
                 }
                 continue;
             }
-            let n = self.decls.len();
-            let (pa, pl) = (format!("loft_pa{p}_{n}"), format!("loft_pl{p}_{n}"));
+            let slot = self.decls.len();
+            let (pa, pl) = (format!("loft_pa{p}_{slot}"), format!("loft_pl{p}_{slot}"));
             self.decls.push(format!("uint8_t *{pa} = 0;"));
             self.decls.push(format!("int {pl} = 0;"));
-            let v = self.var(p);
-            self.line(1, &format!("{pa} = loft_rec_ptr({v});"));
+            let rec = self.var(p);
+            self.line(1, &format!("{pa} = loft_rec_ptr({rec});"));
             let writes = stmts.iter().any(|op| {
                 op.any_node(&mut |n| {
                     matches!(n, Value::Call(d, a) if (*d as usize) < data.definitions.len()
@@ -1806,10 +1812,14 @@ impl<'a> FnWriter<'a> {
                 })
             });
             if writes {
-                self.line(1, &format!("{pl} = loft_rec_locked({v});"));
+                self.line(1, &format!("{pl} = loft_rec_locked({rec});"));
             }
             if trace {
-                eprintln!("recptr: {} parameter {} bound", data.def(self.d).name(), self.vars.name(p));
+                eprintln!(
+                    "recptr: {} parameter {} bound",
+                    data.def(self.d).name(),
+                    self.vars.name(p)
+                );
             }
             crate::rewrite_census::fired("R-RecPtr/param", 1);
             self.rec_ptrs.push((p, pa, pl));
@@ -1886,14 +1896,18 @@ impl<'a> FnWriter<'a> {
             return;
         }
         if trace {
-            eprintln!("recptr: {} {} bound", self.cx.data.def(self.d).name(), self.vars.name(r));
+            eprintln!(
+                "recptr: {} {} bound",
+                self.cx.data.def(self.d).name(),
+                self.vars.name(r)
+            );
         }
-        let n = self.decls.len();
-        let (pa, pl) = (format!("loft_pa{r}_{n}"), format!("loft_pl{r}_{n}"));
+        let slot = self.decls.len();
+        let (pa, pl) = (format!("loft_pa{r}_{slot}"), format!("loft_pl{r}_{slot}"));
         self.decls.push(format!("uint8_t *{pa} = 0;"));
         self.decls.push(format!("int {pl} = 0;"));
-        let v = self.var(r);
-        self.line(ind, &format!("{pa} = loft_rec_ptr({v});"));
+        let rec = self.var(r);
+        self.line(ind, &format!("{pa} = loft_rec_ptr({rec});"));
         // The lock flag only matters to a write through the address.
         let data = self.cx.data;
         let writes = ops[at + 1..].iter().any(|op| {
@@ -1906,7 +1920,7 @@ impl<'a> FnWriter<'a> {
             })
         });
         if writes {
-            self.line(ind, &format!("{pl} = loft_rec_locked({v});"));
+            self.line(ind, &format!("{pl} = loft_rec_locked({rec});"));
         }
         crate::rewrite_census::fired("R-RecPtr", 1);
         self.rec_ptrs.push((r, pa, pl));
@@ -2053,17 +2067,17 @@ impl<'a> FnWriter<'a> {
             {
                 return false;
             }
-            let mut clean = true;
+            let mut untouched = true;
             for a in &args[1..] {
                 a.walk(&mut |n| {
                     if let Value::Var(x) = n.unspan()
                         && (*x == w || dest_vars.contains(x))
                     {
-                        clean = false;
+                        untouched = false;
                     }
                 });
             }
-            clean
+            untouched
         });
         if !ok {
             return Ok(None);
@@ -2102,7 +2116,7 @@ impl<'a> FnWriter<'a> {
         if crate::lower::hand_over::keep_statement(self.cx.data, site.g).is_none() {
             return Ok(None);
         }
-        let size = u32::from(self.cx.stores.size(site.elem_tp));
+        let elem_size = u32::from(self.cx.stores.size(site.elem_tp));
         let pairs: Vec<String> = plan[..count]
             .iter()
             .flat_map(|(o, s)| [format!("{o}u"), format!("{s}u")])
@@ -2115,16 +2129,17 @@ impl<'a> FnWriter<'a> {
         let vec = self.expr(&site.vector, ind)?;
         let vec = as_ref(vec)?;
         // An apart source (`@FR-R-Apart` instance 4) rotates in from its field buffers.
-        let rotate = match self.apr_rotate(site.src, &vec, size, site.k, &plan_c, count) {
-            Some(r) => r,
-            None => {
-                let src = self.expr(site.src, ind)?;
-                let src = as_ref(src)?;
-                format!(
-                    "loft_rotate_into({vec}, {src}, {size}u, INT64_C({}), {plan_c}, {count})",
-                    site.k
-                )
-            }
+        let rotate = if let Some(apart) =
+            self.apr_rotate(site.src, &vec, elem_size, site.k, &plan_c, count)
+        {
+            apart
+        } else {
+            let src = self.expr(site.src, ind)?;
+            let src = as_ref(src)?;
+            format!(
+                "loft_rotate_into({vec}, {src}, {elem_size}u, INT64_C({}), {plan_c}, {count})",
+                site.k
+            )
         };
         self.line(ind, &format!("if ({rotate}) {{"));
         for s in &site.between {
@@ -2347,6 +2362,7 @@ impl<'a> FnWriter<'a> {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines)]
     fn stmt_kind(&mut self, v: &Value, ind: usize) -> Result<(), String> {
         self.note_site(v, ind);
         match v {
@@ -2368,7 +2384,10 @@ impl<'a> FnWriter<'a> {
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => {
-                if self.apr_set(*var, x, ind)? || self.apv_stmt(v, ind) || self.av_set(*var, x, ind)? {
+                if self.apr_set(*var, x, ind)?
+                    || self.apv_stmt(v, ind)
+                    || self.av_set(*var, x, ind)?
+                {
                     return Ok(());
                 }
                 self.set_stmt(*var, x, ind)
@@ -3967,7 +3986,9 @@ impl<'a> FnWriter<'a> {
     /// Operand `i` of `args`, evaluated in order: a value a later operand may change is held
     /// in a temporary.
     fn arg<V: Borrow<Value>>(&mut self, args: &[V], i: usize, ind: usize) -> Result<E, String> {
-        let later_writes = args[i + 1..].iter().any(|later| self.may_write(later.borrow()));
+        let later_writes = args[i + 1..]
+            .iter()
+            .any(|later| self.may_write(later.borrow()));
         self.arg_with(args[i].borrow(), later_writes, ind)
     }
 
@@ -4452,13 +4473,23 @@ impl<'a> FnWriter<'a> {
     }
 
     /// `two` for a text VALUE op: its text field operands read in place (`text_reads`).
-    fn text_two<V: Borrow<Value>>(&mut self, name: &str, args: &[V], ind: usize) -> Result<(E, E), String> {
+    fn text_two<V: Borrow<Value>>(
+        &mut self,
+        name: &str,
+        args: &[V],
+        ind: usize,
+    ) -> Result<(E, E), String> {
         let es = self.text_reads(args, ind)?;
         let [a, b] = <[E; 2]>::try_from(es).map_err(|_| format!("{name} without two operands"))?;
         Ok((a, b))
     }
 
-    fn two<V: Borrow<Value>>(&mut self, name: &str, args: &[V], ind: usize) -> Result<(E, E), String> {
+    fn two<V: Borrow<Value>>(
+        &mut self,
+        name: &str,
+        args: &[V],
+        ind: usize,
+    ) -> Result<(E, E), String> {
         let es = self.args(args, ind)?;
         let [a, b] = <[E; 2]>::try_from(es).map_err(|_| format!("{name} without two operands"))?;
         Ok((a, b))
@@ -5322,15 +5353,7 @@ impl<'a> FnWriter<'a> {
                 else {
                     return Err(format!("{name} with a computed format"));
                 };
-                let es = self.args(
-                    &[
-                        val,
-                        width,
-                        prec,
-                        dir,
-                    ],
-                    ind,
-                )?;
+                let es = self.args(&[val, width, prec, dir], ind)?;
                 let [val, width, prec, dir] =
                     <[E; 4]>::try_from(es).map_err(|_| "format operands".to_string())?;
                 let (val, single) = if name == "OpFormatSingle" {
@@ -5486,7 +5509,9 @@ impl<'a> FnWriter<'a> {
                 // A copy into a field of an element being built: its null arm is the default.
                 if self.is_fresh_field_copy(args) {
                     let (s, d) = (self.temp(CType::Ref), self.temp(CType::Ref));
-                    let null_arm = self.fresh_null_arm(args, &d).ok_or("a fresh field without its type")?;
+                    let null_arm = self
+                        .fresh_null_arm(args, &d)
+                        .ok_or("a fresh field without its type")?;
                     self.line(ind, &format!("{s} = {src};"));
                     self.line(ind, &format!("{d} = {dst};"));
                     self.line(ind, &format!("if ({s}.store_nr == 0xFFFF) {{ {null_arm} }} else {{ loft_copy_record(loft_types, {tp}, {s}, {d}, {free}); }}"));
@@ -6141,10 +6166,7 @@ impl<'a> FnWriter<'a> {
             return Err("a slice of elements that are not scalars".into());
         }
         let size = self.cx.stores.size(tp);
-        let es = self.args(
-            &[v, src, lo, hi],
-            ind,
-        )?;
+        let es = self.args(&[v, src, lo, hi], ind)?;
         let [v, src, lo, hi] =
             <[E; 4]>::try_from(es).map_err(|_| "a slice without four operands".to_string())?;
         Ok(E::new(
