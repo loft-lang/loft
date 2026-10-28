@@ -528,8 +528,8 @@ fn adopt_read_surface(path: &str, stores: &mut Stores) -> std::io::Result<u16> {
 /// # Errors
 /// Returns `NotFound` if `path` does not exist, and the operating system's error if it
 /// cannot be opened (a read-only cache): both are a cache miss, and the caller falls back
-/// to parsing.  A file that opens but is corrupt is still refused by assertion;
-/// integrity-checked loading is arc E's drift-detection job (Q4).
+/// to parsing.  A file that opens but is corrupt is still refused by assertion: this does
+/// not check an image's integrity.
 #[cfg(feature = "mmap")]
 pub fn open_data(path: &str) -> std::io::Result<Data> {
     // An empty name names nothing (`file_access` would answer for `.`).

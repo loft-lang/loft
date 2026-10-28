@@ -3,8 +3,8 @@
 // @I85 — Engine-host kernel natives (the natives behind the web library)
 
 //! The natives behind the `web` library (`[native] in_binary = true`): an HTTP client and a
-//! WebSocket client in loft's own binary, so the library carries no crate of its own (@PLN203,
-//! owner 2026-10-27).  HTTP goes through the agent every HTTPS request loft makes uses
+//! WebSocket client in loft's own binary, so the library carries no crate of its own.  HTTP
+//! goes through the agent every HTTPS request loft makes uses
 //! ([`crate::tls`]: the bundled roots plus the machine's store); a WebSocket session is RFC 6455
 //! over TCP, TLS for `wss://`, reconnecting with backoff.  The C runtime's twin is
 //! `src/c/loft_web.h`; the browser's is `native::WEB_FUNCTIONS_WASM`.
