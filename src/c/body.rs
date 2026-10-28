@@ -600,7 +600,9 @@ impl<'a> FnWriter<'a> {
     }
 
     /// The body: the locals, the temporaries and the statements.
-    pub(crate) fn write(mut self) -> Result<String, String> {
+    /// The function's C body, and how many statements it holds — its own lines, without the
+    /// declarations, the blank lines and the frame-site bookkeeping (`small_function`).
+    pub(crate) fn write(mut self) -> Result<(String, usize), String> {
         let code = self.code;
         // The return buffer an admitted function's signature dropped is a local nothing binds.
         if let Some(p) = self.vr.as_ref().and_then(|f| f.phantom) {
@@ -661,8 +663,13 @@ impl<'a> FnWriter<'a> {
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
         }
+        let statements = self
+            .body
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.contains("loft_frame_site("))
+            .count();
         out.push_str(&self.body);
-        Ok(out)
+        Ok((out, statements))
     }
 
     fn var(&self, v: u16) -> String {

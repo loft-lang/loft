@@ -1040,6 +1040,9 @@ fn main() {
                 .lines()
                 .find(|l| l.starts_with("static ") && l.contains(f))
                 .unwrap_or_default();
+            // `static inline` where the function is small (`@FR-R-Inline`): the return type is
+            // what this asks.
+            let sig = sig.replacen("static inline ", "static ", 1);
             assert_eq!(sig.starts_with("static loft_tup"), structs, "{mode}: {sig}");
         }
         let mut kinds: Vec<(&str, Vec<&str>)> = vec![

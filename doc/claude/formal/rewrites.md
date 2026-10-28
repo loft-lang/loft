@@ -4185,6 +4185,20 @@ line in `Output::output_function`'s prelude.
                  `LOFT_NO_VR_PTR=1`; guard
                  `a-read-only-record-parameter-reads-the-callers-value-at-the-call.loft`.
 
+  (R-Inline)     a loft function the C writes in at most twelve statements is declared
+                 `static inline`, its frame wrapper with it.  The hint changes no
+                 observable behaviour; what it moves is the C compiler's inlining
+                 budget, so a small helper a hot loop calls — a push through an
+                 overwrite-or-append helper, an accessor — is taken into its caller,
+                 whose locals then stay in registers across what was a call.  GCC
+                 left such a helper out of line at -O3 and reloaded the caller's
+                 spilled state after every call (bench 20's interpreter loop: -69 %
+                 cycles); Clang decides without the hint.  The bound is SIZE because
+                 hinting every function moved other rows 2-3 % either way, the
+                 twelve-statement form none beyond noise.  Counted by the writer
+                 (`FnWriter::write`), declarations and frame sites excluded.
+                 Switch `LOFT_NO_INLINE_HINT=1`.
+
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
                  diagnostics hook — must INLINE into the emitted code, and whatever

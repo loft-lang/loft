@@ -2231,6 +2231,18 @@ fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
     ok
 }
 
+/// `@FR-R-Inline`: a function of at most twelve statements is declared `inline`.  The hint
+/// raises the compiler's inlining budget for it, so a small helper called from a hot loop —
+/// a push through `put`, an accessor — is taken into its caller, and the caller's locals stay
+/// in registers across what was a call.  GCC left such a helper out of line and reloaded the
+/// caller's spilled state after every call (bench 20: -69 % cycles); Clang decides alone.
+/// Measured over every bench: nothing else moved beyond noise.  `LOFT_NO_INLINE_HINT=1` drops
+/// the hint.
+fn small_function(statements: usize) -> bool {
+    statements <= 12
+        && !crate::env_once!(std::env::var("LOFT_NO_INLINE_HINT").is_ok_and(|v| v != "0"))
+}
+
 /// The signature and the body of function `d`.
 #[expect(clippy::too_many_lines)]
 fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
@@ -2377,10 +2389,18 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         .apart(mask & APR_BIT != 0)
         .apart_value(mask & APV_BIT != 0)
         .write()?;
+    let (body, statements) = body;
+    // `@FR-R-Inline`: a small function is declared `inline`, its frame wrapper with it.
+    let inline = small_function(statements);
+    let sig = if inline {
+        sig.replacen("static ", "static inline ", 1)
+    } else {
+        sig
+    };
     // Every function keeps its frame: the pushes are macros that a build without the call
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
     // the compiler folds into its caller.
-    Ok((sig, framed(cx, d, &name, &params, ret, &body)))
+    Ok((sig, framed(cx, d, &name, &params, ret, &body, inline)))
 }
 
 /// An `__inv` twin's header parameters, appended to `params`, and the frame its body serves
@@ -2983,16 +3003,25 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
 /// A function as the unit writes it: its body becomes `<name>__fr`, and the function
 /// pushes its frame (`cr_call_push`'s name and file), calls the body and pops the frame, so
 /// every return of the body leaves the frame stack as it found it.
-fn framed(cx: &Cx, d: u32, name: &str, params: &str, ret: CType, body: &str) -> String {
+fn framed(
+    cx: &Cx,
+    d: u32,
+    name: &str,
+    params: &str,
+    ret: CType,
+    body: &str,
+    inline: bool,
+) -> String {
     let def = cx.data.def(d);
+    let storage = if inline { "static inline" } else { "static" };
     let _ = writeln!(
         cx.gen_decls.borrow_mut(),
-        "static {} {name}__fr({params});",
+        "{storage} {} {name}__fr({params});",
         held(ret)
     );
     let _ = write!(
         cx.gen_bodies.borrow_mut(),
-        "\nstatic {} {name}__fr({params}) {{\n{body}}}\n",
+        "\n{storage} {} {name}__fr({params}) {{\n{body}}}\n",
         held(ret)
     );
     let args: Vec<String> = if params == "void" {
