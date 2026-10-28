@@ -128,6 +128,7 @@ fn refuse(l: Lowering, what: text) {
 fn expr(l: Lowering, b: ir::Bundle, n: ir::Node) {
   match n {
     NdInt { n: value } => emit(l, PushInt, value, 0),
+    NdNull => emit(l, PushNull, 0, 0),
     NdVar { n: slot } => emit(l, Load, slot, 0),
     NdSpan { inner } => expr(l, b, inner[0]?),
     NdBlock { block } => block_value(l, b, block[0]?),
@@ -286,6 +287,16 @@ fn statement(l: Lowering, b: ir::Bundle, n: ir::Node) {
   }
 }
 
+// Does `d` answer nothing (a `void` result)?  Its body is then a statement, and the lowering
+// leaves a null as its value, so every function leaves exactly one value on the stack.
+fn returns_nothing(d: ir::Definition) -> boolean {
+  if len(d.returned) == 0 {
+    return true;
+  }
+  r = d.returned[0] ?? panic("a non-empty result vector");
+  r is TyVoid || r is TyNull
+}
+
 // The ops of definition `def_nr`'s body.
 pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
   d = b.data.definitions[def_nr]?;
@@ -300,7 +311,13 @@ pub fn lower(b: ir::Bundle, def_nr: integer) -> Lowering {
     brk_loop: [],
     brk_at: [],
   };
-  expr(l, b, d.code[0]?);
+  if returns_nothing(d) {
+    statement(l, b, d.code[0]?);
+    emit(l, PushNull, 0, 0);
+    emit(l, Ret, 0, 0);
+  } else {
+    expr(l, b, d.code[0]?);
+  }
   l
 }
 

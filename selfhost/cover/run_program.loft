@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The coverage census's runner (@PLN91 S2.1): `run_program <image>` runs the image's `main`
+// through the loft interpreter.  A construct it does not carry yet is reported on stderr as
+// `refused: <reason>` with exit 3, so the census can rank what blocks the most programs.
+use load;
+use lower;
+use run;
+
+fn main() {
+  a = arguments();
+  image = a[0] ?? "";
+  b = load::load(image);
+  if b == null {
+    eprintln("refused: no image at {image}");
+    exit(3);
+  }
+  entry = lower::find(b, "n_main");
+  if entry < 0 {
+    eprintln("refused: the image has no main");
+    exit(3);
+  }
+  o = run::run(b, entry, []);
+  if o.refused != "" {
+    eprintln("refused: {o.refused}");
+    exit(3);
+  }
+}

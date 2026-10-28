@@ -261,7 +261,7 @@ design→code note are in [1b-s0.md](1b-s0.md).
 Phase S1 (scalars, control flow, calls, the speed check: S1, S1.1–S1.4, S1.1a, X16–X18) is
 built; its steps are in [1b-s1.md](1b-s1.md).  S1.1b's open steps follow below.
 
-### S1 closed; S2.1 — the coverage census, and a `main` that returns nothing — DESIGNED 2026-10-28
+### S1 closed; S2.1 — the coverage census, and a `main` that returns nothing — BUILT 2026-10-28
 
 **S1 is closed**: its gate holds (the kernels answer as `--interpret` does) and its speed is
 measured and reported (S1.4; the owner: not a gate).  S1.1b T3 and T4 stay queued as the
@@ -291,6 +291,16 @@ suite chapters `operational`, `calls` and `formatting` (123 cells).
 **Cases:** the census runs over the whole corpus and classifies every program; a program the
 interpreter carries end to end (a void `main` over integers, no output) passes; one printing
 is refused naming `n_println` or the format op — the first rows of the S2 worklist.
+
+**Design → code.**
+- As designed.  The gate chapters (`operational`, `calls`, `formatting`): **48 of their 123
+  cells are plain runs, 0 pass, 48 refused** — 41 first by a text literal (`NdText`), 2 by
+  `OpNullRefSentinel`, then one each by a float null, a boolean literal and three more texts.
+- **The census misses most of the suite**: a cell is mostly `fn test_…` functions, which
+  `loft --tests` runs one by one, not a `main`.  The runner should run them the same way
+  (every zero-argument function the file declares, an assert's failure being that cell's
+  failure), or two thirds of the gate stays invisible.  Folded into S2.2.
+- The whole-corpus baseline follows in the next commit's note.
 
 ### SU1 — `store_load` maps the image instead of copying it — DESIGNED 2026-10-28
 
