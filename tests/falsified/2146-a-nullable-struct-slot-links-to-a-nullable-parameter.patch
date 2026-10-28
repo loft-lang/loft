@@ -1,7 +1,7 @@
-diff --git b/src/parser/call_args.rs a/src/parser/call_args.rs
-index 5089e54..1c41b17 100644
---- b/src/parser/call_args.rs
-+++ a/src/parser/call_args.rs
+diff --git a/src/parser/call_args.rs b/src/parser/call_args.rs
+index 5089e54b..1c41b173 100644
+--- a/src/parser/call_args.rs
++++ b/src/parser/call_args.rs
 @@ -24,10 +24,6 @@ impl Parser {
          arg_pos: &[Position],
      ) -> Vec<Value> {
@@ -13,17 +13,20 @@ index 5089e54..1c41b17 100644
          if types.is_empty() {
              return actual;
          }
-diff --git b/src/parser/calls.rs a/src/parser/calls.rs
-index a080d02..28187e9 100644
---- b/src/parser/calls.rs
-+++ a/src/parser/calls.rs
-@@ -1299,29 +1299,9 @@ impl Parser {
+diff --git a/src/parser/calls.rs b/src/parser/calls.rs
+index 719368a6..70cd3a41 100644
+--- a/src/parser/calls.rs
++++ b/src/parser/calls.rs
+@@ -1356,32 +1356,12 @@ impl Parser {
          if self.in_sandbox && !self.first_pass {
              self.record_param_lock_overrides(d_nr, &actual);
          }
 -        let pres = std::mem::take(&mut self.pending_arg_pres);
 -        let posts = std::mem::take(&mut self.pending_arg_posts);
          self.add_defaults(d_nr, &mut actual, &mut all_types);
+         if !self.first_pass {
+             self.copy_store_text_args(d_nr, &mut actual);
+         }
          let tp = self.call_dependencies(d_nr, &all_types);
          *code = Value::Call(d_nr, actual);
 -        // loft#2146 — an argument linked through a temp is stored back once the call returns.
@@ -47,10 +50,10 @@ index a080d02..28187e9 100644
          self.warn_text_len_byte_index(d_nr, code);
          // @PLN102 arc C step 3 — the recommended-idiom STEER.  A resolved call FROM
          // OWNED source (the entry project) to a `#superseded "Y"` symbol warns the
-diff --git b/src/parser/convert.rs a/src/parser/convert.rs
-index 5b585b3..9d83fe5 100644
---- b/src/parser/convert.rs
-+++ a/src/parser/convert.rs
+diff --git a/src/parser/convert.rs b/src/parser/convert.rs
+index 5b585b35..9d83fe53 100644
+--- a/src/parser/convert.rs
++++ b/src/parser/convert.rs
 @@ -865,59 +865,6 @@ impl Parser {
          {
              return true;
@@ -111,11 +114,11 @@ index 5b585b3..9d83fe5 100644
          // @PLN25 single-payload — a `__nullable<S>` value flows into a `&S` (`RefVar(Reference
          // (S))`) parameter (`fn f(r: &S)` that may MUTATE through `r`).  Unwrap to the payload
          // sub-ref, then pass it BY-REFERENCE via a work-ref + `OpCreateStack` (with `skip_free`,
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 14310c6..be9d30c 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -926,13 +926,6 @@ pub struct Parser {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index eea753b9..1494b13a 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -941,13 +941,6 @@ pub struct Parser {
      /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
      /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
      ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
@@ -129,7 +132,7 @@ index 14310c6..be9d30c 100644
      /// Pass 1's tuple-local call arguments, `(function, callee def name, argument index,
      /// local)`, judged against the callee's signature between the passes
      /// (`record_forward_ref_tuple_links`).
-@@ -1954,8 +1947,6 @@ impl Parser {
+@@ -1976,8 +1969,6 @@ impl Parser {
              infer_ret_defs: std::collections::HashSet::new(),
              adopted_ret_defs: std::collections::HashSet::new(),
              ref_linked_tuple_locals: std::collections::HashSet::new(),
@@ -138,10 +141,10 @@ index 14310c6..be9d30c 100644
              pending_tuple_args: Vec::new(),
              tuple_place_wanted: false,
              loop_sources_replaced: std::collections::HashSet::new(),
-diff --git b/src/parser/nullable_slots.rs a/src/parser/nullable_slots.rs
-index 245c138..0d4b844 100644
---- b/src/parser/nullable_slots.rs
-+++ a/src/parser/nullable_slots.rs
+diff --git a/src/parser/nullable_slots.rs b/src/parser/nullable_slots.rs
+index 245c138a..0d4b8448 100644
+--- a/src/parser/nullable_slots.rs
++++ b/src/parser/nullable_slots.rs
 @@ -93,6 +93,7 @@ impl Parser {
          let Some(struct_d) = self.nullable_payload_struct(syn) else {
              return Vec::new();
