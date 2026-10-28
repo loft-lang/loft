@@ -44,6 +44,11 @@ pub use crate::engine_host::typed::*;
 pub use crate::git_query::typed::*;
 // @PLN179 strand 4b — `lib/process`'s run, so a COMPILED script runs programs too.
 pub use crate::process_run::typed::*;
+// The web library's natives: the host's, and the browser page's over its `loft_web` imports.
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))]
+pub use crate::web_browser::typed::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::web_client::typed::*;
 // @PLN18 08-S2 — the live-flip surface (it forwards to the live tier once that boots).
 pub use crate::live_control::n_live_flip;
 // @PLN18 08-S4 — the background-rebuild surface.

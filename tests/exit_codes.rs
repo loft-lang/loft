@@ -410,6 +410,7 @@ fn w1_1_html_export_produces_file() {
     let out = dir.join("loft_w1_1_test.html");
     fa::write(&src, "fn main() { println(\"html-ok\"); }\n").unwrap();
     let result = loft::platform::process::harness_command(loft_bin())
+        .arg("--native-rust")
         .arg("--html")
         .arg(&out)
         .arg(&src)
@@ -1624,6 +1625,7 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
 /// "native runtime out of date … rebuilding it with your rustc" and then "could not run
 /// cargo" — where nothing could be rebuilt.
 #[test]
+// @PLN203 rust-writer: a missing rustc is the Rust writer's fallback (@C102); the C's is c_driver's
 fn a_missing_rustc_falls_back_quietly_except_where_asked() {
     let tmp = std::env::temp_dir().join(format!("loft_c102_{}", std::process::id()));
     let _ = fa::remove_dir_all(&tmp);
@@ -1647,8 +1649,9 @@ fn a_missing_rustc_falls_back_quietly_except_where_asked() {
     fa::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
     let run = |bin: &std::path::Path, native: bool, require: bool| {
         let mut c = loft::platform::process::harness_command(bin);
+        c.env_remove("LOFT_NATIVE_BACKEND");
         if native {
-            c.arg("--native");
+            c.arg("--native-rust");
         }
         c.arg(&prog)
             .env("PATH", &empty)

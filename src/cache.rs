@@ -1327,7 +1327,7 @@ pub fn touch_now(path: &std::path::Path) {
 /// (~7 MiB) and nothing removes them.  Eviction is **idle-TTL primary**
 /// ([`cache_ttl`]) — drop any bundle not used within the TTL — with the size-cap
 /// ([`program_cache_budget_bytes`]) as a runaway backstop.  Whole (`.store` +
-/// `.manifest` + `.native`) sets go together.  Best-effort.
+/// `.store.dschema` + `.manifest` + `.native`) sets go together.  Best-effort.
 pub fn prune_program_cache() {
     prune_dir(&cache_base_dir(), program_cache_budget_bytes(), cache_ttl());
 }
@@ -1368,6 +1368,7 @@ fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration
     let now = std::time::SystemTime::now();
     let remove_pair = |store: &std::path::Path| {
         let _ = crate::file_access::remove_file(store);
+        let _ = crate::file_access::remove_file(crate::schema_sidecar::dschema_path(store));
         let manifest = crate::file_access::with_extension(store, "manifest");
         let _ = crate::file_access::remove_file(native_sidecar_path(&manifest));
         let _ = crate::file_access::remove_file(manifest);
@@ -1440,6 +1441,8 @@ fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
     images.sort_by_key(|i| std::cmp::Reverse(i.0)); // newest first
     for (_, path) in &images[keep..] {
         let _ = fa::remove_file(path);
+        // The image's layout sidecar goes with it (`save_bundle` writes one beside it).
+        let _ = fa::remove_file(crate::schema_sidecar::dschema_path(&path.os_spelling()));
     }
 }
 
@@ -1945,6 +1948,7 @@ mod tests {
         let mk = |name: &str, age_secs: u64| {
             let store = dir.join(format!("{name}.store"));
             crate::file_access::write(&store, b"0123456789").unwrap();
+            crate::file_access::write(dir.join(format!("{name}.store.dschema")), b"d").unwrap();
             crate::file_access::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
             let when = std::time::SystemTime::now() - Duration::from_secs(age_secs);
             // Open for WRITE before set_modified: Windows `SetFileTime` needs write
@@ -1971,6 +1975,14 @@ mod tests {
         assert!(
             !crate::file_access::exists(dir.join("program-aaa.manifest")),
             "oldest manifest evicted with it"
+        );
+        assert!(
+            !crate::file_access::exists(dir.join("program-aaa.store.dschema")),
+            "oldest layout sidecar evicted with it"
+        );
+        assert!(
+            crate::file_access::exists(dir.join("program-bbb.store.dschema")),
+            "a kept bundle keeps its sidecar"
         );
         assert!(
             crate::file_access::exists(dir.join("program-bbb.store")),
@@ -2039,6 +2051,7 @@ mod tests {
         for i in 0..5u8 {
             let p = root.join(&name(i));
             fa::write(&p, b"img").unwrap();
+            fa::write(root.join(&format!("{}.dschema", name(i))), b"d").unwrap();
             let when = SystemTime::now() - Duration::from_secs(1000 - u64::from(i) * 100);
             fa::open_read_write(&p).unwrap().set_modified(when).unwrap();
         }
@@ -2047,9 +2060,17 @@ mod tests {
         prune_stdlib_dir(&dir, 2);
         for i in 0..3u8 {
             assert!(!fa::exists(root.join(&name(i))), "older image {i} removed");
+            assert!(
+                !fa::exists(root.join(&format!("{}.dschema", name(i)))),
+                "older image {i}'s sidecar removed with it"
+            );
         }
         for i in 3..5u8 {
             assert!(fa::exists(root.join(&name(i))), "newest image {i} kept");
+            assert!(
+                fa::exists(root.join(&format!("{}.dschema", name(i)))),
+                "newest image {i} keeps its sidecar"
+            );
         }
         assert!(
             fa::exists(root.join("stdlib-zzz.store")),

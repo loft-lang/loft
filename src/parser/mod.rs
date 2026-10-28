@@ -1099,6 +1099,9 @@ pub struct Parser {
     /// that `resolve_deferred_unknowns` can re-apply them with overwrite
     /// semantics after cyclic `use` declarations have left Unknown stubs.
     applied_imports: Vec<PendingImport>,
+    /// @PLN204 — the sources whose regime (`Data::width32`) is settled, so a file resumed
+    /// after a `use` keeps the `#width` it began with.
+    width_decided: std::collections::BTreeSet<u16>,
     /// `DefType::Unknown` stubs collected by `actual_types_deferred`
     /// during each `parse_file` run.  Resolved (or finally reported) by
     /// `resolve_deferred_unknowns` after all files in the recursion have
@@ -1787,6 +1790,7 @@ pub(super) mod store_text;
 mod suggest;
 pub(super) mod vectors;
 mod visibility;
+mod width32;
 pub(crate) mod work_buffer;
 
 impl Default for Parser {
@@ -2044,6 +2048,7 @@ impl Parser {
             use_public: false,
             pub_taken: false,
             applied_imports: Vec::new(),
+            width_decided: std::collections::BTreeSet::new(),
             deferred_unknown: Vec::new(),
             record_resolutions: false,
             resolutions: Vec::new(),
@@ -2303,22 +2308,66 @@ impl Parser {
     // * Parser functions *
     // ********************
 
-    /// Parse data from the current lexer.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn parse_file(&mut self) {
-        let start_def = self.data.definitions();
-        // #255 / @PLN9: file-level `#cwd` directive — opt this program out of the
-        // program-relative default so a *relative* file path resolves against the
-        // process cwd (CLI-tool semantics) rather than the program's own
-        // directory.  Whole-program; must precede declarations.  At file top the
-        // lexer's first token can only be this directive (`#rust`/`#native`/etc.
-        // are declaration-scoped, consumed later by `parse_rust`).
-        // `#link static` / `#link dynamic` names how a native build links the native libraries
-        // the program uses.  The DRIVER acts on it, reading the header before any parse
-        // (`native_utils::apply_link_directive`); here it is only checked, so a misspelt mode
-        // is refused rather than silently linking the default way.
+    /// The directives at the top of a file.  `entry` is the file a parse starts from, where
+    /// all three apply; a file a `use` switches into (`entry == false`) may only say
+    /// `#package`, because `#cwd` and `#link` set how the whole PROGRAM runs and links, and
+    /// a library must not change that for the program that uses it.
+    ///
+    /// `#cwd` (#255 / @PLN9) opts the program out of the program-relative default, so a
+    /// *relative* file path resolves against the process cwd (CLI-tool semantics) rather
+    /// than the program's own directory.  Whole-program; must precede declarations.  At file
+    /// top the lexer's first token can only be a directive (`#rust`/`#native`/etc. are
+    /// declaration-scoped, consumed later by `parse_rust`).
+    ///
+    /// `#link static` / `#link dynamic` names how a native build links the native libraries
+    /// the program uses.  The DRIVER acts on it, reading the header before any parse
+    /// (`native_utils::apply_link_directive`); here it is only checked, so a misspelt mode
+    /// is refused rather than silently linking the default way.
+    ///
+    /// `#package` (`@FR-F-Package`): this file shows its internals to the other files of its
+    /// own directory.
+    ///
+    /// @PLN204 — `#width 32` puts this file under the 32-bit regime (`Data::width32`) and
+    /// `#width 64` keeps it out of a whole-program `LOFT_WIDTH=32`; a file's own setting, so a
+    /// used file may say it too.  The stdlib never is.  A suspended file resumed after its
+    /// `use` re-enters here mid-file, so the default is only taken for a source not decided yet.
+    pub(super) fn parse_file_directives(&mut self, entry: bool) {
+        let src = self.data.source;
+        if src != crate::data::STD_SOURCE && !self.width_decided.contains(&src) {
+            self.width_decided.insert(src);
+            self.data.set_width32(src, crate::keys::width32_all());
+        }
         while self.lexer.has_token("#") {
             match self.lexer.has_identifier().as_deref() {
+                Some("width") => {
+                    let bits = self.lexer.has_integer();
+                    match bits {
+                        Some(32) => self.data.set_width32(src, src != crate::data::STD_SOURCE),
+                        Some(64) => self.data.set_width32(src, false),
+                        _ => diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Unknown width '#width {}' (expected '#width 32' or '#width 64')",
+                            bits.map_or_else(String::new, |b| b.to_string())
+                        ),
+                    }
+                    let _ = self.lexer.has_token(";");
+                }
+                Some("package") => {
+                    let file = self.lexer.pos().file;
+                    self.data.note_package_file(&file);
+                    let _ = self.lexer.has_token(";");
+                }
+                Some(whole @ ("cwd" | "link")) if !entry => {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "'#{whole}' sets how the whole program runs, so it is written in the \
+                         program's own file, not in a file it uses; a used file may say \
+                         '#package' or '#width'"
+                    );
+                    break;
+                }
                 Some("cwd") => {
                     self.database.program_relative = false;
                     let _ = self.lexer.has_token(";");
@@ -2339,12 +2388,19 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "Unknown file directive '#{name}' (expected '#cwd' or '#link')"
+                        "Unknown file directive '#{name}' (expected '#cwd', '#link', '#package' or '#width')"
                     );
                     break;
                 }
             }
         }
+    }
+
+    /// Parse data from the current lexer.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_file(&mut self) {
+        let start_def = self.data.definitions();
+        self.parse_file_directives(true);
         // Tier-0 lazy auto-`use`: the file the lexer is on right now, captured
         // before the use-loop may switch away.  Scanned for `lib::` references
         // after the use-region (see the load loop below).

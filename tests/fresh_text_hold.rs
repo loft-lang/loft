@@ -55,7 +55,12 @@ fn a_fresh_elements_text_keeps_the_hold_and_a_shared_store_refuses_it() {
         let mut e = vec![("LOFT_TRACE_HOIST_DECLINE", "1")];
         e.extend_from_slice(env);
         let out = loft(
-            &["--ship", "--native-emit", loft::platform::null_sink()],
+            &[
+                "--ship",
+                "--native-rust",
+                "--native-emit",
+                loft::platform::null_sink(),
+            ],
             &e,
         );
         String::from_utf8_lossy(&out.stderr)

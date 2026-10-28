@@ -325,6 +325,19 @@ pub fn op_conv_bool_from_long(val: i64) -> bool {
     val != i64::MIN
 }
 
+/// @PLN204 — `OpNarrow32`: the 32-bit regime's overflow.  A value outside
+/// `i32::MIN + 1 ..= i32::MAX` (where `i32::MIN` is the 32-bit null) reads null, as a 64-bit
+/// overflow does; a null stays null.
+#[inline]
+#[must_use]
+pub fn op_narrow32(v: i64) -> i64 {
+    if v > i64::from(i32::MIN) && v <= i64::from(i32::MAX) {
+        v
+    } else {
+        i64::MIN
+    }
+}
+
 #[inline]
 #[must_use]
 pub fn op_add_long(v1: i64, v2: i64) -> i64 {

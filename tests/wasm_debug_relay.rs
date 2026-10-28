@@ -96,7 +96,12 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
     .unwrap();
     let client_html = tmp.join("p98_relay_client.html");
     let built = loft::platform::process::harness_command(&loft)
-        .args(["--html", client_html.to_str().unwrap(), "--path"])
+        .args([
+            "--native-rust",
+            "--html",
+            client_html.to_str().unwrap(),
+            "--path",
+        ])
         .arg(format!("{}/", root.display()))
         .args(["--debug=alice"])
         .arg(client_src.to_str().unwrap())

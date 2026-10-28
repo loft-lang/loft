@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: counts the Rust writer's adoptions — its `--native` runs as `--native-rust`.
 //! @PLN164 B1 (`@FR-O-Move`) — ADOPT AT FIRST BIND: a plain local first-bound from a callee
 //! that returns the local it promoted onto its hidden buffer (`fn mk() -> P { o = P { … }; …;
 //! o }`, deps `["o"]`) adopts the store the callee minted instead of minting a second one
@@ -36,7 +37,10 @@ fn loft() -> Command {
 
 fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd = loft();
-    cmd.arg("--native-emit").arg(out).arg(cells());
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
+        .arg(out)
+        .arg(cells());
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -219,7 +223,10 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
     assert_eq!((i_on, i_off), (104, 154), "interpret mints (on, off)");
-    let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
+    let (n_on, n_off) = (
+        store_mints("--native-rust", &[]),
+        store_mints("--native-rust", OFF),
+    );
     assert!(
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"

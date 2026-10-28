@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: compaction and the trie/spatial rebuild of a persisted image differ on the C — its `--native` runs as `--native-rust` until then.
 
 //! @PLAN38 — end-to-end exercise of store images through the compiled `loft`
 //! binary: `store_persist_copy` writes one, `store_load` and the paged
@@ -217,7 +218,7 @@ fn run_script(script: &Path, backend: &str, path: &Path) -> (String, i32) {
 #[test]
 fn paged_load_carries_enum_fields_both_backends() {
     let script = workspace_root().join("tests/scripts/store_paged_enum_field.loft");
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let dir = scratch(&format!("paged_enum_{}", backend.trim_start_matches('-')));
         let path = dir.join("recs.store");
         let (out, code) = run_script(&script, backend, &path);
@@ -247,7 +248,7 @@ fn paged_load_carries_enum_fields_both_backends() {
 #[test]
 fn compaction_on_load_returns_both_backends() {
     let script = workspace_root().join("tests/scripts/store_load_compaction_scratch_header.loft");
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let dir = scratch(&format!(
             "compaction_scratch_header_{}",
             backend.trim_start_matches('-')
@@ -547,7 +548,7 @@ fn store_load_reads_persisted_image_both_backends() {
     assert!(fa::exists(&path), "the write should create the file");
 
     // load it back via the heap path on both backends — same keys + lookup
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &load_script(), &path, "load");
         assert_eq!(code, 0, "{backend} load exit: {out:?}");
         assert!(
@@ -732,7 +733,7 @@ fn store_load_key_loads_only_the_requested_key_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write keys=7,13,42"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &load_script(), &path, "loadkey");
         assert_eq!(code, 0, "{backend} loadkey exit: {out:?}");
         assert!(
@@ -765,7 +766,7 @@ fn store_load_keys_loads_the_requested_subset_both_backends() {
     let (out_w, code_w) = run_mode(&load_script(), &path, "write");
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &load_script(), &path, "loadkeys");
         assert_eq!(code, 0, "{backend} loadkeys exit: {out:?}");
         assert!(
@@ -804,7 +805,7 @@ fn an_image_sheds_the_slack_its_vectors_grew_to() {
             .unwrap_or_default()
     };
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let _ = fa::remove_file(&path);
         let _ = fa::remove_file(fa::with_extension(&path, "store.dschema"));
         // The fixture MANUFACTURES slack through in-place vector growth, which the exact
@@ -853,7 +854,7 @@ fn a_bulk_record_read_loads_exactly_what_the_word_at_a_time_read_did() {
     let (out_w, code_w) = run_mode(&vecstruct_script(), &path, "write");
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (bulk, c1) = run_mode_backend(backend, &vecstruct_script(), &path, "loadkey");
         assert_eq!(c1, 0, "{backend} bulk exit: {bulk:?}");
         let wordwise = {
@@ -901,7 +902,7 @@ fn store_load_key_relocates_a_text_field_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write ok"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &text_script(), &path, "loadkey");
         assert_eq!(code, 0, "{backend} loadkey exit: {out:?}");
         assert!(out.contains("text loadkey=true"), "{backend}: {out:?}");
@@ -934,7 +935,7 @@ fn store_load_key_relocates_a_vector_field_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write ok"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &vec_script(), &path, "loadkey");
         assert_eq!(code, 0, "{backend} loadkey exit: {out:?}");
         assert!(out.contains("vec loadkey=true"), "{backend}: {out:?}");
@@ -967,7 +968,7 @@ fn store_load_key_relocates_a_nested_struct_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write ok"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &nested_script(), &path, "loadkey");
         assert_eq!(code, 0, "{backend} loadkey exit: {out:?}");
         assert!(out.contains("nest loadkey=true"), "{backend}: {out:?}");
@@ -1000,7 +1001,7 @@ fn store_load_key_relocates_a_vector_of_struct_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write ok"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &vecstruct_script(), &path, "loadkey");
         assert_eq!(code, 0, "{backend} loadkey exit: {out:?}");
         assert!(out.contains("vs loadkey=true"), "{backend}: {out:?}");
@@ -1034,7 +1035,7 @@ fn store_load_key_refuses_a_vector_of_text_field_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write ok"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &vectext_refuse_script(), &path, "loadkey");
         assert_eq!(code, 0, "{backend} loadkey exit: {out:?}");
         assert!(
@@ -1069,7 +1070,7 @@ fn store_load_key_over_http_range() {
     let sidecar = fa::read(format!("{}.dschema", path.display())).ok();
     let url = serve_ranges(fa::read(&path).unwrap(), sidecar);
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &load_script(), Path::new(&url), "loadkey");
         assert_eq!(code, 0, "{backend} http loadkey exit: {out:?}");
         assert!(
@@ -1105,7 +1106,7 @@ fn store_load_key_text_both_backends() {
     assert_eq!(code_w, 0, "write: {out_w:?}");
     assert!(out_w.contains("write ok"), "{out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &textkey_script(), &path, "loadkey");
         assert_eq!(code, 0, "{backend} loadkey exit: {out:?}");
         assert!(out.contains("tk loadkey=true"), "{backend}: {out:?}");
@@ -1138,7 +1139,7 @@ fn store_load_range_over_sorted_both_backends() {
     assert_eq!(code_w, 0, "write: {out_w:?}");
     assert!(out_w.contains("write ok"), "{out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &range_script(), &path, "range");
         assert_eq!(code, 0, "{backend} range exit: {out:?}");
         assert!(out.contains("rng loaded=3"), "{backend}: {out:?}");
@@ -1182,7 +1183,7 @@ fn store_load_prefix_over_trie_both_backends() {
     assert_eq!(code_w, 0, "write: {out_w:?}");
     assert!(out_w.contains("write ok"), "{out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         // One key, by a root→leaf descent — and a miss that stays a miss.
         let (out, code) = run_mode_backend(backend, &prefix_script(), &path, "one");
         assert_eq!(code, 0, "{backend} one exit: {out:?}");
@@ -1279,7 +1280,7 @@ fn layout_gate_rejects_changed_struct_both_backends() {
         "persist must write a .dschema sidecar beside the store"
     );
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         // MATCHING layout — the load proceeds.
         let (out, code) = run_mode_backend(backend, &gate_script(), &path, "load");
         assert_eq!(code, 0, "{backend} match exit: {out:?}");
@@ -1324,7 +1325,7 @@ fn store_load_converts_or_refuses_a_changed_layout_both_backends() {
     let (out_w, code_w) = run_mode(&gate_script(), &path, "write");
     assert_eq!(code_w, 0, "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         // MATCHING layout — the whole-image load proceeds and yields the data.
         let (out, code) = run_mode_backend(backend, &gate_script(), &path, "whole");
         assert_eq!(code, 0, "{backend} match exit: {out:?}");
@@ -1398,7 +1399,7 @@ fn store_load_url_converts_or_refuses_a_changed_layout_both_backends() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         for url in [&file_url, &http_url] {
             for pin in ["trusted", sha.as_str()] {
                 let out = run(backend, &gate_script(), url, pin);
@@ -1440,7 +1441,7 @@ fn layout_gate_over_http_rejects_changed_struct() {
     assert!(sidecar.is_some(), "persist must write a .dschema sidecar");
     let url = serve_ranges(fa::read(&path).unwrap(), sidecar);
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         // MATCHING layout over http — the remote gate does a real Match.
         let (out, code) = run_mode_backend(backend, &gate_script(), Path::new(&url), "load");
         assert_eq!(code, 0, "{backend} http match exit: {out:?}");
@@ -1518,7 +1519,7 @@ fn store_load_url_verifies_sha_before_adopting_both_backends() {
         )
     };
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         // Correct hash — the load succeeds, all keys present, heap sound.
         let (out, code) = run(backend, &sha);
         assert_eq!(code, 0, "{backend} verified load exit: {out:?}");
@@ -1566,7 +1567,7 @@ fn store_load_untrusted_validates_before_adopting_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("write keys=7,13,42"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_mode_backend(backend, &load_script(), &path, "loaduntrusted");
         assert_eq!(code, 0, "{backend} loaduntrusted exit: {out:?}");
         assert!(
@@ -1615,7 +1616,7 @@ fn store_load_url_trusted_fetches_over_http_both_backends() {
     let sidecar = fa::read(format!("{}.dschema", path.display())).ok();
     let url = serve_ranges(fa::read(&path).unwrap(), sidecar);
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(load_script())
@@ -1745,7 +1746,7 @@ fn handoff_text_residency_reads_on_native_backend() {
 
     // Written by the interpreter, read by a natively-compiled process: the
     // image is portable across backends, not just across processes.
-    let (n_out, n_code) = run_mode_backend("--native", &script, &path, "readimage");
+    let (n_out, n_code) = run_mode_backend("--native-rust", &script, &path, "readimage");
     assert_eq!(n_code, 0, "{n_out:?}");
     assert!(n_out.contains("readimage load=true"), "{n_out:?}");
     assert_handoff_cells(&n_out, "native readimage");
@@ -2107,7 +2108,7 @@ fn b0_run_full(
 // @speed 1.5
 #[test]
 fn store_digest_b0_oracle_sees_loss_not_layout() {
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("b0_{tag}"));
         let run = |file: &str, order: &str, damage: &str, mode: &str, want: &str, seed| {
@@ -2243,7 +2244,7 @@ fn store_rebuild_b1_recovers_the_interior_and_is_idempotent() {
     // tag, count, sum, xor, bytes — one row per stage the script reports.
     type Row = (String, i64, i64, i64, i64);
     let mut per_backend: Vec<Vec<Row>> = Vec::new();
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let dir = scratch(&format!("b1_{}", backend.trim_start_matches('-')));
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
@@ -2390,7 +2391,7 @@ fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
         t[i + 1].parse().expect("number")
     };
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let tag = backend.trim_start_matches('-');
 
         // With compaction at load on and off: the same data, a sound heap, a root
@@ -2517,7 +2518,7 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
         t[i + 1].to_string()
     };
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         for (kind, verdict) in kinds {
             let tag = backend.trim_start_matches('-');
             let dir = scratch(&format!("kinds_{kind}_{tag}"));
@@ -2656,7 +2657,7 @@ fn reading_a_collection_leaks_nothing_into_its_store() {
         found
     };
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let tag = backend.trim_start_matches('-');
 
         // In memory: 41 traversals must leave the census exactly where 1 did.
@@ -2711,7 +2712,7 @@ fn lazy_bound_collection_fetches_only_the_touched_entry_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("seeded=3"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_lazy(backend, &script, &path, "read");
         assert_eq!(code, 0, "{backend} read exit: {out:?}");
 
@@ -2837,7 +2838,7 @@ fn a_refused_lazy_binding_is_visible_to_the_program_both_backends() {
     assert_eq!(code_w, 0, "write exit: {out_w:?}");
     assert!(out_w.contains("seeded=2,1,1,1,1,2"), "write: {out_w:?}");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_lazy(backend, &script, &path, "read");
         assert_eq!(code, 0, "{backend} read exit: {out:?}");
 
@@ -3015,7 +3016,7 @@ fn lazy_graph_traversal_fetches_only_what_it_touches_both_backends() {
         "seed: {out_w:?}"
     );
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let (out, code) = run_graph(backend, &script, &persons, &companies, "read");
         assert_eq!(code, 0, "{backend} read exit: {out:?}");
 
@@ -3430,7 +3431,7 @@ fn store_load_keys_round_trip_depth_is_measurable() {
 #[test]
 fn store_verify_reads_a_field_collection_as_itself_both_backends() {
     let script = workspace_root().join("tests/scripts/790-verify-field-collection.loft");
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
@@ -3490,7 +3491,7 @@ fn a_spatial_survives_the_rebuild_and_comes_out_in_morton_order() {
     let script = workspace_root().join("tests/scripts/136-persist-copy-morton-order.loft");
     let query = workspace_root().join("tests/scripts/136-persist-copy-box-query.loft");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("persist_copy_spatial_{tag}"));
         let bound = dir.join("bound.store");
@@ -3606,7 +3607,7 @@ fn a_trie_survives_the_rebuild_and_comes_out_in_key_order() {
     let script = workspace_root().join("tests/scripts/134-persist-copy-key-order.loft");
     let query = workspace_root().join("tests/scripts/134-persist-copy-query.loft");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let tag = backend.trim_start_matches('-');
         let dir = scratch(&format!("persist_copy_{tag}"));
         let bound = dir.join("bound.store");
@@ -3757,7 +3758,7 @@ fn store_load_keys_text_batches_what_the_loop_repeats() {
 
     run("--interpret", "write");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let batch = run(backend, "batch");
         let looped = run(backend, "loop");
 
@@ -3818,7 +3819,7 @@ fn store_load_keys_text_serves_a_trie() {
     let script = workspace_root().join("tests/scripts/1064-load-keys-text.loft");
     let path = dir.join("pack");
 
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let _ = fa::remove_file(dir.join("pack.trie"));
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
@@ -3962,7 +3963,10 @@ fn layouts_updated(tag: &str) -> String {
 /// after it, so the mix is measured, not assumed.
 #[test]
 fn every_hash_layout_lives_beside_the_others_in_one_store() {
-    for (first, second) in [("--interpret", "--native"), ("--native", "--interpret")] {
+    for (first, second) in [
+        ("--interpret", "--native-rust"),
+        ("--native-rust", "--interpret"),
+    ] {
         for (wn, we) in HASH_LAYOUTS {
             for (un, ue) in HASH_LAYOUTS {
                 let cell = format!("{wn} written {first}, {un} update {second}");

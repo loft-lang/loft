@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: the runtime log of a fault site is not written by the C — its `--native` runs as `--native-rust` until then.
 
 //! Plan-07 phase 4 production-mode tests.
 //!
@@ -460,7 +461,7 @@ fn main() {
         .output()
         .is_ok()
     {
-        legs.push("--native");
+        legs.push("--native-rust");
     }
     for leg in legs {
         let (script_path, log_path) = setup_prod_run(&format!("every_fault{}", &leg[1..]), source);
@@ -561,7 +562,7 @@ fn main() {
         .output()
         .is_ok()
     {
-        legs.push("--native");
+        legs.push("--native-rust");
     }
     for leg in legs {
         let (script_path, log_path) = setup_prod_run(&format!("held_oob{}", &leg[1..]), source);
@@ -644,7 +645,11 @@ fn run_logged(name: &str, source: &str, native: bool) -> String {
     let (script_path, log_path) = setup_prod_run(name, source);
     let conf = script_path.parent().unwrap().join("log.conf");
     let out = loft::platform::process::harness_command(loft_bin())
-        .arg(if native { "--native" } else { "--interpret" })
+        .arg(if native {
+            "--native-rust"
+        } else {
+            "--interpret"
+        })
         .arg("--log-conf")
         .arg(&conf)
         .arg(&script_path)

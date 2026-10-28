@@ -646,7 +646,9 @@ impl Parser {
                 // loft#1848 — `lib::name` reaches only what `use lib::*` would.
                 if source != u16::MAX
                     && source != self.data.source
-                    && let Some(msg) = self.data.qualified_refusal(source, name, &id)
+                    && let Some(msg) =
+                        self.data
+                            .qualified_refusal(source, name, &id, &self.lexer.pos().file)
                 {
                     diagnostic!(self.lexer, Level::Error, "{msg}");
                 }
@@ -874,6 +876,7 @@ impl Parser {
                 *code = Value::Int(i32::from(tp));
             } else {
                 t = self.parse_call(code, source, &nm, &call_pos);
+                t = self.width32_call_result(code, t);
             }
         } else if self.closure_param != u16::MAX
             && !self.first_pass

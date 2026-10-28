@@ -7,7 +7,8 @@
     scripts/c_sweep.py FILE...          # these programs
     scripts/c_sweep.py --verbose        # also every differing program's two outputs
     scripts/c_sweep.py --asan           # build with AddressSanitizer and UBSan: a report is a defect
-    scripts/c_sweep.py --all            # every refusal reason, not the top 25
+    scripts/c_sweep.py --all            # every refusal reason and every refused program, not the
+                                        # top 25 reasons with five programs each
     scripts/c_sweep.py --mode default   # one macro mode (strict, default, verify) instead of all
     scripts/c_sweep.py --shard K/N      # every N-th program from offset K (CI splits the sweep)
     scripts/c_sweep.py --stderr         # also compare stderr: a fault's message, its `-->` line,
@@ -17,6 +18,9 @@
                                         # interpreter run under LOFT_POISON=1 / LOFT_POISON_CLAIM=1
     scripts/c_sweep.py --wasm           # the C built for wasm32-wasi by clang and run under
                                         # wasmtime instead (LOFT_WASM_CC names another clang)
+    scripts/c_sweep.py --m32            # the C built as 32-bit x86 (gcc -m32) and run natively
+    scripts/c_sweep.py --riscv32        # the C built for 32-bit RISC-V Linux by zig cc and run
+                                        # under qemu-riscv32 (LOFT_RISCV32_CC names another cc)
     LOFT_BIN=<loft> scripts/c_sweep.py  # another build (default target/release/loft)
 
 Every run also files each program's times (bench/portal/local/c_sweep/<modes>.tsv) and lists
@@ -39,7 +43,8 @@ in one bucket:
   differ    carried, and the answers differ — a defect of the C backend
   cc-error  carried, and the C does not compile — a defect of the C backend
   sanitizer (--asan) carried, and the C program trips a sanitizer — a defect of the C backend
-  refused   not carried yet; the reason is counted, and the ranking is the next work
+  refused   not carried yet; the reasons are ranked by count — the ranking is the next work —
+            each with the programs it refused (all of them in <scratch>/refused.tsv)
 
 Exit 1 when any program differs or fails to compile, else 0.  Needs `cc` on PATH.
 """
@@ -84,6 +89,16 @@ WASM_CC = [os.environ.get("LOFT_WASM_CC") or "clang", "--target=wasm32-wasi", "-
 # end of linear memory).
 WASM_LIBS = ["-Wl,-z,stack-size=8388608", "-lm", "-lsetjmp", "-lwasi-emulated-process-clocks",
              "-lwasi-emulated-signal"]
+# @PLN204 — the two 32-bit legs.  `--m32`: the unit as ILP32 x86 (`gcc -m32`, Ubuntu's
+# gcc-multilib), run natively.  `--riscv32`: as 32-bit RISC-V Linux, the Tanmatsu's ISA, by
+# `zig cc -target riscv32-linux-musl` (LOFT_RISCV32_CC names another compiler) and run under
+# `qemu-riscv32` (Ubuntu's qemu-user).  Both build the unit with its shims' sources, as wasm does.
+M32_CC = ["cc", "-m32", "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread", "-w"] + \
+    (["-ldl"] if sys.platform.startswith("linux") else [])
+RV32_CC = (os.environ.get("LOFT_RISCV32_CC") or
+           f"{shutil.which('zig') or '/snap/bin/zig'} cc -target riscv32-linux-musl").split() + \
+    ["-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-w"]
+CROSS = {"m32": M32_CC, "riscv32": RV32_CC}
 
 
 def wasm_run(wasm: str, cwd: Path, tmpdir: str) -> list[str]:
@@ -222,6 +237,8 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
     shim_sources = re.findall(r"^/\* shim-source: (.*) \*/$", unit, re.M)
     if "wasm" in modes and any(not l.endswith(".a") and not l.startswith("-Wl,") for l in links):
         return path, "refused", "a declared C library has no wasm32 build", None, {}
+    if any(m in CROSS for m in modes) and any(not l.startswith("-Wl,") for l in links if not l.endswith(".a")):
+        return path, "refused", "a declared C library has no 32-bit build", None, {}
     tests = not HAS_MAIN.search(src.read_text(encoding="utf-8", errors="replace"))
     # A program without `main` is its tests: the C runs them as `loft --tests` does,
     # and the two exit statuses say whether every test passed.
@@ -244,13 +261,17 @@ def one(path: str, asan: bool = False, modes=tuple(MODES), stderr: bool = False)
             return path, "slow", why, None, times
         if mode == "wasm":
             code, _, err = run(WASM_CC + [c] + shim_sources + ["-o", exe + ".wasm"] + WASM_LIBS, 120)
+        elif mode in CROSS:
+            code, _, err = run(CROSS[mode] + [c] + shim_sources + ["-o", exe, "-lm"], 300)
         else:
             code, _, err = run(CC + flags + (ASAN if asan else []) + [c, "-o", exe, "-lm"] + links, 120)
         if code != 0:
             first = err.decode(errors="replace").strip().split("\n")[0]
             return path, "cc-error", f"[{mode}] {first}", None, times
         # The program's directory, as the driver hands it to every run (`LOFT_SOURCE_DIR`).
-        c_out, times[mode] = timed(wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else [exe],
+        run_cmd = wasm_run(exe + ".wasm", src.parent, tmpdir) if mode == "wasm" else \
+            ["qemu-riscv32", exe] if mode == "riscv32" else [exe]
+        c_out, times[mode] = timed(run_cmd,
                                    limit(path, mode), cwd=src.parent,
                                    env={**tenv, "LOFT_SOURCE_DIR": str(src.parent.resolve())})
         why = killed(path, mode, c_out)
@@ -336,6 +357,10 @@ def main(argv: list[str]) -> int:
     modes = tuple(POISON_MODES) if "--poison" in argv else tuple(MODES)
     if "--wasm" in argv:
         modes = ("wasm",)
+    if "--m32" in argv:
+        modes = ("m32",)
+    if "--riscv32" in argv:
+        modes = ("riscv32",)
     if "--mode" in argv:
         i = argv.index("--mode")
         modes = (argv[i + 1],)
@@ -360,7 +385,7 @@ def main(argv: list[str]) -> int:
     if "--no-limit" not in argv:
         LAST.update(load_times(label))
     buckets = Counter()
-    reasons = Counter()
+    reasons: dict = {}
     bad = []
     timings = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
@@ -373,7 +398,7 @@ def main(argv: list[str]) -> int:
                 shutil.rmtree(os.path.join(SCRATCH, f"{Path(path).stem[:60]}-{zlib.crc32(path.encode()):08x}"),
                               ignore_errors=True)
             if bucket == "refused":
-                reasons[why] += 1
+                reasons.setdefault(why, []).append(path)
             elif bucket in ("differ", "cc-error", "sanitizer", "slow"):
                 bad.append((path, bucket, why, outs))
     total = len(files)
@@ -391,9 +416,21 @@ def main(argv: list[str]) -> int:
                 print(f"      C           stderr: {scrubbed(ce)[:400]!r}")
     report_times(timings, label)
     if reasons:
-        print("refused, by reason:")
-        for why, n in reasons.most_common(None if "--all" in argv else 25):
-            print(f"  {n:5}  {why}")
+        every = "--all" in argv
+        listing = os.path.join(SCRATCH, "refused.tsv")
+        with open(listing, "w", encoding="utf-8") as out:
+            for why, paths in sorted(reasons.items()):
+                for path in sorted(paths):
+                    out.write(f"{path}\t{why}\n")
+        ranked = sorted(reasons.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        print(f"refused, by reason (every program in {listing}):")
+        for why, paths in ranked if every else ranked[:25]:
+            print(f"  {len(paths):5}  {why}")
+            shown = sorted(paths) if every else sorted(paths)[:5]
+            for path in shown:
+                print(f"           {path}")
+            if len(paths) > len(shown):
+                print(f"           … and {len(paths) - len(shown)} more")
     return 1 if bad else 0
 
 

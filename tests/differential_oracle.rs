@@ -230,6 +230,7 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
     let stem = fa::file_stem(path).unwrap_or_default();
     let out = std::env::temp_dir().join(format!("loft_oracle_{stem}_{}.wasm", std::process::id()));
     let compile = loft::platform::process::harness_command(loft_bin())
+        .arg("--native-rust")
         .arg("--native-wasm")
         .arg(&out)
         .arg(path)

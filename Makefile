@@ -2099,7 +2099,7 @@ falsify:  ## Run a guard against the build it was written to catch: GUARD=<file>
 	@if [ -n "$(REF)" ]; then ./scripts/falsify.sh "$(GUARD)" "$(REF)"; \
 	else ./scripts/falsify.sh "$(GUARD)" --installed; fi
 
-ir-schema-check:  ## Is src/ir_schema_gen.rs still what tools/ir_schema/ir.loft generates?
+ir-schema-check:  ## Is src/ir_schema_gen.rs still what selfhost/src/ir.loft generates?
 	@# The generated file IS the store layout (record sizes, field offsets, the Node
 	@# discriminants data_store.rs bakes into DISC_*).  It drifted once already — Key
 	@# gained a `start` field, the generated file was updated, ir.loft was not — and a
@@ -2107,7 +2107,7 @@ ir-schema-check:  ## Is src/ir_schema_gen.rs still what tools/ir_schema/ir.loft 
 	@# `doc_hygiene::ir_schema_gen_matches_its_loft_source`, which runs this same script.
 	@scripts/ir_schema_check.sh
 
-ir-schema-regen:  ## Rewrite src/ir_schema_gen.rs from tools/ir_schema/ir.loft
+ir-schema-regen:  ## Rewrite src/ir_schema_gen.rs from selfhost/src/ir.loft
 	@scripts/ir_schema_check.sh --fix
 	@echo "now run: cargo test --lib baked_layout_mirrors_loft_schema"
 

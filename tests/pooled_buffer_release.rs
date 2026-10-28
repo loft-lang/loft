@@ -178,6 +178,7 @@ fn native_lowers_the_release_to_remove_claims() {
     // leaves c1's release out (its callee empties the vector field in place), so the question
     // is asked with that clause off; the clause's own sites are pinned in tests/refill_text.rs.
     let out = loft()
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out_path)
         .arg(cells())

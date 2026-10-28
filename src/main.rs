@@ -123,6 +123,29 @@ fn print_target_surface(want: Option<&str>) {
     }
 }
 
+/// `loft --emit-image <out.store> prog.loft`: close the parsed program as the startup cache
+/// closes it before taking its image, write that image to `out` with its layout sidecar, and
+/// exit without running the program.  Exit 1, naming the path, when it cannot be written.
+#[cfg(feature = "mmap")]
+fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, out: &str) -> ! {
+    if ships_live_tier {
+        p.data.open_world = true;
+    }
+    compile::close_program(&mut p.data, &mut p.database);
+    if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database.types, out) {
+        eprintln!("loft: cannot write the image to {out}: {e}");
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
+/// A build without file-backed stores (the browser build) cannot write an image.
+#[cfg(not(feature = "mmap"))]
+fn emit_program_image(_p: &mut parser::Parser, _ships_live_tier: bool, _out: &str) -> ! {
+    eprintln!("loft: --emit-image needs file-backed stores, which this build leaves out");
+    std::process::exit(2);
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "the help text, one `println!` per line; a split would cut the text, not a subject"
@@ -159,6 +182,12 @@ fn print_help() {
     println!("  --lib <dir>                   add <dir> to the 'use' import search path; may be");
     println!("                                repeated for multiple directories");
     println!("  --log-conf <path>             use this log config file instead of the default");
+    println!(
+        "  --width 32                    a plain integer is 32-bit and a plain float a single, in every"
+    );
+    println!(
+        "                                file but the standard library (`#width 64` in a file keeps it)"
+    );
     println!(
         "  --timeout <secs>              hard-kill the process after <secs>+grace seconds (PLAN49)"
     );
@@ -228,11 +257,15 @@ fn print_help() {
         "                                site in a single run instead of halting on the first"
     );
     println!("  --native-emit [out.rs]        write generated Rust source and exit");
+    println!("  --emit-image <out.store>      write the program's compiled IR image and exit");
     println!("                                (default: .loft/<script>.rs beside the script)");
     println!("  --native-c                    like --native but through C and the host's C");
     println!("                                compiler (LOFT_CC, CC, else cc); combines with");
     println!("                                --ship, --native-debug, --native-emit");
     println!("                                [out.c]; LOFT_NATIVE_BACKEND=c selects it too");
+    println!("  --native-rust                 like --native but through the Rust writer and");
+    println!("                                rustc whatever LOFT_NATIVE_BACKEND says; with");
+    println!("                                --native-emit it writes the Rust");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
     println!(
         "  --native-android [out.apk]    cross-compile to a signed Android APK (needs \
@@ -7573,6 +7606,11 @@ fn main() {
     // @PLN203 C1 — `--native-c` (or `LOFT_NATIVE_BACKEND=c`): `--native` compiles through
     // the C backend and the host's C compiler instead of rustc.
     let mut native_c = c_driver::c_backend_selected();
+    // @PLN203 C9 — `--native-rust`: the Rust writer and rustc for this run, whatever
+    // `LOFT_NATIVE_BACKEND` selects.  Kept one release past the flip; until then it is how a
+    // test of the Rust writer itself (its emission, its rewrites, the `[native] crate` layer)
+    // says so while the gate's `--native` runs through the C.
+    let mut native_rust = false;
     // @PLN98 P2 — `--lean`: strip the live/debug tier from the generated Rust
     // (no `live_flipped` entry checks, no `LOFT_LIVE_FNS`/`boot_stores`).  The
     // default keeps the live tier (non-breaking); this is opt-OUT.
@@ -7619,6 +7657,9 @@ fn main() {
     let mut introspect_mode = false;
     // @PLN200 B5 — `--emit-c <out.c>`: write the program as C (the C backend) and exit.
     let mut emit_c: Option<String> = None;
+    // @PLN91 S0.2 — `--emit-image <out.store>`: write the program's IMAGE (the bundle the
+    // startup cache saves, with its layout sidecar) and exit without running it.
+    let mut emit_image: Option<String> = None;
     // @PLN86 F12 — `loft sandbox-check <file>`: run the admission walk ONLY and print
     // Admitted / Rejected + diagnostics, NEVER execute.  The modder's "will this be
     // allowed?" loop; the policy comes from `loft.toml` like a normal run.
@@ -7794,6 +7835,14 @@ fn main() {
             emit_c = argv.get(i).cloned();
             i += 1;
             native_mode = false;
+        } else if a == "--emit-image" {
+            let Some(out) = argv.get(i).cloned() else {
+                eprintln!("loft: --emit-image needs the path to write the image to");
+                std::process::exit(2);
+            };
+            emit_image = Some(out);
+            i += 1;
+            native_mode = false;
         } else if a == "--introspect" || a == "introspect" {
             // @PLN12 phase 01: introspection mode (flag or bare subcommand).
             // Default = emit bytecode + Rust + slots + types to stdout.
@@ -7864,6 +7913,9 @@ fn main() {
             native_mode = true;
             native_requested = true;
             native_c = true;
+            native_rust = false;
+        } else if a == "--native-rust" {
+            native_rust = true;
         } else if a == "--native-debug" {
             // NDB.0 — emit DWARF; combine with --ship if
             // optimised + debug-info is wanted.
@@ -8081,6 +8133,24 @@ fn main() {
             // Defaults off so existing consumers are unaffected.
             // Env equivalent: LOFT_DENY_WARNINGS=1
             deny_warnings = true;
+        } else if a == "--width" {
+            // @PLN204 — `--width 32` puts every source but the stdlib under the 32-bit regime
+            // (a plain `integer` is an `i32`, a plain `float` a `single`), as `LOFT_WIDTH=32`
+            // does; a file's own `#width 64` still keeps it out.
+            let bits = argv
+                .get(i)
+                .map(String::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if bits != "32" && bits != "64" {
+                eprintln!("--width requires 32 or 64");
+                std::process::exit(2);
+            }
+            i += 1;
+            // SAFETY: as for --dev-soft-halt — set before any parse reads it.
+            unsafe {
+                std::env::set_var("LOFT_WIDTH", &bits);
+            }
         } else if a == "--timeout" {
             // @PLAN49 T3 — `--timeout <secs>` arms the watchdog.  The
             // graceful T2 fault (when shipped) fires at `<secs>`; the
@@ -9241,6 +9311,20 @@ fn main() {
             .unwrap_or("out.wasm")
             .to_string();
     }
+    // `--native-rust` chooses the writer; alone it is `--native` through it, beside
+    // `--native-emit`, `--html`, `--native-wasm` or `--native-android` it only chooses which
+    // writer builds that.
+    if native_rust {
+        native_c = false;
+        if native_emit.is_none()
+            && html_out.is_none()
+            && native_wasm.is_none()
+            && native_android.is_none()
+        {
+            native_mode = true;
+            native_requested = true;
+        }
+    }
     if let Some(ref mut p) = native_emit
         && p.is_empty()
         && !file_name.is_empty()
@@ -9525,10 +9609,13 @@ fn main() {
     // `name(65535)` with `-` in the slot table — two runs of one binary read as two
     // compilers (measured 2026-09-05 on the released 2026.8.0, `LOFT_NO_CACHE=1` was the
     // only way to compare emissions).
+    // `--emit-image` always parses cold and leaves the user's cache as it was: its image is
+    // a fresh parse, written where the caller names.
     let program_cache_on = loft::cache::program_cache_enabled()
         && script_desugared.is_none()
         && !script_mode
-        && !introspect_mode;
+        && !introspect_mode
+        && emit_image.is_none();
     p.track_sources = program_cache_on;
     // @PLN11 G2/M6 — on a warm hit with LOFT_CODEGEN_STORE, the cache is loaded
     // as a SKELETON (def table only) and the mmap'd bundle store is returned
@@ -10246,6 +10333,11 @@ fn main() {
                 libs: &auto_native_libs,
             },
         );
+    }
+    // @PLN91 S0.2 — the image the cache above saves, taken at the same point and under the
+    // same openness, written to the path the caller named; the program is not run.
+    if let Some(out) = &emit_image {
+        emit_program_image(&mut p, ships_live_tier, out);
     }
     // @PLAN28 debug/validation hook — when `LOFT_DUMP_SNAPSHOT=<path>` is set,
     // write the parsed `Data` as the startup-cache JSON snapshot and exit.
@@ -11494,6 +11586,14 @@ fn main() {
                         std::process::exit(1);
                     }
                 }
+            }
+            // The web library's natives are loft's (`web_browser`), so their `loft_web` imports
+            // are too — unless an older web version's own `host_js` already brought them.
+            let imports_web = crate::native_utils::html_wasm_import_modules(&wasm_bytes)
+                .is_some_and(|mods| mods.iter().any(|m| m == "loft_web"));
+            if imports_web && !s.contains("imports.loft_web") {
+                s.push_str("\n/* === loft's web natives: doc/loft-web.js === */\n");
+                s.push_str(include_str!("../doc/loft-web.js"));
             }
             s
         };
@@ -12930,7 +13030,28 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         let ann =
             test_runner::parse_annotations(&fa::read_to_string(&abs_file).unwrap_or_default());
         let expected = |name: &str| ann.expected_failure(name);
-        match loft::c::emit_program(&p.data, &state.database, &expected) {
+        // @PLN205 L0b — `LOFT_EMIT_FROM_IMAGE=1`: write the C from the program IMAGE (the
+        // `Data` and type schema saved as a bundle and read back into fresh stores), as a
+        // backend that is a separate part will read it.  The probe compares it with the C
+        // written from memory, over every program.
+        let from_image = std::env::var_os("LOFT_EMIT_FROM_IMAGE").is_some();
+        let emitted = if from_image {
+            // A program image is the `mmap` feature's bundle; a build without it has none.
+            #[cfg(feature = "mmap")]
+            let round = loft::ir_read::image_round_trip(&p.data, &state.database);
+            #[cfg(not(feature = "mmap"))]
+            let round: std::io::Result<(loft::data::Data, loft::database::Stores)> = Err(
+                std::io::Error::other("this build has no program image (the `mmap` feature)"),
+            );
+            round
+                .map_err(|e| format!("the program image did not round-trip: {e}"))
+                .and_then(|(data, db)| {
+                    loft::c::emit_program(&data, &db, &expected).map_err(|r| r.to_string())
+                })
+        } else {
+            loft::c::emit_program(&p.data, &state.database, &expected).map_err(|r| r.to_string())
+        };
+        match emitted {
             Ok(c) => {
                 if let Err(e) = fa::write(&out, c) {
                     eprintln!("loft: cannot write {out}: {e}");

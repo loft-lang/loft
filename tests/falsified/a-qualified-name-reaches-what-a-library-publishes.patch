@@ -1,6 +1,8 @@
---- a/src/data.rs	2026-10-02 07:36:34.238027448 +0200
-+++ b/src/data.rs	2026-10-02 07:38:34.735401014 +0200
-@@ -12156,8 +12156,7 @@
+diff --git a/src/data.rs b/src/data.rs
+index 952aab3c2..e6d660a73 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -12907,8 +12907,7 @@ impl Data {
              // A pass-1 forward stub (a library parsed after its user, as in a mutual-use
              // pair) is not the item yet and carries no `pub`: judging it would refuse a
              // `pub struct` the second pass finds published.
@@ -10,11 +12,13 @@
              {
                  return None;
              }
-@@ -12183,7 +12182,7 @@
-                     ),
+@@ -12935,9 +12934,7 @@ impl Data {
                  });
              }
--            if !self.definitions[d as usize].pub_visible {
+             // `@FR-F-Package` — a mate of a `#package` file reads its items as `pub`.
+-            if !self.definitions[d as usize].pub_visible
+-                && !self.shares_internals(&self.definitions[d as usize].position.file, user_file)
+-            {
 +            if true {
                  return Some(format!(
                      "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \

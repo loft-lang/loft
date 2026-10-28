@@ -396,7 +396,7 @@ pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update;
 /// file / IO error / pre-epoch dates — treat 0 as "unknown".
 /// Use for date-window filters: convert the returned seconds to YYYY-MM-DD and
 /// compare lexicographically against `ymd_days_ago(N)`.
-pub fn mtime(path: text) -> integer fs#read;
+pub fn mtime(path: text) -> i64 fs#read;
 #rust"s.database.fs_mtime_at(@path)"
 #impure(host_io)
 
@@ -895,7 +895,7 @@ pub fn seek(self: File, pos: integer) -> boolean fs#update {
 /// reports null rather than 0 — 0 is a legitimate position, so returning it would
 /// make "not opened" indistinguishable from "at the start".  Discharge with
 /// `?? 0` when the distinction does not matter.
-pub fn position(self: const File) -> integer {
+pub fn position(self: const File) -> i64 {
   self.next
 }
 /// Flushes buffered bytes for self to the underlying storage so that the
@@ -1032,11 +1032,11 @@ pub fn host_output(msg: text) host#append;
 // --- Time ---
 /// Returns the current wall-clock time as milliseconds since the Unix epoch
 /// (00:00 UTC on 1 Jan 1970). Use for timestamps and logging.
-pub fn now() -> integer time#read;
+pub fn now() -> i64 time#read;
 #impure(host_io)
 /// Returns microseconds elapsed since program start (monotonic clock).
 /// Unaffected by system clock adjustments. Use for benchmarks and frame timing.
-pub fn ticks() -> integer time#read;
+pub fn ticks() -> i64 time#read;
 #impure(host_io)
 // --- Memory diagnostics ---
 /// Returns a multi-line snapshot of all LIVE stores' internal memory

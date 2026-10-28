@@ -36,6 +36,12 @@ pub enum LexItem {
     /// same number.
     Float(f64, bool),
     Single(f32),
+    /// @PLN204 — an integer literal with the `l` suffix (`123l`): 64-bit even in a file under
+    /// the 32-bit regime, where a plain literal is an `i32`.
+    Wide(u64),
+    /// @PLN204 — a decimal literal with the `d` suffix (`2.5d`): a 64-bit `float` even in a
+    /// file under the 32-bit regime, where a plain decimal literal is a `single`.
+    Double(f64),
     /// Can be both a keyword and one or more position tokens.  Its text is the lexicon's
     /// own ([`LexConfig`]): a token is one of a fixed set, so it names its spelling and
     /// owns nothing.
@@ -488,6 +494,9 @@ pub struct Lexer {
     /// Whether `"…"` literals accept JSON string escapes (`\/`, `\uXXXX` + surrogate
     /// pairs).  See [`LexConfig::json_strings`].
     json_strings: bool,
+    /// Whether a number takes the 64-bit literal suffixes `l` / `d`.  See
+    /// [`LexConfig::wide_suffixes`].
+    wide_suffixes: bool,
     /// @PLN109 — set by [`json_unicode_escape`](Self::json_unicode_escape) when an
     /// unpaired `\uXXXX` high surrogate had to over-read past its 4th hex digit (to
     /// look for a low surrogate that was not there), leaving the char iterator one
@@ -648,6 +657,11 @@ pub struct LexConfig {
     /// a JSON validator).  Off for all normal loft / config lexing, so loft source
     /// string semantics are unchanged.
     pub json_strings: bool,
+    /// @PLN204 — when true (loft source), `123l` and `2.5d` are the 64-bit literals the
+    /// 32-bit regime needs.  Off for JSON and configs, whose numbers take no suffix: there a
+    /// letter after a number stays the next token, so `1.5d` in JSON is refused at the `d`,
+    /// as every reader of it (the C runtime's included) refuses it.
+    pub wide_suffixes: bool,
 }
 
 impl Default for LexConfig {
@@ -660,6 +674,7 @@ impl Default for LexConfig {
             comment: "//",
             interpolate_strings: true,
             json_strings: false,
+            wide_suffixes: true,
         }
     }
 }
@@ -678,6 +693,7 @@ impl LexConfig {
             comment,
             interpolate_strings: false,
             json_strings: false,
+            wide_suffixes: false,
         }
     }
 
@@ -703,6 +719,7 @@ impl LexConfig {
             comment: "",
             interpolate_strings: false,
             json_strings: true,
+            wide_suffixes: false,
         }
     }
 }
@@ -799,6 +816,7 @@ impl Default for Lexer {
             comment: cfg.comment,
             interpolate_strings: cfg.interpolate_strings,
             json_strings: cfg.json_strings,
+            wide_suffixes: cfg.wide_suffixes,
             json_over_read: false,
             mode: Mode::Code,
             in_format_expr: false,
@@ -875,6 +893,7 @@ impl Lexer {
             comment: config.comment,
             interpolate_strings: config.interpolate_strings,
             json_strings: config.json_strings,
+            wide_suffixes: config.wide_suffixes,
             json_over_read: false,
             mode: Mode::Code,
             in_format_expr: false,
@@ -2466,6 +2485,7 @@ impl Lexer {
             if let Some(&c) = self.iter.peek()
                 && c.is_ascii_alphabetic()
                 && c != 'f'
+                && c != 'd'
             {
                 let mut bad = String::new();
                 while let Some(&n) = self.iter.peek() {
@@ -2481,7 +2501,7 @@ impl Lexer {
                 self.err(
                     Level::Error,
                     &format!(
-                        "`{bad}` is not a numeric suffix; write `f` for a `single` literal (`1.5f`) — a bare decimal literal is a `float`"
+                        "`{bad}` is not a numeric suffix; write `f` for a `single` literal (`1.5f`) or `d` for a `float` (`1.5d`) — a bare decimal literal is a `float`, and a `single` in a `#width 32` file"
                     ),
                 );
             }
@@ -2492,6 +2512,16 @@ impl Lexer {
                 } else {
                     self.err(Level::Error, "Problem parsing single float");
                     self.put(LexItem::Single(0.0), pos)
+                }
+            } else if self.wide_suffixes
+                && let Some('d') = self.iter.peek()
+            {
+                self.next_char();
+                if let Ok(r) = val.parse::<f64>() {
+                    self.put(LexItem::Double(r), pos)
+                } else {
+                    self.err(Level::Error, "Problem parsing float");
+                    self.put(LexItem::Double(0.0), pos)
                 }
             } else if let Ok(r) = val.parse::<f64>() {
                 self.put(LexItem::Float(r, val.starts_with('0')), pos)
@@ -2529,6 +2559,27 @@ impl Lexer {
             // while the two are still adjacent, and consumed — left to the parser it was a
             // separate identifier and the reader was told a `;` was missing.
             // Not inside a format hole: a spec such as `{n:08x}` reads a width then a letter.
+            // @PLN204 — `l` is the one suffix an integer literal takes: 64-bit in a file under
+            // the 32-bit regime, where a plain literal is an `i32`.  No format spec is `l`
+            // (`d b o x X e j`), so it is read inside a `{…}` hole too.
+            if self.wide_suffixes
+                && let Some('l') = self.iter.peek()
+                && !self
+                    .iter
+                    .rest()
+                    .nth(1)
+                    .is_some_and(|n| n.is_ascii_alphanumeric() || n == '_')
+            {
+                self.next_char();
+                if r > i64::MAX as u64 {
+                    self.err(
+                        Level::Error,
+                        "Integer literal out of range (exceeds i64::MAX)",
+                    );
+                    return self.put(LexItem::Wide(0), pos);
+                }
+                return self.put(LexItem::Wide(r), pos);
+            }
             if !self.in_format_expr
                 && let Some(&c) = self.iter.peek()
                 && c.is_ascii_alphabetic()
@@ -2542,13 +2593,15 @@ impl Lexer {
                         break;
                     }
                 }
-                let msg = if bad == "f" {
-                    format!("`{val}f`: a `single` literal needs a decimal point — write `{val}.0f`")
+                let msg = if bad == "f" || bad == "d" {
+                    format!(
+                        "`{val}{bad}`: a float literal needs a decimal point — write `{val}.0{bad}`"
+                    )
                 } else {
                     format!(
                         "`{val}{bad}`: an integer literal takes no suffix — its width comes from \
                          where it goes: write `{val} as {bad}`, or give the binding the type \
-                         (`x: {bad} = {val}`)"
+                         (`x: {bad} = {val}`); `l` is the one suffix, for a 64-bit literal"
                     )
                 };
                 self.err(Level::Error, &msg);
@@ -3315,6 +3368,26 @@ impl Lexer {
     /// Shorthand test if the current element is a float and skip it if found.
     pub fn has_float(&mut self) -> Option<f64> {
         if let LexItem::Float(n, _) = self.peek.has {
+            self.cont();
+            Some(n)
+        } else {
+            None
+        }
+    }
+
+    /// @PLN204 — an `l`-suffixed integer literal (`123l`), skipped if found.
+    pub fn has_wide(&mut self) -> Option<u64> {
+        if let LexItem::Wide(n) = self.peek.has {
+            self.cont();
+            Some(n)
+        } else {
+            None
+        }
+    }
+
+    /// @PLN204 — a `d`-suffixed decimal literal (`2.5d`), skipped if found.
+    pub fn has_double(&mut self) -> Option<f64> {
+        if let LexItem::Double(n) = self.peek.has {
             self.cont();
             Some(n)
         } else {

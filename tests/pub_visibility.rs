@@ -638,3 +638,389 @@ fn a_generic_instance_is_visible_as_its_template_is() {
         assert!(!ok && err.contains(why), "{tag}: {err}");
     }
 }
+
+/// `@FR-F-Package` — the private items `#package` cells reach: a function and a method that are
+/// not `pub`, beside `UNITS`' private fields, name-only types and private variants.
+const UNITS_PRIVATE_FNS: &str = "\
+fn secret() -> integer { 42 }
+fn twice(self: Unit) -> integer { self.hp * 2 }
+";
+
+/// `(stdout, stderr, ok)` of `program` placed at `<dir>/<at>/main.loft`, against
+/// `top/lib/units.loft` = `header` + `UNITS` + private functions.  `at` is `top/lib` for a
+/// file beside `units.loft`, `top` for the directory above it, `.` for two levels up,
+/// `top/lib/sub` for a subdirectory and `top/other` for a sibling directory.
+fn run_placed(
+    tag: &str,
+    header: &str,
+    at: &str,
+    program: &str,
+    env: &[(&str, &str)],
+) -> (String, String, bool) {
+    let dir = std::env::temp_dir().join(format!("loft_pub_pkg_{tag}_{}", std::process::id()));
+    let _ = loft::file_access::remove_dir_all(&dir);
+    for sub in ["top/lib/sub", "top/other"] {
+        loft::file_access::create_dir_all(dir.join(sub)).expect("scratch");
+    }
+    loft::file_access::write(
+        dir.join("top/lib/units.loft"),
+        format!("{header}{UNITS}{UNITS_PRIVATE_FNS}"),
+    )
+    .expect("units");
+    let src = dir.join(at).join("main.loft");
+    loft::file_access::write(&src, program).expect("program");
+    let mut c = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+    c.arg("--interpret")
+        .arg("--lib")
+        .arg(dir.join("top/lib"))
+        .arg(&src)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "120");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let out = c.output().expect("run loft");
+    let _ = loft::file_access::remove_dir_all(Path::new(&dir));
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.success(),
+    )
+}
+
+/// One program per access kind, with the line it prints when it is admitted and the refusal
+/// it meets when it is not.
+const PACKAGE_CELLS: &[(&str, &str, &str, &str)] = &[
+    (
+        "field-read",
+        "use units;\nfn main() { u = units::spawn(\"orc\"); println(\"{u.hp}\"); }\n",
+        "101\n", // spawn: hp 100 + Seed { v: 1 }.v
+        "field `hp` of `Unit` is not `pub` in `units`",
+    ),
+    (
+        "field-write",
+        "use units;\nfn main() { u = units::spawn(\"orc\"); u.hp = 5; println(\"{units::hp_of(u)}\"); }\n",
+        "5\n",
+        "field `hp` of `Unit` is not `pub` in `units`",
+    ),
+    (
+        "name-only-built",
+        "use units;\nfn main() { u = units::Unit { name: \"x\", hp: 3 }; println(\"{units::hp_of(u)}\"); }\n",
+        "3\n",
+        "`Unit` is not `pub` in `units`, so it cannot be built outside that file",
+    ),
+    (
+        "invisible-named",
+        "use units;\nfn f(s: units::Seed) -> integer { s.v }\nfn main() { println(\"{f(units::Seed { v: 9 })}\"); }\n",
+        "9\n",
+        "`Seed` is not `pub` in `units`",
+    ),
+    (
+        "variant-field",
+        "use units;\nfn main() { s = units::Blob { seed: 7 }; v = match s { units::Blob { seed } => seed, _ => 0 }; println(\"{v}\"); }\n",
+        "7\n",
+        "field `seed` of `Blob` is not `pub` in `units`",
+    ),
+    (
+        "private-variant",
+        "use units;\nfn main() { m = units::mood(true); v = match m { Angry => 1, _ => 0 }; println(\"{v}\"); }\n",
+        "1\n",
+        "`Angry` is a variant of `Mood`, which is not `pub` in `units`",
+    ),
+    (
+        "private-fn",
+        "use units;\nfn main() { println(\"{units::secret()}\"); }\n",
+        "42\n",
+        "`secret` is not `pub` in `units`",
+    ),
+    (
+        "private-method",
+        "use units;\nfn main() { u = units::spawn(\"orc\"); println(\"{u.twice()}\"); }\n",
+        "202\n", // 101 * 2
+        "`twice` is not `pub` in `units`",
+    ),
+];
+
+/// `@FR-F-Package` — a `#package` file shows every private item and field to the files of its
+/// own directory and of the directory above it, for every access kind; the same program two
+/// levels up, in a subdirectory, in a sibling directory, or with the directive on the READING
+/// file instead, meets C140's refusal unchanged.
+#[test]
+fn package_shows_internals_to_its_directory_and_the_one_above() {
+    for (kind, program, admitted, refusal) in PACKAGE_CELLS {
+        for (place, at) in [("same directory", "top/lib"), ("directory above", "top")] {
+            let tag = format!("{kind}-{}", place.replace(' ', "-"));
+            let (out, err, ok) = run_placed(&tag, "#package\n", at, program, &[]);
+            assert!(ok, "{kind} from the {place} is refused: {err}");
+            if !admitted.is_empty() {
+                assert_eq!(
+                    &out, admitted,
+                    "{kind} from the {place} reads the wrong value"
+                );
+            }
+        }
+        for (place, at) in [
+            ("grandparent", "."),
+            ("subdirectory", "top/lib/sub"),
+            ("sibling", "top/other"),
+        ] {
+            let (_, err, ok) =
+                run_placed(&format!("{kind}-{place}"), "#package\n", at, program, &[]);
+            assert!(
+                !ok && err.contains(refusal),
+                "{kind} from the {place}: {err}"
+            );
+        }
+        // The directive on the reading file grants nothing.
+        let reader = format!("#package\n{program}");
+        let (_, err, ok) = run_placed(&format!("{kind}-reader"), "", "top/lib", &reader, &[]);
+        assert!(
+            !ok && err.contains(refusal),
+            "{kind}, directive on the reader: {err}"
+        );
+    }
+}
+
+/// `@FR-F-Package` — the census (`LOFT_TRACE_VISIBILITY=1`, `scripts/pub_census.sh`) asks the
+/// same check, so a directory mate's use is no longer listed as missing its `pub`.
+#[test]
+fn package_mates_leave_the_census() {
+    let program = "use units;\nfn main() { u = units::spawn(\"orc\"); println(\"{u.hp}\"); }\n";
+    let trace = [("LOFT_TRACE_VISIBILITY", "1")];
+    let (_, err, ok) = run_placed("census-mate", "#package\n", "top/lib", program, &trace);
+    assert!(
+        ok && !err.contains("[visibility]"),
+        "a mate's use is listed: {err}"
+    );
+    let (_, err, _) = run_placed("census-far", "#package\n", ".", program, &trace);
+    assert!(
+        err.contains("[visibility]"),
+        "a use two levels up is not listed: {err}"
+    );
+}
+
+/// A used file may say `#package`; `#cwd` and `#link` set how the whole program runs, so in a
+/// used file they are refused, naming where they belong.
+#[test]
+fn a_used_file_may_say_package_but_not_cwd() {
+    let program = "use units;\nfn main() { println(\"{units::spawn(\\\"orc\\\").name}\"); }\n";
+    let (out, err, ok) = run_placed("used-package", "#package\n", ".", program, &[]);
+    assert!(ok && out == "orc\n", "a used file's #package: {out}{err}");
+    for directive in ["#cwd\n", "#link static\n"] {
+        let (_, err, ok) = run_placed("used-cwd", directive, ".", program, &[]);
+        assert!(
+            !ok && err.contains("sets how the whole program runs"),
+            "{directive}: {err}"
+        );
+    }
+}
+
+/// `(stdout, stderr, ok)` of `program` at `<dir>/<at>/main.loft` over a tree of `files`
+/// (paths under `<dir>`), with `--lib <dir>/top/lib`.
+fn run_tree(
+    tag: &str,
+    files: &[(&str, String)],
+    at: &str,
+    program: &str,
+) -> (String, String, bool) {
+    let dir = std::env::temp_dir().join(format!("loft_pub_tree_{tag}_{}", std::process::id()));
+    let _ = loft::file_access::remove_dir_all(&dir);
+    for sub in ["top/lib/sub", "top/other"] {
+        loft::file_access::create_dir_all(dir.join(sub)).expect("scratch");
+    }
+    for (path, text) in files {
+        loft::file_access::write(dir.join(path), text).expect("file");
+    }
+    let src = dir.join(at).join("main.loft");
+    loft::file_access::write(&src, program).expect("program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(dir.join("top/lib"))
+        .arg(&src)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "120")
+        .output()
+        .expect("run loft");
+    let _ = loft::file_access::remove_dir_all(Path::new(&dir));
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.success(),
+    )
+}
+
+fn shared_units() -> (&'static str, String) {
+    (
+        "top/lib/units.loft",
+        format!("#package\n{UNITS}{UNITS_PRIVATE_FNS}"),
+    )
+}
+
+/// `@FR-F-Package` — to a mate, a `#package` file's items import as `pub` ones do: a glob binds
+/// them bare, a selective `use` binds one, and a method by its name.  Two levels up they do not.
+#[test]
+fn package_items_import_bare_for_a_mate() {
+    let glob = "use units::*;\nfn main() { s = Seed { v: 4 }; println(\"{secret()} {s.v}\"); }\n";
+    let pick = "use units::(secret, Seed, twice);\nfn main() { s = Seed { v: 5 }; u = units::spawn(\"o\"); println(\"{secret()} {s.v} {u.twice()}\"); }\n";
+    for (form, program, expect) in [("glob", glob, "42 4\n"), ("pick", pick, "42 5 202\n")] {
+        for at in ["top/lib", "top"] {
+            let (out, err, ok) = run_tree(
+                &format!("imp-{form}-{}", at.replace('/', "-")),
+                &[shared_units()],
+                at,
+                program,
+            );
+            assert!(ok && out == expect, "{form} import at {at}: {out}{err}");
+        }
+        // Two levels up the import itself must refuse: a bare private function, read by no
+        // other check (a field read would be refused by `check_visibility` instead).
+        let far = if form == "glob" {
+            "use units::*;\nfn main() { println(\"{secret()}\"); }\n"
+        } else {
+            "use units::(secret);\nfn main() { println(\"{secret()}\"); }\n"
+        };
+        let (out, err, ok) = run_tree(&format!("imp-{form}-far"), &[shared_units()], ".", far);
+        assert!(!ok, "{form} import two levels up was admitted: {out}{err}");
+    }
+}
+
+/// `@FR-F-Package` — two mates sharing the same private name collide exactly as two libraries'
+/// `pub` names do: the same program meets the same refusal either way.
+#[test]
+fn package_names_collide_as_pub_names_do() {
+    let program = "use units::*;\nuse extra::*;\nfn main() { println(\"{secret()}\"); }\n";
+    let shared = [
+        shared_units(),
+        (
+            "top/lib/extra.loft",
+            "#package\nfn secret() -> integer { 7 }\n".to_string(),
+        ),
+    ];
+    let published = [
+        (
+            "top/lib/units.loft",
+            format!("{UNITS}pub fn secret() -> integer {{ 42 }}\n"),
+        ),
+        (
+            "top/lib/extra.loft",
+            "pub fn secret() -> integer { 7 }\n".to_string(),
+        ),
+    ];
+    let (out_s, err_s, ok_s) = run_tree("collide-shared", &shared, "top/lib", program);
+    let (out_p, err_p, ok_p) = run_tree("collide-pub", &published, "top/lib", program);
+    let tail = |e: &str| {
+        e.lines()
+            .filter(|l| l.starts_with("error"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        (ok_s, out_s, tail(&err_s)),
+        (ok_p, out_p, tail(&err_p)),
+        "a shared collision differs from a pub one:\nshared: {err_s}\npub: {err_p}"
+    );
+}
+
+/// `@FR-F-Package` — a shared item never passes on: a mate that writes `pub use units::*;`
+/// re-exports `units`' `pub` items, and nothing `#package` showed it.
+#[test]
+fn package_internals_do_not_pass_on_through_pub_use() {
+    let facade = ("top/lib/facade.loft", "pub use units::*;\n".to_string());
+    let reach_pub = "use facade::*;\nfn main() { println(\"{spawn(\\\"x\\\").name}\"); }\n";
+    let (out, err, ok) = run_tree(
+        "leak-pub",
+        &[shared_units(), facade.clone()],
+        ".",
+        reach_pub,
+    );
+    assert!(ok && out == "x\n", "the facade's pub re-export: {out}{err}");
+    for (tag, program) in [
+        (
+            "leak-bare",
+            "use facade::*;\nfn main() { println(\"{secret()}\"); }\n",
+        ),
+        (
+            "leak-qualified",
+            "use facade;\nfn main() { println(\"{facade::secret()}\"); }\n",
+        ),
+    ] {
+        let (out, err, ok) = run_tree(tag, &[shared_units(), facade.clone()], ".", program);
+        assert!(
+            !ok,
+            "{tag}: a shared item passed on through `pub use`: {out}{err}"
+        );
+    }
+}
+
+/// `@FR-F-Package` (S0.3c) — tests are part of the package: a test anywhere in `tests/`
+/// reads a `#package` file of the `src/` beside it as `pub`, end to end, while the same
+/// program as a consumer's file outside the package is refused.
+#[test]
+fn package_tests_see_what_src_shares() {
+    let program = "use units;\nfn main() { u = units::spawn(\"orc\"); println(\"{u.hp} {units::secret()}\"); }\n";
+    let files = |at_lib: &str| {
+        vec![(
+            at_lib.to_string(),
+            format!("#package\n{UNITS}{UNITS_PRIVATE_FNS}"),
+        )]
+    };
+    for (cell, lib, at, admitted) in [
+        ("tests", "pkg/src/units.loft", "pkg/tests", true),
+        (
+            "tests-sub",
+            "pkg/src/units.loft",
+            "pkg/tests/lowering",
+            true,
+        ),
+        ("consumer", "pkg/src/units.loft", "app", false),
+    ] {
+        let owned: Vec<(String, String)> = files(lib);
+        let tree: Vec<(&str, String)> =
+            owned.iter().map(|(p, t)| (p.as_str(), t.clone())).collect();
+        let (out, err, ok) = run_pkg(cell, &tree, "pkg/src", at, program);
+        if admitted {
+            assert!(ok && out == "101 42\n", "{cell}: {out}{err}");
+        } else {
+            assert!(
+                !ok && err.contains("is not `pub` in `units`"),
+                "{cell}: {out}{err}"
+            );
+        }
+    }
+}
+
+/// `run_tree` with the library directory and program place chosen by the cell.
+fn run_pkg(
+    tag: &str,
+    files: &[(&str, String)],
+    lib: &str,
+    at: &str,
+    program: &str,
+) -> (String, String, bool) {
+    let dir = std::env::temp_dir().join(format!("loft_pub_pkgtests_{tag}_{}", std::process::id()));
+    let _ = loft::file_access::remove_dir_all(&dir);
+    for (path, text) in files {
+        let full = dir.join(path);
+        loft::file_access::create_dir_all(full.parent().unwrap()).expect("mkdir");
+        loft::file_access::write(&full, text).expect("file");
+    }
+    loft::file_access::create_dir_all(dir.join(at)).expect("mkdir at");
+    let src = dir.join(at).join("main.loft");
+    loft::file_access::write(&src, program).expect("program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(dir.join(lib))
+        .arg(&src)
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "120")
+        .output()
+        .expect("run loft");
+    let _ = loft::file_access::remove_dir_all(Path::new(&dir));
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.success(),
+    )
+}

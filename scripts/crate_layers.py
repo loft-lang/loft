@@ -78,7 +78,7 @@ LAYERS: list[tuple[str, list[str]]] = [
         "stdlib_ops", "stdlib_sources", "store", "store_budget", "store_census", "take_local",
         "text_calls", "text_run", "timeout", "tls", "toolchain", "trace", "trie_db", "triggers",
         "tuple_links", "type_schema", "variables", "vec_copy", "vector", "verify_self", "wasm",
-        "wasm_assets", "ws_handshake",
+        "wasm_assets", "web_browser", "web_bytes", "web_client", "ws_handshake",
     ]),
     ("front", [
         "const_fn", "const_literal", "copy_manifest", "copy_view", "discharge_into",
@@ -144,7 +144,8 @@ RUNTIME: list[str] = [
     "paged_reader", "par_pool", "placement", "platform", "png_store", "process_run", "radix_db",
     "radix_tree", "resolution_scope", "rewrite_census", "runtime_abi", "runtime_error",
     "schema_sidecar", "siphash", "stack_verify", "store", "store_budget", "store_census",
-    "timeout", "tls", "trie_db", "vector", "wasm", "wasm_assets", "ws_handshake",
+    "timeout", "tls", "trie_db", "vector", "wasm", "wasm_assets", "web_browser", "web_bytes",
+    "web_client", "ws_handshake",
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.

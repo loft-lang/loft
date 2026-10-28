@@ -557,6 +557,10 @@ the browser read them), so a layout is observable.
 
 ## B6 — optional: a minimal binary
 
+**Taken over by [@PLN205](205-lean-interpreter.md)**, which goes further: the backends, the
+runtime components and the tools become prebuilt parts loaded on demand, not a feature left out
+of one build.
+
 **Later, not now (owner, 2026-10-23).**  A by-product, built when wanted: a `native-codegen` feature (default on) gates `rust` and the
 `--native` / `--ship` / `--native-emit` / `--native-wasm` / `--html` /
 `--native-android` / `build-native` arms (`main.rs:7835/7838/7915/7924/7945/~7934/8922`), which

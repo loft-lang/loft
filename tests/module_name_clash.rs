@@ -1211,3 +1211,48 @@ fn a_genuinely_unknown_library_still_says_unknown() {
         "and must not be dressed up as this package's own: {lines:?}"
     );
 }
+
+/// X12 (@PLN91 S0.3b) — a file is never its own module.  Inside a package, a test named
+/// after the module it tests (`tests/load.loft` saying `use load;`, the layout PACKAGES.md
+/// documents) must bind `src/load.loft`.  `own_module_path` looked only beside the CURRENT
+/// file, so the first candidate was the test file itself and every `load::` name read
+/// unknown.  M2 is the same test under another file name, which the flat route always got
+/// right and the own-module route must keep.
+#[test]
+fn a_test_named_after_its_module_binds_the_module_not_itself() {
+    for (cell, test_file) in [("m1", "load.loft"), ("m2", "loader.loft")] {
+        let root = std::env::temp_dir().join(format!("loft_x12_{cell}_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&root);
+        let pkg = root.join("modpkg");
+        fa::create_dir_all(pkg.join("src")).expect("mkdir src");
+        fa::create_dir_all(pkg.join("tests")).expect("mkdir tests");
+        fa::write(
+            pkg.join("loft.toml"),
+            "[package]\nname = \"modpkg\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fa::write(
+            pkg.join("src/load.loft"),
+            "pub fn hello() -> integer { 3 }\n",
+        )
+        .unwrap();
+        let test = pkg.join("tests").join(test_file);
+        fa::write(
+            &test,
+            "use load;\nfn main() { assert(load::hello() == 3, \"the module's function\"); }\n",
+        )
+        .unwrap();
+
+        let mut p = Parser::new();
+        p.parse_dir("default", true, true).unwrap();
+        p.parse(&test.to_string_lossy(), false);
+        let level = p.diagnostics.level();
+        let lines = p.diagnostics.lines().to_vec();
+        let _ = fa::remove_dir_all(&root);
+
+        assert!(
+            level < Level::Error,
+            "{cell}: `use load;` from tests/{test_file} must bind src/load.loft: {lines:?}"
+        );
+    }
+}

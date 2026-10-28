@@ -10,7 +10,64 @@ use super::{
     diagnostic_format, is_op, registry_fn_hint,
 };
 
+/// Does `v` read a text out of a store — a field or element (`OpGetText`), or a slice of one?
+/// Such a text is a VIEW of the store's bytes, not a value of its own.
+fn store_text_view(data: &crate::data::Data, v: &Value) -> bool {
+    match v.unspan() {
+        Value::Call(op, args) => match data.def(*op).name() {
+            "OpGetText" => true,
+            "OpGetTextSub" => args.first().is_some_and(|a| store_text_view(data, a)),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 impl Parser {
+    /// `@FR-F-ParamText` — a `text` parameter is bound to the argument's VALUE at the call.  An
+    /// argument that is a view of a store (`f(w, w.rs[0].name)`) would follow that store: a
+    /// callee growing it moves the bytes under the view, and the parameter reads garbage or
+    /// freed memory (loft#2203).  So the argument is spelled as a copy into a work text here,
+    /// and `opt::arg_copy` drops the copy again wherever nothing the call runs can write a
+    /// store, which keeps a read-only callee as fast as the view.
+    fn copy_store_text_args(&mut self, d_nr: u32, actual: &mut [Value]) {
+        if self.data.def_type(d_nr) != DefType::Function || is_op(self.data.def(d_nr).name()) {
+            return;
+        }
+        let params: Vec<Type> = (0..self.data.attributes(d_nr))
+            .map(|i| self.data.attr_type(d_nr, i))
+            .collect();
+        self.copy_store_text_args_to(&params, actual);
+    }
+
+    /// [`Parser::copy_store_text_args`] for a call whose parameter types are `params` — also
+    /// the call through a function value, whose callee is a run-time fact.
+    pub(super) fn copy_store_text_args_to(&mut self, params: &[Type], actual: &mut [Value]) {
+        // Only a function body has a frame to hold the copy: a struct field's default
+        // (`len($.name)`) is parsed in the struct's own context.
+        if self.data.def_type(self.context) != DefType::Function {
+            return;
+        }
+        for (arg, param) in actual.iter_mut().zip(params) {
+            if !matches!(param.peel_optional().0, Type::Text(_))
+                || !store_text_view(&self.data, arg)
+            {
+                continue;
+            }
+            let w = self.vars.work_text_p2(&mut self.lexer);
+            let view = std::mem::replace(arg, Value::Null);
+            *arg = crate::data::v_block(
+                vec![
+                    crate::data::v_set(w, Value::str("")),
+                    self.cl("OpAppendText", &[Value::Var(w), view]),
+                    Value::Var(w),
+                ],
+                Type::Text(Deps::frame1(w)),
+                crate::data::TEXT_ARG_COPY,
+            );
+        }
+    }
+
     /// Search for definitions with the given name and call that with the given parameters.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -1302,6 +1359,9 @@ impl Parser {
         let pres = std::mem::take(&mut self.pending_arg_pres);
         let posts = std::mem::take(&mut self.pending_arg_posts);
         self.add_defaults(d_nr, &mut actual, &mut all_types);
+        if !self.first_pass {
+            self.copy_store_text_args(d_nr, &mut actual);
+        }
         let tp = self.call_dependencies(d_nr, &all_types);
         *code = Value::Call(d_nr, actual);
         // loft#2146 — an argument linked through a temp is stored back once the call returns.

@@ -73,6 +73,14 @@
 <p>4-byte unsigned: 0 – 4_294_967_294.  The top code is reserved to buy the same refusal <code>i32</code> gets at the bottom (<code>u32 = 4294967295</code> does not compile) — and, unlike <code>i32</code>, it is NOT a null: an overflow here reads <code>0</code>, the type's default (C127, and the note on <code>i32</code> above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with <code>i32</code>, and a value in the upper half (2^31..2^32-2) reads back as the same positive integer.  <code>u32</code> is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property; plain <code>integer</code> holds the whole 0..2^32-1 range and more.</p>
 </div>
 <div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">type</span> <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="ty"><a href="stdlib-types.html">integer</a></span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(<span class="nm">8</span>)</code></pre>
+<p>8-byte signed: the full <code>integer</code>, spelled so that it stays 64-bit in a file under the 32-bit regime (<code>#width 32</code>), where a plain <code>integer</code> is an <code>i32</code>.  Elsewhere it is <code>integer</code> by another name.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">type</span> f64 = <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>The 64-bit <code>float</code>, spelled so that it stays a double in a file under the 32-bit regime (<code>#width 32</code>), where a plain <code>float</code> is a <code>single</code>.  Elsewhere it is <code>float</code>.</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-types.html">Ordering</a></span> {
   <span class="en">Less</span>,
   <span class="en">Equal</span>,

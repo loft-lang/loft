@@ -1336,6 +1336,18 @@ impl Store {
         Self::open_mapped(path, false)
     }
 
+    /// [`open`](Store::open) for a caller that can report a file it cannot create, open or
+    /// grow, rather than treating it as a broken invariant: a cache whose directory is
+    /// read-only, or an image written to a path the caller named.  A file that opens but
+    /// does not hold a store is still refused by assertion, as `open` refuses it.
+    ///
+    /// # Errors
+    /// The operating system's error for creating, opening or sizing the file.
+    #[cfg(feature = "mmap")]
+    pub fn try_open(path: &str) -> std::io::Result<Store> {
+        Self::try_open_mapped(path, false)
+    }
+
     /// `@FR-H-ReadSurface` — [`open`](Store::open) for a READ SURFACE — a cache bundle or image another process may
     /// map at the same time.  The mapping is the file's own pages (`MAP_SHARED`), so anything
     /// `open` writes reaches every process using the file: the free-list and claims rebuilds
@@ -1343,25 +1355,36 @@ impl Store {
     /// stdlib bundle rebuilt them into each other's pages and crashed on corrupt references.
     /// A read surface never claims or frees, so it needs neither rebuild; it is read-only from
     /// the first instruction rather than flagged so after `open` has already written.
+    ///
+    /// # Errors
+    /// The operating system's error for a file it cannot open: a read surface is a cache,
+    /// and a cache the process cannot open (a read-only cache directory) is a miss.
     #[cfg(feature = "mmap")]
-    #[must_use]
-    pub fn open_read_surface(path: &str) -> Store {
-        Self::open_mapped(path, true)
+    pub fn open_read_surface(path: &str) -> std::io::Result<Store> {
+        Self::try_open_mapped(path, true)
     }
 
+    /// # Errors
+    /// Always: a build without file-backed stores has no read surface.
     #[cfg(not(feature = "mmap"))]
-    pub fn open_read_surface(_path: &str) -> Store {
-        panic!(
-            "mmap feature is not compiled in; enable the `mmap` Cargo feature to use file-backed stores"
-        )
+    pub fn open_read_surface(_path: &str) -> std::io::Result<Store> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "this build leaves out file-backed stores",
+        ))
     }
 
     /// A store over a file's whole length, its free-block indexes in the file (`@FR-S-Mapped`).
     #[cfg(feature = "mmap")]
     fn open_mapped(path: &str, read_surface: bool) -> Store {
-        let mut file = MmapStorage::open(path).expect("Opening file");
+        Self::try_open_mapped(path, read_surface).expect("Opening file")
+    }
+
+    #[cfg(feature = "mmap")]
+    fn try_open_mapped(path: &str, read_surface: bool) -> std::io::Result<Store> {
+        let mut file = MmapStorage::open(path)?;
         let init = if (file.capacity() / 8) < MIN_BOUND_WORDS as usize {
-            file.resize(8192).unwrap();
+            file.resize(8192)?;
             true
         } else {
             false
@@ -1445,7 +1468,7 @@ impl Store {
                 store.claims_rebuild();
             }
         }
-        store
+        Ok(store)
     }
 
     /// Load a persisted store IMAGE FILE fully into a fresh HEAP-backed store —
@@ -7855,7 +7878,7 @@ mod tests {
     fn a_read_surface_open_writes_nothing_to_its_file() {
         let (path, before) = image_with_freed_blocks("rs");
         {
-            let s = Store::open_read_surface(path.to_str().unwrap());
+            let s = Store::open_read_surface(path.to_str().unwrap()).unwrap();
             assert!(s.read_only, "a read surface is read-only from the start");
         }
         let after = std::fs::read(&path).unwrap();

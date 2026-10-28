@@ -2464,6 +2464,17 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  store's bytes, is read in place by a store write
                  (`Output::text_value_unborrowed`).  A release emits no code on
                  native, so an early exit's does not end the text.
+                 OPERAND CLAUSE: a text read `OpGetText(R, f)` that is an operand
+                 of a text VALUE op — or a `text` argument of a call that runs no
+                 store write (F-ParamText) and hands no store place to a `&`
+                 parameter — is a BORROW of the field for that
+                 op or call, provided no operand after it may write (a call, or a
+                 block, that is not a pure operator).  R is evaluated where it
+                 stands, in program order.  Nothing between the read and its use
+                 can grow, free or rewrite the field's store, so the bytes read are
+                 the ones a copy would hold (F-ParamText).  An operand after it that
+                 may write keeps the copy, and so does a call through a function
+                 value, whose callee is unknown.
 ```
 
 **The call clause, in words.**  zttext's `slice_runs` binds `s = buf_slice_text(…)`, whose
@@ -2477,6 +2488,23 @@ bind's `.str()` in `Output::output_set`.  Guard
 `tests/scripts/a-call-text-is-borrowed-from-its-work-buffer.loft` (falsified under
 `LOFT_POISON=1` by a plant that drops the return test: w3 reads the scribble), pin
 `tests/call_text_borrow.rs`.
+
+**The operand clause, in words.**  A text read out of a store is a slice of that store's
+buffer, so a backend that does not know what runs between the read and its use copies it: a
+claim, a copy and a release per read.  An op that reads its operands at once — a comparison,
+an append, a format, a print — needs no copy when nothing evaluated after the field can
+disturb it, and the `may_write` test that already decides whether a text VARIABLE operand is
+held decides that too.  A callee that writes no store cannot disturb it while it runs; the
+verdict is `opt::writes::call_writes_store`, the one `(R-Inputs)` holds a vector's base
+across a call on.  Native's operand is a `&str` read at
+the op already; its argument is one too, but without the callee condition, which is
+`calls.md`'s open `D-call-31`.  The clause is built in the C: dryopea `mapfile_to_painted`
+−23 % instructions for the operand half (its palette scan compares a field per element) and
+−3 % for the argument half.  Switch `LOFT_NO_FIELD_VIEW` (C).  Cell
+`loft-suite/rules/rewrites/R-TextBorrow/a-compared-field-is-read-where-the-store-holds-it.loft`
+(c2 a later operand that rewrites the field, c8 a reading callee).  Sites:
+`FnWriter::text_reads` and the view arm of `OpGetText` in `FnWriter::field_operator`,
+`Cx::call_keeps_stores` (`src/c/`).
 
 **The tested clause, in words.**  cbor's `encode` binds `CText { value }` out of its
 parameter and appends the text's bytes to the result, building the header through `head`,
@@ -3196,7 +3224,9 @@ PaintedHex{…}`) 4.76× → 2.81×, with the runtime changes beside it
 (`bench/portal/analysis/over-9x.md`).  Same switch, same falsifier.  Cells
 `tests/scripts/a-hash-written-by-a-compound-subscript-keeps-every-entry.loft`.  Sites:
 `keyed_entry::subscript_keys` (the admission), `Output::output_keyed_entry_subscript`,
-`Stores::keyed_entry_ints`, `hash::entry_ints`.
+`Stores::keyed_entry_ints`, `hash::entry_ints`; in the C, `FnWriter::keyed_in_place`,
+`loft_keyed_entry_ints`, `loft_h_entry_ints`.  Cell
+`loft-suite/rules/rewrites/R-KeyedEntry/a-subscript-literal-is-staged-then-written-into-the-entry-one-probe-finds.loft`.
 
 ### A result vector adopts the return buffer
 
@@ -4491,7 +4521,11 @@ in the @PLN157 shape with its own switch and cells: the callee clause above
 (`LOFT_NO_LITERAL_EXIT_BUFFER`), the relocation of a call's result into an appended element
 (`LOFT_NO_PLACE_RESULT`, `OpPlaceRecord`/`OpMoveRecord`), the buffer that IS the place
 (`LOFT_NO_BUFFER_IS_PLACE`), the element written in place (`LOFT_NO_ELEMENT_IN_PLACE`) and
-the nested literal (`LOFT_NO_NESTED_IN_PLACE`).  Each implementation admits less than its
+the nested literal (`LOFT_NO_NESTED_IN_PLACE`), and the keyed literal (`LOFT_NO_KEYED_IN_PLACE`:
+`lower::keyed_place::site` admits it for both compiled backends, written by
+`Output::output_keyed_place` and `Stores::keyed_place_begin` / `_finish` on native and by
+`FnWriter::keyed_in_place` and `loft_keyed_place_begin` / `_finish` in the C; cell
+`loft-suite/rules/rewrites/R-InPlaceLiteral/a-keyed-literal-is-written-into-its-slot.loft`).  Each implementation admits less than its
 rule — the B2 relocation only a destination in an element appended to a PARAMETER's
 collection, outside a loop, with no second destination or host — and a narrower admission
 costs the rewrite and never a value.  (R-MoveLast)'s host clause is built in `src/literal_host.rs`

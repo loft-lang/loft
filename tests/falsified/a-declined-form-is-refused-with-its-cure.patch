@@ -1,16 +1,11 @@
 diff --git b/src/lexer.rs a/src/lexer.rs
-index 17c073dcc..e23983c1b 100644
+index b6beddff5..8a60f20bf 100644
 --- b/src/lexer.rs
 +++ a/src/lexer.rs
-@@ -2054,35 +2054,6 @@ impl Lexer {
-             };
-             self.ret_number(res, pos, false)
-         } else if let Ok(r) = val.parse::<u64>() {
--            // An integer literal takes no suffix (@C54.D): its width comes from the binding
--            // or parameter type, or from `as`.  A letter glued to one (`34u8`) is named here,
--            // while the two are still adjacent, and consumed — left to the parser it was a
--            // separate identifier and the reader was told a `;` was missing.
--            // Not inside a format hole: a spec such as `{n:08x}` reads a width then a letter.
+@@ -2564,32 +2564,6 @@ impl Lexer {
+                 }
+                 return self.put(LexItem::Wide(r), pos);
+             }
 -            if !self.in_format_expr
 -                && let Some(&c) = self.iter.peek()
 -                && c.is_ascii_alphabetic()
@@ -24,13 +19,15 @@ index 17c073dcc..e23983c1b 100644
 -                        break;
 -                    }
 -                }
--                let msg = if bad == "f" {
--                    format!("`{val}f`: a `single` literal needs a decimal point — write `{val}.0f`")
+-                let msg = if bad == "f" || bad == "d" {
+-                    format!(
+-                        "`{val}{bad}`: a float literal needs a decimal point — write `{val}.0{bad}`"
+-                    )
 -                } else {
 -                    format!(
 -                        "`{val}{bad}`: an integer literal takes no suffix — its width comes from \
 -                         where it goes: write `{val} as {bad}`, or give the binding the type \
--                         (`x: {bad} = {val}`)"
+-                         (`x: {bad} = {val}`); `l` is the one suffix, for a 64-bit literal"
 -                    )
 -                };
 -                self.err(Level::Error, &msg);
@@ -39,10 +36,10 @@ index 17c073dcc..e23983c1b 100644
          } else {
              self.err(Level::Error, "Problem parsing number");
 diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index b7c42a778..63a2a9295 100644
+index 5bb3336f6..52149ca0e 100644
 --- b/src/parser/definitions.rs
 +++ a/src/parser/definitions.rs
-@@ -668,32 +668,6 @@ impl Parser {
+@@ -793,32 +793,6 @@ impl Parser {
                      "Expect enum values to be in camel case style"
                  );
              }
@@ -75,7 +72,7 @@ index b7c42a778..63a2a9295 100644
              let v_nr = if self.first_pass {
                  // A forward reference may already have left a stub under this name:
                  // `Circle{ r: 2 }` written ABOVE `enum Shape { Circle { r: integer } }`
-@@ -4600,25 +4574,6 @@ impl Parser {
+@@ -5590,25 +5564,6 @@ impl Parser {
      }
  
      pub(crate) fn parse_fields(&mut self, directions: bool, result: &mut Vec<(String, bool)>) {

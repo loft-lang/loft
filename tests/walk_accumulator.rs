@@ -23,7 +23,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
     // admits twice (a fast copy and the exact one).
     cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native-emit")
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
         .arg(&out)
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

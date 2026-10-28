@@ -1,3 +1,11 @@
+#package
+// The one home of the compiler's IR types (@PLN91 S0.3).  Two readers depend on it:
+// - the Rust compiler, whose store schema `src/ir_schema_gen.rs` is GENERATED from this file
+//   (`scripts/ir_schema_check.sh`, `make ir-schema-regen`), so an edit here is an edit to the
+//   layout of every saved image;
+// - the loft-written interpreter beside it (`load.loft`, …), which reads a program image as
+//   these records.  `#package` shows them to the files of this directory and the one above.
+//
 // @PLN11 arc A — the COMPLETE compiler IR transcribed as loft types, so
 // `loft --native` generates the store schema + record accessors for the whole
 // thing.  The generated Rust IS arc A's schema (db.structure/enumerate/value/
@@ -413,16 +421,7 @@ struct Bundle {
 // @FTR-078 — the compiler's whole IR vocabulary written as loft types: 24 `Type` variants,
 // 34 `Value` variants, and the definition/function/variable tables — laid out so the store
 // schema for the same graph falls out of it
-fn main() {
-  // An empty Data is enough to force the parser to lay out + register the
-  // full type graph above; the value of this script is the GENERATED SCHEMA
-  // (db.structure/enumerate/value/vector/field for every type), inspected via
-  //   loft --introspect --show-rust --rust-out out.rs ir_full.loft
-  // Constructing deeply-nested records would additionally need each recursive
-  // field wrapped as a reference literal — not needed to study the schema.
-  b = Bundle {
-    data: Data { definitions: [], source: 0 },
-    types: [],
-  };
-  print("bundle with {b.data.definitions.len()} defs, {b.types.len()} types");
+// The empty bundle a program image is read into (`load.loft`).
+fn empty_bundle() -> Bundle {
+  Bundle { data: Data { definitions: [], source: 0 }, types: [] }
 }

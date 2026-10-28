@@ -13,6 +13,18 @@ OPEN: **0** — `D-call-23` and `D-call-22` opened AND CLOSED 2026-09-28 (loft#1
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
 
+### D-call-31 — OPENED AND CLOSED (2026-10-27, loft#2203): a text argument read out of a store was a view of it
+
+`(F-ParamText)` binds a `text` parameter to the argument's value at the call.  A field passed
+straight to one (`f(w, w.rs[0].name)`) was a view of the store on the interpreter and on native,
+with no condition on the callee, so a callee that grew the store — through another parameter,
+at any depth, through a closure, or in a later argument of the same call — moved the bytes
+under it: the interpreter read garbage, native read freed memory.  An overwrite of the field
+alone did not reproduce.  Closed by copying such an argument at the call and dropping the copy
+where `writes_store` proves the whole call writes no store (`opt::arg_copy`); the C copies
+unless the callee keeps every store in place.  Guard: loft-suite
+`rules/calls/F-ParamText/2203-a-text-argument-is-its-value-at-the-call.loft`.
+
 ### D-call-30 — OPENED AND CLOSED (2026-10-12, loft#1987): a lifted call ran ahead of every operand to its left
 
 `(F-Args)` and `(E-Left)` evaluate arguments and operands left to right.  A call whose result

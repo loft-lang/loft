@@ -32,6 +32,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         std::env::temp_dir().join(format!("loft_repeat_fill_{}_{tag}.rs", std::process::id()));
     let status = loft(
         &[
+            "--native-rust",
             "--native-emit",
             out.to_str().unwrap(),
             src.to_str().unwrap(),

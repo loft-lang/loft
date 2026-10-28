@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: counts dispatch to the interpreter, the live tier the C has not got — its `--native` runs as `--native-rust` until then.
 //! loft#938 — the return buffer for a NULLABLE COLLECTION return. **Default ON.**
 //!
 //! `-> vector<T>?` gets the same hidden `__retbuf` the non-nullable form always had, so a
@@ -209,7 +210,7 @@ fn main() {
 
 #[test]
 fn forwarding_return_delivers_and_keeps_null() {
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let tag = format!("forward_{}", backend.trim_start_matches('-'));
         let (out, err) = run(FORWARD, backend, true, &tag);
         assert!(
@@ -230,7 +231,7 @@ fn forwarding_return_delivers_and_keeps_null() {
 fn the_boundary_matrix_passes_on_both_backends() {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/probes/938-nullable-collection-return-buffer.loft");
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
@@ -253,7 +254,7 @@ fn the_boundary_matrix_passes_on_both_backends() {
 fn native_optional_unify_compiles_correctly() {
     let script =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/pln133-optional-unify.loft");
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
@@ -437,7 +438,7 @@ fn a_nullable_function_is_flipped_to_the_interpreter_as_its_dense_twin_is() {
     let names: Vec<&str> = FLIPPED_CALLS.iter().map(|(n, _)| *n).collect();
     let run = |flip: bool| {
         let mut cmd = loft::platform::process::harness_command(loft_bin());
-        cmd.arg("--native")
+        cmd.arg("--native-rust")
             .arg(&file)
             .env("LOFT_TIMEOUT", "300")
             .env("LOFT_NO_CACHE", "1");

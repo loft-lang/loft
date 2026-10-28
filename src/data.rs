@@ -4462,7 +4462,7 @@ pub struct Definition {
     ///
     /// Persisted through the IR store (`DEF_CAP`) so a `#cap`-tagged stdlib loaded
     /// from the `LOFT_STDLIB_CACHE` bundle still gates correctly; mirrored in
-    /// `tools/ir_schema/ir.loft` (`Definition.cap`).
+    /// `selfhost/src/ir.loft` (`Definition.cap`).
     pub cap: String,
     /// Interpreter operator code
     pub op_code: u16,
@@ -4481,7 +4481,7 @@ pub struct Definition {
     /// is suppressed for a fault-prone expression passed DIRECTLY as an argument.
     /// Persisted through the IR store (`DEF_NULL_SAFE`) so a `#null_safe`-annotated
     /// stdlib helper loaded from the `LOFT_STDLIB_CACHE` bundle still suppresses;
-    /// mirrored in `tools/ir_schema/ir.loft` (`Definition.null_safe`).
+    /// mirrored in `selfhost/src/ir.loft` (`Definition.null_safe`).
     pub null_safe: bool,
     /// A standard-library operator's dispatch priority, from `#hot` / `#cold`: [`OP_HOT`] runs
     /// inline in the lean loop on its registers and takes a one-byte opcode, [`OP_COLD`] is
@@ -4497,7 +4497,7 @@ pub struct Definition {
     /// `make ci` lint checks `Y` resolves and this body is a shim over it.
     /// Persisted through the IR store (`DEF_SUPERSEDED`) so a `#superseded`
     /// stdlib symbol loaded from the `LOFT_STDLIB_CACHE` bundle keeps its mark;
-    /// mirrored in `tools/ir_schema/ir.loft` (`Definition.superseded`).
+    /// mirrored in `selfhost/src/ir.loft` (`Definition.superseded`).
     pub superseded: String,
     /// @PLN24 arc A — the C symbol a `#c` binding names, e.g. `"PQstatus"`.
     /// Empty = not a C binding.  Deliberately NOT stored in `native`: that
@@ -4507,7 +4507,7 @@ pub struct Definition {
     ///
     /// Persisted through the IR store (`DEF_C_SYMBOL`) so a cached program does
     /// not come back with the binding silently unbound; mirrored in
-    /// `tools/ir_schema/ir.loft` (`Definition.c_symbol`).
+    /// `selfhost/src/ir.loft` (`Definition.c_symbol`).
     pub c_symbol: String,
     /// @PLN24 arc A — the C signature exactly as declared, e.g. `"int(void*)"`.
     /// Empty = not a C binding.
@@ -4566,18 +4566,18 @@ pub struct Definition {
     /// place in the name's overload set, its method spelling, what hover and the API listing
     /// read — and a call that selects it lowers through the compiler's special form of its
     /// name, as the bare call always has.  A marker on the declaration, never a name test.
-    /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `tools/ir_schema/ir.loft`.
+    /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `selfhost/src/ir.loft`.
     pub builtin: bool,
     /// @PLN182 — written `operator` in place of `fn`: a call of this method is what an
     /// operator form on its `self` type reaches (`a < b` → `compare`).  A plain `fn` of the
     /// same name is an ordinary method.  Persisted through the IR store (`DEF_OPERATOR_FORM`), so
-    /// a cached stdlib keeps the mark; mirrored in `tools/ir_schema/ir.loft`.
+    /// a cached stdlib keeps the mark; mirrored in `selfhost/src/ir.loft`.
     pub operator_form: bool,
     /// `@FR-Const-Foreign` — the declared return type is `-> const T`: the producer hands out
     /// data loft does not own (a mapped file, a library's adopted buffer), so the value is
     /// value-const and a binding of the call's result takes `(Const-Value)` (@C139).
     /// Persisted through the IR store (`DEF_RETURNED_CONST`), so a cached stdlib keeps it;
-    /// mirrored in `tools/ir_schema/ir.loft`.
+    /// mirrored in `selfhost/src/ir.loft`.
     pub returned_const: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
@@ -5027,6 +5027,15 @@ impl Definition {
             // A block's value is its tail; an empty one yields nothing to own.
             Value::Block(bl) => bl
                 .operators
+                .last()
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref, self_nr)),
+            // An `Insert` in tail position yields its last element, as a block does.  It is how
+            // loft#2179 spells a returned parameter's copy (`Insert([Set(__ret_param, d),
+            // Var(__ret_param)])`, `@FR-F-Ret`): read as an unknown shape, a `match` whose arms
+            // return the parameter was "not proven fresh" and its inline result was lifted by
+            // nobody — one leaked record per call, where the concrete twin is lifted and freed
+            // (`@FR-G-Mono`, loft#2206).
+            Value::Insert(ops) => ops
                 .last()
                 .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref, self_nr)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
@@ -5693,6 +5702,14 @@ pub struct Data {
     /// caller that deliberately seeded a base — `loft test`, sharing one library
     /// parse across the test files that `use` exactly it — ever fills it.
     preloaded_uses: HashMap<String, u16>,
+    /// @PLN204 — the sources parsed under the 32-bit regime (`#width 32`, or `LOFT_WIDTH=32`
+    /// for every source but the stdlib): there a plain `integer` is an `i32`, a plain `float`
+    /// a `single`, and arithmetic on 32-bit operands stays 32-bit ([`Self::width32`]).
+    width32_sources: std::collections::BTreeSet<u16>,
+    /// @PLN204 — the generic instances whose TEMPLATE is in a 64-bit source: registered under
+    /// the caller's source, their body is the template's, computed in 64 bits
+    /// ([`Self::body_width32`]).
+    wide_instances: std::collections::BTreeSet<u32>,
     /// Every import that has been applied, so [`rebuild_indices`](Self::rebuild_indices)
     /// can replay it.
     ///
@@ -5726,6 +5743,9 @@ pub struct Data {
     /// in a source's own file is never a private import there — adoption can leave a
     /// declaration under the `source` of the file that first NAMED it (@C98).
     source_files: HashMap<u16, crate::lexer::FileName>,
+    /// `@FR-F-Package` — the files whose directives include `#package`, by their canonical
+    /// path.  Filled while each file is parsed; read by [`Data::shares_internals`].
+    package_files: HashSet<String>,
     /// @PLN199 G0b-2 — the name each library source was loaded under (`use_add`): what a
     /// library artifact names that source's types and functions by ([`Data::source_label`]),
     /// because the source NUMBER depends on the order a program's `use`s load it in.
@@ -6294,6 +6314,11 @@ pub fn v_set(var: u16, value: Value) -> Value {
 /// prelude: a rewrite that matches that prelude by shape steps over a block of this name.
 pub const RANGE_NULL_GUARD: &str = "Range null guard";
 
+/// The name of the block a store-viewing `text` argument is copied in at a call
+/// (`@FR-F-ParamText`): the parser spells the copy, `opt::arg_copy` unwraps it where no store
+/// can be written while the callee holds the text.
+pub const TEXT_ARG_COPY: &str = "text argument copy";
+
 #[must_use]
 pub fn v_block(operators: Vec<Value>, result: Type, name: &'static str) -> Value {
     Value::Block(Box::new(Block {
@@ -6361,9 +6386,10 @@ impl Write for Into {
 pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
     Some(match name {
         // Rust / C / Java / Go habits for the 64-bit integer loft calls `integer`.
-        "int" | "i64" | "u64" | "long" => "integer",
-        // `float` is 64-bit and `single` is 32-bit, so f64→float and f32→single.
-        "f64" | "double" => "float",
+        // (`i64` and `f64` are legal names since @PLN204: the 64-bit forms a 32-bit file asks for.)
+        "int" | "u64" | "long" => "integer",
+        // `float` is 64-bit and `single` is 32-bit, so double→float and f32→single.
+        "double" => "float",
         "f32" => "single",
         "str" | "string" => "text",
         "bool" => "boolean",
@@ -6536,10 +6562,13 @@ impl Data {
             def_names: DefIndex::default(),
             use_names: HashMap::new(),
             preloaded_uses: HashMap::new(),
+            width32_sources: std::collections::BTreeSet::new(),
+            wide_instances: std::collections::BTreeSet::new(),
             applied: Vec::new(),
             bare_uses: Vec::new(),
             private_imports: HashMap::new(),
             source_files: HashMap::new(),
+            package_files: HashSet::new(),
             source_labels: HashMap::new(),
             ambiguous: HashMap::new(),
             unknown_key_fields: Vec::new(),
@@ -6596,6 +6625,57 @@ impl Data {
     /// hand copies of it to several program parses.  The libraries named here
     /// must actually be present in `definitions`: this only stops the loader,
     /// it does not supply anything.
+    /// @PLN204 — is source `src` parsed under the 32-bit regime?
+    #[must_use]
+    pub fn width32_source(&self, src: u16) -> bool {
+        self.width32_sources.contains(&src)
+    }
+
+    /// @PLN204 — is the source now being parsed under the 32-bit regime?
+    #[must_use]
+    pub fn width32(&self) -> bool {
+        self.width32_source(self.source)
+    }
+
+    /// @PLN204 — does any source of this program parse under the 32-bit regime?  A program
+    /// with none holds every integer as the interpreter does, in 64 bits.
+    #[must_use]
+    pub fn any_width32(&self) -> bool {
+        !self.width32_sources.is_empty()
+    }
+
+    /// @PLN204 — was function `d`'s body written under the 32-bit regime?  A generic
+    /// instance answers for its template, whose source it does not share.
+    #[must_use]
+    pub fn body_width32(&self, d: u32) -> bool {
+        !self.wide_instances.contains(&d) && self.width32_source(self.def(d).source)
+    }
+
+    /// @PLN204 — the sources under the 32-bit regime and the instances minted from a 64-bit
+    /// template: parse-time state the IR bundle does not carry, so the program cache's
+    /// manifest writes it and a warm load replays it (`startup_cache`).
+    #[must_use]
+    pub fn width32_state(&self) -> (Vec<u16>, Vec<u32>) {
+        (
+            self.width32_sources.iter().copied().collect(),
+            self.wide_instances.iter().copied().collect(),
+        )
+    }
+
+    /// @PLN204 — instance `d` was minted from a template in a 64-bit source.
+    pub fn mark_wide_instance(&mut self, d: u32) {
+        self.wide_instances.insert(d);
+    }
+
+    /// @PLN204 — record whether source `src` is parsed under the 32-bit regime.
+    pub fn set_width32(&mut self, src: u16, on: bool) {
+        if on {
+            self.width32_sources.insert(src);
+        } else {
+            self.width32_sources.remove(&src);
+        }
+    }
+
     pub fn freeze_uses(&mut self) {
         self.preloaded_uses = self.use_names.clone();
         self.preloaded_uses.remove("std"); // `reset` seeds it unconditionally
@@ -12696,7 +12776,7 @@ impl Data {
 
     pub fn import_all(&mut self, lib_source: u16, into_source: u16, public: bool) {
         self.remember_import(lib_source, into_source, None, public);
-        for (name, def_nr) in self.exported_names(lib_source) {
+        for (name, def_nr) in self.importable_names(lib_source, into_source) {
             self.note_ambiguity(&name, into_source, def_nr);
             self.bind_import(&name, (into_source, lib_source), def_nr, public, false);
         }
@@ -12738,6 +12818,52 @@ impl Data {
         self.def_names
             .get(key, lib_source)
             .filter(|&d| self.passes_on(d) && !self.is_private_import(lib_source, key, d))
+    }
+
+    /// `@FR-F-Package` — the file `into_source` was parsed from, when one is recorded: the
+    /// importer a `#package` file's sharing is judged against.
+    fn importer_file(&self, into_source: u16) -> Option<&str> {
+        self.source_files.get(&into_source).map(|f| f.as_str())
+    }
+
+    /// `@FR-F-Package` — is `d_nr`, declared in `lib_source`, reached by `into_source` only
+    /// because its file shares its internals with the importer's (not `pub`, a mate)?
+    fn shared_with(&self, lib_source: u16, key: &str, d_nr: u32, into_source: u16) -> bool {
+        !self.package_files.is_empty()
+            && !self.passes_on(d_nr)
+            && !self.is_private_import(lib_source, key, d_nr)
+            && self.importer_file(into_source).is_some_and(|importer| {
+                self.shares_internals(&self.definitions[d_nr as usize].position.file, importer)
+            })
+    }
+
+    /// What `into_source` may import from `lib_source` under `key`: what the library passes
+    /// on, and — to a mate of a `#package` file — that file's own items (`@FR-F-Package`).
+    /// A shared item never passes on further: whether a binding re-exports is
+    /// [`Self::passes_on`]'s, judged on the definition, so a mate's `pub use` carries only
+    /// what is `pub`.
+    fn importable(&self, key: &str, lib_source: u16, into_source: u16) -> Option<u32> {
+        self.exported(key, lib_source).or_else(|| {
+            let d = self.def_names.get(key, lib_source)?;
+            self.shared_with(lib_source, key, d, into_source)
+                .then_some(d)
+        })
+    }
+
+    /// Every name [`Self::importable`] answers for a glob `use` of `lib_source`.
+    fn importable_names(&self, lib_source: u16, into_source: u16) -> Vec<(String, u32)> {
+        let mut names = self.exported_names(lib_source);
+        if !self.package_files.is_empty() {
+            names.extend(
+                self.def_names
+                    .iter()
+                    .filter(|&(name, src, d)| {
+                        src == lib_source && self.shared_with(lib_source, name, d, into_source)
+                    })
+                    .map(|(name, _, d)| (name.to_string(), d)),
+            );
+        }
+        names
     }
 
     /// @FR-F-Surface — a `pub` item, or a forward-reference stub.  A stub is not an item and
@@ -12783,7 +12909,13 @@ impl Data {
     /// carries the one-edit cure: the owner's own qualifier for a name `lib` merely imported,
     /// or `pub` on `lib`'s side for an item it keeps private.
     #[must_use]
-    pub fn qualified_refusal(&self, lib_source: u16, lib: &str, name: &str) -> Option<String> {
+    pub fn qualified_refusal(
+        &self,
+        lib_source: u16,
+        lib: &str,
+        name: &str,
+        user_file: &str,
+    ) -> Option<String> {
         if lib_source == u16::MAX || lib_source == STD_SOURCE {
             return None;
         }
@@ -12822,7 +12954,10 @@ impl Data {
                     ),
                 });
             }
-            if !self.definitions[d as usize].pub_visible {
+            // `@FR-F-Package` — a mate of a `#package` file reads its items as `pub`.
+            if !self.definitions[d as usize].pub_visible
+                && !self.shares_internals(&self.definitions[d as usize].position.file, user_file)
+            {
                 return Some(format!(
                     "`{name}` is not `pub` in `{lib}`, so `{lib}::{name}` cannot reach it: a \
                      library's surface is its `pub` items.\n  fix: `{lib}` declares it `pub`, \
@@ -12842,6 +12977,59 @@ impl Data {
                 .source_files
                 .get(&source)
                 .is_none_or(|f| self.definitions[def_nr as usize].position.file != *f)
+    }
+
+    /// A file's place as `#package` compares it: canonical, so `./a.loft`, an absolute path
+    /// and a symlinked directory name one file; as written when the file has no place on
+    /// disk (a source held in memory).
+    fn package_path(file: &str) -> crate::file_access::PathText {
+        let path = crate::file_access::PathText::host(file);
+        crate::file_access::canonical(&path).unwrap_or(path)
+    }
+
+    /// `#package` (`@FR-F-Package`): `file` shows its internals to the other files of its own
+    /// directory.
+    pub fn note_package_file(&mut self, file: &str) {
+        self.package_files.insert(Self::package_path(file).native());
+    }
+
+    /// `@FR-F-Package` — does `owner`, the file that declares an item, show its internals to
+    /// `user`, the file that uses it?  Exactly when `owner` says `#package` and `user` sits in
+    /// `owner`'s directory or in the one directly above it — the code that composes it.  Not
+    /// further up, not below, not a sibling.  The one home of the question; every visibility
+    /// refusal asks it after its own "same file" test.
+    #[must_use]
+    pub fn shares_internals(&self, owner: &str, user: &str) -> bool {
+        if self.package_files.is_empty() {
+            return false;
+        }
+        let owner = Self::package_path(owner);
+        if !self.package_files.contains(&owner.native()) {
+            return false;
+        }
+        let user = Self::package_path(user);
+        let (Some(here), Some(place)) = (owner.parent(), user.parent()) else {
+            return false;
+        };
+        let reaches = |place: &crate::file_access::PathText| {
+            *place == here || here.parent().is_some_and(|up| up == *place)
+        };
+        owner != user && (reaches(&place) || Self::as_tested(&place).is_some_and(|p| reaches(&p)))
+    }
+
+    /// `@FR-F-Package` — where a file inside a package's `tests/` (that directory or below
+    /// it) reads `#package` sharing from: the `src/` beside that `tests/`.  Tests are part of
+    /// the package and not a layer, so depth inside `tests/` walls nothing off.  `None` for a
+    /// place outside any `tests/`.
+    fn as_tested(place: &crate::file_access::PathText) -> Option<crate::file_access::PathText> {
+        let mut dir = Some(place.clone());
+        while let Some(d) = dir {
+            if d.parts().last().is_some_and(|name| name == "tests") {
+                return d.parent().map(|root| root.join("src"));
+            }
+            dir = d.parent();
+        }
+        None
     }
 
     /// Record the file `source` is parsed from (see `source_files`).
@@ -13009,8 +13197,8 @@ impl Data {
         // Functions are stored under the `n_` prefix; try both forms.
         let fn_key = format!("n_{name}");
         let bind_fn_key = format!("n_{bind}");
-        let found_plain = self.exported(name, lib_source);
-        let found_fn = self.exported(&fn_key, lib_source);
+        let found_plain = self.importable(name, lib_source, into_source);
+        let found_fn = self.importable(&fn_key, lib_source, into_source);
         // @C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
         // and has no bare-name definition for an import list to find.  Import every public
         // method of that name the library declares, each under its own key — exactly what a
@@ -13022,9 +13210,10 @@ impl Data {
                 .iter()
                 .filter(|&(key, src, d)| {
                     src == lib_source
-                        && self.definitions[d as usize].pub_visible
                         && !self.is_private_import(lib_source, key, d)
                         && Self::method_name_of_key(key) == Some(name)
+                        && (self.definitions[d as usize].pub_visible
+                            || self.shared_with(lib_source, key, d, into_source))
                 })
                 .map(|(key, _, d)| (key.to_string(), d))
                 .collect()
@@ -13073,7 +13262,7 @@ impl Data {
     /// namespace, this variant is what makes B's later references resolve
     /// to A's real definition.
     pub fn import_all_overwrite(&mut self, lib_source: u16, into_source: u16, public: bool) {
-        for (name, def_nr) in self.exported_names(lib_source) {
+        for (name, def_nr) in self.importable_names(lib_source, into_source) {
             self.bind_import(&name, (into_source, lib_source), def_nr, public, true);
         }
     }
@@ -13091,8 +13280,8 @@ impl Data {
     ) -> bool {
         let fn_key = format!("n_{name}");
         let bind_fn_key = format!("n_{bind}");
-        let found_plain = self.exported(name, lib_source);
-        let found_fn = self.exported(&fn_key, lib_source);
+        let found_plain = self.importable(name, lib_source, into_source);
+        let found_fn = self.importable(&fn_key, lib_source, into_source);
         if found_plain.is_none() && found_fn.is_none() {
             return false;
         }
@@ -15064,5 +15253,191 @@ mod children_index_tests {
         let after: Vec<Vec<u32>> = (0..12).map(|p| data.children_of(p).collect()).collect();
         assert_eq!(before, after);
         assert!(data.children_of(u32::MAX).next().is_none());
+    }
+}
+
+#[cfg(test)]
+mod package_tests {
+    use super::Data;
+    use crate::file_access as fa;
+
+    /// `@FR-F-Package` — `#package` reaches the files of its own directory and of the one
+    /// directly above, and only from the file that says it; the place is the canonical one,
+    /// whatever the spelling.
+    #[test]
+    fn package_reaches_its_directory_and_the_one_above() {
+        let root = std::env::temp_dir().join(format!("loft_package_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&root);
+        for dir in ["top/dir/sub", "top/other"] {
+            fa::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in [
+            "top/dir/a.loft",
+            "top/dir/b.loft",
+            "top/dir/sub/c.loft",
+            "top/p.loft",
+            "top/other/a.loft",
+            "g.loft",
+        ] {
+            fa::write(root.join(file), b"").unwrap();
+        }
+        let path = |f: &str| root.join(f).to_string_lossy().into_owned();
+        let a = path("top/dir/a.loft");
+        let mut data = Data::new();
+        assert!(
+            !data.shares_internals(&a, &path("top/dir/b.loft")),
+            "no directive: file-local"
+        );
+        data.note_package_file(&a);
+        let cells = [
+            ("top/dir/b.loft", true, "a file of the same directory"),
+            (
+                "top/p.loft",
+                true,
+                "a file of the directory above: the composer",
+            ),
+            ("g.loft", false, "two directories up"),
+            ("top/dir/sub/c.loft", false, "a subdirectory: never down"),
+            (
+                "top/other/a.loft",
+                false,
+                "a sibling directory, a file of the same name",
+            ),
+            (
+                "top/dir/a.loft",
+                false,
+                "the file itself: its own rule covers it",
+            ),
+        ];
+        for (user, shared, what) in cells {
+            assert_eq!(data.shares_internals(&a, &path(user)), shared, "{what}");
+        }
+        assert!(
+            !data.shares_internals(&path("top/dir/b.loft"), &a),
+            "only the declaring file's directive counts"
+        );
+        // Other spellings of the same places.
+        let dotted = root
+            .join("top/dir/../dir/b.loft")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            data.shares_internals(&a, &dotted),
+            "`..` names the same directory"
+        );
+        let dotted_up = root
+            .join("top/other/../p.loft")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            data.shares_internals(&a, &dotted_up),
+            "`..` names the same parent"
+        );
+        // A link the OS refuses to make (Windows without the symlink privilege) has no cell.
+        if fa::symlink(root.join("top/dir"), root.join("top/link")).is_ok() {
+            assert!(
+                data.shares_internals(&path("top/link/a.loft"), &path("top/dir/b.loft")),
+                "a symlinked directory is the directory it names"
+            );
+        }
+        let _ = fa::remove_dir_all(&root);
+    }
+
+    /// `@FR-F-Package` (S0.3c) — a file anywhere inside a package's `tests/` reads `#package`
+    /// sharing as if it sat in the `src/` beside it; a helper in `tests/` still shares with
+    /// the tests beside it, and nothing outside the package gains.
+    #[test]
+    fn package_tests_read_as_their_src() {
+        let root = std::env::temp_dir().join(format!("loft_package_tests_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&root);
+        for dir in [
+            "pkg/src/interp",
+            "pkg/src/tests",
+            "pkg/tests/sub",
+            "other/tests",
+        ] {
+            fa::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in [
+            "pkg/src/a.loft",
+            "pkg/src/interp/x.loft",
+            "pkg/src/tests/t.loft",
+            "pkg/tests/t.loft",
+            "pkg/tests/helper.loft",
+            "pkg/tests/sub/t.loft",
+            "other/tests/t.loft",
+        ] {
+            fa::write(root.join(file), b"").unwrap();
+        }
+        let path = |f: &str| root.join(f).to_string_lossy().into_owned();
+        let mut data = Data::new();
+        for shared in [
+            "pkg/src/a.loft",
+            "pkg/src/interp/x.loft",
+            "pkg/tests/helper.loft",
+        ] {
+            data.note_package_file(&path(shared));
+        }
+        let cells = [
+            (
+                "pkg/src/a.loft",
+                "pkg/tests/t.loft",
+                true,
+                "a test reads its src",
+            ),
+            (
+                "pkg/src/a.loft",
+                "pkg/tests/sub/t.loft",
+                true,
+                "and so does the tests subtree",
+            ),
+            (
+                "pkg/src/interp/x.loft",
+                "pkg/tests/t.loft",
+                true,
+                "one up from src/interp is src",
+            ),
+            (
+                "pkg/src/a.loft",
+                "pkg/src/tests/t.loft",
+                false,
+                "a tests INSIDE src is below src",
+            ),
+            (
+                "pkg/src/a.loft",
+                "other/tests/t.loft",
+                false,
+                "another package's tests",
+            ),
+            (
+                "pkg/tests/helper.loft",
+                "pkg/tests/t.loft",
+                true,
+                "a test helper shares with tests",
+            ),
+        ];
+        for (owner, user, shared, what) in cells {
+            assert_eq!(
+                data.shares_internals(&path(owner), &path(user)),
+                shared,
+                "{what}"
+            );
+        }
+        let mut plain = Data::new();
+        plain.note_package_file(&path("pkg/src/interp/x.loft"));
+        assert!(
+            !plain.shares_internals(&path("pkg/src/a.loft"), &path("pkg/tests/t.loft")),
+            "without #package a test reads only pub"
+        );
+        let _ = fa::remove_dir_all(&root);
+    }
+
+    /// A source with no place on disk compares as written.
+    #[test]
+    fn package_compares_an_in_memory_source_as_written() {
+        let mut data = Data::new();
+        data.note_package_file("mem/a.loft");
+        assert!(data.shares_internals("mem/a.loft", "mem/b.loft"));
+        assert!(!data.shares_internals("mem/a.loft", "elsewhere/b.loft"));
     }
 }

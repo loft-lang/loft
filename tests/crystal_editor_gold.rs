@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: the graphics library is a `[native] crate` the C does not link — every loft it spawns runs without LOFT_NATIVE_BACKEND.
 
 //! GL-render gold-image regression for the crystal editor smoke
 //! mode (`tools/audience-demo/crystal_editor.loft --smoke`).
@@ -180,6 +181,7 @@ fn crystal_editor_gl_matches_gold() {
     // A program that does not compile produces no screenshot either, and the
     // screenshot check below reads that as "no software GL".  Ask first.
     let check = loft::platform::process::harness_command(loft_bin())
+        .env_remove("LOFT_NATIVE_BACKEND")
         .args(["--no-warnings", "--path"])
         .arg(format!("{}/", root.display()))
         .arg("--lib")
@@ -196,6 +198,7 @@ fn crystal_editor_gl_matches_gold() {
     let shot = PathBuf::from("/tmp/crystal_editor_gold.png");
     let _ = fa::remove_file(&shot);
     let out = loft::platform::process::harness_command("xvfb-run")
+        .env_remove("LOFT_NATIVE_BACKEND")
         .args([
             "-a",
             "-s",

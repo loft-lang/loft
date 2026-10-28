@@ -199,7 +199,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
     };
 
     let built = loft::platform::process::harness_command(&loft)
-        .args(["--html", "page.html"])
+        .args(["--native-rust", "--html", "page.html"])
         .arg("embed_page.loft")
         .current_dir(&dir)
         .output()
@@ -308,7 +308,7 @@ fn the_embedded_file_is_the_one_the_program_would_open() {
     .expect("write source");
 
     let built = loft::platform::process::harness_command(&loft)
-        .args(["--html", "page.html", "src/layout.loft"])
+        .args(["--native-rust", "--html", "page.html", "src/layout.loft"])
         .current_dir(&root)
         .output()
         .expect("invoke loft --html");
@@ -375,7 +375,14 @@ fn a_librarys_declaration_brings_the_librarys_own_file() {
     .expect("write app source");
 
     let built = loft::platform::process::harness_command(&loft)
-        .args(["--html", "app.html", "--lib", "../libs", "main.loft"])
+        .args([
+            "--native-rust",
+            "--html",
+            "app.html",
+            "--lib",
+            "../libs",
+            "main.loft",
+        ])
         .current_dir(&app)
         .output()
         .expect("invoke loft --html");
@@ -432,7 +439,7 @@ fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
         fa::write(dir.join("loft.toml"), manifest).expect("write manifest");
         let _ = fa::remove_file(dir.join("out.html"));
         let out = loft::platform::process::harness_command(&loft)
-            .args(["--html", "out.html"])
+            .args(["--native-rust", "--html", "out.html"])
             .arg("embed_page.loft")
             .current_dir(&dir)
             .output()

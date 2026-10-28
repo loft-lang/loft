@@ -262,8 +262,53 @@ static void loft_sip_kv(loft_sip *h, loft_kv k) {
     else if (k.kind == LOFT_KV_TEXT) loft_sip_str(h, k.s);
 }
 
+/* keys::key_hash of the one integer key `[key]` under `seed`: the seed's word and the key's, then
+ * the finish for sixteen bytes — what the general digest computes for `loft_kv_int(key)`,
+ * unrolled (`@FR-R-TypedKeyed`'s digest). */
+static uint64_t loft_digest_i64(uint64_t seed, int64_t key) {
+    loft_sip h;
+    uint8_t b[8];
+    loft_sip_init(&h);
+    memcpy(b, &seed, 8);
+    loft_sip_word(&h, loft_sip_le(b, 7) | (uint64_t) b[7] << 56);
+    memcpy(b, &key, 8);
+    loft_sip_word(&h, loft_sip_le(b, 7) | (uint64_t) b[7] << 56);
+    h.length = 16;
+    h.tail = 0;
+    h.ntail = 0;
+    return loft_sip_finish(&h);
+}
+
+/* keys::ints_hash: the digest of `n` integer key parts — the seed's word and one per part, no
+ * tail, the finish for their bytes (`@FR-R-TypedKeyed`'s compound clause). */
+static uint64_t loft_digest_ints(uint64_t seed, const int64_t *ks, int n) {
+    loft_sip h;
+    uint8_t b[8];
+    loft_sip_init(&h);
+    memcpy(b, &seed, 8);
+    loft_sip_word(&h, loft_sip_le(b, 7) | (uint64_t) b[7] << 56);
+    for (int i = 0; i < n; i++) {
+        memcpy(b, &ks[i], 8);
+        loft_sip_word(&h, loft_sip_le(b, 7) | (uint64_t) b[7] << 56);
+    }
+    h.length = (uint64_t) (n + 1) * 8;
+    h.tail = 0;
+    h.ntail = 0;
+    return loft_sip_finish(&h);
+}
+
 /* keys::key_hash: the digest of `n` key values. */
 static uint64_t loft_kv_digest(const loft_kv *kv, int n, uint64_t seed) {
+    if (n == 1 && kv[0].kind == LOFT_KV_INT) return loft_digest_i64(seed, kv[0].i);
+    if (n > 1 && n <= 4) {
+        int64_t ks[4];
+        int ints = 1;
+        for (int i = 0; i < n; i++) {
+            if (kv[i].kind != LOFT_KV_INT) ints = 0;
+            ks[i] = kv[i].i;
+        }
+        if (ints) return loft_digest_ints(seed, ks, n);
+    }
     loft_sip h;
     loft_sip_seeded(&h, seed);
     for (int i = 0; i < n; i++) loft_sip_kv(&h, kv[i]);
@@ -272,6 +317,19 @@ static uint64_t loft_kv_digest(const loft_kv *kv, int n, uint64_t seed) {
 
 /* keys::hash: the digest of the key an element carries. */
 static uint64_t loft_ref_digest(loft_ref e, const loft_key *keys, int n, uint64_t seed) {
+    if (n == 1) {
+        loft_kv k = loft_key_get(loft_store_of(e), e.rec, e.pos, &keys[0]);
+        if (k.kind == LOFT_KV_INT) return loft_digest_i64(seed, k.i);
+    } else if (n <= 4) {
+        int64_t ks[4];
+        int ints = 1;
+        for (int i = 0; i < n; i++) {
+            loft_kv k = loft_key_get(loft_store_of(e), e.rec, e.pos, &keys[i]);
+            if (k.kind != LOFT_KV_INT) ints = 0;
+            ks[i] = k.i;
+        }
+        if (ints) return loft_digest_ints(seed, ks, n);
+    }
     loft_sip h;
     loft_sip_seeded(&h, seed);
     for (int i = 0; i < n; i++) loft_sip_kv(&h, loft_key_get(loft_store_of(e), e.rec, e.pos, &keys[i]));

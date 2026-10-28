@@ -548,6 +548,68 @@ static void loft_set_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_r
     if (free_source && value.store_nr != c.store_nr && !loft_free_protected(value)) loft_free_ref(value);
 }
 
+/* `@FR-R-InPlaceLiteral`'s keyed clause, the first half of `c[k…] = R { … }` written in place
+ * (Stores::keyed_place_begin): the element the FULL subscript names removed, as `loft_set_keyed`
+ * removes it, and a fresh one claimed in the collection's store, not yet filed — the literal's
+ * fields are written into it before `loft_keyed_place_finish` files it. */
+static loft_ref loft_keyed_place_begin(const loft_tdesc *T, uint16_t etp, loft_ref c, int kind, const loft_key *keys,
+                                       int nk, const loft_kv *sub, int nsub) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    uint32_t size = T[etp].size;
+    loft_ref existing = loft_keyed_find(c, kind, size, keys, nk, sub, nsub);
+    if (existing.rec != 0) {
+        if (kind == LOFT_KEYED_HASH) loft_hash_remove(T, etp, c, existing, keys, nk, 0);
+        else if (kind == LOFT_KEYED_SORTED) loft_sorted_remove(c, existing, size);
+        else if (kind == LOFT_KEYED_INDEX) loft_ix_remove(T, etp, c, existing, keys, nk, 0);
+        else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
+            loft_rx_remove_owned(T, etp, c, existing, keys, nk, kind == LOFT_KEYED_TRIE, 0);
+        else loft_ordered_remove(T, etp, c, existing, 0, 0);
+    }
+    return kind == LOFT_KEYED_SORTED ? loft_sorted_new(c, size)
+           : kind == LOFT_KEYED_HASH ? loft_hash_entry(c, size, T[etp].linked)
+                                     : loft_entry_new(c, size);
+}
+
+/* The second half (Stores::keyed_place_finish): the subscript's key written into the claimed
+ * element and the element filed, as `loft_set_keyed` files its copy. */
+static void loft_keyed_place_finish(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref e, int kind,
+                                    const loft_key *keys, int nk, const loft_kv *sub, int nsub) {
+    if (e.rec == 0) return;
+    uint32_t size = T[etp].size;
+    for (int i = 0; i < nsub; i++) loft_key_set(e, &keys[i], sub[i]);
+    if (kind == LOFT_KEYED_HASH) (void) loft_hash_insert(T, etp, c, e, keys, nk, 0);
+    else if (kind == LOFT_KEYED_SORTED) loft_sorted_finish(c, size, keys, nk);
+    else if (kind == LOFT_KEYED_INDEX) (void) loft_ix_insert(T, etp, c, e, keys, nk, 0);
+    else if (kind == LOFT_KEYED_SPATIAL || kind == LOFT_KEYED_TRIE)
+        (void) loft_rx_insert_record(T, etp, c, e, keys, nk, kind == LOFT_KEYED_TRIE, 0);
+    else (void) loft_ordered_insert(T, etp, c, e, keys, nk, 0);
+}
+
+/* `@FR-R-KeyedEntry`'s subscript clause (Stores::keyed_entry_ints): the entry `c[ks…] = T{…}`
+ * writes its non-key fields into — found or filed in one probe (`loft_h_entry_ints`), its key
+ * parts written.  Where that walk cannot serve (a walk over `c` is live, no table yet) the entry
+ * is claimed, keyed and filed through `loft_keyed_place_begin` / `_finish` first, and the filed
+ * place answered: an inline table moves the staged entry into itself. */
+static loft_ref loft_keyed_entry_ints(const loft_tdesc *T, uint16_t etp, loft_ref c, const loft_key *keys, int nk,
+                                      const int64_t *ks) {
+    if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null();
+    int live = 0;
+    for (int i = 0; i < loft_nscratches && !live; i++)
+        live = loft_scratches[i].source.store_nr == c.store_nr && loft_scratches[i].source.rec == c.rec &&
+               loft_scratches[i].source.pos == c.pos;
+    if (!live) {
+        loft_ref e = loft_h_entry_ints(c, keys, nk, ks);
+        if (e.rec != 0) return e;
+    }
+    loft_kv kv[4];
+    for (int i = 0; i < nk && i < 4; i++) kv[i] = loft_kv_int(ks[i]);
+    loft_ref e = loft_keyed_place_begin(T, etp, c, LOFT_KEYED_HASH, keys, nk, kv, nk);
+    if (e.rec == 0) return e;
+    memset(loft_at(loft_store_of(e), e.rec, e.pos), 0, T[etp].size);
+    loft_keyed_place_finish(T, etp, c, e, LOFT_KEYED_HASH, keys, nk, kv, nk);
+    return loft_h_find_ints(c, keys, nk, ks);
+}
+
 /* OpFillKeyed (Stores::fill_keyed_from_vector): each element of the vector `src` filed into the
  * keyed collection `c` as a deep copy under its own key (`insert_keyed_copy`, the latest of one
  * key winning); a null linked element has no key and stays out.  Every element is resolved

@@ -733,14 +733,14 @@ fn write_key_fields(stores: &mut Stores, parent: &Record, off: u32, keys: &[(u16
 
 /// Serialize `data` to a file-backed IR store at `path` (@PLN11 arc D).
 ///
-/// Materializes the whole `Data` into a fresh file-backed store (`Store::open`),
+/// Materializes the whole `Data` into a fresh file-backed store (`Store::try_open`),
 /// with the root claimed as record [`ds::IR_ROOT_REC`] so [`crate::ir_read::open_data`]
 /// can find it with no sidecar.  Dropping the store unmaps + flushes it to disk.
 /// The file is removed first so the root lands at the well-known first record.
 ///
 /// # Errors
-/// Propagates a file-remove error other than "not found"; `Store::open` itself
-/// panics on an unopenable path (consistent with the rest of the store layer).
+/// Propagates a file-remove error other than "not found", and the error for a path
+/// that cannot be created, opened or sized.
 ///
 /// # Panics
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`] (would mean the
@@ -752,7 +752,7 @@ pub fn save_data(data: &Data, path: &str) -> std::io::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    let fstore = crate::store::Store::open(path);
+    let fstore = crate::store::Store::try_open(path)?;
     let mut stores = Stores::new();
     let nr = stores.adopt_store(fstore);
     let rec = stores.allocations[nr as usize].claim(ds::DATA_ROOT_WORDS);
@@ -800,8 +800,16 @@ pub fn materialize_bundle(stores: &mut Stores, root: DbRef, data: &Data, schema:
 /// file-backed store, then `rename`d onto `path`, so a process killed mid-write
 /// can never leave a half-written bundle at `path` for the next run to load.
 ///
+/// Like every store image, the bundle carries a `.dschema` sidecar recording the
+/// layout of its root type, the IR's `Bundle` (`@FR-L-Sound`).  So a loft program
+/// can `store_load` it through the same types, declared in `selfhost/src/ir.loft`,
+/// and is checked against the layout the records were written with.  The image and
+/// its sidecar are one write (`@FR-S-Pair`): both are staged first, then both
+/// renamed into place.
+///
 /// # Errors
-/// Propagates a file-remove or `rename` error.
+/// Propagates a file-remove, sidecar-write or `rename` error, and the error for a temp
+/// path that cannot be created, opened or sized (a read-only cache directory).
 ///
 /// # Panics
 /// If the materialized root does not land at [`ds::IR_ROOT_REC`].
@@ -813,8 +821,8 @@ pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::R
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    {
-        let fstore = crate::store::Store::open(&tmp);
+    let slot = {
+        let fstore = crate::store::Store::try_open(&tmp)?;
         let mut stores = Stores::new();
         let nr = stores.adopt_store(fstore);
         let rec = stores.allocations[nr as usize].claim(ds::BUNDLE_ROOT_WORDS);
@@ -829,10 +837,28 @@ pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::R
             pos: ds::IR_ROOT_POS,
         };
         materialize_bundle(&mut stores, root, data, schema);
-        // Drop `stores` → the file-backed Store unmaps + flushes `tmp` fully
-        // before the atomic rename publishes it at `path`.
-    }
-    crate::file_access::rename(&tmp, path)
+        // Leaving the block drops `stores`: the file-backed Store unmaps and flushes
+        // `tmp` fully before the atomic rename publishes it at `path`.
+        nr
+    };
+    // The identity comes from the IR schema alone, registered in a `Stores` of its own,
+    // so computing it cannot change a byte of the image.  The slot is the writer's
+    // (`@FR-L-Ref-Slot`); the bundle holds no reference that names it.
+    let mut ir = Stores::new();
+    let ids = crate::ir_schema_gen::register_ir_schema(&mut ir);
+    let identity = crate::schema_sidecar::LayoutIdentity::of_store(&ir, slot, ids.bundle);
+    let staged = match identity.stage_beside(std::path::Path::new(path)) {
+        Ok(staged) => staged,
+        Err(e) => {
+            let _ = crate::file_access::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+    crate::file_access::rename(&tmp, path)?;
+    crate::file_access::rename(
+        &staged,
+        crate::schema_sidecar::dschema_path(std::path::Path::new(path)),
+    )
 }
 
 /// Write `v` into the already-allocated `slot` (its bytes are zeroed).

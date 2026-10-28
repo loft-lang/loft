@@ -11,6 +11,8 @@ Literals, closures, string literals and string formatting.  Part of the language
 | Integer          | `42`, `0xff`, `0b1010`, `0o17`      |
 | Float            | `3.14`, `1.0`                       |
 | Single           | `1.0f`, `0.5f`                      |
+| 64-bit integer   | `42l` — an `i64` even in a `#width 32` file ([WIDTH32.md](WIDTH32.md)) |
+| 64-bit float     | `1.0d` — a `float` even in a `#width 32` file |
 | Character        | `'a'`, `'😊'`                       |
 | Boolean          | `true`, `false`                     |
 | Null             | `null`                              |

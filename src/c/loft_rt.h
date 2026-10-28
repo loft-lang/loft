@@ -294,6 +294,19 @@ static void loft_pad_rendered(loft_text *s, size_t start, size_t sign, int64_t w
     loft_text_free(&rendered);
 }
 
+/* The decimal digits of `v`, most significant first, into `buf` (twenty at most): what `%llu`
+ * writes, without parsing a format per number. */
+static int loft_u64_dec(char *buf, uint64_t v) {
+    char tmp[20];
+    int n = 0;
+    do {
+        tmp[n++] = (char) ('0' + (int) (v % 10));
+        v /= 10;
+    } while (v);
+    for (int i = 0; i < n; i++) buf[i] = tmp[n - 1 - i];
+    return n;
+}
+
 /* ops::push_decimal */
 static void loft_push_decimal(loft_text *s, int neg, uint64_t abs, int plus, int64_t width,
                               int dir, uint8_t token) {
@@ -302,7 +315,7 @@ static void loft_push_decimal(loft_text *s, int neg, uint64_t abs, int plus, int
     else if (plus) loft_push_char(s, '+');
     size_t sign = s->len - start;
     char buf[24];
-    int n = snprintf(buf, sizeof buf, "%llu", (unsigned long long) abs);
+    int n = loft_u64_dec(buf, abs);
     loft_push(s, buf, (size_t) n);
     loft_pad_rendered(s, start, sign, width, dir, token);
 }
@@ -530,6 +543,40 @@ LOFT_HOT_INLINE int64_t loft_div(int64_t a, int64_t b) {
 
 LOFT_HOT_INLINE int64_t loft_rem(int64_t a, int64_t b) {
     if (a == LOFT_NULL || b == LOFT_NULL || b == 0) return LOFT_NULL;
+    return a % b;
+}
+
+/* @PLN204 — the 32-bit integers (`CType::Int32`): `int32_t`, null `INT32_MIN`.  `loft_w64`
+ * widens one where a 64-bit value is wanted; `loft_n32` narrows a 64-bit value, a value that
+ * does not fit reading null as `OpNarrow32` answers it.  The operators answer what the
+ * interpreter's `OpNarrow32(OpAddInt(a, b))` answers: a null operand or a result outside
+ * `INT32_MIN + 1 ..= INT32_MAX` is null.  Taken in 64 bits only where 32 cannot hold the
+ * intermediate (a product); a sum is checked against the range before it is formed. */
+#define LOFT_NULL32 INT32_MIN
+LOFT_HOT_INLINE int64_t loft_w64(int32_t a) { return a == LOFT_NULL32 ? LOFT_NULL : (int64_t) a; }
+LOFT_HOT_INLINE int32_t loft_n32(int64_t a) {
+    return (a > (int64_t) INT32_MIN && a <= (int64_t) INT32_MAX) ? (int32_t) a : LOFT_NULL32;
+}
+LOFT_HOT_INLINE int32_t loft_add32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32) return LOFT_NULL32;
+    if ((b > 0 && a > INT32_MAX - b) || (b < 0 && a <= INT32_MIN - b)) return LOFT_NULL32;
+    return a + b;
+}
+LOFT_HOT_INLINE int32_t loft_sub32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32) return LOFT_NULL32;
+    if ((b < 0 && a > INT32_MAX + b) || (b > 0 && a <= INT32_MIN + b)) return LOFT_NULL32;
+    return a - b;
+}
+LOFT_HOT_INLINE int32_t loft_mul32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32) return LOFT_NULL32;
+    return loft_n32((int64_t) a * (int64_t) b);
+}
+LOFT_HOT_INLINE int32_t loft_div32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32 || b == 0) return LOFT_NULL32;
+    return a / b; /* INT32_MIN is null, so INT32_MIN / -1 is never reached */
+}
+LOFT_HOT_INLINE int32_t loft_rem32(int32_t a, int32_t b) {
+    if (a == LOFT_NULL32 || b == LOFT_NULL32 || b == 0) return LOFT_NULL32;
     return a % b;
 }
 
@@ -1689,14 +1736,19 @@ static void loft_fill(loft_ref r, const uint8_t *image, uint32_t n) {
 }
 
 /* get_vector: the element at `from` (negative counts from the end), or the null reference. */
+/* `@FR-R-ElementPath`: the collection record and the length read once each, one unsigned
+ * compare (a negative index past the front fails it too), the element's reference built here. */
 LOFT_HOT_INLINE loft_ref loft_vec_get(loft_ref v, uint32_t size, int64_t from) {
-    if (v.store_nr == 0xFFFF) return loft_ref_null();
-    int64_t len = loft_vec_len(v);
+    loft_ref e = loft_ref_null();
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return e;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return e;
+    int64_t len = (int64_t) loft_u32(s, r, 4);
     int64_t f = from < 0 ? from + len : from;
-    if (f < 0 || f >= len) return loft_ref_null();
-    loft_ref e;
+    if ((uint64_t) f >= (uint64_t) len) return e;
     e.store_nr = v.store_nr;
-    e.rec = loft_collection_rec(loft_store_of(v), v.rec, v.pos);
+    e.rec = r;
     e.pos = (uint32_t) (8 + (uint64_t) f * size);
     return e;
 }
@@ -2101,6 +2153,19 @@ static void loft_copy_claims(const loft_tdesc *T, uint16_t tp, loft_ref from, lo
         loft_ref src_v = { from.store_nr, cur, 0 };
         loft_ref dst_v = { to.store_nr, into, 0 };
         loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);
+        /* Stores::zero_element_tails: into a DEFINED store (an image's), a struct element's
+         * tail past its last field is zeroed — the bulk copy brought the source's leftover
+         * bytes there, which differ between allocators and are not the program's. */
+        if (loft_store_of(to)->defined && T[d->elem].kind == LOFT_T_STRUCT) {
+            const loft_tdesc *e = &T[d->elem];
+            uint32_t used = 0;
+            for (uint16_t k = 0; k < e->n; k++) {
+                uint32_t end = (uint32_t) e->fields[k].pos + T[e->fields[k].type].size;
+                if (end > used) used = end;
+            }
+            for (uint32_t i = 0; used < size && i < len; i++)
+                memset(loft_at(loft_store_of(to), into, 8 + i * size + used), 0, size - used);
+        }
         if (T[d->elem].kind == LOFT_T_SCALAR || T[d->elem].kind == LOFT_T_DBREF) return;
         for (uint32_t i = 0; i < len; i++) {
             loft_ref a = { from.store_nr, cur, 8 + i * size };
@@ -2464,6 +2529,7 @@ LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
     return h;
 }
 
+/* `@FR-R-Refresh`: the growth re-derives the whole header at its own site. */
 LOFT_COLD static loft_ref loft_ph_grow(loft_ph *h, uint32_t size) {
     loft_ref e = loft_vec_append(h->v, size);
     *h = loft_ph_of(h->v, size);
@@ -3222,7 +3288,51 @@ static int loft_shortest_other(char *buf, size_t cap, int p, double v, double ne
     return 1;
 }
 
+/* The shortest form of a `v` with at most 15 significant digits (6 for a single) and
+ * 1e-6 <= |v| < 1e15, without printf: the integer m nearest |v| * 10^k for the least k at which
+ * m / 10^k reads back as `v` — the division is correctly rounded, so it is what `strtod` answers
+ * for those digits — m's neighbours tried too, since |v| * 10^k may itself be inexact.  At that
+ * many digits the decimal grid is coarser than `v`'s spacing, so at most one grid point reads
+ * back and the first k found is the shortest form `loft_push_shortest`'s search arrives at.
+ * Answers 0, writing nothing, for every other `v`. */
+static int loft_push_shortest_fast(loft_text *s, double v, int single) {
+    static const double p10[16] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7,
+                                   1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15};
+    double a = fabs(v);
+    if (!(a >= 1e-6 && a < 1e15)) return 0;
+    uint64_t lim = single ? UINT64_C(1000000) : UINT64_C(1000000000000000);
+    for (int k = 0; k <= 15; k++) {
+        double sc = a * p10[k];
+        if (sc >= (double) lim) return 0;
+        double r = floor(sc + 0.5);
+        for (int d = 0; d < 3; d++) {
+            double c = d == 0 ? r : d == 1 ? r - 1 : r + 1;
+            if (c < 1 || c >= (double) lim) continue;
+            double back = c / p10[k];
+            if (single ? (float) back != (float) a : back != a) continue;
+            uint64_t m = (uint64_t) c;
+            char dig[24];
+            int nd = loft_u64_dec(dig, m);
+            if (v < 0) loft_push_char(s, '-');
+            if (nd <= k) {
+                loft_push(s, "0.", 2);
+                for (int z = 0; z < k - nd; z++) loft_push_char(s, '0');
+                loft_push(s, dig, (size_t) nd);
+            } else {
+                loft_push(s, dig, (size_t) (nd - k));
+                if (k > 0) {
+                    loft_push_char(s, '.');
+                    loft_push(s, dig + nd - k, (size_t) k);
+                }
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void loft_push_shortest(loft_text *s, double v, int single) {
+    if (loft_push_shortest_fast(s, v, single)) return;
     if (isinf(v)) {
         if (v < 0) loft_push(s, "-inf", 4); else loft_push(s, "inf", 3);
         return;
@@ -3391,7 +3501,9 @@ static void loft_push_cstr(loft_text *s, const char *p) {
 
 static void loft_push_i64(loft_text *s, int64_t v) {
     char buf[24];
-    int n = snprintf(buf, sizeof buf, "%lld", (long long) v);
+    int n = 0;
+    if (v < 0) buf[n++] = '-';
+    n += loft_u64_dec(buf + n, v < 0 ? (uint64_t) 0 - (uint64_t) v : (uint64_t) v);
     loft_push(s, buf, (size_t) n);
 }
 
@@ -4369,7 +4481,8 @@ static int loft_eq_content(loft_eq_fn f, loft_ref a, loft_ref b) {
 
 /* ── Kernels and conversions the stdlib calls natively ─────────────────────────────────── */
 
-/* vector_sum_int (loop_kernels.rs): `acc` plus every element, with integer addition's rules.  The
+/* vector_sum_int (loop_kernels.rs, `@FR-R-BoundedNest`'s reduction clause): `acc` plus every
+ * element, with integer addition's rules.  The
  * elements are read off the vector's base, a block of LOFT_SUM_BLOCK at a time (vector::
  * sum_blocks_i64): a block whose every element lies in [-2^40, 2^40) and whose total starts more
  * than 2^50 from the int64 edge cannot overflow and holds no null, so its plain sum is what the

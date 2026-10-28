@@ -49,6 +49,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let cells = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let status = cmd
         .args([
+            "--native-rust",
             "--native-emit",
             out.to_str().unwrap(),
             cells.to_str().unwrap(),

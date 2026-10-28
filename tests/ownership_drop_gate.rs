@@ -1961,6 +1961,7 @@ fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
         let path = dir.join(format!("{}.loft", c.name));
         fa::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
         let out = gate_command()
+            .arg("--native-rust")
             .arg("--native-emit")
             .arg(dir.join(format!("{}.rs", c.name)))
             .arg(&path)

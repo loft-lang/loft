@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: counts the Rust writer's store exchanges — its `--native` runs as `--native-rust` until then.
 //! `@FR-H-SwapIn` — the rebind copy of a minted result into a reset root is an exchange of the
 //! two stores, PINNED on the cells (`tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-
 //! stores.loft`) by counting the exchanges `LOFT_TRACE_STORE_SWAP=1` names: the cells' values
@@ -41,7 +42,7 @@ fn swaps(mode: &str, env: &[(&str, &str)]) -> (usize, String) {
 /// s12's 100 000 rebinds are the floor: each is one exchange on both backends.
 #[test]
 fn the_rebinds_exchange_their_stores_on_both_backends() {
-    for mode in ["--interpret", "--native"] {
+    for mode in ["--interpret", "--native-rust"] {
         let (n, out) = swaps(mode, &[]);
         assert!(
             out.contains("done"),
@@ -56,7 +57,7 @@ fn the_rebinds_exchange_their_stores_on_both_backends() {
 
 #[test]
 fn the_switch_keeps_every_copy() {
-    for mode in ["--interpret", "--native"] {
+    for mode in ["--interpret", "--native-rust"] {
         let (n, out) = swaps(mode, &[("LOFT_NO_STORE_SWAP", "1")]);
         assert!(
             out.contains("done"),

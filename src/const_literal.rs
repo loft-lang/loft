@@ -7,9 +7,11 @@
 //! the interpreter's constant store from it and the native generator emits the same values,
 //! so both match one exhaustive enum; the parser asks [`const_vector_blocker`] why a literal
 //! cannot be pre-built.
-use crate::data::{Data, Value};
+use crate::data::{Data, DefType, Type, Value};
 use crate::data_store::ValueType;
+use crate::database::Stores;
 use crate::ir_node::IrNode;
+use crate::keys::DbRef;
 
 /// One literal field write inside a pre-built constant element: the value, in the terms
 /// the store writes it in.
@@ -243,4 +245,116 @@ pub(crate) fn extract_literal_values(
         return Err("no elements the constant store can build".to_string());
     }
     Ok(elements)
+}
+
+/// Build each vector constant's literal values in a store of its own, as `OpDatabase` +
+/// `OpNewRecord` + `OpFinishRecord` would at run time: `stores.const_refs` and
+/// `data.definitions[d_nr].const_ref` name them.  The interpreter's compile pass calls it, and
+/// so does a backend that reads the program image (@PLN205), which carries the IR but not the
+/// stores built from it.
+pub fn build_const_vectors(
+    stores: &mut Stores,
+    data: &mut Data,
+    program_store: Option<&(Stores, DbRef)>,
+) {
+    // One slot per definition: native codegen resolves `OpConstRef` through
+    // `stores.const_ref_at_runtime(d_nr)`, the interpreter through its mirror of these.
+    stores
+        .const_refs
+        .resize(data.definitions() as usize, DbRef::NULL);
+
+    for d_nr in 0..data.definitions() {
+        if data.def(d_nr).def_type() != DefType::Constant {
+            continue;
+        }
+        let Type::Vector(elem_tp, _) = data.def(d_nr).returned() else {
+            continue;
+        };
+        let elem_tp = (**elem_tp).clone();
+        // @PLN11 G2/M6 — read the const body from the persistent store when
+        // present (store-backed), else the native graph.
+        let body = match program_store {
+            Some((stores, root)) => {
+                IrNode::Store(stores, crate::ir_read::def_body_node(stores, *root, d_nr))
+            }
+            None => IrNode::Native(data.def(d_nr).code()),
+        };
+        // An `Err` is refused at the declaration (`parse_constant` asks
+        // `const_vector_blocker` the same question), so there is nothing to say here —
+        // and nothing to build.
+        let Ok(values) = extract_literal_values(body, data) else {
+            continue;
+        };
+        // Build the vector in its own store using the normal Stores API.
+        // This mirrors what OpDatabase + OpNewRecord + OpFinishRecord do at runtime.
+        // Look up the main_vector<T> struct that wraps the vector field.
+        let vec_struct_name = format!("main_vector<{}>", elem_tp.name(data));
+        let vec_struct_dnr = data.def_nr(&vec_struct_name);
+        if vec_struct_dnr == u32::MAX {
+            continue;
+        }
+        let vec_tp = data.def(vec_struct_dnr).known_type();
+        let size = u32::from(stores.size(vec_tp));
+        // Every byte defined (`Store::defined`): the C backend writes this store's words into
+        // the unit as they are, so a stale byte would make the unit differ run to run.
+        let db = stores.database_defined(size);
+        stores
+            .store_mut(&db)
+            .set_u32_raw(db.rec, 4, u32::from(vec_tp));
+        stores.set_default_value(vec_tp, &db);
+        let vec_ref = DbRef {
+            store_nr: db.store_nr,
+            rec: 1,
+            pos: 8,
+        };
+        for element in &values {
+            let rec = stores.record_new(&vec_ref, vec_tp, 0);
+            for (offset, val) in element {
+                // Each field at ITS OWN offset within the element — a scalar element has
+                // one write at 0, a struct element one per field (loft#702).  Each arm
+                // mirrors the runtime operator in `src/fill.rs`, so a pre-built element
+                // holds the same bytes the initialiser would have written.
+                let at = rec.pos + offset;
+                match val {
+                    ConstField::Int(v) => {
+                        stores.store_mut(&rec).set_int(rec.rec, at, *v);
+                    }
+                    ConstField::Long(v) => {
+                        stores.store_mut(&rec).set_long(rec.rec, at, *v);
+                    }
+                    ConstField::Float(v) => {
+                        stores.store_mut(&rec).set_float(rec.rec, at, *v);
+                    }
+                    ConstField::Single(v) => {
+                        stores.store_mut(&rec).set_single(rec.rec, at, *v);
+                    }
+                    ConstField::Bool(v) => {
+                        stores
+                            .store_mut(&rec)
+                            .set_byte(rec.rec, at, 0, i32::from(*v));
+                    }
+                    ConstField::Char(v) => {
+                        stores.store_mut(&rec).set_u32_raw(rec.rec, at, *v);
+                    }
+                    ConstField::Text(v) => {
+                        // Mirror the runtime OpSetText path (src/fill.rs::set_text):
+                        // store the string in the same store as the vector record
+                        // via set_str(), then write the returned record number
+                        // into the text field as an int pointer.
+                        let store = stores.store_mut(&rec);
+                        let s_pos = store.set_str(v);
+                        store.set_u32_raw(rec.rec, at, s_pos);
+                    }
+                }
+            }
+            stores.record_finish(&vec_ref, &rec, vec_tp, 0);
+        }
+        stores.allocations[db.store_nr as usize].lock_constant();
+        // Plan-57 Phase C: pin the const store so `free_named` never frees it
+        // (it lives for the whole program).  Replaces the `ref_count = u32::MAX/2`
+        // sentinel as the ref-count is removed.
+        stores.allocations[db.store_nr as usize].pinned = true;
+        data.definitions[d_nr as usize].const_ref = Some(vec_ref);
+        stores.const_refs[d_nr as usize] = vec_ref;
+    }
 }

@@ -153,6 +153,13 @@ heap-returning tail discarded 800 000 times holds a flat resident size).
   (F-ParamScalar)  a scalar parameter (integer/float/single/boolean/character) is bound to a
                    COPY of the argument.  `p = e` inside the body is a local update; the caller's
                    value is UNCHANGED.
+  (F-ParamText)    a `text` parameter is bound to the argument's VALUE at the call, whatever the
+                   argument is read from: `f(w, w.rs[0].name)` hands `f` the name as it was, and
+                   a callee that grows, rewrites or frees the store the field lives in — through
+                   another parameter, at any depth, or through a closure — does not change the
+                   parameter.  Reading the argument as a view of the store is a representation
+                   choice, admitted only where nothing the call runs can write a store
+                   (loft#2203).
   (F-ParamHeap)    a heap parameter (a struct / vector / keyed collection) is bound so that the
                    parameter and the caller's argument share the same store: a MUTATION THROUGH
                    the parameter — `p.field = v`, `p[i] = v`, `p.field += …` — IS VISIBLE to the
@@ -379,6 +386,8 @@ DESIGN_DECISIONS.md @C123.
               (`L::name` inside L) means "in this file" and is not an outside reach.
 
   (F-Visible) everything a file F declares is private to F; `pub` gives consent (@C140).
+              "Outside F" below means outside F and, when F says `#package`, outside F's
+              directory and the one above it too (F-Package).
               A TYPE T of F, outside F, is
                 - INVISIBLE when T is not `pub` and no `pub` item of F names it: not named;
                 - NAME ONLY when T is not `pub` but a `pub` fn's signature of F, or a `pub`
@@ -408,6 +417,21 @@ DESIGN_DECISIONS.md @C123.
               `match` on one, and a literal or variant pattern against an A member read τ.
               Inside F, and as a `pub type`, A is τ.  A tuple spelled inline is no declaration: its
               members are visible wherever it is.
+
+  (F-Package) a file F whose directives include `#package` reads, to every other file in
+              F's own directory and in the directory directly above it, as if every item F
+              declares and every field of those items were `pub`; to any other file it reads
+              as (F-Visible) says.  The directories are the canonical ones (any spelling of a
+              path, a symlinked directory); two levels up, a subdirectory and a sibling
+              directory are outside.  A package's TESTS are part of it: a file anywhere
+              inside a directory named `tests` (that directory or below) also reads it as
+              if it sat in the `src` directory beside that `tests`.  Only F's own
+              directive counts: a file reading F's internals declares nothing.  Membership is
+              where F is, never how it was reached (`use`, `--lib`, the registry).  A file a
+              program `use`s may say `#package`, and only that: `#cwd` and `#link` set how
+              the whole program runs and are refused there.  A shared item imports, glob or
+              selective, as a `pub` one does, and never passes on: `pub use` re-exports only
+              what is `pub` (F-Surface), so nothing reaches past the two directories.
 ```
 
 **`(F-Visible)` in words.** The levels are decided by what F's own `pub` items mention, so a
@@ -415,6 +439,19 @@ DESIGN_DECISIONS.md @C123.
 fields and its construction stay F's until F says otherwise.  The census
 (`scripts/pub_census.sh`, `LOFT_TRACE_VISIBILITY=1`) lists every outside use that lacks its
 `pub`; one check (`Parser::check_visibility`) answers both it and the refusal.
+
+**`(F-Package)` in words.** Privacy enforces the right abstractions; it does not hide
+information.  The default stays file-local, because an author should think about what escapes a
+file.  A file that is part of something bigger says so in its first line, and its place supplies
+the group: the files beside it, and the directory above, which holds the code that composes it
+(deeper directories hold the details).  Never downward, since a detail that needed its
+composer's internals would be a cycle; never further up, so each layer is walled from all but
+the one that builds on it.  The consent is one-sided — it sits in the file
+whose internals escape — so one directory can mix shared files with one that keeps its
+internals behind its `pub` functions.  Nothing outside the directory gains anything: a
+library's published surface, and what its consumers see, are unchanged.  The one home of the
+question is `Data::shares_internals` (`src/data.rs`), which every refusal of (F-Visible) and
+(F-Surface) asks after its own "same file" test (@C140).
 
 **In words.** `pub` is the boundary a library draws, and the owner's ruling is that the
 boundary holds: definitions without it "should not be reachable at all" from outside.  A

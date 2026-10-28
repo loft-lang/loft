@@ -792,7 +792,22 @@ impl Parser {
                 return self.unary_through_operator(val, "negate", m, t);
             }
             let arg = val.clone();
-            self.call_op_as(val, "Min", "-", &[arg], &[t])
+            // @PLN204 — negating a 32-bit integer under the 32-bit regime stays 32-bit (it
+            // cannot leave the range: `i32::MIN` is the null).
+            let keep32 = self.data.width32() && Self::width32_int(&t);
+            let tp = self.call_op_as(val, "Min", "-", &[arg], &[t]);
+            if keep32 && let Type::Integer(spec) = tp.base() {
+                let narrow = Type::Integer(crate::narrow::IntegerSpec {
+                    not_null: spec.not_null,
+                    ..crate::narrow::IntegerSpec::i32()
+                });
+                return if matches!(tp, Type::Optional(_)) {
+                    Type::optional(narrow)
+                } else {
+                    narrow
+                };
+            }
+            tp
         } else if self.lexer.has_token("(") {
             // loft#1067 — a tuple MEMBER's declared type is an expected type like any
             // other, so `t: (fn(integer) -> integer, integer) = (|x| { x * 2 }, 1)` can
@@ -1281,11 +1296,54 @@ impl Parser {
             self.parse_var(val, "$", parent_tp, &name_pos)
         } else if let Some(nr) = self.lexer.has_integer() {
             *val = Value::Int(nr as i32);
-            I32.clone()
+            // @PLN204 — a plain literal is an `i32` under the 32-bit regime.
+            if self.data.width32() {
+                Type::Integer(crate::narrow::IntegerSpec::i32())
+            } else {
+                I32.clone()
+            }
         } else if let Some(nr) = self.lexer.has_long() {
+            if self.data.width32() && !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    code = "literal-wider-than-32",
+                    "`{nr}` does not fit a 32-bit integer, and this file is under the 32-bit \
+                     regime — write `{nr}l` for a 64-bit literal, or give the binding the type \
+                     (`x: i64 = {nr}`)"
+                );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!("write `{nr}l`, a 64-bit literal"),
+                    condition: Some("the number is meant to be 64-bit here".to_string()),
+                    edit: None,
+                    concept: "integer width",
+                    concept_ref: "@F4",
+                });
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!("give the binding the type `i64`: `x: i64 = {nr}`"),
+                    condition: Some("the value is meant to stay 64-bit".to_string()),
+                    edit: None,
+                    concept: "integer width",
+                    concept_ref: "@F4",
+                });
+            }
             *val = Value::Long(nr as i64);
             crate::data::I64.clone()
+        } else if let Some(nr) = self.lexer.has_wide() {
+            *val = Value::Long(nr as i64);
+            Type::Integer(crate::narrow::IntegerSpec::i64())
         } else if let Some(nr) = self.lexer.has_float() {
+            // @PLN204 — a plain decimal literal is a `single` under the 32-bit regime.
+            if self.data.width32() {
+                *val = Value::Single(nr as f32);
+                Type::Single
+            } else {
+                *val = Value::Float(nr);
+                Type::Float
+            }
+        } else if let Some(nr) = self.lexer.has_double() {
             *val = Value::Float(nr);
             Type::Float
         } else if let Some(nr) = self.lexer.has_single() {

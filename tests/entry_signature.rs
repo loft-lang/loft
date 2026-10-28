@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: main's argv and returned values do not reach the C entry as on the other backends — its `--native` runs as `--native-rust` until then.
 //
 // #618 / #629 — the ENTRY function's call must supply every argument its
 // signature declares, on BOTH backends.
@@ -48,7 +49,7 @@ fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
 /// what makes these cells able to fail.
 fn both_backends(name: &str, src: &str, expect: &str) {
     let path = write_probe(name, src);
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend])
             .arg(&path)
@@ -191,7 +192,7 @@ fn entry_declaring_argv_both_backends() {
         "argv.loft",
         "fn main(args: vector<text>) {\n  println(\"argc={len(args)}\");\n}\n",
     );
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend])
             .arg(&path)
@@ -215,7 +216,7 @@ fn entry_declaring_argv_both_backends() {
 fn plain_entry_is_unchanged() {
     let path = write_probe("plain.loft", "fn main() {\n  println(\"plain\");\n}\n");
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .args(["--native"])
+        .args(["--native-rust"])
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_KEEP_NATIVE_RS", "1")

@@ -222,6 +222,7 @@ fn a_scanner_beside_a_chain_keeps_its_registers() {
     // vanish with the converted `Object`, so both shapes stay value records.
     let out = std::env::temp_dir().join("loft_literal_exit_chain.rs");
     let status = loft()
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CHAIN_GUARD))

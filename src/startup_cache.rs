@@ -181,6 +181,11 @@ struct ManifestState {
     wasm_bridge_routes: Vec<(String, String, String)>,
     wasm_bridge_packages: Vec<(String, String)>,
     wasm_bridge_host_js: Vec<String>,
+    /// @PLN204 — `w32src <source>` / `wideinst <def>`: the 32-bit regime's sources and the
+    /// instances of 64-bit templates (`Data::width32_state`).  A warm load without them read
+    /// every file as 64-bit, and the C of a `#width 32` program lost its `int32_t`.
+    width32_sources: Vec<u16>,
+    wide_instances: Vec<u32>,
 }
 
 #[cfg(feature = "mmap")]
@@ -358,6 +363,16 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         wasm_bridge_host_js.push(rest.to_string());
         next = lines.next();
     }
+    let mut width32_sources = Vec::new();
+    while let Some(rest) = next.and_then(|l| l.strip_prefix("w32src ")) {
+        width32_sources.push(rest.parse().ok()?);
+        next = lines.next();
+    }
+    let mut wide_instances = Vec::new();
+    while let Some(rest) = next.and_then(|l| l.strip_prefix("wideinst ")) {
+        wide_instances.push(rest.parse().ok()?);
+        next = lines.next();
+    }
     // Remaining lines: `<hexhash> <path>` for every parsed source.
     let mut any = false;
     let mut cur = next;
@@ -384,6 +399,8 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         wasm_bridge_routes,
         wasm_bridge_packages,
         wasm_bridge_host_js,
+        width32_sources,
+        wide_instances,
     })
 }
 
@@ -483,17 +500,10 @@ pub fn warm_load_program(
     // same prebuilt-or-auto-build freshness check a cold parse runs (a loft
     // rebuild still triggers the package rebuild).  Any failure → treat the
     // whole thing as a cache miss and let the cold path report it.
-    let mut native_libs = Vec::new();
-    for (stem, pkg_dir) in &state.native_lib_regs {
-        let Some(path) = crate::interp::extensions::resolve_native_lib(pkg_dir, stem) else {
-            return warm_miss(&format!(
-                "native library {stem} in {pkg_dir} does not resolve"
-            ));
-        };
-        if !native_libs.contains(&path) {
-            native_libs.push(path);
-        }
-    }
+    let native_libs = match resolve_native_libs(&state.native_lib_regs) {
+        Ok(libs) => libs,
+        Err(why) => return warm_miss(&why),
+    };
     // @PLN11 Arc N / N1 — touch-on-use: a warm hit marks the bundle recently-used
     // so the idle-TTL GC keeps actively-run programs and ages out one-offs.
     crate::cache::touch_now(&bundle);
@@ -585,21 +595,64 @@ pub fn warm_load_program(
     }
     crate::copy_manifest::restore_materialised(state.materialised);
     p.native_lib_regs = state.native_lib_regs;
-    // #444 — restore the `[wasm.bridge]` state the IR bundle does not carry.
-    // `--html` codegen keys the host-import-extern skip AND the routed-call on
-    // `wasm_bridge_routes`; an empty table makes those two decisions disagree
-    // and collide (E0428).  `packages` drives the bridge-crate link and
-    // `host_js` the HTML preamble — all three are parse-time-only, so the warm
-    // path replays them here exactly as the cold parse populated them.
-    for (sym, krate, bridge_fn) in state.wasm_bridge_routes {
-        p.data.wasm_bridge_routes.insert(sym, (krate, bridge_fn));
-    }
-    p.data.wasm_bridge_packages = state.wasm_bridge_packages;
-    p.data.wasm_bridge_host_js_files = state.wasm_bridge_host_js;
+    replay_parse_state(
+        &mut p.data,
+        state.wasm_bridge_routes,
+        state.wasm_bridge_packages,
+        state.wasm_bridge_host_js,
+        state.width32_sources,
+        state.wide_instances,
+    );
     if crate::keys::env_set("LOFT_TRACE_WARM") {
         eprintln!("[warm] hit: {}", bundle.display());
     }
     Some(state.user_def_start.unwrap_or_else(|| p.data.definitions()))
+}
+
+/// Each `[library] native` registration's library path, deduplicated in registration order, or
+/// why one no longer resolves (a warm miss: the cold parse would resolve it again).
+#[cfg(feature = "mmap")]
+fn resolve_native_libs(regs: &[(String, String)]) -> Result<Vec<String>, String> {
+    let mut libs = Vec::new();
+    for (stem, pkg_dir) in regs {
+        let Some(path) = crate::interp::extensions::resolve_native_lib(pkg_dir, stem) else {
+            return Err(format!(
+                "native library {stem} in {pkg_dir} does not resolve"
+            ));
+        };
+        if !libs.contains(&path) {
+            libs.push(path);
+        }
+    }
+    Ok(libs)
+}
+
+/// The parse-time `Data` state the IR bundle does not carry, replayed on a warm hit exactly as
+/// the cold parse populated it.  #444 — the `[wasm.bridge]` state: `--html` codegen keys the
+/// host-import-extern skip AND the routed-call on `wasm_bridge_routes`, so an empty table makes
+/// those two decisions disagree and collide (E0428); `packages` drives the bridge-crate link
+/// and `host_js` the HTML preamble.  @PLN204 — the 32-bit regime's sources and wide instances,
+/// without which a warm run read every file as 64-bit.
+#[cfg(feature = "mmap")]
+fn replay_parse_state(
+    data: &mut crate::data::Data,
+    routes: Vec<(String, String, String)>,
+    packages: Vec<(String, String)>,
+    host_js: Vec<String>,
+    width32_sources: Vec<u16>,
+    wide_instances: Vec<u32>,
+) {
+    for (sym, krate, bridge_fn) in routes {
+        data.wasm_bridge_routes.insert(sym, (krate, bridge_fn));
+    }
+    data.wasm_bridge_packages = packages;
+    data.wasm_bridge_host_js_files = host_js;
+    for src in width32_sources {
+        data.set_width32(src, true);
+    }
+    for d in wide_instances {
+        data.mark_wide_instance(d);
+    }
 }
 
 /// The files a program bundle's manifest hashes: every parsed source and the nearest
@@ -742,6 +795,13 @@ pub fn save_program(
     }
     for host_js in &p.data.wasm_bridge_host_js_files {
         let _ = writeln!(lines, "wbhostjs {host_js}");
+    }
+    let (width32_sources, wide_instances) = p.data.width32_state();
+    for src in width32_sources {
+        let _ = writeln!(lines, "w32src {src}");
+    }
+    for d in wide_instances {
+        let _ = writeln!(lines, "wideinst {d}");
     }
     for path in &paths {
         let Some(h) = crate::cache::file_hash(path) else {
@@ -1034,10 +1094,19 @@ mod ncrate_manifest_tests {
             ("wbroute n_x foo bridge_x\n", false),
             ("wbpkg foo /pkgs/foo\n", false),
             ("wbhostjs /pkgs/foo/host.js\n", false),
+            ("w32src 3\n", true),
+            ("wideinst 1200\n", true),
         ] {
-            let after_actx = ["alib ", "wbroute ", "wbpkg ", "wbhostjs "]
-                .iter()
-                .any(|p| header.starts_with(p));
+            let after_actx = [
+                "alib ",
+                "wbroute ",
+                "wbpkg ",
+                "wbhostjs ",
+                "w32src ",
+                "wideinst ",
+            ]
+            .iter()
+            .any(|p| header.starts_with(p));
             let (before, after) = if after_actx {
                 ("", header)
             } else {

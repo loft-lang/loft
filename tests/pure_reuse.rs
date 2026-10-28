@@ -97,7 +97,15 @@ fn the_request_check_calls_its_parser_once() {
             std::process::id(),
             want
         ));
-        let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells()], env);
+        let (_, err, ok) = loft(
+            &[
+                "--native-rust",
+                "--native-emit",
+                &rs.to_string_lossy(),
+                &cells(),
+            ],
+            env,
+        );
         assert!(ok, "{env:?}: emit failed:\n{err}");
         let src = fa::read_to_string(&rs).expect("emitted source");
         let _ = fa::remove_file(&rs);
@@ -165,7 +173,12 @@ fn a_check_and_a_use_call_the_total_function_once() {
             want
         ));
         let (_, err, ok) = loft(
-            &["--native-emit", &rs.to_string_lossy(), &script(SHARED)],
+            &[
+                "--native-rust",
+                "--native-emit",
+                &rs.to_string_lossy(),
+                &script(SHARED),
+            ],
             env,
         );
         assert!(ok, "{env:?}: emit failed:\n{err}");

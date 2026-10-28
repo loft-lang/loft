@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: reads the Rust writer's overflow memo — its `--native` runs as `--native-rust`.
 //! @PLN157 § V-ao (`@FR-R-Invariant`) — the EMISSION pins.  An integer chain a loop cannot
 //! change (`+ - * neg & | ^` over literals and variables the loop neither rebinds nor lets
 //! escape) is evaluated at its first use and answered from a memo after; the memo is
@@ -33,7 +34,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
     // admits twice (a fast copy and the exact one).
     cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native-emit")
+    cmd.arg("--native-rust")
+        .arg("--native-emit")
         .arg(&out)
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")
@@ -85,7 +87,7 @@ fn run_native(tag: &str, src: &str, env: &[(&str, &str)]) -> (String, String) {
     // These counts pin ONE copy of a loop; `@FR-R-FaultFlag` emits a statement it
     // admits twice (a fast copy and the exact one).
     cmd.env("LOFT_NO_FAULT_FLAG", "1");
-    cmd.arg("--native")
+    cmd.arg("--native-rust")
         .arg(&file)
         .env("LOFT_TIMEOUT", "120")
         .env("LOFT_NO_CACHE", "1")

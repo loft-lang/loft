@@ -771,6 +771,10 @@ impl Parser {
         }
         // Register the new definition.
         let d_nr = self.data.add_def(&mangled, &tmpl_pos, DefType::Function);
+        // @PLN204 — the body is the template's: 64-bit when the template's file is.
+        if !self.data.width32_source(self.data.def(g_nr).source) {
+            self.data.mark_wide_instance(d_nr);
+        }
         for (a, hidden) in tmpl_attrs.iter().zip(&tmpl_hidden) {
             let a_nr = self
                 .data

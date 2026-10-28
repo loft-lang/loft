@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: the artefacts swept are rustc's — its `--native` runs as `--native-rust` until then.
 //
 // A native compile sweeps the scratch directory of every artefact whose process is dead,
 // and leaves the test runner's per-file binary cache alone (`platform::
@@ -43,7 +44,7 @@ fn a_native_compile_sweeps_dead_process_artefacts_and_keeps_the_test_cache() {
     )
     .unwrap();
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .arg("--native")
+        .arg("--native-rust")
         .arg(&prog)
         // Both spellings: `make ci` exports `LOFT_TMPDIR` beside `TMPDIR`, and the runtime
         // reads its scratch through `platform::scratch_dir`, which prefers the former.

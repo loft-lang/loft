@@ -513,11 +513,11 @@ pub fn ir_roundtrip_check(data: &Data) -> Result<(), crate::ir_schema::DataDiff>
 /// claims (mirrors worker stores), and also guards the cached artifact
 /// against accidental mutation.  The ONE home for this discipline; all
 /// three loaders (`open_data`, `open_bundle`, `open_bundle_into`) route
-/// through it.
+/// through it.  A file the process cannot open is the caller's cache miss, never a crash.
 #[cfg(feature = "mmap")]
-fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
-    let fstore = crate::store::Store::open_read_surface(path);
-    stores.adopt_store(fstore)
+fn adopt_read_surface(path: &str, stores: &mut Stores) -> std::io::Result<u16> {
+    let fstore = crate::store::Store::open_read_surface(path)?;
+    Ok(stores.adopt_store(fstore))
 }
 
 /// Load a native [`Data`] from a file-backed IR store written by
@@ -526,9 +526,10 @@ fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
 /// record ([`ds::IR_ROOT_REC`]) — no re-parse, no schema registration.
 ///
 /// # Errors
-/// Returns `NotFound` if `path` does not exist (a cache miss — the caller
-/// falls back to parsing).  `Store::open` panics on an unreadable/corrupt
-/// file; integrity-checked loading is arc E's drift-detection job (Q4).
+/// Returns `NotFound` if `path` does not exist, and the operating system's error if it
+/// cannot be opened (a read-only cache): both are a cache miss, and the caller falls back
+/// to parsing.  A file that opens but is corrupt is still refused by assertion: this does
+/// not check an image's integrity.
 #[cfg(feature = "mmap")]
 pub fn open_data(path: &str) -> std::io::Result<Data> {
     // An empty name names nothing (`file_access` would answer for `.`).
@@ -539,7 +540,7 @@ pub fn open_data(path: &str) -> std::io::Result<Data> {
         ));
     }
     let mut stores = Stores::new();
-    let nr = adopt_read_surface(path, &mut stores);
+    let nr = adopt_read_surface(path, &mut stores)?;
     let root = DbRef {
         store_nr: nr,
         rec: ds::IR_ROOT_REC,
@@ -568,7 +569,7 @@ pub fn open_bundle(path: &str) -> std::io::Result<(Data, Vec<SchemaType>)> {
         ));
     }
     let mut stores = Stores::new();
-    let nr = adopt_read_surface(path, &mut stores);
+    let nr = adopt_read_surface(path, &mut stores)?;
     let root = DbRef {
         store_nr: nr,
         rec: ds::IR_ROOT_REC,
@@ -610,7 +611,7 @@ pub fn open_program_store(path: &str) -> std::io::Result<(Stores, DbRef, Data, V
         ));
     }
     let mut stores = Stores::new();
-    let nr = adopt_read_surface(path, &mut stores);
+    let nr = adopt_read_surface(path, &mut stores)?;
     let root = DbRef {
         store_nr: nr,
         rec: ds::IR_ROOT_REC,
@@ -637,6 +638,29 @@ pub fn open_bundle_into(path: &str, database: &mut Stores) -> std::io::Result<Da
     let (data, types) = open_bundle(path)?;
     database.install_schema(types);
     Ok(data)
+}
+
+/// The program IMAGE a backend that is a separate part reads (@PLN205): `data` and the type
+/// schema of `stores` written as a bundle and read back into fresh stores, which carry nothing
+/// else of the running program but where relative paths resolve and the constants, rebuilt.  What a backend writes from
+/// the pair must equal what it writes from the originals; `LOFT_EMIT_FROM_IMAGE` is the probe.
+///
+/// # Errors
+/// The bundle could not be written or read back.
+#[cfg(feature = "mmap")]
+pub fn image_round_trip(data: &Data, stores: &Stores) -> std::io::Result<(Data, Stores)> {
+    let path = std::env::temp_dir().join(format!("loft_image_{}.bundle", std::process::id()));
+    let path = path.to_string_lossy().to_string();
+    crate::ir_store::save_bundle(data, &stores.types, &path)?;
+    let mut fresh = Stores::new();
+    let read = open_bundle_into(&path, &mut fresh);
+    let _ = crate::file_access::remove_file(&path);
+    let mut data = read?;
+    fresh.program_relative = stores.program_relative;
+    // The constants are built from the IR, as the compile pass builds them: the image carries
+    // the IR, not the stores built from it.
+    crate::const_literal::build_const_vectors(&mut fresh, &mut data, None);
+    Ok((data, fresh))
 }
 
 /// Rebuild one native [`Definition`] from a store `Definition` record.
@@ -2223,6 +2247,67 @@ mod tests {
             "installed type count"
         );
         assert!(s.has_type("text"), "base type 'text' present after install");
+    }
+
+    /// `@FR-L-Sound` / `@FR-S-Pair` — a saved bundle carries the `.dschema` sidecar of its
+    /// root type, and that sidecar is the layout a loft program declaring
+    /// `selfhost/src/ir.loft` reads it through.  The comparison is required to be
+    /// IDENTICAL, not merely loadable: a changed layout is converted on load rather than
+    /// refused, which would hide a drift between `ir.loft` and the Rust IR schema.
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn a_saved_bundle_carries_the_layout_ir_loft_declares() {
+        use crate::ir_store::save_bundle;
+        use crate::schema_sidecar::{LayoutIdentity, SchemaVerdict, check_beside, dschema_path};
+
+        let mut p = crate::parser::Parser::new();
+        p.parse_dir("default", true, false)
+            .expect("parse default/ stdlib");
+        let path =
+            std::env::temp_dir().join(format!("loft_bundle_side_{}.store", std::process::id()));
+        let path_str = path.to_str().unwrap();
+        save_bundle(&p.data, &p.database.types, path_str).expect("save_bundle");
+        let side = dschema_path(&path);
+        assert!(
+            crate::file_access::exists(&side),
+            "save_bundle wrote no sidecar beside {path_str}"
+        );
+
+        // The IR schema the writer registers.
+        let mut ir = Stores::new();
+        let ids = register_ir_schema(&mut ir);
+        let rust_side = LayoutIdentity::of(&ir, &[ids.bundle]);
+        let verdict = check_beside(&path, &rust_side, ir.release()).expect("read sidecar");
+
+        // The same types, compiled by loft from their one source.
+        let mut q = crate::parser::Parser::new();
+        q.parse_dir("default", true, false)
+            .expect("parse default/ stdlib");
+        // `parse` answers whether ANY diagnostic was raised, an advice included; only an
+        // error means the types did not compile.
+        q.parse("selfhost/src/ir.loft", false);
+        assert!(
+            q.diagnostics.level() < crate::diagnostics::Level::Error,
+            "selfhost/src/ir.loft does not compile"
+        );
+        let bundle = q.database.name("Bundle");
+        assert_ne!(bundle, u16::MAX, "ir.loft declares no Bundle");
+        let loft_side = LayoutIdentity::of(&q.database, &[bundle]);
+        let loft_verdict =
+            check_beside(&path, &loft_side, q.database.release()).expect("read sidecar");
+
+        let _ = crate::file_access::remove_file(&path);
+        let _ = crate::file_access::remove_file(&side);
+        assert_eq!(
+            verdict,
+            SchemaVerdict::Match,
+            "the sidecar disagrees with the IR schema"
+        );
+        assert_eq!(
+            loft_verdict,
+            SchemaVerdict::Match,
+            "ir.loft compiled by loft lays Bundle out differently from the Rust IR schema"
+        );
     }
 
     /// Round-trip the real stdlib's database schema: parse default/, encode the

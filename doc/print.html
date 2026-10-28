@@ -4066,6 +4066,14 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>4-byte unsigned: 0 – 4_294_967_294.  The top code is reserved to buy the same refusal <code>i32</code> gets at the bottom (<code>u32 = 4294967295</code> does not compile) — and, unlike <code>i32</code>, it is NOT a null: an overflow here reads <code>0</code>, the type's default (C127, and the note on <code>i32</code> above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with <code>i32</code>, and a value in the upper half (2^31..2^32-2) reads back as the same positive integer.  <code>u32</code> is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property; plain <code>integer</code> holds the whole 0..2^32-1 range and more.</p>
 </div>
 <div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">type</span> <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="ty"><a href="stdlib-types.html">integer</a></span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(<span class="nm">8</span>)</code></pre>
+<p>8-byte signed: the full <code>integer</code>, spelled so that it stays 64-bit in a file under the 32-bit regime (<code>#width 32</code>), where a plain <code>integer</code> is an <code>i32</code>.  Elsewhere it is <code>integer</code> by another name.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">type</span> f64 = <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>The 64-bit <code>float</code>, spelled so that it stays a double in a file under the 32-bit regime (<code>#width 32</code>), where a plain <code>float</code> is a <code>single</code>.  Elsewhere it is <code>float</code>.</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-types.html">Ordering</a></span> {
   <span class="en">Less</span>,
   <span class="en">Equal</span>,
@@ -4857,7 +4865,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Writes <code>bytes</code> to file <code>path</code>, truncating any existing content.  Returns true on success.  The inverse of read_bytes; the pair round-trips a non-UTF-8 blob byte-for-byte.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-binary-file-i-o.html">mtime</a></span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> fs#read</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-binary-file-i-o.html">mtime</a></span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> fs#read</code></pre>
 <p>Modification time of <code>path</code> as Unix epoch SECONDS (integer — same i64 representation as file.size).  Returns 0 on missing file / IO error / pre-epoch dates — treat 0 as &quot;unknown&quot;. Use for date-window filters: convert the returned seconds to YYYY-MM-DD and compare lexicographically against <code>ymd_days_ago(N)</code>.</p>
 </div>
 <div class="item">
@@ -4871,7 +4879,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Returns false — a no-op — when there is nothing to seek in: a directory, an absent file, or a negative <code>pos</code>.  A seek before the first read or write is remembered and applies to it.  Seeking PAST the end is allowed: the position is remembered and a following write extends the file, which is how a free-list or an update-in-place walk lands.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-binary-file-i-o.html">position</a></span>(self: const <span class="en"><a href="stdlib-file-system.html">File</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-binary-file-i-o.html">position</a></span>(self: const <span class="en"><a href="stdlib-file-system.html">File</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span></code></pre>
 <p>The current read/write position in bytes, i.e. where the next read or write will land.  The read side of [seek]; <code>self#next</code> is the operator form.</p>
 <p>Distinct from <code>self#index</code>, which is where the LAST read STARTED — after <code>x = f#read as i32</code> on a fresh file, <code>position</code> is 4 and <code>f#index</code> is 0.</p>
 <p>A file this process has not read from or written to yet has no position, and reports null rather than 0 — 0 is a legitimate position, so returning it would make &quot;not opened&quot; indistinguishable from &quot;at the start&quot;.  Discharge with <code>?? 0</code> when the distinction does not matter.</p>
@@ -5076,11 +5084,11 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <h2 id="stdlib-time">Time</h2>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-time.html">now</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> time#read</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-time.html">now</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> time#read</code></pre>
 <p>Returns the current wall-clock time as milliseconds since the Unix epoch (00:00 UTC on 1 Jan 1970). Use for timestamps and logging.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-time.html">ticks</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> time#read</code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-time.html">ticks</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> time#read</code></pre>
 <p>Returns microseconds elapsed since program start (monotonic clock). Unaffected by system clock adjustments. Use for benchmarks and frame timing.</p>
 </div>
 <h2 id="stdlib-memory-diagnostics">Memory diagnostics</h2>
@@ -5310,7 +5318,7 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Typed extractor — returns <code>null</code> on kind mismatch.</p>
 </div>
 <div class="item">
-<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">as_long</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">as_long</a></span>(self: const <span class="en"><a href="stdlib-json.html">JsonValue</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span></code></pre>
 <p>Typed extractor — returns <code>null</code> on kind mismatch.  A <code>JInteger</code> answers its exact value; a <code>JNumber</code> is truncated toward zero.</p>
 </div>
 <div class="item">

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: the Rust emitter's own output — its native runs name `--native-rust`.
 
 //! Plan 09 phase 00 step 0.8 — emitter dispatch validation suite.
 //!
@@ -58,7 +59,12 @@ fn baseline_present() -> bool {
 
 fn emit_native(loft_src: &str, out_path: &std::path::Path) {
     let status = loft::platform::process::harness_command(loft_binary())
-        .args(["--native-emit", out_path.to_str().unwrap(), loft_src])
+        .args([
+            "--native-rust",
+            "--native-emit",
+            out_path.to_str().unwrap(),
+            loft_src,
+        ])
         .current_dir(project_root())
         .status()
         .expect("failed to spawn loft binary — run `cargo build --release` first");
@@ -592,6 +598,7 @@ fn p244_text_native_wrapper_compiles_under_native() {
     // Direct binary invocation — see p203_reproducer_passes_under_native
     // for the nested-cargo race rationale.
     let status = loft::platform::process::harness_command(loft_binary())
+        .arg("--native-rust")
         .arg("tests/integration/p244_smoke.loft")
         .current_dir(project_root())
         .status()
@@ -621,6 +628,7 @@ fn p244_text_native_wrapper_compiles_under_native() {
 fn pln10_n2_cdylib_text_wrapper_returns_owned_string() {
     let out_rs = std::env::temp_dir().join(format!("loft_pln10_n2_{}.rs", std::process::id()));
     let status = loft::platform::process::harness_command(loft_binary())
+        .arg("--native-rust")
         .arg("--native-emit")
         .arg(&out_rs)
         .arg("tests/integration/p244_smoke.loft")

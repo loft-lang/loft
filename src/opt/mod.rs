@@ -9,6 +9,7 @@
 //! from `generation/` keeps a re-export at its old path.
 
 pub mod apart;
+pub mod arg_copy;
 pub mod attrs;
 pub mod body_writes;
 pub mod char_walk;

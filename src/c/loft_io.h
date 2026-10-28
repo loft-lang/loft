@@ -7,7 +7,8 @@
  * What a file needs beyond C99 — a path's kind and size, a directory listing, mkdir, rmdir,
  * unlink, truncate, fsync — comes from POSIX where loft_cc.h finds it (`LOFT_POSIX`).  Without
  * it a file is what `fopen` opens, a directory is never seen, a listing is empty and the
- * directory operations answer Other. */
+ * directory operations answer Other — except on Windows, whose C runtime makes and removes a
+ * directory (`_mkdir`, `_rmdir`). */
 
 #if defined(LOFT_POSIX)
 #include <sys/types.h>
@@ -18,6 +19,10 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #endif
+#elif defined(_WIN32)
+/* No POSIX, but the Windows C runtime makes and removes a directory and stats a path. */
+#include <direct.h>
+#include <sys/stat.h>
 #endif
 #include <errno.h>
 
@@ -817,6 +822,33 @@ static int64_t loft_fs_mkdir(loft_str raw, int all) {
     } else {
         code = mkdir(path, 0777) == 0 ? LOFT_FS_OK : loft_fs_code(errno);
     }
+#elif defined(_WIN32)
+    if (all) {
+        /* Past the root a parent cannot be made of: `C:/`, `//srv/share/`, `/`. */
+        char *p = path;
+        if (p[0] && p[1] == ':') p += 2;
+        else if (p[0] == '/' && p[1] == '/') {
+            int seps = 0;
+            for (p += 2; *p && seps < 2; p++) if (*p == '/') seps++;
+            p--;
+        }
+        for (p++; *p; p++) {
+            if (*p != '/') continue;
+            *p = 0;
+            if (_mkdir(path) != 0 && errno != EEXIST) {
+                *p = '/';
+                code = loft_fs_code(errno);
+                free(path);
+                return code;
+            }
+            *p = '/';
+        }
+        struct _stat st;
+        code = _mkdir(path) == 0 || (errno == EEXIST && _stat(path, &st) == 0 && (st.st_mode & _S_IFDIR))
+            ? LOFT_FS_OK : loft_fs_code(errno);
+    } else {
+        code = _mkdir(path) == 0 ? LOFT_FS_OK : loft_fs_code(errno);
+    }
 #else
     (void) all;
 #endif
@@ -829,8 +861,12 @@ static int64_t loft_fs_rmdir(loft_str raw) {
     char *path = loft_resolve(raw);
     if (!path) return LOFT_FS_OTHER;
     int64_t code = LOFT_FS_OTHER;
+#if defined(LOFT_POSIX) || defined(_WIN32)
 #if defined(LOFT_POSIX)
     if (rmdir(path) == 0) code = LOFT_FS_OK;
+#else
+    if (_rmdir(path) == 0) code = LOFT_FS_OK;
+#endif
     else if (errno == ENOENT) code = LOFT_FS_NOT_FOUND;
     else if (errno == EACCES || errno == EPERM) code = LOFT_FS_PERMISSION_DENIED;
     else if (errno == ENOTEMPTY || errno == EEXIST) code = LOFT_FS_NOT_EMPTY;
@@ -1250,10 +1286,20 @@ static uint8_t loft_is_file_at(loft_str raw) {
     return r;
 }
 
-/* os_temp_dir (std::env::temp_dir): TMPDIR, else /tmp. */
+/* os_temp_dir (std::env::temp_dir): TMPDIR, else /tmp — on Windows (GetTempPath2's order)
+ * TMP, else TEMP, else USERPROFILE, else the Windows directory. */
 static loft_text loft_os_temp_dir(void) {
+#if defined(_WIN32)
+    static const char *const vars[] = { "TMP", "TEMP", "USERPROFILE", "SystemRoot" };
+    for (size_t i = 0; i < sizeof vars / sizeof *vars; i++) {
+        const char *t = getenv(vars[i]);
+        if (t && *t) return loft_given(t);
+    }
+    return loft_given("C:\\Windows");
+#else
     const char *t = getenv("TMPDIR");
     return loft_given(t && *t ? t : "/tmp");
+#endif
 }
 
 /* `dir_with_sub`: `base` in the portable form, `sub` joined to it as `Path::join` does. */

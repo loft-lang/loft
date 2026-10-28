@@ -103,6 +103,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     ));
     let status = loft(
         &[
+            "--native-rust",
             "--native-emit",
             out.to_str().unwrap(),
             cells().to_str().unwrap(),
@@ -238,6 +239,7 @@ fn a_coroutine_body_carries_no_loop_entry_guard_and_still_compiles() {
     let out = std::env::temp_dir().join(format!("loft_gc_coroutine_{}.rs", std::process::id()));
     let status = loft(
         &[
+            "--native-rust",
             "--native-emit",
             out.to_str().unwrap(),
             gen_src.to_str().unwrap(),

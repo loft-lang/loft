@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# Is `src/ir_schema_gen.rs` still a faithful regeneration of `tools/ir_schema/ir.loft`?
+# Is `src/ir_schema_gen.rs` still a faithful regeneration of `selfhost/src/ir.loft`?
 #
 # That file is `@generated … DO NOT EDIT — regenerate`, and the store LAYOUT is derived
 # from it: record sizes, field byte offsets, the `Node` discriminants that
@@ -36,7 +36,7 @@ set -u
 cd "$(dirname "$0")/.."
 
 GEN="src/ir_schema_gen.rs"
-SRC="tools/ir_schema/ir.loft"
+SRC="selfhost/src/ir.loft"
 EXTRACT="tools/ir_schema/extract.py"
 
 for f in "$GEN" "$SRC" "$EXTRACT"; do

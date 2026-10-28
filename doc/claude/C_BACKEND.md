@@ -31,13 +31,16 @@ python3 scripts/c_sweep.py --asan  # the same, built with AddressSanitizer + UBS
 python3 scripts/c_sweep.py --poison  # the store poison modes, against the interpreter's
 python3 scripts/c_sweep.py --verbose FILE...   # both outputs of each differing program
 python3 scripts/c_sweep.py --mode default      # one macro mode instead of all three
-python3 scripts/c_sweep.py --all               # every refusal reason, not the top 25
+python3 scripts/c_sweep.py --all               # every refusal reason and program, not the top 25
 python3 scripts/c_sweep.py --stderr            # stderr compared too (a fault's message, location
                                                #   and chain), the driver's `advice:` notes aside
 python3 scripts/c_sweep.py --shard K/N         # every N-th program from K: ci.yml's `c-sweep`
                                                #   runs four shards per PR, miri.yml the
                                                #   --poison and --asan sweeps nightly
 make c-sweep ARGS="…"                          # the release loft built first, then the sweep
+python3 scripts/image_probe.py                 # every corpus program: the C written from the
+                                               #   program IMAGE (LOFT_EMIT_FROM_IMAGE=1) against
+                                               #   the C written from memory, byte for byte (@PLN205)
 ./scripts/find_problems.sh --subject c         # the C backend's guards (c_emit, c_https)
 python3 scripts/c_sweep.py --wasm              # the C built for wasm32-wasi, run under wasmtime
 python3 scripts/c_sweep.py --no-limit          # no kill at three times the last sweep's time
@@ -68,7 +71,8 @@ Rust `ship` lane has it ([bench/README.md](../../bench/README.md) § The C lanes
 `c_sweep.py` reads `target/release/loft` (or `LOFT_BIN`) for every program, so a rebuild while
 it runs mixes two compilers into one result: build first, or point `LOFT_BIN` at a copy.  It
 builds every carried program in the three macro modes (below) and puts it in one bucket: `match`, `differ`, `cc-error`, `sanitizer` (`--asan`), `slow` or `refused`, and ranks the
-refusals by reason — that ranking is the work list.  Each program gets a directory of its own
+refusals by reason, each with the programs it refused (five, or all of them under `--all`; the
+full list in `refused.tsv` beside the run's directories) — that ranking is the work list.  Each program gets a directory of its own
 (its unit `p.c`, its binary, and a `tmp/` that is its `TMPDIR` in every run) under the sweep's
 scratch, `<temp>/loft-c-sweep-<checkout>/<pid>/` (`scripts/run_scratch.py`): a program that
 matched or was refused loses it at once, every other keeps it and the report prints its path
@@ -142,7 +146,9 @@ module and the C header and compare every answer and every byte of the store.
 | `loft_parse.h` | `T.parse(text)` and `T.parse(JsonValue)`: the walks into a type, read from the `loft_ptypes` table `parse.rs` writes, and the per-store `#errors` (`LOFT_PARSE`) |
 | `loft_io.h` | files and the filesystem |
 | `loft_lazy.h` | lazy stores: the bindings, their pins, the fault channel, the miss path (`LOFT_LAZY`) |
-| `loft_net.h` | whole-image loads over a URL: `file://`, HTTP/1.1, SHA-256 (`LOFT_NET`) |
+| `loft_https.h` | the client connection (a socket, TLS over it), the one HTTP/1.1 client, the WebSocket handshake's SHA-1 and accept key |
+| `loft_net.h` | loads over a URL: `file://`, an HTTP GET, a page by `Range`, SHA-256 (`LOFT_NET`) |
+| `loft_web.h` | the web library's natives: HTTP, a WebSocket client, the pack builder (`LOFT_WEB`) |
 | `deliver.rs` | `deliver(tag, value)`'s byte form: one walker per type the value reaches |
 
 ## The macro modes
@@ -165,7 +171,10 @@ never seen, a listing is empty and the directory operations answer `Other`.
 
 ## The model
 
-**Shapes.**  Every loft value has one C shape (`CType`): `int64_t` for every integer width
+**Shapes.**  Every loft value has one C shape (`CType`): `int32_t` for an integer whose type
+fits 32 bits (null `LOFT_NULL32`; widened where the runtime takes `int64_t`, and computed in
+32 bits where both operands are — [WIDTH32.md § The C backend](WIDTH32.md#the-c-backend),
+`LOFT_NO_C_INT32=1` turns it off), `int64_t` for every other integer
 (null `LOFT_NULL`, a narrow range is enforced by `OpRangeDefault` and by the field setters),
 `uint8_t` for a boolean (255 null) and a plain enum (255 null), `double` / `float` (NaN null),
 `uint32_t` for a character (0 null), `loft_text` for an owned text and `loft_str` for a view,
@@ -284,7 +293,11 @@ element, a `?` discharge of a table's element (`hoist::borrowed_discharge_temps`
 borrowed text or a text parameter, a literal, a field read, a block ending in one), is held as
 a `loft_str` view instead of an owned copy (`@FR-R-TextBorrow`,
 `opt::text_borrow::borrowed_text_walks` and the plain clause of `hoist::borrowed_store_texts`);
-a bind that would view a temporary is refused by name, never left dangling.  A choice
+a bind that would view a temporary is refused by name, never left dangling.  A text FIELD that
+is an operand of a comparison, an append, a format or a print, or the argument of a callee that
+writes no store (`Cx::call_keeps_stores`), is read where the store holds it when no
+later operand may write (`FnWriter::text_reads`, R-TextBorrow's operand clause); every other
+field read copies (`LOFT_NO_FIELD_VIEW=1` copies them all).  A choice
 between such views or literals, as a discharge writes it, is the view it picks, and a
 formatted value is appended from its work buffer, as native borrows it.  A `for c in t`
 walk takes an ASCII byte without decoding it and asks its null test once
@@ -292,11 +305,14 @@ walk takes an ASCII byte without decoding it and asks its null test once
 `LOFT_NO_SPLIT_TABLE=1`, `LOFT_NO_TEXT_BORROW=1` and `LOFT_NO_CHAR_WALK=1` turn them off,
 as on native.
 
-**Float text.**  `(F-Float-Text)` (@C156): the shortest form takes `printf`'s nearest p-digit
-candidate from 15 digits up (6 for a single; from one digit for a subnormal), else its
+**Float text.**  `(F-Float-Text)` (@C156): a value of at most 15 significant digits (6 for a
+single) between 1e-6 and 1e15 is the integer nearest |v|·10^k for the least k whose correctly
+rounded quotient reads back — no `printf` (`loft_push_shortest_fast`); otherwise the shortest
+form takes `printf`'s nearest p-digit candidate from 15 digits up (6 for a single; from one digit for a subnormal), else its
 neighbour on the value's other side at the same length; `.P` up to 9 decimals is exact integer
 arithmetic; a parse takes Clinger's fast path where the significand fits 2^53 and the power of
-ten 10^22.  Where none applies, `printf` / `strtod` answer, so the C library must round
+ten 10^22, and an integer in JSON is read in place.  Decimal integers are written digit by digit.
+Where none applies, `printf` / `strtod` answer, so the C library must round
 correctly — glibc and wasi-libc do (both sweeps).
 
 **Keyed collections.**  A persisted image carries a collection's layout, so the layouts are
@@ -309,7 +325,15 @@ record cursors.  A sorted is a vector kept in key order (`sorted_new`, `sorted_f
 `remove_owned` and `remove_vector_at` give it.  A `spatial` and a `trie` are
 `src/radix_tree.rs` ported (`loft_radix.h`) under `radix_db.rs`' Morton oracle and
 `trie_db.rs`' text oracle, with their walks — the outward walk from a point, the box walk by
-BIGMIN, the prefix walk — snapshotted as `build_rec_scratch` lays them out.
+BIGMIN, the prefix walk — snapshotted as `build_rec_scratch` lays them out.  A hash with ONE
+8-byte integer key looked up by that integer takes `loft_h_find_i64` (`@FR-R-TypedKeyed`): the
+same digest, home bucket and walk as `loft_h_find`, the key compared in place; the digest of one
+integer key, in every path that hashes one, is SipHash's two words and finish unrolled
+(`loft_digest_i64`), which `the_c_hash_table_files_every_entry_where_hash_does` pins to
+`hash.rs`'s placement.  `c[k…] = T{…}` is written into the element the collection claims for
+it (`@FR-R-InPlaceLiteral`'s keyed clause, `loft_keyed_place_begin` / `_finish`), and over a
+hash keyed by one to four integer parts whose element owns no heap, into the entry one probe
+finds or files (`@FR-R-KeyedEntry`'s subscript clause, `loft_keyed_entry_ints`).
 
 **Store images.**  `store_persist_copy` is `Stores::persist_copy` ported: the root deep-copied
 into a scratch store, its trees laid out in van Emde Boas order (`rtree_relayout`), the store
@@ -522,7 +546,9 @@ the C runtime when the runtime carries it (`in_binary_native` in `mod.rs`), and 
 by name when it does not — never the "not loaded" stub, which the interpreter cannot give for a
 native of its own binary.  `loft_process.h` carries `lib/process` (`process_run`: one `poll`
 drains every pipe, a child leads its own process group, the timeout stops the tree) and
-`lib/git` (`git_query`).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
+`lib/git` (`git_query`); `loft_web.h` carries the web library's natives (the HTTP client and a
+WebSocket client over the runtime's client connection, the pack builder; `src/web_client.rs` is
+the interpreter's twin, `tests/web_natives.rs` the guard).  `loft_engine.h` carries `lib/engine_host`'s kernel: the listener and
 the connector over WebSockets, the UDP state-sync channel, the events, ticks and `post`, the
 `D!:` debug channel answering as a build with no live tier, and `http_fetch` on a worker thread
 over the runtime's HTTP client (above).  Not carried, so refused by name: the

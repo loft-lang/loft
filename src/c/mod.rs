@@ -55,8 +55,15 @@ const RUNTIME: &str = concat!(
     include_str!("loft_lazy.h"),
     include_str!("loft_https.h"),
     include_str!("loft_net.h"),
+    include_str!("loft_web.h"),
     include_str!("loft_process.h"),
-    include_str!("loft_engine.h")
+    include_str!("loft_engine.h"),
+    // A library's native part behind the loft-ffi ABI (@PLN205): the ABI's own header, then
+    // the host side.
+    "#ifdef LOFT_FFI\n",
+    include_str!("../../loft-ffi/include/loft_ffi.h"),
+    include_str!("loft_ffi_host.h"),
+    "#endif\n"
 );
 
 /// Why a function cannot be written as C yet.
@@ -79,6 +86,11 @@ impl std::fmt::Display for Refusal {
 pub(crate) enum CType {
     /// A 64-bit integer, `int64_t`; null is `LOFT_NULL`.
     Int,
+    /// @PLN204 — an integer whose type fits 32 bits (`i32`, `u8`, a `limit` inside `i32`,
+    /// every plain `integer` of a `#width 32` file), `int32_t`; null is `LOFT_NULL32`.  Read
+    /// where a 64-bit value is wanted it widens (`loft_w64`), and a 64-bit value stored into
+    /// one narrows (`loft_n32`), so only the operations written for it run in 32 bits.
+    Int32,
     /// A boolean, stored as `uint8_t` (0, 1, `LOFT_BOOL_NULL`).
     Bool,
     /// A text: an owned `loft_text` where it is held, a `loft_str` view where it is passed.
@@ -101,10 +113,24 @@ pub(crate) enum CType {
     Void,
 }
 
+/// @PLN204 — `LOFT_NO_C_INT32=1` holds every integer in `int64_t`, as before `CType::Int32`:
+/// the first bisect step for a C-only wrong answer on a program with 32-bit integers.
+pub(crate) fn no_c_int32() -> bool {
+    static NO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *NO.get_or_init(|| std::env::var_os("LOFT_NO_C_INT32").is_some_and(|v| v != "0"))
+}
+
+/// The C shape a native runtime function takes or answers for loft shape `c`: the runtime is
+/// written in `int64_t`, so a 32-bit integer crosses it widened.
+pub(crate) fn native_shape(c: CType) -> CType {
+    if c == CType::Int32 { CType::Int } else { c }
+}
+
 /// The C type a local or a result of shape `c` is held in.
 pub(crate) fn held(c: CType) -> String {
     match c {
         CType::Int => "int64_t".into(),
+        CType::Int32 => "int32_t".into(),
         CType::Bool => "uint8_t".into(),
         CType::Text => "loft_text".into(),
         CType::Ref => "loft_ref".into(),
@@ -179,6 +205,8 @@ pub(crate) struct Cx<'a> {
     /// The unit binds a collection to a lazy source (`store_bind_lazy`): every keyed lookup
     /// consults the binding on a miss (`loft_lazy_miss`).
     pub(crate) lazy: std::cell::Cell<bool>,
+    /// A function calls a library's prebuilt native part (`LOFT_FFI`, [`library_native`]).
+    pub(crate) ffi: std::cell::Cell<bool>,
     /// The `par` sites written on threads so far, which numbers each one's body and context.
     pub(crate) par_sites: std::cell::Cell<u32>,
     /// The keyed collection types a `sqlite:` plan was written for (`loft_sqlplan{tp}`).
@@ -193,6 +221,10 @@ pub(crate) struct Cx<'a> {
     /// The loop verdict's memos shared across the unit (`hoist::hoistable`,
     /// `hoist::callee_inputs`): which callees write a store, their write sets, their inputs.
     pub(crate) hoist_memo: std::cell::RefCell<HoistMemo>,
+    /// `@FR-R-ValueRecord`'s plan (`opt::value_records`), computed on first use: empty under
+    /// `LOFT_NO_VALUE_RECORD=1` and for a program whose plan holds a form the C does not
+    /// write (`Cx::value_records`).
+    vr: std::cell::OnceCell<std::rc::Rc<crate::opt::value_records::layout::ValueRecords>>,
 }
 
 /// The memos [`Cx::hoist_memo`] keeps.
@@ -250,13 +282,97 @@ impl<'a> Cx<'a> {
             parse_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             frames: std::cell::Cell::new(false),
             lazy: std::cell::Cell::new(false),
+            ffi: std::cell::Cell::new(false),
             par_sites: std::cell::Cell::new(0),
             sql_plans: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             lazy_fetchers: std::cell::Cell::new(0),
             twins: std::cell::RefCell::new(Vec::new()),
             switches: crate::lower::switches::Switches::from_env(),
             hoist_memo: std::cell::RefCell::new(HoistMemo::default()),
+            vr: std::cell::OnceCell::new(),
         }
+    }
+
+    /// The value-record plan the C writes from, native's own (`opt::value_records`), or an
+    /// empty one: the plan is program-wide, so the C takes it whole or not at all, and it
+    /// declines a plan with a function-value dispatch answering a tuple
+    /// (`@FR-R-FnRefValue`), which it does not write yet.
+    pub(crate) fn value_records(
+        &self,
+    ) -> std::rc::Rc<crate::opt::value_records::layout::ValueRecords> {
+        self.vr
+            .get_or_init(|| {
+                use crate::opt::value_records::layout as vl;
+                let vr = crate::opt::value_records::value_records(self.data, self.stores, false);
+                let views = vr
+                    .types
+                    .values()
+                    .any(|t| t.fields.iter().any(|(_, rt)| vl::is_view_part(rt)));
+                let fnref = vr.fnref_sites.keys().any(|(d, v)| {
+                    vl::fnref_value(&vr.fnref_sites, &vr.fns, *d, *v).is_some()
+                }) || vr.fnref_sites.values().any(|(arms, _)| {
+                    arms.iter()
+                        .any(|a| vr.fns.contains_key(a) || vr.params.contains_key(a))
+                });
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    eprintln!(
+                        "[valuerec] the C takes {} function(s), {} with tuple parameters (views {views}, fn-ref {fnref})",
+                        vr.fns.len(),
+                        vr.params.len()
+                    );
+                }
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    for (d, key) in &vr.fns {
+                        let view = vr.types.get(key).is_some_and(|t| t.fields.iter().any(|(_, rt)| vl::is_view_part(rt)));
+                        eprintln!("[valuerec] the C's plan: {} key {key}{}", self.data.def(*d).name(), if view { " (view)" } else { "" });
+                    }
+                }
+                if fnref {
+                    return std::rc::Rc::new(vl::ValueRecords::default());
+                }
+                std::rc::Rc::new(vr)
+            })
+            .clone()
+    }
+
+    /// The C shape of value-record layout `key`: a `loft_tup` of its fields — `i64`, `f64`,
+    /// `f32` and `bool` as integer, float, single and boolean — and, for a nullable layout,
+    /// the presence word as a boolean after them.
+    /// `d`'s value locals (`opt::value_records::value_locals_in`): each with its layout key.
+    pub(crate) fn vr_locals(&self, d: u32) -> std::collections::HashMap<u16, u16> {
+        let vr = self.value_records();
+        if vr.fns.is_empty() && vr.params.is_empty() {
+            return std::collections::HashMap::new();
+        }
+        crate::opt::value_records::value_locals_in(
+            self.data,
+            d,
+            &vr.fns,
+            &vr.params,
+            &vr.view_offs,
+            &vr.fnref_sites,
+            &vr.sp,
+        )
+    }
+
+    pub(crate) fn vr_ctype(&self, key: u16) -> Option<CType> {
+        let vr = self.value_records();
+        let layout = vr.types.get(&key)?;
+        let mut shapes: Vec<CType> = layout
+            .fields
+            .iter()
+            .map(|(_, rt)| match *rt {
+                "f64" => CType::Float,
+                "f32" => CType::Single,
+                "bool" => CType::Bool,
+                rt if crate::opt::value_records::layout::is_view_part(rt) => CType::Ref,
+                _ => CType::Int,
+            })
+            .collect();
+        if layout.nullable {
+            shapes.push(CType::Bool);
+        }
+        Some(CType::Tuple(self.tuple_id(shapes)))
     }
 
     /// The kind of record collection type `tp` and its element type, or `None` for any other
@@ -445,7 +561,15 @@ impl<'a> Cx<'a> {
     pub(crate) fn ctype(&self, tp: &Type) -> Option<CType> {
         match tp.base() {
             // A narrow integer is held as a plain one: its range is enforced where a value
-            // enters it (`OpRangeDefault`) and where a field stores it.
+            // enters it (`OpRangeDefault`) and where a field stores it.  `int32_t` is the 32-bit
+            // regime's: only there is every value narrowed before it is held (`OpNarrow32`).  In a
+            // 64-bit program an `i32` local or parameter keeps the wide value it was given, as
+            // the interpreter's 8-byte slot does (`931b-i32-accepted-forms-run`).
+            Type::Integer(spec)
+                if spec.is_width32() && self.data.any_width32() && !no_c_int32() =>
+            {
+                Some(CType::Int32)
+            }
             Type::Integer(_) => Some(CType::Int),
             Type::Boolean => Some(CType::Bool),
             Type::Float => Some(CType::Float),
@@ -504,6 +628,7 @@ impl<'a> Cx<'a> {
     pub(crate) fn initial(&self, c: CType) -> String {
         match c {
             CType::Int => "LOFT_NULL".into(),
+            CType::Int32 => "LOFT_NULL32".into(),
             CType::Bool => "LOFT_BOOL_NULL".into(),
             CType::Text => "{ 0, 0, 0 }".into(),
             CType::Ref => "{ 0xFFFF, 0, 0 }".into(),
@@ -954,6 +1079,21 @@ impl Cx<'_> {
             &mut memo.stores_written,
             &mut memo.writes,
             &mut memo.inputs,
+        )
+    }
+
+    /// Does a call to `d` run no store write?  Then a text argument may view the store it was
+    /// read from (`@FR-F-ParamText`, `FnWriter::text_reads`): nothing the call runs can move
+    /// or rewrite its bytes.  The verdict the hoist holds a vector's base across a call on.
+    pub(crate) fn call_keeps_stores(&self, d: u32) -> bool {
+        let memo = &mut *self.hoist_memo.borrow_mut();
+        let mut active = std::collections::HashSet::new();
+        !crate::opt::writes::call_writes_store(
+            d,
+            self.data,
+            &mut memo.stores_written,
+            &mut active,
+            None,
         )
     }
 
@@ -1707,7 +1847,13 @@ fn unit_defines(
     }) {
         out.push_str("#define LOFT_ENGINE 1\n");
     }
+    if runtimes.iter().any(|r| r.starts_with("loft_web_")) {
+        out.push_str("#define LOFT_WEB 1\n");
+    }
     out.push_str(&fetch_defines(data, reached, &runtimes, cx.lazy.get()));
+    if cx.ffi.get() {
+        out.push_str("#define LOFT_FFI 1\n");
+    }
     if cx.frames.get() {
         let sf = stores.name("StackFrame");
         let at = |f: &str| stores.position(sf, f);
@@ -1729,7 +1875,8 @@ fn unit_defines(
 
 /// A unit that fetches over a URL: `LOFT_NET` for the whole-image loads and for the paged loaders
 /// and lazy bindings, whose image may be an `http(s)://` one read by range (`loft_net.h`), and for
-/// any of them or `http_fetch` the TLS client its `https://` requests run over (`tls::unit_lines`).
+/// any of them, `http_fetch` or a web native the TLS client its `https://` and `wss://` requests
+/// run over (`tls::unit_lines`).
 fn fetch_defines(
     data: &Data,
     reached: &std::collections::HashSet<u32>,
@@ -1746,7 +1893,10 @@ fn fetch_defines(
     if loads {
         out.push_str("#define LOFT_NET 1\n");
     }
-    if loads || runtimes.contains(&"loft_kernel_http_fetch") {
+    if loads
+        || runtimes.contains(&"loft_kernel_http_fetch")
+        || runtimes.iter().any(|r| r.starts_with("loft_web_"))
+    {
         out.push_str(&tls::unit_lines());
     }
     out
@@ -1896,12 +2046,23 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if def.code() == &Value::Null && !unloaded {
         return Err(format!("native {}", def.original_name()));
     }
-    let ret = cx
-        .ctype(def.returned())
-        .ok_or_else(|| format!("returns {}", type_word(def.returned())))?;
+    // `@FR-R-ValueRecord` — an admitted function returns its record's fields as a struct.
+    let vr = cx.value_records();
+    let vr_key = vr.fns.get(&d).copied();
+    let ret = match vr_key {
+        Some(key) => cx
+            .vr_ctype(key)
+            .ok_or("a value record without its layout")?,
+        None => cx
+            .ctype(def.returned())
+            .ok_or_else(|| format!("returns {}", type_word(def.returned())))?,
+    };
     if unloaded {
         if let Some(runtime) = in_binary_native(def.native()) {
             return forwarded_native(cx, d, ret, runtime);
+        }
+        if let Some(lib) = prebuilt_library(cx.data, def.native()) {
+            return library_native(cx, d, ret, &lib);
         }
         // A native loft's own binary implements is never unloaded there: the stub would answer
         // what the interpreter never does, so a native the runtime does not carry refuses.
@@ -1923,10 +2084,12 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if args.len() != def.attributes().len() {
         return Err("parameters that do not match their arguments".into());
     }
-    let shapes = variable_shapes(cx, vars, &args)?;
+    let mut shapes = variable_shapes(cx, vars, &args)?;
+    let dropped = vr_shapes(cx, d, vr_key, &mut shapes);
     let params: Vec<String> = args
         .iter()
         .enumerate()
+        .filter(|(i, _)| dropped != Some(*i))
         .map(|(i, &a)| {
             let c = shapes[a as usize];
             let name = body::var_name(vars.name(a), a);
@@ -1942,17 +2105,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
     // them; its body serves those vectors' accesses from them as a loop's held headers.
     let mut params = params;
-    let mut inputs: Vec<(crate::opt::writes::PathKey, String, bool)> = Vec::new();
-    if mask & INV_BIT != 0 {
-        let fi = cx
-            .callee_inputs(d)
-            .filter(|fi| !fi.headers.is_empty())
-            .ok_or("an __inv twin of a function with no header inputs")?;
-        for (k, (p, offs, _)) in fi.headers.iter().enumerate() {
-            params.push(format!("loft_vh hi{k}"));
-            inputs.push(((*p, offs.clone()), format!("hi{k}"), true));
-        }
-    }
+    let inputs = inv_inputs(cx, d, mask, &mut params)?;
     let params = if params.is_empty() {
         "void".to_string()
     } else {
@@ -1985,6 +2138,42 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     // chain (`LOFT_CALL_CHAIN`, `LOFT_FRAMES`) compiles to nothing, the wrapper then a call
     // the compiler folds into its caller.
     Ok((sig, framed(cx, d, &name, &params, ret, &body)))
+}
+
+/// An `__inv` twin's header parameters, appended to `params`, and the frame its body serves
+/// their vectors' accesses from; none for any other mask.
+fn inv_inputs(
+    cx: &Cx,
+    d: u32,
+    mask: u64,
+    params: &mut Vec<String>,
+) -> Result<Vec<(crate::opt::writes::PathKey, String, bool)>, String> {
+    let mut inputs = Vec::new();
+    if mask & INV_BIT != 0 {
+        let fi = cx
+            .callee_inputs(d)
+            .filter(|fi| !fi.headers.is_empty())
+            .ok_or("an __inv twin of a function with no header inputs")?;
+        for (k, (p, offs, _)) in fi.headers.iter().enumerate() {
+            params.push(format!("loft_vh hi{k}"));
+            inputs.push(((*p, offs.clone()), format!("hi{k}"), true));
+        }
+    }
+    Ok(inputs)
+}
+
+/// `@FR-R-ValueLocal` — `d`'s value locals (the tuple parameters among them) take their struct
+/// shapes, and an admitted function's return buffer is no parameter: answers the attribute
+/// the signature drops.
+fn vr_shapes(cx: &Cx, d: u32, vr_key: Option<u16>, shapes: &mut [CType]) -> Option<usize> {
+    for (v, key) in &cx.vr_locals(d) {
+        if let Some(c) = cx.vr_ctype(*key)
+            && (*v as usize) < shapes.len()
+        {
+            shapes[*v as usize] = c;
+        }
+    }
+    vr_key.and_then(|_| crate::opt::attrs::ret_buffer_attr(cx.data.def(d)))
 }
 
 /// A `#c` binding (`c_signature`, `c_call`): a wrapper declaring the callee by the author's own
@@ -2196,6 +2385,29 @@ fn c_binding_result(
 fn in_binary_native(native: &str) -> Option<&'static str> {
     match native {
         "n_process_run" => Some("loft_process_run"),
+        // The web library's natives (`loft_web.h`; `src/web_client.rs` for the interpreter).
+        "n_http_do" => Some("loft_web_http_do"),
+        "n_http_body" => Some("loft_web_http_body"),
+        "n_http_headers" => Some("loft_web_http_headers"),
+        "n_http_head_size" => Some("loft_web_http_head_size"),
+        "n_ws_connect" => Some("loft_web_ws_connect"),
+        "n_ws_client_send" => Some("loft_web_ws_client_send"),
+        "n_ws_client_send_binary" => Some("loft_web_ws_client_send_binary"),
+        "n_ws_client_recv" => Some("loft_web_ws_client_recv"),
+        "n_ws_client_message" => Some("loft_web_ws_client_message"),
+        "n_ws_client_opcode" => Some("loft_web_ws_client_opcode"),
+        "n_ws_client_close" => Some("loft_web_ws_client_close"),
+        "n_sleep_ms" => Some("loft_web_sleep_ms"),
+        "n_pack_reset" => Some("loft_web_pack_reset"),
+        "n_pack_u8" => Some("loft_web_pack_u8"),
+        "n_pack_u16_le" => Some("loft_web_pack_u16_le"),
+        "n_pack_u32_le" => Some("loft_web_pack_u32_le"),
+        "n_pack_take" => Some("loft_web_pack_take"),
+        "n_byte_at" => Some("loft_web_byte_at"),
+        "n_ws_group_clear" => Some("loft_web_ws_group_clear"),
+        "n_ws_group_add" => Some("loft_web_ws_group_add"),
+        "n_ws_group_poll" => Some("loft_web_ws_group_poll"),
+        "n_frame_yield" => Some("loft_web_frame_yield"),
         "n_git_query" => Some("loft_git_query"),
         // `lib/engine_host`'s kernel (`loft_engine.h`).  Its build swap and background rebuild
         // (`swap_world`, `swap_start`, `rebuild_*`) are not carried: a unit that calls one refuses.
@@ -2267,6 +2479,187 @@ fn declared_params(cx: &Cx, d: u32) -> Result<Vec<String>, String> {
         });
     }
     Ok(params)
+}
+
+/// The library a `#native` symbol's package ships prebuilt for this host (`prebuilt/<triple>/`,
+/// the loft-ffi C ABI): the file the interpreter loads for it too
+/// (`native_build::prebuilt_native_lib`).  None for a package without one — never a build.
+fn prebuilt_library(data: &Data, native: &str) -> Option<String> {
+    let krate = data.native_symbol_crates.get(native)?;
+    let (name, pkg_dir) = data
+        .native_packages
+        .iter()
+        .find(|(c, _)| c.replace('-', "_") == *krate)?;
+    let stem = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+        .and_then(|m| m.native)
+        .unwrap_or_else(|| name.replace('-', "_"));
+    crate::native_build::prebuilt_native_lib(pkg_dir, &stem)
+}
+
+/// The loft-ffi side of a library native's parameters (`library_native`): each one's C
+/// parameter types and the argument expressions that pass it, the lines that build a heap
+/// argument's `loft_ffi_ref`, and the first heap argument, whose store the call is handed.
+struct FfiArgs {
+    params: Vec<String>,
+    args: Vec<String>,
+    prep: String,
+    store_arg: Option<usize>,
+}
+
+fn library_ffi_args(def: &crate::data::Definition) -> Result<FfiArgs, String> {
+    let mut ffi_params: Vec<String> = Vec::new();
+    let mut ffi_args: Vec<String> = Vec::new();
+    let mut prep = String::new();
+    let mut store_arg: Option<usize> = None;
+    for (i, a) in def.attributes().iter().enumerate() {
+        let tp = a.typedef.base();
+        if tp.heap_dep().is_some() {
+            store_arg.get_or_insert(i);
+            ffi_params.push("loft_ffi_ref".into());
+            if matches!(tp, Type::Vector(_, _)) {
+                let _ = writeln!(
+                    prep,
+                    "    loft_ffi_ref r{i} = {{ a{i}.store_nr, a{i}.rec ? loft_collection_rec(loft_store_of(a{i}), a{i}.rec, a{i}.pos) : 0, 0 }};"
+                );
+            } else {
+                let _ = writeln!(
+                    prep,
+                    "    loft_ffi_ref r{i} = {{ a{i}.store_nr, a{i}.rec, a{i}.pos }};"
+                );
+            }
+            ffi_args.push(format!("r{i}"));
+            continue;
+        }
+        match tp {
+            Type::Text(_) => {
+                ffi_params.push("const uint8_t *".into());
+                ffi_params.push("size_t".into());
+                ffi_args.push(format!("(const uint8_t *) a{i}.p"));
+                ffi_args.push(format!("a{i}.len"));
+            }
+            Type::Integer(s) if s.forced_size.is_none() => {
+                ffi_params.push("int64_t".into());
+                ffi_args.push(format!("a{i}"));
+            }
+            Type::Integer(_) => {
+                ffi_params.push("int32_t".into());
+                ffi_args.push(format!("(int32_t) a{i}"));
+            }
+            Type::Float => {
+                ffi_params.push("double".into());
+                ffi_args.push(format!("a{i}"));
+            }
+            Type::Single => {
+                ffi_params.push("float".into());
+                ffi_args.push(format!("a{i}"));
+            }
+            Type::Boolean => {
+                ffi_params.push("bool".into());
+                ffi_args.push(format!("a{i} == 1"));
+            }
+            _ => {
+                return Err(format!(
+                    "native {} (a library parameter of type {})",
+                    def.original_name(),
+                    type_word(&a.typedef)
+                ));
+            }
+        }
+    }
+    Ok(FfiArgs {
+        params: ffi_params,
+        args: ffi_args,
+        prep,
+        store_arg,
+    })
+}
+
+/// A `#native` function of a package whose native part is a prebuilt library (@PLN205): a body
+/// that resolves the library's typed symbol on the first call and calls it with the loft-ffi
+/// signature (`loft-ffi/include/loft_ffi.h`): a store first when an argument or the answer is
+/// a heap value, a text as its bytes and length, a vector as its data record.
+fn library_native(cx: &Cx, d: u32, ret: CType, lib: &str) -> Result<(String, String), String> {
+    let def = cx.data.def(d);
+    let params = declared_params(cx, d)?;
+    let FfiArgs {
+        params: mut ffi_params,
+        args: mut ffi_args,
+        prep,
+        store_arg,
+    } = library_ffi_args(def)?;
+    let ffi_ret = match def.returned().base() {
+        Type::Void => "void",
+        Type::Integer(s) if s.forced_size.is_none() => "int64_t",
+        Type::Integer(_) => "int32_t",
+        Type::Float => "double",
+        Type::Single => "float",
+        Type::Boolean => "uint8_t",
+        Type::Text(_) => "loft_ffi_str",
+        other => {
+            return Err(format!(
+                "native {} (a library answer of type {})",
+                def.original_name(),
+                type_word(other)
+            ));
+        }
+    };
+    if let Some(i) = store_arg {
+        ffi_params.insert(0, "loft_ffi_store".into());
+        ffi_args.insert(0, format!("loft_ffi_store_of(loft_store_of(a{i}))"));
+    }
+    cx.ffi.set(true);
+    let fp = format!(
+        "{ffi_ret} (*)({})",
+        if ffi_params.is_empty() {
+            "void".to_string()
+        } else {
+            ffi_params.join(", ")
+        }
+    );
+    let sig = format!(
+        "static {} {}({})",
+        held(ret),
+        c_name(cx.data, d),
+        if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.join(", ")
+        }
+    );
+    let mut body = String::new();
+    let _ = writeln!(
+        body,
+        "    static {ffi_ret} (*fp)({}) = 0;",
+        if ffi_params.is_empty() {
+            "void".to_string()
+        } else {
+            ffi_params.join(", ")
+        }
+    );
+    let _ = writeln!(
+        body,
+        "    if (!fp) fp = ({fp}) loft_ffi_sym({}, {});",
+        body::c_string(lib),
+        body::c_string(def.native())
+    );
+    body.push_str(&prep);
+    let call = format!("fp({})", ffi_args.join(", "));
+    match def.returned().base() {
+        Type::Void => {
+            let _ = writeln!(body, "    {call};");
+        }
+        Type::Text(_) => {
+            let _ = writeln!(body, "    loft_ffi_str t = {call};");
+            let _ = writeln!(
+                body,
+                "    return loft_text_own(loft_lit(t.ptr ? (const char *) t.ptr : \"\", t.len));"
+            );
+        }
+        _ => {
+            let _ = writeln!(body, "    return {call};");
+        }
+    }
+    Ok((sig, body))
 }
 
 /// An `in_binary` native the runtime carries: a body that hands its arguments on.

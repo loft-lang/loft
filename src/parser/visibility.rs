@@ -81,6 +81,9 @@ impl Parser {
         if owner.source == self.data.source
             || owner.position.file == self.lexer.pos().file
             || owner.name.starts_with("__")
+            || self
+                .data
+                .shares_internals(&owner.position.file, &self.lexer.pos().file)
         {
             return;
         }
@@ -172,6 +175,9 @@ impl Parser {
             || def.source == crate::data::STD_SOURCE
             || def.source == self.data.source
             || def.position.file == self.lexer.pos().file
+            || self
+                .data
+                .shares_internals(&def.position.file, &self.lexer.pos().file)
         {
             return;
         }
@@ -219,6 +225,9 @@ impl Parser {
             || owner.position.file == self.lexer.pos().file
             || owner.pub_visible
             || !self.data.is_name_only(owner_nr)
+            || self
+                .data
+                .shares_internals(&owner.position.file, &self.lexer.pos().file)
         {
             return;
         }

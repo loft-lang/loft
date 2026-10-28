@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: the guard flips a Rust-writer switch to restore the defect it catches — its `--native` runs as `--native-rust` until then.
 //! @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`) — A DISTURBANCE ONE FRAME DOWN IS A DISTURBANCE:
 //! a container a CALLEE grows or removes from ends the place a caller's view names, so the view
 //! materialises exactly as it does when the same statement is written inline.
@@ -70,7 +71,7 @@ fn the_pairs_agree_on_both_backends_under_every_falsifier() {
         out.contains("15 pairs, inline and callee agree"),
         "the guard did not reach its last pair:\n{out}"
     );
-    let (native_ok, native, native_err) = run("--native", STRICT_NATIVE);
+    let (native_ok, native, native_err) = run("--native-rust", STRICT_NATIVE);
     assert!(native_ok, "the guard failed on --native:\n{native_err}");
     assert_eq!(out, native, "the two backends must print the same");
 }
@@ -80,7 +81,7 @@ fn the_pairs_agree_on_both_backends_under_every_falsifier() {
 /// nothing.
 #[test]
 fn the_switch_restores_the_defect_the_guard_catches() {
-    for mode in ["--interpret", "--native"] {
+    for mode in ["--interpret", "--native-rust"] {
         let (ok, _, err) = run(mode, OFF);
         assert!(
             !ok,

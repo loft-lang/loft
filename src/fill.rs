@@ -286,6 +286,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     null_reported::<false>,
     cast_text_from_bool::<false>,
     range_default::<false>,
+    narrow32::<false>,
     conv_character_from_null::<false>,
     const_long_text::<false>,
     cast_int_from_text::<false>,
@@ -636,6 +637,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     null_reported::<true>,
     cast_text_from_bool::<true>,
     range_default::<true>,
+    narrow32::<true>,
     conv_character_from_null::<true>,
     const_long_text::<true>,
     cast_int_from_text::<true>,
@@ -986,6 +988,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     null_reported_r,
     cast_text_from_bool_r,
     range_default_r,
+    narrow32_r,
     conv_character_from_null_r,
     const_long_text_r,
     cast_int_from_text_r,
@@ -1342,6 +1345,19 @@ fn range_default<const F: bool>(s: &mut State) {
 fn range_default_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     range_default::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn narrow32<const F: bool>(s: &mut State) {
+    let v_val = s.get_stack_m::<F, i64>();
+    let new_value = ops::op_narrow32(v_val);
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn narrow32_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    narrow32::<true>(s);
     s.regs_out()
 }
 

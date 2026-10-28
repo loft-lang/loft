@@ -13,6 +13,7 @@ mod generator;
 mod keyed;
 mod misc;
 mod par;
+mod value;
 
 use super::{CType, Cx, c_name, held, is_operator, type_word};
 use crate::data::{Block, Value};
@@ -34,6 +35,8 @@ pub(crate) fn var_name(name: &str, v: u16) -> String {
 enum K {
     /// `int64_t`.
     Int,
+    /// @PLN204 — `int32_t`, null `LOFT_NULL32` (`CType::Int32`).
+    Int32,
     /// A C condition, 0 or 1.
     Cond,
     /// A stored boolean, `uint8_t` 0, 1 or `LOFT_BOOL_NULL`.
@@ -88,6 +91,7 @@ impl E {
 fn kind_of(c: CType) -> K {
     match c {
         CType::Int => K::Int,
+        CType::Int32 => K::Int32,
         CType::Bool => K::Bool,
         CType::Text => K::View,
         CType::Ref => K::Ref,
@@ -137,6 +141,17 @@ pub(crate) struct FnWriter<'a> {
     /// The record scalars each enclosing loop reads once before it (`@FR-R-Scalar`): the
     /// `(variable, field offset)` key, the local holding it and its shape, innermost last.
     scalars: Vec<Vec<(crate::opt::hoist::ScalarKey, String, CType)>>,
+    /// `@FR-R-ValueRecord`'s facts for this function (`value::VrFn`), when the plan has any.
+    vr: Option<Box<value::VrFn>>,
+    /// The leaf being written as its dense self inside its widening (`value::vr_assign`).
+    widening: Option<usize>,
+    /// A value staged into a C temporary, by the temporary's name, with its kind: what a
+    /// `Value::RawExpr` the writer built for a rewrite reads (`keyed::keyed_in_place`).
+    raw: std::collections::HashMap<String, K>,
+    /// Set by a text VALUE op (`@FR-R-TextBorrow`) for the one operand it reads at once: the
+    /// generic `OpGetText` answers the field's bytes where the store holds them instead of a
+    /// copy (`text_reads`).  Taken by the first `OpGetText` that sees it.
+    field_view: bool,
     /// The record push headers each enclosing loop binds (`loft_ph`, `@FR-R-PushRec`): the
     /// path, the header and the element size, innermost last.
     push_heads: Vec<Vec<(crate::opt::writes::PathKey, String, u32)>>,
@@ -261,6 +276,7 @@ fn borrowed_texts(cx: &Cx, d: u32) -> Vec<bool> {
     walks.extend(crate::opt::hoist::borrowed_discharge_temps(
         cx.data, d, &tables,
     ));
+    // `@FR-R-SliceBorrow` rides on the same analysis: a value slice of a text parameter.
     let store = crate::opt::store_text_borrow::borrowed_store_texts(cx.data, d, &walks);
     let plain = store
         .locals
@@ -363,6 +379,10 @@ impl<'a> FnWriter<'a> {
             labels: 0,
             headers: Vec::new(),
             push_heads: Vec::new(),
+            vr: value::VrFn::of(cx, d).map(Box::new),
+            widening: None,
+            raw: std::collections::HashMap::new(),
+            field_view: false,
             scalars: Vec::new(),
             hoist_cache: std::collections::HashMap::new(),
             placed: crate::opt::hoist::placed_locals(def.code(), cx.data),
@@ -483,6 +503,10 @@ impl<'a> FnWriter<'a> {
     /// The body: the locals, the temporaries and the statements.
     pub(crate) fn write(mut self) -> Result<String, String> {
         let code = self.code;
+        // The return buffer an admitted function's signature dropped is a local nothing binds.
+        if let Some(p) = self.vr.as_ref().and_then(|f| f.phantom) {
+            self.params[p as usize] = false;
+        }
         for (v, tab) in &self.split_tabs {
             self.decls
                 .push(format!("loft_stab st{v} = {{ {{ 0, 0, 0 }}, 0, 0, 0 }};"));
@@ -693,7 +717,8 @@ impl<'a> FnWriter<'a> {
                     continue;
                 }
                 // A path an enclosing frame holds as well — with a base, or without one where
-                // this loop would keep none either — is served by that frame.
+                // this loop would keep none either — is served by that frame (`@FR-R-State`:
+                // one holder per path).
                 let outer = self
                     .headers
                     .iter()
@@ -727,7 +752,9 @@ impl<'a> FnWriter<'a> {
             .map(|(_, n, c)| (n.clone(), *c))
     }
 
-    /// `@FR-R-PushRec`, as native's record push header: before loop `b`, a `loft_ph` for each
+    /// `@FR-R-PushRec`, as native's record push header (`@FR-R-Mint`'s group, the path's one
+    /// holder under `@FR-R-State`, re-derived after a growth under `@FR-R-Refresh`): before
+    /// loop `b`, a `loft_ph` for each
     /// minted path of `mints` that no window and no enclosing loop serves; the path's mints and
     /// finishes go through it (`Self::pushed_mint`).  `LOFT_NO_RECORD_PUSH=1` admits none, in
     /// the verdict, as on native.
@@ -862,7 +889,9 @@ impl<'a> FnWriter<'a> {
 
     /// Loop `b`'s header verdict (`hoist::hoistable`), or `None` where none is asked: in a
     /// generator, whose locals live in its frame between resumes, or under
-    /// `LOFT_NO_VECTOR_HOIST=1`.
+    /// `LOFT_NO_VECTOR_HOIST=1`.  The C keeps a header only where the verdict says so, so it
+    /// keeps what native's gate enforces: `@FR-R-InPlace` (only in-place sets run in a held
+    /// loop) and `@FR-R-Callee` (a callee is admitted as its own writes are).
     fn verdict(&mut self, b: &Block) -> Option<crate::opt::hoist::LoopHoist> {
         if self.gen_elem.is_some() || std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0")
         {
@@ -1556,6 +1585,7 @@ impl<'a> FnWriter<'a> {
     fn null_into(&mut self, target: &str, c: CType, ind: usize) {
         let s = match c {
             CType::Int => format!("{target} = LOFT_NULL;"),
+            CType::Int32 => format!("{target} = LOFT_NULL32;"),
             CType::Bool => format!("{target} = LOFT_BOOL_NULL;"),
             CType::Text => format!("loft_text_set(&{target}, loft_null_text());"),
             CType::Ref => format!("{target} = loft_ref_null();"),
@@ -1740,6 +1770,9 @@ impl<'a> FnWriter<'a> {
             | Value::Enum(..)
             | Value::Text(_) => Ok(()),
             Value::Span(b) => self.stmt(&b.1, ind),
+            // `@FR-R-ValueRecord` — a materialised view return, or a build that returns what
+            // it builds, standing as a statement returns its struct.
+            Value::Block(b) if self.vr_stmt_leaf(b) => self.vr_stmt(v, b, ind),
             Value::Block(b) => self.block_stmt(b, ind),
             Value::Insert(ops) => ops.iter().try_for_each(|o| self.stmt(o, ind)),
             Value::Set(var, x) => self.set_stmt(*var, x, ind),
@@ -2287,6 +2320,12 @@ impl<'a> FnWriter<'a> {
         reason = "one arm per kind of bind; the rewritten binds are already helpers"
     )]
     fn set_stmt(&mut self, var: u16, x: &Value, ind: usize) -> Result<(), String> {
+        if self.vr.is_some()
+            && let Some(r) = self.vr_set(var, x, ind)
+        {
+            self.bound[var as usize] = true;
+            return r;
+        }
         // An `&` local is bound to the variable `OpCreateStack` names: it points there, and
         // every later read and write of it goes through.
         if self.store_links[var as usize] {
@@ -2694,7 +2733,14 @@ impl<'a> FnWriter<'a> {
     }
 
     /// Emit the statements `v` needs and put its value in `target`, of shape `c`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
+    )]
     fn assign(&mut self, v: &Value, target: &str, c: CType, ind: usize) -> Result<(), String> {
+        if self.vr.is_some() && self.vr_assign(v, target, c, ind)? {
+            return Ok(());
+        }
         match v.unspan() {
             // A tuple that owns texts is copied element by element: a struct copy would share them.
             Value::Var(src) if matches!(c, CType::Tuple(id) if self.cx.tuple_has_text(id)) => {
@@ -2778,6 +2824,15 @@ impl<'a> FnWriter<'a> {
             // A self tail call's loop (`opt::tail_self`) leaves only by a `return`: it has no
             // value to put anywhere.
             v @ Value::Loop(lp) if lp.name == "tail_self" => self.stmt(v, ind),
+            // @PLN204 — a value stored into a 32-bit local is narrowed, so an operation of two
+            // 32-bit operands it stores is the 32-bit operation (`narrow32`): a loop's
+            // `i = i + 1` runs in `int32_t`.
+            v @ (Value::Call(..) | Value::Int(_)) if c == CType::Int32 => {
+                let e = self.narrow32(v, ind)?;
+                let code = as_int32(e)?;
+                self.line(ind, &format!("{target} = {code};"));
+                Ok(())
+            }
             v => {
                 let e = self.expr(v, ind)?;
                 // A temporary tuple that owns texts keeps them — its buffers are reused and the
@@ -3079,6 +3134,9 @@ impl<'a> FnWriter<'a> {
     /// A C expression for `v`'s value; the statements it needs are emitted first.
     fn expr(&mut self, v: &Value, ind: usize) -> Result<E, String> {
         match v.unspan() {
+            Value::RawExpr(code) if self.raw.contains_key(code) => {
+                Ok(E::new(code.clone(), self.raw[code]))
+            }
             Value::Int(i) => Ok(E::new(format!("INT64_C({i})"), K::Int)),
             Value::Long(l) if *l == i64::MIN => Ok(E::new("LOFT_NULL", K::Int)),
             Value::Long(l) => Ok(E::new(c_long(*l), K::Int)),
@@ -3154,7 +3212,8 @@ impl<'a> FnWriter<'a> {
         }
     }
 
-    /// A text choice between views — `if c { a } else { b }`, as a `?` discharge writes it,
+    /// `@FR-R-TextBorrow`'s discharge clause, its value: a text choice between views —
+    /// `if c { a } else { b }`, as a `?` discharge writes it,
     /// where each arm is a borrowed text variable or a literal — as the view it picks: the
     /// bytes are the arm's own, valid as long as that variable is, so nothing is copied.
     /// `None` for any other compound.
@@ -3246,46 +3305,74 @@ impl<'a> FnWriter<'a> {
     /// A variable is read in place unless a later operand may write it (@FR-E-Left: an
     /// operand is read before a later operand writes) — then it is read into a temporary too.
     fn args(&mut self, args: &[Value], ind: usize) -> Result<Vec<E>, String> {
-        let mut out = Vec::with_capacity(args.len());
-        for (i, a) in args.iter().enumerate() {
-            let e = self.expr(a, ind)?;
-            let later_writes = args[i + 1..].iter().any(|b| self.may_write(b));
-            if later_writes && matches!(a.unspan(), Value::Var(_)) && e.kind == K::View {
-                let t = self.temp(CType::Text);
-                self.line(ind, &format!("loft_text_set(&{t}, {});", e.code));
-                out.push(self.held(t, CType::Text));
-                continue;
-            }
-            let simple = match a.unspan() {
-                Value::Var(_) => !later_writes,
-                Value::Int(_) | Value::Long(_) | Value::Boolean(_) | Value::Text(_) => true,
-                _ => false,
-            };
-            // A temporary is already stable — and a second one would share the texts a tuple
-            // temporary owns, which the epilogue frees through each.
-            if simple
-                || matches!(e.kind, K::View | K::Void)
-                || self.temps.iter().any(|(t, _)| *t == e.code)
-            {
-                out.push(e);
-                continue;
-            }
-            let (c, code) = match e.kind {
-                K::Int => (CType::Int, e.code),
-                K::Ref => (CType::Ref, e.code),
-                K::Tup(id) => (CType::Tuple(id), e.code),
-                K::Enum => (CType::Enum, e.code),
-                K::Float => (CType::Float, e.code),
-                K::Single => (CType::Single, e.code),
-                K::Char => (CType::Char, e.code),
-                K::Fn => (CType::Fn, e.code),
-                _ => (CType::Bool, as_bool(e)?),
-            };
-            let t = self.temp(c);
-            self.line(ind, &format!("{t} = {code};"));
-            out.push(E::new(t, kind_of(c)));
+        (0..args.len()).map(|i| self.arg(args, i, ind)).collect()
+    }
+
+    /// The operands of a text VALUE op (`@FR-R-TextBorrow`: one that reads its operands at once
+    /// and writes no store), as `args` evaluates them — except that a text field read no later
+    /// operand can disturb (`may_write`) is the field's bytes where the store holds them, as
+    /// native's `&str` operand is, not a copy: nothing between the read and the op can grow,
+    /// free or rewrite that store.
+    /// `LOFT_NO_FIELD_VIEW=1` copies every such field again.
+    fn text_reads(&mut self, args: &[Value], ind: usize) -> Result<Vec<E>, String> {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = *OFF.get_or_init(|| std::env::var("LOFT_NO_FIELD_VIEW").is_ok_and(|v| v != "0"));
+        let data = self.cx.data;
+        (0..args.len())
+            .map(|i| {
+                let field = !off
+                    && matches!(args[i].unspan(), Value::Call(d, xs)
+                    if xs.len() == 2 && data.def(*d).name() == "OpGetText");
+                if !field || args[i + 1..].iter().any(|b| self.may_write(b)) {
+                    return self.arg(args, i, ind);
+                }
+                self.field_view = true;
+                let e = self.expr(&args[i], ind);
+                self.field_view = false;
+                e
+            })
+            .collect()
+    }
+
+    /// Operand `i` of `args`, evaluated in order: a value a later operand may change is held
+    /// in a temporary.
+    fn arg(&mut self, args: &[Value], i: usize, ind: usize) -> Result<E, String> {
+        let operand = &args[i];
+        let value = self.expr(operand, ind)?;
+        let later_writes = args[i + 1..].iter().any(|later| self.may_write(later));
+        if later_writes && matches!(operand.unspan(), Value::Var(_)) && value.kind == K::View {
+            let temp = self.temp(CType::Text);
+            self.line(ind, &format!("loft_text_set(&{temp}, {});", value.code));
+            return Ok(self.held(temp, CType::Text));
         }
-        Ok(out)
+        let simple = match operand.unspan() {
+            Value::Var(_) => !later_writes,
+            Value::Int(_) | Value::Long(_) | Value::Boolean(_) | Value::Text(_) => true,
+            _ => false,
+        };
+        // A temporary is already stable — and a second one would share the texts a tuple
+        // temporary owns, which the epilogue frees through each.
+        if simple
+            || matches!(value.kind, K::View | K::Void)
+            || self.temps.iter().any(|(t, _)| *t == value.code)
+        {
+            return Ok(value);
+        }
+        let (shape, code) = match value.kind {
+            K::Int => (CType::Int, value.code),
+            K::Int32 => (CType::Int32, value.code),
+            K::Ref => (CType::Ref, value.code),
+            K::Tup(id) => (CType::Tuple(id), value.code),
+            K::Enum => (CType::Enum, value.code),
+            K::Float => (CType::Float, value.code),
+            K::Single => (CType::Single, value.code),
+            K::Char => (CType::Char, value.code),
+            K::Fn => (CType::Fn, value.code),
+            _ => (CType::Bool, as_bool(value)?),
+        };
+        let temp = self.temp(shape);
+        self.line(ind, &format!("{temp} = {code};"));
+        Ok(E::new(temp, kind_of(shape)))
     }
 
     /// May evaluating `v` write a variable?  A statement, a block or a call that is not a
@@ -3310,27 +3397,50 @@ impl<'a> FnWriter<'a> {
         }
     }
 
+    /// `v.len()` of a vector this body holds — the stdlib wrapper answered as its op
+    /// (`@FR-R-Wrapper`) — a split table's count, a held header's length or a push header's.
+    /// `None` for any other vector.
+    fn held_len(&mut self, args: &[Value], ind: usize) -> Result<Option<E>, String> {
+        let [v] = args else { return Ok(None) };
+        if let Some(t) = self.split_tab_of(v) {
+            return Ok(Some(E::new(format!("((int64_t) st{t}.n)"), K::Int)));
+        }
+        if let Some(h) = self.held_vector(v) {
+            return Ok(Some(E::new(format!("{h}.len"), K::Int)));
+        }
+        self.pushed_mint("OpLengthVector", args, ind)
+    }
+
+    /// An operator call: a bare `null` argument is the null of the operand's declared type, as
+    /// the bytecode pushes it (`OpSetDbRef(g, 0, null)`, `OpPushInt(v, null)`).
+    fn call_operator(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
+        let cx = self.cx;
+        if args.iter().any(|a| matches!(a.unspan(), Value::Null)) {
+            let attrs = cx.data.def(d).attributes();
+            let typed: Vec<Value> = args
+                .iter()
+                .enumerate()
+                .map(|(i, a)| match a.unspan() {
+                    Value::Null => attrs
+                        .get(i)
+                        .and_then(|at| self.typed_null(&at.typedef))
+                        .unwrap_or(Value::Null),
+                    _ => a.clone(),
+                })
+                .collect();
+            return self.operator(cx.data.def(d).name(), &typed, ind);
+        }
+        self.operator(cx.data.def(d).name(), args, ind)
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
+    )]
     fn call(&mut self, d: u32, args: &[Value], ind: usize) -> Result<E, String> {
         let cx = self.cx;
         if is_operator(cx.data, d) {
-            // A bare `null` argument is the null of the operand's declared type, as the
-            // bytecode pushes it (`OpSetDbRef(g, 0, null)`, `OpPushInt(v, null)`).
-            if args.iter().any(|a| matches!(a.unspan(), Value::Null)) {
-                let attrs = cx.data.def(d).attributes();
-                let typed: Vec<Value> = args
-                    .iter()
-                    .enumerate()
-                    .map(|(i, a)| match a.unspan() {
-                        Value::Null => attrs
-                            .get(i)
-                            .and_then(|at| self.typed_null(&at.typedef))
-                            .unwrap_or(Value::Null),
-                        _ => a.clone(),
-                    })
-                    .collect();
-                return self.operator(cx.data.def(d).name(), &typed, ind);
-            }
-            return self.operator(cx.data.def(d).name(), args, ind);
+            return self.call_operator(d, args, ind);
         }
         let def = cx.data.def(d);
         if let Some(e) = self.keyed_native(def.name(), args, ind)? {
@@ -3351,9 +3461,17 @@ impl<'a> FnWriter<'a> {
             return Ok(E::new(format!("loft_env_variables({size})"), K::Ref));
         }
         let callee = def.original_name();
-        let ret = cx
-            .ctype(def.returned())
-            .ok_or_else(|| format!("a call to {callee} returning {}", type_word(def.returned())))?;
+        // `@FR-R-ValueRecord` — an admitted callee answers its struct and takes no buffer; a
+        // tuple parameter takes a struct.
+        let (vr_key, dropped, tuple_params) = self.vr_callee(d);
+        let ret = match vr_key {
+            Some(key) => cx
+                .vr_ctype(key)
+                .ok_or("a value record without its layout")?,
+            None => cx.ctype(def.returned()).ok_or_else(|| {
+                format!("a call to {callee} returning {}", type_word(def.returned()))
+            })?,
+        };
         let shapes: Vec<CType> = def
             .attributes()
             .iter()
@@ -3370,26 +3488,34 @@ impl<'a> FnWriter<'a> {
         if shapes.len() != args.len() {
             return Err("a call whose arguments do not match its parameters".into());
         }
-        // `v.len()` of a vector an enclosing loop holds: the header's length.
         if def.name() == "t_6vector_len"
-            && let [v] = args
+            && let Some(e) = self.held_len(args, ind)?
         {
-            if let Some(t) = self.split_tab_of(v) {
-                return Ok(E::new(format!("((int64_t) st{t}.n)"), K::Int));
-            }
-            if let Some(h) = self.held_vector(v) {
-                return Ok(E::new(format!("{h}.len"), K::Int));
-            }
-            if let Some(e) = self.pushed_mint("OpLengthVector", args, ind)? {
-                return Ok(e);
-            }
+            return Ok(e);
         }
+        // A native runtime function is written in `int64_t`: a 32-bit integer crosses it widened.
+        let native = super::native_c(def.name()).is_some();
+        let (ret, shapes) = if native {
+            (
+                super::native_shape(ret),
+                shapes.into_iter().map(super::native_shape).collect(),
+            )
+        } else {
+            (ret, shapes)
+        };
         let name = super::native_c(def.name()).map_or_else(|| c_name(cx.data, d), str::to_string);
         // A link argument is the address of the caller's variable; the others are values,
         // evaluated in order.
         let mut xs = vec![String::new(); args.len()];
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
-        self.value_args(args, &shapes, &values, &mut xs, ind)?;
+        let values = self.vr_args(args, values, dropped, &tuple_params, &mut xs, ind)?;
+        // A callee that runs no store write reads a text argument as a text VALUE op
+        // does (`@FR-F-ParamText`) — unless a store place goes to a `&` parameter, which its twin writes.
+        let reads = places == 0 && cx.call_keeps_stores(d);
+        self.value_args(args, &shapes, &values, &mut xs, reads, ind)?;
+        if let Some(i) = dropped {
+            xs.remove(i);
+        }
         // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
         let mut mask = places;
         if super::native_c(def.name()).is_none()
@@ -3409,6 +3535,11 @@ impl<'a> FnWriter<'a> {
             super::twin_name(cx.data, d, mask)
         };
         let call = format!("{name}({})", xs.join(", "));
+        if let Some(key) = vr_key
+            && let Some(buf) = self.vr_forward_target(args, dropped)
+        {
+            return self.vr_forward(&call, key, buf, ind);
+        }
         Ok(match ret {
             CType::Text => {
                 let t = self.temp(CType::Text);
@@ -3450,6 +3581,7 @@ impl<'a> FnWriter<'a> {
         shapes: &[CType],
         values: &[usize],
         xs: &mut [String],
+        reads: bool,
         ind: usize,
     ) -> Result<(), String> {
         let mut rest = Vec::new();
@@ -3469,7 +3601,11 @@ impl<'a> FnWriter<'a> {
             }
         }
         let vals: Vec<Value> = rest.iter().map(|&i| args[i].clone()).collect();
-        let es = self.args(&vals, ind)?;
+        let es = if reads {
+            self.text_reads(&vals, ind)?
+        } else {
+            self.args(&vals, ind)?
+        };
         for (e, &i) in es.into_iter().zip(&rest) {
             xs[i] = as_shape(e, shapes[i])?;
         }
@@ -3525,7 +3661,7 @@ impl<'a> FnWriter<'a> {
             }
         }
         let sig = cx.fn_sig(modes, ret);
-        self.value_args(&args[..shapes.len()], &shapes, &values, &mut xs, ind)?;
+        self.value_args(&args[..shapes.len()], &shapes, &values, &mut xs, false, ind)?;
         let mut list = vec![self.var(v)];
         list.extend(xs);
         let call = format!("loft_call{sig}({})", list.join(", "));
@@ -3665,12 +3801,23 @@ impl<'a> FnWriter<'a> {
         Ok(a)
     }
 
+    /// `two` for a text VALUE op: its text field operands read in place (`text_reads`).
+    fn text_two(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
+        let es = self.text_reads(args, ind)?;
+        let [a, b] = <[E; 2]>::try_from(es).map_err(|_| format!("{name} without two operands"))?;
+        Ok((a, b))
+    }
+
     fn two(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
         let es = self.args(args, ind)?;
         let [a, b] = <[E; 2]>::try_from(es).map_err(|_| format!("{name} without two operands"))?;
         Ok((a, b))
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "past the bar where the 32-bit arms met the value-record arms on a join; the split is release work (M-file-split)"
+    )]
     fn operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         // The text writes through a `&` parameter: the C names the caller's text the same way.
         let name = match name {
@@ -3683,6 +3830,11 @@ impl<'a> FnWriter<'a> {
             "OpFormatStackDatabase" => "OpFormatDatabase",
             n => n,
         };
+        if self.vr.is_some()
+            && let Some(e) = self.vr_operator(name, args, ind)?
+        {
+            return Ok(e);
+        }
         if !self.headers.is_empty()
             && let Some(e) = self.held_access(name, args, ind)?
         {
@@ -3729,6 +3881,11 @@ impl<'a> FnWriter<'a> {
         if let Some(e) = self.probe_operator(name, args, ind)? {
             return Ok(e);
         }
+        if name == "OpNarrow32"
+            && let [x] = args
+        {
+            return self.narrow32(x, ind);
+        }
         let arith = match name {
             // The `Nullable` forms answer the same values; only the overflow report differs.
             "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
@@ -3758,10 +3915,75 @@ impl<'a> FnWriter<'a> {
             _ => None,
         };
         if let Some(op) = cmp {
-            let (a, b) = self.two(name, args, ind)?;
+            let (a, b) = self.two32(name, args, ind)?;
+            // Two 32-bit operands compare as they are: the null is the lowest value in
+            // either width, so the order is the 64-bit one.
+            if a.kind == K::Int32 && b.kind == K::Int32 {
+                return Ok(compare(&a.code, op, &b.code));
+            }
             return Ok(compare(&as_int(a)?, op, &as_int(b)?));
         }
         self.text_operator(name, args, ind)
+    }
+
+    /// @PLN204 — the two operands of a binary integer operator, a literal that fits taken as a
+    /// 32-bit one, so an operation on 32-bit values can be written in 32 bits.
+    fn two32(&mut self, name: &str, args: &[Value], ind: usize) -> Result<(E, E), String> {
+        let (a, b) = self.two(name, args, ind)?;
+        let lit = |v: &Value, e: E| match v.unspan() {
+            Value::Int(i) if *i != i32::MIN => E::new(format!("INT32_C({i})"), K::Int32),
+            _ => e,
+        };
+        Ok((lit(&args[0], a), lit(&args[1], b)))
+    }
+
+    /// @PLN204 — `OpNarrow32(x)`, the 32-bit regime's arithmetic: `x` computed and narrowed to
+    /// `int32_t`, a value that does not fit reading null.  An add, subtract, multiply, divide
+    /// or remainder of two 32-bit operands is written in 32 bits (`loft_add32` …), which
+    /// answers the same: the 64-bit operation of two `int32_t` values cannot overflow, so
+    /// narrowing its result is exactly the 32-bit operation's overflow check.
+    fn narrow32(&mut self, x: &Value, ind: usize) -> Result<E, String> {
+        if let Value::Int(lit) = x.unspan()
+            && *lit != i32::MIN
+            && !super::no_c_int32()
+        {
+            return Ok(E::new(format!("INT32_C({lit})"), K::Int32));
+        }
+        if let Value::Call(op_nr, args) = x.unspan()
+            && args.len() == 2
+            && is_operator(self.cx.data, *op_nr)
+        {
+            let name = self.cx.data.def(*op_nr).name();
+            let op32 = match name {
+                "OpAddInt" | "OpAddIntNullable" => Some("loft_add32"),
+                "OpMinInt" | "OpMinIntNullable" => Some("loft_sub32"),
+                "OpMulInt" | "OpMulIntNullable" => Some("loft_mul32"),
+                "OpDivInt" | "OpDivIntNullable" => Some("loft_div32"),
+                "OpRemInt" | "OpRemIntNullable" => Some("loft_rem32"),
+                _ => None,
+            };
+            if let Some(op32) = op32
+                && !super::no_c_int32()
+            {
+                let (a, b) = self.two32(name, args, ind)?;
+                if a.kind == K::Int32 && b.kind == K::Int32 {
+                    return Ok(E::new(format!("{op32}({}, {})", a.code, b.code), K::Int32));
+                }
+                let wide = &op32[..op32.len() - 2];
+                return Ok(E::new(
+                    format!("loft_n32({wide}({}, {}))", as_int(a)?, as_int(b)?),
+                    K::Int32,
+                ));
+            }
+        }
+        let e = self.expr(x, ind)?;
+        if super::no_c_int32() {
+            return Ok(E::new(
+                format!("loft_w64(loft_n32({}))", as_int(e)?),
+                K::Int,
+            ));
+        }
+        Ok(E::new(as_int32(e)?, K::Int32))
     }
 
     /// `target = if cond { t } else { e }`, each arm assigning it; a not-null test's else opens
@@ -3923,7 +4145,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("(!{})", as_cond(a)?), K::Cond))
             }
             "OpEqText" | "OpNeText" => {
-                let (a, b) = self.two(name, args, ind)?;
+                let (a, b) = self.text_two(name, args, ind)?;
                 let neg = if name == "OpNeText" { "!" } else { "" };
                 Ok(E::new(
                     format!("{neg}loft_str_eq({}, {})", as_view(a)?, as_view(b)?),
@@ -3931,7 +4153,7 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             "OpLtText" | "OpLeText" => {
-                let (a, b) = self.two(name, args, ind)?;
+                let (a, b) = self.text_two(name, args, ind)?;
                 let f = if name == "OpLtText" {
                     "loft_text_lt"
                 } else {
@@ -3965,7 +4187,8 @@ impl<'a> FnWriter<'a> {
                         K::Void,
                     ));
                 }
-                let val = self.expr(val, ind)?;
+                let [val] = <[E; 1]>::try_from(self.text_reads(std::slice::from_ref(val), ind)?)
+                    .map_err(|_| "OpAppendText without its value".to_string())?;
                 Ok(E::new(
                     format!("loft_text_concat(&{dest}, {})", as_view(val)?),
                     K::Void,
@@ -3980,7 +4203,7 @@ impl<'a> FnWriter<'a> {
                 let (Value::Int(dir), Value::Int(token)) = (dir.unspan(), token.unspan()) else {
                     return Err("OpFormatText with a computed format".into());
                 };
-                let (val, width) = self.two(name, &[(*val).clone(), (*width).clone()], ind)?;
+                let (val, width) = self.text_two(name, &[(*val).clone(), (*width).clone()], ind)?;
                 Ok(E::new(
                     format!(
                         "loft_format_text(&{dest}, {}, {}, {dir}, {token})",
@@ -4025,7 +4248,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("loft_text_free(&{dest})"), K::Void))
             }
             "OpPrint" => {
-                let es = self.args(args, ind)?;
+                let es = self.text_reads(args, ind)?;
                 let [a] = <[E; 1]>::try_from(es)
                     .map_err(|_| "OpPrint without one operand".to_string())?;
                 Ok(E::new(format!("loft_print({})", as_view(a)?), K::Void))
@@ -4820,7 +5043,21 @@ impl<'a> FnWriter<'a> {
             }
             ("OpGetText", [r, fld]) => {
                 let fld = Self::literal(fld, "field")?;
+                let view = std::mem::take(&mut self.field_view);
                 let r = self.expr(r, ind)?;
+                if view {
+                    // The record is named before the read: a call computing it runs here, in
+                    // program order, and the view itself reads nothing but the store.
+                    let code = as_ref(r)?;
+                    let at = if code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                        code
+                    } else {
+                        let t = self.temp(CType::Ref);
+                        self.line(ind, &format!("{t} = {code};"));
+                        t
+                    };
+                    return Ok(E::new(format!("loft_get_text({at}, {fld})"), K::View));
+                }
                 let t = self.temp(CType::Text);
                 self.line(ind, &format!("loft_text_free(&{t});"));
                 self.line(
@@ -5539,6 +5776,8 @@ fn c_long(n: i64) -> String {
 fn as_int(e: E) -> Result<String, String> {
     match e.kind {
         K::Int => Ok(e.code),
+        // @PLN204 — a 32-bit integer read as a 64-bit one: its null stays null.
+        K::Int32 => Ok(format!("loft_w64({})", e.code)),
         // The slot the bytecode writes is the integer's: a character's code point, a
         // boolean's byte, a function value's definition number (`FnRefDnr`).
         K::Char | K::Bool => Ok(format!("((int64_t) ({}))", e.code)),
@@ -5604,6 +5843,8 @@ fn as_char(e: E) -> Result<String, String> {
         // An integer written as a character: its low 32 bits, as the store keeps them (an
         // integer null is the character null, 0).
         K::Int => Ok(format!("((uint32_t) ({}))", e.code)),
+        // `INT32_MIN`, the 32-bit null, is the character null too: 0.
+        K::Int32 => Ok(format!("((uint32_t) loft_w64({}))", e.code)),
         k => Err(format!("a character expected, a {k:?} found")),
     }
 }
@@ -5623,9 +5864,19 @@ fn as_view(e: E) -> Result<String, String> {
 }
 
 /// The value of `e` converted to shape `c`, for a parameter or a store.
+/// @PLN204 — `e` as a 32-bit integer: a 64-bit value that does not fit reads null, as the
+/// interpreter's `OpNarrow32` answers it.
+fn as_int32(e: E) -> Result<String, String> {
+    match e.kind {
+        K::Int32 => Ok(e.code),
+        _ => Ok(format!("loft_n32({})", as_int(e)?)),
+    }
+}
+
 fn as_shape(e: E, c: CType) -> Result<String, String> {
     match c {
         CType::Int => as_int(e),
+        CType::Int32 => as_int32(e),
         CType::Bool => as_bool(e),
         CType::Text => as_view(e),
         CType::Ref => as_ref(e),
@@ -5813,6 +6064,14 @@ const OP_CHAR: &[&str] = &[
 
 /// The C shape an operator's value is held in, for the operators this backend writes.
 fn op_shape(name: &str) -> Option<CType> {
+    // @PLN204 — `OpNarrow32` answers an `int32_t` (`FnWriter::narrow32`).
+    if name == "OpNarrow32" {
+        return Some(if super::no_c_int32() {
+            CType::Int
+        } else {
+            CType::Int32
+        });
+    }
     let shapes = [
         (OP_INT, CType::Int),
         (OP_BOOL, CType::Bool),
@@ -5976,4 +6235,22 @@ fn param_root(vars: &crate::variables::Function, v: u16, params: &[u16]) -> Opti
         cur = d;
     }
     None
+}
+
+/// The C shape that holds a value of kind `k`, for a value staged into a temporary; `None` for
+/// a view or a condition-less kind no temporary can hold whole.
+fn shape_of_kind(k: K) -> Option<CType> {
+    Some(match k {
+        K::Int => CType::Int,
+        K::Int32 => CType::Int32,
+        K::Cond | K::Bool => CType::Bool,
+        K::Ref => CType::Ref,
+        K::Enum => CType::Enum,
+        K::Float => CType::Float,
+        K::Single => CType::Single,
+        K::Char => CType::Char,
+        K::Fn => CType::Fn,
+        K::Tup(id) => CType::Tuple(id),
+        K::View | K::Void => return None,
+    })
 }

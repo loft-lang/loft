@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: host_input / bounded host input answer differently on the C — its `--native` runs as `--native-rust` until then.
 
 //! `host_input()` — the program-input primitive (mirror of `print`).  Reads all
 //! input as one text: stdin on `--interpret` / `--native` (and WASI), the JS
@@ -76,7 +77,7 @@ fn run(backend: &str, stdin: &str) -> String {
 #[test]
 fn host_input_interpret_equals_native() {
     let interp = run("--interpret", "hello loft");
-    let native = run("--native", "hello loft");
+    let native = run("--native-rust", "hello loft");
     assert_eq!(
         interp, "echo=[hello loft] len=10\n",
         "interpret: {interp:?}"
@@ -88,7 +89,7 @@ fn host_input_interpret_equals_native() {
 #[test]
 fn host_input_empty() {
     assert_eq!(run("--interpret", ""), "echo=[] len=0\n");
-    assert_eq!(run("--native", ""), "echo=[] len=0\n");
+    assert_eq!(run("--native-rust", ""), "echo=[] len=0\n");
 }
 
 /// `host_output(msg)` — the outbound mirror.  On native/WASI it writes one
@@ -104,7 +105,7 @@ fn host_output_goes_to_stderr_on_both_backends() {
   println("done");
 }
 "#;
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let id = SEQ.fetch_add(1, Ordering::Relaxed);
         let dir =
             std::env::temp_dir().join(format!("loft_host_output_{}_{id}", std::process::id()));
@@ -238,7 +239,7 @@ fn bounded_host_input_answers_with_no_host() {
   println("mode=[{m}] len={m.len()}");
 }
 "#;
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = run_with_open_stdin(backend, source, &[], Duration::from_secs(20));
         assert_eq!(out, "mode=[] len=0\n", "{backend}: {out:?}");
     }
@@ -260,7 +261,7 @@ fn bounded_host_input_reads_a_host_that_stays_connected() {
   println("mode=[{m}] len={m.len()}");
 }
 "#;
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = run_with_open_stdin(
             backend,
             source,
@@ -290,7 +291,7 @@ fn bounded_host_input_never_splits_a_character() {
   println("a=[{a}] b=[{b}] sizes={a.size()}/{b.size()}");
 }
 "#;
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         // "caf" + the two bytes of 'é', torn apart between the writes.
         let out = run_with_open_stdin(
             backend,
@@ -311,7 +312,7 @@ fn host_input_utf8_passthrough() {
     assert_eq!(interp, "echo=[café] len=4\n", "interpret: {interp:?}");
     assert_eq!(
         interp,
-        run("--native", "café"),
+        run("--native-rust", "café"),
         "interpret vs native diverged"
     );
 }

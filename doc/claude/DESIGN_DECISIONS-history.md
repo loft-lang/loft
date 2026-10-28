@@ -111,6 +111,8 @@ alternatives considered are in `DISCUSSION.md` alongside.
 
 ## C54.D — Rust-style numeric literal suffixes
 
+**2026-10-27 — `l` and `d` added** (owner, @PLN204): *"234l as long … 12.5f as doubles"*.  `f` kept its meaning (`single`) and `d` took the double, because `1.0f` is a single in every library the regime compiles; width suffixes (`34u8`) stay declined.
+
 **Catalogue:** @F4 (width integers), @F5 (type conversions — `as`).
 
 **Question.** Should loft accept `34u8`, `4948u32`, `100i32` as
@@ -2874,6 +2876,8 @@ One text, `native_lib::NO_RUSTC`, says it in all three.
 
 ## C103 — `int` / `str` / `bool` are suggested, never legal (no cross-language type aliases)
 
+**2026-10-27 — `i64` and `f64` become legal** (owner, @PLN204): the Tanmatsu's 32-bit regime makes `integer` an `i32` and `float` a `single` in a `#width 32` file, and *"i64 is the long variant when really needed in the code"*.  The other names stay suggestions.
+
 ### Context
 
 Every Python, Rust, Go and C newcomer types `int` in their first hour. loft's type names
@@ -4794,6 +4798,13 @@ decided by the file's own `pub` signatures; enum variant fields follow the struc
 non-`pub` type named in a `pub` signature is name only rather than a leak to warn about.
 **Not adopted:** fully hidden non-record types; read-only-outside fields.  Lands before
 contract 1 because it adds refusals.
+**Widened** 2026-10-27 (owner, @PLN91 S0.3a): `#package`.  **Measured**: a loft program split over
+several files paid `pub` on everything it shared (the self-hosting interpreter's IR vocabulary:
+25 types and 142 fields before a second file could read one field).  The owner kept the
+file-local default and rejected a manifest-based package (no dependency on a `.toml` file): a
+file that shares says so, and its directory plus the one above is the group (the level above
+composes the details below it; privacy enforces abstractions rather than hiding information).  It only relaxes, so no program
+changes.
 ## C141 — A decoded text or byte string may be a view into the bytes it was decoded from
 
 Asked 2026-10-07 while working the worst native routines: `pluginabi`'s `check_request` (12.0×

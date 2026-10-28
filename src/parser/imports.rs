@@ -64,6 +64,8 @@ impl Parser {
             self.parsed_sources.push(f.to_string());
         }
         self.lexer.switch(f);
+        // A used file's own directives: only `#package` applies to it (`@FR-F-Package`).
+        self.parse_file_directives(false);
     }
 
     /// Apply all pending imports whose target source matches the currently active source.
@@ -810,7 +812,8 @@ impl Parser {
     }
 
     /// Where a module of the CURRENT file's own package would live — `<its
-    /// dir>/<id>.loft` or `<its dir>/lib/<id>.loft` — with no view on whether
+    /// dir>/<id>.loft`, `<its dir>/lib/<id>.loft`, or the package root's
+    /// `src/<id>.loft` — never the current file itself, with no view on whether
     /// something else should win the name.
     ///
     /// Split out from [`own_module_file`] because `use self::<id>` (loft#949) wants
@@ -824,12 +827,22 @@ impl Parser {
             return None;
         }
         let sep = sep_str();
-        [
+        let mut candidates = vec![
             format!("{cur_dir}{sep}{id}.loft"),
             format!("{cur_dir}{sep}lib{sep}{id}.loft"),
-        ]
-        .into_iter()
-        .find(|c| crate::file_access::exists(c))
+        ];
+        // loft#976's home of a package's modules is its root's `src/`: a file outside it
+        // (`tests/`) finds the module there.
+        if let Some(root) = crate::resolution_scope::project_root(&cur_script) {
+            let in_src = root.join("src").join(format!("{id}.loft"));
+            candidates.push(in_src.to_string_lossy().into_owned());
+        }
+        // A file is never its own module (X12): from `tests/<id>.loft` the first candidate
+        // would be the test file itself.
+        let here = crate::file_access::plain_canonical_str(&cur_script);
+        candidates.into_iter().find(|c| {
+            crate::file_access::exists(c) && crate::file_access::plain_canonical_str(c) != here
+        })
     }
 
     /// The `[package] name` of the package the current file belongs to (loft#949).

@@ -1656,8 +1656,31 @@ impl Parser {
             "%" => "%=",
             other => other,
         };
+        // @PLN204 — `a ⊕= b` under the 32-bit regime is the 32-bit operation `a ⊕ b` is.
+        let regime32 = self.data.width32()
+            && matches!(
+                op,
+                "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+            )
+            && Self::width32_int(f_type)
+            && Self::width32_int(src_tp);
         let mut code = Value::Null;
         let tp = self.call_op_as(&mut code, name, spelled, &operands, &types);
+        if regime32 && let Type::Integer(spec) = tp.base() {
+            let narrow = Type::Integer(crate::narrow::IntegerSpec {
+                not_null: spec.not_null,
+                ..crate::narrow::IntegerSpec::i32()
+            });
+            let narrow = if matches!(tp, Type::Optional(_)) {
+                Type::optional(narrow)
+            } else {
+                narrow
+            };
+            if !matches!(op, "&" | "|" | "^") {
+                code = self.cl("OpNarrow32", &[code]);
+            }
+            return (code, narrow);
+        }
         (code, tp)
     }
 
@@ -6159,6 +6182,18 @@ impl Parser {
             let operand_nullable = user_member.is_none()
                 && crate::keys::nprop_enabled()
                 && (matches!(*ctp, Type::Optional(_)) || matches!(second_type, Type::Optional(_)));
+            // @PLN204 — under the 32-bit regime an integer operation on two 32-bit operands is
+            // a 32-bit operation: its result is an `i32`, and a value leaving that range reads
+            // null (`OpNarrow32`).  An `i64` operand (or a plain `integer` from a 64-bit file)
+            // keeps the operation 64-bit.
+            let regime32 = user_member.is_none()
+                && self.data.width32()
+                && matches!(
+                    operator,
+                    "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+                )
+                && Self::width32_int(ctp)
+                && Self::width32_int(&second_type);
             *ctp = if let Some(m) = user_member {
                 let form = Self::arith_form(operator).unwrap_or_default();
                 self.arith_through_operator(code, form, m, second_code, second_type, ctp.clone())
@@ -6173,6 +6208,26 @@ impl Parser {
             // `@FR-N-Arith` — the result is the operator's own type: a range the operands prove
             // (`x & 255`, `u8 + u8`) is asked by the narrowing store that needs it
             // (`int_range`), never written into the type, so it does not reach inference.
+            let result_spec = match ctp.base() {
+                Type::Integer(spec) => Some(*spec),
+                _ => None,
+            };
+            if regime32 && let Some(spec) = result_spec {
+                // `& | ^` of two 32-bit values cannot leave the range; the rest can.
+                if !matches!(operator, "&" | "|" | "^") {
+                    let inner = std::mem::replace(code, Value::Null);
+                    *code = self.cl("OpNarrow32", &[inner]);
+                }
+                let narrow = Type::Integer(crate::narrow::IntegerSpec {
+                    not_null: spec.not_null,
+                    ..crate::narrow::IntegerSpec::i32()
+                });
+                *ctp = if matches!(ctp, Type::Optional(_)) {
+                    Type::optional(narrow)
+                } else {
+                    narrow
+                };
+            }
             if div_nullable && crate::keys::pln25_dn1_enabled() {
                 *ctp = Type::optional(ctp.clone());
             } else if operand_nullable
@@ -6269,6 +6324,12 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         None
+    }
+
+    /// @PLN204 — is `tp` an integer that fits 32 bits by its declaration
+    /// ([`crate::narrow::IntegerSpec::is_width32`]), nullable or not?
+    pub(crate) fn width32_int(tp: &Type) -> bool {
+        matches!(tp.base(), Type::Integer(spec) if spec.is_width32())
     }
 
     /// A `&<operand>` recorded as a possible side of `&a == &b` that turned out to be part of

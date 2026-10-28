@@ -37,6 +37,27 @@ fn function_name(param: type, other: type = default_value) -> return_type {
   A caller of `spawn` may write `fn show(u: units::Unit)` and read `u.name`; `u.hp`, a
   `units::Unit { … }` literal and a `Blob { seed }` pattern are refused, each naming its cure
   (`tests/pub_visibility.rs`).
+- **A file shares with its own directory, and the one above, by saying `#package`**
+  (`formal/calls.md` `(F-Package)`).  To the other files beside it and to the files of the
+  directory directly above (the code that composes it), a file whose first line is `#package`
+  reads as if everything it declares were `pub`: its private functions, types, fields and
+  variants.  To any other file — two levels up, a subdirectory, a sibling directory — it reads
+  as above.  The file
+  that shares says so; the files that read it say nothing, so a directory can keep one file
+  private beside others that share:
+
+  ```loft
+  #package                                  // interp/run.loft
+  struct Frame { pc: integer, base: integer }
+  fn step(f: Frame) -> integer { f.pc + 1 }
+  ```
+
+  `interp/lower.loft` and a file in the directory above `interp/` may then build a
+  `run::Frame`, read `f.pc` and call `run::step`; a file two levels up may not.  A package's
+  tests are part of it: a file anywhere inside its `tests/` directory sees what the files of the
+  `src/` beside it share, so `pkg/tests/lowering/if.loft` may test a private step of
+  `pkg/src/lower.loft`.  A file a program `use`s may say `#package`, but
+  not `#cwd` or `#link`, which set how the whole program runs.
 - Some names are **reserved** and cannot name a program's function: the words `assert`, `panic`,
   `sizeof` and `debug_assert`, which the language keeps for meanings of its own, and the name of a
   standard-library function that is not a method (`log_info`, `parallel_for`, …).  Names the

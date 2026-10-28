@@ -51,7 +51,12 @@ fn a_call_answering_its_work_text_is_borrowed_and_one_that_may_answer_a_paramete
         let mut e = vec![("LOFT_TRACE_TEXT_BORROW", "1")];
         e.extend_from_slice(env);
         let out = loft(
-            &["--ship", "--native-emit", loft::platform::null_sink()],
+            &[
+                "--ship",
+                "--native-rust",
+                "--native-emit",
+                loft::platform::null_sink(),
+            ],
             &e,
         );
         String::from_utf8_lossy(&out.stderr).into_owned()

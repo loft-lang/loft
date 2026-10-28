@@ -168,6 +168,19 @@ value), a nullable hole into a non-null parameter warns, and a `lit` that does n
 
 ### New
 
+**`#package` lets a file share its internals with the files around it.**  Everything a file
+declares stays private to it unless it says `pub`; a file that is part of something bigger now
+starts with `#package`, and the files of its own directory and of the directory directly above
+it (the code that builds on it) may then use its private functions, types, fields and variants,
+and import them, as if they were `pub`.  A package's tests are part of it: anything inside its
+`tests/` sees what its `src/` shares.  Nothing further away sees anything new, and a `pub use`
+still passes on only what is `pub`.
+
+**`loft --emit-image out.store prog.loft` writes a program's compiled IR and runs nothing.**
+The image is the one the startup cache keeps for the program, with its `.dschema` sidecar
+beside it, so a loft program can `store_load` it through the IR's own types
+(`selfhost/src/ir.loft`) and read every definition the compiler made.
+
 **A test ledger records what your checked runs prove.**  Run your tests or your program with
 `LOFT_LEDGER=game.ledger`: each integer operator's site is counted as run, and as faulted when
 the processor's plain arithmetic would have answered differently — an overflow, a null operand,
@@ -327,6 +340,11 @@ web service checks a server against the bundled roots and the machine's own stor
 git do.
 
 ### Bug fixes
+
+**A cache directory loft cannot write no longer stops your program.**  With a read-only
+`~/.cache` (a sandbox, a container, a shared machine) every run that had to parse ended in an
+internal compiler error; one that found an earlier run's cache there did too.  Now the cache is
+simply not written, or not used, and the program runs from a fresh parse.
 
 **A `_ => null` arm joins an enum match as nullable.**  `match n { Lit { v } => v, _ => null }`
 is an `integer?`, as the named spelling `Var { name } => null` already was; the wildcard arm

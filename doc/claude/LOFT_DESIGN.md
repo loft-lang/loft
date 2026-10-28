@@ -422,6 +422,11 @@ use regex;
 fn main() { … }
 ```
 
+A third directive, `#package`, is not about running or linking: it lets the other files of
+the file's own directory, and of the directory above it, see its private items (LOFT_DECLARATIONS.md, `(F-Package)`).  It is
+the only directive a file a program `use`s may carry; `#cwd` and `#link` belong to the
+program's own file.
+
 `--static` / `--dynamic` on the command line win over the directive.  The interpreter
 ignores it — an interpreted run loads libraries the same way either way.  A library written
 in loft alone (`script`) is always compiled into the binary.  Guard:

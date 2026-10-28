@@ -1,0 +1,13 @@
+# The web library's natives as web 0.5.0 declares them (`[native] in_binary = true`), for
+# tests/web_natives.rs: the natives are loft's own (src/web_client.rs, src/c/loft_web.h), so the
+# guard needs only their declarations, not the library.
+[package]
+name = "web_natives"
+version = "0.1.0"
+loft = ">=2026.10.0"
+
+[library]
+entry = "src/web_natives.loft"
+
+[native]
+in_binary = true

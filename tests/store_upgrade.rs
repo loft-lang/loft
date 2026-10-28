@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: the store converter (@PLN196) is not in the C runtime yet (Phase B) — its `--native` runs as `--native-rust` until then.
 //
 // @PLN196 — the store upgrade: a changed definition converts its data, or says why not.
 //
@@ -301,6 +302,7 @@ fn cell_dir(name: &str) -> std::path::PathBuf {
 /// Run `loft <args>` in `dir`; (exit code, stdout, stderr).
 fn run_loft(dir: &std::path::Path, args: &[&str]) -> (i32, String, String) {
     let out = loft::platform::process::harness_command(loft_bin())
+        .env_remove("LOFT_NATIVE_BACKEND")
         .args(args)
         .current_dir(dir)
         .env("LOFT_TIMEOUT", "120")
@@ -328,7 +330,7 @@ fn write_store(name: &str, writer: &str) -> std::path::PathBuf {
 /// Run `b.loft` on both backends and require `expect` on stdout.
 #[track_caller]
 fn reads(name: &str, dir: &std::path::Path, expect: &str, when: &str) {
-    for mode in [&[][..], &["--native"][..]] {
+    for mode in [&[][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("b.loft");
         let (code, out, err) = run_loft(dir, &args);
@@ -378,7 +380,7 @@ fn upgrade_refused(name: &str, writer: &str, reader: &str, reason: &str) {
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
     let before = store_bytes(&dir);
     // The reader's own `store_load` refuses it too, with the same reason.
-    for mode in [&[][..], &["--native"][..]] {
+    for mode in [&[][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("b.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -816,7 +818,7 @@ fn an_enum_method_leaves_the_layout_alone() {
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
     let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "b.loft", "a.store"]);
     assert_eq!((code, out.as_str()), (0, ""), "nothing to upgrade:\n{err}");
-    for mode in [&[][..], &["--native"][..]] {
+    for mode in [&[][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("b.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -831,7 +833,7 @@ fn an_enum_method_name_does_not_parse_as_a_variant() {
     let dir = cell_dir("enum_method_text");
     let src = "enum E { A, B }\nfn label(self: E) -> text { if self == A { \"a\" } else { \"b\" } }\nfn main() {\n  t = \"label\";\n  e = t as E?;\n  f = \"B\" as E;\n  println(\"{e == null} {f} {f.label()}\");\n}\n";
     loft::file_access::write(dir.join("p.loft"), src).unwrap();
-    for mode in [&[][..], &["--native"][..]] {
+    for mode in [&[][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("p.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -858,7 +860,7 @@ fn a_stored_reference_survives_a_load_into_another_slot() {
         "{REF_TYPES}fn main() {{\n  pad = W {{ n: 9 }};\n  w = W {{ n: 0 }};\n  ok = store_load(w, \"a.store\");\n  println(\"{{ok}} {{pad.n}} {{w.r.k ?? -1}}\");\n  w.items[1].k = 77;\n  println(\"{{w.r.k ?? -1}}\");\n}}\n"
     );
     loft::file_access::write(dir.join("b.loft"), &reader).unwrap();
-    for mode in [&[][..], &["--native"][..]] {
+    for mode in [&[][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("b.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -881,6 +883,7 @@ fn a_reference_into_another_store_refuses_the_write() {
     let dir = cell_dir("ref_foreign");
     loft::file_access::write(dir.join("a.loft"), &writer).unwrap();
     let out = loft::platform::process::harness_command(loft_bin())
+        .env_remove("LOFT_NATIVE_BACKEND")
         .arg("a.loft")
         .current_dir(&dir)
         .env("LOFT_TIMEOUT", "120")
@@ -964,7 +967,7 @@ fn a_spatial_and_a_trie_field_render() {
     let dir = cell_dir("render_keyed");
     let src = "struct Pin { x: integer, y: integer }\nstruct Wd { w: text }\nstruct M { pins: spatial<Pin[x, y]>, t: trie<Wd[w]>, n: integer }\nfn main() {\n  m = M { n: 1 };\n  m.pins += [Pin { x: 5, y: 0 }, Pin { x: 1, y: 2 }];\n  m.t += [Wd { w: \"pear\" }, Wd { w: \"apple\" }];\n  println(\"{m}\");\n}\n";
     loft::file_access::write(dir.join("p.loft"), src).unwrap();
-    for mode in [&["--interpret"][..], &["--native"][..]] {
+    for mode in [&["--interpret"][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("p.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -1023,7 +1026,7 @@ fn dollar_defaults_construct_on_both_backends() {
     );
     loft::file_access::write(dir.join("p.loft"), &src).unwrap();
     let expect = format!("{FILLED_PEN}\n{}\n", FILLED_INK.replace("2: ink", "given"));
-    for mode in [&["--interpret"][..], &["--native"][..]] {
+    for mode in [&["--interpret"][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("p.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -1084,7 +1087,7 @@ fn cell_rename_in_two_upgrades() {
     let (code, out, err) = run_loft(&dir, &["layout", "upgrade", "c.loft", "a.store"]);
     assert_eq!(code, 0, "step 2:\n{out}\n{err}");
     assert!(out.contains("T.label removed"), "{out}");
-    for mode in [&["--interpret"][..], &["--native"][..]] {
+    for mode in [&["--interpret"][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("c.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -1211,8 +1214,9 @@ fn cell_swap_world_restores_and_converts_a_world_with_a_reference() {
     let dir = write_store("swap_world_restore", writer);
     loft::file_access::write(dir.join("b.loft"), reader).unwrap();
     let lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("lib");
-    for mode in ["--interpret", "--native"] {
+    for mode in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(loft_bin())
+            .env_remove("LOFT_NATIVE_BACKEND")
             .args([mode, "--lib"])
             .arg(&lib)
             .arg("b.loft")
@@ -1246,11 +1250,12 @@ fn cell_a_rebuild_checks_the_running_world_before_it_compiles() {
         loft::file_access::write(dir.join(format!("{name}.loft")), src).unwrap();
         let mut args = vec!["--check"];
         if native {
-            args.push("--native");
+            args.push("--native-rust");
         }
         let file = format!("{name}.loft");
         args.push(&file);
         let out = loft::platform::process::harness_command(loft_bin())
+            .env_remove("LOFT_NATIVE_BACKEND")
             .args(&args)
             .current_dir(&dir)
             .env("LOFT_TIMEOUT", "120")
@@ -1410,7 +1415,7 @@ fn cell_a_skipped_version_without_a_routine_is_refused() {
     manifest(&dir, "3.0", "");
     loft::file_access::write(dir.join("b.loft"), reader_s(V3)).unwrap();
     let before = store_bytes(&dir);
-    for mode in [&[][..], &["--native"][..]] {
+    for mode in [&[][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("b.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -1528,7 +1533,7 @@ fn cell_a_store_below_the_oldest_release_is_refused() {
         .unwrap();
         let before = store_bytes(&dir);
         let reason = "this store was written by 1.4, and this program reads stores from 2.0 on; open it once with 2.3, then with this one";
-        for mode in [&[][..], &["--native"][..]] {
+        for mode in [&[][..], &["--native-rust"][..]] {
             let mut args: Vec<&str> = mode.to_vec();
             args.push("b.loft");
             let (code, out, err) = run_loft(&dir, &args);
@@ -1600,7 +1605,7 @@ fn cell_a_conversion_refused_part_way_leaves_nothing_owed() {
         "struct T { k: integer, n: text, m: integer = $.k * 1000 }\nstruct W { a: integer, b: integer = $.a * 2, h: hash<T[n]> }\nfn main() {\n  w = W {};\n  ok = store_load(w, \"a.store\");\n  println(\"ok={ok} a={w.a} b={w.b} len={len(w.h)}\");\n}\n",
     )
     .unwrap();
-    for mode in [&[][..], &["--native"][..]] {
+    for mode in [&[][..], &["--native-rust"][..]] {
         let mut args: Vec<&str> = mode.to_vec();
         args.push("b.loft");
         let (code, out, err) = run_loft(&dir, &args);
@@ -1634,10 +1639,11 @@ fn cell_a_rebuild_decides_the_routine_by_the_worlds_release() {
         loft::file_access::write(dir.join("next.loft"), src).unwrap();
         let mut args = vec!["--check"];
         if native {
-            args.push("--native");
+            args.push("--native-rust");
         }
         args.push("next.loft");
         let out = loft::platform::process::harness_command(loft_bin())
+            .env_remove("LOFT_NATIVE_BACKEND")
             .args(&args)
             .current_dir(&dir)
             .env("LOFT_TIMEOUT", "120")

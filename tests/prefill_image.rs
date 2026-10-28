@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: reads the Rust writer's image-use census — its `--native` runs as `--native-rust` until then.
 //! @PLN164 C4 (`@FR-R-Prefill`) — THE PREFILL IMAGE: the default prefill of a minted record
 //! is one block write of a per-type image captured from the field-by-field walk's first
 //! run, never the walk again.  The cell corpus
@@ -75,7 +76,7 @@ fn every_mint_of_the_cells_matches_the_walk_on_the_interpreter() {
 
 #[test]
 fn every_mint_of_the_cells_matches_the_walk_on_native() {
-    let out = run("--native", VERIFY_NATIVE);
+    let out = run("--native-rust", VERIFY_NATIVE);
     assert!(
         out.trim_end().ends_with("ok"),
         "cells did not reach `ok`:\n{out}"
@@ -90,8 +91,8 @@ fn the_switch_answers_the_same_values() {
         on, off,
         "interpreter: the image and the walk must print the same"
     );
-    let n_on = run("--native", &[]);
-    let n_off = run("--native", OFF);
+    let n_on = run("--native-rust", &[]);
+    let n_off = run("--native-rust", OFF);
     assert_eq!(
         n_on, n_off,
         "native: the image and the walk must print the same"
@@ -157,7 +158,7 @@ fn the_cells_use_the_image_on_both_backends() {
     // makes the native half of the verify pin above non-vacuous.  Both backends must USE
     // an image: the interpreter `Mix`'s (every cell), native `Outer`'s (c12).
     let interpret = image_uses("--interpret", "Mix");
-    let native = image_uses("--native", "Outer");
+    let native = image_uses("--native-rust", "Outer");
     assert!(
         interpret > 0 && native > 0,
         "image uses: interpret `Mix` {interpret}, native `Outer` {native}"

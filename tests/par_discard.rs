@@ -107,7 +107,7 @@ fn the_discard_route_lowers_to_the_runtime_helper() {
     let probe = write_probe("emit");
     let out_rs = std::env::temp_dir().join(format!("loft_987_emit_{}.rs", std::process::id()));
     let status = loft::platform::process::harness_command(loft_bin())
-        .args(["--native-emit", out_rs.to_str().unwrap()])
+        .args(["--native-rust", "--native-emit", out_rs.to_str().unwrap()])
         .arg(&probe)
         .env("LOFT_TIMEOUT", "300")
         .status()

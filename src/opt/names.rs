@@ -104,6 +104,29 @@ pub(crate) fn collect_int_fn_refs(node: IrNode, calls: &mut HashSet<u32>) {
     }
 }
 
+/// Can definition `d` be the target of a function value?  It needs something to run: a body,
+/// a native, or a `#c` binding.  An interface's method stub (`__iface_…`) has none, and a
+/// plain integer equal to its number — `[30, 10, 20]` written into a `vector<i32>`, which the
+/// `OpSetInt4` / `OpPushInt4` recovery below cannot tell from a lambda's number — must not
+/// make it reachable: a backend that writes every reachable function refuses one it cannot
+/// write, so the over-approximation stops being free (the C backend refused every such
+/// vector).
+fn can_be_fn_value(data: &Data, d: u32) -> bool {
+    let def = data.def(d);
+    def.code() != &Value::Null || !def.native().is_empty() || !def.c_sig.is_empty()
+}
+
+/// Is the integer `d`, met where a fn-ref MAY ride as a plain number (a field or element
+/// write, a `yield`), a function value: a definition this program has, a function, no
+/// operator, and [`can_be_fn_value`]?  The recoveries over-approximate, and this keeps the
+/// over-approximation to definitions a backend can write.
+fn fn_value_number(data: &Data, d: u32) -> bool {
+    d < data.definitions()
+        && matches!(data.def(d).def_type(), DefType::Function)
+        && !data.def(d).name().starts_with("Op")
+        && can_be_fn_value(data, d)
+}
+
 /// Scan a definition's code for fn-ref literals:
 /// - `Set(var, Int(n))` where `var` has a `Function` or `Routine` type
 /// - `Call(d, args)` where a parameter of `d` is `Function`/`Routine` typed and the
@@ -204,9 +227,7 @@ pub(crate) fn collect_fn_ref_literals(
             if let Some(arg2) = fn_ref_operand
                 && let Value::Int(dn) = arg2.unspan()
                 && *dn >= 0
-                && (*dn as u32) < data.definitions()
-                && matches!(data.def(*dn as u32).def_type(), DefType::Function)
-                && !data.def(*dn as u32).name().starts_with("Op")
+                && fn_value_number(data, *dn as u32)
             {
                 calls.insert(*dn as u32);
             }
@@ -266,7 +287,15 @@ pub(crate) fn collect_fn_ref_literals(
         // panics at runtime with `invalid fn-ref: <d_nr>`.  Same shape
         // as the @P299 fix for `OpSetInt4(field, pos, Int(d_nr))`;
         // over-approximation is correctness-safe.
-        Value::Yield(inner) => collect_int_fn_refs(IrNode::Native(inner), calls),
+        // Only an integer that can BE a function value is one: a generator yielding numbers
+        // (`yield 10`) named whatever definition carried that number — after the stdlib grew,
+        // an interface stub with no body, which the C backend refuses — as `OpSetInt4`'s
+        // recovery already admits only `can_be_fn_value`.
+        Value::Yield(inner) => {
+            let mut yielded = HashSet::new();
+            collect_int_fn_refs(IrNode::Native(inner), &mut yielded);
+            calls.extend(yielded.into_iter().filter(|&d| fn_value_number(data, d)));
+        }
         _ => {}
     }
     // Recursion is delegated to the keystone so this walk stays total: only the

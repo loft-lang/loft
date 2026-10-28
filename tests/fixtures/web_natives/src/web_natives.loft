@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The web library's native declarations, word for word (web 0.5.0, src/web.loft), public so a
+// test program reaches them directly.
+
+pub fn http_do(method: text, url: text, body: text, headers: text) -> integer;
+#native
+pub fn http_body() -> text;
+#native
+pub fn http_headers() -> text;
+#native
+pub fn http_head_size(url: text) -> integer;
+#native
+pub fn ws_connect(url: text) -> integer;
+#native
+pub fn ws_client_send(handle: integer, msg: text) -> boolean;
+#native
+pub fn ws_client_send_binary(handle: integer, msg: text) -> boolean;
+#native
+pub fn ws_client_recv(handle: integer) -> boolean;
+#native
+pub fn ws_client_message() -> text;
+#native
+pub fn ws_client_opcode() -> integer;
+#native
+pub fn ws_client_close(handle: integer);
+#native
+pub fn sleep_ms(ms: integer);
+#native
+pub fn pack_reset();
+#native
+pub fn pack_u8(b: integer);
+#native
+pub fn pack_u16_le(v: integer);
+#native
+pub fn pack_u32_le(v: integer);
+#native
+pub fn pack_take() -> text;
+#native
+pub fn byte_at(idx: integer, t: text) -> integer;
+#native
+pub fn ws_group_clear();
+#native
+pub fn ws_group_add(handle: integer);
+#native
+pub fn ws_group_poll() -> integer;
+#native
+pub fn frame_yield();
+#native

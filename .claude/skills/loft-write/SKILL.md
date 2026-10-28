@@ -303,6 +303,15 @@ use arguments as args;               // library alias → `args::parse_args` (qu
 - `use lib;` gives the `lib::` qualifier only (@C98); `use lib::*;` brings every `pub` name in
   bare.  An import serves this file only; `pub use lib::*;` / `pub use lib::(a);` also passes
   the names on to whoever imports this file (a package entry offering its modules).
+- **Everything a file declares is private to that file**; `pub` shows it (an item, or one
+  field).  A file that is part of something bigger starts with **`#package`**: to the files
+  of its own directory and of the directory directly above it, it reads as if everything in
+  it were `pub` (fields, literals, variants, private functions, glob and selective imports).
+  Not two levels up, not a subdirectory, not a sibling; the reading files declare nothing.
+  A package's tests (anything inside `tests/`) see what its `src/` shares, so test internal
+  steps directly instead of making them `pub`.
+  Prefer it over `pub` on every field of a type shared inside one component; keep `pub` for
+  what the component offers outside.  A used file may say `#package`, never `#cwd`/`#link`.
 - `use lib as m;` gives a qualifier alias only (`m::fn`); it does not wildcard-import.
 - A qualified `lib::fn()` auto-loads the library — an explicit `use` is optional for
   qualified access.

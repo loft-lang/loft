@@ -83,9 +83,11 @@
 
 /* ── Safe hints ───────────────────────────────────────────────────────────────────────── */
 
-/* A helper every element and field access goes through: inlined, so a reference passed and
- * returned by value never travels through memory. */
-/* `LOFT_COLD_PATH()` opens the branch a null takes: an empty volatile asm, which no compiler
+/* `@FR-R-Cold` in the C: a helper every element and field access goes through is inlined
+ * (`LOFT_HOT_INLINE`), so a reference passed and returned by value never travels through memory,
+ * and what shares a body but not its frequency — a growth arm, a refill, a fault — is outlined
+ * `LOFT_COLD`. */
+/* `LOFT_COLD_PATH()` opens the branch a null takes (`@FR-R-Cold`'s branch weight): an empty volatile asm, which no compiler
  * if-converts away, so a discharge stays a branch the processor predicts instead of a select
  * in the dependency chain around it (a float discharge in a division loop was a `cmov` through
  * the integer registers: 32 % of `par`'s worker).  Nothing under strict C99. */

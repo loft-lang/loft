@@ -86,17 +86,17 @@ subject_patterns() {
     (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~code_base ~fast_table ~frame_headroom ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_ ~fs_ ~frame_readers ~ledger' ;;
     (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~foreign_store ~foreign_bridge ~locked_writes ~dropped_writes ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures ~btree =concurrent_warm_start' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
-    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust =builder_trigger' ;;
+    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust =builder_trigger =selfhost' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~compiled_stdlib ~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
-    (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world' ;;
+    (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world =web_natives' ;;
     # @PLN184 Track W — the platform-sensitive set: `windows_rules` runs the file scripts under
     # the emulated Windows host itself; the rest are the file, directory and process families.
     (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =process_tree =windows_probe =sweep_ignored' ;;
     # @PLN203 C8 — the C backend's own guards.  Its corpus reading is `scripts/c_sweep.py`
     # (`make c-sweep`), which no test binary runs.
-    (c)         echo '=c_emit =c_https' ;;
+    (c)         echo '=c_emit =c_https =web_natives' ;;
     (*)        return 1 ;;
   esac
 }
@@ -131,7 +131,7 @@ subject_paths() {
     (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
-    (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs' ;;
+    (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs|^src/web_client\.rs' ;;
     (winrules) echo '^src/file_access/|^src/platform\.rs|^src/database/io\.rs|^src/database/loft_file\.rs|^src/state/io\.rs|^src/png_store\.rs' ;;
     (c)        echo '^src/c/|^src/c_driver\.rs|^scripts/c_sweep\.py' ;;
     (*)        return 1 ;;

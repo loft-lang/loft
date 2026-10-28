@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 rust-writer: reads the Rust runtime's [clear] trace line — its `--native` runs as `--native-rust` until then.
 //! `@FR-H-ClearRelease` — clearing a vector FIELD of a multi-field record releases what its
 //! elements own, on both backends.
 //!
@@ -84,5 +85,5 @@ fn a_vector_field_clear_names_its_element_type_on_the_interpreter() {
 
 #[test]
 fn a_vector_field_clear_names_its_element_type_on_native() {
-    check("--native");
+    check("--native-rust");
 }

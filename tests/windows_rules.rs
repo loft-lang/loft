@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN203 C-gap: the emulated Windows host is not honoured by the C — its `--native` runs as `--native-rust` until then.
 
 //! @PLN184 Track W — the platform-sensitive scripts, run under the emulated Windows host
 //! (`LOFT_POISON_HOST=windows`) on both backends.  The layer applies Windows' rules over the
@@ -31,7 +32,7 @@ fn run_under_the_emulated_host(script: &str) {
     // processes: hold the run lock they hold, keyed by the file's path, so two runs of one
     // script never interleave their writes (`116-file-append-log` lost its size assertion).
     let _run_lock = common::source_run_lock(&root.join("tests/scripts").join(script));
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .current_dir(root)
             .env("LOFT_POISON_HOST", "windows")
@@ -142,7 +143,7 @@ fn a_name_that_is_not_text_is_listed_and_never_reached() {
                 files 4\nexists false\ncontent null\nwrite false\ndelete false\n\
                 exact exact\nplain plain\n";
     for host in ["", "windows"] {
-        for backend in ["--interpret", "--native"] {
+        for backend in ["--interpret", "--native-rust"] {
             let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .current_dir(root)
                 .env("LOFT_POISON_HOST", host)
@@ -179,7 +180,7 @@ fn a_name_that_is_not_text_is_listed_and_never_reached() {
 #[test]
 fn a_loft_programs_stop_takes_what_its_child_started() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for backend in ["--interpret", "--native"] {
+    for backend in ["--interpret", "--native-rust"] {
         let dir = std::env::temp_dir().join(format!(
             "loft_winrules_tree_{}_{}",
             std::process::id(),
