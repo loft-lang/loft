@@ -50,6 +50,20 @@ fn bit(c: boolean) -> integer {
   if c { 1 } else { 0 }
 }
 
+// Loft's own `abs` of an integer; null stays null.
+fn abs_of(v: integer?) -> integer? {
+  if v == null { null } else { v.abs() }
+}
+
+// `OpRangeDefault`, the value a narrow integer takes: null stays null unless a default is
+// given, a value inside `lo..=hi` stays, any other takes the default.
+fn range_default(v: integer?, lo: integer?, hi: integer?, dflt: integer?) -> integer? {
+  if v == null {
+    return dflt;
+  }
+  if v >= lo && v <= hi { v } else { dflt }
+}
+
 // Definition `entry` called with the integer `args`.
 pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
   progs: vector<lower::Lowering> = [];
@@ -363,6 +377,11 @@ pub fn run(b: ir::Bundle, entry: integer, args: vector<integer>) -> Outcome {
           );
         }
         texts[at] = (texts[at] ?? "") + piece;
+      }
+      Abs => { ints[sp_int - 1] = abs_of(ints[sp_int - 1]); }
+      RangeDefault => {
+        sp_int -= 3;
+        ints[sp_int - 1] = range_default(ints[sp_int - 1], ints[sp_int], ints[sp_int + 1], ints[sp_int + 2]);
       }
       Neg => {
         match op.kind {

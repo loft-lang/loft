@@ -83,11 +83,26 @@ fn test_the_stdlibs_own_loft_functions_run_from_the_image() {
   assert(ran("stdlib", "n_use_stdlib", [4]) == 12, "use_stdlib(4)");
 }
 
-fn test_an_operator_s1_does_not_carry_is_refused_by_name() {
+fn test_an_operator_the_interpreter_does_not_carry_is_refused_by_name() {
   b = kernel("stdlib");
-  d = lower::find(b, "n_uses_abs");
-  o = run::run(b, d, [-3]);
-  assert(o.refused == "an operator the interpreter does not carry: OpAbsInt", "refused: {o.refused}");
+  d = lower::find(b, "n_uses_pow");
+  o = run::run(b, d, [3]);
+  assert(o.refused == "an operator the interpreter does not carry: OpPowInt", "refused: {o.refused}");
+}
+
+fn test_the_small_integer_operators_answer_as_loft_does() {
+  // By hand: `abs`; a plain enum counts from 1; 7 / 0 is null, so the `??` gives -1; 300 does
+  // not fit a `u8`, so it takes the default 7, or reads null as a `u8?`.
+  assert(ran("stdlib", "n_uses_abs", [-3]) == 3, "uses_abs(-3)");
+  assert(ran("stdlib", "n_uses_abs", [4]) == 4, "uses_abs(4)");
+  assert(ran("small_ops", "n_hue_number", [0]) == 1, "hue_number(0)");
+  assert(ran("small_ops", "n_hue_number", [2]) == 3, "hue_number(2)");
+  assert(ran("small_ops", "n_div_or", [7, 2]) == 3, "div_or(7, 2)");
+  assert(ran("small_ops", "n_div_or", [7, 0]) == -1, "div_or(7, 0)");
+  assert(ran("small_ops", "n_narrow", [200]) == 200, "narrow(200)");
+  assert(ran("small_ops", "n_narrow", [300]) == 7, "narrow(300)");
+  assert(ran("small_ops", "n_narrow_or_null", [200]) == 200, "narrow_or_null(200)");
+  assert(ran("small_ops", "n_narrow_or_null", [300]) == -1, "narrow_or_null(300)");
 }
 
 fn test_every_format_spec_renders_through_the_c_runtime() {

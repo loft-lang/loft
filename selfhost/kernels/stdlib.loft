@@ -3,7 +3,8 @@
 //
 // S1 probe: stdlib functions written in loft (`clamp`, which calls `min` and `max`, and
 // `floor_mod`) run from the image's own IR, as the Rust interpreter runs them; `abs` reaches
-// the operator `OpAbsInt`, which S1 does not carry, so it is refused by name.
+// the operator `OpAbsInt`; `pow` reaches `OpPowInt`, which the interpreter does not carry, so
+// it is refused by name.
 fn use_stdlib(n: integer) -> integer {
   n.clamp(0, 10) + n.floor_mod(7) + n.max(3)
 }
@@ -12,6 +13,10 @@ fn uses_abs(n: integer) -> integer {
   n.abs()
 }
 
+fn uses_pow(n: integer) -> integer {
+  n.pow(2) ?? 0
+}
+
 fn main() {
-  println("{use_stdlib(-5)} {use_stdlib(12)} {use_stdlib(4)} {uses_abs(-3)}");
+  println("{use_stdlib(-5)} {use_stdlib(12)} {use_stdlib(4)} {uses_abs(-3)} {uses_pow(3)}");
 }
