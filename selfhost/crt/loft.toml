@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# @PLN91 — the loft interpreter's own library of C runtime routines: the format routines the C
+# runtime already defines, reached through `#c` on every backend (the interpreter dlopens the
+# shim, --native and --native-c link it).  Only routines the C runtime defines belong here;
+# everything else the interpreter needs is loft code.
+
+[package]
+name    = "crt"
+version = "0.0.0"
+loft    = ">=0.8"
+
+[library]
+entry = "src/crt.loft"
+
+[c]
+shim = "shim/crt.c"

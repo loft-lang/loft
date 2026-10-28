@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The C runtime's format routines through the `crt` library, against loft's own rendering of
+// the same spec: `"{42:06x}"` is `OpFormatInt(_, 42, 16, 6, 48, false, false, 2)`, and so on.
+use crt;
+
+fn test_an_integer_spec_renders_as_loft_renders_it() {
+  n: integer? = null;
+  assert(crt::format_int(42, 16, 6, 48, false, false, 2) == "{42:06x}", "06x");
+  assert(crt::format_int(-7, 10, 4, 32, true, false, 1) == "{-7:+>4}", "+>4");
+  assert(crt::format_int(255, 16, 6, 48, false, true, 2) == "{255:#06x}", "#06x");
+  assert(crt::format_int(n, 10, 0, 32, false, false, 2) == "{n}", "null");
+}
+
+fn test_a_float_spec_renders_as_loft_renders_it() {
+  assert(crt::format_float(3.14159, 0, 2, 32, false, 2, false) == "{3.14159:.2}", ".2");
+  assert(crt::format_float(2.5, 8, 1, 32, true, 1, false) == "{2.5:+>8.1}", "+>8.1");
+  f: float? = null;
+  assert(crt::format_float(f, 0, -1, 32, false, 2, false) == "{f}", "null float");
+}
+
+fn test_a_text_spec_renders_as_loft_renders_it() {
+  assert(crt::format_text("abc", 7, 1, 32) == "{"abc":>7}", ">7");
+  assert(crt::format_text("ab", 6, -1, 42) == "{"ab":*<6}", "*<6");
+  t: text? = null;
+  assert(crt::format_text(t, 0, -1, 32) == "{t}", "null text");
+}

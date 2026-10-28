@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The C runtime's format routines (@PLN91 S2.2), as the loft interpreter calls them: one `#c`
+// binding per routine, into `shim/crt.c`, and a loft function per kind that owns the buffer
+// the rendering is written into.  The operands are the format operators' own (`OpFormatInt`
+// and its siblings, `default/01_code.loft`), so a format spec the IR carries is rendered by
+// the C runtime exactly as a C-backend program renders it.
+
+fn c_format_int(out: vector<u8>, val: integer, is_null: boolean, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) -> integer;
+#c "loft_crt_format_int" "int64_t(char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_format_float(out: vector<u8>, val: vector<float>, is_null: boolean, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) -> integer;
+#c "loft_crt_format_float" "int64_t(char*, int64_t, const double*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t)"
+
+fn c_format_text(out: vector<u8>, val: text, is_null: boolean, width: integer, dir: integer, token: integer) -> integer;
+#c "loft_crt_format_text" "int64_t(char*, int64_t, const char*, int64_t, int64_t, int64_t, int64_t)"
+
+// A byte buffer of `n` zero bytes, for a routine to write into.
+fn room(n: integer) -> vector<u8> {
+  [for _ in 0..n { 0 as u8 }]
+}
+
+// `val` formatted as `OpFormatInt(_, val, radix, width, token, plus, note, dir)` formats it.
+pub fn format_int(val: integer?, radix: integer, width: integer, token: integer, plus: boolean, note: boolean, dir: integer) -> text {
+  buf = room(64);
+  n = c_format_int(buf, val ?? 0, val == null, radix, width, token, plus, note, dir);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_format_int(buf, val ?? 0, val == null, radix, width, token, plus, note, dir);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// `val` formatted as `OpFormatFloat` (or, with `single`, `OpFormatSingle`) formats it.
+pub fn format_float(val: float?, width: integer, precision: integer, token: integer, plus: boolean, dir: integer, single: boolean) -> text {
+  v: vector<float> = [val ?? 0.0];
+  buf = room(64);
+  n = c_format_float(buf, v, val == null, width, precision, token, plus, dir, single);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_format_float(buf, v, val == null, width, precision, token, plus, dir, single);
+  }
+  text_from_byte_range(buf, 0, n)
+}
+
+// `val` formatted as `OpFormatText(_, val, width, dir, token)` formats it.
+pub fn format_text(val: text?, width: integer, dir: integer, token: integer) -> text {
+  buf = room(size(val ?? "") + width + 8);
+  n = c_format_text(buf, val ?? "", val == null, width, dir, token);
+  if n > len(buf) {
+    buf = room(n);
+    n = c_format_text(buf, val ?? "", val == null, width, dir, token);
+  }
+  text_from_byte_range(buf, 0, n)
+}
