@@ -309,6 +309,9 @@ impl Parser {
             // @FR-N-Store — the parameter is a slot when this binding is REPORTED and the callee
             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent
             // callee (`abs(x)` propagates the null through a runtime guard) only test the fit.
+            // @PLN204 — a 64-bit caller's argument for a 32-bit library's parameter.
+            let narrowed = self.width32_call_argument(&mut actual_code, actual_type, &tp, d_nr);
+            let actual_type = narrowed.as_ref().unwrap_or(actual_type);
             let arg_at = actual_code.span_pos().copied();
             // A scalar PLACE is linked, not stored, so @FR-N-Store's "a nullable value becomes
             // null there" does not describe it, and its cure (`?`) would turn the place into a

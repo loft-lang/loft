@@ -138,6 +138,47 @@ impl Parser {
         narrow
     }
 
+    /// The other side of [`Self::width32_call_result`]: a 64-bit file calling a function whose
+    /// body is under the regime hands its arguments across the same boundary.  A plain
+    /// `integer` for a parameter the regime made 32-bit (a whole-range `i32`) is narrowed at
+    /// the call (`OpNarrow32`, null when it does not fit), and a `float` for a `single` one is
+    /// rounded (`OpCastSingleFromFloat`), so a library can go under the regime without its
+    /// 64-bit callers changing a line.  An `i64` / `f64` parameter is wide and takes the value
+    /// as it is; a 32-bit caller needs nothing here.  Answers the argument's new type.
+    pub(crate) fn width32_call_argument(
+        &mut self,
+        code: &mut Value,
+        actual: &Type,
+        param: &Type,
+        callee: u32,
+    ) -> Option<Type> {
+        if self.data.width32()
+            || self.data.def(callee).name.starts_with("Op")
+            || !self.data.body_width32(callee)
+        {
+            return None;
+        }
+        let (op, to) = match (actual.base(), param.base()) {
+            (Type::Integer(src), Type::Integer(dst))
+                if src.max > i64::from(i32::MAX)
+                    && dst.is_width32()
+                    && i64::from(dst.min) <= i64::from(i32::MIN) + 1
+                    && dst.max >= i64::from(i32::MAX) =>
+            {
+                ("OpNarrow32", param.base().clone())
+            }
+            (Type::Float, Type::Single) => ("OpCastSingleFromFloat", Type::Single),
+            _ => return None,
+        };
+        let inner = std::mem::replace(code, Value::Null);
+        *code = self.cl(op, &[inner]);
+        Some(if matches!(actual, Type::Optional(_)) {
+            Type::optional(to)
+        } else {
+            to
+        })
+    }
+
     /// A function answering how many elements, characters or bytes something holds.
     fn is_count_fn(name: &str) -> bool {
         matches!(name, "n_len" | "n_size")
