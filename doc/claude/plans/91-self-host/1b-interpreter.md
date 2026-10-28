@@ -282,6 +282,44 @@ integer it returns.  Both must print the same number, or the times do not compar
 - **S1.4 — the measurement**: best of five wall times per kernel, both sides, numbers in
   this section, and the gate read against them.
 
+### S1.2 — the run loop: `fib(25)` answers what `--interpret` answers — DESIGNED 2026-10-28
+
+**What.**  `selfhost/src/run.loft`, `pub fn run(b: ir::Bundle, entry: integer, args:
+vector<integer>) -> Outcome`, with `struct Outcome { value: integer, refused: text }`: the entry's
+result, or the first thing S1 does not carry, named (never a guessed value).
+
+- **Lowering on demand.**  `lower::lower` gains the frame's size: `slots` (the definition's
+  variable count, `len(d.variables.variables)`) and `params` (its attribute count).  `run`
+  lowers a function the first time it is called and keeps it in a `vector<lower::Lowering>`
+  indexed by definition number, with a `vector<boolean>` saying which are lowered.
+- **Two explicit stacks, no recursion** (the frame limit is the reason the lowering is flat):
+  the value stack `vector<integer>` with a pointer `sp`, and the frames as three integer
+  vectors (`f_def`, `f_pc`, `f_base`) with `fp`.  A push overwrites below the length and
+  appends at it; a return resets `sp` to the frame's base.  Nothing is ever removed, so the
+  stacks only grow to the deepest point the program reaches.
+- **One loop.**  The current frame is held in locals (`def`, `pc`, `base`, `ops`) and saved
+  into the frame vectors only at a call; each turn fetches `ops[pc]`, steps `pc`, and
+  `match`es the code:
+  - `PushInt a` pushes `a`; `Load a` pushes slot `base + a`; `Store a` and `Pop` (S1.3) write
+    and drop.
+  - an operator pops `y`, then `x`, and pushes loft's own `x OP y` — a comparison pushes 1 or
+    0 through `if x OP y { 1 } else { 0 }`, so a null operand behaves as in the program;
+  - `Jump a` sets `pc`; `JumpIfFalse a` pops and jumps on 0;
+  - `Call d n`: the arguments are the top `n` values, so the callee's base is `sp - n`; its
+    other slots are zeroed up to `slots`; the caller's `pc` is saved and the callee entered;
+  - `Ret`: pops the value, resets `sp` to `base`, and either answers it (the entry's frame) or
+    pushes it in the caller.
+- **The interpreter's own number.**  The test compares with values computed outside this
+  code: `fib(0..10)` is 0 1 1 2 3 5 8 13 21 34 55, `fib(25)` is 75 025 (what
+  `loft --interpret` prints for `kernels/fib.loft` at 25).
+
+**Code points:** `selfhost/src/run.loft` (new), `selfhost/src/lower.loft` (`slots`,
+`params`), `selfhost/tests/run.loft` (new).
+
+**Cases** (hand-computed, both backends): the eleven small values and 75 025; a call into a
+function the lowering refuses answers `refused` naming it, not a value; an entry with the
+wrong number of arguments is refused.
+
 ### S1.1b — a tail self-call jumps wherever it can, and warns where it cannot (fixes X15) — DESIGNED 2026-10-28
 
 **Found by S1.1.**  `lower.loft` walks the IR tree by recursion, and its tail self-calls are
