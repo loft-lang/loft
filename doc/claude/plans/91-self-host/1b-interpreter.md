@@ -40,6 +40,14 @@ It holds four constraints:
    `doc/claude/formal/` chapter and cites them by tag.  It is measured by the language
    suite's cells, which are filed under those same rules (§ Reusing the formal rules).
 
+**The order of the goals (owner, 2026-10-28).**  First full coverage: every test and program
+the repository defines (the corpus, `tests/scripts`, the language suite's cells) gives
+`--interpret`'s result.  Speed is measured from S1 on and reported (S1.4's 3× line), never a
+gate.  **Start-up on par with the Rust interpreter is a goal for later, not a blocker**: the
+analysis of how the Rust interpreter makes its start-up fast (the compiled stdlib, the
+program cache) is recorded when it is done, and a start-up step is planned only after
+coverage.
+
 ## The dogfood rule (governs every step)
 
 This project exists to find out what loft is like for its hardest consumer, a language
