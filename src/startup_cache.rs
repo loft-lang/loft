@@ -602,27 +602,46 @@ pub fn warm_load_program(
     }
     crate::copy_manifest::restore_materialised(state.materialised);
     p.native_lib_regs = state.native_lib_regs;
-    // #444 — restore the `[wasm.bridge]` state the IR bundle does not carry.
-    // `--html` codegen keys the host-import-extern skip AND the routed-call on
-    // `wasm_bridge_routes`; an empty table makes those two decisions disagree
-    // and collide (E0428).  `packages` drives the bridge-crate link and
-    // `host_js` the HTML preamble — all three are parse-time-only, so the warm
-    // path replays them here exactly as the cold parse populated them.
-    for (sym, krate, bridge_fn) in state.wasm_bridge_routes {
-        p.data.wasm_bridge_routes.insert(sym, (krate, bridge_fn));
-    }
-    p.data.wasm_bridge_packages = state.wasm_bridge_packages;
-    p.data.wasm_bridge_host_js_files = state.wasm_bridge_host_js;
-    for src in state.width32_sources {
-        p.data.set_width32(src, true);
-    }
-    for d in state.wide_instances {
-        p.data.mark_wide_instance(d);
-    }
+    replay_parse_state(
+        &mut p.data,
+        state.wasm_bridge_routes,
+        state.wasm_bridge_packages,
+        state.wasm_bridge_host_js,
+        state.width32_sources,
+        state.wide_instances,
+    );
     if crate::keys::env_set("LOFT_TRACE_WARM") {
         eprintln!("[warm] hit: {}", bundle.display());
     }
     Some(state.user_def_start.unwrap_or_else(|| p.data.definitions()))
+}
+
+/// The parse-time `Data` state the IR bundle does not carry, replayed on a warm hit exactly as
+/// the cold parse populated it.  #444 — the `[wasm.bridge]` state: `--html` codegen keys the
+/// host-import-extern skip AND the routed-call on `wasm_bridge_routes`, so an empty table makes
+/// those two decisions disagree and collide (E0428); `packages` drives the bridge-crate link
+/// and `host_js` the HTML preamble.  @PLN204 — the 32-bit regime's sources and wide instances,
+/// without which a warm run read every file as 64-bit.
+#[cfg(feature = "mmap")]
+fn replay_parse_state(
+    data: &mut crate::data::Data,
+    routes: Vec<(String, String, String)>,
+    packages: Vec<(String, String)>,
+    host_js: Vec<String>,
+    width32_sources: Vec<u16>,
+    wide_instances: Vec<u32>,
+) {
+    for (sym, krate, bridge_fn) in routes {
+        data.wasm_bridge_routes.insert(sym, (krate, bridge_fn));
+    }
+    data.wasm_bridge_packages = packages;
+    data.wasm_bridge_host_js_files = host_js;
+    for src in width32_sources {
+        data.set_width32(src, true);
+    }
+    for d in wide_instances {
+        data.mark_wide_instance(d);
+    }
 }
 
 /// The files a program bundle's manifest hashes: every parsed source and the nearest
