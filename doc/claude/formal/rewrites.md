@@ -4240,7 +4240,9 @@ line in `Output::output_function`'s prelude.
                  in an interpreter's call loop, once per function lowered instead of once
                  per call (the self-host's `run`: −58 % instructions on fib(25) when
                  priced by hand).  A static rule: no registry of views and no per-write
-                 work elsewhere.  Switch `LOFT_NO_DEFERRED_COPY=1`; trace
+                 work elsewhere.  OPT-IN (`LOFT_DEFERRED_COPY=1`): under GCC, the remap of
+                 a derived view at a copy point inside a hot loop slows that loop even
+                 where the point never runs (the self-host's `mix` +30 %); trace
                  `LOFT_TRACE_DEFERRED_COPY=1`; guard
                  `loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft`
                  (four of its five cells fail with the copy point removed, and the

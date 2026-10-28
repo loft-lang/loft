@@ -17,8 +17,8 @@
 //! each reference variable derived from it (`op = prog.ops[pc]`), must be a read; a derived
 //! view is moved into the copy when it is taken (`loft_dc_remap`), as is any address held for
 //! one of them (`@FR-R-RecPtr`).  A text borrowed from the local declines it.
-//! `LOFT_NO_DEFERRED_COPY=1` copies at every bind again; `LOFT_TRACE_DEFERRED_COPY=1` names
-//! each admission and decline.
+//! Opt-in (`LOFT_DEFERRED_COPY=1`) while a derived view's remap costs GCC's hot loops;
+//! `LOFT_TRACE_DEFERRED_COPY=1` names each admission, decline and copy point.
 use super::FnWriter;
 use crate::data::{Type, Value};
 use std::collections::{HashMap, HashSet};
@@ -36,6 +36,9 @@ pub(crate) struct DcVar {
     pub sources: Vec<u16>,
     /// The deferred binds: their `Set` nodes, by address.
     pub binds: HashSet<usize>,
+    /// The statements after which the local and its views are dead (`dead_after`): a write
+    /// there needs no copy, since nothing reads what it would have disturbed.
+    pub dead: HashSet<usize>,
 }
 
 /// The function's deferred locals.
@@ -86,7 +89,9 @@ impl FnWriter<'_> {
     /// The deferred locals of this function (`@FR-R-DeferredCopy`).
     pub(super) fn deferred_plan(&self) -> DeferredCopies {
         let mut out = DeferredCopies::default();
-        if crate::env_once!(std::env::var("LOFT_NO_DEFERRED_COPY").is_ok_and(|v| v != "0"))
+        // Opt-in for now: under GCC, a derived view's remap at a copy point inside a hot loop
+        // (`op = loft_dc_remap(…)`) slows that loop even when the point never runs.
+        if !crate::env_once!(std::env::var("LOFT_DEFERRED_COPY").is_ok_and(|v| v != "0"))
             || self.gen_elem.is_some()
         {
             return out;
@@ -170,12 +175,14 @@ impl FnWriter<'_> {
                 derived.len()
             );
         }
+        let dead = dead_after(self.code, &refs, &binds);
         Some(DcVar {
             own,
             derived,
             tp,
             sources,
             binds,
+            dead,
         })
     }
 
@@ -264,12 +271,26 @@ impl FnWriter<'_> {
             .iter()
             .flat_map(|(x, d)| d.derived.iter().copied().chain([*x, d.own]))
             .collect();
+        // A copy is disturbed by a change to its source's RECORDS, never by the store's buffer
+        // moving (a reference is store, record and position, not an address).  So besides
+        // `distinct`, two owners this activation created — minted, or placed in a host's store
+        // (`(R-Place)`) — own disjoint records whichever store they share: a write through one
+        // changes no record of the other.
+        let own_here = |w: u16| facts.fresh(w) || facts.placed.contains(&w);
+        let records_apart = |t: u16, v: u16| {
+            facts
+                .terminal(v)
+                .is_some_and(|tv| tv != t && own_here(t) && own_here(tv))
+        };
         let apart = |v: u16| {
             owns.contains(&v)
                 || (v as usize) >= vars.var_count()
                 || !(crate::data::is_dbref(vars.tp(v).base())
                     || matches!(vars.tp(v).base(), Type::RefVar(_)))
-                || dv.sources.iter().all(|t| *t != v && facts.distinct(*t, v))
+                || dv
+                    .sources
+                    .iter()
+                    .all(|t| *t != v && (facts.distinct(*t, v) || records_apart(*t, v)))
         };
         let mut hit = false;
         let memo = self.dc.writes.clone();
@@ -297,8 +318,19 @@ impl FnWriter<'_> {
                             _ => "_".into(),
                         })
                         .collect();
+                    let mut failing = Vec::new();
+                    for a in args {
+                        a.any_node(&mut |m| {
+                            if let Value::Var(v) = m
+                                && !apart(*v)
+                            {
+                                failing.push(vars.name(*v).to_string());
+                            }
+                            false
+                        });
+                    }
                     eprintln!(
-                        "deferred-copy:   copy point at {} [{}]",
+                        "deferred-copy:   copy point at {} [{}] not apart: {failing:?}",
                         data.def(*op).name(),
                         names.join(",")
                     );
@@ -320,11 +352,12 @@ impl FnWriter<'_> {
             Value::If(c, _, _) => c,
             other => other,
         };
+        let at = node_addr(s);
         let mut due: Vec<u16> = self
             .dc
             .vars
             .iter()
-            .filter(|(_, dv)| self.dc_writes_source(probe, dv))
+            .filter(|(_, dv)| !dv.dead.contains(&at) && self.dc_writes_source(probe, dv))
             .map(|(x, _)| *x)
             .collect();
         due.sort_unstable();
@@ -421,6 +454,65 @@ impl FnWriter<'_> {
             .iter()
             .any(|(x, dv)| *x == v || dv.derived.contains(&v))
     }
+}
+
+/// The statements where a copy point is not needed for the variables of `refs`: after them
+/// nothing reads one again — the rest of the enclosing block reaches a `return` (or is the
+/// value a `return` hands back) without mentioning one — or before them none was bound by a
+/// deferred bind yet (a top-level statement ahead of the first one in `binds`).  A block that
+/// ends without returning — a loop body runs again, an enclosing block goes on — counts as
+/// reading, so this only drops a point no path past it can need.
+fn dead_after(code: &Value, refs: &HashSet<u16>, binds: &HashSet<usize>) -> HashSet<usize> {
+    fn mentions(n: &Value, refs: &HashSet<u16>) -> bool {
+        n.any_node(&mut |m| matches!(m, Value::Var(v) if refs.contains(v)))
+    }
+    fn walk(n: &Value, refs: &HashSet<u16>, returns: bool, out: &mut HashSet<usize>) {
+        match n.unspan() {
+            Value::Return(e) => walk(e, refs, true, out),
+            Value::Block(b) | Value::Loop(b) => {
+                let ops = &b.operators;
+                let ends = returns && matches!(n.unspan(), Value::Block(_));
+                for (i, op) in ops.iter().enumerate() {
+                    let dead = if let Value::Return(_) = op.unspan() {
+                        !mentions(op, refs)
+                    } else {
+                        let rest = &ops[i + 1..];
+                        match rest.iter().position(|o| {
+                            mentions(o, refs) || matches!(o.unspan(), Value::Return(_))
+                        }) {
+                            Some(k) => {
+                                matches!(rest[k].unspan(), Value::Return(_))
+                                    && !mentions(&rest[k], refs)
+                            }
+                            None => ends,
+                        }
+                    };
+                    if dead {
+                        out.insert(node_addr(op));
+                    }
+                    walk(op, refs, false, out);
+                }
+            }
+            other => other.for_each_child(&mut |c| walk(c, refs, false, out)),
+        }
+    }
+    let mut out = HashSet::new();
+    walk(code, refs, false, &mut out);
+    // Top-level statements ahead of the first deferred bind, everything inside them included.
+    if let Value::Block(b) = code.unspan() {
+        let first = b
+            .operators
+            .iter()
+            .position(|op| op.any_node(&mut |m| binds.contains(&node_addr(m))));
+        for op in &b.operators[..first.unwrap_or(0)] {
+            op.any_node(&mut |m| {
+                out.insert(node_addr(m));
+                false
+            });
+            out.insert(node_addr(op));
+        }
+    }
+    out
 }
 
 /// Whether every record a value of type `tp` reaches is laid out as `loft_dc_remap` follows it:
