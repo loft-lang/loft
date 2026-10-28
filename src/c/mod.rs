@@ -561,8 +561,15 @@ impl<'a> Cx<'a> {
     pub(crate) fn ctype(&self, tp: &Type) -> Option<CType> {
         match tp.base() {
             // A narrow integer is held as a plain one: its range is enforced where a value
-            // enters it (`OpRangeDefault`) and where a field stores it.
-            Type::Integer(spec) if spec.is_width32() && !no_c_int32() => Some(CType::Int32),
+            // enters it (`OpRangeDefault`) and where a field stores it.  `int32_t` is the 32-bit
+            // regime's: only there is every value narrowed before it is held (`OpNarrow32`).  In a
+            // 64-bit program an `i32` local or parameter keeps the wide value it was given, as
+            // the interpreter's 8-byte slot does (`931b-i32-accepted-forms-run`).
+            Type::Integer(spec)
+                if spec.is_width32() && self.data.any_width32() && !no_c_int32() =>
+            {
+                Some(CType::Int32)
+            }
             Type::Integer(_) => Some(CType::Int),
             Type::Boolean => Some(CType::Bool),
             Type::Float => Some(CType::Float),

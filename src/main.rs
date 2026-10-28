@@ -13036,7 +13036,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // written from memory, over every program.
         let from_image = std::env::var_os("LOFT_EMIT_FROM_IMAGE").is_some();
         let emitted = if from_image {
-            loft::ir_read::image_round_trip(&p.data, &state.database)
+            // A program image is the `mmap` feature's bundle; a build without it has none.
+            #[cfg(feature = "mmap")]
+            let round = loft::ir_read::image_round_trip(&p.data, &state.database);
+            #[cfg(not(feature = "mmap"))]
+            let round: std::io::Result<(loft::data::Data, loft::database::Stores)> = Err(
+                std::io::Error::other("this build has no program image (the `mmap` feature)"),
+            );
+            round
                 .map_err(|e| format!("the program image did not round-trip: {e}"))
                 .and_then(|(data, db)| {
                     loft::c::emit_program(&data, &db, &expected).map_err(|r| r.to_string())
