@@ -430,13 +430,20 @@ LOFT_HOT_INLINE int64_t loft_mul(int64_t a, int64_t b) {
         int64_t r;
         return LOFT_MUL_OVF(a, b, &r) ? LOFT_NULL : r;
     }
-    if (a > 0) {
-        if (b > 0) { if (a > INT64_MAX / b) return LOFT_NULL; }
-        else if (b < INT64_MIN / a) return LOFT_NULL;
-    } else if (a < 0) {
-        if (b > 0) { if (a < INT64_MIN / b) return LOFT_NULL; }
-        else if (b != 0 && a < INT64_MAX / b) return LOFT_NULL;
+    /* One operand is a constant: make it `b`, and every bound below divides by it, so it folds
+     * to a compare.  With the constant on the left, `INT64_MAX / b` divided by the other operand
+     * at run time — an `idiv` per multiply (`lerp_int`'s `(b - a) * i`). */
+    if (LOFT_CONSTANT(a) && !LOFT_CONSTANT(b)) {
+        int64_t t = a;
+        a = b;
+        b = t;
     }
+    if (b > 0) {
+        if (a > INT64_MAX / b || a < INT64_MIN / b) return LOFT_NULL;
+    } else if (b < -1) {
+        if (a < INT64_MAX / b || a > INT64_MIN / b) return LOFT_NULL;
+    }
+    /* b == -1 overflows only for INT64_MIN, which is null and answered above. */
     return a * b;
 }
 
